@@ -82,6 +82,10 @@ public class InlinedFunctionInputTraceContractTest {
 			.filter(constraint -> constraint.kind() == ConstraintKind.CONJUNCTIVE)
 			.filter(constraint -> constraint.evidence().startsWith("inlined-function-argument:"))
 			.map(NeutralPlacementGraph.Constraint::right).collect(Collectors.toSet());
+		Assert.assertFalse("inlined trace markers must not acquire the runtime alias contract",
+			analysis.graph().constraints().stream().anyMatch(constraint ->
+				constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+					&& constraint.evidence().startsWith("inlined-function-argument:")));
 		Assert.assertFalse("an exact lexical argument may retain its optional trace constraint",
 			constrainedInputs.isEmpty());
 		List<PlacementAnalysis.LogicalInlinedFunctionInputFact> outcomes =
@@ -254,6 +258,56 @@ public class InlinedFunctionInputTraceContractTest {
 		Assert.assertTrue("runtime FunctionCall inputs must not use the inlined trace reason",
 			inputs.stream().flatMap(node -> node.exclusions().stream()).noneMatch(exclusion ->
 				exclusion.reasonCode() == ReasonCode.NON_EMITTED_INLINED_FUNCTION_INPUT));
+		Assert.assertTrue("every runtime function input must be fed by one exact value-alias edge",
+			inputs.stream().allMatch(input -> analysis.graph().constraints().stream().anyMatch(constraint ->
+				constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+					&& constraint.right() == input.key()
+					&& constraint.evidence().startsWith("function-argument:"))));
+		Assert.assertFalse("runtime function inputs must not retain the old materializing boundary edge",
+			analysis.graph().constraints().stream().anyMatch(constraint ->
+				constraint.kind() == ConstraintKind.CONJUNCTIVE
+					&& constraint.evidence().startsWith("function-argument:")));
+	}
+
+	@Test
+	public void nestedAndSharedRuntimeCallersRetainExactAliasChains() throws Exception {
+		DMLProgram program = compile("""
+			inner=function(matrix[double] A) return (double s) {
+				B=A; i=1; while(i<2) { B=B+1; i=i+1; }; s=sum(B);
+			}
+			outer=function(matrix[double] A) return (double s) {
+				s=inner(A); i=1; while(i<2) { s=s+1; i=i+1; }
+			}
+			F=federated(addresses=list("localhost:1234/X1","localhost:1235/X2"),
+				ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));
+			F1=F+1; F2=F+2; Y=outer(F1); Z=outer(F2); print(Y+Z);
+			""", true);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		List<PlacementAnalysis.LogicalFunctionInputFact> facts =
+			analysis.logicalFunctionInputsInCanonicalOrder();
+		Assert.assertTrue("fixture must retain nested and repeated non-inlined calls", facts.size() >= 3);
+		Assert.assertTrue("two outer calls must bind the same compiled formal read",
+			facts.stream().collect(Collectors.groupingBy(
+				PlacementAnalysis.LogicalFunctionInputFact::targetRead, Collectors.counting()))
+				.values().stream().anyMatch(count -> count > 1));
+		Assert.assertTrue("the inner call must contribute a non-main caller source",
+			facts.stream().anyMatch(fact -> !"main".equals(fact.sourceArgument().functionNamespace())));
+		for(PlacementAnalysis.LogicalFunctionInputFact fact : facts) {
+			long aliases = analysis.graph().constraints().stream().filter(constraint ->
+				constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+					&& constraint.left() == fact.sourceArgument()
+					&& constraint.right() == fact.boundary()
+					&& constraint.inputPosition() == fact.callInputPosition()
+					&& constraint.evidence().startsWith("function-argument:")).count();
+			long formalBindings = analysis.graph().constraints().stream().filter(constraint ->
+				constraint.kind() == ConstraintKind.SAME_PLACEMENT
+					&& constraint.left() == fact.boundary()
+					&& constraint.right() == fact.targetRead()
+					&& "function-formal-input".equals(constraint.evidence())).count();
+			Assert.assertEquals("each call actual must have one alias-only boundary", 1, aliases);
+			Assert.assertEquals("each boundary must preserve placement into its formal read", 1, formalBindings);
+		}
 	}
 
 	@Test

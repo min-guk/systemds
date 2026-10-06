@@ -275,7 +275,7 @@ public class WorkerPoolAnchorResolverFunctionReturnTest {
 				"function-result:Y"),
 			new Constraint(ConstraintKind.SAME_PLACEMENT, outputBoundary.key(), read.key(), -1,
 				"cfg-function-output-value:Y"),
-			new Constraint(ConstraintKind.CONJUNCTIVE, argument.key(), formalBoundary.key(), 0,
+			new Constraint(ConstraintKind.SAME_VALUE_PLACEMENT, argument.key(), formalBoundary.key(), 0,
 				"function-argument:Y"),
 			new Constraint(ConstraintKind.SAME_PLACEMENT, formalBoundary.key(), read.key(), -1,
 				"function-formal-input"));

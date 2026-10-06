@@ -59,3 +59,18 @@
 - **해결/수정 범위**: 새 worktree `/home/mchoi/w1357-loop-entry-main-20261006`에서 `origin/main`의 `adaebee9cc706cda52760f19ec8328a065118b8d` 위에 이번 20개 파일 변경만 적용했다. `PlacementCostSemantics.java` 충돌은 main의 비용 구현을 유지하고 materialized-output layout helper만 추가해 해결했다. 이 문서에는 이번 세션 이슈만 포함했다.
 - **검증**: 통합 상태에서 production/test 전체 컴파일 및 동일 targeted suite 실행 결과 **116건, 실패 0, 오류 0, 기존 제외 7; 실제 통과 109건**. 실제 worker 검증 2건과 loop replay 6건 모두 통과했다. main의 기존 선택 test 클래스에는 원래 snapshot보다 3건이 적다. 독립 dependency review 및 `git diff --check`도 통과했다. 명령은 `LOOP_ENTRY_IMPLEMENTATION_2026-10-06.md`, 로컬 로그는 `.omx/loop-entry-publish/main-regressions.log`에 있다.
 - **잔여 이슈/회귀 위험**: 위 A/B 비용·그래프 검증은 원래 snapshot 기준이며 main의 비용 수치로 일반화하지 않는다. main에 없는 snapshot 전용 API 의존성은 발견되지 않았다. 기존 completeness 제한은 그대로 유지한다.
+
+
+## Function binding alias and GET sharing — origin/main integration
+
+- **문제 정의**: 함수 input binding에서만 값 배치 변환을 허용하던 규칙을 TW/TR 및 output binding과 일원화했다. 이후 같은 MatrixObject를 caller/formal이 읽어도 호출 문맥별로 GET을 중복 과금하는 비용 오류를 확인했다.
+- **변경 요약**: actual→input binding을 SAME_VALUE_PLACEMENT로 하고 formal 후보/분석/anchor projection을 일치시켰다. GET 공유는 정확한 함수 인자 alias origin·생성 호출 ancestry·native 배치·단가가 증명된 경우만 허용한다. CP/FOUT 새 업로드와 derived/relocation 및 증명 불충분한 값은 공유하지 않는다. 새 값 생성 횟수는 보존한다.
+- **통합 배경**: 원래 작업 트리는 다른 미커밋 비용·실험 변경을 포함했다. 별도 worktree에서 origin/main 3d0d683c1b 위에 이번 변경만 옮겼다. 함수 경계 patch는 적용 가능했지만 main에는 global GET grouping/ancestry API가 없어 필요한 부분만 이식했다. 업로드·latent/fused resolver 및 일반 비함수 다운로드는 기존 경로를 보존한다.
+- **통합 중 검출/해결**: 초기 포트는 일반 변수까지 그룹화하여 기존 cost fingerprint 변화와 LogReg/GLM/SliceLine의 EXACT_VE_FACTOR_CELL_OVERFLOW를 일으켰다. 공유 대상을 증명된 function alias origin으로 한정하고 일반 factor/기존 provenance resolver를 보존하며, unresolved activation union에는 Boolean observation factorization을 사용한다. 후보를 제거하거나 비용을 임의로 축소하지 않는다.
+- **수정 파일**: ExactPhysicalCostModel.java, OccurrenceExecutionFrequencyFacts.java, 함수 경계 placement5파일, 관련 alias/anchor tests 및 신규 ExactFunctionAliasGetCostTest, Docker 비교 runner와 진입점, FUNCTION_BOUNDARY_GET_SHARING_2026-10-06.md.
+- **기존 snapshot 증거**: 동일 수정 비용 모델로 boundary A/B 14workloads×W1/W3=56compile-only 성공. 22조건은 배치·명령·목적값 동일,6조건 변경. main에 없는 미커밋 비용 변경이 포함된 snapshot의 결과이므로 main 통합 비용으로 일반화하지 않는다. 자세한 수치와 provenance는 위 상세 문서를 참고한다.
+- **미해결 문제**: L2SVM W1에서 FOUT formal과 if 합류 equality가 결합해 CP 정규화 결과의 추가 업로드를 요구한다. 분기별 변환 후 합류를 표현하는 기능은 이번에 구현하지 않았다. 기존 local 계산/local 저장 조합이 제외되므로 무해한 plan-space 정리라고 주장하지 않는다.
+- **잠재 회귀 위험/검증 원칙**: 서로 다른 값/호출의 GET을 합치거나, 일반 비용과 업로드 수명까지 바꾸는 위험. 생성 횟수·중첩·독립 origin 회귀, fresh upload 제외 조건 코드 리뷰와 기존 비용 golden을 유지하고 검증한다. 분산 실행/실측 성능/캐시 eviction은 검증 범위 밖이다.
+- **의사결정 근거**: binding의 alias 계약과 MatrixObject 생성 수명에 비용을 맞춘다. 런타임 fallback, privacy 완화, recompile CP/FOUT 허용을 추가하지 않는다. if 문제는 별도 명시적 변환 표현으로 풀어야 한다.
+
+- **통합 최종 검증**: Maven compile/test-compile 성공, 신규6 GET 회귀 및64-assignment 인코딩 동등성을 포함한120 tests PASS. 기존 main에서도 재현한 GLM/fingerprint 메서드2개를 제외하고 기록했으며 non-hermetic worker metadata fixture 클래스1개는 성공으로 계산하지 않았다. 고정한 최종 engine으로 frozen 실험 DML의14workloads×W1/W3 Docker compile-only28/28 PASS. production SHA 일치, 독립 리뷰 APPROVE, Python/shell/whitespace 검사 PASS. 상세 한계와 portable receipt는 FUNCTION_BOUNDARY_GET_SHARING_2026-10-06.md 및 docs/experiments/function-alias-main-20261006/validation.json.

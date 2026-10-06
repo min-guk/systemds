@@ -432,7 +432,7 @@ public class WorkerPoolAnchorResolverCycleTest {
 		private void functionInput(Ref read, Ref argument) {
 			Ref boundary = add("function-input-boundary", transientRead("function-input-boundary"),
 				NodeKind.FUNCTION_INPUT, null);
-			constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, argument.key, boundary.key, 0,
+			constraints.add(new Constraint(ConstraintKind.SAME_VALUE_PLACEMENT, argument.key, boundary.key, 0,
 				"function-argument:X"));
 			constraints.add(new Constraint(ConstraintKind.SAME_PLACEMENT, boundary.key, read.key, 0,
 				"function-formal-input"));

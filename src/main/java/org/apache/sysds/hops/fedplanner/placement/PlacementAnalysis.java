@@ -3692,9 +3692,8 @@ public final class PlacementAnalysis {
 	private List<LogicalFunctionInputFact> deriveLogicalFunctionInputs() {
 		Map<CompiledHopKey,List<Constraint>> incomingArguments = new IdentityHashMap<>();
 		for(Constraint constraint : graph.constraints())
-			if(constraint.kind() == ConstraintKind.CONJUNCTIVE
-				&& (constraint.evidence().startsWith("function-argument:")
-					|| constraint.evidence().startsWith("inlined-function-argument:")))
+			if(constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+				&& constraint.evidence().startsWith("function-argument:"))
 				incomingArguments.computeIfAbsent(constraint.right(), ignored -> new java.util.ArrayList<>())
 					.add(constraint);
 		List<LogicalFunctionInputFact> result = new java.util.ArrayList<>();
@@ -3796,9 +3795,10 @@ public final class PlacementAnalysis {
 			if(!hopsByKey.get(fact.targetRead()).getInput().isEmpty())
 				throw new IllegalArgumentException("Logical function read has physical inputs");
 			long argumentEdges = graph.constraints().stream().filter(constraint ->
-				constraint.kind() == ConstraintKind.CONJUNCTIVE
+				constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
 					&& constraint.left() == fact.sourceArgument() && constraint.right() == fact.boundary()
-					&& constraint.inputPosition() == fact.callInputPosition()).count();
+					&& constraint.inputPosition() == fact.callInputPosition()
+					&& constraint.evidence().startsWith("function-argument:")).count();
 			long formalEdges = graph.constraints().stream().filter(constraint ->
 				constraint.kind() == ConstraintKind.SAME_PLACEMENT
 					&& constraint.left() == fact.boundary() && constraint.right() == fact.targetRead()

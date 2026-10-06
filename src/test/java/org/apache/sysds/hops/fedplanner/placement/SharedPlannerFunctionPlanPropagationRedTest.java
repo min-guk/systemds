@@ -26,7 +26,6 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResults;
@@ -219,44 +218,35 @@ public class SharedPlannerFunctionPlanPropagationRedTest {
 	}
 
 	@Test
-	public void localFormalMaterializesFederatedArgumentAtExactFunctionCallInput() throws Exception {
+	public void functionInputAliasRejectsFoutSourceWithLocalFormal() throws Exception {
 		DMLProgram program = compile(SMALL_FUNCTION_SCRIPT);
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		PlacementAnalysis.LogicalFunctionInputFact fact = analysis.logicalFunctionInputsInCanonicalOrder().stream()
 			.filter(candidate -> analysis.hop(candidate.sourceArgument()).orElseThrow()
 				.getDataType().isMatrix()).findFirst().orElseThrow();
-		CompiledHopKey call = analysis.requireExactPhysicalFunctionInputConsumer(fact);
 		NeutralPlacementGraph.Node argument = analysis.graph().node(fact.sourceArgument()).orElseThrow();
+		NeutralPlacementGraph.Node boundary = analysis.graph().node(fact.boundary()).orElseThrow();
 		NeutralPlacementGraph.Node formal = analysis.graph().node(fact.targetRead()).orElseThrow();
-		NeutralPlacementGraph.Node callNode = analysis.graph().node(call).orElseThrow();
 		PlacementState federatedArgument = argument.legalAlternatives().stream()
 			.filter(state -> state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT)
 			.findFirst().orElseThrow();
-		PlacementState localFormal = formal.legalAlternatives().stream()
-			.filter(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT)
+		NeutralPlacementGraph.Constraint alias = analysis.graph().constraints().stream()
+			.filter(constraint -> constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT)
+			.filter(constraint -> constraint.left() == fact.sourceArgument()
+				&& constraint.right() == fact.boundary())
 			.findFirst().orElseThrow();
-		PlacementState callState = callNode.legalAlternatives().stream()
-			.filter(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT)
+		analysis.graph().constraints().stream()
+			.filter(constraint -> constraint.kind() == ConstraintKind.SAME_PLACEMENT)
+			.filter(constraint -> constraint.left() == fact.boundary()
+				&& constraint.right() == fact.targetRead())
 			.findFirst().orElseThrow();
-		Map<CompiledHopKey,PlacementState> selected = new java.util.IdentityHashMap<>();
-		selected.put(argument.key(), federatedArgument);
-		selected.put(formal.key(), localFormal);
-		selected.put(call, callState);
-		Map<CompiledHopKey,PlacementEmissionState> emissions = new java.util.IdentityHashMap<>();
-		selected.forEach((key, state) -> emissions.put(key, new PlacementEmissionState(state, false)));
 
-		List<LocalMaterializationActionKey> actions = LocalMaterializationSelections.derive(
-			analysis, selected, emissions, List.of());
-		Assert.assertEquals(1, actions.size());
-		Assert.assertSame(argument.key(), actions.get(0).sourceOccurrence());
-		Assert.assertEquals(1, actions.get(0).obligations().size());
-		Assert.assertSame(call, actions.get(0).obligations().get(0).consumerOccurrence());
-		Assert.assertEquals(fact.callInputPosition(), actions.get(0).obligations().get(0).inputPosition());
-		Assert.assertSame(callState, actions.get(0).obligations().get(0).requiredPlacement());
-		Assert.assertFalse("The selected function-call LOCAL action makes the CP/LOUT formal physically local",
-			PlacementCostSemantics.requiresRefedLocalMaterialization(analysis, formal, emissions));
-		Assert.assertTrue("A direct FED/FOUT source still needs the explicit FED-to-local REFED pre-stage",
-			PlacementCostSemantics.requiresRefedLocalMaterialization(analysis, argument, emissions));
+		Assert.assertNotNull(alias);
+		Assert.assertNotNull(federatedArgument);
+		Assert.assertTrue("A runtime function binding cannot own an implicit FOUT-to-LOUT GET",
+			boundary.legalAlternatives().stream().noneMatch(state -> state.output() == FederatedOutput.LOUT));
+		Assert.assertTrue("The formal read must retain the same alias-only FOUT domain",
+			formal.legalAlternatives().stream().noneMatch(state -> state.output() == FederatedOutput.LOUT));
 	}
 
 	private static DMLProgram compile(String script) throws Exception {

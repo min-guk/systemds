@@ -104,19 +104,42 @@ public final class OccurrenceExecutionFrequencyFacts {
 	}
 
 	private static final long MAIN_CONTEXT = 0L;
+	/** One exact caller occurrence and the callee context created by that invocation. */
+	public record FunctionBoundaryOccurrenceFact(long callerContextOrdinal,
+		OccurrenceProfileFact calleeProfile) {
+		public FunctionBoundaryOccurrenceFact {
+			if(callerContextOrdinal < 0L)
+				throw new IllegalArgumentException("PLACEMENT_FUNCTION_CALLER_CONTEXT_INVALID");
+			Objects.requireNonNull(calleeProfile, "calleeProfile");
+		}
+	}
+
 	private final Map<String,List<OccurrenceProfileFact>> profilesByPath;
 	private final Set<String> conservativeFallbackPaths;
 	private final boolean exactFunctionContextsProven;
+	private final Map<String,List<FunctionBoundaryOccurrenceFact>> functionBoundaryOccurrences;
 
 	private OccurrenceExecutionFrequencyFacts(
 		Map<String,List<OccurrenceProfileFact>> profilesByPath,
 		Set<String> conservativeFallbackPaths,
 		boolean exactFunctionContextsProven) {
+		this(profilesByPath, conservativeFallbackPaths, exactFunctionContextsProven, Map.of());
+	}
+
+	private OccurrenceExecutionFrequencyFacts(
+		Map<String,List<OccurrenceProfileFact>> profilesByPath,
+		Set<String> conservativeFallbackPaths,
+		boolean exactFunctionContextsProven,
+		Map<String,List<FunctionBoundaryOccurrenceFact>> functionBoundaryOccurrences) {
 		Map<String,List<OccurrenceProfileFact>> frozen = new LinkedHashMap<>();
 		profilesByPath.forEach((path, profiles) -> frozen.put(path, List.copyOf(profiles)));
 		this.profilesByPath = Collections.unmodifiableMap(frozen);
 		this.conservativeFallbackPaths = Set.copyOf(conservativeFallbackPaths);
 		this.exactFunctionContextsProven = exactFunctionContextsProven;
+		Map<String,List<FunctionBoundaryOccurrenceFact>> frozenBoundaries = new LinkedHashMap<>();
+		functionBoundaryOccurrences.forEach((boundary, occurrences) ->
+			frozenBoundaries.put(boundary, List.copyOf(occurrences)));
+		this.functionBoundaryOccurrences = Collections.unmodifiableMap(frozenBoundaries);
 	}
 
 	static OccurrenceExecutionFrequencyFacts from(PlacementAnalysis analysis) {
@@ -247,6 +270,20 @@ public final class OccurrenceExecutionFrequencyFacts {
 		return requireNonnegativeWeight(total, "EXACT_FORWARDING_WEIGHT_UNPROVEN");
 	}
 
+	/**
+	 * Exact caller-to-callee ancestry for one logical function input.  This is
+	 * deliberately occurrence based: equal function names or equal weights are
+	 * not evidence that two calls share a retained runtime value.
+	 */
+	public List<FunctionBoundaryOccurrenceFact> exactFunctionBoundaryOccurrences(
+		LogicalFunctionInputFact fact) {
+		Objects.requireNonNull(fact, "logical function input fact");
+		if(!exactFunctionContextsProven)
+			return List.of();
+		return functionBoundaryOccurrences.getOrDefault(
+			fact.boundary().normalizedSignature(), List.of());
+	}
+
 	/** Expected executions of one logical DML function-call boundary. */
 	public double logicalFunctionCallWeight(LogicalFunctionInputFact fact) {
 		List<String> paths = fact.boundary().controlRegion().regionPath();
@@ -337,7 +374,45 @@ public final class OccurrenceExecutionFrequencyFacts {
 			indexMissingProfilesConservatively();
 			analysis.assertProgramStructureUnchanged();
 			return new OccurrenceExecutionFrequencyFacts(
-				profiles, conservativeFallbackPaths, exactFunctions);
+				profiles, conservativeFallbackPaths, exactFunctions,
+				exactFunctions ? functionBoundaryOccurrences() : Map.of());
+		}
+
+		private Map<String,List<FunctionBoundaryOccurrenceFact>> functionBoundaryOccurrences() {
+			Map<String,List<FunctionBoundaryOccurrenceFact>> result = new LinkedHashMap<>();
+			for(LogicalFunctionInputFact fact : analysis.logicalFunctionInputsInCanonicalOrder()) {
+				CompiledHopKey call = analysis.requireExactPhysicalFunctionInputConsumer(fact);
+				Hop callHop = analysis.hop(call).orElseThrow();
+				List<FunctionCallContext> contexts = indexedFunctionCalls.get(callHop);
+				if(contexts == null || contexts.isEmpty())
+					continue;
+				List<OccurrenceProfileFact> formalProfiles = builtExactProfilesOrNull(fact.targetRead());
+				if(formalProfiles == null)
+					continue;
+				List<FunctionBoundaryOccurrenceFact> occurrences = new ArrayList<>();
+				for(FunctionCallContext context : contexts) {
+					OccurrenceProfileFact profile = formalProfiles.stream()
+						.filter(candidate -> candidate.contextOrdinal() == context.contextOrdinal)
+						.findFirst().orElse(null);
+					if(profile == null) {
+						occurrences.clear();
+						break;
+					}
+					occurrences.add(new FunctionBoundaryOccurrenceFact(
+						context.callerContextOrdinal, profile));
+				}
+				if(!occurrences.isEmpty())
+					result.put(fact.boundary().normalizedSignature(), List.copyOf(occurrences));
+			}
+			return result;
+		}
+
+		private List<OccurrenceProfileFact> builtExactProfilesOrNull(CompiledHopKey key) {
+			List<String> paths = key.controlRegion().regionPath();
+			if(paths.size() != 1 || conservativeFallbackPaths.contains(paths.get(0)))
+				return null;
+			List<OccurrenceProfileFact> result = profiles.get(paths.get(0));
+			return result == null || result.isEmpty() ? null : result;
 		}
 
 		private void indexCalledFunctions() {

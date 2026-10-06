@@ -280,7 +280,7 @@ public class LogicalBoundaryRealizationsTest {
 	@Test
 	public void cyclicBoundaryTopologyRemainsIncompleteLikeColdOracle() {
 		Fixture f = new Fixture();
-		f.edges.add(new Constraint(ConstraintKind.CONJUNCTIVE, f.boundary, f.boundary, 1,
+		f.edges.add(new Constraint(ConstraintKind.SAME_VALUE_PLACEMENT, f.boundary, f.boundary, 1,
 			"function-argument:cycle"));
 		LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
 			f.nodes, f.edges, f.origins, f.facts);
@@ -352,7 +352,8 @@ public class LogicalBoundaryRealizationsTest {
 						FType.ROW, ReasonCode.OK, "fixture", List.of()), new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
 					new CandidateProfileFact(List.of(FType.ROW), ""), List.of(emission), ""));
 			}
-			edges.add(new Constraint(ConstraintKind.CONJUNCTIVE, argument, boundary, 0, "function-argument:X"));
+			edges.add(new Constraint(ConstraintKind.SAME_VALUE_PLACEMENT, argument, boundary, 0,
+				"function-argument:X"));
 			edges.add(new Constraint(ConstraintKind.SAME_PLACEMENT, boundary, reader, 0, "function-formal-input"));
 			edges.add(new Constraint(ConstraintKind.SAME_PLACEMENT, writer, reader, 0, "cfg-transient-value:BRANCH_JOIN_PHI"));
 		}
@@ -378,7 +379,7 @@ public class LogicalBoundaryRealizationsTest {
 			facts.add(new CandidateRuleFact(new CandidateRuleKey(downstreamReader, List.of()),
 				CandidateEvaluationStatus.AVAILABLE, source.capability(), source.shapeProof(), source.profile(),
 				List.of(new CandidateEmissionFact(NATIVE, FType.ROW)), ""));
-			edges.add(new Constraint(ConstraintKind.CONJUNCTIVE, reader, downstreamBoundary, 0,
+			edges.add(new Constraint(ConstraintKind.SAME_VALUE_PLACEMENT, reader, downstreamBoundary, 0,
 				"function-argument:X"));
 			edges.add(new Constraint(ConstraintKind.SAME_PLACEMENT, downstreamBoundary, downstreamReader, 0,
 				"function-formal-input"));

@@ -6,6 +6,11 @@
 # run_LAN.sh or resumes the unrelated paused all14 performance goal.
 set -euo pipefail
 
+if [[ "${1:-}" == "--function-boundary-compare" ]]; then
+    shift
+    exec python3 "$(dirname "$0")/check_function_boundary_plans.py" "$@"
+fi
+
 if [[ "${1:-}" == "--campaign" ]]; then
     shift
     exec python3 "$(dirname "$0")/run_matrix_campaign.py" "$@"

@@ -5871,9 +5871,8 @@ final class PlacementRelationClosure {
 		}
 		Map<CompiledHopKey,List<Constraint>> argumentsByBoundary = new IdentityHashMap<>();
 		for(Constraint constraint : functionConstraints)
-			if(constraint.kind() == ConstraintKind.CONJUNCTIVE
-				&& (constraint.evidence().startsWith("function-argument:")
-					|| constraint.evidence().startsWith("inlined-function-argument:")))
+			if(constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+				&& constraint.evidence().startsWith("function-argument:"))
 				argumentsByBoundary.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
 					.add(constraint);
 		List<FunctionInputBinding> bindings = new ArrayList<>();
@@ -5936,9 +5935,10 @@ final class PlacementRelationClosure {
 			List<CandidateRuleFact> priorFacts = priorSlots.stream().map(facts::get).toList();
 			CandidateBase privacyBase = projectFreshBasePrivacy(
 				replacement, exactKeys, exactFacts, origins);
-			replacement = privacyBase.node();
-			exactKeys = new ArrayList<>(privacyBase.keys());
-			exactFacts = new ArrayList<>(privacyBase.facts());
+			CandidateBase aliasBase = retainFunctionInputAliasPlacements(privacyBase);
+			replacement = aliasBase.node();
+			exactKeys = new ArrayList<>(aliasBase.keys());
+			exactFacts = new ArrayList<>(aliasBase.facts());
 			if(retainCompleteDerivedBase(current, priorKeys, priorFacts, replacement, exactKeys, exactFacts))
 				continue;
 			closedNodes.set(ordinal, replacement);
@@ -6007,6 +6007,51 @@ final class PlacementRelationClosure {
 		if(local)
 			domain.add(0, null);
 		return Collections.unmodifiableList(domain);
+	}
+
+	/** Keeps a formal TRead row only when it aliases its exact caller value placement. */
+	private static CandidateBase retainFunctionInputAliasPlacements(CandidateBase base) {
+		List<CandidateRuleKey> keys = new ArrayList<>();
+		List<CandidateRuleFact> facts = new ArrayList<>();
+		Set<PlacementState> legal = new java.util.TreeSet<>();
+		for(int index = 0; index < base.keys().size(); index++) {
+			CandidateRuleKey key = base.keys().get(index);
+			CandidateRuleFact fact = base.facts().get(index);
+			if(key.orderedInputs().size() != 1 || fact.key().orderedInputs().size() != 1)
+				throw new IllegalStateException("Function input alias row must have one exact caller input");
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE) {
+				keys.add(key);
+				facts.add(fact);
+				continue;
+			}
+			CandidateInputState input = key.orderedInputs().get(0);
+			List<CandidateEmissionFact> emissions = fact.allowedEmissionFacts().stream()
+				.filter(emission -> sameFunctionInputValuePlacement(
+					input, emission.emissionState().placementState()))
+				.toList();
+			if(emissions.isEmpty())
+				continue;
+			keys.add(key);
+			facts.add(emissions.equals(fact.allowedEmissionFacts()) ? fact
+				: new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+					fact.profile(), emissions, fact.failureCode()));
+			emissions.stream().map(CandidateEmissionFact::emissionState)
+				.map(PlacementEmissionState::placementState).forEach(legal::add);
+		}
+		if(legal.isEmpty())
+			throw new IllegalStateException("Function input formal has no exact alias-compatible candidate");
+		Node node = base.node();
+		List<Exclusion> exclusions = node.exclusions().stream()
+			.filter(exclusion -> !legal.contains(exclusion.state())).toList();
+		return new CandidateBase(new Node(node.key(), node.kind(), node.valueVersion(), true,
+			new ArrayList<>(legal), exclusions, node.anchors()), keys, facts);
+	}
+
+	private static boolean sameFunctionInputValuePlacement(CandidateInputState input,
+		PlacementState state) {
+		return input.present()
+			? state.output() == FederatedOutput.FOUT && state.fType() == input.fType()
+			: state.output() == FederatedOutput.LOUT;
 	}
 
 	/**
@@ -6211,7 +6256,6 @@ final class PlacementRelationClosure {
 			boolean sourceCanSupply = source.legalAlternatives().stream().anyMatch(sourceState ->
 				targetState.output() == FederatedOutput.LOUT
 					? sourceState.output() == FederatedOutput.LOUT
-						|| sourceState.output() == FederatedOutput.FOUT
 					: sourceState.output() == FederatedOutput.FOUT
 						&& sourceState.fType() != null
 						&& sourceState.fType() == targetState.fType());
@@ -6301,7 +6345,7 @@ final class PlacementRelationClosure {
 					? nodesByBlock.get(occurrences.get(callIndex).block()).get(callOp.getInput(inputPosition)) : null;
 				List<PlacementState> alternatives = argument == null ? List.of(
 					new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false))
-					: transientAlternatives(argument.legalAlternatives());
+					: exactValueBoundaryAlternatives(List.of(argument));
 				Node input = functionBoundaryNode(call, functionKey, inputName, callIndex,
 					inputPosition, VersionKind.FUNCTION_INPUT, NodeKind.FUNCTION_INPUT, alternatives,
 					argument == null ? List.of() : argument.anchors());
@@ -6314,7 +6358,7 @@ final class PlacementRelationClosure {
 				constraints.add(new Constraint(ConstraintKind.DOMINATES, call.key(), input.key(), inputPosition,
 					"function-callsite-control"));
 				if(argument != null)
-					constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, argument.key(), input.key(), inputPosition,
+					constraints.add(new Constraint(ConstraintKind.SAME_VALUE_PLACEMENT, argument.key(), input.key(), inputPosition,
 						"function-argument:" + inputName.canonicalSourceOriginToken()));
 				if(inputName.isKnown())
 					for(Node formalInput : nodes)
@@ -8945,9 +8989,8 @@ final class PlacementRelationClosure {
 				byType.values().forEach(facts -> facts.sort(null)));
 			Map<CompiledHopKey,List<CompiledHopKey>> argumentsByBoundary = new IdentityHashMap<>();
 			for(Constraint constraint : constraints)
-				if(constraint.kind() == ConstraintKind.CONJUNCTIVE
-					&& (constraint.evidence().startsWith("function-argument:")
-						|| constraint.evidence().startsWith("inlined-function-argument:")))
+				if(constraint.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+					&& constraint.evidence().startsWith("function-argument:"))
 					argumentsByBoundary.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
 						.add(constraint.left());
 			for(Constraint constraint : constraints)

@@ -57,9 +57,8 @@ public final class SyntheticBoundaryProjection {
 					&& boundaryState.fType() != null;
 			Boolean expectedDerivedFedFout = null;
 			for(NeutralPlacementGraph.Constraint authority : authorities) {
-				boolean expectedKind = boundary.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
-					? authority.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
-					: authority.kind() == NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT;
+				boolean expectedKind = authority.kind()
+					== NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT;
 				PlacementEmissionState sourceEmissionState = sourceEmissionStates.get(authority.left());
 				NeutralPlacementGraph.Node source = analysis.graph().node(authority.left()).orElse(null);
 				if(!expectedKind || authority.right() != boundary.key() || source == null
@@ -83,7 +82,7 @@ public final class SyntheticBoundaryProjection {
 	}
 
 	/**
-	 * Projects the sole incoming compiler-owned conjunctive authority for a synthetic boundary.
+	 * Projects the sole incoming compiler-owned value-alias authority for a synthetic boundary.
 	 * Returns {@code null} only while that exact source occurrence has not yet been selected.
 	 */
 	public static SyntheticBoundaryReceipt projectSyntheticBoundary(PlacementAnalysis analysis,
@@ -108,9 +107,8 @@ public final class SyntheticBoundaryProjection {
 		List<NeutralPlacementGraph.Constraint> authorities = analysis.graph().constraints().stream()
 			.filter(constraint -> constraint.right() == boundary.key())
 			.filter(constraint -> boundary.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
-				? constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
-					&& (constraint.evidence().startsWith("function-argument:")
-						|| constraint.evidence().startsWith("inlined-function-argument:"))
+				? constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT
+					&& constraint.evidence().startsWith("function-argument:")
 				: constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT
 					&& (constraint.evidence().startsWith("function-result:")
 						|| constraint.evidence().startsWith("inlined-function-result:")))

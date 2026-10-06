@@ -273,9 +273,10 @@ public class NeutralPlacementGraphUploadRelocationRedTest {
 		List<Node> authoritylessInputs = inputs.stream()
 			.filter(node -> analysis.graph().constraints().stream().noneMatch(constraint ->
 				constraint.right() == node.key()
-					&& constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
-					&& (constraint.evidence().startsWith("function-argument:")
-						|| constraint.evidence().startsWith("inlined-function-argument:"))))
+					&& (constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_VALUE_PLACEMENT
+							&& constraint.evidence().startsWith("function-argument:")
+						|| constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
+							&& constraint.evidence().startsWith("inlined-function-argument:"))))
 			.toList();
 
 		Assert.assertFalse("GLM rewrites must expose at least one substituted inlined input",

@@ -618,9 +618,8 @@ public final class NeutralPlacementGraph {
 		}
 		// A conjunctive value edge is directional. A local target can consume either a
 		// local source or an explicitly materialized federated source; a federated target
-		// requires an exact same-layout federated source. Function actual/formal edges use
-		// the same contract because FunctionCallCP owns a physical input Lop that lowering
-		// can rewire to the selected FOUT->LOUT materialization.
+		// requires an exact same-layout federated source. Runtime function bindings use
+		// SAME_VALUE_PLACEMENT instead because FunctionCallCP aliases the supplied value.
 		return right.output() != org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
 			|| left.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
 				&& Objects.equals(left.fType(), right.fType());

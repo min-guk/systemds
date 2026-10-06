@@ -190,9 +190,10 @@ public final class LogicalBoundaryRealizations {
 				&& (edge.evidence().startsWith("cfg-function-output-value:")
 					|| "function-formal-input".equals(edge.evidence()));
 			boolean argument = target != null && target.kind() == NodeKind.FUNCTION_INPUT
-				&& edge.kind() == ConstraintKind.CONJUNCTIVE
-				&& (edge.evidence().startsWith("function-argument:")
-					|| edge.evidence().startsWith("inlined-function-argument:"));
+				&& (edge.kind() == ConstraintKind.SAME_VALUE_PLACEMENT
+						&& edge.evidence().startsWith("function-argument:")
+					|| edge.kind() == ConstraintKind.CONJUNCTIVE
+						&& edge.evidence().startsWith("inlined-function-argument:"));
 			boolean primary = edge.kind() == ConstraintKind.DOMINATES && edge.inputPosition() == 0
 				&& "multi-return-output-value".equals(edge.evidence())
 				&& NativePlacementContinuity.transformEncodePreservesPool(hop, FType.ROW)

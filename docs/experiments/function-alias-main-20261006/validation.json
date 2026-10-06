@@ -1,0 +1,223 @@
+{
+  "base_commit": "3d0d683c1bca099f004edf9105f5387369b4abea",
+  "production_sha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java": "867865edd8888f2d312d8bb527c6a3f4d85f0537ad41104b1f2b717d61f20926",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/LogicalBoundaryRealizations.java": "6c6049c75d669c43320f9df348cd11a8106066c4f2f0c1482e08175bab2d3b16",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraph.java": "8105172a25f1156cb67b8b543f41498475d9e58d38e69e3ee69f64cd7c2fdb93",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/OccurrenceExecutionFrequencyFacts.java": "dcaa4ba272561eba84aeceaeae351a5bb72f662c2bc5b33c31cb710cb7916cf5",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.java": "ca3f044dcdf40c837aec3b8e53695ac540be0076b16cc5cf8ac8026daf0baa36",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java": "5445fd51c8d126722e135b8f9198b2e04aedcbdce1091b4f32e4e92219efb1e8",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/SyntheticBoundaryProjection.java": "328077e1d5d2fb1e2958aca183ef4561f29abe4843dc8a183dcf54a8460021e4"
+  },
+  "unit_tests_passed": 120,
+  "baseline_excluded_methods": [
+    "OccurrenceExecutionFrequencyFactsConstantBranchTest.actualBuiltinGlmDeadStraightenXIsZeroAndCgRemainsPositive",
+    "ExactNativeLocalAnchorFanoutCostTest.protectedNativeLocalCostSurfaceIsBitAndStructureStable"
+  ],
+  "suite_not_run": "NeutralPlacementGraphUploadRelocationRedTest (unavailable non-hermetic localhost worker metadata fixtures)",
+  "docker_compile_only": [
+    {
+      "case": "ADULT_w1",
+      "status": "passed",
+      "graph_nodes": 717,
+      "physical_alternatives": 2383,
+      "runtime_executed": false
+    },
+    {
+      "case": "ADULT_w3",
+      "status": "passed",
+      "graph_nodes": 729,
+      "physical_alternatives": 1067,
+      "runtime_executed": false
+    },
+    {
+      "case": "COVTYPE_w1",
+      "status": "passed",
+      "graph_nodes": 717,
+      "physical_alternatives": 2383,
+      "runtime_executed": false
+    },
+    {
+      "case": "COVTYPE_w3",
+      "status": "passed",
+      "graph_nodes": 729,
+      "physical_alternatives": 1067,
+      "runtime_executed": false
+    },
+    {
+      "case": "P1_FULL_w1",
+      "status": "passed",
+      "graph_nodes": 1464,
+      "physical_alternatives": 2914,
+      "runtime_executed": false
+    },
+    {
+      "case": "P1_FULL_w3",
+      "status": "passed",
+      "graph_nodes": 1472,
+      "physical_alternatives": 1996,
+      "runtime_executed": false
+    },
+    {
+      "case": "P2_PREP_w1",
+      "status": "passed",
+      "graph_nodes": 130,
+      "physical_alternatives": 324,
+      "runtime_executed": false
+    },
+    {
+      "case": "P2_PREP_w3",
+      "status": "passed",
+      "graph_nodes": 146,
+      "physical_alternatives": 205,
+      "runtime_executed": false
+    },
+    {
+      "case": "als_w1",
+      "status": "passed",
+      "graph_nodes": 194,
+      "physical_alternatives": 362,
+      "runtime_executed": false
+    },
+    {
+      "case": "als_w3",
+      "status": "passed",
+      "graph_nodes": 202,
+      "physical_alternatives": 299,
+      "runtime_executed": false
+    },
+    {
+      "case": "glm_w1",
+      "status": "passed",
+      "graph_nodes": 1175,
+      "physical_alternatives": 413347,
+      "runtime_executed": false
+    },
+    {
+      "case": "glm_w3",
+      "status": "passed",
+      "graph_nodes": 1187,
+      "physical_alternatives": 208943,
+      "runtime_executed": false
+    },
+    {
+      "case": "gmm_w1",
+      "status": "passed",
+      "graph_nodes": 384,
+      "physical_alternatives": 1972,
+      "runtime_executed": false
+    },
+    {
+      "case": "gmm_w3",
+      "status": "passed",
+      "graph_nodes": 392,
+      "physical_alternatives": 808,
+      "runtime_executed": false
+    },
+    {
+      "case": "gnmf_w1",
+      "status": "passed",
+      "graph_nodes": 81,
+      "physical_alternatives": 1703,
+      "runtime_executed": false
+    },
+    {
+      "case": "gnmf_w3",
+      "status": "passed",
+      "graph_nodes": 89,
+      "physical_alternatives": 377,
+      "runtime_executed": false
+    },
+    {
+      "case": "kmeans_w1",
+      "status": "passed",
+      "graph_nodes": 327,
+      "physical_alternatives": 3486,
+      "runtime_executed": false
+    },
+    {
+      "case": "kmeans_w3",
+      "status": "passed",
+      "graph_nodes": 335,
+      "physical_alternatives": 1164,
+      "runtime_executed": false
+    },
+    {
+      "case": "l2svm_w1",
+      "status": "passed",
+      "graph_nodes": 227,
+      "physical_alternatives": 11742,
+      "runtime_executed": false
+    },
+    {
+      "case": "l2svm_w3",
+      "status": "passed",
+      "graph_nodes": 239,
+      "physical_alternatives": 8262,
+      "runtime_executed": false
+    },
+    {
+      "case": "lm_w1",
+      "status": "passed",
+      "graph_nodes": 34,
+      "physical_alternatives": 210,
+      "runtime_executed": false
+    },
+    {
+      "case": "lm_w3",
+      "status": "passed",
+      "graph_nodes": 46,
+      "physical_alternatives": 159,
+      "runtime_executed": false
+    },
+    {
+      "case": "logreg_w1",
+      "status": "passed",
+      "graph_nodes": 477,
+      "physical_alternatives": 100877,
+      "runtime_executed": false
+    },
+    {
+      "case": "logreg_w3",
+      "status": "passed",
+      "graph_nodes": 489,
+      "physical_alternatives": 28356,
+      "runtime_executed": false
+    },
+    {
+      "case": "pca_w1",
+      "status": "passed",
+      "graph_nodes": 86,
+      "physical_alternatives": 1122,
+      "runtime_executed": false
+    },
+    {
+      "case": "pca_w3",
+      "status": "passed",
+      "graph_nodes": 94,
+      "physical_alternatives": 259,
+      "runtime_executed": false
+    },
+    {
+      "case": "steplm_w1",
+      "status": "passed",
+      "graph_nodes": 442,
+      "physical_alternatives": 3734,
+      "runtime_executed": false
+    },
+    {
+      "case": "steplm_w3",
+      "status": "passed",
+      "graph_nodes": 454,
+      "physical_alternatives": 868,
+      "runtime_executed": false
+    }
+  ],
+  "builtin_scripts": "Frozen experiment DML snapshot, including STEP-LM max_features; not modifications to main builtin sources",
+  "review": "APPROVE",
+  "limitations": [
+    "compile-only; no distributed numeric/performance run",
+    "original all14 A/B cost figures are from a broader dirty snapshot, not this main backport",
+    "if join placement restriction remains unresolved"
+  ]
+}

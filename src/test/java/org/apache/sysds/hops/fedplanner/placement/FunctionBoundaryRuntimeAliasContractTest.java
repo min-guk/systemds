@@ -14,19 +14,29 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegio
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
-/** Runtime truth for explicit placement transfer across a DML function value boundary. */
+/** Runtime truth for alias-only value binding across a DML function boundary. */
 public class FunctionBoundaryRuntimeAliasContractTest {
 	@Test
-	public void functionInputAllowsCostedFoutToLoutButRejectsLoutToFout() {
-		Constraint boundary = new Constraint(ConstraintKind.CONJUNCTIVE, key("actual"), key("formal"),
+	public void functionInputIsAnExactValueAliasLikeTransientBinding() {
+		Constraint boundary = new Constraint(ConstraintKind.SAME_VALUE_PLACEMENT, key("actual"), key("formal"),
 			0, "function-argument:X");
 		PlacementState local = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
-		PlacementState full = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.FULL, false);
+		PlacementState fedLocal = new PlacementState(ExecType.FED, FederatedOutput.LOUT, FType.ROW, true);
+		PlacementState cpFout = new PlacementState(ExecType.CP, FederatedOutput.FOUT, FType.ROW, true);
+		PlacementState fedFout = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
+		PlacementState differentFout = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.FULL, false);
 
 		assertTrue(NeutralPlacementGraph.constraintSatisfied(boundary, local, local));
-		assertTrue(NeutralPlacementGraph.constraintSatisfied(boundary, full, full));
-		assertTrue(NeutralPlacementGraph.constraintSatisfied(boundary, full, local));
-		assertFalse(NeutralPlacementGraph.constraintSatisfied(boundary, local, full));
+		assertTrue("Execution type may differ when both sides expose the same local value",
+			NeutralPlacementGraph.constraintSatisfied(boundary, fedLocal, local));
+		assertTrue("Execution type may differ when both sides expose the same federated value",
+			NeutralPlacementGraph.constraintSatisfied(boundary, cpFout, fedFout));
+		assertFalse("A function binding cannot hide a FOUT-to-LOUT download",
+			NeutralPlacementGraph.constraintSatisfied(boundary, fedFout, local));
+		assertFalse("A function binding cannot hide a LOUT-to-FOUT upload",
+			NeutralPlacementGraph.constraintSatisfied(boundary, local, fedFout));
+		assertFalse("A federated alias must preserve its partitioning type",
+			NeutralPlacementGraph.constraintSatisfied(boundary, fedFout, differentFout));
 	}
 
 	@Test
