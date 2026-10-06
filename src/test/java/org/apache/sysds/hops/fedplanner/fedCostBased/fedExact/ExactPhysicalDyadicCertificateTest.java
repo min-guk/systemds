@@ -8,6 +8,7 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -36,11 +37,18 @@ public class ExactPhysicalDyadicCertificateTest {
 		assertEquals(oracle.maximum().bitLength(), certificate.maximumSumBits());
 		assertEquals(surface.contributions().size(), certificate.canonicalContributionCount());
 		int nonzero = 0;
+		int identities = 0;
 		for(var encoding : surface.dyadicCostTransport().canonical()) {
+			if(encoding.transport() instanceof ExactPhysicalCostModel.FrozenCostTransport.Identity identity) {
+				identities++;
+				assertSame(encoding.contribution().factor(), identity.factor());
+				assertSame(surface.exactSolverFactors().get(identity.solverFactorOrdinal()), identity.factor());
+			}
 			var monetary = monetary(encoding.transport());
 			if(monetary != null && maximum(monetary) > 0d)
 				nonzero++;
 		}
+		assertTrue("unfactorized contributions must retain identity transport", identities > 0);
 		assertTrue("fixture must contain identically positive-zero contributions",
 			nonzero < certificate.canonicalContributionCount());
 		assertEquals(nonzero, certificate.accumulationContributionCount());
@@ -92,16 +100,20 @@ public class ExactPhysicalDyadicCertificateTest {
 	}
 
 	@Test
-	public void allFourConstructionCasesCarryTypedMetadataWithoutDescriptorParsing() {
+	public void activationAndProjectionCarryTypedMetadataWithoutDescriptorParsing() {
 		for(var constructor : ExactActivationClassFactorDecomposition.Decomposition.class
 			.getDeclaredConstructors())
 			assertTrue("zero proof construction must stay inside the decomposition factory",
 				Modifier.isPrivate(constructor.getModifiers()));
 		var source = new ExactCategoricalSolver.Variable("source", 2);
 		var consumer = new ExactCategoricalSolver.Variable("consumer", 2);
-		var unresolved = activation(source, List.of(
-			demand(consumer, 0.6, "a"), demand(consumer, 0.6, "b"), demand(consumer, 0.6, "c")));
-		assertEquals(ExactPhysicalCostModel.CostTransportKind.IDENTITY,
+		var unresolvedDemands = List.of(
+			demand(consumer, 0.6, "a"), demand(consumer, 0.6, "b"), demand(consumer, 0.6, "c"));
+		assertFalse(ExactMaterializationActivation.partition(unresolvedDemands.stream()
+			.map(ExactPhysicalCostModel.ActivationDemand::event).toList(), 1).resolved());
+		var unresolved = activation(source, unresolvedDemands);
+		// The event quotient carries unresolved unions in one monetary table as well.
+		assertEquals(ExactPhysicalCostModel.CostTransportKind.ONE_MONETARY_TABLE,
 			unresolved.factorization().costTransportKind());
 		assertMaximumTransport(unresolved);
 
@@ -177,8 +189,17 @@ public class ExactPhysicalDyadicCertificateTest {
 		double encodedMaximum;
 		if(declaration instanceof ExactPhysicalCostModel.CostTransportDeclaration.Identity identity)
 			encodedMaximum = maximum(ExactCategoricalSolver.freezeValidatedFactor(identity.factor()));
-		else if(declaration instanceof ExactPhysicalCostModel.CostTransportDeclaration.OneMonetaryTable one)
+		else if(declaration instanceof ExactPhysicalCostModel.CostTransportDeclaration.OneMonetaryTable one) {
+			assertEquals(List.of(one.factor()), value.factorization().ordinaryFactors());
+			assertEquals("the monetary table must be charged exactly once", 1L,
+				value.factorization().factors().stream().filter(factor -> factor == one.factor()).count());
+			for(var factor : value.factorization().factors())
+				if(factor != one.factor())
+					for(double cost : values(ExactCategoricalSolver.freezeValidatedFactor(factor)))
+						assertTrue("auxiliary constraints must not add monetary cost",
+							cost == 0d || cost == Double.POSITIVE_INFINITY);
 			encodedMaximum = maximum(ExactCategoricalSolver.freezeValidatedFactor(one.factor()));
+		}
 		else
 			encodedMaximum = 0;
 		assertEquals(Double.doubleToRawLongBits(canonicalMaximum),

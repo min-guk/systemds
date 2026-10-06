@@ -326,6 +326,40 @@ public class OwnedRefedReuseTest {
 	}
 
 	@Test
+	public void retiredCopyCannotBeReusedEvenWithUnchangedOwnerVersionAndLayout() {
+		MatrixObject owner = local("retired-Y");
+		long version = owner.getMutationVersion();
+		AtomicInteger creations = new AtomicInteger();
+		CountingMap expired = new CountingMap(4900);
+		alias(owner, 9, "same-layout", FType.ROW, expired, creations);
+		FederationUtils.retireOwnedRefedReuseMaps(owner);
+		assertEquals(version, owner.getMutationVersion());
+		CountingMap fresh = new CountingMap(4901);
+		alias(owner, 9, "same-layout", FType.ROW, fresh, creations);
+		alias(owner, 9, "same-layout", FType.ROW, fresh, creations);
+		assertEquals(2, creations.get());
+		assertEquals(1, expired._aliases);
+		assertEquals(1, expired._cleanups);
+		assertEquals(2, fresh._aliases);
+	}
+
+	@Test
+	public void evictedCopyIsRecreatedWhenItsOriginalOwnerRequestsItAgain() {
+		MatrixObject owner = local("evicted-Y");
+		AtomicInteger creations = new AtomicInteger();
+		CountingMap expired = new CountingMap(4910, entries(5_000_000, 1));
+		alias(owner, 10, "same-layout", FType.ROW, expired, creations);
+		alias(local("evictor"), 10, "other-layout", FType.ROW,
+			new CountingMap(4911, entries(5_000_000, 1)), new AtomicInteger());
+		assertEquals(1, expired._cleanups);
+		CountingMap fresh = new CountingMap(4912, entries(5_000_000, 1));
+		alias(owner, 10, "same-layout", FType.ROW, fresh, creations);
+		assertEquals(2, creations.get());
+		assertEquals(1, expired._aliases);
+		assertEquals(1, fresh._aliases);
+	}
+
+	@Test
 	public void oversizedCanonicalIsAliasedThenRetiredWithoutReuse() {
 		MatrixObject owner = local("large-Y");
 		CountingMap first = new CountingMap(5000, entries(10_000_000, 1));

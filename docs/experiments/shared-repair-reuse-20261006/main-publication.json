@@ -441,7 +441,9 @@
     "origin-baseline/verdict.json": "4afeacb46a828ccd49efb0caef2976d2c02c2c2fdfa3feb896341b44c3d8c391",
     "docker/verdict.json": "e7eff5690c4b66b7d6a454ea03773f34cb2cea93dbe301dfe4868d6f359e3703",
     "later-main/validation.json": "68bb8a40c10eab3bb6bcc6a3233349473fc7fb7e01f81884f97766c8cc580bcd",
-    "later-main/test.log": "6ee33710ca7b7dcb150a1267d1f782e51d06d1b3c15554081e69d22e0aaa1008"
+    "later-main/test.log": "6ee33710ca7b7dcb150a1267d1f782e51d06d1b3c15554081e69d22e0aaa1008",
+    "latest-main/validation.json": "468f30b74f2f7ad743b5178aadc4b79c3339571db0ed9c2b014d8c1aed04de83",
+    "latest-main/test.log": "9d220ea433d6c33f2ac688019af7322d24ad951d81e8cc33ff3e859e3ece69d9"
   },
   "claims": {
     "all733TestsPass": false,
@@ -449,5 +451,37 @@
     "noProductionEditsAfterFullIntegratedBuild": true,
     "runtimeTrainingExecuted": false,
     "performanceWinClaimed": false
+  },
+  "latestMainIntegration": {
+    "incomingMain": "db1064c3c9180ace8caaaed9ab264bf9aaecd768",
+    "productionUnchangedSinceFullGate": true,
+    "sourceSha256": {
+      "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalDyadicCertificateTest.java": "17689d3e4fb6cdbafc0329b3f25a6718aba4ef3a63f4779c2e070db871441def",
+      "src/test/java/org/apache/sysds/runtime/controlprogram/federated/OwnedRefedReuseTest.java": "e63999b1713eb267171a3eebd45732761de1c5525a9571606bf93a83c5aa68d8"
+    },
+    "javacCommand": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/javac",
+      "-cp",
+      "target/classes:target/test-classes:target/lib/*",
+      "-d",
+      "/home/mchoi/cost-followup-20261006/main-publication/latest-main/classes",
+      "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalDyadicCertificateTest.java",
+      "src/test/java/org/apache/sysds/runtime/controlprogram/federated/OwnedRefedReuseTest.java"
+    ],
+    "testCommand": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+      "--add-modules=jdk.incubator.vector",
+      "-Xmx8g",
+      "-XX:ActiveProcessorCount=4",
+      "-cp",
+      "/home/mchoi/cost-followup-20261006/main-publication/latest-main/classes:target/classes:target/test-classes:target/lib/*",
+      "org.junit.runner.JUnitCore",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalDyadicCertificateTest",
+      "org.apache.sysds.runtime.controlprogram.federated.OwnedRefedReuseTest"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 4.561927132308483,
+    "tests": 26,
+    "priorIntegrationCommit": "1ad9d171e6"
   }
 }

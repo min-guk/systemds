@@ -123,3 +123,5 @@ StepLM W1·logreg W3·PCA W1은 `RESOURCE`, GLM W1/W3·logreg W1은 `RESOURCE_IN
 5개 기존 실패를 명시적으로 분리한 첫 재검증은 L2SVM 테스트가 전역 receipt를 초기화하지 않는 순서 의존성도 드러냈다. 시작/종료의 test reset만 추가하고 원래 배치·비용·emission 검사를 유지했다. 최종 Maven package와 **나머지 728건이 모두 통과**했다. 고정 fixture/image의 Docker StepLM W3·PCA W3 compile/lowering도 2/2 통과했다. 전체 733건 무실패 또는 학습 runtime/latency 향상으로 해석하지 않는다.
 
 통합 증거와 명시적 제외 목록은 [publication 검증 기록](experiments/shared-repair-reuse-20261006/main-publication.json)에 있다. 원본 로그와 baseline overlay는 `/home/mchoi/cost-followup-20261006/main-publication/`에 보존한다.
+
+푸시 직전 `db1064c3c9`까지 추가된 main 변경도 병합했다. 이 후속 변경에는 production 수정이 없고 문서와 캐시/정확 비용 인증 테스트만 있다. 최종 두 테스트 클래스를 별도 컴파일해 26/26 통과했으며, 나머지 source는 위 728건을 통과한 source와 동일하다.

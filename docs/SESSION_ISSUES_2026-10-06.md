@@ -620,6 +620,22 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - **잔여 이슈/회귀 위험**: 이 범위의 두 오류는 해결됐다. ROLL 직렬화 등 다른 opcode와 큰 factor/메모리 및 P1/GLM 이슈의 해결을 주장하지 않는다. replay 참조/후보 보존은 complete-space·loop·support-union 등 인접 회귀, 출력 flag는 FOUT/LOUT 왕복 검사로 감지한다. 독립 read-only 리뷰 CLEAR, diff whitespace PASS.
 - **보고서/근거**: `docs/DYNAMIC_NATIVE_COMPOSITION_2026-10-06.md`, `.omx/dynamic-native-evidence/validation.json`. Docker: `/grid/3/cofee-lm-sweep-mchoi-20260914/dynamic-native-composition-20261006/dynamic-native-runtimefix/result.json`. 최종 Java source와 main/test class bytes는 성공한 frozen 빌드와 일치한다.
 
+## Dyadic certificate의 unresolved-union transport 기대값 — 해결
+
+- **환경/재현**: 최신 `origin/main`의 `e8e42e93fa`에서 별도 worktree를 생성했다. `mvn -q -DskipTests=false -Djacoco.skip=true -Dtest-forkCount=1 -Dtest-perCoreThreadCount=false -Dtest=ExactPhysicalDyadicCertificateTest test` 결과 5 tests 중 1 failure, error/skip 0. `allFourConstructionCasesCarryTypedMetadataWithoutDescriptorParsing`에서 `expected:<IDENTITY> but was:<ONE_MONETARY_TABLE>`를 재현했다.
+- **원인**: 비용 모델 통합 후 unresolved union도 event quotient의 보조 제약과 하나의 monetary table로 인코딩한다. 테스트만 과거 canonical factor 직접 사용을 뜻하는 `IDENTITY`를 기대했다. 수치 비용 오류가 확인된 것은 아니다.
+- **해결/의사결정 근거**: production planner/runtime/비용 모델은 그대로 두고 테스트 계약을 현재 표현에 맞춘다. fixture가 실제 unresolved partition인지 확인하고 `ONE_MONETARY_TABLE`을 요구한다. 기존 canonical/encoded maximum의 raw-bit 동등성을 유지하며 monetary table이 ordinary factor의 유일 원소이고 solver factor 목록에 정확히 한 번 포함되는지, 나머지 보조 제약이 0 또는 +∞인지 검사한다. 실제 physical surface에서 canonical factor 및 solver ordinal과 동일한 `Identity`가 존재하는지도 명시적으로 검증한다. Descriptor 문자열 파싱으로 분기를 판정하지 않는다.
+- **수정 파일**: `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalDyadicCertificateTest.java`, 이 문서.
+- **검증 완료**: 아래 명령으로 8개 클래스 / 49 tests 모두 PASS, failure/error/skip 0. Event quotient의 64개 원래 변수 할당에 대한 canonical 비용 raw-bit 동등성, OR decomposition, activation 비용 및 dyadic 인증을 포함한다. `git diff --check`도 PASS. 원본 실패 로그/XML과 수정본 로그/XML/요약 JSON은 `/grid/3/cofee-lm-sweep-mchoi-20260914/dyadic-certificate-test-20261006/`에 보존한다.
+
+  ```bash
+  mvn -q -DskipTests=false -Djacoco.skip=true \
+    -Dtest-forkCount=1 -Dtest-perCoreThreadCount=false \
+    -Dtest=ExactPhysicalDyadicCertificateTest,ExactFunctionAliasActivationEncodingTest,ExactActivationClassFactorDecompositionTest,ExactMaterializationActivationTest,ExactActivationMaterializationCostTest,ExactDyadicCostsTest,ExactDyadicZeroElisionTest,ExactActivationIndependentOracleTest test
+  ```
+
+- **잔여 이슈/잠재 회귀 위험**: production 변경은 없다. 이 테스트 수정으로 다른 통합 실패의 해결이나 실행시간 개선을 주장하지 않는다. metadata 기대값만 변경하여 잘못된 과금을 숨길 위험은 위 단일 과금·hard constraint·기존 exhaustive equivalence 검사로 감지한다.
+
 ## 보조 실행 단계·MMChain·업로드 중복 비용 후속 점검 — 점검 및 확인된 결함 수정 완료
 
 - **범위/환경**: 사용자 요청으로 `d57bca99d9`에서 분리한 `/home/mchoi/w1357-cost-followup-20261006`, `fix/cost-followup-20261006`에서 작업한다. DP/Exact 공통 비용 모델을 점검하며 후보 legality/privacy/runtime 계약은 변경하지 않는다. 기존 compiler-only PUBLIC 비용 fixture 예외 문서를 따른다.
@@ -705,3 +721,4 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - **최종 baseline 판정**: 원격의 모든 production 차이 7개 파일을 origin blob으로 복원한 격리 overlay와 동일한 test source로 5개 메서드의 실패를 확인했다. 4개는 최초 통합 실행의 오류 signature가 일치한다. ALS FedAll은 임시 입력 경로가 program fingerprint/greedy tie에 영향을 줄 수 있어 외부 진단 fixture의 절대 경로를 고정해 재대조했다. 동일 fixture에서 origin과 통합본은 `empty owned-row domain`으로 실패하며 로그가 byte 단위로 같다. 최초 통합의 `no common relocation pool` 문구까지 원격에서 동일하게 재현했다고 주장하지 않는다.
 - **최종 검증**: Java 17 Maven package 성공. 원래 733건을 실행한 최초 실패 기록과 원격에서 재현된 5개 메서드의 명시적 제외 목록을 보존했다. CTABLE/L2SVM 검사 정정 뒤 같은 목록으로 **96개 클래스의 나머지 728/728 통과**, failure/ignore 0이다. 전체 733건 무실패로 보고하지 않는다. 최종 source SHA가 빌드 때와 일치하고 production/JAR는 Docker 2건 성공 시점과 동일하다. [통합 검증 기록](experiments/shared-repair-reuse-20261006/main-publication.json)에 명령, runner, 실패·수정·재검증 이력, source/evidence SHA와 baseline 대조를 기록했다.
 - **잔여 범위**: main의 StepLM CFG closure 비수렴, ALS FedAll greedy conflict, ALS/StepLM canonical factor overflow, LogReg privacy placement 실패 5건은 남아 있다. 이전 unsupported-boundary repair overflow 해결이나 병합 전 645건 통과와 구분한다. 이번 publication 검증은 training runtime 또는 latency 개선을 주장하지 않는다.
+- **푸시 직전 main 동기화**: 검증 중 추가된 `db1064c3c9`까지의 main 변경도 보존한다. `0146f043e0` 이후의 차이는 문서와 `OwnedRefedReuseTest`·`ExactPhysicalDyadicCertificateTest`뿐이며 production 변경은 없다. 두 최종 test source를 별도 컴파일해 **26/26 통과**했고, 나머지 Java source는 728건 gate의 SHA와 일치한다. 세션 문서의 양쪽 추가 내용을 모두 유지했으며 [통합 기록](experiments/shared-repair-reuse-20261006/main-publication.json)에 마지막 source/명령/로그 hash를 추가했다.
