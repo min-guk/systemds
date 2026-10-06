@@ -6,13 +6,29 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
+import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.DMLTranslator;
+import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
@@ -97,8 +113,156 @@ public class ExactPhysicalRealizationSupportFactorCacheTest {
 		Assert.assertEquals(EXPECTED_TRUTH_SHA256, HexFormat.of().formatHex(digest.digest()));
 	}
 
+	@Test
+	public void flatPrivateAggregateRetainsSameDurableOutputAcrossSupplyRoutes() throws Exception {
+		ExactPhysicalModel model = ExactPhysicalModel.build(flatPrivateAnalysis());
+		assertDifferentRoutePremise(model);
+		assertRealizationSupportFactorCells(model);
+	}
+
 	private static void update(MessageDigest digest, String value) {
 		digest.update(value.getBytes(StandardCharsets.UTF_8));
+	}
+
+	private static void assertDifferentRoutePremise(ExactPhysicalModel model) {
+		Set<DurableOutput> requiredDurableOutputs = new HashSet<>();
+		model.domains().stream().flatMap(domain -> domain.alternatives().stream())
+			.filter(alternative -> alternative.supportClause() != null)
+			.flatMap(alternative -> alternative.supportClause().requiredInputSupport().stream())
+			.filter(reference -> reference.realization().layoutKind() == PlacementLayoutKind.DURABLE_MAP)
+			.forEach(reference -> requiredDurableOutputs.add(new DurableOutput(
+				reference.rule().parentOccurrence(), reference.realization())));
+		Map<DurableOutput,Set<CandidateRuleKey>> routesByDurableOutput = new HashMap<>();
+		for(var domain : model.domains())
+			for(var alternative : domain.alternatives()) {
+				if(alternative.realization() == null
+					|| alternative.realization().key().layoutKind() != PlacementLayoutKind.DURABLE_MAP)
+					continue;
+				var fact = alternative.captured()
+					? alternative.candidateRule() : alternative.executionRule();
+				if(fact != null)
+					routesByDurableOutput.computeIfAbsent(new DurableOutput(
+						alternative.decision(), alternative.realization().key()), ignored -> new HashSet<>())
+						.add(fact.key());
+			}
+		Assert.assertTrue("fixture must exercise one required durable output through different input routes",
+			routesByDurableOutput.entrySet().stream().anyMatch(entry ->
+				requiredDurableOutputs.contains(entry.getKey()) && entry.getValue().size() > 1));
+	}
+
+	/** Independent oracle for the exact required-output relation encoded by hard factors. */
+	private static void assertRealizationSupportFactorCells(ExactPhysicalModel model) {
+		Map<ExactCategoricalSolver.Variable,ExactPhysicalModel.DecisionDomain> domains =
+			new IdentityHashMap<>();
+		for(var domain : model.domains())
+			domains.put(domain.variable(), domain);
+		long checked = 0;
+		long admittedDifferentRoute = 0;
+		for(var encoding : model.hardFactorEncodings()) {
+			if(!encoding.decomposition().descriptor().startsWith("realization-support|"))
+				continue;
+			var factor = encoding.canonicalFactor();
+			Assert.assertTrue("realization-support factor must couple one consumer and source",
+				factor.scope().size() == 1 || factor.scope().size() == 2);
+			var consumer = domains.get(factor.scope().get(0));
+			var source = domains.get(factor.scope().get(factor.scope().size() - 1));
+			Assert.assertNotNull(consumer);
+			Assert.assertNotNull(source);
+			for(int consumerValue = 0; consumerValue < consumer.alternatives().size(); consumerValue++)
+				for(int sourceValue = 0; sourceValue < source.alternatives().size(); sourceValue++) {
+					int[] values = factor.scope().size() == 1
+						? new int[] {consumerValue} : new int[] {consumerValue, sourceValue};
+					if(factor.scope().size() == 1 && consumerValue != sourceValue)
+						continue;
+					var consumerAlternative = consumer.alternatives().get(consumerValue);
+					var sourceAlternative = source.alternatives().get(sourceValue);
+					List<CandidateRealizationReference> required = consumerAlternative.supportClause() == null
+						? List.of() : consumerAlternative.supportClause().requiredInputSupport().stream()
+							.filter(reference -> reference.rule().parentOccurrence().equals(source.node().key()))
+							.toList();
+					Set<SupportIdentity> requiredIdentities = new HashSet<>();
+					for(var reference : required)
+						requiredIdentities.add(independentSupportIdentity(reference));
+					CandidateRealizationReference selected = selectedReference(sourceAlternative);
+					boolean expected = requiredIdentities.isEmpty()
+						|| requiredIdentities.size() == 1 && selected != null
+							&& requiredIdentities.contains(independentSupportIdentity(selected));
+					double actual = factor.cost(values);
+					Assert.assertEquals("independent realization-support cell disagrees|descriptor="
+						+ encoding.decomposition().descriptor() + "|consumer=" + consumerValue
+						+ "|source=" + sourceValue, expected ? 0d : Double.POSITIVE_INFINITY,
+						actual, 0d);
+					checked++;
+					if(expected && selected != null && required.stream().anyMatch(reference ->
+						!reference.equals(selected)
+							&& independentSupportIdentity(reference).equals(
+								independentSupportIdentity(selected))))
+						admittedDifferentRoute++;
+				}
+		}
+		Assert.assertTrue("fixture must expose encoded realization-support cells", checked > 0);
+		Assert.assertTrue("fixture must admit the same durable output through a different input route",
+			admittedDifferentRoute > 0);
+	}
+
+	private static CandidateRealizationReference selectedReference(
+		ExactPhysicalModel.Alternative alternative) {
+		if(alternative.realization() == null)
+			return null;
+		var fact = alternative.captured()
+			? alternative.candidateRule() : alternative.executionRule();
+		return fact == null ? null : CandidateRealizationReference.of(fact.key(), alternative.realization());
+	}
+
+	private static SupportIdentity independentSupportIdentity(CandidateRealizationReference reference) {
+		boolean durable = reference.realization().layoutKind() == PlacementLayoutKind.DURABLE_MAP;
+		return new SupportIdentity(reference.rule().parentOccurrence(),
+			durable ? null : reference.rule(), reference.realization());
+	}
+
+	private record DurableOutput(CompiledHopKey owner, PlacementRealizationKey realization) { }
+	private record SupportIdentity(CompiledHopKey owner, CandidateRuleKey exactRule,
+		PlacementRealizationKey realization) { }
+
+	private static org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis flatPrivateAnalysis()
+		throws Exception {
+		String script = String.join("\n",
+			"UA=federated(addresses=list(\"localhost:13001/UA\"),ranges=list(list(0,0),list(16,4096)));",
+			"UB=federated(addresses=list(\"localhost:13002/UB\"),ranges=list(list(0,0),list(16,4096)));",
+			"S0=federated(addresses=list(\"localhost:13001/S0\"),ranges=list(list(0,0),list(16,4096)));",
+			"total=0;energy=0;",
+			"for(i in 1:3) {",
+			"  QA0=UA+S0;QB0=UB+S0;QC0=UB*S0;",
+			"  QM0=QB0/QC0;",
+			"  total=total+sum(QA0)+sum(QM0);",
+			"  energy=energy+sum(QA0*QA0)+sum(QM0*QM0);",
+			"  S0=S0+i;",
+			"}",
+			"print(total+energy);") + "\n";
+		DMLProgram program = ParserFactory.createParser().parse(
+			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(
+			program, Privacy.PRIVATE_AGGREGATE);
+		Set<Hop> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+		program.getStatementBlocks().stream().filter(block -> block.getHops() != null)
+			.flatMap(block -> block.getHops().stream())
+			.forEach(root -> markPublicFederatedSource(root, "S0", visited));
+		return new NeutralPlacementGraphBuilder().buildAnalysis(program);
+	}
+
+	private static void markPublicFederatedSource(Hop hop, String name, Set<Hop> visited) {
+		if(hop == null || !visited.add(hop))
+			return;
+		if(hop instanceof DataOp data && data.getOp() == OpOpData.FEDERATED
+			&& name.equals(data.getName()))
+			FederatedPlannerUtils.setFederatedSourcePrivacyForTesting(data, Privacy.PUBLIC);
+		for(Hop input : hop.getInput())
+			markPublicFederatedSource(input, name, visited);
 	}
 
 	private static org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis analysis()

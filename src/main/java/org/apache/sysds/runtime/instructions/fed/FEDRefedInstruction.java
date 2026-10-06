@@ -30,6 +30,7 @@ import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest.Reques
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
+import org.apache.sysds.runtime.controlprogram.federated.RefedReuseAudit;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
@@ -222,6 +223,10 @@ public class FEDRefedInstruction extends FEDInstruction {
 				: new FederationMap(inMap.getID(), inMap.getMap(), expectedType);
 			out.setFedMapping(outMap);
 			out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
+			if(RefedReuseAudit.isEnabled())
+				RefedReuseAudit.recordSupply(getPlannerSyntheticActionKey(), _input.getName(), in.getUniqueID(),
+					in.getMutationVersion(), _supplySharingGroup, FederationUtils.deriveFedLayoutSignature(outMap),
+					false, outMap.getID(), false);
 			if (DEBUG_KMEANS) {
 				System.out.println("[DBG-KMEANS] fed_refed reuse-fed in=" + _input.getName()
 					+ " out=" + _output.getName()
@@ -296,11 +301,24 @@ public class FEDRefedInstruction extends FEDInstruction {
 				}
 				return selectedAnchorMap.copyWithNewID(canonicalId);
 			};
+		boolean[] created = null;
+		if(RefedReuseAudit.isEnabled()) {
+			created = new boolean[1];
+			java.util.function.Supplier<FederationMap> delegate = materializer;
+			boolean[] observed = created;
+			materializer = () -> {
+				observed[0] = true;
+				return delegate.get();
+			};
+		}
 		FederationMap published = _supplySharingGroup == null
 			? FederationUtils.getOrCreateOwnedRefedAlias(in, inputMutationVersion,
 				rows, cols, nnz, getTID(), layoutSig, cacheMapType, materializer)
 			: FederationUtils.materializePlannedRefed(in, inputMutationVersion,
 				rows, cols, nnz, getTID(), layoutSig, cacheMapType, _supplySharingGroup, materializer);
+		RefedReuseAudit.recordSupply(getPlannerSyntheticActionKey(), _input.getName(), in.getUniqueID(),
+			inputMutationVersion, _supplySharingGroup, layoutSig, _requiresLocalMaterialization,
+			published.getID(), created != null && created[0]);
 
 		out.setFedMapping(published);
 		out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());

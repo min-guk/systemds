@@ -783,3 +783,37 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - **해결/판단 근거**: `ExactPhysicalCostModel`은 자동 병합됐으며 operator-owned auxiliary PUT/통신과 supply-owned explicit movement, CTABLE cold GET collector 및 source/version lifetime을 독립 검토했다. 같은 이동의 중복 과금이나 candidate/constraint 완화는 발견하지 않았다. 세션 문서는 양쪽 기록을 모두 보존했다.
 - **최종 검증**: 관련 79개 클래스 708 cases 중 703 PASS, 기존 skip 5, 실패/오류 0. 새 frozen Docker `invariant-fout-sharing-main-r2`의 proof 12/12, DML E2E 13/13 기대 결과 PASS, runtime conversion 위반 0. 실제 invariant GET/PUT 1/1·updated 3/3, 최종 main/test source/class 전부 SHA 일치. 이미 `0146`에서도 재현된 전체 GLM 오류는 앞선 확대 회귀/귀속 기록에 남기며 이번 관련 suite에는 포함하지 않았다.
 - **잔여 문제/회귀 위험**: 상이한 creation/consumer profile과 CTABLE per-call preparation의 소유권을 혼동하면 중복/누락 과금이 생길 수 있다. CTABLE·native upload·공유·canonical 테스트와 real-worker 1×/N× 검증으로 감지한다. 새 dependency, solver mode, runtime fallback은 추가하지 않는다.
+
+## Derived supply sharing 자동 E2E 범위와 메모리 정책 설명 정정 — 문서화 완료
+
+- **환경/조건**: 전용 worktree `/home/mchoi/w1357-derived-supply-sharing-20261006`, 코드 기준 `ada24ffd4be4d17240f32f5bd1c2b5a98e1a0c8a`. 사용자는 남은 자동 DML 검증과 메모리 확인의 상세 설명을 문서로 요청했다.
+- **문제 정의/증상**: real-worker 1×/N× proof를 optimizer 자동 선택까지 연결된 전체 DML 검증으로 오해할 수 있고, 앞선 설명과 게시 보고서에서 planned copy 유지와 일반 cache eviction의 차이가 불명확했다.
+- **원인/의사결정 근거**: worker proof는 `forcedUpload`와 직접 구성한 staged instruction을 사용한다. 별도 Global/Local 검사는 canonical 비용과 lifetime을 검증한다. `FederationUtils.evictOwnedRefedEntries`는 `_planned`를 건너뛰므로 일반 cache 퇴출 후 재생성 테스트를 planned sharing의 정책으로 일반화할 수 없다. Oracle·planner·runtime 규칙은 수정하지 않는다.
+- **해결 방법/변경 요약**: 자동 DML 선택·lowering·실행의 성공 기준, planned/legacy/single-use 유지 정책, 메모리 측정 항목 및 측정 후의 최소 대응을 별도 보고서에 정리했다. 게시 보고서의 retirement/eviction 표현도 같은 구분으로 정정했다.
+- **수정 파일**: `docs/DERIVED_SUPPLY_E2E_AND_MEMORY_VALIDATION_2026-10-06_KO.md`, `docs/DERIVED_SUPPLY_MAIN_PUBLICATION_2026-10-06_KO.md`, 이 세션 문서.
+- **검증 방법/결과**: production cache 코드, `ExactCompiledSupplySharingTest`, `ExactStagedSupplyCanonicalCostTest`, `InvariantFoutSharingDockerProof`, `OwnedRefedReuseTest`의 해당 메서드와 기존 게시 증거를 대조했다. 문서만 변경하며 새 DML 실행·메모리 실험 결과를 추가하지 않는다.
+- **잔여 이슈**: 특정 staged REFED sharing이 자동 선택·실행되는 DML 회귀와 실제 메모리 압박 측정은 추가 작업이다. 정확한 last-consumer 해제와 residency 비용 최적화는 현재 구현 범위 밖이다.
+- **잠재 회귀 위험/감지**: 실행 코드 변경으로 인한 회귀는 없다. 기존 검증과 새 계획을 혼동하거나 planned copy의 LRU 제외를 worker RAM 상주 보장으로 오해하지 않도록 코드 링크·검증 범위·측정 기준을 분리했다.
+
+## Derived supply sharing 자동 DML 실행과 메모리 측정 — 검증 완료, 후속 진단 분리
+
+- **요청/환경**: 사용자가 후속 검증 보고서대로 실행을 요청했다. 같은 전용 worktree의 `ada24ffd4b`를 기준으로 진행하며 기존 실험은 수정하지 않는다.
+- **문제 정의**: 후보 지정 없이 선택된 staged REFED sharing의 DML E2E 및 planned copy 유지에 따른 실제 메모리 관측을 한 실행에서 연결해야 한다.
+- **해결 계획**: source pool A의 public 공급을 A/B의 보호된 연산에서 사용하는 invariant/updated DML을 작성한다. test-only probe가 DMLScript 전체 실행, 선택 receipt와 canonical recost, 실제 공급 생성 횟수를 연결한다. 기본 OFF인 관측 계측으로 planned/legacy/single-use 생성·재사용·정리 사유를 기록하며 cache key/lifetime/비용/합법성은 바꾸지 않는다. 새로운 Docker lane과 매 case의 새 worker에서 RSS·GC·spill을 측정한다.
+- **수정 범위**: 별도 Docker runner와 회귀, test-only DML probe, REFED ownership 관측 및 해당 회귀. root가 shared target 빌드·Docker 실행·최종 증거를 통합한다.
+- **검증/잔여 이슈**: 작은 자동 선택 fixture를 먼저 고정하고 데이터 크기·동시 copy 수를 확장한다. 결과는 후속 기록에 추가하며 구현 중 상태를 완료로 해석하지 않는다.
+- **잠재 회귀 위험/감지**: 관측이 객체를 추가 retain하거나 cleanup 예외를 숨기는 위험을 unit 및 코드 리뷰로 검사한다. 자동 선택 없는 정상 실행, 다른 source/version의 공유, 누락된 group, dropped audit event를 성공으로 계산하지 않는 harness 회귀를 둔다.
+
+### 자동 공유 검증 중 확인한 fixture·관측 문제 — 수정 및 재검증 중
+
+- **증상/원인**: 작은 S의 matmul은 native 요청에 실어 보내는 계획이 REFED보다 싸서 공유 공급을 선택하지 않았다. Updated matmul producer도 합법적인 FED/LOUT 결과를 택해 intended FOUT staging 경로를 실행하지 않았다. 이는 coverage 미충족으로 실패 처리했으며 수치 결과 성공을 공유 성공으로 집계하지 않았다. 보호 입력의 elementwise 결과를 더하는 대안은 compiler가 Nary plus로 합쳐 현재 oracle의 privacy-safe placement 부재로 실패했다.
+- **대응/의사결정 근거**: 후보·privacy·비용 규칙을 변경하지 않고 실제 자동 선택과 native supply 비용을 조사한다. 원래 실패 증거는 각 frozen Docker run에 보존한다. 반복 간 공유가 필요해지는 invariant 데이터 크기를 늘린 결과 Local/Global에서 GET/PUT 1회가 확인됐다.
+- **관측 도구 수정**: DML 종료 이후 통계용 UDF를 같은 coordinator에서 보내면 strict runtime audit가 거부하므로 별도 observer JVM으로 분리했다. observer와 실패한 DML probe의 Netty client 종료를 추가했다. audit의 lifecycle과 supply를 source/version/group/layout으로 연결하고 실제 dispatch GET/PUT과 대조하며 dropped event·logging 실패를 거부한다.
+- **정리 증거 보강**: WORKER_RESET의 metadata discard만으로 remote cleanup을 성공이라 보고하지 않는다. 기존 CLEAR의 모든 worker 성공 응답을 기다린 결과만 기본 OFF audit에 전달한다. 요청·cleanup 정책은 변경하지 않는다.
+- **현재 메모리 관측**: 24 MiB copy 3개, 총 약72 MiB를 1 GiB/256 MiB worker heap에서 모두 1회 생성 후 재사용했다. 일반 cache 예산64 MiB를 넘는 planned 유지가 관측됐다. Worker cache가 비활성화되어 FS spill은0이며 RSS·GC·수명 이벤트를 기록한다. 최종 source의 재실행 결과는 결과 보고서에 정리한다.
+- **확대 회귀**: 관련14개 클래스75건 중68건 통과, 기존 ordinal reflection fixture 두 클래스7건에서 constructor lookup 오류가 발생했다. production ordinal 코드는 이번에 수정하지 않았으며 HEAD baseline overlay로 귀속을 재현 중이다. 이 실패를 전체 통과로 표시하지 않는다.
+- **잠재 회귀 위험/감지**: 기본 OFF 계측이 cache 소유·예외 처리에 영향을 주지 않도록 audit/owned-cache 회귀를 수행한다. Worker CLEAR 성공과 coordinator metadata retirement를 분리해서 검증한다.
+
+### 최종 결과 — 2026-10-07 완료
+
+자동 DML4/4 및 메모리 profile2/2가 통과했다. Updated는 새 outer version3개를 각각 inner loop에서3회 사용하는 사례로,9번 공급·3번 생성·6번 hit와 GET/PUT3회를 검증했다. Java75건 중68건 통과와 기존 reflection 오류7건의 HEAD 재현, Python35건 통과를 구분해 기록한다. 자세한 완료·잔여 범위는 [다음 날짜 세션 기록](SESSION_ISSUES_2026-10-07.md)과 [최종 결과 보고서](DERIVED_SUPPLY_AUTOMATIC_E2E_RESULTS_2026-10-07_KO.md)에 있다.

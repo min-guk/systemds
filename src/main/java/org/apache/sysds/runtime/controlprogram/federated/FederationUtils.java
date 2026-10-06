@@ -146,19 +146,33 @@ public class FederationUtils {
 		if(!sharingGroup.isEmpty())
 			return getOrCreateOwnedRefedAlias(owner, inputMutationVersion, rows, cols, nnz, tid,
 				layoutSig, outType, sharingGroup, materializer);
+		RefedReuseAudit.Context audit = RefedReuseAudit.isEnabled()
+			? RefedReuseAudit.context("SINGLE_USE", owner.getUniqueID(), inputMutationVersion, sharingGroup,
+				normalizeRefedReuseLayoutSig(layoutSig), String.valueOf(outType)) : null;
 		synchronized(owner) {
 			if(owner.getMutationVersion() != inputMutationVersion)
 				throw new DMLRuntimeException("Planned REFED used a stale source version");
 			FederatedValueIdentity source = federatedValueIdentity(owner.getFedMapping());
-			FederationMap result = materializer.get();
-			if(result == null || result.getMap() == null || result.getMap().isEmpty())
-				throw new DMLRuntimeException("Planned REFED materializer returned an empty federation map");
-			if(owner.getMutationVersion() != inputMutationVersion
-				|| !Objects.equals(source, federatedValueIdentity(owner.getFedMapping()))) {
-				result.execCleanup(tid, result.getID());
-				throw new DMLRuntimeException("Planned REFED materializer changed the source version");
+			FederationMap result = null;
+			RefedReuseAudit.creationAttempt(audit);
+			try {
+				result = materializer.get();
+				if(result == null || result.getMap() == null || result.getMap().isEmpty())
+					throw new DMLRuntimeException("Planned REFED materializer returned an empty federation map");
+				if(owner.getMutationVersion() != inputMutationVersion
+					|| !Objects.equals(source, federatedValueIdentity(owner.getFedMapping()))) {
+					cleanupFailedRefedCreation(audit, result, tid);
+					throw new DMLRuntimeException("Planned REFED materializer changed the source version");
+				}
+				if(audit != null)
+					RefedReuseAudit.creationSuccess(audit, result.getID(), estimateOwnedRefedBytes(result));
+				return result;
 			}
-			return result;
+			catch(RuntimeException ex) {
+				RefedReuseAudit.creationFailure(audit, result == null ? -1 : result.getID(),
+					ex.getClass().getSimpleName());
+				throw ex;
+			}
 		}
 	}
 
@@ -179,25 +193,42 @@ public class FederationUtils {
 			OwnedRefedReuseKey key = new OwnedRefedReuseKey(owner, inputMutationVersion, source,
 				rows, cols, source == null ? nnz : -1, tid, normalizeRefedReuseLayoutSig(layoutSig),
 				outType, sharingGroup);
+			RefedReuseAudit.Context audit = RefedReuseAudit.isEnabled()
+				? RefedReuseAudit.context(sharingGroup == null ? "LEGACY" : "PLANNED", owner.getUniqueID(),
+					inputMutationVersion, sharingGroup, key._layoutSig, String.valueOf(outType)) : null;
 			synchronized (_ownedRefedReuseCache) {
 				OwnedRefedReuseEntry entry = _ownedRefedReuseCache.get(key);
 				boolean retained = entry != null;
+				if(entry != null)
+					RefedReuseAudit.hit(entry._audit, entry._canonical.getID(), entry._estimatedBytes);
 				if (entry == null) {
-					FederationMap canonical = materializer.get();
-					if (canonical == null || canonical.getMap() == null || canonical.getMap().isEmpty())
-						throw new DMLRuntimeException("Owned REFED materializer returned an empty federation map");
-					if (owner.getMutationVersion() != inputMutationVersion
-						|| !Objects.equals(source, federatedValueIdentity(owner.getFedMapping()))) {
-						canonical.execCleanup(tid, canonical.getID());
-						throw new DMLRuntimeException("Owned REFED materializer changed the source value/version");
+					FederationMap canonical = null;
+					RefedReuseAudit.creationAttempt(audit);
+					try {
+						canonical = materializer.get();
+						if (canonical == null || canonical.getMap() == null || canonical.getMap().isEmpty())
+							throw new DMLRuntimeException("Owned REFED materializer returned an empty federation map");
+						if (owner.getMutationVersion() != inputMutationVersion
+							|| !Objects.equals(source, federatedValueIdentity(owner.getFedMapping()))) {
+							cleanupFailedRefedCreation(audit, canonical, tid);
+							throw new DMLRuntimeException("Owned REFED materializer changed the source value/version");
+						}
 					}
-					entry = new OwnedRefedReuseEntry(canonical, tid, estimateOwnedRefedBytes(canonical),
-						sharingGroup != null);
+					catch(RuntimeException ex) {
+						RefedReuseAudit.creationFailure(audit, canonical == null ? -1 : canonical.getID(),
+							ex.getClass().getSimpleName());
+						throw ex;
+					}
+					long estimatedBytes = estimateOwnedRefedBytes(canonical);
+					RefedReuseAudit.creationSuccess(audit, canonical.getID(), estimatedBytes);
+					entry = new OwnedRefedReuseEntry(canonical, tid, estimatedBytes,
+						sharingGroup != null, audit);
 					retained = entry._planned || entry._estimatedBytes <= OWNED_REFED_REUSE_CACHE_BYTES;
 					if (retained) {
 						_ownedRefedReuseCache.put(key, entry);
 						_ownedRefedReuseCacheBytes = saturatedAdd(_ownedRefedReuseCacheBytes,
 							entry._estimatedBytes);
+						RefedReuseAudit.retained(audit, canonical.getID(), estimatedBytes);
 					}
 				}
 				long aliasID = getNextFedDataID();
@@ -206,15 +237,21 @@ public class FederationUtils {
 					if(owner.getMutationVersion() != inputMutationVersion
 						|| !Objects.equals(source, federatedValueIdentity(owner.getFedMapping())))
 						throw new DMLRuntimeException("Owned REFED source changed while publishing an alias");
+					RefedReuseAudit.alias(entry._audit, entry._canonical.getID());
 					if (retained)
 						evictOwnedRefedEntries();
 					else
-						cleanupOwnedRefedEntry(entry);
+						cleanupOwnedRefedEntry(entry, "CACHE_NOT_RETAINED");
 					return alias;
 				}
 				catch(RuntimeException ex) {
-					if (retained)
-						removeOwnedRefedEntry(key);
+					RefedReuseAudit.aliasFailure(entry._audit, entry._canonical.getID());
+					if (retained) {
+						OwnedRefedReuseEntry removed = removeOwnedRefedEntry(key);
+						if(removed != null)
+							RefedReuseAudit.retirement(removed._audit, removed._canonical.getID(),
+								removed._estimatedBytes, RefedReuseAudit.ALIAS_FAILURE);
+					}
 					try {
 						entry._canonical.execCleanup(tid, aliasID);
 					}
@@ -222,7 +259,7 @@ public class FederationUtils {
 						ex.addSuppressed(cleanupEx);
 					}
 					try {
-						cleanupOwnedRefedEntry(entry);
+						cleanupOwnedRefedEntry(entry, RefedReuseAudit.ALIAS_FAILURE);
 					}
 					catch(RuntimeException cleanupEx) {
 						ex.addSuppressed(cleanupEx);
@@ -235,6 +272,11 @@ public class FederationUtils {
 
 	/** Retire all canonical REFED materializations owned by this exact local object. */
 	public static void retireOwnedRefedReuseMaps(MatrixObject owner) {
+		retireOwnedRefedReuseMaps(owner, RefedReuseAudit.SOURCE_REMOVAL);
+	}
+
+	/** Retire all canonical REFED materializations owned by this object for the stated lifecycle reason. */
+	public static void retireOwnedRefedReuseMaps(MatrixObject owner, String reason) {
 		if (owner == null)
 			return;
 		synchronized (_ownedRefedReuseCache) {
@@ -248,8 +290,9 @@ public class FederationUtils {
 					iter.remove();
 					_ownedRefedReuseCacheBytes = saturatedSubtract(_ownedRefedReuseCacheBytes,
 						entry._estimatedBytes);
+					RefedReuseAudit.retirement(entry._audit, entry._canonical.getID(), entry._estimatedBytes, reason);
 					try {
-						cleanupOwnedRefedEntry(entry);
+						cleanupOwnedRefedEntry(entry, reason);
 					}
 					catch(RuntimeException ex) {
 						if (failure == null)
@@ -269,8 +312,10 @@ public class FederationUtils {
 		synchronized (_ownedRefedReuseCache) {
 			RuntimeException failure = null;
 			for (OwnedRefedReuseEntry entry : _ownedRefedReuseCache.values()) {
+				RefedReuseAudit.retirement(entry._audit, entry._canonical.getID(), entry._estimatedBytes,
+					RefedReuseAudit.EXPLICIT_CLEAR);
 				try {
-					cleanupOwnedRefedEntry(entry);
+					cleanupOwnedRefedEntry(entry, RefedReuseAudit.EXPLICIT_CLEAR);
 				}
 				catch(RuntimeException ex) {
 					if (failure == null)
@@ -288,7 +333,18 @@ public class FederationUtils {
 
 	/** Forget ownership after a worker-wide CLEAR, which is itself the remote cleanup. */
 	static void discardOwnedRefedReuseCache() {
+		discardOwnedRefedReuseCache(null);
+	}
+
+	/** Forget ownership and record whether the worker-wide CLEAR completed successfully. */
+	static void discardOwnedRefedReuseCache(Boolean remoteCleanupSuccess) {
 		synchronized (_ownedRefedReuseCache) {
+			for(OwnedRefedReuseEntry entry : _ownedRefedReuseCache.values()) {
+				RefedReuseAudit.retirement(entry._audit, entry._canonical.getID(), entry._estimatedBytes,
+					RefedReuseAudit.WORKER_RESET);
+				RefedReuseAudit.cleanup(entry._audit, entry._canonical.getID(), entry._estimatedBytes,
+					RefedReuseAudit.WORKER_RESET, remoteCleanupSuccess);
+			}
 			_ownedRefedReuseCache.clear();
 			_ownedRefedReuseCacheBytes = 0;
 		}
@@ -304,7 +360,10 @@ public class FederationUtils {
 			entries.remove();
 			_ownedRefedReuseCacheBytes = saturatedSubtract(_ownedRefedReuseCacheBytes,
 				eldest.getValue()._estimatedBytes);
-			cleanupOwnedRefedEntry(eldest.getValue());
+			OwnedRefedReuseEntry entry = eldest.getValue();
+			RefedReuseAudit.retirement(entry._audit, entry._canonical.getID(), entry._estimatedBytes,
+				RefedReuseAudit.LEGACY_EVICTION);
+			cleanupOwnedRefedEntry(entry, RefedReuseAudit.LEGACY_EVICTION);
 		}
 	}
 
@@ -357,9 +416,31 @@ public class FederationUtils {
 		return left - right;
 	}
 
-	private static void cleanupOwnedRefedEntry(OwnedRefedReuseEntry entry) {
-		if (entry != null && entry._canonical != null)
+	private static void cleanupOwnedRefedEntry(OwnedRefedReuseEntry entry, String reason) {
+		if (entry == null || entry._canonical == null)
+			return;
+		try {
 			entry._canonical.execCleanup(entry._tid, entry._canonical.getID());
+			RefedReuseAudit.cleanup(entry._audit, entry._canonical.getID(), entry._estimatedBytes, reason, true);
+		}
+		catch(RuntimeException ex) {
+			RefedReuseAudit.cleanup(entry._audit, entry._canonical.getID(), entry._estimatedBytes, reason, false);
+			throw ex;
+		}
+	}
+
+	private static void cleanupFailedRefedCreation(RefedReuseAudit.Context audit, FederationMap map, long tid) {
+		long estimatedBytes = audit == null ? 0 : estimateOwnedRefedBytes(map);
+		try {
+			map.execCleanup(tid, map.getID());
+			RefedReuseAudit.cleanup(audit, map.getID(), estimatedBytes,
+				RefedReuseAudit.CREATION_FAILURE, true);
+		}
+		catch(RuntimeException ex) {
+			RefedReuseAudit.cleanup(audit, map.getID(), estimatedBytes,
+				RefedReuseAudit.CREATION_FAILURE, false);
+			throw ex;
+		}
 	}
 
 	/**
@@ -1397,12 +1478,15 @@ public class FederationUtils {
 		private final long _tid;
 		private final long _estimatedBytes;
 		private final boolean _planned;
+		private final RefedReuseAudit.Context _audit;
 
-		private OwnedRefedReuseEntry(FederationMap canonical, long tid, long estimatedBytes, boolean planned) {
+		private OwnedRefedReuseEntry(FederationMap canonical, long tid, long estimatedBytes, boolean planned,
+			RefedReuseAudit.Context audit) {
 			_canonical = canonical;
 			_tid = tid;
 			_estimatedBytes = estimatedBytes;
 			_planned = planned;
+			_audit = audit;
 		}
 	}
 

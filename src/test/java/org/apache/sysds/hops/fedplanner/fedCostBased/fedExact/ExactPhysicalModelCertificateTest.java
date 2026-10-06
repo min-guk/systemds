@@ -30,6 +30,8 @@ public class ExactPhysicalModelCertificateTest {
 
 	@Test
 	public void sevenWorkloadsBuildBaselineFreePhysicalDomainsAndFactors() throws Exception {
+		int representedDerivedCandidates = 0;
+		int independentlyUnrealizableDerivedCandidates = 0;
 		for(Workload workload : List.of(
 			new Workload("KMEANS", kmeans()), new Workload("PCA", pca()),
 			new Workload("LM", lm()), new Workload("L2SVM", l2svm()),
@@ -80,11 +82,18 @@ public class ExactPhysicalModelCertificateTest {
 					if(!emission.emissionState().derivedFedFout()
 						|| domain.node().legalAlternatives().stream().noneMatch(state::equals))
 						continue;
-					Assert.assertTrue(workload.name() + "|derived candidate silently removed|rule="
-						+ rule.key().normalizedSignature() + "|emission=" + emission.normalizedSignature(),
-						domain.alternatives().stream().anyMatch(alternative -> alternative.captured()
-							&& alternative.candidateRule() == rule
-							&& alternative.candidateEmission() == emission));
+					boolean represented = domain.alternatives().stream().anyMatch(alternative ->
+						alternative.captured() && alternative.candidateRule() == rule
+							&& alternative.candidateEmission() == emission);
+					if(represented) {
+						representedDerivedCandidates++;
+						continue;
+					}
+					Assert.assertTrue(workload.name() + "|derived candidate silently removed without an "
+						+ "independent impossible-input proof|rule=" + rule.key().normalizedSignature()
+						+ "|emission=" + emission.normalizedSignature(),
+						independentlyImpossibleDerivedInput(analysis, rule, emission));
+					independentlyUnrealizableDerivedCandidates++;
 				}
 			}
 			Assert.assertTrue(certificate, physical.candidates().stream().allMatch(candidate ->
@@ -135,6 +144,41 @@ public class ExactPhysicalModelCertificateTest {
 					}
 			Assert.assertTrue(certificate, statistics.maximumFactorCells() <= 10_000_000);
 		}
+		Assert.assertTrue("campaign must retain represented derived-output coverage",
+			representedDerivedCandidates > 0);
+		Assert.assertTrue("campaign must exercise explicit impossible-input classification",
+			independentlyUnrealizableDerivedCandidates > 0);
+	}
+
+	private static boolean independentlyImpossibleDerivedInput(PlacementAnalysis analysis,
+		PlacementAnalysis.CandidateRuleFact rule,
+		PlacementAnalysis.CandidateEmissionFact emission) {
+		for(int position = 0; position < rule.key().orderedInputs().size(); position++) {
+			if(!rule.key().orderedInputs().get(position).present())
+				continue;
+			final int inputPosition = position;
+			var edges = analysis.compiledInputEdgesInCanonicalOrder().stream()
+				.filter(edge -> edge.consumer() == rule.key().parentOccurrence()
+					&& edge.inputPosition() == inputPosition).toList();
+			if(edges.size() != 1)
+				continue;
+			var source = analysis.graph().node(edges.get(0).producer()).orElseThrow();
+			boolean sourceCanProduceFout = source.legalAlternatives().stream()
+				.anyMatch(state -> state.output() == FederatedOutput.FOUT);
+			boolean sourceHasRelocation = analysis.graph().relocationActions().stream()
+				.anyMatch(action -> action.key().sourceValueVersion().equals(source.valueVersion()));
+			boolean directSupport = emission.realizations().stream()
+				.flatMap(realization -> realization.supportClauses().stream())
+				.flatMap(clause -> clause.inputBindings().stream())
+				.anyMatch(binding -> binding.inputPosition() == inputPosition
+					&& binding.source().rule().parentOccurrence() == source.key()
+					&& binding.kind()
+						== org.apache.sysds.hops.fedplanner.placement.PlacementIdentity
+							.CandidateInputBindingKind.DIRECT);
+			if(!sourceCanProduceFout && !sourceHasRelocation && !directSupport)
+				return true;
+		}
+		return false;
 	}
 
 	@Test
