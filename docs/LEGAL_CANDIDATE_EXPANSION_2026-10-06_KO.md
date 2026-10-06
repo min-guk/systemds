@@ -95,3 +95,32 @@ scripts/fedplanner/run_LAN_docker.sh --joint-boundary-e2e \
 [진단 결과와 재현 artifact](experiments/boundary-seed-20261006/joint-row-diagnostic.json)에 row scope·크기·source SHA를 보존한다. 진단은 factor/solver 선택을 바꾸지 않았고, 실행 시간에는 추가 grounding·출력 비용이 포함되므로 성능 개선의 근거로 사용하지 않는다.
 
 진단 Docker 학습도 PASS이며 전체 16계수 CP 일치, audit/runtime conversion 위반 0, 게시본과 최종 modeled upper 122.26631334184357 일치를 확인했다. 실제 freezer의 25,006,592셀 및 partial/subtree 작업량도 동일했다.
+
+
+### 2026-10-07: row 분해 제외 후 alias 의존 축소
+
+사용자 요청에 따라 row 분해는 제외했다. 앞선 row 실험은 별도 복사본에서의 진단뿐이므로 production에 되돌릴 row factor 코드는 없었다. 이번 단계는 보고서가 지목한 **loop-back alias 연쇄의 중복 선택 의존성**을 줄이는 구현이다. `origin/main`의 `0eb1ae4410`까지 반영했다.
+
+`JointValueMapRelations.Grounding`은 내부 alias의 모든 reachable query에 대해, 모든 support clause가 같은 retained owner의 단일 reference로 전달되는지 인증한다. 인증된 alias 하나를 joint factor의 scope에서만 생략한다. 원래 decision·후보·비용·realization-support factor는 유지한다. reader/consumer, exact-pool override, 다중 source, clause마다 다른 target은 인증하지 않는다. 선택된 retained source를 직접 따라가되 원래 cycle token과 invariant-pool 증명 순서를 유지한다.
+
+동치성은 support 제약 `S`와 joint predicate `H`의 결합에 대한 **`S+H_old == S+H_projected`**다. `S`가 incoming alias reference와 outgoing target reference의 정확한 일치를 이미 강제하므로 같은 선택 축을 `H`에서 다시 열거할 필요가 없다. support-invalid tuple의 단독 `H` 값은 달라질 수 있고, 이 경우에도 전체 모델의 비용은 infinity다. 이를 일반적인 standalone predicate 동치로 확대하면 안 된다.
+
+실제 multiLogReg에서는 `multiLogReg.dml:284`의 else 경로 `_PLACEMENT Grad`를 `S*Grad` joint scope에서 제거했다. 원래 선택 domain 38개는 그대로 존재하지만, joint truth에서 해당 observation category 17개를 곱하지 않는다.
+
+| 같은 Docker LogReg 조건 | 게시 baseline | alias projection |
+|---|---:|---:|
+| `S*Grad` truth 셀 | 25,006,592 | 1,470,976 |
+| partial 판정 호출 | 2,547,709 | 150,189 |
+| 해당 factor freeze | 16.246초 | 2.369초 |
+| 최종 checkpoint planner 시간 | 37.115초 | 15.764초 |
+| 전체 compilation | 89.101초 | 74.622초 |
+| 학습 실행 | 3.847초 | 4.843초 |
+| 최종 modeled upper | 122.26631334184357 | 122.26631334184357 |
+
+truth 저장 셀은 정확히 **17분의 1**이다. partial 판정 감소는 표현에서 중복 축을 없앤 결과이며, 삭제한 합법 후보 수가 아니다. 공유 호스트의 단일 비교이므로 시간 차이를 일반적인 speedup으로 보장하지 않는다. 이번 실행의 공통 analysis는 55.180초로 여전히 가장 큰 구간이다. 이 변경이 전체 compilation 병목을 모두 해소한 것은 아니다.
+
+Docker의 실제 builtin `multiLogReg/l2svm/lmCG` **3/3 PASS**다. 전체 계수 16/8/8개가 CP와 일치하고 최대 절대 오차는 각각 2.22e-16, 8.42e-17, 1.23e-15 미만이다. 세 workload 모두 이전과 최종 modeled upper가 같고 audit 및 runtime conversion 위반은 0이다. 입력·fixture·dependency·Docker image 해시도 baseline과 같다. 정식 대규모 데이터 campaign이 아닌 기존 192×8 재현 workload라는 범위는 유지한다.
+
+최신 main 통합 회귀 49개 클래스 363건과 최종 신규 회귀 재실행 3건, package 빌드가 통과했다. 회귀 fixture에서는 원래 1,872개 조합 전체의 support-conjoined truth를 대조했다. 독립 reference oracle, partial certificate의 모든 completion, exact 최적화의 네 가지 고정 조건, regional fixed/free 전환과 cache 재사용을 검사한다. 작은 fixture는 production observation encoding 선택 기준에 못 미치므로 decomposition 자체의 검사는 완전 truth quotient를 사용한다. 실제 production 경로는 Docker physical proof와 학습에서 별도로 검증했다.
+
+[검증 집계](experiments/joint-alias-20261007/validation.json)와 [세션 상세 기록](SESSION_ISSUES_2026-10-07.md)에 build·source/class·회귀·원본 로그를 보존한다. 남는 generic product와 dense factor 표현은 그대로이며, 이번 patch는 인증 가능한 내부 alias 하나만 줄인다.

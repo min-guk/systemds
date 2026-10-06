@@ -1,0 +1,428 @@
+{
+  "schema": "systemds-support-certified-joint-alias-v1",
+  "integratedOriginMain": "0eb1ae4410855ba45b3f8e9fc07e7adc9c8cefb2",
+  "productionSources": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.java": "9461debcce0079fa0c0dd87aa41b24e0bb12d339cd1fb7522bfb21ea085d85e2",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.java": "582795add8baeb253d809554b928f524fc0a4372344195d46843b77387db385f"
+  },
+  "javaRegression": {
+    "tests": 363,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "classes": 49,
+    "log": "/home/mchoi/w1357-structural-grounding-20261006/target/joint-alias-evidence/regression.log",
+    "sha256": "7239e8483f9c1f6e756c9a1ba9bda6009c3a4d45335685929838e4f6a809534c"
+  },
+  "finalDedicatedRegression": {
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "classes": 1,
+    "log": "/home/mchoi/w1357-structural-grounding-20261006/target/joint-alias-evidence/final-test.log",
+    "sha256": "4e6c596b0bd1b8e82e5be2b6e041bed93adce14e5e196e63bfa63d90ef440a72"
+  },
+  "finalSourceSnapshotSha256": "0fd856d2fd1123e14731195553d9ba1701bc543260ef5d3c5d53f71377223b0f",
+  "finalBuildStatus": {
+    "exitCode": 0,
+    "changedSources": []
+  },
+  "postFreezeTestEdit": "After the 363-test build started, one test assertion was added. Its source hash change was detected; all sources were frozen again, and the dedicated three-test suite and package were rebuilt successfully. Production sources did not change.",
+  "dockerFrozenMainMatchesFinalBuild": {
+    "main-sources": 1651,
+    "main-classes": 4357
+  },
+  "baselineComparability": {
+    "image": true,
+    "inputSha256": true,
+    "fixtureSha256": true,
+    "dependencies": true
+  },
+  "dockerTestArtifacts": "The unchanged 10-test physical proof used baseline frozen test sources/classes. The new regression was separately compiled and run in Maven.",
+  "smallFixture": {
+    "originalCells": 1872,
+    "projectedCells": 936,
+    "exhaustiveOriginalAssignments": 1872,
+    "referenceSupportValid": 312,
+    "supportInvalidPredicateDifferences": 112,
+    "partialCertificates": 936,
+    "exactScenarios": 4,
+    "regionalBlocks": 4
+  },
+  "ml": {
+    "status": "PASSED",
+    "result": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/joint-alias-candidate-01/result.json",
+    "resultSha256": "94199676a2d2ed5c15600f607fff916f28ca28d1428d4e1e910e870b600c196b",
+    "baselineResult": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/legal-prefix-main-publication-r2/result.json",
+    "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "classPreflightPassed": true,
+    "modelProofPassed": true,
+    "runtimeConversionViolations": [],
+    "cases": [
+      {
+        "case": "ml_logreg",
+        "passed": true,
+        "modelComparison": {
+          "actualEntries": 16,
+          "entries": 16,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 2.220446049250313e-16,
+          "nonzero": true
+        },
+        "fedStatistics": {
+          "compilationSeconds": 74.621658,
+          "executionSeconds": 4.843
+        },
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 17336646,
+            "clusters": 3527,
+            "conditionalAttempts": 40,
+            "conditionalImprovements": 4,
+            "dpNanos": 5334188679,
+            "elapsedNanos": 5954999635,
+            "improvements": 4,
+            "internalDecisions": 49,
+            "lower": 120.54269578813249,
+            "merges": 4566,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 15764200413,
+            "relativeGap": 0.014298813731032978,
+            "resourceRejected": 698,
+            "retainedSlots": 9578164,
+            "scoringNanos": 290577872,
+            "upper": 122.26631334184357,
+            "validationNanos": 152728824
+          },
+          "initial": {
+            "assignments": 2236691,
+            "clusters": 5418,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 166790181,
+            "elapsedNanos": 267860769,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 2.8587210976952604,
+            "merges": 3346,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 10077072437,
+            "relativeGap": 531.2774853737075,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 1521.6328772659972,
+            "validationNanos": 27829782
+          },
+          "seedBoundary": {
+            "assignments": 2236691,
+            "clusters": 5418,
+            "conditionalAttempts": 40,
+            "conditionalImprovements": 4,
+            "dpNanos": 3985740834,
+            "elapsedNanos": 4226083771,
+            "improvements": 4,
+            "internalDecisions": 0,
+            "lower": 2.8587210976952604,
+            "merges": 3346,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 14035294238,
+            "relativeGap": 41.76958442725188,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 25170834,
+            "upper": 122.26631334184357,
+            "validationNanos": 139518129
+          },
+          "seedBoundaryCount": 1
+        },
+        "auditErrors": [],
+        "runtimeAuditViolations": [],
+        "baselineFedStatistics": {
+          "compilationSeconds": 89.101444,
+          "executionSeconds": 3.847
+        },
+        "baselineFinalCheckpoint": {
+          "assignments": 41353447,
+          "clusters": 3527,
+          "conditionalAttempts": 40,
+          "conditionalImprovements": 4,
+          "dpNanos": 14836294384,
+          "elapsedNanos": 15405506575,
+          "improvements": 4,
+          "internalDecisions": 49,
+          "lower": 120.54269578813249,
+          "merges": 4566,
+          "phase": "TARGET_REACHED",
+          "plannerElapsedNanos": 37115112191,
+          "relativeGap": 0.014298813731032978,
+          "resourceRejected": 704,
+          "retainedSlots": 9691316,
+          "scoringNanos": 249226082,
+          "upper": 122.26631334184357,
+          "validationNanos": 117576394
+        }
+      },
+      {
+        "case": "ml_l2svm",
+        "passed": true,
+        "modelComparison": {
+          "actualEntries": 8,
+          "entries": 8,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 8.413408858487514e-17,
+          "nonzero": true
+        },
+        "fedStatistics": {
+          "compilationSeconds": 14.022254,
+          "executionSeconds": 1.072
+        },
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 259420,
+            "clusters": 2307,
+            "conditionalAttempts": 5,
+            "conditionalImprovements": 2,
+            "dpNanos": 593143703,
+            "elapsedNanos": 651078377,
+            "improvements": 2,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1547,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 1846755955,
+            "relativeGap": 0.011083284007794878,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 7457575,
+            "upper": 21.385960545366007,
+            "validationNanos": 27763277
+          },
+          "initial": {
+            "assignments": 259420,
+            "clusters": 2307,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 32110602,
+            "elapsedNanos": 65080749,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1547,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 1260770179,
+            "relativeGap": 2.395225246626159,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 71.81421581727763,
+            "validationNanos": 11577303
+          },
+          "seedBoundary": {
+            "assignments": 259420,
+            "clusters": 2307,
+            "conditionalAttempts": 5,
+            "conditionalImprovements": 2,
+            "dpNanos": 593143703,
+            "elapsedNanos": 650528910,
+            "improvements": 2,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1547,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 1846211277,
+            "relativeGap": 0.011083284007794878,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 7457575,
+            "upper": 21.385960545366007,
+            "validationNanos": 27763277
+          },
+          "seedBoundaryCount": 1
+        },
+        "auditErrors": [],
+        "runtimeAuditViolations": [],
+        "baselineFedStatistics": {
+          "compilationSeconds": 12.810617,
+          "executionSeconds": 0.992
+        },
+        "baselineFinalCheckpoint": {
+          "assignments": 259420,
+          "clusters": 2307,
+          "conditionalAttempts": 5,
+          "conditionalImprovements": 2,
+          "dpNanos": 614410846,
+          "elapsedNanos": 667235944,
+          "improvements": 2,
+          "internalDecisions": 0,
+          "lower": 21.1515321078151,
+          "merges": 1547,
+          "phase": "TARGET_REACHED",
+          "plannerElapsedNanos": 1801887303,
+          "relativeGap": 0.011083284007794878,
+          "resourceRejected": 0,
+          "retainedSlots": 0,
+          "scoringNanos": 6467596,
+          "upper": 21.385960545366007,
+          "validationNanos": 27272396
+        }
+      },
+      {
+        "case": "ml_lm",
+        "passed": true,
+        "modelComparison": {
+          "actualEntries": 8,
+          "entries": 8,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 1.2212453270876722e-15,
+          "nonzero": true
+        },
+        "fedStatistics": {
+          "compilationSeconds": 7.353879,
+          "executionSeconds": 0.941
+        },
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 21108,
+            "clusters": 1073,
+            "conditionalAttempts": 1,
+            "conditionalImprovements": 1,
+            "dpNanos": 246406683,
+            "elapsedNanos": 280913724,
+            "improvements": 1,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 782,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 1004550476,
+            "relativeGap": 0.008141441118854212,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 3146970,
+            "upper": 21.2628479582568,
+            "validationNanos": 14994147
+          },
+          "initial": {
+            "assignments": 21108,
+            "clusters": 1073,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 19993679,
+            "elapsedNanos": 43421687,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 782,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 767063550,
+            "relativeGap": 2.399110611511323,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 71.69110323016842,
+            "validationNanos": 8262248
+          },
+          "seedBoundary": {
+            "assignments": 21108,
+            "clusters": 1073,
+            "conditionalAttempts": 1,
+            "conditionalImprovements": 1,
+            "dpNanos": 246406683,
+            "elapsedNanos": 280322819,
+            "improvements": 1,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 782,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 1003962838,
+            "relativeGap": 0.008141441118854212,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 3146970,
+            "upper": 21.2628479582568,
+            "validationNanos": 14994147
+          },
+          "seedBoundaryCount": 1
+        },
+        "auditErrors": [],
+        "runtimeAuditViolations": [],
+        "baselineFedStatistics": {
+          "compilationSeconds": 6.189509,
+          "executionSeconds": 0.686
+        },
+        "baselineFinalCheckpoint": {
+          "assignments": 21108,
+          "clusters": 1073,
+          "conditionalAttempts": 1,
+          "conditionalImprovements": 1,
+          "dpNanos": 158743706,
+          "elapsedNanos": 186914982,
+          "improvements": 1,
+          "internalDecisions": 0,
+          "lower": 21.091135718673456,
+          "merges": 782,
+          "phase": "TARGET_REACHED",
+          "plannerElapsedNanos": 702031259,
+          "relativeGap": 0.008141441118854212,
+          "resourceRejected": 0,
+          "retainedSlots": 0,
+          "scoringNanos": 2818247,
+          "upper": 21.2628479582568,
+          "validationNanos": 11501143
+        }
+      }
+    ]
+  },
+  "logregTruthFactor": {
+    "baseline": {
+      "logicalCells": 25006592,
+      "partialCalls": 2547709,
+      "leafCalls": 0,
+      "zeroCells": 22608192,
+      "forbiddenCells": 2398400,
+      "provenSubtrees": 340,
+      "subtreeCells": 22602112,
+      "elapsedNanos": 16246230732,
+      "domains": [
+        8,
+        1,
+        104,
+        17,
+        104,
+        17
+      ]
+    },
+    "candidate": {
+      "logicalCells": 1470976,
+      "partialCalls": 150189,
+      "leafCalls": 0,
+      "zeroCells": 1335856,
+      "forbiddenCells": 135120,
+      "provenSubtrees": 340,
+      "subtreeCells": 1329536,
+      "elapsedNanos": 2368555794,
+      "domains": [
+        8,
+        1,
+        104,
+        104,
+        17
+      ]
+    }
+  },
+  "limitations": [
+    "One internal alias per joint factor is projected; candidates, costs and original support factors remain.",
+    "Equivalence requires original realization-support factors. Standalone predicates may differ on support-invalid assignments.",
+    "Small-fixture decomposition uses an exact truth-derived quotient because production encoding declines the small factor.",
+    "Cycle-token preservation was reviewed, but the attempted cycle-guard mutant was not detected by the small fixture.",
+    "Single run on a shared host; 192x8 synthetic data and actual builtin training, not a large dataset campaign.",
+    "Dense factor storage and generic candidate products still exist; common analysis remains expensive."
+  ]
+}

@@ -442,6 +442,20 @@ final class ExactPhysicalModel {
 	private static ExactPhysicalModel build(PlacementAnalysis analysis, CandidateRuleLookup ruleLookup,
 		boolean prunePrivacyIllegalRelocations, boolean allocationFreeInputAuthorityEvaluation,
 		boolean lazyAlternativeSignatures, boolean indexedRelocationObligations) {
+		return build(analysis, ruleLookup, prunePrivacyIllegalRelocations,
+			allocationFreeInputAuthorityEvaluation, lazyAlternativeSignatures,
+			indexedRelocationObligations, true);
+	}
+
+	/** The original joint predicate is retained as a whole-model legality oracle. */
+	static ExactPhysicalModel buildWithUnprojectedJointFactorsForTest(PlacementAnalysis analysis) {
+		return build(analysis, indexedCandidateRuleLookup(analysis), true, true, true, true, false);
+	}
+
+	private static ExactPhysicalModel build(PlacementAnalysis analysis, CandidateRuleLookup ruleLookup,
+		boolean prunePrivacyIllegalRelocations, boolean allocationFreeInputAuthorityEvaluation,
+		boolean lazyAlternativeSignatures, boolean indexedRelocationObligations,
+		boolean projectJointAliases) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(ruleLookup, "ruleLookup");
 		analysis.assertProgramStructureUnchanged();
@@ -480,7 +494,7 @@ final class ExactPhysicalModel {
 			hardFactorizations = new IdentityHashMap<>();
 		addNeutralConstraintFactors(analysis.graph(), byDecision, factors);
 		addStrictTransientFactors(analysis, byDecision, factors);
-		addJointFactors(analysis, byDecision, factors, hardFactorizations);
+		addJointFactors(analysis, byDecision, factors, hardFactorizations, projectJointAliases);
 		addLogicalBoundaryFactors(analysis, byDecision, factors);
 		RealizationSupportPreparationStatistics realizationSupportStatistics =
 			addRealizationSupportFactors(analysis, byDecision, factors, hardFactorizations);
@@ -1167,7 +1181,8 @@ final class ExactPhysicalModel {
 	/** Every correlated execution row must be physically executable under one static selection. */
 	private static void addJointFactors(PlacementAnalysis analysis,
 		Map<CompiledHopKey,DecisionDomain> domains, List<ExactCategoricalSolver.Factor> factors,
-		Map<ExactCategoricalSolver.Factor,ExactHardFactorObservationDecomposition.Result> factorizations) {
+		Map<ExactCategoricalSolver.Factor,ExactHardFactorObservationDecomposition.Result> factorizations,
+		boolean projectAliases) {
 		for(JointValueMapRelations.Relation relation : JointValueMapRelations.from(analysis)) {
 			// Fixed-map relations are already owned by the ordinary input authorities.
 			// An always-zero high-arity factor would still create a solver clique.
@@ -1180,12 +1195,24 @@ final class ExactPhysicalModel {
 				throw new IllegalArgumentException("Joint consumer decision domain missing");
 			List<DecisionDomain> scope = new ArrayList<>();
 			scope.add(consumer);
-			var grounding = new JointValueMapRelations.Grounding(analysis, relation);
-			List<CompiledHopKey> supportOwners = grounding.supportOwners();
+			var originalGrounding = new JointValueMapRelations.Grounding(analysis, relation);
+			List<CompiledHopKey> supportOwners = originalGrounding.supportOwners();
+			for(CompiledHopKey owner : supportOwners)
+				if(domains.get(owner) == null)
+					throw new IllegalArgumentException("Joint support decision domain missing");
+			var projection = projectAliases
+				? jointAliasProjection(originalGrounding, relation, supportOwners, domains) : null;
+			var grounding = projection == null ? originalGrounding : projection.grounding();
+			if(projection != null) {
+				supportOwners = supportOwners.stream().filter(owner -> owner != projection.removedOwner()).toList();
+				org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace.logGlobal(
+					"Exact-JointAliasProjection", "consumer=" + relation.consumer().normalizedSignature()
+						+ " removedOwner=" + projection.removedOwner().normalizedSignature()
+						+ " removedDomain=" + domains.get(projection.removedOwner()).variable().domainSize()
+						+ " certifiedQueries=" + projection.certifiedQueryCount());
+			}
 			for(CompiledHopKey owner : supportOwners) {
 				DecisionDomain domain = domains.get(owner);
-				if(domain == null)
-					throw new IllegalArgumentException("Joint support decision domain missing");
 				if(!scope.contains(domain))
 					scope.add(domain);
 			}
@@ -1325,6 +1352,29 @@ final class ExactPhysicalModel {
 			if(encoded != null)
 				factorizations.put(factor, encoded);
 		}
+	}
+
+	/**
+	 * Realization-support factors remain in this model and enforce both edges of
+	 * the alias forwarding proof. Only the joint factor's redundant axis is removed;
+	 * the original decision and its costs/constraints are retained. The conjunction
+	 * with those support factors, rather than this joint predicate alone, is equivalent.
+	 */
+	private static JointValueMapRelations.AliasProjection jointAliasProjection(
+		JointValueMapRelations.Grounding grounding, JointValueMapRelations.Relation relation,
+		List<CompiledHopKey> supportOwners, Map<CompiledHopKey,DecisionDomain> domains) {
+		for(CompiledHopKey owner : supportOwners.stream()
+			.filter(key -> key != relation.consumer() && !relation.readers().contains(key))
+			.sorted(Comparator.<CompiledHopKey>comparingInt(key -> domains.get(key).variable().domainSize())
+				.reversed().thenComparing(CompiledHopKey::normalizedSignature)).toList()) {
+			Set<CompiledHopKey> retained = Collections.newSetFromMap(new IdentityHashMap<>());
+			retained.addAll(supportOwners);
+			retained.remove(owner);
+			var projected = grounding.projectAliasOwner(owner, retained);
+			if(projected.isPresent())
+				return projected.get();
+		}
+		return null;
 	}
 
 	/** Function value aliases preserve the selected pool; source categories are conjunctive. */

@@ -153,6 +153,25 @@ public final class JointValueMapRelations {
 	private record PoolQuery(CandidateRealizationReference reference,
 		CompiledHopKey supplier, CompiledHopKey origin) { }
 
+	/**
+	 * A joint-alignment evaluator with one certified internal alias owner removed.
+	 *
+	 * <p>The projection is equivalent only together with the original candidate
+	 * realization-support factors. Those factors still require the removed alias
+	 * decision and its retained target to select the references used by the
+	 * projected evaluator. This certificate is therefore not a standalone
+	 * whole-assignment equivalence.</p>
+	 */
+	public record AliasProjection(Grounding grounding, CompiledHopKey removedOwner,
+		int certifiedQueryCount) {
+		public AliasProjection {
+			Objects.requireNonNull(grounding, "grounding");
+			Objects.requireNonNull(removedOwner, "removedOwner");
+			if(certifiedQueryCount <= 0)
+				throw new IllegalArgumentException("Alias projection requires a certified query");
+		}
+	}
+
 	/** Immutable-analysis projection; memoized proofs never depend on a selected plan. */
 	public static final class Grounding {
 		/** A proof about every completion of the currently assigned decision owners. */
@@ -166,6 +185,7 @@ public final class JointValueMapRelations {
 		private final PlacementAnalysis analysis;
 		private final Relation relation;
 		private final boolean requireSameGeometry;
+		private final Map<PoolQuery,CompiledHopKey> projectedAliasOwners;
 		private final Map<PoolQuery,java.util.Optional<DurableAnchorKey>> invariantPools = new java.util.HashMap<>();
 
 		public Grounding(PlacementAnalysis analysis, Relation relation) {
@@ -173,9 +193,93 @@ public final class JointValueMapRelations {
 		}
 
 		private Grounding(PlacementAnalysis analysis, Relation relation, boolean requireSameGeometry) {
+			this(analysis, relation, requireSameGeometry, Map.of());
+		}
+
+		private Grounding(PlacementAnalysis analysis, Relation relation, boolean requireSameGeometry,
+			Map<PoolQuery,CompiledHopKey> projectedAliasOwners) {
 			this.analysis = Objects.requireNonNull(analysis, "analysis");
 			this.relation = Objects.requireNonNull(relation, "relation");
 			this.requireSameGeometry = requireSameGeometry;
+			this.projectedAliasOwners = Map.copyOf(projectedAliasOwners);
+		}
+
+		/**
+		 * Certifies removal of one non-reader transient alias from this joint factor.
+		 * The returned evaluator is sound only while the original realization-support
+		 * factors remain in the model; they enforce the skipped alias-to-target
+		 * references. The source evaluator is immutable and remains unchanged.
+		 */
+		public java.util.Optional<AliasProjection> projectAliasOwner(CompiledHopKey owner,
+			Set<CompiledHopKey> retainedOwners) {
+			Objects.requireNonNull(owner, "owner");
+			Objects.requireNonNull(retainedOwners, "retainedOwners");
+			if(!projectedAliasOwners.isEmpty() || owner == relation.consumer()
+				|| relation.readers().contains(owner) || !internalAliasOwner(owner))
+				return java.util.Optional.empty();
+			List<CompiledHopKey> originalOwners = supportOwners();
+			if(!originalOwners.contains(owner))
+				return java.util.Optional.empty();
+
+			Set<PoolQuery> reachable = new java.util.HashSet<>();
+			Set<PoolQuery> candidates = new java.util.HashSet<>();
+			for(Row row : relation.rows()) for(InputSource input : row.inputs())
+				for(var fact : analysis.candidateRuleFacts().orderedFactsForParent(input.reader()))
+					for(var emission : fact.allowedEmissionFacts()) for(var realization : emission.realizations()) {
+						PoolQuery query = new PoolQuery(CandidateRealizationReference.of(fact.key(), realization),
+							input.source(), input.valueOrigin());
+						collectProjectionQueries(query, owner, reachable, candidates);
+					}
+			if(candidates.isEmpty())
+				return java.util.Optional.empty();
+
+			Map<PoolQuery,CompiledHopKey> certified = new java.util.HashMap<>(projectedAliasOwners);
+			for(PoolQuery query : candidates) {
+				var realization = analysis.requireExactCandidateRealization(query.reference());
+				if(realization.key().layoutKind() != PlacementIdentity.PlacementLayoutKind.VALUE_MAP)
+					return java.util.Optional.empty();
+				CompiledHopKey target = null;
+				for(var clause : realization.supportClauses()) {
+					if(exactPool(realization, clause) != null)
+						return java.util.Optional.empty();
+					List<CandidateRealizationReference> sources = sources(clause, query);
+					if(sources.size() != 1)
+						return java.util.Optional.empty();
+					CompiledHopKey candidate = sources.get(0).rule().parentOccurrence();
+					if(candidate == owner || !retainedOwners.contains(candidate)
+						|| target != null && target != candidate)
+						return java.util.Optional.empty();
+					target = candidate;
+				}
+				if(target == null)
+					return java.util.Optional.empty();
+				certified.put(query, target);
+			}
+			Grounding projected = new Grounding(analysis, relation, requireSameGeometry, certified);
+			projected.invariantPools.putAll(invariantPools);
+			return java.util.Optional.of(new AliasProjection(projected, owner, candidates.size()));
+		}
+
+		private boolean internalAliasOwner(CompiledHopKey owner) {
+			Hop hop = analysis.hop(owner).orElse(null);
+			return hop != null && (PlacementProgramFacts.isTransientRead(hop)
+				|| PlacementProgramFacts.isTransientWrite(hop)
+				|| hop instanceof UnaryOp unary && unary.getOp() == OpOp1._PLACEMENT);
+		}
+
+		private void collectProjectionQueries(PoolQuery query, CompiledHopKey owner,
+			Set<PoolQuery> visited, Set<PoolQuery> candidates) {
+			if(!visited.add(query)) return;
+			var realization = analysis.requireExactCandidateRealization(query.reference());
+			if(realization.key().layoutKind() != PlacementIdentity.PlacementLayoutKind.VALUE_MAP) return;
+			for(var clause : realization.supportClauses()) for(var reference : sources(clause, query)) {
+				PoolQuery child = new PoolQuery(reference, query.origin(), query.origin());
+				if(invariantPool(child, new java.util.HashSet<>()) != null)
+					continue;
+				if(reference.rule().parentOccurrence() == owner)
+					candidates.add(child);
+				collectProjectionQueries(child, owner, visited, candidates);
+			}
 		}
 
 		private boolean sameObservedPool(DurableAnchorKey left, DurableAnchorKey right) {
@@ -262,17 +366,29 @@ public final class JointValueMapRelations {
 					PoolQuery childQuery = new PoolQuery(reference, query.origin(), query.origin());
 					DurableAnchorKey pool = invariantPool(childQuery, new java.util.HashSet<>());
 					if(pool == null) {
-						CompiledHopKey owner = reference.rule().parentOccurrence();
-						if(!selected.containsKey(owner)) {
-							unknown = true;
-							continue;
+						CompiledHopKey projectedOwner = projectedAliasOwners.get(childQuery);
+						if(projectedOwner != null) {
+							PartialPool proof = projectedPartialPool(childQuery, projectedOwner, selected, active);
+							if(proof.forbidden()) return proof;
+							pool = proof.pool();
+							if(pool == null) {
+								unknown = true;
+								continue;
+							}
 						}
-						CandidateSelectionReceipt child = selected.get(owner);
-						if(child == null || !CandidateSelections.matchesRealization(reference, child))
-							return PartialPool.FORBIDDEN;
-						PartialPool proof = partialPool(childQuery, child, selected, active);
-						if(proof.forbidden()) return proof;
-						pool = proof.pool();
+						else {
+							CompiledHopKey owner = reference.rule().parentOccurrence();
+							if(!selected.containsKey(owner)) {
+								unknown = true;
+								continue;
+							}
+							CandidateSelectionReceipt child = selected.get(owner);
+							if(child == null || !CandidateSelections.matchesRealization(reference, child))
+								return PartialPool.FORBIDDEN;
+							PartialPool proof = partialPool(childQuery, child, selected, active);
+							if(proof.forbidden()) return proof;
+							pool = proof.pool();
+						}
 					}
 					if(pool == null) unknown = true;
 					else {
@@ -282,6 +398,22 @@ public final class JointValueMapRelations {
 					}
 				}
 				return unknown ? PartialPool.UNKNOWN : new PartialPool(common, false);
+			}
+			finally { active.remove(query); }
+		}
+
+		private PartialPool projectedPartialPool(PoolQuery query, CompiledHopKey target,
+			Map<CompiledHopKey,CandidateSelectionReceipt> selected, Set<PoolQuery> active) {
+			if(!active.add(query)) return PartialPool.FORBIDDEN;
+			try {
+				if(!selected.containsKey(target)) return PartialPool.UNKNOWN;
+				CandidateSelectionReceipt receipt = selected.get(target);
+				if(receipt == null) return PartialPool.FORBIDDEN;
+				PoolQuery child = new PoolQuery(CandidateRealizationReference.of(receipt.rule(),
+					receipt.realization()), query.origin(), query.origin());
+				DurableAnchorKey pool = invariantPool(child, new java.util.HashSet<>());
+				return pool == null ? partialPool(child, receipt, selected, active)
+					: new PartialPool(pool, false);
 			}
 			finally { active.remove(query); }
 		}
@@ -300,15 +432,34 @@ public final class JointValueMapRelations {
 					PoolQuery childQuery = new PoolQuery(reference, query.origin(), query.origin());
 					DurableAnchorKey pool = invariantPool(childQuery, new java.util.HashSet<>());
 					if(pool == null) {
-						CandidateSelectionReceipt child = selected.get(reference.rule().parentOccurrence());
-						if(child == null || !CandidateSelections.matchesRealization(reference, child)) return null;
-						pool = selectedPool(childQuery, child, selected, active);
+						CompiledHopKey projectedOwner = projectedAliasOwners.get(childQuery);
+						if(projectedOwner != null)
+							pool = projectedSelectedPool(childQuery, projectedOwner, selected, active);
+						else {
+							CandidateSelectionReceipt child = selected.get(reference.rule().parentOccurrence());
+							if(child == null || !CandidateSelections.matchesRealization(reference, child)) return null;
+							pool = selectedPool(childQuery, child, selected, active);
+						}
 					}
 					if(pool == null || common != null && !sameObservedPool(common, pool))
 						return null;
 					common = pool;
 				}
 				return common;
+			}
+			finally { active.remove(query); }
+		}
+
+		private DurableAnchorKey projectedSelectedPool(PoolQuery query, CompiledHopKey target,
+			Map<CompiledHopKey,CandidateSelectionReceipt> selected, Set<PoolQuery> active) {
+			if(!active.add(query)) return null;
+			try {
+				CandidateSelectionReceipt receipt = selected.get(target);
+				if(receipt == null) return null;
+				PoolQuery child = new PoolQuery(CandidateRealizationReference.of(receipt.rule(),
+					receipt.realization()), query.origin(), query.origin());
+				DurableAnchorKey pool = invariantPool(child, new java.util.HashSet<>());
+				return pool != null ? pool : selectedPool(child, receipt, selected, active);
 			}
 			finally { active.remove(query); }
 		}
@@ -378,6 +529,8 @@ public final class JointValueMapRelations {
 							input.source(), input.valueOrigin());
 						collectOwners(query, owners, visited);
 					}
+			owners.removeAll(projectedAliasOwners.keySet().stream()
+				.map(query -> query.reference().rule().parentOccurrence()).toList());
 			return owners.stream().sorted().toList();
 		}
 
