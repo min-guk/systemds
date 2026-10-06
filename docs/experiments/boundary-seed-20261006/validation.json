@@ -1,0 +1,310 @@
+{
+  "baseCommit": "0146f043e07ca445d9084257759aa78fe14ddf55",
+  "unit": {
+    "classes": 17,
+    "totals": {
+      "tests": 176,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "results": [
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CostBasedPruningTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.21
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolverTest",
+        "tests": 21,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.35
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalConfigurationTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.07
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointPhysicalCostTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 9.037
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalSeedTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.158
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.BoundaryPruningTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.134
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.PlannerResourceGuardTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.057
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.LocalPhysicalOptimizerIncrementalTraceTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.042
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.SharedRegionalPreparationTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.652
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanLocalCostIntegrationTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 2.708
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolverArithmeticParityTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.32
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointBoundaryPhysicalModelProofTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 79.845
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalSharedSourceEncodingTest",
+        "tests": 25,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 4.76
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalBoundaryMessageTest",
+        "tests": 17,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.189
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalBoundarySeedTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.421
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalOptimizerTest",
+        "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 1.202
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.LocalCategoricalOptimizerTest",
+        "tests": 18,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.381
+      }
+    ],
+    "log": "/home/mchoi/w1357-structural-grounding-20261006/target/boundary-seed-evidence/regression.log",
+    "command": [
+      "mvn",
+      "-o",
+      "-DskipTests=false",
+      "-Dmaven.test.skip=false",
+      "-Dtest-forkCount=1",
+      "-Dtest-perCoreThreadCount=false",
+      "-Dtest=CostBasedPruningTest,ExactCategoricalSolverTest,IncrementalRegionalConfigurationTest,JointPhysicalCostTest,IncrementalRegionalSeedTest,BoundaryPruningTest,PlannerResourceGuardTest,LocalPhysicalOptimizerIncrementalTraceTest,SharedRegionalPreparationTest,FederatedPlanLocalCostIntegrationTest,ExactCategoricalSolverArithmeticParityTest,JointBoundaryPhysicalModelProofTest,ExactPhysicalSharedSourceEncodingTest,IncrementalBoundaryMessageTest,IncrementalBoundarySeedTest,IncrementalRegionalOptimizerTest,LocalCategoricalOptimizerTest",
+      "test",
+      "jar:jar"
+    ]
+  },
+  "sourceSha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer.java": "855e1fde63f4ec49d57445e4856815e093e6a58dd91d74bf3365a012e0f83bbf",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/RegionalSearchProblem.java": "50d6de8218f18881ef800526d3333a1d28790e2fbae29980d67a78b35eea739e",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalBoundarySeedTest.java": "94a3c7af37ccdaa8b3be82ce501eb761fc0258a6a79b8bb7eb41bdcb3bf07db5",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizerTest.java": "b72262d3617e5284bb1f08dfa1120047ee9db9689f2ab057c682784df0cede79"
+  },
+  "jarSha256": "f2d07d5e7b2a315e93ecfb28d9894dac06bb07c48faa42253fd4d69a15a2bf67",
+  "mutation": {
+    "mutation": "Restore empty-original-owner skip before auxiliary closure",
+    "tests": 11,
+    "expectedFailures": 1,
+    "failingTest": "followsAuxiliaryOnlyCostOwnerBackToOriginalDecisions",
+    "observedSeedCost": 10,
+    "expectedSeedCost": 3,
+    "log": "/home/mchoi/w1357-structural-grounding-20261006/target/boundary-seed-evidence/aux-owner-mutant.log"
+  },
+  "baselineRed": {
+    "tests": 6,
+    "errors": 6,
+    "reason": "SEED_BOUNDARY checkpoint absent",
+    "log": "/home/mchoi/w1357-structural-grounding-20261006/target/boundary-seed-evidence/red.log"
+  },
+  "frozenSourceAndClassVerification": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer.java": {
+      "sourceSha256": "855e1fde63f4ec49d57445e4856815e093e6a58dd91d74bf3365a012e0f83bbf",
+      "classSha256": "e3a72a9ab4d86625a727d1343db5e3ee804292b3bf63514c63a6c6fd84d56e78",
+      "matchedFrozenInputs": true
+    },
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/RegionalSearchProblem.java": {
+      "sourceSha256": "50d6de8218f18881ef800526d3333a1d28790e2fbae29980d67a78b35eea739e",
+      "classSha256": "eb9aca6d6e3ff4ad3c7ed46eb216423c49fb86cc37c63f7f167c434c7ccfa62c",
+      "matchedFrozenInputs": true
+    },
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalBoundarySeedTest.java": {
+      "sourceSha256": "94a3c7af37ccdaa8b3be82ce501eb761fc0258a6a79b8bb7eb41bdcb3bf07db5",
+      "classSha256": "52ac997b3c8c506d67233da4b5927b82618cd60653a83c277497269558029574",
+      "matchedFrozenInputs": true
+    },
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizerTest.java": {
+      "sourceSha256": "b72262d3617e5284bb1f08dfa1120047ee9db9689f2ab057c682784df0cede79",
+      "classSha256": "ffcd7bda3217152b3645966c8c5ccbfa2744aa6e8f4968bd86f985ff891cd6b4",
+      "matchedFrozenInputs": true
+    }
+  },
+  "docker": {
+    "result": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-20261006/boundary-seed-final/result.json",
+    "status": "PASSED",
+    "modelProofTests": 10,
+    "classPreflightPassed": true,
+    "runtimeConversionViolations": [],
+    "cases": [
+      {
+        "actionDiagnostics": [
+          "Federated prefetch count:\t0."
+        ],
+        "auditErrors": [],
+        "auditRows": 139,
+        "auditSchemas": [
+          "fed-runtime-capability-v1",
+          "fed-runtime-conversion-frontier-v1",
+          "fedplanner-candidate-space-v1"
+        ],
+        "branchUploadLoweredAndExecuted": false,
+        "case": "joint_loop_toggle",
+        "cpFingerprint": {
+          "COLS": 3.0,
+          "NORM2": 140.0,
+          "ROWS": 8.0,
+          "SUM": 54.0
+        },
+        "cpReturncode": 0,
+        "dynamicNativeExecution": null,
+        "expected": "success",
+        "fedFingerprint": {
+          "COLS": 3.0,
+          "NORM2": 140.0,
+          "ROWS": 8.0,
+          "SUM": 54.0
+        },
+        "fedNoRelocation": true,
+        "fedReturncode": 0,
+        "passed": true,
+        "requiresBranchUpload": false,
+        "requiresFedNoRelocation": false
+      },
+      {
+        "actionDiagnostics": [
+          "Federated prefetch count:\t0."
+        ],
+        "auditErrors": [],
+        "auditRows": 139,
+        "auditSchemas": [
+          "fed-runtime-capability-v1",
+          "fed-runtime-conversion-frontier-v1",
+          "fedplanner-candidate-space-v1"
+        ],
+        "branchUploadLoweredAndExecuted": false,
+        "case": "joint_function_calls",
+        "cpFingerprint": {
+          "CALL_C": 54.0,
+          "CALL_D": 132.0,
+          "COLS": 1.0,
+          "NORM2": 20340.0,
+          "ROWS": 2.0,
+          "SUM": 186.0
+        },
+        "cpReturncode": 0,
+        "dynamicNativeExecution": null,
+        "expected": "success",
+        "fedFingerprint": {
+          "CALL_C": 54.0,
+          "CALL_D": 132.0,
+          "COLS": 1.0,
+          "NORM2": 20340.0,
+          "ROWS": 2.0,
+          "SUM": 186.0
+        },
+        "fedNoRelocation": true,
+        "fedReturncode": 0,
+        "passed": true,
+        "requiresBranchUpload": false,
+        "requiresFedNoRelocation": false
+      }
+    ],
+    "command": [
+      "scripts/fedplanner/run_LAN_docker.sh",
+      "--joint-boundary-e2e",
+      "--run-id",
+      "boundary-seed-final",
+      "--output-root",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-20261006",
+      "--case",
+      "joint_loop_toggle",
+      "--case",
+      "joint_function_calls",
+      "--timeout-seconds",
+      "900"
+    ]
+  },
+  "limits": [
+    "No workload performance comparison was run.",
+    "The seed pass retains persistent boundary messages and uses temporary conditional/VE tables.",
+    "Global optimality is not guaranteed by the seed pass."
+  ],
+  "review": {
+    "correctnessBlockers": 0,
+    "remainingRisk": "Upfront conditional solve latency on large correlated regions"
+  }
+}

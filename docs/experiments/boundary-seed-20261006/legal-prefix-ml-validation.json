@@ -1,0 +1,942 @@
+{
+  "schema": "systemds-legal-prefix-v1",
+  "baseCommit": "ada24ffd4be4d17240f32f5bd1c2b5a98e1a0c8a",
+  "beforeRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-candidate-01",
+  "afterRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/legal-prefix-candidate-01",
+  "beforeStatus": "FAILED",
+  "afterStatus": "PASSED",
+  "regression": {
+    "tests": 329,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "classes": 41,
+    "log": "target/candidate-pruning-evidence/regression-final.log",
+    "logSha256": "bc917aa36844ec172f358749708b4db43e5e6999158ef7c0faf6bab799a3a082",
+    "buildSourceSnapshot": "target/candidate-pruning-evidence/build-source-sha.json"
+  },
+  "changedProductionSources": [
+    "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.java",
+    "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactHardFactorObservationDecomposition.java",
+    "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.java",
+    "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolver.java",
+    "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalSharedSourceEncoding.java",
+    "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.java",
+    "org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.java",
+    "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java"
+  ],
+  "provenance": {
+    "sameImageInputsScripts": true,
+    "sameDependencies": true,
+    "currentSourcesMatchFrozen": true,
+    "testSourcesMatchBuildStart": true,
+    "ownContainerRemoved": true,
+    "currentClassBytesMatchFrozen": true
+  },
+  "modelProofPassed": true,
+  "classPreflightPassed": true,
+  "runtimeConversionViolations": [],
+  "cases": [
+    {
+      "case": "ml_l2svm",
+      "before": {
+        "actionDiagnostics": [
+          "Federated prefetch count:\t0."
+        ],
+        "auditErrors": [],
+        "auditRows": 333,
+        "auditSchemas": [
+          "fed-runtime-capability-v1",
+          "fed-runtime-conversion-frontier-v1",
+          "fedplanner-candidate-space-v1"
+        ],
+        "branchUploadLoweredAndExecuted": false,
+        "case": "ml_l2svm",
+        "cpFingerprint": {
+          "COLS": 1.0,
+          "NORM2": 0.0021577624175312406,
+          "ROWS": 8.0,
+          "SUM": -0.075141452696496
+        },
+        "cpReturncode": 0,
+        "cpStatistics": {
+          "compilationSeconds": 5.024638,
+          "executionSeconds": 0.738
+        },
+        "dynamicNativeExecution": null,
+        "expected": "success",
+        "fedFingerprint": {
+          "COLS": 1.0,
+          "NORM2": 0.002157762417531243,
+          "ROWS": 8.0,
+          "SUM": -0.07514145269649591
+        },
+        "fedNoRelocation": false,
+        "fedReturncode": 0,
+        "fedStatistics": {
+          "compilationSeconds": 14.032942,
+          "executionSeconds": 2.537
+        },
+        "lossProgress": null,
+        "modelComparison": {
+          "actualEntries": 8,
+          "entries": 8,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 8.413408858487514e-17,
+          "nonzero": true
+        },
+        "passed": true,
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 259407,
+            "clusters": 2294,
+            "conditionalAttempts": 5,
+            "conditionalImprovements": 2,
+            "dpNanos": 899160133,
+            "elapsedNanos": 975933739,
+            "improvements": 2,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1534,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 2264141735,
+            "relativeGap": 0.011083284007794878,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 8627088,
+            "upper": 21.385960545366007,
+            "validationNanos": 38926995
+          },
+          "initial": {
+            "assignments": 259407,
+            "clusters": 2294,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 45601906,
+            "elapsedNanos": 87594212,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1534,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 1375811455,
+            "relativeGap": 2.395225246626159,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 71.81421581727763,
+            "validationNanos": 14577334
+          },
+          "seedBoundary": {
+            "assignments": 259407,
+            "clusters": 2294,
+            "conditionalAttempts": 5,
+            "conditionalImprovements": 2,
+            "dpNanos": 899160133,
+            "elapsedNanos": 975149223,
+            "improvements": 2,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1534,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 2263365965,
+            "relativeGap": 0.011083284007794878,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 8627088,
+            "upper": 21.385960545366007,
+            "validationNanos": 38926995
+          },
+          "seedBoundaryCount": 1
+        },
+        "plannerTraceComplete": true,
+        "requiresBranchUpload": false,
+        "requiresFedNoRelocation": false,
+        "runtimeAuditViolations": [],
+        "phaseSeconds": {
+          "analysis": 10.044800692,
+          "planner": 2.737479798
+        },
+        "partialFreeze": {
+          "records": 0,
+          "logicalCells": 0,
+          "partialCalls": 0,
+          "leafCalls": 0,
+          "provenSubtrees": 0,
+          "subtreeCells": 0,
+          "elapsedSeconds": 0.0,
+          "largest": []
+        },
+        "plannerCheckpointCount": 4,
+        "rawResult": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-candidate-01/result.json"
+      },
+      "after": {
+        "actionDiagnostics": [
+          "Federated prefetch count:\t0."
+        ],
+        "auditErrors": [],
+        "auditRows": 333,
+        "auditSchemas": [
+          "fed-runtime-capability-v1",
+          "fed-runtime-conversion-frontier-v1",
+          "fedplanner-candidate-space-v1"
+        ],
+        "branchUploadLoweredAndExecuted": false,
+        "case": "ml_l2svm",
+        "cpFingerprint": {
+          "COLS": 1.0,
+          "NORM2": 0.0021577624175312406,
+          "ROWS": 8.0,
+          "SUM": -0.075141452696496
+        },
+        "cpReturncode": 0,
+        "cpStatistics": {
+          "compilationSeconds": 4.661303,
+          "executionSeconds": 0.731
+        },
+        "dynamicNativeExecution": null,
+        "expected": "success",
+        "fedFingerprint": {
+          "COLS": 1.0,
+          "NORM2": 0.002157762417531243,
+          "ROWS": 8.0,
+          "SUM": -0.07514145269649591
+        },
+        "fedNoRelocation": false,
+        "fedReturncode": 0,
+        "fedStatistics": {
+          "compilationSeconds": 10.657729,
+          "executionSeconds": 0.97
+        },
+        "lossProgress": null,
+        "modelComparison": {
+          "actualEntries": 8,
+          "entries": 8,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 8.413408858487514e-17,
+          "nonzero": true
+        },
+        "passed": true,
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 259407,
+            "clusters": 2294,
+            "conditionalAttempts": 5,
+            "conditionalImprovements": 2,
+            "dpNanos": 603187588,
+            "elapsedNanos": 656281044,
+            "improvements": 2,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1534,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 1784190444,
+            "relativeGap": 0.011083284007794878,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 6761173,
+            "upper": 21.385960545366007,
+            "validationNanos": 26623608
+          },
+          "initial": {
+            "assignments": 259407,
+            "clusters": 2294,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 32198124,
+            "elapsedNanos": 60258675,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1534,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 1188182070,
+            "relativeGap": 2.395225246626159,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 71.81421581727763,
+            "validationNanos": 9964389
+          },
+          "seedBoundary": {
+            "assignments": 259407,
+            "clusters": 2294,
+            "conditionalAttempts": 5,
+            "conditionalImprovements": 2,
+            "dpNanos": 603187588,
+            "elapsedNanos": 655574714,
+            "improvements": 2,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1534,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 1783489083,
+            "relativeGap": 0.011083284007794878,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 6761173,
+            "upper": 21.385960545366007,
+            "validationNanos": 26623608
+          },
+          "seedBoundaryCount": 1
+        },
+        "plannerTraceComplete": true,
+        "requiresBranchUpload": false,
+        "requiresFedNoRelocation": false,
+        "runtimeAuditViolations": [],
+        "phaseSeconds": {
+          "analysis": 7.524007844,
+          "planner": 2.127283189
+        },
+        "partialFreeze": {
+          "records": 2,
+          "logicalCells": 306,
+          "partialCalls": 212,
+          "leafCalls": 0,
+          "provenSubtrees": 18,
+          "subtreeCells": 162,
+          "elapsedSeconds": 0.004221007,
+          "largest": [
+            {
+              "logicalCells": 153,
+              "partialCalls": 106,
+              "leafCalls": 0,
+              "zeroCells": 153,
+              "forbiddenCells": 0,
+              "provenSubtrees": 9,
+              "subtreeCells": 81,
+              "elapsedNanos": 2950232,
+              "domains": [
+                17,
+                1,
+                1,
+                9
+              ]
+            },
+            {
+              "logicalCells": 153,
+              "partialCalls": 106,
+              "leafCalls": 0,
+              "zeroCells": 153,
+              "forbiddenCells": 0,
+              "provenSubtrees": 9,
+              "subtreeCells": 81,
+              "elapsedNanos": 1270775,
+              "domains": [
+                17,
+                1,
+                1,
+                9
+              ]
+            }
+          ]
+        },
+        "runtimeAuditSummaries": [
+          {
+            "plan": "eecd6ebaeeaa7db4e5d3716c9e101b062f064805140e8631a7107ce53799554c",
+            "authorityGenerations": "1",
+            "plannedHops": "252",
+            "plannedPhysicalHops": "118",
+            "loweredPhysicalHops": "118",
+            "missingPhysicalHops": "0",
+            "plannedSynthetic": "0",
+            "missingSynthetic": "0",
+            "loweringRecords": "411",
+            "runtimeInstructionKinds": "166",
+            "federatedDispatchKinds": "13",
+            "workerFragmentKinds": "0",
+            "mismatches": "0"
+          }
+        ],
+        "plannerCheckpointCount": 4,
+        "rawResult": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/legal-prefix-candidate-01/result.json"
+      }
+    },
+    {
+      "case": "ml_lm",
+      "before": {
+        "actionDiagnostics": [
+          "Federated prefetch count:\t0."
+        ],
+        "auditErrors": [],
+        "auditRows": 172,
+        "auditSchemas": [
+          "fed-runtime-capability-v1",
+          "fed-runtime-conversion-frontier-v1",
+          "fedplanner-candidate-space-v1"
+        ],
+        "branchUploadLoweredAndExecuted": false,
+        "case": "ml_lm",
+        "cpFingerprint": {
+          "COLS": 1.0,
+          "NORM2": 2.5193362505008015,
+          "ROWS": 8.0,
+          "SUM": 4.000516427347455
+        },
+        "cpReturncode": 0,
+        "cpStatistics": {
+          "compilationSeconds": 3.607798,
+          "executionSeconds": 0.421
+        },
+        "dynamicNativeExecution": null,
+        "expected": "success",
+        "fedFingerprint": {
+          "COLS": 1.0,
+          "NORM2": 2.519336250500799,
+          "ROWS": 8.0,
+          "SUM": 4.000516427347454
+        },
+        "fedNoRelocation": false,
+        "fedReturncode": 0,
+        "fedStatistics": {
+          "compilationSeconds": 6.44834,
+          "executionSeconds": 0.819
+        },
+        "lossProgress": null,
+        "modelComparison": {
+          "actualEntries": 8,
+          "entries": 8,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 1.2212453270876722e-15,
+          "nonzero": true
+        },
+        "passed": true,
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 21595,
+            "clusters": 1065,
+            "conditionalAttempts": 1,
+            "conditionalImprovements": 1,
+            "dpNanos": 219360895,
+            "elapsedNanos": 253176814,
+            "improvements": 1,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 774,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 812520382,
+            "relativeGap": 0.008141441118854212,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 2825159,
+            "upper": 21.2628479582568,
+            "validationNanos": 15493768
+          },
+          "initial": {
+            "assignments": 21595,
+            "clusters": 1065,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 19239966,
+            "elapsedNanos": 42821915,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 774,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 602173960,
+            "relativeGap": 2.399110611511323,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 71.69110323016842,
+            "validationNanos": 9898264
+          },
+          "seedBoundary": {
+            "assignments": 21595,
+            "clusters": 1065,
+            "conditionalAttempts": 1,
+            "conditionalImprovements": 1,
+            "dpNanos": 219360895,
+            "elapsedNanos": 252681819,
+            "improvements": 1,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 774,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 812030347,
+            "relativeGap": 0.008141441118854212,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 2825159,
+            "upper": 21.2628479582568,
+            "validationNanos": 15493768
+          },
+          "seedBoundaryCount": 1
+        },
+        "plannerTraceComplete": true,
+        "requiresBranchUpload": false,
+        "requiresFedNoRelocation": false,
+        "runtimeAuditViolations": [],
+        "phaseSeconds": {
+          "analysis": 4.214443177,
+          "planner": 1.085462624
+        },
+        "partialFreeze": {
+          "records": 0,
+          "logicalCells": 0,
+          "partialCalls": 0,
+          "leafCalls": 0,
+          "provenSubtrees": 0,
+          "subtreeCells": 0,
+          "elapsedSeconds": 0.0,
+          "largest": []
+        },
+        "plannerCheckpointCount": 4,
+        "rawResult": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-candidate-01/result.json"
+      },
+      "after": {
+        "actionDiagnostics": [
+          "Federated prefetch count:\t0."
+        ],
+        "auditErrors": [],
+        "auditRows": 172,
+        "auditSchemas": [
+          "fed-runtime-capability-v1",
+          "fed-runtime-conversion-frontier-v1",
+          "fedplanner-candidate-space-v1"
+        ],
+        "branchUploadLoweredAndExecuted": false,
+        "case": "ml_lm",
+        "cpFingerprint": {
+          "COLS": 1.0,
+          "NORM2": 2.5193362505008015,
+          "ROWS": 8.0,
+          "SUM": 4.000516427347455
+        },
+        "cpReturncode": 0,
+        "cpStatistics": {
+          "compilationSeconds": 3.060314,
+          "executionSeconds": 0.32
+        },
+        "dynamicNativeExecution": null,
+        "expected": "success",
+        "fedFingerprint": {
+          "COLS": 1.0,
+          "NORM2": 2.519336250500799,
+          "ROWS": 8.0,
+          "SUM": 4.000516427347454
+        },
+        "fedNoRelocation": false,
+        "fedReturncode": 0,
+        "fedStatistics": {
+          "compilationSeconds": 5.613585,
+          "executionSeconds": 0.606
+        },
+        "lossProgress": null,
+        "modelComparison": {
+          "actualEntries": 8,
+          "entries": 8,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 1.2212453270876722e-15,
+          "nonzero": true
+        },
+        "passed": true,
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 21595,
+            "clusters": 1065,
+            "conditionalAttempts": 1,
+            "conditionalImprovements": 1,
+            "dpNanos": 152295468,
+            "elapsedNanos": 180448172,
+            "improvements": 1,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 774,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 665185356,
+            "relativeGap": 0.008141441118854212,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 2806304,
+            "upper": 21.2628479582568,
+            "validationNanos": 11448893
+          },
+          "initial": {
+            "assignments": 21595,
+            "clusters": 1065,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 14932772,
+            "elapsedNanos": 33894943,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 774,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 518639301,
+            "relativeGap": 2.399110611511323,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 71.69110323016842,
+            "validationNanos": 6442949
+          },
+          "seedBoundary": {
+            "assignments": 21595,
+            "clusters": 1065,
+            "conditionalAttempts": 1,
+            "conditionalImprovements": 1,
+            "dpNanos": 152295468,
+            "elapsedNanos": 179738246,
+            "improvements": 1,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 774,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 664482463,
+            "relativeGap": 0.008141441118854212,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 2806304,
+            "upper": 21.2628479582568,
+            "validationNanos": 11448893
+          },
+          "seedBoundaryCount": 1
+        },
+        "plannerTraceComplete": true,
+        "requiresBranchUpload": false,
+        "requiresFedNoRelocation": false,
+        "runtimeAuditViolations": [],
+        "phaseSeconds": {
+          "analysis": 3.742091382,
+          "planner": 0.856537733
+        },
+        "partialFreeze": {
+          "records": 0,
+          "logicalCells": 0,
+          "partialCalls": 0,
+          "leafCalls": 0,
+          "provenSubtrees": 0,
+          "subtreeCells": 0,
+          "elapsedSeconds": 0.0,
+          "largest": []
+        },
+        "runtimeAuditSummaries": [
+          {
+            "plan": "6fc2183bc1e8292f5fe9075fd3e8c1f8c8cc2eacffcef558626cb2d130ae4de7",
+            "authorityGenerations": "1",
+            "plannedHops": "124",
+            "plannedPhysicalHops": "54",
+            "loweredPhysicalHops": "54",
+            "missingPhysicalHops": "0",
+            "plannedSynthetic": "0",
+            "missingSynthetic": "0",
+            "loweringRecords": "148",
+            "runtimeInstructionKinds": "91",
+            "federatedDispatchKinds": "13",
+            "workerFragmentKinds": "0",
+            "mismatches": "0"
+          }
+        ],
+        "plannerCheckpointCount": 4,
+        "rawResult": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/legal-prefix-candidate-01/result.json"
+      }
+    },
+    {
+      "case": "ml_logreg",
+      "before": {
+        "actionDiagnostics": [],
+        "auditErrors": [],
+        "auditRows": 682,
+        "auditSchemas": [
+          "fedplanner-candidate-space-v1"
+        ],
+        "branchUploadLoweredAndExecuted": false,
+        "case": "ml_logreg",
+        "cpFingerprint": {
+          "COLS": 2.0,
+          "NORM2": 0.18221965264382198,
+          "ROWS": 8.0,
+          "SUM": -0.8322576710419777
+        },
+        "cpReturncode": 0,
+        "cpStatistics": {
+          "compilationSeconds": 9.565547,
+          "executionSeconds": 1.368
+        },
+        "dynamicNativeExecution": null,
+        "expected": "success",
+        "fedFingerprint": {},
+        "fedNoRelocation": false,
+        "fedReturncode": 124,
+        "fedStatistics": {},
+        "lossProgress": null,
+        "modelComparison": {
+          "actualEntries": 0,
+          "entries": 16,
+          "errors": [
+            "[Errno 2] No such file or directory: '/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-candidate-01/cases/ml_logreg/fed-model.csv'"
+          ],
+          "finite": false,
+          "matched": false,
+          "maxAbsDifference": null,
+          "nonzero": true
+        },
+        "passed": false,
+        "plannerCheckpointSummary": {
+          "final": null,
+          "initial": null,
+          "seedBoundary": null,
+          "seedBoundaryCount": 0
+        },
+        "plannerTraceComplete": false,
+        "requiresBranchUpload": false,
+        "requiresFedNoRelocation": false,
+        "runtimeAuditViolations": [],
+        "phaseSeconds": {
+          "analysis": 48.856552679
+        },
+        "partialFreeze": {
+          "records": 0,
+          "logicalCells": 0,
+          "partialCalls": 0,
+          "leafCalls": 0,
+          "provenSubtrees": 0,
+          "subtreeCells": 0,
+          "elapsedSeconds": 0.0,
+          "largest": []
+        },
+        "plannerCheckpointCount": 0,
+        "rawResult": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-candidate-01/result.json"
+      },
+      "after": {
+        "actionDiagnostics": [
+          "--------CP prefetch _mVar31.MATRIX.FP64.false _mVar29.MATRIX.FP64 1",
+          "15  prefetch         0.022      1",
+          "Federated prefetch count:\t0.",
+          "[PlannerRuntimeAudit][Execution] status=MATCH plan=94a14230818e2b773c69d91b4eca7716ea5ae2449dba87fba5202e2316fe8ed2 auditKey=1b70102f80958d84 hop=-1 lop=1617 signature=- opcode=prefetch plannedTarget=SYNTHETIC/LOCAL plannedPhysical=CP/LOUT plannedValue=null/LOUT syntheticAction=dac464697acae8e4 actual=CP/LOUT count=1",
+          "[PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=94a14230818e2b773c69d91b4eca7716ea5ae2449dba87fba5202e2316fe8ed2 action=b057e6783e2a3319 stage=LOCAL token=dac464697acae8e4 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=1b70102f80958d84",
+          "[PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=94a14230818e2b773c69d91b4eca7716ea5ae2449dba87fba5202e2316fe8ed2 action=b057e6783e2a3319 stage=LOCAL token=dac464697acae8e4 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=2bec3f71a3470af0",
+          "[PlannerRuntimeAudit][Lowering-Synthetic] status=MATCH plan=94a14230818e2b773c69d91b4eca7716ea5ae2449dba87fba5202e2316fe8ed2 action=b057e6783e2a3319 stage=LOCAL token=dac464697acae8e4 opcode=prefetch plannedPhysical=CP/LOUT actual=CP/LOUT auditKey=897457fc6db67799"
+        ],
+        "auditErrors": [],
+        "auditRows": 704,
+        "auditSchemas": [
+          "fed-runtime-capability-v1",
+          "fed-runtime-conversion-frontier-v1",
+          "fedplanner-candidate-space-v1"
+        ],
+        "branchUploadLoweredAndExecuted": false,
+        "case": "ml_logreg",
+        "cpFingerprint": {
+          "COLS": 2.0,
+          "NORM2": 0.18221965264382198,
+          "ROWS": 8.0,
+          "SUM": -0.8322576710419777
+        },
+        "cpReturncode": 0,
+        "cpStatistics": {
+          "compilationSeconds": 8.857927,
+          "executionSeconds": 1.091
+        },
+        "dynamicNativeExecution": null,
+        "expected": "success",
+        "fedFingerprint": {
+          "COLS": 2.0,
+          "NORM2": 0.18221965264382206,
+          "ROWS": 8.0,
+          "SUM": -0.8322576710419773
+        },
+        "fedNoRelocation": false,
+        "fedReturncode": 0,
+        "fedStatistics": {
+          "compilationSeconds": 89.965411,
+          "executionSeconds": 3.869
+        },
+        "lossProgress": null,
+        "modelComparison": {
+          "actualEntries": 16,
+          "entries": 16,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 2.220446049250313e-16,
+          "nonzero": true
+        },
+        "passed": true,
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 41364677,
+            "clusters": 3457,
+            "conditionalAttempts": 40,
+            "conditionalImprovements": 4,
+            "dpNanos": 15856380875,
+            "elapsedNanos": 16380031456,
+            "improvements": 4,
+            "internalDecisions": 49,
+            "lower": 120.54269578813249,
+            "merges": 4500,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 43420790236,
+            "relativeGap": 0.014298813731032978,
+            "resourceRejected": 704,
+            "retainedSlots": 9705012,
+            "scoringNanos": 226826398,
+            "upper": 122.26631334184357,
+            "validationNanos": 131784550
+          },
+          "initial": {
+            "assignments": 25762252,
+            "clusters": 5347,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 473309337,
+            "elapsedNanos": 566364560,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 2.8587210976952604,
+            "merges": 3280,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 27607137967,
+            "relativeGap": 531.2774853737075,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 1521.6328772659972,
+            "validationNanos": 25651770
+          },
+          "seedBoundary": {
+            "assignments": 25762252,
+            "clusters": 5347,
+            "conditionalAttempts": 40,
+            "conditionalImprovements": 4,
+            "dpNanos": 14438195406,
+            "elapsedNanos": 14643926164,
+            "improvements": 4,
+            "internalDecisions": 0,
+            "lower": 2.8587210976952604,
+            "merges": 3280,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 41684694492,
+            "relativeGap": 41.76958442725188,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 18762198,
+            "upper": 122.26631334184357,
+            "validationNanos": 117678453
+          },
+          "seedBoundaryCount": 1
+        },
+        "plannerTraceComplete": true,
+        "requiresBranchUpload": false,
+        "requiresFedNoRelocation": false,
+        "runtimeAuditViolations": [],
+        "phaseSeconds": {
+          "analysis": 43.897266807,
+          "planner": 44.728051692
+        },
+        "partialFreeze": {
+          "records": 4,
+          "logicalCells": 25006639,
+          "partialCalls": 2547734,
+          "leafCalls": 0,
+          "provenSubtrees": 359,
+          "subtreeCells": 22602159,
+          "elapsedSeconds": 20.175256933,
+          "largest": [
+            {
+              "logicalCells": 25006592,
+              "partialCalls": 2547709,
+              "leafCalls": 0,
+              "zeroCells": 22608192,
+              "forbiddenCells": 2398400,
+              "provenSubtrees": 340,
+              "subtreeCells": 22602112,
+              "elapsedNanos": 20174634120,
+              "domains": [
+                8,
+                1,
+                104,
+                17,
+                104,
+                17
+              ]
+            },
+            {
+              "logicalCells": 16,
+              "partialCalls": 3,
+              "leafCalls": 0,
+              "zeroCells": 16,
+              "forbiddenCells": 0,
+              "provenSubtrees": 2,
+              "subtreeCells": 16,
+              "elapsedNanos": 68748,
+              "domains": [
+                2,
+                1,
+                1,
+                8
+              ]
+            },
+            {
+              "logicalCells": 16,
+              "partialCalls": 3,
+              "leafCalls": 0,
+              "zeroCells": 16,
+              "forbiddenCells": 0,
+              "provenSubtrees": 2,
+              "subtreeCells": 16,
+              "elapsedNanos": 26770,
+              "domains": [
+                2,
+                1,
+                1,
+                8
+              ]
+            },
+            {
+              "logicalCells": 15,
+              "partialCalls": 19,
+              "leafCalls": 0,
+              "zeroCells": 15,
+              "forbiddenCells": 0,
+              "provenSubtrees": 15,
+              "subtreeCells": 15,
+              "elapsedNanos": 527295,
+              "domains": [
+                3,
+                5,
+                1
+              ]
+            }
+          ]
+        },
+        "runtimeAuditSummaries": [
+          {
+            "plan": "94a14230818e2b773c69d91b4eca7716ea5ae2449dba87fba5202e2316fe8ed2",
+            "authorityGenerations": "1",
+            "plannedHops": "524",
+            "plannedPhysicalHops": "207",
+            "loweredPhysicalHops": "207",
+            "missingPhysicalHops": "0",
+            "plannedSynthetic": "1",
+            "missingSynthetic": "0",
+            "loweringRecords": "911",
+            "runtimeInstructionKinds": "338",
+            "federatedDispatchKinds": "24",
+            "workerFragmentKinds": "0",
+            "mismatches": "0"
+          }
+        ],
+        "plannerCheckpointCount": 1224,
+        "rawResult": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/legal-prefix-candidate-01/result.json"
+      }
+    }
+  ],
+  "limitations": [
+    "Single shared-host run, trace/audit enabled; not a statistical speedup claim.",
+    "192x8 synthetic protected X with actual builtin training; not full staged campaign.",
+    "Dense Cartesian storage is retained; certified-subtree evaluation is pruned.",
+    "Generic FType oracle and unconstrained legal products remain in the audited inventory."
+  ]
+}

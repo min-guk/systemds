@@ -1,0 +1,803 @@
+{
+  "schema": "systemds-boundary-seed-latest-main-ml-v1",
+  "integration": {
+    "oldHead": "0146f043e07ca445d9084257759aa78fe14ddf55",
+    "fetchedMain": "ada24ffd4be4d17240f32f5bd1c2b5a98e1a0c8a",
+    "files": {
+      "docs/SESSION_ISSUES_2026-10-06.md": "0a4d88eab8ea3ea1d6292e2e11bc2a742e478c4a9d11761c5e1247d3fee555b5",
+      "scripts/fedplanner/run_joint_boundary_e2e.py": "8fd6ec02fb56ff95acc5dcd733e2a7152a5220036434cb03b74394bc41ba4eca",
+      "scripts/fedplanner/tests/test_run_joint_boundary_e2e.py": "45a9cec5ad24136a268ea3a029573ce1b2e5c5f212b2959183f4b89d48e40666",
+      "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer.java": "855e1fde63f4ec49d57445e4856815e093e6a58dd91d74bf3365a012e0f83bbf",
+      "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/RegionalSearchProblem.java": "50d6de8218f18881ef800526d3333a1d28790e2fbae29980d67a78b35eea739e",
+      "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizerTest.java": "b72262d3617e5284bb1f08dfa1120047ee9db9689f2ab057c682784df0cede79",
+      "docs/LOCAL_DP_SEED_BOUNDARY_OPTIMIZATION_2026-10-06_KO.md": "b4727cfad577c0b6b2b2560f3c7154b37f66727db146ccfdc850c21d8200cb1d",
+      "docs/experiments/boundary-seed-20261006/ml-validation.json": "4fe9d7690d89053c5c719c5e3cb6dcace17388abc93fb4d960718a95d7b742ca",
+      "docs/experiments/boundary-seed-20261006/validation.json": "fe0b62d52bb4b803cdf4820716940842b6816bd478ea69f9b3c95b17a01497c4",
+      "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalBoundarySeedTest.java": "94a3c7af37ccdaa8b3be82ce501eb761fc0258a6a79b8bb7eb41bdcb3bf07db5"
+    },
+    "stashObject": "83c6f744381d0f91f9508f23209107614993c72b",
+    "updatedHead": "ada24ffd4be4d17240f32f5bd1c2b5a98e1a0c8a",
+    "allPriorFeatureFilesPreserved": true,
+    "conflictResolution": "Session issues: append both independent records, preserve latest main and local feature sections."
+  },
+  "baselineBuild": {
+    "baselineCommit": "ada24ffd4be4d17240f32f5bd1c2b5a98e1a0c8a",
+    "compileCommand": [
+      "javac",
+      "--release",
+      "17",
+      "-cp",
+      "/home/mchoi/w1357-structural-grounding-20261006/target/classes:/home/mchoi/w1357-structural-grounding-20261006/target/lib/*",
+      "-d",
+      "/home/mchoi/w1357-structural-grounding-20261006/target/boundary-seed-evidence/latest-main/baseline/classes",
+      "/home/mchoi/w1357-structural-grounding-20261006/target/boundary-seed-evidence/latest-main/baseline/sources/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer.java",
+      "/home/mchoi/w1357-structural-grounding-20261006/target/boundary-seed-evidence/latest-main/baseline/sources/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/RegionalSearchProblem.java"
+    ],
+    "classDifferencesFromCandidate": [
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer$Result.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer$Neighborhood.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer$Options.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer$Candidate.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer$Node.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer$Checkpoint.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/RegionalSearchProblem.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer.class"
+    ],
+    "sourceHashes": {
+      "IncrementalRegionalOptimizer": "fca6c391232ad8e213ffabe708ddc89b05fd937d515febdf311ecc36c3c624ff",
+      "RegionalSearchProblem": "f792edcc0d109d0e4a1a1070521a9a5bf4c40a055af7ede81f367912a443171a"
+    },
+    "note": "Only two production source families rebuilt from fetched main; all other compiled classes and resources identical to latest-main candidate."
+  },
+  "javaRegression": {
+    "status": "PASSED",
+    "classes": 24,
+    "tests": 240,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "results": [
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CostBasedPruningTest",
+        "tests": "4",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.173"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolverTest",
+        "tests": "21",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.339"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalConfigurationTest",
+        "tests": "8",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.051"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointPhysicalCostTest",
+        "tests": "3",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "8.78"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.SharedRegionalCompactionParityTest",
+        "tests": "7",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.431"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalSeedTest",
+        "tests": "4",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.157"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.SharedReductionRepairTest",
+        "tests": "6",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.394"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.BoundaryPruningTest",
+        "tests": "6",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.131"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalReducedSolverTest",
+        "tests": "35",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.758"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.PlannerResourceGuardTest",
+        "tests": "7",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.051"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCompiledSupplySharingTest",
+        "tests": "1",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "6.127"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.LocalPhysicalOptimizerIncrementalTraceTest",
+        "tests": "2",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.035"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.SharedRegionalPreparationTest",
+        "tests": "11",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "1.102"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanLocalCostIntegrationTest",
+        "tests": "1",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "4.624"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolverArithmeticParityTest",
+        "tests": "9",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.612"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalNativeSupplyRepresentationTest",
+        "tests": "4",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "7.591"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointBoundaryPhysicalModelProofTest",
+        "tests": "10",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "36.434"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalDyadicCertificateTest",
+        "tests": "5",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "6.204"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDerivedSupplySharingTest",
+        "tests": "3",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.539"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalSharedSourceEncodingTest",
+        "tests": "25",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "4.793"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalBoundaryMessageTest",
+        "tests": "17",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.388"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalBoundarySeedTest",
+        "tests": "11",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.512"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.IncrementalRegionalOptimizerTest",
+        "tests": "19",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "1.569"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.LocalCategoricalOptimizerTest",
+        "tests": "21",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.667"
+      }
+    ],
+    "jarSha256": "5d63a1020a6984bc3ca55569c9703c40f47ed2d079ed50d77c3d68160b238075",
+    "log": "/home/mchoi/w1357-structural-grounding-20261006/target/boundary-seed-evidence/latest-main/regression.log"
+  },
+  "pythonHarnessTests": {
+    "tests": 25,
+    "failures": 0
+  },
+  "experiment": {
+    "baseCommit": "ada24ffd4be4d17240f32f5bd1c2b5a98e1a0c8a",
+    "candidateSource": "latest main plus preserved boundary seed feature",
+    "baselineSource": "unmodified latest main production sources",
+    "cases": [
+      "ml_l2svm",
+      "ml_lm",
+      "ml_logreg"
+    ],
+    "rows": 192,
+    "columns": 8,
+    "workers": 3,
+    "caseTimeoutSeconds": 300,
+    "runRoot": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006",
+    "runs": [
+      "latest-main-candidate-01",
+      "latest-main-baseline-01"
+    ],
+    "scope": "actual builtin training only, no GD supplemental cases; one sequential pair, trace/audit enabled"
+  },
+  "casesPassedOnBothVersions": 2,
+  "casesAttemptedOnBothVersions": 3,
+  "provenance": {
+    "expectedClassDifferences": [
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer$Candidate.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer$Checkpoint.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer$Neighborhood.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer$Node.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer$Options.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer$Result.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/RegionalSearchProblem.class"
+    ],
+    "sameOtherClassesResourcesDependencies": true,
+    "sameTestClassesAndSources": true,
+    "sameInputsScriptsImage": true,
+    "currentProductionSourcesMatchFrozenCandidate": true,
+    "ownContainersRemoved": true
+  },
+  "runs": {
+    "baseline": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-baseline-01",
+      "result": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-baseline-01/result.json",
+      "status": "FAILED",
+      "modelProofPassed": true,
+      "classPreflightPassed": true,
+      "runtimeConversionViolations": []
+    },
+    "candidate": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-candidate-01",
+      "result": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-candidate-01/result.json",
+      "status": "FAILED",
+      "modelProofPassed": true,
+      "classPreflightPassed": true,
+      "runtimeConversionViolations": []
+    }
+  },
+  "cases": [
+    {
+      "case": "ml_l2svm",
+      "baseline": {
+        "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-baseline-01",
+        "passed": true,
+        "fedReturncode": 0,
+        "cpReturncode": 0,
+        "modelComparison": {
+          "actualEntries": 8,
+          "entries": 8,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 8.413408858487514e-17,
+          "nonzero": true
+        },
+        "checkpoints": {
+          "final": {
+            "assignments": 37779191,
+            "clusters": 1520,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 6455110373,
+            "elapsedNanos": 7003059403,
+            "improvements": 2,
+            "internalDecisions": 19,
+            "lower": 21.353231873338405,
+            "merges": 2015,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 10297402646,
+            "relativeGap": 0.0015327268594159302,
+            "resourceRejected": 264,
+            "retainedSlots": 6840092,
+            "scoringNanos": 290189919,
+            "upper": 21.385960545366007,
+            "validationNanos": 56957586
+          },
+          "initial": {
+            "assignments": 259407,
+            "clusters": 2294,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 81020211,
+            "elapsedNanos": 159061546,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1534,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 3453417342,
+            "relativeGap": 2.395225246626159,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 71.81421581727763,
+            "validationNanos": 23968960
+          },
+          "seedBoundary": null,
+          "seedBoundaryCount": 0
+        },
+        "times": {
+          "analysisSeconds": 17.758934809,
+          "plannerSeconds": 11.111367553,
+          "compilationSeconds": 31.47931,
+          "executionSeconds": 5.556
+        },
+        "auditSummary": [
+          {
+            "plan": "4baf6897a93658738d694f7f8ca9d90feebfbe9ea68ce8f0cc6767fc65e87a04",
+            "authorityGenerations": "1",
+            "plannedHops": "252",
+            "plannedPhysicalHops": "118",
+            "loweredPhysicalHops": "118",
+            "missingPhysicalHops": "0",
+            "plannedSynthetic": "0",
+            "missingSynthetic": "0",
+            "loweringRecords": "411",
+            "runtimeInstructionKinds": "166",
+            "federatedDispatchKinds": "13",
+            "workerFragmentKinds": "0",
+            "mismatches": "0"
+          }
+        ],
+        "auditErrors": [],
+        "runtimeAuditViolations": [],
+        "fedMatrixMultiplyCount": 17,
+        "threadDumpContainsCommonRootPreparation": false
+      },
+      "candidate": {
+        "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-candidate-01",
+        "passed": true,
+        "fedReturncode": 0,
+        "cpReturncode": 0,
+        "modelComparison": {
+          "actualEntries": 8,
+          "entries": 8,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 8.413408858487514e-17,
+          "nonzero": true
+        },
+        "checkpoints": {
+          "final": {
+            "assignments": 259407,
+            "clusters": 2294,
+            "conditionalAttempts": 5,
+            "conditionalImprovements": 2,
+            "dpNanos": 899160133,
+            "elapsedNanos": 975933739,
+            "improvements": 2,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1534,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 2264141735,
+            "relativeGap": 0.011083284007794878,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 8627088,
+            "upper": 21.385960545366007,
+            "validationNanos": 38926995
+          },
+          "initial": {
+            "assignments": 259407,
+            "clusters": 2294,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 45601906,
+            "elapsedNanos": 87594212,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1534,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 1375811455,
+            "relativeGap": 2.395225246626159,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 71.81421581727763,
+            "validationNanos": 14577334
+          },
+          "seedBoundary": {
+            "assignments": 259407,
+            "clusters": 2294,
+            "conditionalAttempts": 5,
+            "conditionalImprovements": 2,
+            "dpNanos": 899160133,
+            "elapsedNanos": 975149223,
+            "improvements": 2,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1534,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 2263365965,
+            "relativeGap": 0.011083284007794878,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 8627088,
+            "upper": 21.385960545366007,
+            "validationNanos": 38926995
+          },
+          "seedBoundaryCount": 1
+        },
+        "times": {
+          "analysisSeconds": 10.044800692,
+          "plannerSeconds": 2.737479798,
+          "compilationSeconds": 14.032942,
+          "executionSeconds": 2.537
+        },
+        "auditSummary": [
+          {
+            "plan": "7215137463fdf726e2c9aff35276ea734e12eeb0f0265ddc4aad48dc64c32cf0",
+            "authorityGenerations": "1",
+            "plannedHops": "252",
+            "plannedPhysicalHops": "118",
+            "loweredPhysicalHops": "118",
+            "missingPhysicalHops": "0",
+            "plannedSynthetic": "0",
+            "missingSynthetic": "0",
+            "loweringRecords": "411",
+            "runtimeInstructionKinds": "166",
+            "federatedDispatchKinds": "13",
+            "workerFragmentKinds": "0",
+            "mismatches": "0"
+          }
+        ],
+        "auditErrors": [],
+        "runtimeAuditViolations": [],
+        "fedMatrixMultiplyCount": 17,
+        "threadDumpContainsCommonRootPreparation": false
+      },
+      "comparison": {
+        "sameFinalModeledCost": true,
+        "initialCostMs": 71.81421581727763,
+        "seedCostMs": 21.385960545366007,
+        "finalCostMs": 21.385960545366007,
+        "baselineFinalCostMs": 21.385960545366007,
+        "seedReductionPercent": 70.22043574244418,
+        "seedSeconds": 0.887555011,
+        "seedPersistentCoverUnchanged": true,
+        "baselinePlannerSeconds": 11.111367553,
+        "candidatePlannerSeconds": 2.737479798
+      }
+    },
+    {
+      "case": "ml_lm",
+      "baseline": {
+        "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-baseline-01",
+        "passed": true,
+        "fedReturncode": 0,
+        "cpReturncode": 0,
+        "modelComparison": {
+          "actualEntries": 8,
+          "entries": 8,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 1.2212453270876722e-15,
+          "nonzero": true
+        },
+        "checkpoints": {
+          "final": {
+            "assignments": 329006,
+            "clusters": 759,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 152785533,
+            "elapsedNanos": 329127481,
+            "improvements": 3,
+            "internalDecisions": 8,
+            "lower": 21.262847958256792,
+            "merges": 955,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 1188540187,
+            "relativeGap": 3.3417100905534265e-16,
+            "resourceRejected": 25,
+            "retainedSlots": 210752,
+            "scoringNanos": 69558192,
+            "upper": 21.2628479582568,
+            "validationNanos": 56576745
+          },
+          "initial": {
+            "assignments": 21595,
+            "clusters": 1065,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 26374777,
+            "elapsedNanos": 51794909,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 774,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 911215430,
+            "relativeGap": 2.399110611511323,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 71.69110323016842,
+            "validationNanos": 11820319
+          },
+          "seedBoundary": null,
+          "seedBoundaryCount": 0
+        },
+        "times": {
+          "analysisSeconds": 6.886525269,
+          "plannerSeconds": 1.585604251,
+          "compilationSeconds": 10.054954,
+          "executionSeconds": 1.305
+        },
+        "auditSummary": [
+          {
+            "plan": "6fc2183bc1e8292f5fe9075fd3e8c1f8c8cc2eacffcef558626cb2d130ae4de7",
+            "authorityGenerations": "1",
+            "plannedHops": "124",
+            "plannedPhysicalHops": "54",
+            "loweredPhysicalHops": "54",
+            "missingPhysicalHops": "0",
+            "plannedSynthetic": "0",
+            "missingSynthetic": "0",
+            "loweringRecords": "148",
+            "runtimeInstructionKinds": "91",
+            "federatedDispatchKinds": "13",
+            "workerFragmentKinds": "0",
+            "mismatches": "0"
+          }
+        ],
+        "auditErrors": [],
+        "runtimeAuditViolations": [],
+        "fedMatrixMultiplyCount": 17,
+        "threadDumpContainsCommonRootPreparation": false
+      },
+      "candidate": {
+        "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-candidate-01",
+        "passed": true,
+        "fedReturncode": 0,
+        "cpReturncode": 0,
+        "modelComparison": {
+          "actualEntries": 8,
+          "entries": 8,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 1.2212453270876722e-15,
+          "nonzero": true
+        },
+        "checkpoints": {
+          "final": {
+            "assignments": 21595,
+            "clusters": 1065,
+            "conditionalAttempts": 1,
+            "conditionalImprovements": 1,
+            "dpNanos": 219360895,
+            "elapsedNanos": 253176814,
+            "improvements": 1,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 774,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 812520382,
+            "relativeGap": 0.008141441118854212,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 2825159,
+            "upper": 21.2628479582568,
+            "validationNanos": 15493768
+          },
+          "initial": {
+            "assignments": 21595,
+            "clusters": 1065,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 19239966,
+            "elapsedNanos": 42821915,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 774,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 602173960,
+            "relativeGap": 2.399110611511323,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 71.69110323016842,
+            "validationNanos": 9898264
+          },
+          "seedBoundary": {
+            "assignments": 21595,
+            "clusters": 1065,
+            "conditionalAttempts": 1,
+            "conditionalImprovements": 1,
+            "dpNanos": 219360895,
+            "elapsedNanos": 252681819,
+            "improvements": 1,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 774,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 812030347,
+            "relativeGap": 0.008141441118854212,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 2825159,
+            "upper": 21.2628479582568,
+            "validationNanos": 15493768
+          },
+          "seedBoundaryCount": 1
+        },
+        "times": {
+          "analysisSeconds": 4.214443177,
+          "plannerSeconds": 1.085462624,
+          "compilationSeconds": 6.44834,
+          "executionSeconds": 0.819
+        },
+        "auditSummary": [
+          {
+            "plan": "6fc2183bc1e8292f5fe9075fd3e8c1f8c8cc2eacffcef558626cb2d130ae4de7",
+            "authorityGenerations": "1",
+            "plannedHops": "124",
+            "plannedPhysicalHops": "54",
+            "loweredPhysicalHops": "54",
+            "missingPhysicalHops": "0",
+            "plannedSynthetic": "0",
+            "missingSynthetic": "0",
+            "loweringRecords": "148",
+            "runtimeInstructionKinds": "91",
+            "federatedDispatchKinds": "13",
+            "workerFragmentKinds": "0",
+            "mismatches": "0"
+          }
+        ],
+        "auditErrors": [],
+        "runtimeAuditViolations": [],
+        "fedMatrixMultiplyCount": 17,
+        "threadDumpContainsCommonRootPreparation": false
+      },
+      "comparison": {
+        "sameFinalModeledCost": true,
+        "initialCostMs": 71.69110323016842,
+        "seedCostMs": 21.2628479582568,
+        "finalCostMs": 21.2628479582568,
+        "baselineFinalCostMs": 21.2628479582568,
+        "seedReductionPercent": 70.34102280447381,
+        "seedSeconds": 0.209859904,
+        "seedPersistentCoverUnchanged": true,
+        "baselinePlannerSeconds": 1.585604251,
+        "candidatePlannerSeconds": 1.085462624
+      }
+    },
+    {
+      "case": "ml_logreg",
+      "baseline": {
+        "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-baseline-01",
+        "passed": false,
+        "fedReturncode": 124,
+        "cpReturncode": 0,
+        "modelComparison": {
+          "actualEntries": 0,
+          "entries": 16,
+          "errors": [
+            "[Errno 2] No such file or directory: '/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-baseline-01/cases/ml_logreg/fed-model.csv'"
+          ],
+          "finite": false,
+          "matched": false,
+          "maxAbsDifference": null,
+          "nonzero": true
+        },
+        "checkpoints": {
+          "final": null,
+          "initial": null,
+          "seedBoundary": null,
+          "seedBoundaryCount": 0
+        },
+        "times": {
+          "analysisSeconds": 53.830352634
+        },
+        "auditSummary": [],
+        "auditErrors": [],
+        "runtimeAuditViolations": [],
+        "fedMatrixMultiplyCount": 0,
+        "threadDumpContainsCommonRootPreparation": false
+      },
+      "candidate": {
+        "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-candidate-01",
+        "passed": false,
+        "fedReturncode": 124,
+        "cpReturncode": 0,
+        "modelComparison": {
+          "actualEntries": 0,
+          "entries": 16,
+          "errors": [
+            "[Errno 2] No such file or directory: '/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/latest-main-candidate-01/cases/ml_logreg/fed-model.csv'"
+          ],
+          "finite": false,
+          "matched": false,
+          "maxAbsDifference": null,
+          "nonzero": true
+        },
+        "checkpoints": {
+          "final": null,
+          "initial": null,
+          "seedBoundary": null,
+          "seedBoundaryCount": 0
+        },
+        "times": {
+          "analysisSeconds": 48.856552679
+        },
+        "auditSummary": [],
+        "auditErrors": [],
+        "runtimeAuditViolations": [],
+        "fedMatrixMultiplyCount": 0,
+        "threadDumpContainsCommonRootPreparation": true
+      }
+    }
+  ],
+  "limitations": [
+    "One pair with trace/audit enabled on a shared host, not a statistical speedup claim.",
+    "192x8 synthetic protected inputs using actual builtins, not full staged ML campaign.",
+    "Single Docker container loopback, 4 CPUs/8 GiB, 3 GiB coordinator heap.",
+    "Both variants use source default cost constants, no calibration overrides.",
+    "Comparison is on the fetched ada24 commit; previous 0146 results are historical."
+  ]
+}
