@@ -1,0 +1,333 @@
+{
+  "schema": "systemds-seed-prefix-main-publication-v1",
+  "verifiedCommit": "0bb200fb5cf15cdc7115ddd9faa3e70b49269672",
+  "integration": {
+    "previousValidatedCommit": "bcda73d0cce1dd9b90a16be74f980358e120d4d2",
+    "originMain": "825acfca9d36db8e45d847124602de0f32096d1e",
+    "integration": "0bb200fb5cf15cdc7115ddd9faa3e70b49269672",
+    "incomingPaths": [
+      "docs/SESSION_ISSUES_2026-10-06.md",
+      "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java",
+      "src/test/java/org/apache/sysds/hops/fedplanner/placement/LogregProtectedLoopSliceTest.java"
+    ]
+  },
+  "java": {
+    "tests": 356,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "log": "/home/mchoi/w1357-structural-grounding-20261006/target/candidate-pruning-evidence/main-publication-r2/regression.log",
+    "logSha256": "d5282fe938d697408cf25fc4013467ed6845247893dded45fb1ba30f2d0aaa80"
+  },
+  "separateKnownHeuristicChecks": {
+    "verifiedCommit": "bcda73d0cce1dd9b90a16be74f980358e120d4d2",
+    "tests": 9,
+    "passed": 7,
+    "preexistingErrors": 2,
+    "methods": [
+      "mixedFederatedBranchDoesNotAuthorizeLocalPhi",
+      "functionLoopKeepsLocalVectorTransposeAndLossInCP"
+    ],
+    "error": "Final publication has an unbound relocation action",
+    "log": "/home/mchoi/w1357-structural-grounding-20261006/target/candidate-pruning-evidence/main-publication/known-heuristic-errors.log"
+  },
+  "pythonHarnessTests": 25,
+  "sourceAndFrozenArtifactMatches": {
+    "main-sources": 1651,
+    "test-sources": 1932,
+    "main-classes": 4356,
+    "test-classes": 2815
+  },
+  "buildSourceSnapshotSha256": "91643f27392b72563e7dae84b03a6a70ac9dccda0e480a12c8b016949a9043bd",
+  "ml": {
+    "status": "PASSED",
+    "rawResult": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-seed-ml-20261006/legal-prefix-main-publication-r2/result.json",
+    "resultSha256": "ba63fe0800d9505b2d71a581c9665f59f1dc14c615df9d67c206f15fb62c7df5",
+    "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "sameInputAsLegalPrefixCandidate": true,
+    "classPreflightPassed": true,
+    "modelProofPassed": true,
+    "runtimeConversionViolations": [],
+    "cases": [
+      {
+        "case": "ml_logreg",
+        "passed": true,
+        "modelComparison": {
+          "actualEntries": 16,
+          "entries": 16,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 2.220446049250313e-16,
+          "nonzero": true
+        },
+        "fedStatistics": {
+          "compilationSeconds": 89.101444,
+          "executionSeconds": 3.847
+        },
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 41353447,
+            "clusters": 3527,
+            "conditionalAttempts": 40,
+            "conditionalImprovements": 4,
+            "dpNanos": 14836294384,
+            "elapsedNanos": 15405506575,
+            "improvements": 4,
+            "internalDecisions": 49,
+            "lower": 120.54269578813249,
+            "merges": 4566,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 37115112191,
+            "relativeGap": 0.014298813731032978,
+            "resourceRejected": 704,
+            "retainedSlots": 9691316,
+            "scoringNanos": 249226082,
+            "upper": 122.26631334184357,
+            "validationNanos": 117576394
+          },
+          "initial": {
+            "assignments": 25772596,
+            "clusters": 5419,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 523817366,
+            "elapsedNanos": 606295450,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 2.8587210976952604,
+            "merges": 3346,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 22315911145,
+            "relativeGap": 531.2774853737075,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 1521.6328772659972,
+            "validationNanos": 21652975
+          },
+          "seedBoundary": {
+            "assignments": 25772596,
+            "clusters": 5419,
+            "conditionalAttempts": 40,
+            "conditionalImprovements": 4,
+            "dpNanos": 13408819455,
+            "elapsedNanos": 13596282812,
+            "improvements": 4,
+            "internalDecisions": 0,
+            "lower": 2.8587210976952604,
+            "merges": 3346,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 35305898838,
+            "relativeGap": 41.76958442725188,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 18720414,
+            "upper": 122.26631334184357,
+            "validationNanos": 105649666
+          },
+          "seedBoundaryCount": 1
+        },
+        "auditErrors": [],
+        "runtimeAuditViolations": []
+      },
+      {
+        "case": "ml_l2svm",
+        "passed": true,
+        "modelComparison": {
+          "actualEntries": 8,
+          "entries": 8,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 8.413408858487514e-17,
+          "nonzero": true
+        },
+        "fedStatistics": {
+          "compilationSeconds": 12.810617,
+          "executionSeconds": 0.992
+        },
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 259420,
+            "clusters": 2307,
+            "conditionalAttempts": 5,
+            "conditionalImprovements": 2,
+            "dpNanos": 614410846,
+            "elapsedNanos": 667235944,
+            "improvements": 2,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1547,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 1801887303,
+            "relativeGap": 0.011083284007794878,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 6467596,
+            "upper": 21.385960545366007,
+            "validationNanos": 27272396
+          },
+          "initial": {
+            "assignments": 259420,
+            "clusters": 2307,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 31601577,
+            "elapsedNanos": 58875715,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1547,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 1193534037,
+            "relativeGap": 2.395225246626159,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 71.81421581727763,
+            "validationNanos": 9620649
+          },
+          "seedBoundary": {
+            "assignments": 259420,
+            "clusters": 2307,
+            "conditionalAttempts": 5,
+            "conditionalImprovements": 2,
+            "dpNanos": 614410846,
+            "elapsedNanos": 666593975,
+            "improvements": 2,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1547,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 1801247558,
+            "relativeGap": 0.011083284007794878,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 6467596,
+            "upper": 21.385960545366007,
+            "validationNanos": 27272396
+          },
+          "seedBoundaryCount": 1
+        },
+        "auditErrors": [],
+        "runtimeAuditViolations": []
+      },
+      {
+        "case": "ml_lm",
+        "passed": true,
+        "modelComparison": {
+          "actualEntries": 8,
+          "entries": 8,
+          "errors": [],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 1.2212453270876722e-15,
+          "nonzero": true
+        },
+        "fedStatistics": {
+          "compilationSeconds": 6.189509,
+          "executionSeconds": 0.686
+        },
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 21108,
+            "clusters": 1073,
+            "conditionalAttempts": 1,
+            "conditionalImprovements": 1,
+            "dpNanos": 158743706,
+            "elapsedNanos": 186914982,
+            "improvements": 1,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 782,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 702031259,
+            "relativeGap": 0.008141441118854212,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 2818247,
+            "upper": 21.2628479582568,
+            "validationNanos": 11501143
+          },
+          "initial": {
+            "assignments": 21108,
+            "clusters": 1073,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 14607287,
+            "elapsedNanos": 33199031,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 782,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 548328072,
+            "relativeGap": 2.399110611511323,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 71.69110323016842,
+            "validationNanos": 5945200
+          },
+          "seedBoundary": {
+            "assignments": 21108,
+            "clusters": 1073,
+            "conditionalAttempts": 1,
+            "conditionalImprovements": 1,
+            "dpNanos": 158743706,
+            "elapsedNanos": 186429495,
+            "improvements": 1,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 782,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 701550460,
+            "relativeGap": 0.008141441118854212,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 2818247,
+            "upper": 21.2628479582568,
+            "validationNanos": 11501143
+          },
+          "seedBoundaryCount": 1
+        },
+        "auditErrors": [],
+        "runtimeAuditViolations": []
+      }
+    ]
+  },
+  "als": {
+    "status": "passed",
+    "rawReceipt": "/home/mchoi/w1357-structural-grounding-20261006/target/fedpolicy-greedy-docker/als-run-c6xzdiy7/receipt.json",
+    "receiptSha256": "62e3307646b19b1307c0cfdbf1177f2d3228f57bde7cfb1f0ff7b698cd60f214",
+    "jarSha256": "3babcf427a3910ae8f872d03bdc9d4253fba7b1a90188fee06f923cb314ae974",
+    "matrixComparison": {
+      "shape": [
+        10,
+        20
+      ],
+      "shapeValid": true,
+      "allFinite": true,
+      "entriesCompared": 200,
+      "absoluteTolerance": 1e-08,
+      "relativeTolerance": 1e-07,
+      "maxAbsoluteDifference": 0.0,
+      "withinTolerance": true,
+      "cpOutputSha256": {
+        "cp-V.csv": "b6e7b0e5b5c482fc9dfd3a41db9a923c628d9830b5d1f036468221bd4345d597"
+      },
+      "fedallOutputSha256": {
+        "fedall-V.csv": "b6e7b0e5b5c482fc9dfd3a41db9a923c628d9830b5d1f036468221bd4345d597"
+      }
+    },
+    "auditSummary": "[PlannerRuntimeAudit][Summary] plan=bdbf7b6a3b4fbb50ed979db6d03e52dfa6c6736dce69dc3f81a4d320bff9f05f authorityGenerations=1 plannedHops=207 plannedPhysicalHops=74 loweredPhysicalHops=74 missingPhysicalHops=0 plannedSynthetic=10 missingSynthetic=0 loweringRecords=898 runtimeInstructionKinds=1045 federatedDispatchKinds=815 workerFragmentKinds=0 mismatches=0",
+    "runtimeFallbackCount": 0,
+    "runtimeRepairCount": 0
+  },
+  "limitations": [
+    "Shared host; concurrent correctness runs are not a controlled performance comparison.",
+    "Dense hard-factor table storage remains.",
+    "Two preexisting Heuristic analysis errors are reported separately from the passing targeted suite."
+  ]
+}
