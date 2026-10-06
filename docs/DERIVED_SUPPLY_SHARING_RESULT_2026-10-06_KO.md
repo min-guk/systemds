@@ -1,5 +1,7 @@
 # Native candidate / supply / derived sharing 구현 보고서
 
+최신 `origin/main` 통합 및 게시 검증은 [게시 보고서](DERIVED_SUPPLY_MAIN_PUBLICATION_2026-10-06_KO.md)를 참고한다.
+
 > 후속 수정: 이 보고서의 invariant FOUT→fresh staging→REFED N× 설명은 당시 구현의
 > 결과다. 현재는 원본 logical source/version을 유지하여 1×로 공유한다.
 > [후속 수정과 검증 보고서](INVARIANT_FOUT_SHARING_2026-10-06_KO.md)를 참조한다.

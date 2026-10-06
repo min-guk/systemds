@@ -655,11 +655,20 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 - **보고서/근거**: `docs/DYNAMIC_NATIVE_COMPOSITION_2026-10-06.md`, `.omx/dynamic-native-evidence/validation.json`. Docker: `/grid/3/cofee-lm-sweep-mchoi-20260914/dynamic-native-composition-20261006/dynamic-native-runtimefix/result.json`. 최종 Java source와 main/test class bytes는 성공한 frozen 빌드와 일치한다.
 
 
-## Derived supply sharing의 최신 origin/main 통합 — 검증 중
+## Derived supply sharing의 최신 origin/main 통합 — 통합·검증 완료
 
 - **환경/범위**: 별도 worktree `/home/mchoi/w1357-derived-supply-sharing-20261006`. 구현 커밋 `6b9ee37485`와 최신 원격 `0146f043e07ca445d9084257759aa78fe14ddf55`를 병합한다. 기존 worktree와 실행 중인 실험은 변경하지 않는다.
 - **증상/원인**: 양쪽에서 `ExactPhysicalCostModel`의 materialization activation과 세션 문서를 수정하여 textual conflict가 생겼다. 최신 main은 branch guard가 있는 다중 alias origin, auxiliary FED 통신 비용, native geometry/realization 및 resource guard 수정을 포함한다.
 - **해결/판단 근거**: upstream의 guarded alias creation과 auxiliary operator 비용을 유지하고, derived sharing의 `crossExecutionReuse`와 원본 source/version에 묶인 staged REFED upload를 함께 보존한다. 세션 기록은 양쪽 독립 항목을 모두 유지한다. Candidate legality/privacy/TW/TR 규칙을 완화하지 않는다.
 - **수정 파일**: `ExactPhysicalCostModel.java`, 이 문서. 자동 병합된 `Dag`, recompile/branch normalization 및 native output authority 경로는 독립 read-only 검토했다.
-- **검증**: merged Java 회귀와 13개 joint-boundary Docker 케이스를 실행할 예정이다. Python harness 20/20 및 shell syntax는 통과했다. 최종 결과는 게시 검증 보고서에 기록한다.
-- **잔여 이슈/회귀 위험**: dynamic native endpoint witness를 정확한 durable geometry로 오인하지 않는지 추가 확인한다. 기존 large-factor/다른 workload 통합 이슈의 해결을 주장하지 않으며 이 병합의 targeted regression과 구별한다.
+- **검증**: 기능 회귀 38 classes / 328 cases 중 324 PASS·기존 skip 4, 확대 63 classes / 573 cases 중 567 PASS·기존 skip 5·기존 GLM 오류 1. 최신 main의 retirement/eviction을 포함한 OwnedRefedReuseTest 30/30 PASS. Python 20/20, test-compile/shell/diff PASS. Docker model proof 12/12 및 E2E 13/13 기대 결과 PASS, runtime conversion 위반 0. 상세 수치/재현은 게시 검증 보고서 참조.
+- **추가 수정/회귀 위험**: dynamic native endpoint witness를 정확한 durable geometry로 오인하던 NativeSupplyRepresentation을 selected realization kind/lineage 보존으로 고치고 새 회귀를 통과했다. 기존 large-factor/GLM 등 다른 workload 이슈와 구별한다. 최종 production source/class는 성공한 Docker frozen 빌드와 일치하며 이후 변경한 테스트 1개는 별도로 검증했다.
+
+
+### 게시 검증 중 확인한 GLM 오류의 baseline 귀속 — 기존 결함으로 확인
+
+- **환경/증상**: 병합본 확대 Java 회귀 63 classes / 573 cases에서 567 PASS, 기존 skip 5, 오류 1. `actualBuiltinGlmDeadStraightenXIsZeroAndCgRemainsPositive`의 derived FOUT anchor authority 오류다.
+- **원인/판단 근거**: `0146f043e0` frozen baseline의 tracked Java source 3,549개와 Git blob을 전수 대조해 모두 일치함을 확인했다. 같은 method 1개만 실행하여 동일 오류를 재현했다. Placement graph/closure 단계이며 이번 physical cost/model 생성 전이다.
+- **해결/수정 파일**: 이 게시 작업에서 기존 GLM authority 규칙을 변경하거나 테스트를 skip하지 않는다. 재현과 귀속을 `DERIVED_SUPPLY_MAIN_PUBLICATION_2026-10-06_KO.md` 및 별도 evidence에 기록한다. 현재 기능의 38 classes / 328 cases는 324 PASS, 기존 skip 4, 실패/오류 0이다.
+- **추가 main 통합**: 검증 도중 들어온 `e8e42e93fa`까지의 문서/retirement·eviction 테스트 커밋도 병합했다. Production source 변경은 없고 최종 `OwnedRefedReuseTest` 30/30 PASS다.
+- **잔여 문제/회귀 위험**: GLM 함수 경계 authority 결함은 남아 있다. 이번 기능의 회귀와 분리해 같은 baseline method로 감지하며, 전체 저장소가 all-green이라고 주장하지 않는다. Immutable source-sharing과 cache retirement 후 재생성의 별도 계약을 유지한다.

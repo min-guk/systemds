@@ -1,0 +1,8 @@
+{
+  "class": "org.apache.sysds.runtime.controlprogram.federated.OwnedRefedReuseTest",
+  "tests": 30,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "seconds": 0.424
+}

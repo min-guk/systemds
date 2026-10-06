@@ -1,0 +1,54 @@
+{
+  "workspace": "/home/mchoi/w1357-derived-supply-sharing-20261006",
+  "implementationCommit": "6b9ee37485e6b42cf20513e7536d28f6e7ad2f91",
+  "firstUpstreamCommit": "0146f043e07ca445d9084257759aa78fe14ddf55",
+  "latestUpstreamCommit": "e8e42e93fa6fca0406fab4fcddcad22d4ee92f6f",
+  "featureRegression": {
+    "tests": 328,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 4
+  },
+  "expandedRegression": {
+    "tests": 573,
+    "failures": 0,
+    "errors": 1,
+    "skipped": 5
+  },
+  "latestOwnedRefedRegression": {
+    "class": "org.apache.sysds.runtime.controlprogram.federated.OwnedRefedReuseTest",
+    "tests": 30,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 0.424
+  },
+  "knownBaselineError": {
+    "class": "OccurrenceExecutionFrequencyFactsConstantBranchTest",
+    "method": "actualBuiltinGlmDeadStraightenXIsZeroAndCgRemainsPositive",
+    "sameErrorMessage": true,
+    "matchedBaselineJavaSources": 3549
+  },
+  "docker": {
+    "status": "PASSED",
+    "cases": 13,
+    "passed": 13,
+    "modelProofTests": 12,
+    "runtimeConversionViolations": 0,
+    "classPreflightPassed": true,
+    "realWorkerInvariantGetPut": [
+      1,
+      1
+    ],
+    "realWorkerUpdatedGetPut": [
+      3,
+      3
+    ],
+    "executions": 3
+  },
+  "productionBytesMatchFrozenDocker": true,
+  "testDifferenceVerifiedSeparately": [
+    "org/apache/sysds/runtime/controlprogram/federated/OwnedRefedReuseTest.class"
+  ],
+  "fullRepositoryAllGreen": false
+}

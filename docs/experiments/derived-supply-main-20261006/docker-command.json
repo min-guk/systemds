@@ -1,0 +1,19 @@
+{
+  "command": [
+    "scripts/fedplanner/run_LAN_docker.sh",
+    "--joint-boundary-e2e",
+    "--output-root",
+    "/grid/3/cofee-lm-sweep-mchoi-20260914/invariant-fout-sharing-20261006",
+    "--stage-root",
+    "/home/mchoi/w1357-derived-supply-sharing-20261006/target/invariant-fout-sharing-e2e",
+    "--run-id",
+    "invariant-fout-sharing-main-r1",
+    "--timeout-seconds",
+    "1200",
+    "--case-timeout-seconds",
+    "300",
+    "--model-proof-class",
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.InvariantFoutSharingDockerProof"
+  ],
+  "started": 1791316696.3837512
+}

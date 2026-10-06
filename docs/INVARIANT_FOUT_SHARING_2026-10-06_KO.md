@@ -1,5 +1,7 @@
 # Immutable FOUT staging의 REFED sharing 수정
 
+최신 `origin/main` 통합 및 게시 검증은 [게시 보고서](DERIVED_SUPPLY_MAIN_PUBLICATION_2026-10-06_KO.md)를 참고한다.
+
 ## 조사와 설계
 
 작업 위치는 `/home/mchoi/w1357-derived-supply-sharing-20261006`이다. 기준은
