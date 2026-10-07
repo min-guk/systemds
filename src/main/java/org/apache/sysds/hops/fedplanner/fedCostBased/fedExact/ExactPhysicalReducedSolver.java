@@ -799,6 +799,13 @@ final class ExactPhysicalReducedSolver {
 					reducedFactors.add(factor);
 					continue;
 				}
+				ExactCategoricalSolver.Factor functional = scope.length == 2
+					? factor.projectFunctionalMap(reducedScope, sourceValues[scope[0]], sourceValues[scope[1]])
+					: null;
+				if(functional != null) {
+					reducedFactors.add(functional);
+					continue;
+				}
 				ExactCategoricalSolver.CostFunction evaluator = factor.supportsPartialTruth()
 					? new PartialSupportedValueEvaluator(factor, scope, sourceValues)
 					: new SupportedValueEvaluator(factor, scope, sourceValues);
@@ -817,6 +824,11 @@ final class ExactPhysicalReducedSolver {
 	private static ExactCategoricalSolver.Factor projectFrozenFactor(
 		ExactCategoricalSolver.Factor source, List<ExactCategoricalSolver.Variable> reducedScope,
 		int[] scope, ExactCategoricalSolver.FrozenInputs frozen, int[][] representatives) {
+		ExactCategoricalSolver.Factor functional = scope.length == 2
+			? source.projectFunctionalMap(reducedScope, representatives[scope[0]], representatives[scope[1]])
+			: null;
+		if(functional != null)
+			return functional;
 		int cells = reducedScope.stream().mapToInt(
 			ExactCategoricalSolver.Variable::domainSize).reduce(1, Math::multiplyExact);
 		ExactCategoricalSolver.HardTable hard = source.isHardTable()
@@ -973,6 +985,9 @@ final class ExactPhysicalReducedSolver {
 	private static boolean reviseFrozenSupport(ExactCategoricalSolver.FrozenInputs frozen,
 		int factor, boolean[][] active, int[] removals) {
 		int[] scope = frozen.scope(factor);
+		ExactCategoricalSolver.FunctionalMap mapping = frozen.factor(factor).functionalMapping();
+		if(mapping != null)
+			return reviseFunctionalSupport(mapping, scope, active, removals);
 		boolean changed = false;
 		if(scope.length == 1) {
 			for(int value=0; value<active[scope[0]].length; value++)
@@ -1010,6 +1025,35 @@ final class ExactPhysicalReducedSolver {
 				}
 			}
 		}
+		return changed;
+	}
+
+	/** The same row-first, column-second binary revision, over the complete finite relation. */
+	private static boolean reviseFunctionalSupport(ExactCategoricalSolver.FunctionalMap mapping,
+		int[] scope, boolean[][] active, int[] removals) {
+		boolean[] rows = active[scope[0]], columns = active[scope[1]];
+		boolean[] reached = new boolean[columns.length];
+		boolean changed = false;
+		for(int row = 0; row < rows.length; row++) {
+			if(!rows[row])
+				continue;
+			int target = mapping.target(row);
+			if(target >= 0 && columns[target])
+				reached[target] = true;
+			else {
+				rows[row] = false;
+				if(removals != null)
+					removals[scope[0]]++;
+				changed = true;
+			}
+		}
+		for(int column = 0; column < columns.length; column++)
+			if(columns[column] && !reached[column]) {
+				columns[column] = false;
+				if(removals != null)
+				removals[scope[1]]++;
+				changed = true;
+			}
 		return changed;
 	}
 
@@ -1213,6 +1257,14 @@ final class ExactPhysicalReducedSolver {
 	private static boolean factorObservationsEqual(ExactCategoricalSolver.FrozenInputs frozen,
 		ObservationTraversal observation, int left, int right, boolean[][] active,
 		int position, int cell) {
+		if(position == 0 && observation.variablePosition == 0) {
+			ExactCategoricalSolver.FunctionalMap mapping = frozen.factor(observation.factor).functionalMapping();
+			if(mapping != null) {
+				boolean[] targets = active[observation.scope[1]];
+				return activeFunctionalTarget(mapping, left, targets)
+					== activeFunctionalTarget(mapping, right, targets);
+			}
+		}
 		if(position == observation.scope.length) {
 			int stride = observation.strides[observation.variablePosition];
 			long leftBits = Double.doubleToRawLongBits(
@@ -1277,11 +1329,38 @@ final class ExactPhysicalReducedSolver {
 								hashes.second[scopedVariable][value],~factor);
 						}
 				}
-			if(relevant)
-				compileFactorObservations(frozen,factor,scope,active,quotientVariableCount,
-					hashes,0,0);
+			if(relevant) {
+				ExactCategoricalSolver.FunctionalMap mapping = frozen.factor(factor).functionalMapping();
+				if(mapping != null && scope[0] < quotientVariableCount && scope[1] >= quotientVariableCount)
+					compileFunctionalObservations(mapping, scope, active, hashes);
+				else
+					compileFactorObservations(frozen,factor,scope,active,quotientVariableCount,
+						hashes,0,0);
+			}
 		}
 		return hashes;
+	}
+
+	private static int activeFunctionalTarget(ExactCategoricalSolver.FunctionalMap mapping,
+		int row, boolean[] activeTargets) {
+		int target = mapping.target(row);
+		return target >= 0 && activeTargets[target] ? target : -1;
+	}
+
+	/**
+	 * Hash only an exact active row-profile key for this closed representation. Hashes
+	 * are private bucket keys, not certificates: the subsequent full observation
+	 * equality check remains authoritative, and canonical representative order is unchanged.
+	 */
+	private static void compileFunctionalObservations(ExactCategoricalSolver.FunctionalMap mapping,
+		int[] scope, boolean[][] active, ObservationHashes hashes) {
+		int source = scope[0];
+		for(int row = 0; row < active[source].length; row++)
+			if(active[source][row]) {
+				long profile = activeFunctionalTarget(mapping, row, active[scope[1]]) + 1L;
+				hashes.first[source][row] = mix(hashes.first[source][row], profile);
+				hashes.second[source][row] = mix(hashes.second[source][row], Long.rotateLeft(profile, 23));
+			}
 	}
 
 	private static void compileFactorObservations(ExactCategoricalSolver.FrozenInputs frozen,

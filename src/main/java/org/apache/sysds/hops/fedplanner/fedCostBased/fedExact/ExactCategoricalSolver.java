@@ -107,6 +107,47 @@ public final class ExactCategoricalSolver {
 			return new Factor(scope, null, null, Objects.requireNonNull(evaluator, "evaluator"), false);
 		}
 
+		/** Keep the complete hard relation deferred until unary support has reduced its shape. */
+		static Factor functionalMap(Variable source, Variable target, int[] rowToColumn) {
+			Objects.requireNonNull(rowToColumn, "rowToColumn");
+			if(rowToColumn.length != source.domainSize())
+				throw new IllegalArgumentException("EXACT_VE_FUNCTIONAL_MAP_SHAPE_INVALID");
+			return lazy(List.of(source, target), new FunctionalMap(rowToColumn.clone(), target.domainSize()));
+		}
+
+		FunctionalMap functionalMapping() {
+			FunctionalMap mapping = evaluator instanceof FunctionalMap direct ? direct
+				: hardValues == null ? null : hardValues.functional;
+			return mapping != null && scope.size() == 2
+				&& scope.get(0).domainSize() == mapping.rows()
+				&& scope.get(1).domainSize() == mapping.columns ? mapping : null;
+		}
+
+		/** Null requests the ordinary projection when the target projection is not injective. */
+		Factor projectFunctionalMap(List<Variable> projectedScope, int[] rows, int[] columns) {
+			FunctionalMap mapping = functionalMapping();
+			if(mapping == null)
+				return null;
+			if(projectedScope.size() != 2 || projectedScope.get(0).domainSize() != rows.length
+				|| projectedScope.get(1).domainSize() != columns.length)
+				throw new IllegalArgumentException("EXACT_VE_FUNCTIONAL_MAP_SHAPE_INVALID");
+			int[] inverse = PlannerResourceGuard.allocateInts(mapping.columns, "exact-functional-projection");
+			Arrays.fill(inverse, -1);
+			for(int column = 0; column < columns.length; column++) {
+				if(inverse[columns[column]] >= 0)
+					return null;
+				inverse[columns[column]] = column;
+			}
+			int[] projected = PlannerResourceGuard.allocateInts(rows.length, "exact-functional-projection");
+			for(int row = 0; row < rows.length; row++) {
+				int target = mapping.target(rows[row]);
+				projected[row] = target < 0 ? -1 : inverse[target];
+			}
+			FunctionalMap result = new FunctionalMap(projected, columns.length);
+			return hardValues == null ? lazy(projectedScope, result)
+				: hardOwned(projectedScope, new HardTable(result));
+		}
+
 		List<Variable> scope() { return scope; }
 		boolean isHardTable() { return hardValues != null; }
 		Factor rebindOwned(List<Variable> reboundScope) {
@@ -147,15 +188,61 @@ public final class ExactCategoricalSolver {
 		}
 	}
 
-	/** Exact +0.0/+INF table; a set bit denotes a forbidden logical cell. */
+	/** A closed, immutable +0.0/+INF relation. Its array is privately owned, never exposed. */
+	static final class FunctionalMap implements CostFunction {
+		private final int[] rowToColumn;
+		private final int columns;
+
+		private FunctionalMap(int[] ownedRows, int columns) {
+			for(int target : ownedRows)
+				if(target < -1 || target >= columns)
+					throw new IllegalArgumentException("EXACT_VE_FUNCTIONAL_MAP_TARGET_INVALID");
+			rowToColumn = ownedRows;
+			this.columns = columns;
+		}
+
+		int rows() { return rowToColumn.length; }
+		int columns() { return columns; }
+		int target(int row) { return rowToColumn[row]; }
+
+		/** Ordered logical cells; used only after the complete matrix shape has been validated. */
+		private int finiteCellAfter(int previous) {
+			for(int row = previous < 0 ? 0 : previous / columns + 1; row < rows(); row++)
+				if(rowToColumn[row] >= 0)
+					return row * columns + rowToColumn[row];
+			return -1;
+		}
+
+		@Override
+		public double cost(int[] values) {
+			if(values[0] < 0 || values[0] >= rows() || values[1] < 0 || values[1] >= columns)
+				throw new IllegalArgumentException("EXACT_VE_FACTOR_ASSIGNMENT_VALUE_INVALID");
+			return rowToColumn[values[0]] == values[1] ? 0d : Double.POSITIVE_INFINITY;
+		}
+	}
+
+	/** Exact +0.0/+INF table with either packed forbidden bits or a functional backing. */
 	static final class HardTable {
 		private final int cells;
 		private final long[] forbidden;
+		private final FunctionalMap functional;
 		private int forbiddenCount;
 
 		private HardTable(int cells, long[] forbidden) {
 			this.cells = cells;
 			this.forbidden = forbidden;
+			functional = null;
+		}
+
+		private HardTable(FunctionalMap mapping) {
+			cells = Math.multiplyExact(mapping.rows(), mapping.columns);
+			forbidden = null;
+			functional = mapping;
+			int finite = 0;
+			for(int target : mapping.rowToColumn)
+				if(target >= 0)
+					finite++;
+			forbiddenCount = cells - finite;
 		}
 
 		static HardTable allocate(int cells) {
@@ -164,11 +251,16 @@ public final class ExactCategoricalSolver {
 		}
 
 		double costAt(int cell) {
+			if(functional != null)
+				return functional.target(cell / functional.columns) == cell % functional.columns
+					? 0d : Double.POSITIVE_INFINITY;
 			return (forbidden.length == 0 || (forbidden[cell >>> 6] & 1L << (cell & 63)) == 0L)
 				? 0d : Double.POSITIVE_INFINITY;
 		}
 
 		void forbid(int cell) {
+			if(functional != null)
+				throw new IllegalStateException("EXACT_VE_FUNCTIONAL_MAP_IMMUTABLE");
 			long bit = 1L << (cell & 63);
 			int word = cell >>> 6;
 			if((forbidden[word] & bit) == 0L) {
@@ -177,6 +269,8 @@ public final class ExactCategoricalSolver {
 			}
 		}
 		void forbidRange(int start, int end) {
+			if(functional != null)
+				throw new IllegalStateException("EXACT_VE_FUNCTIONAL_MAP_IMMUTABLE");
 			while(start < end && (start & 63) != 0)
 				forbid(start++);
 			int fullEnd = end & ~63;
@@ -202,6 +296,43 @@ public final class ExactCategoricalSolver {
 			// A uniform hard table gives every axis value the same response profile.
 			if(forbiddenCount == 0 || forbiddenCount == cells)
 				return classes;
+			if(functional != null) {
+				if(domain == functional.rows() && stride == functional.columns) {
+					if(functional.columns >= domain) {
+						Map<Integer,Integer> categories = new HashMap<>();
+						for(int row = 0; row < domain; row++)
+							classes[row] = categories.computeIfAbsent(functional.target(row),
+								ignored -> categories.size());
+						return classes;
+					}
+					int[] categories = PlannerResourceGuard.allocateInts(functional.columns + 1,
+						"exact-functional-classes");
+					int next = 0;
+					for(int row = 0; row < domain; row++) {
+						int category = functional.target(row) + 1;
+						if(categories[category] == 0)
+							categories[category] = ++next;
+						classes[row] = categories[category] - 1;
+					}
+					return classes;
+				}
+				if(domain == functional.columns && stride == 1) {
+					for(int target : functional.rowToColumn)
+						if(target >= 0)
+							classes[target] = 1;
+					int next = 0, emptyClass = -1;
+					for(int column = 0; column < domain; column++) {
+						if(classes[column] != 0)
+							classes[column] = next++;
+						else {
+							if(emptyClass < 0)
+								emptyClass = next++;
+							classes[column] = emptyClass;
+						}
+					}
+					return classes;
+				}
+			}
 			long required = Math.max(1L,(3L * domain + 1L) / 2L);
 			if(required > 1L << 30)
 				return identityClasses(classes);
@@ -959,6 +1090,9 @@ public final class ExactCategoricalSolver {
 		int cells = 1;
 		for(Variable variable : factor.scope)
 			cells = Math.multiplyExact(cells, variable.domainSize());
+		FunctionalMap mapping = factor.functionalMapping();
+		if(mapping != null)
+			return Factor.hardOwned(factor.scope, new HardTable(mapping));
 		if(!factor.supportsPartialTruth())
 			return freezeGenericFactor(factor, cells);
 		return freezePartialHardFactor(factor,cells);
@@ -1205,10 +1339,11 @@ public final class ExactCategoricalSolver {
 		for(int factorIndex = 0; factorIndex < factors.size(); factorIndex++) {
 			Factor factor = factors.get(factorIndex);
 			DenseFactor dense = denseFactors.get(factorIndex);
-			for(int cell = 0; cell < dense.logicalCells(); cell++)
-				if(dense.valueAt(cell) < 0d)
-					throw new IllegalArgumentException(
-						"INCREMENTAL_MESSAGE_COST_INVALID|value=" + dense.valueAt(cell));
+			if(dense.hardValues == null)
+				for(int cell = 0; cell < dense.logicalCells(); cell++)
+					if(dense.valueAt(cell) < 0d)
+						throw new IllegalArgumentException(
+							"INCREMENTAL_MESSAGE_COST_INVALID|value=" + dense.valueAt(cell));
 			leaves.add(dense.hardValues == null
 				? new BoundaryMessage(input.variables, input.domains,
 					factor.scope, input.scopes.get(factorIndex), dense.values,
@@ -1665,6 +1800,12 @@ public final class ExactCategoricalSolver {
 			return null;
 		int[] finiteCells = PlannerResourceGuard.allocateInts(finite, "exact-hard-support");
 		int output = 0;
+		if(values.functional != null) {
+			for(int cell = values.functional.finiteCellAfter(-1); cell >= 0;
+				cell = values.functional.finiteCellAfter(cell))
+				finiteCells[output++] = cell;
+			return new ExactFiniteSupportJoin.Relation(scope, finiteCells);
+		}
 		for(int word = 0; word < values.forbidden.length; word++) {
 			long finiteBits = ~values.forbidden[word];
 			if(word == values.forbidden.length - 1 && (values.cells() & 63) != 0)
@@ -2150,6 +2291,10 @@ public final class ExactCategoricalSolver {
 		if((long)prepared.variables.size() + factors.size() > (1L << 20))
 			return false;
 		for(DenseFactor factor : factors) {
+			if(factor.hardValues != null) {
+				factor.finiteCount = factor.hardValues.finiteCount();
+				continue;
+			}
 			int finiteCount = 0;
 			for(int cell = 0; cell < factor.logicalCells(); cell++) {
 				double value = factor.valueAt(cell);
@@ -2249,9 +2394,8 @@ public final class ExactCategoricalSolver {
 
 		private long logicalFiniteCells(DenseFactor factor) {
 			long count = 0L;
-			for(int stored = 0; stored < factor.storedCells(); stored++) {
-				if(factor.storedValue(stored) == Double.POSITIVE_INFINITY)
-					continue;
+			for(int stored = factor.nextFiniteStoredCell(-1); stored >= 0;
+				stored = factor.nextFiniteStoredCell(stored)) {
 				int cell = factor.storedLogicalCell(stored);
 				long multiplicity = 1L;
 				for(int axis = 0; axis < factor.scope.length; axis++)
@@ -4042,6 +4186,16 @@ public final class ExactCategoricalSolver {
 			return hardValues != null || sparseCells == null ? stored : sparseCells[stored];
 		}
 
+		/** Storage indices retain their existing meaning; only iteration skips implicit infinities. */
+		private int nextFiniteStoredCell(int previous) {
+			if(hardValues != null && hardValues.functional != null)
+				return hardValues.functional.finiteCellAfter(previous);
+			for(int stored = previous + 1; stored < storedCells(); stored++)
+				if(storedValue(stored) != Double.POSITIVE_INFINITY)
+					return stored;
+			return -1;
+		}
+
 		private int axis(int variable) {
 			for(int axis = 0; axis < scope.length; axis++)
 				if(scope[axis] == variable)
@@ -4105,9 +4259,7 @@ public final class ExactCategoricalSolver {
 				stride = Math.multiplyExact(stride, representatives.length);
 			}
 			long finite = 0L;
-			for(int stored = 0; stored < storedCells(); stored++) {
-				if(storedValue(stored) == Double.POSITIVE_INFINITY)
-					continue;
+			for(int stored = nextFiniteStoredCell(-1); stored >= 0; stored = nextFiniteStoredCell(stored)) {
 				int cell = storedLogicalCell(stored);
 				long multiplicity = 1L;
 				for(int axis = 0; axis < scope.length; axis++)
@@ -4123,9 +4275,7 @@ public final class ExactCategoricalSolver {
 			int output = 0;
 			int[] first = new int[scope.length];
 			int[] positions = new int[scope.length];
-			for(int stored = 0; stored < storedCells(); stored++) {
-				if(storedValue(stored) == Double.POSITIVE_INFINITY)
-					continue;
+			for(int stored = nextFiniteStoredCell(-1); stored >= 0; stored = nextFiniteStoredCell(stored)) {
 				int cell = storedLogicalCell(stored);
 				boolean empty = false;
 				for(int axis = 0; axis < scope.length; axis++) {
@@ -4170,6 +4320,8 @@ public final class ExactCategoricalSolver {
 		private int[] selectiveFiniteCells() {
 			if(sparseCells != null)
 				return sparseCells;
+			if(hardValues != null)
+				finiteCount = hardValues.finiteCount();
 			if(finiteCount < 0) {
 				finiteCount = 0;
 				for(int cell = 0; cell < logicalCells(); cell++)
@@ -4181,9 +4333,8 @@ public final class ExactCategoricalSolver {
 				return null;
 			int[] cells = PlannerResourceGuard.allocateInts(count, "exact-sparse-support");
 			int output = 0;
-			for(int cell = 0; cell < logicalCells(); cell++)
-				if(valueAt(cell) != Double.POSITIVE_INFINITY)
-					cells[output++] = cell;
+			for(int cell = nextFiniteStoredCell(-1); cell >= 0; cell = nextFiniteStoredCell(cell))
+				cells[output++] = cell;
 			return cells;
 		}
 

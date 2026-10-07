@@ -1,0 +1,482 @@
+{
+  "version": "v65",
+  "baselineCommit": "01d4f63020649d0a1980b9d05a591007502115de",
+  "changes": [
+    "Store and traverse exact functional hard relations without expanding all implicit infinite cells."
+  ],
+  "sourceSha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.java": "30e38475254b62c88aecb0e8234256283504df5cd090c5d94c608f41108ff431",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactHardFactorObservationDecomposition.java": "533913223d82480452437e1ef636714f42d2d35186544504058767187271378d",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolver.java": "ee376e348b332b486f2cf3e73ad81804be612f391011d312a127a37a1b3289db",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactFunctionalHardParityTest.java": "f53ac3002573f947efb53ad068ccfaed99ab77e6202ce3962b6ad8edf2f7bcfd",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactFunctionalHardRelationTest.java": "3876af7f4c26a9abd104df69c3321a5f838062ffa049085023bbbf4c4705b6f6"
+  },
+  "independentReview": {
+    "functionalHardRelation": "CLEAR"
+  },
+  "tests": {
+    "command": [
+      "mvn",
+      "-q",
+      "-Dtest=ExactFunctionalHardRelationTest,ExactFunctionalHardParityTest,ExactHardFactorObservationDecompositionTest,ExactHardTableRepresentationTest,ExactHardAxisProfileParityTest,ExactHardBoundaryShortcutTest,ExactQuotientAllAxisCompilationTest,ExactQuotientLogicalCellTraversalTest,ExactQuotientObservationHashReuseTest,ExactFrozenSupportEpochTest,ExactReducedFactorProjectionTest,ExactPhysicalReducedSolverOwnershipTransferTest,ExactCategoricalSolverArithmeticParityTest,ExactPartialHardFactorTest,ExactFiniteSupportJoinTest,ExactPhysicalReducedSolverTest,RegionalHardSupportMergeTest,ExactDyadicSolverTest,ExactDyadicSeparatorMajorParityTest,GlobalExactCompletionTest,ExactPhysicalDyadicCertificateTest,ExactPhysicalSemanticDagFingerprintTest,ExactPhysicalCostFingerprintDeterminismTest,ExactPhysicalCostFingerprintStreamingTest,ExactInputAuthoritySourceReceiptProjectionTest,ExactNativeLocalAnchorFanoutCostTest",
+      "-Dtest-forkCount=1",
+      "-Dtest-threadCount=1",
+      "test",
+      "jar:jar"
+    ],
+    "counts": {
+      "tests": 181,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "distinctClasses": 26,
+    "sameSourceSnapshot": true,
+    "suites": [
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolverArithmeticParityTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDyadicSeparatorMajorParityTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDyadicSolverTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFiniteSupportJoinTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFrozenSupportEpochTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionalHardParityTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactFunctionalHardRelationTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactHardAxisProfileParityTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactHardBoundaryShortcutTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactHardFactorObservationDecompositionTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactHardTableRepresentationTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactInputAuthoritySourceReceiptProjectionTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactNativeLocalAnchorFanoutCostTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPartialHardFactorTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostFingerprintDeterminismTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostFingerprintStreamingTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalDyadicCertificateTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalReducedSolverOwnershipTransferTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalReducedSolverTest",
+        "tests": 35,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalSemanticDagFingerprintTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactQuotientAllAxisCompilationTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactQuotientLogicalCellTraversalTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactQuotientObservationHashReuseTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactReducedFactorProjectionTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.GlobalExactCompletionTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.RegionalHardSupportMergeTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "provenance": {
+    "engine": "/home/mchoi/fedplanner-boundary-correctness-20261006/engine-merged-v65",
+    "completeSourceAndClassInventoriesVerified": true,
+    "freezeReceiptSha256": "6491f71520c8fe104c1d70e66a159c76829ace7a9b6352383fa800c924d9fe53",
+    "jars": [
+      {
+        "path": "/home/mchoi/w1357-cost-model-main-20261006/target/systemds-3.4.0-SNAPSHOT.jar",
+        "sha256": "7fa3810ecc6b3560e6f25adc09fdc15e27c7b86af8ce5e0158d90d9a7ae3aff8",
+        "classes": 3920
+      }
+    ],
+    "inputParity": [
+      {
+        "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/glm-merged-v65-w1",
+        "equal": true,
+        "changes": []
+      },
+      {
+        "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/glm-merged-v65-w3",
+        "equal": true,
+        "changes": []
+      },
+      {
+        "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v65-local",
+        "equal": true,
+        "changes": []
+      },
+      {
+        "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v65-global",
+        "equal": true,
+        "changes": []
+      }
+    ],
+    "dockerImage": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "containerCpus": 4,
+    "containerMemoryGiB": 16,
+    "jvmHeapGiB": 10,
+    "profiler": false
+  },
+  "glmCompileOnly": [
+    {
+      "case": "glm_w1",
+      "planner": "DP-LocalConflict",
+      "wallSeconds": 477.189625916,
+      "phasesSeconds": {
+        "CommonPreparation": 0.033323,
+        "Analysis": 303.117476,
+        "PlannerSetup": 0.00319,
+        "Model": 25.133216,
+        "CostSurface": 46.276062,
+        "Optimizer": 95.539206,
+        "Selection": 1.980243,
+        "OtherPlanning": 0.002393,
+        "Diagnostics": 0.011767,
+        "Conversion": 2.522523,
+        "Application": 0.24645,
+        "FinalVerification": 0.008209,
+        "Registration": 0.004367,
+        "ReceiptHandoff": 0.00019,
+        "Total": 474.878614
+      },
+      "planningSucceeded": true,
+      "runtimeExecuted": false,
+      "objectiveBits": "local-conflict-objective=4671489731595367111",
+      "selectedStateCount": 1240,
+      "completeAssignmentSha256": "bf5669ea0c032f2509b190d9cf7c64b3e4c1a429f9fb2b7dcdc0aae04bef1fe9",
+      "comparison": {
+        "v63": {
+          "wallSeconds": 511.887798665,
+          "objectiveBitsEqual": true,
+          "completeAssignmentEqual": true
+        }
+      },
+      "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/glm-merged-v65-w1",
+      "containerName": "codex-function-boundary-b-glm_w1-138406f30144",
+      "resultSha256": "da14f715adc0a0e8788e30dbc4eeddda5895f3731072eea46f37ea93d96b9017",
+      "commandSha256": "4d155d8ea4d6ffc589ab0b397430bace88bc5a87a08609030c999697c25306ba",
+      "localQualityTermination": "[PlannerTrace][DP-IncrementalRegional] phase=TARGET_REACHED merges=14097 clusters=11557 lower=20492.62480608965 upper=20956.64109049996 relativeGap=0.022643086905705816 elapsedNanos=59424375057 dpNanos=56547700144 scoringNanos=2002184504 validationNanos=344335850 assignments=1486198413 retainedSlots=709985028 improvements=6 resourceRejected=6545 internalDecisions=79 conditionalAttempts=82 conditionalImprovements=6 plannerElapsedNanos=166945427792 separateGlobalCalls=0 scope=encoded-model",
+      "observedReductionFromV63Percent": 6.778472321374451
+    },
+    {
+      "case": "glm_w3",
+      "planner": "DP-LocalConflict",
+      "wallSeconds": 306.130198798,
+      "phasesSeconds": {
+        "CommonPreparation": 0.039779,
+        "Analysis": 202.112656,
+        "PlannerSetup": 0.002742,
+        "Model": 13.847768,
+        "CostSurface": 26.920736,
+        "Optimizer": 56.283064,
+        "Selection": 2.326184,
+        "OtherPlanning": 0.001541,
+        "Diagnostics": 0.007731,
+        "Conversion": 1.782194,
+        "Application": 0.295168,
+        "FinalVerification": 0.008222,
+        "Registration": 0.005201,
+        "ReceiptHandoff": 0.000221,
+        "Total": 303.633207
+      },
+      "planningSucceeded": true,
+      "runtimeExecuted": false,
+      "objectiveBits": "local-conflict-objective=4671453370371391968",
+      "selectedStateCount": 1252,
+      "completeAssignmentSha256": "67ad64196ced72f38f60deb308ea0dd5f1793018f046cc8b415d71a9ade913be",
+      "comparison": {
+        "v63": {
+          "wallSeconds": 328.709275772,
+          "objectiveBitsEqual": true,
+          "completeAssignmentEqual": true
+        }
+      },
+      "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/glm-merged-v65-w3",
+      "containerName": "codex-function-boundary-b-glm_w3-790e3178c86c",
+      "resultSha256": "65023568fb1faa2ccb225b88930e8a759d6ea8169032a8315d566565fe499ee7",
+      "commandSha256": "7385941c4e1a210156eea9b470edf2b228de2ab3861b98e1524846907c6dc4d8",
+      "localQualityTermination": "[PlannerTrace][DP-IncrementalRegional] phase=TARGET_REACHED merges=12662 clusters=10875 lower=20821.370754298612 upper=20824.359728278476 relativeGap=1.435531798138977E-4 elapsedNanos=41229843170 dpNanos=39372360521 scoringNanos=993598063 validationNanos=217086588 assignments=766228555 retainedSlots=326767584 improvements=3 resourceRejected=4918 internalDecisions=68 conditionalAttempts=57 conditionalImprovements=3 plannerElapsedNanos=97047135270 separateGlobalCalls=0 scope=encoded-model",
+      "observedReductionFromV63Percent": 6.869011201759145
+    }
+  ],
+  "p1CompileOnly": [
+    {
+      "case": "P1_FULL_w1",
+      "planner": "DP-LocalConflict",
+      "wallSeconds": 31.53791588,
+      "phasesSeconds": {
+        "CommonPreparation": 0.025623,
+        "Analysis": 19.886658,
+        "PlannerSetup": 0.003074,
+        "Model": 0.441383,
+        "CostSurface": 0.800382,
+        "Optimizer": 5.597591,
+        "Selection": 0.632968,
+        "OtherPlanning": 0.001509,
+        "Diagnostics": 0.006001,
+        "Conversion": 1.764924,
+        "Application": 0.414176,
+        "FinalVerification": 0.01364,
+        "Registration": 0.00513,
+        "ReceiptHandoff": 0.000161,
+        "Total": 29.593217
+      },
+      "planningSucceeded": true,
+      "runtimeExecuted": false,
+      "objectiveBits": "local-conflict-objective=4728318273290936294",
+      "selectedStateCount": 1537,
+      "completeAssignmentSha256": "90d6be436496cf5e9406698173682744d8a02f38ea8e363e28bd1ac3ca7575d3",
+      "comparison": {
+        "v63": {
+          "wallSeconds": 33.114041291,
+          "objectiveBitsEqual": true,
+          "completeAssignmentEqual": true
+        }
+      },
+      "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v65-local",
+      "containerName": "codex-function-boundary-b-p1_full_w1-ee06334645ca",
+      "resultSha256": "62d6af880555ccbbbf79020a45fd964129450e35588bc70c507428936bc8c438",
+      "commandSha256": "5c6f999cf2ad1e7005289031f5557e3a2230912b91c6179c0eac6121880d28fa"
+    },
+    {
+      "case": "P1_FULL_w3",
+      "planner": "DP-LocalConflict",
+      "wallSeconds": 18.603471361,
+      "phasesSeconds": {
+        "CommonPreparation": 0.018828,
+        "Analysis": 12.403656,
+        "PlannerSetup": 0.003169,
+        "Model": 0.363082,
+        "CostSurface": 0.582197,
+        "Optimizer": 1.022254,
+        "Selection": 0.478489,
+        "OtherPlanning": 0.001614,
+        "Diagnostics": 0.005481,
+        "Conversion": 1.295864,
+        "Application": 0.410267,
+        "FinalVerification": 0.015406,
+        "Registration": 0.00728,
+        "ReceiptHandoff": 0.000248,
+        "Total": 16.607836
+      },
+      "planningSucceeded": true,
+      "runtimeExecuted": false,
+      "objectiveBits": "local-conflict-objective=4734494558711388671",
+      "selectedStateCount": 1545,
+      "completeAssignmentSha256": "576b41c7312f0ed9484a596dc2d0b93ce70ec4a38b0a5def3de413d2d8d0e55d",
+      "comparison": {
+        "v63": {
+          "wallSeconds": 20.762155885,
+          "objectiveBitsEqual": true,
+          "completeAssignmentEqual": true
+        }
+      },
+      "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v65-local",
+      "containerName": "codex-function-boundary-b-p1_full_w3-32b18cbe798b",
+      "resultSha256": "e167e6ba37cf4a8ae429aea466d2cacf6a00d829c776ec98a42b511427e94ef3",
+      "commandSha256": "376b2b79c1256482821f2ca7cddb388a54439d3c35b3252e14365abd783bc905"
+    },
+    {
+      "case": "P1_FULL_w3",
+      "planner": "Exact",
+      "wallSeconds": 20.642865103,
+      "phasesSeconds": {
+        "CommonPreparation": 0.020496,
+        "Analysis": 14.432687,
+        "PlannerSetup": 0.003062,
+        "Model": 0.320444,
+        "CostSurface": 0.604498,
+        "Optimizer": 0.616898,
+        "Selection": 0.610545,
+        "OtherPlanning": 0.001782,
+        "Diagnostics": 0.008228,
+        "Conversion": 1.282539,
+        "Application": 0.295977,
+        "FinalVerification": 0.009343,
+        "Registration": 0.00525,
+        "ReceiptHandoff": 0.000192,
+        "Total": 18.211941
+      },
+      "planningSucceeded": true,
+      "runtimeExecuted": false,
+      "objectiveBits": "physical-ve-objective=4734494558711388677",
+      "selectedStateCount": 1545,
+      "completeAssignmentSha256": "34f3edfa6128c9d12fc5258a61a6db91410ceaf5a882515480a6ed329dfddef1",
+      "comparison": {
+        "v63": {
+          "wallSeconds": 20.022005626,
+          "objectiveBitsEqual": true,
+          "completeAssignmentEqual": true
+        }
+      },
+      "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v65-global",
+      "containerName": "codex-function-boundary-b-p1_full_w3-b22f93c42a09",
+      "resultSha256": "1da9106f348dec1fa6dd8072a5faa64c3db6e951eb2536f075253777a793dbc6",
+      "commandSha256": "1ca8bb356209905933c9743f69912adeca5c923eb8307c13b5ca0d638c01a595"
+    }
+  ],
+  "limits": [
+    "One fresh-JVM screening run per configuration; observed changes are not a statistical performance claim.",
+    "Compile-only planning does not establish actual workload runtime correctness.",
+    "Selected-plan parity and bounded dense/cold parity regressions do not prove complete GLM candidate-identity equality.",
+    "The GLM under-20-second target and its final repeated-run/runtime evaluator remain unachieved."
+  ],
+  "goalAchieved": false,
+  "publicationRegression": {
+    "exitCode": 0,
+    "wallSeconds": 98.07081961631775,
+    "selectedClasses": 26,
+    "reportedClasses": 26,
+    "counts": {
+      "tests": 181,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "differencesFromFrozenV65": {
+      "target/classes": [],
+      "target/test-classes": [],
+      "src/main/java": [],
+      "src/test/java": []
+    }
+  }
+}

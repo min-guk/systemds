@@ -119,8 +119,7 @@ final class ExactHardFactorObservationDecomposition {
 			var source = canonical.scope().get(position);
 			var auxiliary = auxiliaries.get(position);
 			int[] categories = observations.get(position);
-			solverFactors.add(ExactCategoricalSolver.Factor.lazy(List.of(source, auxiliary), values ->
-				categories[values[0]] == values[1] ? 0.0 : Double.POSITIVE_INFINITY));
+			solverFactors.add(ExactCategoricalSolver.Factor.functionalMap(source, auxiliary, categories));
 		}
 		ExactCategoricalSolver.CostFunction truthEvaluator = canonical.supportsPartialTruth()
 			? new PartialRepresentativeTruthEvaluator(canonical, representatives)
