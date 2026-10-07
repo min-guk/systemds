@@ -842,6 +842,10 @@ final class ExactPhysicalSharedSourceEncoding {
 		long retainedTemporaryCells = 0;
 		for(ExactPhysicalModel.HardFactorEncoding encoding : model.hardFactorEncodings()) {
 			var decomposition = encoding.decomposition();
+			// Pool proof circuits already expose small local factors. They have no
+			// single truth table or degree-two observation axes to quotient here.
+			if(!decomposition.isObservationStar())
+				continue;
 			List<ExactCategoricalSolver.Factor> local = decomposition.solverFactors();
 			List<int[]> observations = decomposition.observations();
 			Integer truthOrdinal = factorPositions.get(local.get(local.size() - 1));

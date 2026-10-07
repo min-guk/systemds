@@ -118,6 +118,8 @@ def cases() -> tuple[Case, ...]:
         Case("ml_l2svm", "ml_l2svm", training=True, default_selected=False),
         Case("ml_lm", "ml_lm", training=True, default_selected=False),
         Case("ml_steplm", "ml_steplm", training=True, default_selected=False),
+        Case("ml_steplm_local_matrix", "ml_steplm_local_matrix",
+             training=True, default_selected=False),
         Case("ml_logreg_gd", "ml_logreg_gd", training=True,
              requires_loss_progress=True, default_selected=False),
         Case("ml_l2svm_gd", "ml_l2svm_gd", training=True,
@@ -305,6 +307,42 @@ def steplm_read(federated: bool, variable: str, columns: int) -> str:
         f'{source}.csv"),ranges=list(list(0,0),list(20,{columns})));\n')
 
 
+def steplm_dataset() -> tuple[tuple[tuple[float, ...], ...], tuple[float, ...]]:
+    x = tuple((
+        (row - 9.5) / 10.0,
+        ((row * row) % 17 - 8) / 7.0,
+        ((row * 5 + 3) % 19 - 9) / 6.0,
+        (row % 4) - 1.5,
+        ((row * 7 + row // 3) % 23 - 11) / 8.0,
+    ) for row in range(20))
+    y = tuple(1.75 * row[0] - 2.0 * row[2] + 0.65 * row[4]
+              + ((index % 3) - 1) / 100.0
+              for index, row in enumerate(x))
+    return x, y
+
+
+def dml_matrix_literal(values: tuple[tuple[float, ...], ...]) -> str:
+    flattened = " ".join(f"{value:.17g}" for row in values for value in row)
+    return (f'matrix("{flattened}",rows={len(values)},cols={len(values[0])},'
+            "byrow=TRUE)")
+
+
+def steplm_local_matrix_read(federated: bool, variable: str) -> str:
+    x, y = steplm_dataset()
+    values = x if variable == "X" else tuple((value,) for value in y)
+    columns = len(values[0])
+    local = f"{variable}_LOCAL={dml_matrix_literal(values)};\n"
+    if not federated:
+        return local + f"{variable}={variable}_LOCAL;\n"
+    return (local + f'{variable}=federated(local_matrix={variable}_LOCAL,'
+            f'addresses=list("localhost:{WORKER_PORT}"),'
+            f'ranges=list(list(0,0),list(20,{columns})));\n')
+
+
+def is_steplm(case: Case) -> bool:
+    return case.kind in {"ml_steplm", "ml_steplm_local_matrix"}
+
+
 def model_output() -> str:
     return (fingerprint("m")
             + 'write(m,$MODEL_OUTPUT,format="csv");\n')
@@ -329,7 +367,9 @@ def pool_prefix(federated: bool, public_second_inputs: bool = False) -> str:
 
 def program(case: Case, federated: bool) -> str:
     if case.training:
-        prefix = (steplm_read(federated, "X", 5) if case.kind == "ml_steplm"
+        prefix = (steplm_local_matrix_read(federated, "X")
+                  if case.kind == "ml_steplm_local_matrix"
+                  else steplm_read(federated, "X", 5) if case.kind == "ml_steplm"
                   else training_x_read(federated))
         if case.kind == "ml_logreg":
             body = (local_read("Y_ML_LOGREG") + "Y=Y_ML_LOGREG;\n"
@@ -342,8 +382,11 @@ def program(case: Case, federated: bool) -> str:
         elif case.kind == "ml_lm":
             body = (local_read("Y_ML_LM") + "Y=Y_ML_LM;\n"
                     "m=lmCG(X=X,y=Y,icpt=0,reg=1e-4,tol=1e-9,maxi=10,verbose=FALSE);\n")
-        elif case.kind == "ml_steplm":
-            body = (steplm_read(federated, "Y", 1) +
+        elif is_steplm(case):
+            y_read = (steplm_local_matrix_read(federated, "Y")
+                      if case.kind == "ml_steplm_local_matrix"
+                      else steplm_read(federated, "Y", 1))
+            body = (y_read +
                     "[m,s]=steplm(X=X,y=Y,icpt=0,reg=1e-7,tol=1e-7,maxi=20,"
                     "verbose=FALSE);\n"
                     'write(s,$SELECTION_OUTPUT,format="csv");\n')
@@ -471,16 +514,7 @@ def write_inputs(run: Path, selected: tuple[Case, ...] | None = None) -> dict[st
             texts[name] = ("\n".join(f"{value:.17g}" for value in values) + "\n",
                            192, 1, "public")
     if any(case.kind == "ml_steplm" for case in selected_cases):
-        steplm_x = tuple((
-            (row - 9.5) / 10.0,
-            ((row * row) % 17 - 8) / 7.0,
-            ((row * 5 + 3) % 19 - 9) / 6.0,
-            (row % 4) - 1.5,
-            ((row * 7 + row // 3) % 23 - 11) / 8.0,
-        ) for row in range(20))
-        steplm_y = tuple(1.75 * row[0] - 2.0 * row[2] + 0.65 * row[4]
-                         + ((index % 3) - 1) / 100.0
-                         for index, row in enumerate(steplm_x))
+        steplm_x, steplm_y = steplm_dataset()
         x_payload = "\n".join(",".join(f"{value:.17g}" for value in row)
                               for row in steplm_x) + "\n"
         y_payload = "\n".join(f"{value:.17g}" for value in steplm_y) + "\n"
@@ -562,7 +596,7 @@ def java_command(case: Case, mode: str, case_timeout_seconds: int = 300,
            if profile_jfr and mode == "fed" else "")
     output_argument = (f' -nvargs MODEL_OUTPUT=/evidence/cases/{case.name}/{mode}-model.csv'
                        if case.training else "")
-    if case.kind == "ml_steplm":
+    if is_steplm(case):
         output_argument += (f' SELECTION_OUTPUT=/evidence/cases/{case.name}/'
                             f'{mode}-selection.csv')
     use_probe = mode == "fed" and canonical_proof_required(planner, canonical_proof)
@@ -1005,12 +1039,12 @@ def evaluate(run: Path, container_returncode: int,
             model_comparison = (compare_models(
                 run / "cases" / case.name / "cp-model.csv",
                 run / "cases" / case.name / "fed-model.csv",
-                (5, 1) if case.kind == "ml_steplm" else None)
+                (5, 1) if is_steplm(case) else None)
                 if case.training else None)
             selection_comparison = (compare_selections(
                 run / "cases" / case.name / "cp-selection.csv",
                 run / "cases" / case.name / "fed-selection.csv", 5)
-                if case.kind == "ml_steplm" else None)
+                if is_steplm(case) else None)
             checkpoints = planner_checkpoints(text) if case.training and planner == "local" else []
             checkpoint_phases = {str(item.get("phase")) for item in checkpoints}
             trace_required = case.training and planner == "local"
@@ -1045,7 +1079,7 @@ def evaluate(run: Path, container_returncode: int,
                       and not audit_violations
                       and (not case.training or bool(model_comparison and
                            model_comparison["matched"] and model_comparison["nonzero"]))
-                      and (case.kind != "ml_steplm" or bool(
+                      and (not is_steplm(case) or bool(
                            selection_comparison and selection_comparison["matched"]))
                       and jfr_passed
                       and (not case.requires_loss_progress or bool(

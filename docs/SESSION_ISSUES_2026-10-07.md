@@ -225,6 +225,52 @@
 - main source1,652개/class-resource4,374개가 Maven 산출물과 같고 전체 Java3,584개가 build freeze와 일치한다. 기준과 후보의 production 차이는 PlacementRelationClosure, PlacementAnalysis, ExactPhysicalCostModel 세 파일뿐이다. [상세 결과](LOGREG_REPLAY_COST_ABLATION_2026-10-07.md), [통합 검증 JSON/명령](experiments/logreg-replay-cost-20261007/publication-validation.json).
 - 잔여 이슈는 common closure의 replay 재구성/증명 문맥 재사용과 seed boundary 반복 compile이다. invalidation 누락·정렬 변화·문맥 의존 memo가 잠재 회귀 위험이며 새 proof/CFG/cost 회귀와 실제 학습의 checkpoint·audit 동치 비교로 감지한다. runtime fallback과 후보 cap은 추가하지 않았다.
 
+
+## StepLM joint 배치 정렬의 작은 scope encoding — 해결
+
+- **문제/기준**: 최신 origin/main `2faff2a2a5`에서 새 worktree `steplm-joint-compact-20261007`을 만들었다. 기존 workspace는 변경하지 않는다. 앞선 검증된 조기 생략 변경을 이어 받았다. 두 입력의 정렬을 증명하는 재귀 공급 결정을21축 factor로 모아 cost preflight에서 overflow한다.
+- **수정 계획**: 기존 canonical joint predicate와 공급 참조·origin·cycle 의미를 회귀 oracle로 보존한다. 공급별 배치 결과를 작은 범위 제약으로 인코딩하고, 최종 joint row 정렬은 결과만 비교하도록 분리한다. 후보/금액/상한/런타임 규칙은 변경하지 않는다.
+- **검증 계획**: 수정 전 작은 회귀로 canonical legal space를 고정하고, compact encoding의 보조 변수를 존재 소거한 결과를 비교한다. 상관/독립 입력·alias loop·function call·relocation·invalid cycle 및 canonical 비용을 확인한다. 원래20×5 StepLM compile과 Docker run_LAN_docker.sh 소형 실제 실행을 검증한다. 대형 및 CSV 학습 성능은 제외한다.
+- **위험/잔여**: 관찰 범주만 합치면 full realization-reference 일치와 cyclic self-support를 놓칠 수 있다. 결정적인 배치 도출 또는 유한한 cycle-safe proof와 회귀로 검증한다. 아직 해결 주장 없음.
+
+- **구현/동치**: 공급별 demanded pool 보조 변수, 조건부 source-reference edge 및 순환 component의 rank, 실제 row별 정렬을 최대3축 factor로 분해했다. 기존 canonical predicate·후보·비용·privacy·runtime 규칙을 유지한다. Projected target의 scope 밖 dependency는 기존 missing-receipt와 같은 INVALID로 처리하며, 관찰 star 전용 quotient는 새 회로에 적용하지 않는다.
+- **최종 코드 검증**: 관련15클래스62건, shared-source28건 및 원래20×5 전체 compile1건까지 총91건 PASS. Small space 전수 existential parity 및 canonical monetary raw bits/선택 parity를 확인했다. 실제 SCC loop의 rank 제약을 제거하면 거짓 순환 증명이 허용되는 mutation regression도 통과했다. Architectural review CLEAR, isolated javac-Xlint·diff check·package PASS.
+- **계측**: 기존21축/1.36×10²⁴셀 preflight overflow에서 전체 encoded hard 최대scope3, 최대45,325셀·합625,066셀로 바뀌었다. 남은 joint 자체는203aux/352factor/46,832셀이고 rank20개다. 전체 graph symbolic order induced width는21→16이다. 최초 DP 계획 선택105.710초, canonical objective37019.63574473899ms. 기본3GB JVM의 최종 전체 compile 회귀는142.320초에 통과했다. Host 단일 측정이므로 training speedup으로 해석하지 않는다. Docker 실제 학습 검증은 진행중이다.
+- **검증 과정 이슈**: 초기 SCC fixture는 invariant shortcut으로 cycle이 없어 assertion이 실패했고 실제 cycle을 만드는 초기화 loop로 교체했다. 잘못된 package skip property 때문에 실행된 Python StartupTest에서 log-count4/5 불일치1건이 있었으나 baseline7건/최종 단독7건은 모두 통과했다. 관련 코드는 수정하지 않았고 모든 실패 로그를 보존한다.
+- **상세 보고서**: `docs/STEPLM_JOINT_COMPACT_ENCODING_2026-10-07.md`; 원시근거 `target/joint-compact-evidence/`. 아직 commit/push하지 않았다.
+
+## StepLM 실제 Docker 입력의 CFG snapshot 반복 비교 — 해결
+
+- **문제/환경**: 위 compact joint 코드의 실제 Docker `ml_steplm`(20×5, 원격 FED X/Y, 모델과 selection 출력)에서 joint encoding 전 `analysis_begin`에 오래 머문다. 원래 local_matrix/B-only compile 회귀와 다른 입력이다. 첫 실행은 결국 `Executable realization/action composition did not converge`로 실패했다. 이 실패를 joint 수정 성공 또는 단순 timeout으로 분류하지 않는다.
+- **관측/원인 범위**: 소유 container의 coordinator에서 수집한 스택은 `completedLoopSeedTransferMeasured`의 `LoopSeedRevision.equals`가 동일한 immutable proof snapshot 쌍을 여러 reader에 대해 반복 비교하며 deep realization/support List equality로 내려가는 것을 보여준다. 이는 반복 비교 비용의 근거이며, 별도 publication 비수렴의 원인을 증명한 것은 아니다.
+- **해결 계획/구현**: `LoopSeedProofSnapshot` 안에 상대 snapshot identity와 정확한 구조 비교 결과를 한 항목으로 memo한다. 원래 revision key와 완전한 List equality/hash를 보존한다. 일반 mutable List 비교는 memo하지 않는다. self/null/동일 hash의 다른 내용/상대 교체/일반 List mutation 및 반복 호출 횟수 회귀를 추가했다.
+- **수정 파일**: `placement/PlacementRelationClosure.java`, `placement/LoopSeedSnapshotEqualityMemoTest.java`.
+- **검증**: 수정 전 회귀4건 중 반복 비교3건 실패, 수정 후 isolated javac/JUnit4건 통과. 중앙 Maven 및 실제 Docker 재검증 예정. 첫 run 원본과 스택은 `target/joint-compact-evidence/`, Docker 결과는 `/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-joint-compact-validation-20261007/`에 보존한다.
+- **잔여/위험**: 이 memo는 semantic convergence를 바꾸지 않으므로 publication 비수렴을 해결했다고 주장하지 않는다. snapshot 내부 값의 불변성 및 강한 참조 한 항목의 보관이 전제다. 구조적으로 다른 proof의 잘못된 cache hit는 hash collision/교체 회귀로 검사한다. 후보, privacy, TW/TR, pass 한도 및 runtime 정책은 바꾸지 않는다.
+- **범위 재확인/분리 진단**: 이전 기록의 별도 CSV common-analysis 지연이며 사용자가 뒤로 미룬 경로다. 추가 closure 수정으로 확대하지 않는다. `local_matrix` 입력에 Docker의 selection 출력·모든 fingerprint roots를 그대로 붙인 compile-only 진단은27.256초/pass4에 수렴했다. 동일 owner의 intra-pass relocation support8→6→8 재생성은 pass 경계에서 같아 비수렴 근거가 아니다. 원격 입력의 host compile-only는 privacy metadata 조회를 시도해 즉시 중단했고 runtime 실행 근거로 사용하지 않는다. 실제 원래 source 의미의 검증을 위해 파일 입력 없이 동일 full-rank20×5 행렬을 생성하는 opt-in Docker case를 추가한다.
+- **Maven/선택 범위 오류**: 중앙 memo 인접 회귀7클래스28건은 통과했지만 `LoopSeedReplayWideningTest` 전체 선택에 기존50,000×2,100 metadata-only1건이 섞였다. 대형 학습을 실행하지 않았으나 사용자의 대형 제외 범위에는 맞지 않는 선택 오류이며 숨기지 않는다. 최종 재실행은 해당 클래스의 소형5개 메서드만 명시했고, compact/조기 생략9건 및 원래 전체 compile1건과 함께15/15 PASS다. Java source3,588개는 최종 재검증 중 변경0이다.
+- **최종 scope 보완**: 반복 reader의 canonical scope2에 새3축 회로를 쓰면 범위가 커질 수 있어, 최종 scope≤3에는 기존 observation encoding을 보존한다. 실제 square-matrix `A=X/Y; C=A%*%A` 회귀가 VALUE_MAP과 복수 물리 입력의 존재를 먼저 확인하고 factor/auxiliary/scope/descriptor/비용 bits/선택 동치를 검증한다. 독립 최종 리뷰 CLEAR, 통합18클래스92/92 PASS, failures/errors/skips0. 원래20×5 전체 compile162.057초 PASS이며 Java 및 harness source3,590개 변경0이다.
+- **Docker fixture 보완**: 파일 입력 없는 full-rank20×5를 추가했으며 기존 CSV case는 그대로 둔다. 처음 literal 생성의 `c(...)`는 DML에서 정의되지 않아 root의 실제 Parser/HOP 진단이 실패했다. 기존 지원 문법인 `matrix("space-separated values",rows=...,cols=...,byrow=TRUE)`로 수정한 뒤 CP/FED Parser/HOP 두 경로와 Python31/31을 통과했다. 검증 fixture 오류 로그도 보존한다.
+
+## Full-rank StepLM outer publication의 주기2 — 해결
+
+- **새 증거/분류 수정**: 최종 Docker02의 파일 입력 없는20×5 `local_matrix` StepLM도 joint encoding 전에 `Executable realization/action composition did not converge`로 실패했다. 따라서 앞서 remote CSV에서 관측한 병목을 CSV에 한정된 것으로 분류할 수 없다. 이 입력과 상수1 compile 회귀의 차이를 구분한다. DMLScript는 오류를 출력하고 rc0으로 종료했으나 harness의 모델·selection·trace 검증이 실패를 정확히 감지했다. coordinator 강제 종료를 시도하기 전에 이미 자연 종료했으며 종료 신호는 보내지 않았다.
+- **원인 범위/진단**: 같은 literal DML의 compile-only 진단은 pass6부터 full-context 주기2를 확인했다. nodes/domain/logical/actions/pending은 안정적이고 candidate facts의2개 owner만 달라진다. `lmCG.dml:129` 안쪽 `parsertemp258 ba(+*)`와 바깥 `q ba(+*)`의 FULL/BROADCAST direct/derived 지원이 번갈아 생성·삭제된다. 최초 차이는 `cfg-grounded`, 반대 경로 제거는 `source-prune`다. 반복 로그를 모으는 대신 주기 증명 후 bounded probe를 중단했다.
+- **대응/원칙**: exact support reference의 최초 손실과 재생성을 추적한다. 반복 한도 증가, 주기 중간 상태 채택, 합법 후보 삭제, 무조건 union/intersection으로 수렴 판정을 우회하지 않는다. 아직 production closure 수정은 하지 않았다.
+- **다른 실제 검증**: Docker02에서 joint6/6과 작은 builtin LogReg/L2SVM/lmCG3/3은 PASS. 전체 계수16/8/8개의 최대 절대 오차는2.22e-16/8.41e-17/1.22e-15이고 runtime audit 위반0이다. StepLM 실패를 포함한10건 전체는 FAILED로 보존한다.
+- **근거/잔여/위험**: `target/joint-compact-evidence/publication-probes/literal-order/`, `docker-steplm-local-matrix-threads-01.txt`, 원본 Docker `steplm-joint-compact-validation-20261007/steplm-joint-compact-02/`. 실제 값 StepLM 학습은 아직 미완료다. 향후 수정은 expired support를 되살리거나 full/broadcast의 독립 합법 대안을 잃지 않는지 회귀로 검증해야 한다.
+- **정확한 순서 결함/수정 계획**: `q`의 DIRECT 및 RELOCATION clause는 안쪽 matmul의 exact DURABLE_MAP을 참조한다. source-prune가 그 참조를 삭제한 뒤 final-action-bind가 생산자의 action-backed VALUE_MAP을 복원한다. 기존 binder는 전체 owner를 교체하면서 교체 전 source options를 읽어 소비자가 한 pass 늦게 본다. 삭제 전에 current action authority의 생산자 binding을 완료하고, changed receipt를 기존 native/direct CFG closure가 소비하도록 하는 가장 작은 수정 경계를 검증한다. Action binder만 반복해서는 DIRECT-only FOUT을 생성하지 못하므로 충분하지 않다.
+- **회귀 계획**: 새 `StepLmPublicationReceiptClosureTest`에 같은 full-rank literal20×5를 사용한다. 단순 종료뿐 아니라 q의 두 DIRECT 경로 보존을 확인한다. `PublicationSupportClosureTest`의 expired source/action, 전체 reaching writer, sibling-support 보존 및 memo/fixed-point 인접 회귀를 함께 검사한다. HEAD/no-memo isolated class는 컴파일했지만12초 진단은 첫 pass를 끝내지 못했으므로, HEAD에서도 주기2를 실제 관측했다고 주장하지 않는다.
+- **최종 수정 경계**: 삭제 전에 전체 CFG를 다시 호출하는 초안은 채택하지 않았다. 기존 CFG composed fixed point의 두 direct closure 뒤에 current action binding을 포함해, 생산자 receipt 변화가 같은 고정점의 native/CFG 전파에 소비되도록 했다. `lastDirectFacts`는 action binding 직전, direct closure가 실제 처리한 revision을 저장한다. 추가 변경을 이미 처리한 것으로 기록하여 dirty work를 누락하는 초안 오류를 독립 리뷰에서 발견해 수정했다.
+- **불필요한 작업 제거**: relocation binder는 compiled-input dependency의 SCC를 생산자 순서로 처리하며 cyclic SCC 내부는 동시 commit한다. Facts와 source options는 owner identity로 index하고 변경된 owner의 lazy options만 무효화한다. 전체 fact list·inventory를 SCC마다 다시 순회하지 않는다. 결과 fact 순서와 `exact.isEmpty()` 동작을 보존하고 기존 source/action pruning이 실제 철회를 처리한다.
+- **고립 검증/리뷰**: 실제 Docker와 같은 데이터·selection 출력·네 fingerprint root의20×5 StepLM 분석이28.272초에 통과했다. 회귀는 정확한 `.builtinNS::m_lmCG`의 q owner를 하나로 식별하며 FULL/BROADCAST DIRECT source reference가 현재 생산자의 DURABLE_MAP에 존재함을 확인한다. 기존 publication·memo·fixed-point·snapshot32건 PASS, 별도 scheduling2건 PASS. Acyclic 한 번의 binding은 반복 동시 closure와 같고 fact 순서에 독립적이다. SCC 내부 새 receipt는 다음 transfer 전에는 소비하지 않으며 실제 고정점까지 검사한다. 수정 전 classes에서 acyclic 회귀가 실패해 민감성을 확인했다. 독립 최종 리뷰 CLEAR; 중앙 Maven·실제 Docker는 진행중이다.
+- **회귀 fixture 보정**: scheduling 초안이 연속 두 이동의 목적지를 같게 두어 두 번째가 DIRECT-only가 됐다. action binder는 relocation이 포함된 clause만 생성하므로 실패는 테스트 전제 오류였다. 서로 다른 목적지로 실제 두 이동을 만들고 RELOCATION binding을 확인하도록 고쳤으며 production 규칙은 완화하지 않았다.
+
+- **최종 중앙 검증**: Java25클래스132/132 PASS(실패·오류·skip0), Python31/31 PASS, Maven package 및 diff check PASS. 원래20×5 전체 compile142.804초 PASS, 실제 값/전체 출력 roots의 분석 회귀30.585초 PASS다. 소스3,603개는 회귀·빌드 중 변경0이고 최종 class/resource4,374개는 Docker 전후 변경0이다. 원본은 `target/joint-compact-evidence/publication-final-{common,core}/`, `publication-final-build.json`에 있다.
+- **최종 실제 학습**: `run_LAN_docker.sh --joint-boundary-e2e`의 `steplm-joint-compact-03`은 joint6건+소형ML4건=10/10 PASS다. StepLM20×5의5개 계수 최대 차이0, 선택 순서 `[3,1,5]` 동일, runtime audit/conversion 위반0이다. 컴파일120.694863초, 실행0.903초. LogReg/L2SVM/lmCG도 전체16/8/8개 계수 일치 및 audit 통과. 원본 결과 `/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-joint-compact-validation-20261007/steplm-joint-compact-03/result.json`. 소유 staging은 자동 정리됐으며 기존 workspace는 수정하지 않았다.
+- **남은 성능/범위**: StepLM DP 탐색97.003초와 `RESOURCE` 종료 시 upper37040.115993804146ms/lower19529.714826506737ms의 gap은 남는다. 합법 incumbent을 실행한 결과이며 전역 최적성을 주장하지 않는다. Overflow/주기2는 해결했지만 빠른 전체 계획 탐색까지 해결한 것은 아니다. 단일 실제 실행으로 성공 baseline 대비 속도 개선율을 만들지 않는다. 원격CSV 최종 재실행과 대형/전체Global Exact 최적화는 제외했다. 새 제한·fallback·후보 삭제를 추가하지 않았다.
+- **최종 보고서/상태**: `docs/STEPLM_JOINT_COMPACT_ENCODING_2026-10-07.md`, `docs/experiments/steplm-joint-compact-20261007/validation.json`. 전용 worktree에 미커밋 상태로 보존하며 이번 수정은 push하지 않았다.
+
 ## StepLM·ALS overflow 및 큰 LogReg W1 첫 재검증 — 완료, 새 main 후속 검증 진행 중
 
 - **요청/기준**: 사용자가 이전 잔여 항목 1·3의 최신 main 동일 조건 검증을 요청했다. 새로 fetch한 `origin/main`은 `93706bbaa9`이며 별도 worktree `/home/mchoi/w1357-main-revalidation-20261007`에 고정한다. 기존 worktree·실행·artifact는 수정하지 않는다.
@@ -299,6 +345,13 @@
 - **실제 학습 검증**: `run_LAN_docker.sh --joint-boundary-e2e --case ml_logreg`, 192×8 PRIVATE_AGGREGATE X/public local labels/3 ROW workers/4CPU8GiB/pinned image의 baseline/candidate 각2회 모두 PASS다. candidate 반복의 costFingerprint·planHash가 각각 정확히 일치한다. 네 실행의 candidate space·524개 배치·시간 제외1,224개 DP checkpoint·목적값122.26631334184357·16개 학습 계수가 같고, CP/FED 최대 오차2.22e-16, audit/conversion 위반0이다.
 - **근거/잔여**: `docs/experiments/cost-fingerprint-20261007/validation.json`에 명령·로그 SHA·최초 차이 및 원자료 경로를 기록했다. 기존 비결정적 hash와 새 canonical hash의 값은 달라질 수 있다. latency 개선 주장은 하지 않으며, W1 공통 분석과 별도 factor-size 오류는 여전히 범위 밖이다. 후보 제거·비용 변경·runtime fallback은 없다.
 - **게시 통합 검증**: 최신 main `344f88360919e3eb109c4e4bc121cf949be6a757`의 L2SVM·비용 추정 snapshot 변경에 rebase했고 충돌은 없었다. origin/main 대비 production 차이는 기존 joint factor 순서 수정 7줄뿐이다. fresh Maven test-compile 성공, 기존 32건과 upstream snapshot 2건 총34건 PASS(14.086초), 독립 JVM 2회의 전체 비용표/순서/assignment/objective/plan snapshot 동일. 기존 Docker 결과의 기준241b9c는 유지하며 별도 `publication-validation.json`에 통합 명령·SHA를 기록했다.
+
+## StepLM joint 수정 게시와 전체 플래닝20초 목표 — 통합 검증 중
+
+- **요청/기준**: 검증된 joint/CFG 수정부터 commit·origin/main push한 다음 전체 플래닝을20초 이내로 줄이라는 요청이다. 원본 수정은 `879383b42c`로 커밋했다. Fetch된 main이6개 commit 전진한 `56d2ac628e`이므로 그 변경을 먼저 통합한다.
+- **통합 범위/원칙**: upstream alias reachability·bounded sparse storage·runtime 전 transfer 추정 snapshot·deterministic cost/plan fingerprint를 보존한다. Session 문서는 양쪽 이력을 합치고, Docker harness는 upstream case/계측과 기존 full-rank StepLM literal case를 함께 유지한다. Production 세 파일은 자동 병합됐으며 별도 의미 검토와 소형 회귀를 수행한다.
+- **성능 평가 예정**: 동일 image·4CPU/8GB·coordinator3GB·실제 StepLM20×5로 전체 컴파일 시간을20초 이하로 검사한다. 공통 분석·비용 모델 구성·DP 선택을 포함하며 runtime 학습 시간과 분리한다. 합법 후보·privacy·source/version/lifetime·canonical 비용과 CP/FED 학습 결과를 유지한다. 대형 학습과 CSV 별도 오류는 제외한다.
+- **회귀 위험/검증**: 일반 compact 회로를 observation-star로 잘못 취급하는 quotient, descriptor 및 alias 경로 충돌, sparse table 저장 규칙 변경에 따른 선택/비용 차이를 관련 회귀와 실제 Docker로 검사한다. 통합 검증과 게시가 끝나기 전에는 새 성능 구현을 시작하지 않는다.
 
 
 ## LogReg common 잔여 병목 조사 — 분석 완료, 추가 최적화 미구현
@@ -378,3 +431,33 @@
 - **최종 성능/목표 상태**: 기준/수정본을 번갈아 각3회 실행했다. 전체 컴파일 기준27.200/31.780/27.652초, 수정24.566/24.195/20.397초. 평균28.877→23.053초(-20.17%), 중앙값27.652→24.195초(-12.50%). common 평균19.382→16.331초이며 수정 범위13.968–17.794초다. **전체10초 목표는 미달**이며 모든 수정본에서 이를 명시적으로 false로 기록했다. 모델16계수 maxdiff2.22e-16, fingerprint/1,224 checkpoints 동치, audit/conversion0. L2SVM 양쪽1회 모델/4checkpoints/audit smoke PASS. 학습 실행 평균3.083→3.299초이며 학습 가속을 주장하지 않는다.
 - **Ablation/채택 해석**: exact 두 파일의 개선을 제거하면 전체23.583초/common16.080초, 나머지 common/identity/publication/관측 개선을 제거하면29.494초/common18.403초였다. 모두 정확성 동치다. 단일 ablation과 실행 변동으로 exact 변경의 독립 wall-time 개선율 또는 각 미세 변경의 기여율은 확정하지 않는다. cold oracle·정밀도·메모리 회귀, 소스 검토로 확인한 중복 계산 제거, 결합본의 반복 감소를 근거로 반영한다. 모듈별 합산 개선율을 만들어내지 않는다.
 - **잔여/결정**: target 미달을 실패 은폐 없이 기록했다. common만 평균16.331초이며 전체의70.84%다. 전체 CFG 재사용은 loop seed/privacy/mutable Hop/현재·음성 proof readset을 완전히 검증하는 설계가 먼저 필요하다. seed placement ID 공유는 이미 있으므로 중복 캐시를 추가하지 않았다. 후보 임의 삭제·새 runtime fallback·fixture 축소는 없다. 새 기능 오류는 확인되지 않았으나 큰W1/다른 workload 성능은 미검증이다. 상세는 LOGREG_TOTAL_COMPILE_OPTIMIZATION_2026-10-07_KO.md, 통합 결과는 experiments/logreg-total-compile-20261007/validation.json의 TARGET_NOT_MET 상태로 보존한다.
+- **StepLM 게시 전 두 번째 main 통합**: 첫 통합은 `5eaa080449`로 보존했다. 공유 origin/main이 `d26bb59610`으로 다시 전진하여 해당 고정 hash의 LogReg common-analysis memo/SCC 최적화도 통합했다. Production은 자동 병합됐고 session 문서의 양쪽 추가 이력을 보존했다. 테스트 기준은 이제 mutable remote ref가 아닌 `d26bb59610` 통합 소스다. 새로운 CFG replay memo와 action receipt invalidation의 결합을 추가 검증한다.
+
+- **StepLM 통합 게시 검증 완료**: d26bb59610 통합 코드의 common88건+joint/cost/sparse121건=Java209/209 PASS(실패·오류·skip0), Python35/35 및 package/diff check PASS. `steplm-joint-publication-04` 실제 Docker10/10 PASS, StepLM5계수·선택순서 `[3,1,5]`는 CP와 정확히 같고 전체 audit/conversion 위반0이다. 소스3,614개·class/resource4,390개가 테스트·빌드 기준과 같다. 독립 병합 리뷰 CLEAR. 상세는 `docs/experiments/steplm-joint-compact-20261007/publication-validation.json`; 이후20초 목표의 baseline으로 이 게시본을 사용한다.
+
+## 최신 main ALS 확인 — 워크스페이스 정리 및 기존 실패 회귀 PASS
+
+- **요청/기준**: workspace를 정리하고 origin/main 기반으로 ALS를 확인한다. fetch로 확인한 `9668cb432f051d0313c5668719b9adadb0c60314`에 `verify/als-main-20261007`을 고정했다. 실행 중 remote ref가 전진해도 이번 결과의 기준을 바꾸지 않는다.
+- **정리**: 이전 tracked 변경은 모두 커밋·푸시 완료 상태였다. 현재 worktree의 target7,259개 file/symlink 항목을 grid의 `als-main-verification-20261007/previous-target-56d2ac628e`로 복사하고 전수 hash/link 일치를 확인한 뒤 기존 target을 정리했다. 이전 alias/cost 증거 경로는 symlink로 보존하고 dependency만 재사용한다. 다른 worktree·외부 실험 자료는 유지했다. 새 main/test classes는 fresh Maven으로 생성한다.
+- **검증 대상/조건**: 기존 `CampaignBG014AlsPartitionedComputeCostRedTest.singleWorkerAlsPricesOneReusableCpRuntimeWeightMaterialization` 그대로 실행한다. n50,000·d2,100·rank10·maxi2·PRIVATE_AGGREGATE X·W1 FULL·WAN-light 조건이며 Java17/8GiB/4CPU의 metadata-only compile·비용·Exact/Local DP 선택 테스트다. 실제 데이터 학습이나 lowering 검증과 구분한다.
+- **판정 계획**: 이전 실패는 비용 surface preflight의 joint hard-factor overflow였다. 현 main의 compact joint 표현을 포함해 같은 메서드의 통과 여부와 최초 실패 단계를 확인한다. 후보/기대값/한도를 바꾸지 않고, 새 실패가 나오면 동일 실행을 반복하기 전에 stack과 원인을 분리한다. raw command/log/build/source SHA는 `/home/mchoi/als-main-verification-20261007/`에 저장한다.
+- **잔여/위험**: 실행 완료 전 ALS 해결을 주장하지 않는다. 원래 메서드는 Exact를 먼저 호출하므로 거기서 막히면 뒤 Local DP도 실패했다고 단정하지 않는다. shared host wall time은 성능 A/B로 사용하지 않는다.
+- **최종 결과**: fresh Maven test-compile 성공, Java/builtin/POM 3,808개 파일 SHA가 빌드·테스트 전후 그대로다. 위 원래 메서드는 **1건 실행/실패0/ignore0**, JUnit74.910초(전체 process76.009초)에 PASS했다. 메서드 본문이 이전 실패 기준 `fbfd4d790f`와 동일함을 직접 비교했다. production·기대값·solver 한도는 수정하지 않았다.
+- **확인된 범위**: 이전 joint hard-factor preflight overflow가 해소되어 전체 cost surface 구성, 재사용 FULL W2C 전송 비용의 단일 contribution 및 중복 과금 방지 검사, Exact 최적화·selection 검증, Local DP 최적화·selection 검증, 두 planner의 cost fingerprint 일치 및 기존 owner 선택 assertion까지 완료했다. 37.57초 thread dump도 Exact 완료 후 Local DP merge 단계에 도달했음을 보여준다.
+- **남는 경계**: 해당 metadata-only ALS 테스트의 기존 overflow는 현재 main에서 해결된 것으로 갱신한다. 실제 분산 학습, CP/FED 수치 비교, plan projection/lowering은 이 테스트가 수행하지 않으므로 검증 완료로 보고하지 않는다. 이전 실패 시간과 새 성공 시간을 속도 개선율로 비교하지 않는다. 검증 기록만 변경했으며 새 구현으로 인한 회귀 위험은 없다.
+- **근거**: `docs/experiments/als-main-verification-20261007/validation.json`에 source/build SHA, 정리 receipt, 원래 실행 명령과 이전 실패 대비, 새 stdout/stderr SHA를 저장했다. 원자료는 `/home/mchoi/als-main-verification-20261007/`에 보존한다.
+- **플래닝 시간 추가 확인**: 기존 74.910초는 fixture·assertion·Exact·Local DP를 합친 JUnit 시간이라 한 planner의 시간으로 사용할 수 없다. 같은 조건의 외부 테스트 사본에 `System.nanoTime()` 구간 계측만 추가해 fresh JVM 1회 실행했다. 원래 Exact→Local 순서와 모든 assertion을 유지했으며 계측을 되돌리면 원본이 정확히 복원된다. production class overlay는 없고 원본 source 3,808개 SHA도 그대로다.
+- **계측 결과**: fixture/parse/rewrite 1.109초, 공통 분석 9.426초, 물리 모델 0.617초, 비용 surface 1.134초, Exact solver 2.996초/selection 검증 0.094초, Local DP solver 53.428초/selection 검증 0.029초다. 공통+물리+비용+각 solver+selection의 구간 합은 **DP 64.634초**, Exact 14.267초다. 새 계측 테스트는 1/1 PASS(실패·ignore 0), JUnit 68.856초다. 따라서 이 실행에서 가장 긴 플래너 구간은 Local DP solver였다.
+- **시간 해석/잔여**: 위 합은 동일 회귀 안의 구간 합이며 각각 독립 cold DP/Exact 전체 컴파일 시간이 아니다. Local은 Exact 다음 실행이므로 JIT/cache 순서의 영향이 가능하다. metadata 기반 단일 shared-host 관측이고, plan projection/LOP 생성/학습을 제외한다. Docker 성능 비교나 개선율을 주장하지 않는다. `timing-validation.json`, `timing.stdout.log`, `timing-only.patch`에 구간값·계측 변경·검증 명령을 보존했다. 수정은 기록뿐이며 oracle/비용/후보/solver 로직을 바꾸지 않았다.
+
+
+## LogReg 최적화의 최신 main 통합 — 검증 완료
+
+- **문제/환경**: LogReg 최적화 `5f9ede00f1`을 게시하기 전 fetch에서 origin/main이 `9409f503d8`로 전진했음을 확인했다. StepLM joint proof/relocation support 수정과 `PlacementRelationClosure` 및 세션 기록이 겹쳤다.
+- **해결/수정 파일**: upstream의 component 순서에 따른 relocation binding 및 revision 갱신을 보존하고, 각 replacement에 기존 `retainUnchangedPrivacyFact`를 적용해 동일 객체 authority의 재사용을 결합했다. 세션 문서의 두 append는 모두 보존했다. oracle/privacy/TR-TW/후보 허용 규칙은 추가로 수정하지 않았다.
+- **검증 계획/상태**: 통합 전 3,598개 Java source가 검증된 동결본과 일치함을 확인하고 LogReg 변경을 별도 커밋했다. 통합 후 exact/joint/direct/relocation/identity 회귀와 Maven package, Docker 실제 LogReg 학습의 모델·audit 및 계획 동치를 재검증한다.
+- **잔여/위험**: 이전의 평균 컴파일 23.053초는 통합 전 동결본의 측정이다. 최신 main 결합본에 그대로 적용하지 않는다. SCC 갱신 순서와 identity 재사용의 상호작용은 새 upstream 회귀와 실제 학습으로 감지한다. 전체 10초 목표는 계속 미달이다.
+
+- **통합 검증 완료**: Java 102클래스 838건 중832PASS/기존ignore6/실패·오류0, Maven package 성공208.732초, 빌드 전후3,604개 Java source SHA 불변. Python harness35건 PASS. 독립 병합 검토에서도 correctness blocker가 없었다.
+- **실제 학습/기준 차이 확인**: `logreg-r2-main9409-01`에서 harness/container/model-proof 성공, CP/FED16계수 maxdiff2.22e-16, audit/conversion 위반0, analysis fingerprint 일치. d26의1,224 checkpoints와 비교하는 기존 evaluator는 upstream의 joint factor 변경으로 false/exit1을 반환했으며 그 결과를 보존했다. main 게시 검증 `steplm-joint-publication-04`의 main source1,645개가 Git9409와 전수 일치함을 확인하고 다시 비교해 시간 제외1,228 checkpoints 전부 동일함을 증명했다. 입력 fixture/config/image/dependency도 일치한다. 이는 실패를 무시한 것이 아니라 upstream 기준의 의미 변경을 분리한 검증이다.
+- **최종 관측/잔여**: 통합 smoke1회 common15.885초, 전체 컴파일22.554984초, 학습3.638초. 반복 성능 개선율로 사용하지 않으며 전체10초 목표는 미달이다. 원자료는 `logreg-common-round2-20261007/integration-9409`, 게시 근거는 `docs/experiments/logreg-total-compile-20261007/publication-validation.json`이다. 새 회귀는 확인되지 않았으며 대형W1 및 타 workload 성능은 이번 게시 검증 범위 밖이다.

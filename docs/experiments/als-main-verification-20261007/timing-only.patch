@@ -1,0 +1,43 @@
+--- a/src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/CampaignBG014AlsPartitionedComputeCostRedTest.java
++++ b/src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/CampaignBG014AlsPartitionedComputeCostRedTest.java
+@@ -441,0 +442 @@
++			long alsTiming0 = System.nanoTime();
+@@ -442,0 +444,3 @@
++			long alsTiming1 = System.nanoTime();
++			System.out.println("ALS_TIMING fixture_parse_rewrite nanos=" + (alsTiming1 - alsTiming0));
++			long alsCommonStart = System.nanoTime();
+@@ -444,0 +449,2 @@
++			long alsTiming2 = System.nanoTime();
++			System.out.println("ALS_TIMING common_analysis nanos=" + (alsTiming2 - alsCommonStart));
+@@ -495,0 +502 @@
++			long alsTiming3 = System.nanoTime();
+@@ -496,0 +504,3 @@
++			long alsTiming4 = System.nanoTime();
++			System.out.println("ALS_TIMING physical_model nanos=" + (alsTiming4 - alsTiming3));
++			long alsSurfaceStart = System.nanoTime();
+@@ -498,0 +509,2 @@
++			long alsTiming5 = System.nanoTime();
++			System.out.println("ALS_TIMING cost_surface nanos=" + (alsTiming5 - alsSurfaceStart));
+@@ -544,5 +556,17 @@
+-			ExactPhysicalSelection exact = ExactPhysicalSelection.create(model,
+-				ExactPhysicalOptimizer.optimize(model, surface,
+-					ExactPhysicalOptimizer.PRODUCTION_LIMITS));
+-			ExactPhysicalSelection local = ExactPhysicalSelection.create(model,
+-				LocalPhysicalOptimizer.optimize(model, surface).physicalResult());
++			long alsTiming6 = System.nanoTime();
++			var alsTimedExactResult = ExactPhysicalOptimizer.optimize(model, surface,
++				ExactPhysicalOptimizer.PRODUCTION_LIMITS);
++			long alsTiming7 = System.nanoTime();
++			System.out.println("ALS_TIMING exact_solver nanos=" + (alsTiming7 - alsTiming6));
++			long alsExactSelectionStart = System.nanoTime();
++			ExactPhysicalSelection exact = ExactPhysicalSelection.create(model, alsTimedExactResult);
++			long alsTiming8 = System.nanoTime();
++			System.out.println("ALS_TIMING exact_selection_validation nanos=" + (alsTiming8 - alsExactSelectionStart));
++			long alsTiming9 = System.nanoTime();
++			var alsTimedLocalResult = LocalPhysicalOptimizer.optimize(model, surface);
++			long alsTiming10 = System.nanoTime();
++			System.out.println("ALS_TIMING local_dp_solver nanos=" + (alsTiming10 - alsTiming9));
++			long alsLocalSelectionStart = System.nanoTime();
++			ExactPhysicalSelection local = ExactPhysicalSelection.create(model, alsTimedLocalResult.physicalResult());
++			long alsTiming11 = System.nanoTime();
++			System.out.println("ALS_TIMING local_dp_selection_validation nanos=" + (alsTiming11 - alsLocalSelectionStart));

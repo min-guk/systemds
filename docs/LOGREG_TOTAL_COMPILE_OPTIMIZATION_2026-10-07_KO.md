@@ -85,3 +85,13 @@ L2SVM은 양쪽 각1회 regression smoke에서 모델·4 checkpoints·fingerprin
 최종 통합 검증 JSON: [validation.json](experiments/logreg-total-compile-20261007/validation.json). 최상위 상태는 `TARGET_NOT_MET`, 정확성/조건 검증은 각각 `PASSED`로 구분한다.
 
 수정한 production 파일은 `PlacementRelationClosure.java`, `NativePlacementContinuity.java`, `LogicalBoundaryRealizations.java`, `PlacementIdentity.java`, `PlacementAnalysis.java`, `PlannerCandidateSpaceAudit.java`, `ExactCategoricalSolver.java`, `ExactFactorValueClasses.java`, `FederatedPlannerLogger.java`, `OracleFacade.java`다. 각 파일은 기존 모듈 안에서 변경했으며 새 의존성이나 사용자용 플래너 옵션은 추가하지 않았다.
+
+## 최신 main 통합 후 게시 검증
+
+LogReg 변경을 `5f9ede00f1`로 커밋한 뒤 origin/main `9409f503d8`의 StepLM joint proof/relocation 변경을 병합했다. `PlacementRelationClosure`의 충돌은 upstream SCC 순서와 revision 갱신을 보존하면서 동일 authority의 fact 재사용을 적용해 해결했다.
+
+통합본은 Java 102클래스 838건 중832 PASS/기존 ignore6/실패·오류0, Python35건 PASS 및 Maven package를 통과했다. 빌드 전후3,604개 Java source가 같고 Docker 실행에는 이 동결본을 사용했다. 독립 병합 검토에도 correctness blocker가 없었다.
+
+실제 LogReg 학습의 모델16계수는 CP와 maxdiff2.22e-16, runtime audit/conversion 위반0이다. 이전 d26의1,224 checkpoints와는 upstream의 joint factor 변경 때문에 일치하지 않았다. 그 비교 실패는 원자료에 보존했다. 기존 main 게시 실행의 동결 main source1,645개가 Git9409와 전수 일치함을 확인한 뒤 비교했으며, 통합본의 시간 제외1,228 checkpoints와 analysis fingerprint는 최신 main 결과와 전부 동일했다.
+
+이 통합 smoke1회에서 common15.885초, 전체 컴파일22.554984초, 학습3.638초였다. 앞의3회 반복 성능은 통합 전 동결본의 결과이며, 이 단일 관측과 섞어 개선율을 다시 계산하지 않는다. **전체10초 목표는 계속 미달이다.** [게시 검증 기록](experiments/logreg-total-compile-20261007/publication-validation.json)에 비교 기준·명령·source/결과 SHA를 보존했다.

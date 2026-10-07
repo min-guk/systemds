@@ -1,0 +1,1748 @@
+{
+  "schema": "systemds-steplm-joint-publication-v1",
+  "status": "VALIDATED_FOR_PUBLICATION",
+  "implementationCommit": "879383b42c7276d857b74325ce2dfeafac501114",
+  "firstIntegrationCommit": "5eaa080449",
+  "upstreamBaseline": "d26bb596102557d4e9d8c76fd5530892688155ad",
+  "originalValidation": "validation.json",
+  "review": "CLEAR: compact/star quotient, sparse fallback, alias memo, CFG replay evidence, direct dirty revision and schedule-cache integration",
+  "tests": {
+    "common": {
+      "passed": true,
+      "command": [
+        "mvn",
+        "-q",
+        "-Dtest-forkCount=2",
+        "-Dtest=StepLmPublicationReceiptClosureTest,RelocationBindingScheduleTest,PublicationSupportClosureTest,RelocationProductMemoTest,NeutralPlacementFixedPointCompositionTest,LoopSeedSnapshotEqualityMemoTest,LoopSeedReplayWideningTest#failedLoopSeedAttemptDoesNotConsumeItsRevision+completedLoopSeedLeavesWidenedExitRetryableUntilItsOwnTransfer+privacyRejectedLoopSeedDoesNotConsumeEitherProofState+repeatedReuseUpdateLoopConvergesWithOneAnalysisScopedSeed+protectedAlsLoopRetainsWidenedNativeSourceAndAllReachingWriters,CfgReplayMemoTest,DirectComponentScheduleCacheTest,DirectSupportUnionScheduleTest,DirectedDirectClosureDirtyConeTest",
+        "test"
+      ],
+      "returncode": 0,
+      "wallSeconds": 100.08129024505615,
+      "sourceFileCount": 3614,
+      "changedSources": [],
+      "missingReports": [],
+      "classes": [
+        {
+          "class": "PublicationSupportClosureTest",
+          "tests": 10,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.242,
+          "methods": [
+            {
+              "name": "expiredClauseDoesNotRemoveTheValidAlternative",
+              "seconds": "0.129"
+            },
+            {
+              "name": "equivalentSeedRequestsStillDistinguishPinnedOutputAndRanges",
+              "seconds": "0.07"
+            },
+            {
+              "name": "authoritativeWriterInventoryRejectsAnEntireMissingRelation",
+              "seconds": "0.012"
+            },
+            {
+              "name": "unchangedPublicationReusesAlreadyCanonicalObjects",
+              "seconds": "0.006"
+            },
+            {
+              "name": "expiredRelocationRemovesItsWholeClauseButKeepsLiveSiblings",
+              "seconds": "0.01"
+            },
+            {
+              "name": "logicalReaderRequiresLiveSupportFromEveryReachingWriter",
+              "seconds": "0.006"
+            },
+            {
+              "name": "finalActionProjectionRetainsExactAndDirectAuthorityAfterClausePruning",
+              "seconds": "0.003"
+            },
+            {
+              "name": "oneLiveInputCannotAuthorizeAnExpiredConjunct",
+              "seconds": "0.001"
+            },
+            {
+              "name": "finalActionProjectionCannotHideMissingActionOrExpiredSource",
+              "seconds": "0.004"
+            },
+            {
+              "name": "privacyRowReuseRequiresTheSameExactEmissionObjects",
+              "seconds": "0"
+            }
+          ]
+        },
+        {
+          "class": "DirectedDirectClosureDirtyConeTest",
+          "tests": 23,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.448,
+          "methods": [
+            {
+              "name": "nestedAuthorityChangeMarksOnlyItsExactOwner",
+              "seconds": "0.38"
+            },
+            {
+              "name": "removedOrAddedSupportStillInvalidatesItsConsumer",
+              "seconds": "0.012"
+            },
+            {
+              "name": "diamondVisitsOnlyChangedRowAndItsConsumers",
+              "seconds": "0.001"
+            },
+            {
+              "name": "regeneratedIdenticalEdgesDoNotDirtyTheirConsumers",
+              "seconds": "0.004"
+            },
+            {
+              "name": "cycleAndFunctionReachingFollowProducerToConsumer",
+              "seconds": "0.002"
+            },
+            {
+              "name": "independentlyRebuiltCompleteFactsWithSharedOwnersRemainUnchanged",
+              "seconds": "0.002"
+            },
+            {
+              "name": "identicalFactListAvoidsAllChangeDetectionTraversal",
+              "seconds": "0.001"
+            },
+            {
+              "name": "incrementalSupportRefusesInventoryOwnerOrRuleKeyDrift",
+              "seconds": "0.008"
+            },
+            {
+              "name": "ownerInventoryMultirowAndOrderingUseExactFallbackSemantics",
+              "seconds": "0.001"
+            },
+            {
+              "name": "incrementalSupportUsesOccurrenceIdentityAndOnlyChangedOwnerSlots",
+              "seconds": "0.004"
+            },
+            {
+              "name": "postPhysicalFirstPassUsesOldAndNewDependencies",
+              "seconds": "0.001"
+            },
+            {
+              "name": "postPhysicalFirstPassSeesAbsentSourceAndNewLoopSeed",
+              "seconds": "0.001"
+            },
+            {
+              "name": "oneValueVersionExpandsAliasesWithoutReversingDependencies",
+              "seconds": "0"
+            },
+            {
+              "name": "unchangedAliasPredecessorDoesNotStarveReadySuccessor",
+              "seconds": "0.008"
+            },
+            {
+              "name": "incrementalSupportMatchesFullScanForDuplicatesWithdrawalAndRestoration",
+              "seconds": "0.004"
+            },
+            {
+              "name": "replayShrinkAndReorderReportsSemanticOwnersWithoutPositionalAccess",
+              "seconds": "0.002"
+            },
+            {
+              "name": "postBoundaryChangedOwnersRefreshEvenWhenAdjacencyIsUnchanged",
+              "seconds": "0.004"
+            },
+            {
+              "name": "structurallyEqualButDistinctOwnerIdentitiesBothRemainDirty",
+              "seconds": "0"
+            },
+            {
+              "name": "postPhysicalFirstPassFallsBackWhenGlobalAnchorInventoryChanges",
+              "seconds": "0.002"
+            },
+            {
+              "name": "postPhysicalFirstPassPreservesUnchangedIndependentRows",
+              "seconds": "0.001"
+            },
+            {
+              "name": "completeTouchedOwnerDeltaMatchesColdAndSkipsUnrelatedSlots",
+              "seconds": "0.004"
+            },
+            {
+              "name": "supportAdditionsAndDeletionsRebuildCycleSchedule",
+              "seconds": "0.003"
+            },
+            {
+              "name": "postPhysicalFirstPassSeedsChangedEdgesAndReachingWithoutFactChanges",
+              "seconds": "0.001"
+            }
+          ]
+        },
+        {
+          "class": "NeutralPlacementFixedPointCompositionTest",
+          "tests": 12,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 46.201,
+          "methods": [
+            {
+              "name": "zeroStructuralArenaBudgetChangesWorkOnlyNeverCandidateSemantics",
+              "seconds": "3.17"
+            },
+            {
+              "name": "dirtyDirectClosureMatchesFullRecomputeAtTheComposedTransferBoundary",
+              "seconds": "1.487"
+            },
+            {
+              "name": "privacyFilteredLoopSeedProgressDoesNotBecomeAFalseCycle",
+              "seconds": "7.395"
+            },
+            {
+              "name": "lazyReceiptRelationRetainsExactLegacyLexicalRank",
+              "seconds": "0.077"
+            },
+            {
+              "name": "recursiveDirectPublicationIsStableWithIncrementalAndMemoDisabled",
+              "seconds": "33.084"
+            },
+            {
+              "name": "exactContextDiagnosticsRemainBoundedWhenTrackingIsDisabled",
+              "seconds": "0.063"
+            },
+            {
+              "name": "representativeCompositionsTerminateAtStablePassWithinDeclaredBound",
+              "seconds": "0.242"
+            },
+            {
+              "name": "nativeContinuityIsClearedAfterExceptionalAndSuccessfulBuilds",
+              "seconds": "0.145"
+            },
+            {
+              "name": "aggregateComplexityMetricsAreAnalysisScopedAndSemanticallyInert",
+              "seconds": "0.171"
+            },
+            {
+              "name": "independentStatementOrderPreservesSemanticFixedPointSnapshot",
+              "seconds": "0.042"
+            },
+            {
+              "name": "rebuildingTheSameCompiledProgramIsIdempotent",
+              "seconds": "0.096"
+            },
+            {
+              "name": "ordinaryTransientReaderRetainsExactNativeBindingAfterPhysicalReplay",
+              "seconds": "0.228"
+            }
+          ]
+        },
+        {
+          "class": "LoopSeedReplayWideningTest",
+          "tests": 5,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 22.592,
+          "methods": [
+            {
+              "name": "repeatedReuseUpdateLoopConvergesWithOneAnalysisScopedSeed",
+              "seconds": "19.411"
+            },
+            {
+              "name": "protectedAlsLoopRetainsWidenedNativeSourceAndAllReachingWriters",
+              "seconds": "3.179"
+            },
+            {
+              "name": "privacyRejectedLoopSeedDoesNotConsumeEitherProofState",
+              "seconds": "0"
+            },
+            {
+              "name": "completedLoopSeedLeavesWidenedExitRetryableUntilItsOwnTransfer",
+              "seconds": "0.001"
+            },
+            {
+              "name": "failedLoopSeedAttemptDoesNotConsumeItsRevision",
+              "seconds": "0"
+            }
+          ]
+        },
+        {
+          "class": "DirectSupportUnionScheduleTest",
+          "tests": 11,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 2.72,
+          "methods": [
+            {
+              "name": "potentialOverlapKeepsOldChangedSignalButNotUnionSignal",
+              "seconds": "0.117"
+            },
+            {
+              "name": "identityPairMembershipRequiresBothExactEndpoints",
+              "seconds": "0.001"
+            },
+            {
+              "name": "directNativePublicationMemoEvictsOldestAndClearsPerBuild",
+              "seconds": "2.216"
+            },
+            {
+              "name": "exactGroundedSubsetReusesOldOrAuthorityOnly",
+              "seconds": "0.057"
+            },
+            {
+              "name": "selfEdgeAndCycleUseExactPairMembershipRatherThanSccHeuristics",
+              "seconds": "0.003"
+            },
+            {
+              "name": "nonPotentialAndIdentityDistinctEdgesChangeTheDependencyUnion",
+              "seconds": "0.001"
+            },
+            {
+              "name": "directNativePublicationMemoUsesCompleteIdentityContext",
+              "seconds": "0.31"
+            },
+            {
+              "name": "changedDynamicWitnessAndNonEqualTieForceCanonicalMerge",
+              "seconds": "0.001"
+            },
+            {
+              "name": "nativeRebindingRetainsGroundedAlternativesButNotStagingAuthority",
+              "seconds": "0.006"
+            },
+            {
+              "name": "mixedCoveredAndUncoveredDeltaChangesTheDependencyUnion",
+              "seconds": "0.006"
+            },
+            {
+              "name": "exactSubsetRejectsStructurallyEqualForeignAuthority",
+              "seconds": "0.002"
+            }
+          ]
+        },
+        {
+          "class": "CfgReplayMemoTest",
+          "tests": 10,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 2.067,
+          "methods": [
+            {
+              "name": "structurallyEqualSupportCannotReplaceGraphOwnedDependencyIdentities",
+              "seconds": "0.249"
+            },
+            {
+              "name": "nativeEvidenceRetainsOnlyOutputFieldsConsumedByReplay",
+              "seconds": "1.648"
+            },
+            {
+              "name": "replayContextOrdinalIndexPreservesFirstEqualAndAbsentColdSemantics",
+              "seconds": "0.147"
+            },
+            {
+              "name": "nativeProofPresenceChangesInvalidateWithUnchangedSourceFacts",
+              "seconds": "0.006"
+            },
+            {
+              "name": "replayContextInvalidatesEveryCapturedReaderAndDefinitionAuthority",
+              "seconds": "0.003"
+            },
+            {
+              "name": "dependencyEvidenceInvalidatesChangedSupportWithAnIdenticalReferenceKey",
+              "seconds": "0.001"
+            },
+            {
+              "name": "structuralReferenceCollisionKeepsFirstAndRemovalExposesNext",
+              "seconds": "0"
+            },
+            {
+              "name": "inventoryMatchesColdSourceOraclesAndKeepsStructuralMembership",
+              "seconds": "0.008"
+            },
+            {
+              "name": "nativeQueriesKeepStructurallyEqualRootIdentitiesDistinct",
+              "seconds": "0.003"
+            },
+            {
+              "name": "negativeRealizationLookupInvalidatesWhenTheReferenceAppears",
+              "seconds": "0"
+            }
+          ]
+        },
+        {
+          "class": "LoopSeedSnapshotEqualityMemoTest",
+          "tests": 4,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.164,
+          "methods": [
+            {
+              "name": "equalDistinctSnapshotsMemoizeOneIdentityPair",
+              "seconds": "0.162"
+            },
+            {
+              "name": "unequalSameHashSnapshotsRemainUnequalAndMemoized",
+              "seconds": "0.001"
+            },
+            {
+              "name": "alternatingSnapshotIdentityInvalidatesOnlyTheOneEntryMemo",
+              "seconds": "0"
+            },
+            {
+              "name": "reflexiveNullAndMutableListSemanticsAreUnchanged",
+              "seconds": "0.001"
+            }
+          ]
+        },
+        {
+          "class": "RelocationProductMemoTest",
+          "tests": 6,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.539,
+          "methods": [
+            {
+              "name": "exactCurrentProductIsReusedWithoutEnumeratingLeavesAgain",
+              "seconds": "0.37"
+            },
+            {
+              "name": "choiceAuthorityAndOutputGeometryRemainExactCacheBoundaries",
+              "seconds": "0.139"
+            },
+            {
+              "name": "derivedActionAndExactOutputKeysRemainPartOfProductIdentity",
+              "seconds": "0.016"
+            },
+            {
+              "name": "freshCarriedClausesAreNotPartOfTheMemoizedGeneratedContribution",
+              "seconds": "0.004"
+            },
+            {
+              "name": "previousInvocationReuseRetainsOnlyFreshExactChoices",
+              "seconds": "0.007"
+            },
+            {
+              "name": "ownerAndOutputBranchIdentityCannotAlias",
+              "seconds": "0.002"
+            }
+          ]
+        },
+        {
+          "class": "StepLmPublicationReceiptClosureTest",
+          "tests": 1,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 25.282,
+          "methods": [
+            {
+              "name": "fullRankStepLmRetainsBothDirectWorkerPoolRoutes",
+              "seconds": "25.282"
+            }
+          ]
+        },
+        {
+          "class": "DirectComponentScheduleCacheTest",
+          "tests": 4,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.063,
+          "methods": [
+            {
+              "name": "edgeAndAliasChangesMissAndMatchTheirOwnColdGraphs",
+              "seconds": "0.051"
+            },
+            {
+              "name": "reorderedDuplicateEdgesReuseTheExactColdSchedule",
+              "seconds": "0.002"
+            },
+            {
+              "name": "ownerIdentityAndRegistryOrderArePartOfTheCacheKey",
+              "seconds": "0.003"
+            },
+            {
+              "name": "boundedEvictionAndClearChangeReuseOnly",
+              "seconds": "0.007"
+            }
+          ]
+        },
+        {
+          "class": "RelocationBindingScheduleTest",
+          "tests": 2,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.831,
+          "methods": [
+            {
+              "name": "acyclicScheduleMatchesRepeatedSimultaneousClosureAndIgnoresFactOrder",
+              "seconds": "0.813"
+            },
+            {
+              "name": "cyclicComponentRequiresAnotherTransferBeforeItIsConverged",
+              "seconds": "0.018"
+            }
+          ]
+        }
+      ],
+      "totals": {
+        "tests": 88,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      }
+    },
+    "core": {
+      "passed": true,
+      "command": [
+        "mvn",
+        "-q",
+        "-Dtest-forkCount=2",
+        "-Dtest=JointCompactAlignmentTest,JointEarlyPruningTest,JointPartialTruthTest,JointAliasProjectionTest,JointPhysicalCostTest,JointBoundaryMixedInputTest,JointBoundaryPhysicalModelProofTest,ExactHardFactorObservationDecompositionTest,ExactPhysicalCostFingerprintPreflightTest,JointPhysicalCostRowsPrefixTest,JointValueMapRelationsTest,JointValueMapSelectionLegalityTest,JointInputReachingDefinitionsTest,LoopIdentityBackedgeClosureTest,ExactDurableOutputSupportTest,ExactPhysicalSharedSourceEncodingTest,ExactSharedSourceDefaultRoutingTest,FederatedPlannerFallbackIntegrationTest#testDpPlansSteplmWithSameNamedFormalTransientBinding,ExactPhysicalCostFingerprintDeterminismTest,ExactPhysicalCostSurfaceEstimateSnapshotTest,ExactPhysicalLegalityEncodingTest#encodedLegalityMatchesRawCanonicalFeasibilityOnSmallFixture,ExactSparseStorageBudgetTest#deferredDyadicRejectsNumericOnlyAuthority+deferredProjectionMatchesStrictDyadicAssignmentAndRepresentative+sparseOutputStopsBeforePerFactorLimitGrowth+sparseOutputStopsBeforeCumulativeLimitGrowth+sparseStorageDoesNotCrossOverToOversizedDenseMessage,JointAliasReachabilityTest#diamondExpandsEachRealizationOnce+cyclicExitRemainsReachableInEitherQueryOrder+closedCycleCachesOnlyTheCompletedNegativeQuery+sourcePriorityAndAliasFallbackReuseRemainIntact+followsOnlyAliasesAndRecognizesTheOriginBeforeHopClassification+cacheSeparatesOriginsRealizationsAndAnalysisSnapshots+cyclicGraphsMatchIndependentTransitiveClosure,PlacementJointInputEnvironmentTest,PlacementCanonicalFingerprintTest",
+        "test"
+      ],
+      "returncode": 0,
+      "wallSeconds": 212.25228238105774,
+      "sourceFileCount": 3614,
+      "changedSources": [],
+      "missingReports": [],
+      "classes": [
+        {
+          "class": "ExactHardFactorObservationDecompositionTest",
+          "tests": 3,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.071,
+          "methods": [
+            {
+              "name": "exhaustiveOracleDetectsUnderDiscriminatingObservation",
+              "seconds": "0.047"
+            },
+            {
+              "name": "encodedRelationIsExactForEveryCanonicalCell",
+              "seconds": "0.021"
+            },
+            {
+              "name": "inconsistentObservationAssignmentIsRejected",
+              "seconds": "0.002"
+            }
+          ]
+        },
+        {
+          "class": "PlacementCanonicalFingerprintTest",
+          "tests": 6,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.257,
+          "methods": [
+            {
+              "name": "stableSignatureLeavesNonLowercaseAsciiHexUnchanged",
+              "seconds": "0.019"
+            },
+            {
+              "name": "canonicalConstructorMatchesLegacyHexRecanonicalization",
+              "seconds": "0.149"
+            },
+            {
+              "name": "stableSignatureMatchesRegexOracleForRandomizedInputs",
+              "seconds": "0.08"
+            },
+            {
+              "name": "legacyConstructorRetainsFixtureIdentityAndRejectsBlankValues",
+              "seconds": "0.003"
+            },
+            {
+              "name": "stableSignatureMatchesRegexAtHexRunBoundaries",
+              "seconds": "0.001"
+            },
+            {
+              "name": "digestEncodingMatchesKnownVectorsAndLegacyByteFormatting",
+              "seconds": "0.005"
+            }
+          ]
+        },
+        {
+          "class": "ExactPhysicalLegalityEncodingTest",
+          "tests": 1,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 3.157,
+          "methods": [
+            {
+              "name": "encodedLegalityMatchesRawCanonicalFeasibilityOnSmallFixture",
+              "seconds": "3.157"
+            }
+          ]
+        },
+        {
+          "class": "JointBoundaryMixedInputTest",
+          "tests": 2,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 6.127,
+          "methods": [
+            {
+              "name": "independentProtectedOperandsAreRejectedForInfeasibility",
+              "seconds": "4.632"
+            },
+            {
+              "name": "independentPublicOperandHasAnExplicitLocalPlanBesideProtectedValueMap",
+              "seconds": "1.495"
+            }
+          ]
+        },
+        {
+          "class": "JointPartialTruthTest",
+          "tests": 5,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 5.43,
+          "methods": [
+            {
+              "name": "correlatedRowsKeepDifferentLegalWorkerPools",
+              "seconds": "3.128"
+            },
+            {
+              "name": "loopMatrixScalarKeepsPartialProofsSound",
+              "seconds": "0.818"
+            },
+            {
+              "name": "independentBranchesCannotBorrowCorrelatedOrigins",
+              "seconds": "0.377"
+            },
+            {
+              "name": "loopSourcesRequireGroundedProof",
+              "seconds": "0.601"
+            },
+            {
+              "name": "functionAliasesPreserveSelectedPoolProof",
+              "seconds": "0.504"
+            }
+          ]
+        },
+        {
+          "class": "ExactDurableOutputSupportTest",
+          "tests": 3,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.111,
+          "methods": [
+            {
+              "name": "valueMapSupportRemainsRuleExact",
+              "seconds": "0.102"
+            },
+            {
+              "name": "sameDurableOutputSupportsDifferentInputSupplyRoutes",
+              "seconds": "0.002"
+            },
+            {
+              "name": "durableOutputSupportKeepsOwnerAndLayoutExact",
+              "seconds": "0.007"
+            }
+          ]
+        },
+        {
+          "class": "ExactSharedSourceDefaultRoutingTest",
+          "tests": 3,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 2.521,
+          "methods": [
+            {
+              "name": "encodingCapRejectionUsesTheOriginalExactBranch",
+              "seconds": "2.11"
+            },
+            {
+              "name": "forcedTargetRetainsWholeLegacyFactorsAndOriginalOrder",
+              "seconds": "0.226"
+            },
+            {
+              "name": "eligibleDefaultUsesTheCertifiedGraphWithBothCompactionModes",
+              "seconds": "0.184"
+            }
+          ]
+        },
+        {
+          "class": "JointPhysicalCostRowsPrefixTest",
+          "tests": 2,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.098,
+          "methods": [
+            {
+              "name": "prefixEnumerationMatchesExhaustiveFilterForMixedRows",
+              "seconds": "0.09"
+            },
+            {
+              "name": "rejectedPrefixDoesNotExpandRemainingAxes",
+              "seconds": "0.007"
+            }
+          ]
+        },
+        {
+          "class": "JointValueMapSelectionLegalityTest",
+          "tests": 3,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 5.37,
+          "methods": [
+            {
+              "name": "canonicalIndependentDirectWitnessIsRejectedBeforeNormalization",
+              "seconds": "3.843"
+            },
+            {
+              "name": "receiptlessCpLoutConsumerDoesNotImposeFederatedPoolAlignment",
+              "seconds": "0.946"
+            },
+            {
+              "name": "canonicalCorrelatedDirectWitnessNormalizesAndPrevalidatesEmission",
+              "seconds": "0.581"
+            }
+          ]
+        },
+        {
+          "class": "ExactPhysicalCostFingerprintPreflightTest",
+          "tests": 3,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 2.459,
+          "methods": [
+            {
+              "name": "aggregateInputBudgetFailsBeforeFingerprintEvaluation",
+              "seconds": "0.069"
+            },
+            {
+              "name": "fingerprintAndSolverShareOneFrozenOrdinaryTable",
+              "seconds": "0.032"
+            },
+            {
+              "name": "productionSurfacePathPreflightsBeforeOrdinaryEvaluation",
+              "seconds": "2.357"
+            }
+          ]
+        },
+        {
+          "class": "JointCompactAlignmentTest",
+          "tests": 6,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 11.183,
+          "methods": [
+            {
+              "name": "repeatedFunctionCallOriginsPreserveLegalityCostAndSelection",
+              "seconds": "3.097"
+            },
+            {
+              "name": "loopCycleCannotSatisfyItsOwnPoolWitness",
+              "seconds": "3.355"
+            },
+            {
+              "name": "narrowRepeatedReaderJointKeepsLegacyEncoding",
+              "seconds": "0.466"
+            },
+            {
+              "name": "independentBranchRowsRemainForbiddenWithoutMovement",
+              "seconds": "0.409"
+            },
+            {
+              "name": "loopCarriedValueOriginsPreserveLegalityCostAndSelection",
+              "seconds": "3.579"
+            },
+            {
+              "name": "correlatedBranchRowsPreserveLegalityCostAndSelection",
+              "seconds": "0.275"
+            }
+          ]
+        },
+        {
+          "class": "JointAliasReachabilityTest",
+          "tests": 7,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 2.406,
+          "methods": [
+            {
+              "name": "followsOnlyAliasesAndRecognizesTheOriginBeforeHopClassification",
+              "seconds": "1.883"
+            },
+            {
+              "name": "sourcePriorityAndAliasFallbackReuseRemainIntact",
+              "seconds": "0.029"
+            },
+            {
+              "name": "closedCycleCachesOnlyTheCompletedNegativeQuery",
+              "seconds": "0.004"
+            },
+            {
+              "name": "cyclicGraphsMatchIndependentTransitiveClosure",
+              "seconds": "0.477"
+            },
+            {
+              "name": "diamondExpandsEachRealizationOnce",
+              "seconds": "0.007"
+            },
+            {
+              "name": "cacheSeparatesOriginsRealizationsAndAnalysisSnapshots",
+              "seconds": "0.002"
+            },
+            {
+              "name": "cyclicExitRemainsReachableInEitherQueryOrder",
+              "seconds": "0.004"
+            }
+          ]
+        },
+        {
+          "class": "ExactPhysicalCostFingerprintDeterminismTest",
+          "tests": 2,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 5.721,
+          "methods": [
+            {
+              "name": "jointCostFactorsFollowModelDomainOrder",
+              "seconds": "3.269"
+            },
+            {
+              "name": "rebuiltAnalysesPreserveEveryCostTableAndProjectedPlanHash",
+              "seconds": "2.452"
+            }
+          ]
+        },
+        {
+          "class": "ExactPhysicalCostSurfaceEstimateSnapshotTest",
+          "tests": 2,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 4.906,
+          "methods": [
+            {
+              "name": "runtimeHopEstimateRefreshDoesNotChangeCanonicalCostSurface",
+              "seconds": "4.631"
+            },
+            {
+              "name": "distinctInitialEstimatesRemainDistinctCostSurfaces",
+              "seconds": "0.274"
+            }
+          ]
+        },
+        {
+          "class": "JointInputReachingDefinitionsTest",
+          "tests": 9,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 1.371,
+          "methods": [
+            {
+              "name": "loopHeaderReadSeesEntryAndBackedgeDefinitions",
+              "seconds": "1.068"
+            },
+            {
+              "name": "unchangedArmAndRepeatedLoopBranchReachFiniteFixedPoint",
+              "seconds": "0.096"
+            },
+            {
+              "name": "independentBranchesRetainAllFourCombinations",
+              "seconds": "0.021"
+            },
+            {
+              "name": "unrelatedBranchesDoNotConsumeTheRequestedDependencySlice",
+              "seconds": "0.102"
+            },
+            {
+              "name": "formalNamesResolveDistinctCallerVariables",
+              "seconds": "0.031"
+            },
+            {
+              "name": "nonRecursiveFunctionReturnsKeepCallSiteAndExitCorrelation",
+              "seconds": "0.021"
+            },
+            {
+              "name": "oneBranchDecisionRetainsOnlyAaAndBbTuples",
+              "seconds": "0.013"
+            },
+            {
+              "name": "sameBlockSequentialReadsKeepTheirObservedDefinitionVersions",
+              "seconds": "0.001"
+            },
+            {
+              "name": "loopedFunctionBindingHasFiniteStaticIdentity",
+              "seconds": "0.016"
+            }
+          ]
+        },
+        {
+          "class": "JointValueMapRelationsTest",
+          "tests": 3,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 1.198,
+          "methods": [
+            {
+              "name": "executionRowsAlignDirectAndRelocatedPoolsWithoutRequiringOneGlobalPool",
+              "seconds": "1.145"
+            },
+            {
+              "name": "independentBranchesRejectCrossPoolRowsAndShareProducerSelections",
+              "seconds": "0.027"
+            },
+            {
+              "name": "correlatedBranchRowsMayUseDifferentPools",
+              "seconds": "0.026"
+            }
+          ]
+        },
+        {
+          "class": "JointAliasProjectionTest",
+          "tests": 3,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 6.25,
+          "methods": [
+            {
+              "name": "exactAndConditionalRegionalSolvesPreserveProjectedOptima",
+              "seconds": "4.507"
+            },
+            {
+              "name": "supportConjunctionPreservesEveryOriginalAssignmentAfterAliasProjection",
+              "seconds": "1.098"
+            },
+            {
+              "name": "readerOwnedLoopSourcesAreNotProjected",
+              "seconds": "0.644"
+            }
+          ]
+        },
+        {
+          "class": "JointPhysicalCostTest",
+          "tests": 3,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 6.189,
+          "methods": [
+            {
+              "name": "nestedBranchCostUsesBranchEventsInsteadOfTupleCount",
+              "seconds": "3.39"
+            },
+            {
+              "name": "unresolvedValueMapDownloadUsesNonzeroConservativePoolBound",
+              "seconds": "2.318"
+            },
+            {
+              "name": "correlatedMapExecutionHasPositiveCostAndProjectsToAPlan",
+              "seconds": "0.481"
+            }
+          ]
+        },
+        {
+          "class": "JointEarlyPruningTest",
+          "tests": 4,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 5.697,
+          "methods": [
+            {
+              "name": "aliasLoopJointPredicateRetainsBothAlignmentOutcomes",
+              "seconds": "4.202"
+            },
+            {
+              "name": "loopMatrixScalarDropsOnlyItsVacuousJointPredicate",
+              "seconds": "0.795"
+            },
+            {
+              "name": "independentMultiFedRowsKeepTheirJointPredicate",
+              "seconds": "0.353"
+            },
+            {
+              "name": "correlatedMultiFedRowsKeepTheirJointPredicate",
+              "seconds": "0.347"
+            }
+          ]
+        },
+        {
+          "class": "ExactPhysicalSharedSourceEncodingTest",
+          "tests": 27,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 2.06,
+          "methods": [
+            {
+              "name": "correlatedAaBbRelationFailsClosedInsteadOfInventingCrossRows",
+              "seconds": "0.027"
+            },
+            {
+              "name": "retainedTruthProfileIsNotChargedAsIterationLocalTemporaryStorage",
+              "seconds": "0.001"
+            },
+            {
+              "name": "deterministicStructuralTieUsesMinimumOriginalOrdinalNotLegacyObservationTie",
+              "seconds": "0.014"
+            },
+            {
+              "name": "actualPrepareRejectsCrossedHeaderReferenceAndUsesProjectedLinks",
+              "seconds": "0.659"
+            },
+            {
+              "name": "exhaustiveOriginalAndEncodedDirectionsPreserveRelationAndRawBits",
+              "seconds": "0.003"
+            },
+            {
+              "name": "productionDurableOutputAllowsAlternateProducerRouteWithoutChangingCost",
+              "seconds": "0.034"
+            },
+            {
+              "name": "fullRectangleEmitsExecutableMembershipFactorsAndRetainsFibers",
+              "seconds": "0"
+            },
+            {
+              "name": "durableOutputAcrossRulesPreservesExhaustiveRelationAndRawCost",
+              "seconds": "0.001"
+            },
+            {
+              "name": "materializationBudgetRejectsLongOverflowInsteadOfWrapping",
+              "seconds": "0.001"
+            },
+            {
+              "name": "wildcardProjectionTraversalPreservesOrderAndCanStopEarly",
+              "seconds": "0.001"
+            },
+            {
+              "name": "actualProjectedXorReturnsDenseFallbackAtAndBelowItsPairwiseCap",
+              "seconds": "0.007"
+            },
+            {
+              "name": "productionRefinesCorrelatedHeadersWithoutAddingOrDroppingAssignments",
+              "seconds": "0.018"
+            },
+            {
+              "name": "illegalHeaderSourceTupleIsExplicitInfinityNotSparseZero",
+              "seconds": "0"
+            },
+            {
+              "name": "projectedCapRejectionLeavesTheSmallerDenseFallbackEligible",
+              "seconds": "0"
+            },
+            {
+              "name": "absentSourceIsWildcardAndExplicitNoneRemainsAValue",
+              "seconds": "0"
+            },
+            {
+              "name": "projectedOutputPreflightAccountsForEveryPairwiseFactorAndRetainedCell",
+              "seconds": "0.001"
+            },
+            {
+              "name": "demandedReferenceWithoutSelectableOwnerAlternativeRemainsAnInfeasibleValue",
+              "seconds": "0.013"
+            },
+            {
+              "name": "originalObservationIsRecoveredFromDecodedSourceNotTruthRepresentative",
+              "seconds": "0.001"
+            },
+            {
+              "name": "productionBoundaryBuildsActualFactorsAndDecodesCanonicalWitness",
+              "seconds": "1.169"
+            },
+            {
+              "name": "productionBoundaryPreservesWholeLegacyModelAndForcedFactors",
+              "seconds": "0.104"
+            },
+            {
+              "name": "equalLookingButIdentityDistinctOwnersAndReferencesStayDistinct",
+              "seconds": "0"
+            },
+            {
+              "name": "rawIncidencesAreRetargetedOnlyOnFiberCongruence",
+              "seconds": "0"
+            },
+            {
+              "name": "trustedDecompositionMapComposesWithoutReadingOneHotLinkTable",
+              "seconds": "0.001"
+            },
+            {
+              "name": "cyclicOwnerIdentityIsRepresentedWithoutRecursiveExpansion",
+              "seconds": "0"
+            },
+            {
+              "name": "repeatedSourceMustSelectOneIdentityValue",
+              "seconds": "0"
+            },
+            {
+              "name": "profilePreflightRejectsBeforeLazyEvaluatorInvocationAndPreservesRawClasses",
+              "seconds": "0.001"
+            },
+            {
+              "name": "thirdIncidenceAndFactorLocalViewsRemainSeparate",
+              "seconds": "0.001"
+            }
+          ]
+        },
+        {
+          "class": "ExactSparseStorageBudgetTest",
+          "tests": 5,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.122,
+          "methods": [
+            {
+              "name": "sparseStorageDoesNotCrossOverToOversizedDenseMessage",
+              "seconds": "0.108"
+            },
+            {
+              "name": "sparseOutputStopsBeforePerFactorLimitGrowth",
+              "seconds": "0.007"
+            },
+            {
+              "name": "sparseOutputStopsBeforeCumulativeLimitGrowth",
+              "seconds": "0.002"
+            },
+            {
+              "name": "deferredDyadicRejectsNumericOnlyAuthority",
+              "seconds": "0.001"
+            },
+            {
+              "name": "deferredProjectionMatchesStrictDyadicAssignmentAndRepresentative",
+              "seconds": "0.004"
+            }
+          ]
+        },
+        {
+          "class": "JointBoundaryPhysicalModelProofTest",
+          "tests": 10,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 8.829,
+          "methods": [
+            {
+              "name": "oneDynamicFederatedInputAndLocalOperandPreserveValueMap",
+              "seconds": "2.668"
+            },
+            {
+              "name": "rewrittenFullFunctionCallsRetainExactFormalAuthority",
+              "seconds": "1.382"
+            },
+            {
+              "name": "loopBranchRowsRemainGroundedWithoutCyclicSelfProof",
+              "seconds": "0.528"
+            },
+            {
+              "name": "twoFunctionCallsProjectCorrelatedValueMapsThroughBoundaries",
+              "seconds": "0.375"
+            },
+            {
+              "name": "correlatedAaBbValueMapPlanIsAdmitted",
+              "seconds": "0.257"
+            },
+            {
+              "name": "independentAbBaRowsAreRejected",
+              "seconds": "0.36"
+            },
+            {
+              "name": "normalizedNestedBranchPreservesOriginCorrelation",
+              "seconds": "1.354"
+            },
+            {
+              "name": "normalizedIndependentBranchesCannotBorrowCorrelatedOrigins",
+              "seconds": "0.774"
+            },
+            {
+              "name": "twoCallsMayReuseTheSameArgumentOccurrencesAtDistinctBoundaries",
+              "seconds": "0.581"
+            },
+            {
+              "name": "functionLoopWithLocalOperandReachesFiniteValueMapClosure",
+              "seconds": "0.547"
+            }
+          ]
+        },
+        {
+          "class": "LoopIdentityBackedgeClosureTest",
+          "tests": 4,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 29.568,
+          "methods": [
+            {
+              "name": "anIncompatibleBackedgeCannotBorrowEntryFullEvidence",
+              "seconds": "4.455"
+            },
+            {
+              "name": "nestedIdentityBackedgesKeepTheGroundedFullAlternative",
+              "seconds": "4.278"
+            },
+            {
+              "name": "smallBuiltinStepLmCompletesCanonicalCommonClosure",
+              "seconds": "19.964"
+            },
+            {
+              "name": "protectedNestedIdentityBackedgesMatchFullRecompute",
+              "seconds": "0.87"
+            }
+          ]
+        },
+        {
+          "class": "PlacementJointInputEnvironmentTest",
+          "tests": 4,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 0.043,
+          "methods": [
+            {
+              "name": "sameOrderingKeyDoesNotHideAProvenanceChange",
+              "seconds": "0.037"
+            },
+            {
+              "name": "definitionCanonicalKeyIsImmutableAndCached",
+              "seconds": "0"
+            },
+            {
+              "name": "unchangedUpdatesReuseEnvironmentAndChangedAxisSharesTheOtherMap",
+              "seconds": "0.001"
+            },
+            {
+              "name": "canonicalComparisonKeyIsImmutableAndCached",
+              "seconds": "0.005"
+            }
+          ]
+        },
+        {
+          "class": "FederatedPlannerFallbackIntegrationTest",
+          "tests": 1,
+          "errors": 0,
+          "failures": 0,
+          "skipped": 0,
+          "seconds": 137.69,
+          "methods": [
+            {
+              "name": "testDpPlansSteplmWithSameNamedFormalTransientBinding",
+              "seconds": "137.69"
+            }
+          ]
+        }
+      ],
+      "totals": {
+        "tests": 121,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      }
+    },
+    "totalJava": 209,
+    "python": 35,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "build": {
+    "packageExitCode": 0,
+    "sourceFiles": 3614,
+    "classResources": 4390,
+    "changedSources": [],
+    "classManifest": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-joint-compact-20261007/target/joint-compact-evidence/publication-integrated-built-classes.json",
+    "log": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-joint-compact-20261007/target/joint-compact-evidence/publication-integrated-package.log",
+    "unchangedAfterDocker": true
+  },
+  "dockerRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-joint-compact-validation-20261007/steplm-joint-publication-04",
+  "performanceObjectiveNext": "After publication, total StepLM20x5 compilation <=20 seconds in three fresh-JVM runs under the same Docker resource limits; retain legal candidates, canonical cost semantics, non-worse selected objective and exact CP/FED model/selection results.",
+  "docker": {
+    "result": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-joint-compact-validation-20261007/steplm-joint-publication-04/result.json",
+    "status": "PASSED",
+    "classPreflightPassed": true,
+    "overlayPreflightPassed": true,
+    "modelProofPassed": true,
+    "runtimeConversionViolations": [],
+    "cases": [
+      {
+        "case": "joint_correlated_aa",
+        "passed": true,
+        "fedStatistics": {
+          "compilationSeconds": 3.178219,
+          "executionSeconds": 0.885
+        },
+        "modelComparison": null,
+        "selectionComparison": null,
+        "plannerCheckpointSummary": null,
+        "auditErrors": [],
+        "runtimeAuditViolations": []
+      },
+      {
+        "case": "joint_correlated_bb",
+        "passed": true,
+        "fedStatistics": {
+          "compilationSeconds": 2.857375,
+          "executionSeconds": 0.5
+        },
+        "modelComparison": null,
+        "selectionComparison": null,
+        "plannerCheckpointSummary": null,
+        "auditErrors": [],
+        "runtimeAuditViolations": []
+      },
+      {
+        "case": "joint_independent_ab",
+        "passed": true,
+        "fedStatistics": {
+          "compilationSeconds": 3.581857,
+          "executionSeconds": 0.149
+        },
+        "modelComparison": null,
+        "selectionComparison": null,
+        "plannerCheckpointSummary": null,
+        "auditErrors": [],
+        "runtimeAuditViolations": []
+      },
+      {
+        "case": "joint_independent_private_ab_negative",
+        "passed": true,
+        "auditErrors": []
+      },
+      {
+        "case": "joint_loop_toggle",
+        "passed": true,
+        "fedStatistics": {
+          "compilationSeconds": 3.195366,
+          "executionSeconds": 0.272
+        },
+        "modelComparison": null,
+        "selectionComparison": null,
+        "plannerCheckpointSummary": null,
+        "auditErrors": [],
+        "runtimeAuditViolations": []
+      },
+      {
+        "case": "joint_function_calls",
+        "passed": true,
+        "fedStatistics": {
+          "compilationSeconds": 3.032242,
+          "executionSeconds": 0.236
+        },
+        "modelComparison": null,
+        "selectionComparison": null,
+        "plannerCheckpointSummary": null,
+        "auditErrors": [],
+        "runtimeAuditViolations": []
+      },
+      {
+        "case": "ml_steplm_local_matrix",
+        "passed": true,
+        "fedStatistics": {
+          "compilationSeconds": 104.571702,
+          "executionSeconds": 0.731
+        },
+        "modelComparison": {
+          "actualEntries": 5,
+          "actualShape": [
+            5,
+            1
+          ],
+          "entries": 5,
+          "errors": [],
+          "expectedShape": [
+            5,
+            1
+          ],
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 0.0,
+          "nonzero": true,
+          "referenceShape": [
+            5,
+            1
+          ],
+          "shapeMatched": true
+        },
+        "selectionComparison": {
+          "actual": [
+            3,
+            1,
+            5
+          ],
+          "actualShape": [
+            1,
+            3
+          ],
+          "errors": [],
+          "integral": true,
+          "matched": true,
+          "reference": [
+            3,
+            1,
+            5
+          ],
+          "referenceShape": [
+            1,
+            3
+          ],
+          "shapeMatched": true,
+          "validReference": true
+        },
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 935076025,
+            "clusters": 0,
+            "conditionalAttempts": 66,
+            "conditionalImprovements": 0,
+            "dpNanos": 83289748932,
+            "elapsedNanos": 84648057309,
+            "improvements": 0,
+            "internalDecisions": 89,
+            "lower": 19529.714826506737,
+            "merges": 4869,
+            "phase": "RESOURCE",
+            "plannerElapsedNanos": 88610979440,
+            "relativeGap": 0.8966030135540635,
+            "resourceRejected": 1657,
+            "retainedSlots": 0,
+            "scoringNanos": 1126436098,
+            "upper": 37040.115993804146,
+            "validationNanos": 29097165
+          },
+          "initial": {
+            "assignments": 664389,
+            "clusters": 6180,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 59461308,
+            "elapsedNanos": 215417369,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 2539.543162383207,
+            "merges": 2887,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 4178349820,
+            "relativeGap": 13.585346113607402,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 37040.115993804146,
+            "validationNanos": 29097165
+          },
+          "seedBoundary": {
+            "assignments": 664389,
+            "clusters": 6180,
+            "conditionalAttempts": 54,
+            "conditionalImprovements": 0,
+            "dpNanos": 24540160915,
+            "elapsedNanos": 24722137972,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 2539.543162383207,
+            "merges": 2887,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 28685072516,
+            "relativeGap": 13.585346113607402,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 24152102,
+            "upper": 37040.115993804146,
+            "validationNanos": 29097165
+          },
+          "seedBoundaryCount": 1
+        },
+        "auditErrors": [],
+        "runtimeAuditViolations": []
+      },
+      {
+        "case": "ml_logreg",
+        "passed": true,
+        "fedStatistics": {
+          "compilationSeconds": 27.433421,
+          "executionSeconds": 2.59
+        },
+        "modelComparison": {
+          "actualEntries": 16,
+          "actualShape": [
+            8,
+            2
+          ],
+          "entries": 16,
+          "errors": [],
+          "expectedShape": null,
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 2.220446049250313e-16,
+          "nonzero": true,
+          "referenceShape": [
+            8,
+            2
+          ],
+          "shapeMatched": true
+        },
+        "selectionComparison": null,
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 13364566,
+            "clusters": 3449,
+            "conditionalAttempts": 40,
+            "conditionalImprovements": 4,
+            "dpNanos": 2729746205,
+            "elapsedNanos": 3016906670,
+            "improvements": 4,
+            "internalDecisions": 55,
+            "lower": 120.54269578813253,
+            "merges": 4564,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 6036563382,
+            "relativeGap": 0.01429881373103262,
+            "resourceRejected": 687,
+            "retainedSlots": 8691828,
+            "scoringNanos": 114031698,
+            "upper": 122.26631334184357,
+            "validationNanos": 83699638
+          },
+          "initial": {
+            "assignments": 719016,
+            "clusters": 5406,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 48784091,
+            "elapsedNanos": 97015607,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 2.8587210976952604,
+            "merges": 3340,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 3116683951,
+            "relativeGap": 531.2774853737075,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 1521.6328772659972,
+            "validationNanos": 15516010
+          },
+          "seedBoundary": {
+            "assignments": 719016,
+            "clusters": 5406,
+            "conditionalAttempts": 40,
+            "conditionalImprovements": 4,
+            "dpNanos": 1941071395,
+            "elapsedNanos": 2064005173,
+            "improvements": 4,
+            "internalDecisions": 0,
+            "lower": 2.8587210976952604,
+            "merges": 3340,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 5083666504,
+            "relativeGap": 41.76958442725188,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 11464758,
+            "upper": 122.26631334184357,
+            "validationNanos": 76965201
+          },
+          "seedBoundaryCount": 1
+        },
+        "auditErrors": [],
+        "runtimeAuditViolations": []
+      },
+      {
+        "case": "ml_l2svm",
+        "passed": true,
+        "fedStatistics": {
+          "compilationSeconds": 8.674817,
+          "executionSeconds": 0.76
+        },
+        "modelComparison": {
+          "actualEntries": 8,
+          "actualShape": [
+            8,
+            1
+          ],
+          "entries": 8,
+          "errors": [],
+          "expectedShape": null,
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 8.413408858487514e-17,
+          "nonzero": true,
+          "referenceShape": [
+            8,
+            1
+          ],
+          "shapeMatched": true
+        },
+        "selectionComparison": null,
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 257076,
+            "clusters": 2305,
+            "conditionalAttempts": 5,
+            "conditionalImprovements": 2,
+            "dpNanos": 641280981,
+            "elapsedNanos": 697959325,
+            "improvements": 2,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1545,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 1593195210,
+            "relativeGap": 0.011083284007794878,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 10640948,
+            "upper": 21.385960545366007,
+            "validationNanos": 25938470
+          },
+          "initial": {
+            "assignments": 257076,
+            "clusters": 2305,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 29919642,
+            "elapsedNanos": 58028388,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1545,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 953274152,
+            "relativeGap": 2.395225246626159,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 71.81421581727763,
+            "validationNanos": 9509444
+          },
+          "seedBoundary": {
+            "assignments": 257076,
+            "clusters": 2305,
+            "conditionalAttempts": 5,
+            "conditionalImprovements": 2,
+            "dpNanos": 641280981,
+            "elapsedNanos": 697393578,
+            "improvements": 2,
+            "internalDecisions": 0,
+            "lower": 21.1515321078151,
+            "merges": 1545,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 1592635845,
+            "relativeGap": 0.011083284007794878,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 10640948,
+            "upper": 21.385960545366007,
+            "validationNanos": 25938470
+          },
+          "seedBoundaryCount": 1
+        },
+        "auditErrors": [],
+        "runtimeAuditViolations": []
+      },
+      {
+        "case": "ml_lm",
+        "passed": true,
+        "fedStatistics": {
+          "compilationSeconds": 4.477677,
+          "executionSeconds": 0.552
+        },
+        "modelComparison": {
+          "actualEntries": 8,
+          "actualShape": [
+            8,
+            1
+          ],
+          "entries": 8,
+          "errors": [],
+          "expectedShape": null,
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 1.2212453270876722e-15,
+          "nonzero": true,
+          "referenceShape": [
+            8,
+            1
+          ],
+          "shapeMatched": true
+        },
+        "selectionComparison": null,
+        "plannerCheckpointSummary": {
+          "final": {
+            "assignments": 21108,
+            "clusters": 1073,
+            "conditionalAttempts": 1,
+            "conditionalImprovements": 1,
+            "dpNanos": 111280108,
+            "elapsedNanos": 135535203,
+            "improvements": 1,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 782,
+            "phase": "TARGET_REACHED",
+            "plannerElapsedNanos": 448220959,
+            "relativeGap": 0.008141441118854212,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 1584962,
+            "upper": 21.2628479582568,
+            "validationNanos": 8506239
+          },
+          "initial": {
+            "assignments": 21108,
+            "clusters": 1073,
+            "conditionalAttempts": 0,
+            "conditionalImprovements": 0,
+            "dpNanos": 13001571,
+            "elapsedNanos": 30910023,
+            "improvements": 0,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 782,
+            "phase": "INITIAL_BOUND",
+            "plannerElapsedNanos": 343596971,
+            "relativeGap": 2.399110611511323,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 0,
+            "upper": 71.69110323016842,
+            "validationNanos": 4364006
+          },
+          "seedBoundary": {
+            "assignments": 21108,
+            "clusters": 1073,
+            "conditionalAttempts": 1,
+            "conditionalImprovements": 1,
+            "dpNanos": 111280108,
+            "elapsedNanos": 135253626,
+            "improvements": 1,
+            "internalDecisions": 0,
+            "lower": 21.091135718673456,
+            "merges": 782,
+            "phase": "SEED_BOUNDARY",
+            "plannerElapsedNanos": 447942920,
+            "relativeGap": 0.008141441118854212,
+            "resourceRejected": 0,
+            "retainedSlots": 0,
+            "scoringNanos": 1584962,
+            "upper": 21.2628479582568,
+            "validationNanos": 8506239
+          },
+          "seedBoundaryCount": 1
+        },
+        "auditErrors": [],
+        "runtimeAuditViolations": []
+      }
+    ]
+  }
+}

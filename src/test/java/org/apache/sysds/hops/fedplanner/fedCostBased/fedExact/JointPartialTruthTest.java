@@ -63,7 +63,9 @@ public class JointPartialTruthTest {
 		translator.constructHops(program);
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
 		var analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
-		var model = ExactPhysicalModel.build(analysis);
+		var model = requireSinglePhysicalInput
+			? ExactPhysicalModel.buildWithUnprunedJointFactorsForTest(analysis)
+			: ExactPhysicalModel.build(analysis);
 		if(requireSinglePhysicalInput) {
 			var relations = JointValueMapRelations.from(analysis);
 			Assert.assertTrue("fixture must exercise a FED joint consumer with exactly one physical input",

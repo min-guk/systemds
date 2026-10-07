@@ -1,0 +1,158 @@
+{
+  "schema": "logreg-main-publication-v1",
+  "status": "PASSED",
+  "targetSeconds": 10,
+  "targetMet": false,
+  "implementationCommit": "5f9ede00f1c1516e79ac005960ef5a02ff3c4030",
+  "upstreamMerged": "9409f503d8965d9e40c11718d0be3d5f139c419e",
+  "mergeResolution": "Keep upstream component/revision schedule; retain unchanged exact-identity facts in each replacement; preserve pre-relocation lastDirectFacts snapshot.",
+  "review": "Independent merged-source review CLEAR; no correctness blocker.",
+  "build": {
+    "returncode": 0,
+    "sourceUnchanged": true,
+    "seconds": 208.7322554588318,
+    "head": "5f9ede00f1c1516e79ac005960ef5a02ff3c4030"
+  },
+  "javaTests": {
+    "tests": 838,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 6,
+    "classes": 102
+  },
+  "pythonTests": {
+    "tests": 35,
+    "failures": 0,
+    "errors": 0
+  },
+  "javaSourceFiles": 3604,
+  "sourceMatchesFrozenBuild": true,
+  "harnessReturnCode": 0,
+  "dockerRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-main9409-01",
+  "upstreamComparisonRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-joint-compact-validation-20261007/steplm-joint-publication-04",
+  "upstreamFrozenMainSourcesMatchGit": {
+    "revision": "9409f503d8965d9e40c11718d0be3d5f139c419e",
+    "javaFiles": 1645
+  },
+  "priorD26Comparison": {
+    "checkpointParity": false,
+    "baselineCount": 1224,
+    "mergedCount": 1228,
+    "evaluatorExitCode": 1,
+    "reason": "The prior-base evaluator detected upstream joint-factor trace changes. Its failed equality result is retained; publication compares with the already-published main implementation below."
+  },
+  "upstreamComparison": {
+    "nonTimeCheckpointParity": true,
+    "checkpointCount": 1228,
+    "analysisFingerprintParity": true,
+    "analysisFingerprints": [
+      "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+    ],
+    "terminalCheckpoint": {
+      "assignments": 13364566,
+      "clusters": 3449,
+      "conditionalAttempts": 40,
+      "conditionalImprovements": 4,
+      "improvements": 4,
+      "internalDecisions": 55,
+      "lower": 120.54269578813253,
+      "merges": 4564,
+      "phase": "TARGET_REACHED",
+      "relativeGap": 0.01429881373103262,
+      "resourceRejected": 687,
+      "retainedSlots": 8691828,
+      "upper": 122.26631334184357
+    },
+    "fixtureAndConfigSha256Match": true,
+    "imageMatch": true,
+    "dependencyDigestMatch": true
+  },
+  "modelComparison": {
+    "actualEntries": 16,
+    "actualShape": [
+      8,
+      2
+    ],
+    "entries": 16,
+    "errors": [],
+    "expectedShape": null,
+    "finite": true,
+    "matched": true,
+    "maxAbsDifference": 2.220446049250313e-16,
+    "nonzero": true,
+    "referenceShape": [
+      8,
+      2
+    ],
+    "shapeMatched": true
+  },
+  "runtimeAuditViolations": [],
+  "runtimeConversionViolations": [],
+  "classPreflightPassed": true,
+  "overlayPreflightPassed": true,
+  "modelProofPassed": true,
+  "timing": {
+    "scope": "single integration smoke, not a new repeated performance comparison",
+    "commonSeconds": 15.885172952,
+    "compilationSeconds": 22.554984,
+    "executionSeconds": 3.638
+  },
+  "evidence": [
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/integration-9409/final-regression-command.json",
+      "sha256": "7dc1ac7654b6acbe0dfa3ad6015710e357e164c10ad54fe8e81690bbe80c62a2"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/integration-9409/final-regression.log",
+      "sha256": "d2cb1f98256139ae434cfe02814ca457292de5021622da6d1e42166cdc3e13c8"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/integration-9409/final-regression-summary.json",
+      "sha256": "99f7f58cc6a91c42cc8c2d93ea3bb89495c6e6a8c5b2dcffd044a1b23ff928a0"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/integration-9409/final-build-status.json",
+      "sha256": "3fd285a0dd0cd25d149d5f649360aa8e835a07e7e050613f23a1f9f562142755"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/integration-9409/final/manifest.json",
+      "sha256": "0d5f00053d682a608660df10c557322eafbfb7965b6f11e145062304fd046398"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/integration-9409/python-tests.log",
+      "sha256": "f282ed80c66b4dca65aff9d4580e31ad6ba45daa57e7b70b0b4dc3d2ea650449"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/integration-9409/checkpoint-diff.txt",
+      "sha256": "0d323cba72157373497656f6b50ca1ae7f0ff9a17fbca15075c84c965b5c0119"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/integration-9409/evaluation.log",
+      "sha256": "c5000db9eef9a3cd0f0434dde3417dbac7b2fa691983965128ee9b7a7af6cf31"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-main9409-01-command.json",
+      "sha256": "922d895615d92cfb65e5583de4e16e929e7c2114cc4ac81c646818077d230e26"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-main9409-01-validation.json",
+      "sha256": "c5000db9eef9a3cd0f0434dde3417dbac7b2fa691983965128ee9b7a7af6cf31"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-main9409-01/result.json",
+      "sha256": "14a15fe4f9df917303c1e2d07b68a43874730655a4cb923513185cf3d0ad0639"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-main9409-01/manifest.json",
+      "sha256": "7482db116900fae115767f18b85ab79b7779c2b35efdda7268d88d3898ace278"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-joint-compact-validation-20261007/steplm-joint-publication-04/result.json",
+      "sha256": "b41fedc82600c1d145dc8498a1a570e303f99ba83870acdeaf53e4012dcb437e"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-joint-compact-validation-20261007/steplm-joint-publication-04/manifest.json",
+      "sha256": "f2f4856aa285425cf148eb8c729952f92c39dcd4295d2a848a499f582499a256"
+    }
+  ]
+}
