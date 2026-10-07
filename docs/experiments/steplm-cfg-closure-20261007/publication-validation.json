@@ -1,0 +1,143 @@
+{
+  "schema": "systemds-steplm-main-publication-v1",
+  "status": "VERIFIED_FOR_PUSH",
+  "fixCommit": "30e822dacb",
+  "integratedOriginMain": "73d1eb024f6f70a7d869f363d895d72313bcbff6",
+  "java": {
+    "passed": 61,
+    "skipped": 5,
+    "failures": 0,
+    "errors": 0,
+    "suites": [
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointAliasProjectionTest",
+        "tests": "3",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "6.422"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointPartialTruthTest",
+        "tests": "5",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "4.718"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.EarlyPrivacyPruningLegalSpaceParityTest",
+        "tests": "4",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "4.849"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.FunctionBoundaryOccurrenceIdentityTest",
+        "tests": "1",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "1.54"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.LogregProtectedLoopSliceTest",
+        "tests": "2",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "46.88"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.LoopIdentityBackedgeClosureTest",
+        "tests": "4",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "37.77"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.LoopSeedReplayWideningTest",
+        "tests": "5",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "24.846"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.NeutralPlacementFixedPointCompositionTest",
+        "tests": "12",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "47.082"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.PhysicalSinglePartitionProofFixedPointTest",
+        "tests": "9",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.283"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.PublicationSupportClosureTest",
+        "tests": "10",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.131"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.StepLmDynamicLoopPlacementTest",
+        "tests": "1",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "4.29"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.StepLmNegatedTransposePlacementTest",
+        "tests": "3",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "2.152"
+      },
+      {
+        "name": "org.apache.sysds.hops.fedplanner.placement.TransientPlacementAlternativesTest",
+        "tests": "7",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "5",
+        "time": "3.433"
+      }
+    ],
+    "canonicalStepLmSeconds": 26.904,
+    "largeMetadataMethodExcluded": true
+  },
+  "python": {
+    "passed": 30,
+    "pyCompile": true
+  },
+  "build": {
+    "success": true,
+    "elapsed": "4m12s",
+    "log": "/home/mchoi/steplm-cfg-closure-20261007/target/steplm-publication-evidence/package.log",
+    "logSha256": "e44dda57eda107ed3b26d97257bf1ac780774c895bcd6deb5fc319dba972e908",
+    "frozenSourceCount": 3578,
+    "sourceChanges": [],
+    "jarSha256": "3d9d7a35cd269351979125eb001267b840c90d8c8b26ed62e3d332d47cd3681c"
+  },
+  "sourceSha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java": "d779c3ddf968ef31cfb127eeacf397f3ef72f29aa634bc69c40e3de89ccd128c",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/LoopIdentityBackedgeClosureTest.java": "8226cf04fffbdac383979bae1768d356ad6a57d8cd10c9b99e7f05d0bddac7b8",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/PhysicalSinglePartitionProofFixedPointTest.java": "7c0953840e64a1c0287bc0ac1d7cea80d32fb4bc1de43287a193f4d1bca56b8e",
+    "scripts/fedplanner/run_joint_boundary_e2e.py": "887af9540a6f64977e8f9c8868962a923edc7ccb7adac4219d2213ee0c99e036",
+    "scripts/fedplanner/tests/test_run_joint_boundary_e2e.py": "3861103ba17bc7136ab668aeb5ecf0da7e206da3ba98077a5fea24100c4b9f34"
+  },
+  "review": "No semantic conflict found between active CFG seeds and per-inventory partition-proof worklist; both Python StepLM and JFR result conditions preserved.",
+  "runtimeRerunAfterMerge": false,
+  "previousRuntimeEvidence": "validation.json records pre-merge baseline/candidate runs and remains unchanged. No new claim of CSV training completion, speedup or overflow resolution."
+}
