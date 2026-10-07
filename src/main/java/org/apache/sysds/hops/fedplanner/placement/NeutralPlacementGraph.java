@@ -227,21 +227,53 @@ public final class NeutralPlacementGraph {
 		}
 	}
 
+	/** Conditional authority owned by one exact candidate and one of its support clauses. */
+	public record DerivedFoutAnchorAuthority(PlacementIdentity.CandidateRealizationReference reference,
+		PlacementAnalysis.CandidateEmissionRealization realization,
+		PlacementAnalysis.CandidateRealizationSupportClause clause)
+		implements Comparable<DerivedFoutAnchorAuthority> {
+		public DerivedFoutAnchorAuthority {
+			Objects.requireNonNull(reference, "reference");
+			Objects.requireNonNull(realization, "realization");
+			Objects.requireNonNull(clause, "clause");
+			if(!reference.realization().equals(realization.key())
+				|| !realization.ownsSupportClauseIdentity(clause)
+				|| realization.provenWorkerPool(clause) == null)
+				throw new IllegalArgumentException("Derived FOUT anchor certificate lacks an owned exact pool");
+		}
+		public DurableAnchorKey pool() { return realization.provenWorkerPool(clause); }
+		public String normalizedSignature() {
+			return fields(reference.normalizedSignature(), clause.normalizedSignature());
+		}
+		@Override public int compareTo(DerivedFoutAnchorAuthority that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
 	public record DerivedFoutMaterializationAction(DerivedFoutMaterializationActionKey key,
-		List<DerivedFoutOutputAuthority> exactOutputAuthorities)
+		List<DerivedFoutOutputAuthority> exactOutputAuthorities,
+		List<DerivedFoutAnchorAuthority> nativeAnchorAuthorities)
 		implements Comparable<DerivedFoutMaterializationAction> {
 		public DerivedFoutMaterializationAction(DerivedFoutMaterializationActionKey key) {
-			this(key,List.of());
+			this(key,List.of(),List.of());
+		}
+		public DerivedFoutMaterializationAction(DerivedFoutMaterializationActionKey key,
+			List<DerivedFoutOutputAuthority> exactOutputAuthorities) {
+			this(key,exactOutputAuthorities,List.of());
 		}
 		public DerivedFoutMaterializationAction {
 			Objects.requireNonNull(key, "key");
 			exactOutputAuthorities = sorted(exactOutputAuthorities,"exactOutputAuthorities");
+			nativeAnchorAuthorities = sorted(nativeAnchorAuthorities,"nativeAnchorAuthorities");
 		}
 		public String normalizedSignature() {
-			return exactOutputAuthorities.isEmpty() ? key.normalizedSignature()
+			String output = exactOutputAuthorities.isEmpty() ? key.normalizedSignature()
 				: fields(key.normalizedSignature(),"EXACT_OUTPUT_AUTHORITIES",
 					signatures(exactOutputAuthorities.stream()
 						.map(DerivedFoutOutputAuthority::normalizedSignature).toList()));
+			return nativeAnchorAuthorities.isEmpty() ? output : fields(output, "NATIVE_ANCHOR_AUTHORITIES",
+				signatures(nativeAnchorAuthorities.stream()
+					.map(DerivedFoutAnchorAuthority::normalizedSignature).toList()));
 		}
 		@Override public int compareTo(DerivedFoutMaterializationAction that) {
 			return normalizedSignature().compareTo(that.normalizedSignature());
@@ -740,7 +772,14 @@ public final class NeutralPlacementGraph {
 						"Derived FOUT action has an invalid exact output anchor: action="
 							+ key.normalizedSignature() + " anchor=" + outputAnchor.normalizedSignature());
 			}
-			boolean exactAnchorAuthority = anchorOwner.anchors().stream()
+			for(DerivedFoutAnchorAuthority authority : action.nativeAnchorAuthorities())
+				if(authority.reference().rule().parentOccurrence() != anchorOwner.key()
+					|| authority.realization().placementState().output() != FederatedOutput.FOUT
+					|| authority.realization().placementState().fType() != key.durableAnchorOwnerFType()
+					|| !PlacementIdentity.samePhysicalWorkerPool(authority.pool(), key.durableAnchor()))
+					throw new IllegalArgumentException("Derived FOUT native anchor certificate names a foreign owner or pool");
+			boolean exactAnchorAuthority = !action.nativeAnchorAuthorities().isEmpty()
+				|| anchorOwner.anchors().stream()
 				.anyMatch(anchor -> PlacementIdentity.samePhysicalWorkerPool(anchor, key.durableAnchor()))
 				|| derivedFoutMaterializationActions.stream().anyMatch(ownerAction ->
 					ownerAction.exactOutputAuthorities().stream().anyMatch(authority ->

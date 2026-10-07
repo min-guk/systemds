@@ -41,9 +41,24 @@ public class ExactPhysicalCostSurfaceEstimateSnapshotTest {
 		Assert.assertEquals(before.contributions().size(), after.contributions().size());
 		Assert.assertEquals(before.transferKeys(), after.transferKeys());
 		Assert.assertEquals(before.supplySharingGroups().stream()
-			.map(ExactPhysicalCostModel.SupplySharingGroup::semanticDescriptor).toList(),
+			.map(ExactPhysicalCostSurfaceEstimateSnapshotTest::sharingDescriptor).toList(),
 			after.supplySharingGroups().stream()
-				.map(ExactPhysicalCostModel.SupplySharingGroup::semanticDescriptor).toList());
+				.map(ExactPhysicalCostSurfaceEstimateSnapshotTest::sharingDescriptor).toList());
+	}
+
+	/** Compare the full descriptor independently of the production streaming encoder. */
+	private static String sharingDescriptor(ExactPhysicalCostModel.SupplySharingGroup group) {
+		StringBuilder result = new StringBuilder(group.physicalEmissionIdentity())
+			.append("|source=").append(group.source().key())
+			.append("|active=").append(java.util.Arrays.toString(group.activeSource()));
+		for(var demand : group.demands())
+			result.append("|demand=").append(demand.variables().stream()
+				.map(ExactCategoricalSolver.Variable::key).toList())
+				.append(':').append(demand.observations().stream()
+					.map(java.util.Arrays::toString).toList())
+				.append(":event=").append(demand.event())
+				.append(":crossExecution=").append(demand.crossExecutionReuse());
+		return result.toString();
 	}
 
 	@Test

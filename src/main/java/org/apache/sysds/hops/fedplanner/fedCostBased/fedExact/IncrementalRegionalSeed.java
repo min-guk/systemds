@@ -26,6 +26,32 @@ import java.util.Objects;
 /** Lifts an original-decision Regional seed into the shared reduced encoded model. */
 final class IncrementalRegionalSeed {
 	private static final String INFEASIBLE = "INCREMENTAL_REGIONAL_SEED_INFEASIBLE";
+	static final class SupportStatistics {
+		long factorRevisions;
+		long visitedCells;
+	}
+	private record SupportFactor(ExactCategoricalSolver.Factor factor, int[] scopeIndex) { }
+	private record SupportPlan(SupportFactor[] factors, int[][] incident, boolean[][] supported) { }
+
+	/** Ascending live prefixes avoid rescanning the mostly fixed original domains. */
+	private static final class ActiveDomains {
+		private final int[][] values;
+		private final int[] sizes;
+		private ActiveDomains(boolean[][] active) {
+			values = new int[active.length][];
+			sizes = new int[active.length];
+			for(int variable = 0; variable < active.length; variable++) {
+				for(boolean value : active[variable])
+					if(value)
+						sizes[variable]++;
+				values[variable] = PlannerResourceGuard.allocateInts(
+					sizes[variable], "regional-seed-active-values");
+				for(int value = 0, target = 0; value < active[variable].length; value++)
+					if(active[variable][value])
+						values[variable][target++] = value;
+			}
+		}
+	}
 
 	private IncrementalRegionalSeed() { }
 
@@ -36,6 +62,12 @@ final class IncrementalRegionalSeed {
 	 */
 	static int[] lift(ExactPhysicalReducedSolver.CompactModel root,
 		List<Integer> originalAssignment, ExactCategoricalSolver.Limits limits) {
+		return lift(root, originalAssignment, limits, null);
+	}
+
+	static int[] lift(ExactPhysicalReducedSolver.CompactModel root,
+		List<Integer> originalAssignment, ExactCategoricalSolver.Limits limits,
+		SupportStatistics statistics) {
 		Objects.requireNonNull(root, "root");
 		Objects.requireNonNull(originalAssignment, "originalAssignment");
 		Objects.requireNonNull(limits, "limits");
@@ -66,7 +98,8 @@ final class IncrementalRegionalSeed {
 			assignment[variable] = reducedValue;
 		}
 
-		propagateFiniteSupport(root.factors(), index, active);
+		propagateFiniteSupport(compileSupportPlan(root.factors(), index, variables.size()), active,
+			statistics);
 		for(int variable = root.originalDecisionCount(); variable < variables.size(); variable++) {
 			int singleton = singleton(active[variable]);
 			if(singleton >= 0)
@@ -100,53 +133,101 @@ final class IncrementalRegionalSeed {
 		return Double.isFinite(total);
 	}
 
-	private static void propagateFiniteSupport(List<ExactCategoricalSolver.Factor> factors,
-		Map<ExactCategoricalSolver.Variable, Integer> index, boolean[][] active) {
-		boolean changed;
+	private static SupportPlan compileSupportPlan(List<ExactCategoricalSolver.Factor> factors,
+		Map<ExactCategoricalSolver.Variable, Integer> index, int variableCount) {
+		SupportFactor[] compiled = new SupportFactor[factors.size()];
+		int maximumArity = 0;
+		for(ExactCategoricalSolver.Factor factor : factors)
+			maximumArity = Math.max(maximumArity, factor.scope().size());
+		int[] supportWidths = new int[maximumArity];
+		int[] incidentCounts = new int[variableCount];
+		for(int ordinal = 0; ordinal < factors.size(); ordinal++) {
+			ExactCategoricalSolver.Factor factor = factors.get(ordinal);
+			int[] scopeIndex = new int[factor.scope().size()];
+			for(int position = 0; position < scopeIndex.length; position++) {
+				scopeIndex[position] = requireIndex(index, factor.scope().get(position));
+				incidentCounts[scopeIndex[position]]++;
+				supportWidths[position] = Math.max(supportWidths[position],
+					factor.scope().get(position).domainSize());
+			}
+			compiled[ordinal] = new SupportFactor(factor, scopeIndex);
+		}
+		int[][] incident = Arrays.stream(incidentCounts).mapToObj(int[]::new).toArray(int[][]::new);
+		Arrays.fill(incidentCounts, 0);
+		for(int ordinal = 0; ordinal < compiled.length; ordinal++)
+			for(int variable : compiled[ordinal].scopeIndex())
+				incident[variable][incidentCounts[variable]++] = ordinal;
+		boolean[][] supported = Arrays.stream(supportWidths).mapToObj(boolean[]::new).toArray(boolean[][]::new);
+		return new SupportPlan(compiled, incident, supported);
+	}
+
+	private static void propagateFiniteSupport(SupportPlan plan, boolean[][] active,
+		SupportStatistics statistics) {
+		ActiveDomains live = new ActiveDomains(active);
+		boolean[] dirty = new boolean[plan.factors().length];
+		Arrays.fill(dirty, true);
+		boolean pending;
 		do {
-			changed = false;
-			for(ExactCategoricalSolver.Factor factor : factors) {
-				List<ExactCategoricalSolver.Variable> scope = factor.scope();
-				boolean[][] supported = new boolean[scope.size()][];
-				int[] scopeIndex = new int[scope.size()];
-				for(int position = 0; position < scope.size(); position++) {
-					scopeIndex[position] = requireIndex(index, scope.get(position));
-					supported[position] = new boolean[scope.get(position).domainSize()];
+			pending = false;
+			for(int ordinal = 0; ordinal < plan.factors().length; ordinal++) {
+				if(!dirty[ordinal])
+					continue;
+				dirty[ordinal] = false;
+				SupportFactor factor = plan.factors()[ordinal];
+				for(int position = 0; position < factor.scopeIndex().length; position++) {
+					int variable = factor.scopeIndex()[position];
+					for(int offset = 0; offset < live.sizes[variable]; offset++)
+						plan.supported()[position][live.values[variable][offset]] = false;
 				}
-				boolean finite = markFiniteSupports(factor, scopeIndex, active, supported,
-					new int[scope.size()], 0);
+				if(statistics != null)
+					statistics.factorRevisions++;
+				boolean finite = markFiniteSupports(factor, active, live, plan.supported(), 0, 0, statistics);
 				if(!finite)
 					throw new IllegalArgumentException(INFEASIBLE);
-				for(int position = 0; position < scope.size(); position++) {
-					int variable = scopeIndex[position];
-					for(int value = 0; value < active[variable].length; value++)
-						if(active[variable][value] && !supported[position][value]) {
+				for(int position = 0; position < factor.scopeIndex().length; position++) {
+					int variable = factor.scopeIndex()[position];
+					int retained = 0;
+					int previousSize = live.sizes[variable];
+					for(int offset = 0; offset < previousSize; offset++) {
+						int value = live.values[variable][offset];
+						if(plan.supported()[position][value])
+							live.values[variable][retained++] = value;
+						else
 							active[variable][value] = false;
-							changed = true;
-						}
-					if(singleton(active[variable]) == -2)
+					}
+					live.sizes[variable] = retained;
+					if(retained != previousSize)
+						for(int affected : plan.incident()[variable])
+							dirty[affected] = true;
+					if(retained == 0)
 						throw new IllegalArgumentException(INFEASIBLE);
 				}
 			}
-		} while(changed);
+			for(boolean factorDirty : dirty)
+				pending |= factorDirty;
+		} while(pending);
 	}
 
-	private static boolean markFiniteSupports(ExactCategoricalSolver.Factor factor,
-		int[] scopeIndex, boolean[][] active, boolean[][] supported, int[] values, int position) {
-		if(position == scopeIndex.length) {
-			if(!Double.isFinite(factor.cost(values)))
+	private static boolean markFiniteSupports(SupportFactor factor, boolean[][] active,
+		ActiveDomains live, boolean[][] supported, int position, int cell, SupportStatistics statistics) {
+		if(position == factor.scopeIndex().length) {
+			if(statistics != null)
+				statistics.visitedCells++;
+			if(!Double.isFinite(factor.factor().denseCostAt(cell)))
 				return false;
-			for(int current = 0; current < values.length; current++)
-				supported[current][values[current]] = true;
 			return true;
 		}
 		boolean finite = false;
-		for(int value = 0; value < active[scopeIndex[position]].length; value++)
-			if(active[scopeIndex[position]][value]) {
-				values[position] = value;
-				finite |= markFiniteSupports(factor, scopeIndex, active, supported, values,
-					position + 1);
+		int variable = factor.scopeIndex()[position];
+		for(int offset = 0; offset < live.sizes[variable]; offset++) {
+			int value = live.values[variable][offset];
+			boolean completion = markFiniteSupports(factor, active, live, supported, position + 1,
+				cell * active[variable].length + value, statistics);
+			if(completion) {
+				supported[position][value] = true;
+				finite = true;
 			}
+		}
 		return finite;
 	}
 

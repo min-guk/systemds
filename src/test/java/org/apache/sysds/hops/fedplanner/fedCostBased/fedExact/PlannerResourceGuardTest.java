@@ -79,6 +79,8 @@ public class PlannerResourceGuardTest {
 
 		assertEquals("SYSTEM_RESOURCE_EXHAUSTED|diagnostic=unavailable",failure.getMessage());
 		assertSame(failure,repeatedFailure);
+		assertTrue(failure.actualAllocationFailure());
+		assertTrue(repeatedFailure.actualAllocationFailure());
 	}
 
 	@Test
@@ -92,6 +94,17 @@ public class PlannerResourceGuardTest {
 		assertTrue(failure.getMessage(),failure.getMessage().contains("requiredBytes=8192"));
 		assertTrue(failure.getMessage(),failure.getMessage().contains("allocation=double[]"));
 		assertSame(allocationFailure,failure.getCause());
+		assertTrue(failure.actualAllocationFailure());
+	}
+
+	@Test
+	public void resourcePreflightIsNotAnActualAllocationFailure() {
+		PlannerResourceGuard.ResourceExhaustedException failure = assertThrows(
+			PlannerResourceGuard.ResourceExhaustedException.class,
+			() -> PlannerResourceGuard.checkAdditionalBytes(1_001, "regional-merge",
+				new PlannerResourceGuard.HeapSnapshot(1_000, 1_000, 64)));
+
+		assertTrue(!failure.actualAllocationFailure());
 	}
 
 	@Test

@@ -93,6 +93,59 @@ public class PlacementIdentityAnalysisScopeTest {
 		}
 	}
 
+	@Test
+	public void signatureBudgetFollowsTheCurrentCacheLifecycleOwner() throws Exception {
+		PlacementIdentity.setNormalizedSignatureCacheMaxCharsForTest(8L);
+		boolean active = false;
+		try {
+			Object firstActiveKey = new Object();
+			String firstActiveText = new String("12345678");
+			PlacementIdentity.beginAnalysisScope(null);
+			active = true;
+			PlacementIdentity.rememberSignature(firstActiveKey, firstActiveText);
+			Assert.assertSame(firstActiveText, PlacementIdentity.cachedSignature(firstActiveKey));
+			Assert.assertEquals(8, PlacementIdentity.normalizedSignatureCacheRetainedChars());
+
+			PlacementIdentity.endAnalysisScope();
+			active = false;
+			Assert.assertNull(activeMap("ACTIVE_IDENTITY_SIGNATURES"));
+			Assert.assertNull(activeMap("ACTIVE_STRUCTURAL_SIGNATURES"));
+			Assert.assertEquals("released strong values must not consume the weak-cache budget",
+				0, PlacementIdentity.normalizedSignatureCacheRetainedChars());
+			Assert.assertNull("analysis-owned values must not leak into the weak cache",
+				PlacementIdentity.cachedSignature(firstActiveKey));
+
+			Object weakKey = new Object();
+			String weakText = new String("abcdefgh");
+			PlacementIdentity.rememberSignature(weakKey, weakText);
+			Assert.assertSame("the fresh weak cache can retain after a full analysis scope",
+				weakText, PlacementIdentity.cachedSignature(weakKey));
+			Assert.assertEquals(8, PlacementIdentity.normalizedSignatureCacheRetainedChars());
+
+			PlacementIdentity.beginAnalysisScope(null);
+			active = true;
+			Assert.assertNull("the next strong scope must release prior weak values",
+				PlacementIdentity.cachedSignature(weakKey));
+			Assert.assertEquals(0, PlacementIdentity.normalizedSignatureCacheRetainedChars());
+			Object secondActiveKey = new Object();
+			String secondActiveText = new String("ABCDEFGH");
+			PlacementIdentity.rememberSignature(secondActiveKey, secondActiveText);
+			Assert.assertSame(secondActiveText, PlacementIdentity.cachedSignature(secondActiveKey));
+			Assert.assertEquals(8, PlacementIdentity.normalizedSignatureCacheRetainedChars());
+
+			PlacementIdentity.endAnalysisScope();
+			active = false;
+			Assert.assertEquals(0, PlacementIdentity.normalizedSignatureCacheRetainedChars());
+			Assert.assertNull("completed strong values must be released",
+				PlacementIdentity.cachedSignature(secondActiveKey));
+		}
+		finally {
+			if(active)
+				PlacementIdentity.endAnalysisScope();
+			PlacementIdentity.setNormalizedSignatureCacheMaxCharsForTest(null);
+		}
+	}
+
 	private static Map<?,?> activeMap(String fieldName) throws Exception {
 		Field field = PlacementIdentity.class.getDeclaredField(fieldName);
 		field.setAccessible(true);

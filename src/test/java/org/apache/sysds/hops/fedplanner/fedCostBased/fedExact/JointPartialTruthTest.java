@@ -43,18 +43,35 @@ public class JointPartialTruthTest {
 			+ "i=i+1;}C=p*A;print(sum(C));", true);
 	}
 
-	@Test public void functionAliasesPreserveSelectedPoolProof() throws Exception {
-		long provenSubtrees = check("f=function(matrix[double] A,matrix[double] B) return (matrix[double] C){"
+	@Test public void functionAliasesPreserveExhaustiveSelectedPoolTruth() throws Exception {
+		// Exact CFG alias provenance keeps every legal function-input pool in play until
+		// the other reader is selected. Requiring an early FORBIDDEN proof here would
+		// restore the old broken-origin behavior; exhaustive truth parity remains required.
+		Verification verified = check("f=function(matrix[double] A,matrix[double] B) return (matrix[double] C){"
 			+ "i=1;while(i<1){i=i+1;}C=A+B;}" + SOURCES
 			+ "C1=f(X,X);C2=f(Y,Y);print(sum(C1)+sum(C2));");
-		Assert.assertTrue("function aliases must certify a subtree before its leaves", provenSubtrees > 0);
+		Assert.assertTrue("exact function aliases must retain legal completions", verified.legalLeaves() > 0);
+		Assert.assertEquals("exact function aliases must not invent forbidden completions",
+			0, verified.forbiddenLeaves());
 	}
 
-	private static long check(String script) throws Exception {
+	@Test public void aggregateFunctionChoicesCertifyMixedSubtrees() throws Exception {
+		Verification verified = check("f=function(matrix[double] A,matrix[double] B) return (matrix[double] C){"
+			+ "i=1;while(i<1){i=i+1;}C=A+B;}" + SOURCES
+			+ "U=colSums(X);V=colSums(Y);C1=f(U,U);C2=f(V,V);print(sum(C1)+sum(C2));");
+		Assert.assertTrue("function choices must certify a subtree before its leaves",
+			verified.provenSubtrees() > 0);
+		Assert.assertTrue("fixture must retain legal completions", verified.legalLeaves() > 0);
+		Assert.assertTrue("fixture must retain forbidden completions", verified.forbiddenLeaves() > 0);
+	}
+
+	private record Verification(long provenSubtrees, long legalLeaves, long forbiddenLeaves) { }
+
+	private static Verification check(String script) throws Exception {
 		return check(script, false);
 	}
 
-	private static long check(String script, boolean requireSinglePhysicalInput) throws Exception {
+	private static Verification check(String script, boolean requireSinglePhysicalInput) throws Exception {
 		var program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
 			script, new HashMap<>());
 		var translator = new DMLTranslator(program);
@@ -81,7 +98,7 @@ public class JointPartialTruthTest {
 								.map(ExactPhysicalModel.InputAuthority::inputPosition).distinct().count() == 1)));
 		}
 		int factors = 0;
-		long[] work = new long[2];
+		long[] work = new long[4];
 		for(var factor : model.hardFactors()) {
 			if(!factor.supportsPartialTruth()) continue;
 			factors++;
@@ -102,7 +119,7 @@ public class JointPartialTruthTest {
 			}
 		}
 		Assert.assertTrue("joint hard factors must retain partial proofs", factors > 0);
-		return work[1];
+		return new Verification(work[1], work[2], work[3]);
 	}
 
 	private static int verify(ExactCategoricalSolver.Factor factor, int[] values, int position, long[] work) {
@@ -113,6 +130,7 @@ public class JointPartialTruthTest {
 			Assert.assertTrue(cost == 0.0 || cost == Double.POSITIVE_INFINITY);
 			outcomes = cost == 0.0 ? 1 : 2;
 			work[0]++;
+			work[cost == 0.0 ? 2 : 3]++;
 		}
 		else {
 			for(int value = 0; value < factor.scope().get(position).domainSize(); value++) {

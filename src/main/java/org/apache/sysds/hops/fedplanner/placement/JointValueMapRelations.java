@@ -174,6 +174,18 @@ public final class JointValueMapRelations {
 		}
 	}
 
+	private record SourceQuery(PlacementAnalysis.CandidateRealizationSupportClause clause,
+		CompiledHopKey supplier, CompiledHopKey origin) {
+		@Override public boolean equals(Object other) {
+			return other instanceof SourceQuery that && clause == that.clause
+				&& supplier == that.supplier && origin == that.origin;
+		}
+		@Override public int hashCode() {
+			return 31 * (31 * System.identityHashCode(clause) + System.identityHashCode(supplier))
+				+ System.identityHashCode(origin);
+		}
+	}
+
 	/** Immutable-analysis projection; memoized proofs never depend on a selected plan. */
 	public static final class Grounding {
 		/** A proof about every completion of the currently assigned decision owners. */
@@ -233,11 +245,15 @@ public final class JointValueMapRelations {
 
 		private final PlacementAnalysis analysis;
 		private final Relation relation;
+		private final CompiledHopKey fixedPoolOwner;
 		private final boolean requireSameGeometry;
 		private final Map<PoolQuery,CompiledHopKey> projectedAliasOwners;
 		private final Map<PoolQuery,java.util.Optional<DurableAnchorKey>> invariantPools = new java.util.HashMap<>();
 		private final Map<CompiledHopKey,Map<CandidateRealizationReference,Boolean>> aliasOrigins =
 			new IdentityHashMap<>();
+		private final Map<CandidateRealizationReference,java.util.Optional<DurableAnchorKey>>
+			allSourceInvariantPools = new java.util.HashMap<>();
+		private final Map<SourceQuery,List<CandidateRealizationReference>> sourceProjections = new java.util.HashMap<>();
 
 		public Grounding(PlacementAnalysis analysis, Relation relation) {
 			this(analysis, relation, false);
@@ -251,6 +267,7 @@ public final class JointValueMapRelations {
 			Map<PoolQuery,CompiledHopKey> projectedAliasOwners) {
 			this.analysis = Objects.requireNonNull(analysis, "analysis");
 			this.relation = Objects.requireNonNull(relation, "relation");
+			this.fixedPoolOwner = null;
 			this.requireSameGeometry = requireSameGeometry;
 			this.projectedAliasOwners = Map.copyOf(projectedAliasOwners);
 		}
@@ -405,6 +422,19 @@ public final class JointValueMapRelations {
 			}
 		}
 
+		private Grounding(PlacementAnalysis analysis, CompiledHopKey fixedPoolOwner) {
+			this.analysis = Objects.requireNonNull(analysis, "analysis");
+			this.relation = null;
+			this.fixedPoolOwner = Objects.requireNonNull(fixedPoolOwner, "fixedPoolOwner");
+			this.requireSameGeometry = false;
+			this.projectedAliasOwners = Map.of();
+		}
+
+		/** Resolves every source of one selected VALUE_MAP into one fixed worker pool. */
+		public static Grounding fixedPool(PlacementAnalysis analysis, CompiledHopKey owner) {
+			return new Grounding(analysis, owner);
+		}
+
 		private boolean sameObservedPool(DurableAnchorKey left, DurableAnchorKey right) {
 			// Joint hard legality observes worker alignment and the partitioned axis.
 			// Cost projections additionally observe all extents; do not reuse the
@@ -415,6 +445,8 @@ public final class JointValueMapRelations {
 
 		public List<GroundedLayoutRow> rows(Map<CompiledHopKey,CandidateSelectionReceipt> selected,
 			int outputSourcePosition, Set<Integer> positions) {
+			if(relation == null)
+				throw new IllegalStateException("Fixed-pool grounding does not own correlated rows");
 			List<GroundedLayoutRow> result = new ArrayList<>();
 			for(Row row : relation.rows()) {
 				List<GroundedInput> inputs = new ArrayList<>();
@@ -541,6 +573,164 @@ public final class JointValueMapRelations {
 			finally { active.remove(query); }
 		}
 
+		/**
+		 * The selected owner and every recursively required VALUE_MAP source must
+		 * resolve to the supplied concrete pool. Missing selected receipts are
+		 * deferred only for an explicit partial-search call. Clause-independent
+		 * invariant sources are intentionally omitted from the selected map here;
+		 * callers must enforce ordinary realization-support selection separately.
+		 */
+		public boolean matchesFixedPool(Map<CompiledHopKey,CandidateSelectionReceipt> selected,
+			DurableAnchorKey expected, boolean allowUnassigned) {
+			if(fixedPoolOwner == null)
+				throw new IllegalStateException("Correlated-row grounding does not own a fixed-pool query");
+			Objects.requireNonNull(selected, "selected");
+			Objects.requireNonNull(expected, "expected");
+			CandidateSelectionReceipt receipt = selected.get(fixedPoolOwner);
+			if(receipt == null)
+				return allowUnassigned;
+			return new SelectedFixedPoolGraph(selected, expected).matches(receipt, allowUnassigned);
+		}
+
+		/** Selected fixed-pool proof graph; cycles require a reachable exact or deferred terminal. */
+		private final class SelectedFixedPoolGraph {
+			private final Map<CompiledHopKey,CandidateSelectionReceipt> selected;
+			private final DurableAnchorKey expected;
+			private final Map<CompiledHopKey,SelectedPoolNode> nodes = new IdentityHashMap<>();
+			private boolean valid = true;
+
+			private SelectedFixedPoolGraph(Map<CompiledHopKey,CandidateSelectionReceipt> selected,
+				DurableAnchorKey expected) {
+				this.selected = selected;
+				this.expected = expected;
+			}
+
+			private boolean matches(CandidateSelectionReceipt root, boolean allowUnassigned) {
+				visit(root);
+				if(!valid || !allowUnassigned && nodes.values().stream().anyMatch(node -> node.deferred))
+					return false;
+				Set<SelectedPoolNode> grounded = Collections.newSetFromMap(new IdentityHashMap<>());
+				Map<SelectedPoolNode,List<SelectedPoolNode>> dependents = new IdentityHashMap<>();
+				java.util.ArrayDeque<SelectedPoolNode> work = new java.util.ArrayDeque<>();
+				for(SelectedPoolNode node : nodes.values()) {
+					if(node.exact || allowUnassigned && node.deferred) {
+						grounded.add(node);
+						work.add(node);
+					}
+					for(SelectedPoolNode dependency : node.dependencies)
+						dependents.computeIfAbsent(dependency, ignored -> new ArrayList<>()).add(node);
+				}
+				while(!work.isEmpty())
+					for(SelectedPoolNode dependent : dependents.getOrDefault(work.remove(), List.of()))
+						if(grounded.add(dependent))
+							work.add(dependent);
+				return grounded.size() == nodes.size();
+			}
+
+			private SelectedPoolNode visit(CandidateSelectionReceipt receipt) {
+				CompiledHopKey owner = receipt.rule().parentOccurrence();
+				SelectedPoolNode existing = nodes.get(owner);
+				if(existing != null) {
+					if(existing.receipt != receipt)
+						valid = false;
+					return existing;
+				}
+				SelectedPoolNode node = new SelectedPoolNode(receipt);
+				nodes.put(owner, node);
+				var fact = analysis.candidateRuleFacts().requireExact(owner, receipt.rule().orderedInputs());
+				if(fact.key() != receipt.rule()
+					|| analysis.requireExactCandidateRealization(CandidateRealizationReference.of(
+						receipt.rule(), receipt.realization())) != receipt.realization()
+					|| !receipt.realization().ownsSupportClauseIdentity(receipt.supportClause())) {
+					valid = false;
+					return node;
+				}
+				DurableAnchorKey exact = exactPool(receipt.realization(), receipt.supportClause());
+				if(exact != null) {
+					node.exact = true;
+					valid &= sameObservedPool(exact, expected);
+					return node;
+				}
+				if(receipt.realization().key().layoutKind()
+					!= PlacementIdentity.PlacementLayoutKind.VALUE_MAP
+					|| receipt.supportClause().requiredInputSupport().isEmpty()) {
+					valid = false;
+					return node;
+				}
+				for(CandidateRealizationReference reference : receipt.supportClause().requiredInputSupport()) {
+					DurableAnchorKey invariant = allSourceInvariantPool(reference, new java.util.HashSet<>());
+					if(invariant != null) {
+						node.exact = true;
+						valid &= sameObservedPool(invariant, expected);
+						continue;
+					}
+					CandidateSelectionReceipt child = selected.get(reference.rule().parentOccurrence());
+					if(child == null) {
+						node.deferred = true;
+						continue;
+					}
+					if(reference.rule() != child.rule()
+						|| analysis.requireExactCandidateRealization(reference) != child.realization()) {
+						valid = false;
+						continue;
+					}
+					node.dependencies.add(visit(child));
+				}
+				return node;
+			}
+		}
+
+		private static final class SelectedPoolNode {
+			private final CandidateSelectionReceipt receipt;
+			private final List<SelectedPoolNode> dependencies = new ArrayList<>();
+			private boolean exact;
+			private boolean deferred;
+
+			private SelectedPoolNode(CandidateSelectionReceipt receipt) {
+				this.receipt = receipt;
+			}
+		}
+
+		private DurableAnchorKey allSourceInvariantPool(CandidateRealizationReference reference,
+			Set<CandidateRealizationReference> active) {
+			var cached = allSourceInvariantPools.get(reference);
+			if(cached != null)
+				return cached.orElse(null);
+			if(!active.add(reference))
+				return null;
+			DurableAnchorKey common = null;
+			boolean complete = true;
+			try {
+				var realization = analysis.requireExactCandidateRealization(reference);
+				for(var clause : realization.supportClauses()) {
+					DurableAnchorKey pool = exactPool(realization, clause);
+					if(pool == null && realization.key().layoutKind()
+						== PlacementIdentity.PlacementLayoutKind.VALUE_MAP
+						&& !clause.requiredInputSupport().isEmpty()) {
+						for(var support : clause.requiredInputSupport()) {
+							DurableAnchorKey child = allSourceInvariantPool(support, active);
+							if(child == null || pool != null && !sameObservedPool(pool, child)) {
+								complete = false;
+								break;
+							}
+							pool = child;
+						}
+					}
+					if(!complete || pool == null || common != null && !sameObservedPool(common, pool)) {
+						complete = false;
+						break;
+					}
+					common = pool;
+				}
+			}
+			finally {
+				active.remove(reference);
+			}
+			DurableAnchorKey result = complete ? common : null;
+			allSourceInvariantPools.put(reference, java.util.Optional.ofNullable(result));
+			return result;
+		}
+
 		private DurableAnchorKey selectedPool(PoolQuery query, CandidateSelectionReceipt receipt,
 			Map<CompiledHopKey,CandidateSelectionReceipt> selected, Set<PoolQuery> active) {
 			if(!active.add(query)) return null;
@@ -629,6 +819,9 @@ public final class JointValueMapRelations {
 
 		private List<CandidateRealizationReference> sources(
 			PlacementAnalysis.CandidateRealizationSupportClause clause, PoolQuery query) {
+			SourceQuery key = new SourceQuery(clause, query.supplier(), query.origin());
+			List<CandidateRealizationReference> cached = sourceProjections.get(key);
+			if(cached != null) return cached;
 			List<CandidateRealizationReference> candidates = clause.requiredInputSupport().stream()
 				.filter(reference -> reference.rule().parentOccurrence() == query.supplier()).toList();
 			if(candidates.isEmpty()) candidates = clause.requiredInputSupport().stream()
@@ -637,6 +830,7 @@ public final class JointValueMapRelations {
 				candidates = clause.requiredInputSupport();
 			if(candidates.isEmpty()) candidates = clause.requiredInputSupport().stream().filter(reference ->
 				aliasesOrigin(reference, query.origin())).toList();
+			sourceProjections.put(key, candidates);
 			return candidates;
 		}
 
@@ -652,6 +846,8 @@ public final class JointValueMapRelations {
 
 		/** Scope contains only decisions whose chosen clause can change a queried physical map. */
 		public List<CompiledHopKey> supportOwners() {
+			if(fixedPoolOwner != null)
+				return fixedPoolSupportOwners();
 			Set<CompiledHopKey> owners = Collections.newSetFromMap(new IdentityHashMap<>());
 			owners.addAll(relation.readers());
 			Set<PoolQuery> visited = new java.util.HashSet<>();
@@ -665,6 +861,34 @@ public final class JointValueMapRelations {
 			owners.removeAll(projectedAliasOwners.keySet().stream()
 				.map(query -> query.reference().rule().parentOccurrence()).toList());
 			return owners.stream().sorted().toList();
+		}
+
+		private List<CompiledHopKey> fixedPoolSupportOwners() {
+			Set<CompiledHopKey> owners = Collections.newSetFromMap(new IdentityHashMap<>());
+			owners.add(fixedPoolOwner);
+			Set<CandidateRealizationReference> visited = new java.util.HashSet<>();
+			for(var fact : analysis.candidateRuleFacts().orderedFactsForParent(fixedPoolOwner))
+				for(var emission : fact.allowedEmissionFacts())
+					for(var realization : emission.realizations())
+						collectAllSourceOwners(CandidateRealizationReference.of(fact.key(), realization),
+							owners, visited);
+			return owners.stream().sorted().toList();
+		}
+
+		private void collectAllSourceOwners(CandidateRealizationReference reference,
+			Set<CompiledHopKey> owners, Set<CandidateRealizationReference> visited) {
+			if(!visited.add(reference) || allSourceInvariantPool(reference, new java.util.HashSet<>()) != null)
+				return;
+			var realization = analysis.requireExactCandidateRealization(reference);
+			if(realization.key().layoutKind() != PlacementIdentity.PlacementLayoutKind.VALUE_MAP)
+				return;
+			for(var clause : realization.supportClauses())
+				for(var support : clause.requiredInputSupport()) {
+					if(allSourceInvariantPool(support, new java.util.HashSet<>()) == null) {
+						owners.add(support.rule().parentOccurrence());
+						collectAllSourceOwners(support, owners, visited);
+					}
+				}
 		}
 
 		private void collectOwners(PoolQuery query, Set<CompiledHopKey> owners, Set<PoolQuery> visited) {
@@ -697,12 +921,22 @@ public final class JointValueMapRelations {
 			if(hop != null && !PlacementProgramFacts.isTransientRead(hop)
 				&& !PlacementProgramFacts.isTransientWrite(hop)
 				&& !(hop instanceof UnaryOp unary && unary.getOp() == OpOp1._PLACEMENT)) continue;
-			var clauses = analysis.requireExactCandidateRealization(current).supportClauses();
+			var realization = analysis.requireExactCandidateRealization(current);
+			var clauses = realization.supportClauses();
 			// Reverse pushes preserve the previous depth-first support order.
 			for(int clause = clauses.size() - 1; clause >= 0; clause--) {
 				var support = clauses.get(clause).requiredInputSupport();
 				for(int position = support.size() - 1; position >= 0; position--)
 					pending.push(support.get(position));
+			}
+			// Native TRead provenance comes from exact logical compatibility edges.
+			// Matching worker pools or FTypes alone never proves the writer identity.
+			if(PlacementProgramFacts.isTransientRead(hop)
+				&& clauses.stream().allMatch(clause -> clause.requiredInputSupport().isEmpty())
+				&& clauses.stream().anyMatch(clause -> realization.provenWorkerPoolForOwnedClause(clause) != null)) {
+				var compatibility = analysis.transientCompatibilityForReader(current);
+				for(int edge = compatibility.size() - 1; edge >= 0; edge--)
+					pending.push(compatibility.get(edge).sourceRealization());
 			}
 		}
 		return false;

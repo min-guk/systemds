@@ -83,6 +83,11 @@ public class ExactInputAuthorityOptimizationTest {
 			for(int value = 0; value < lazy.domains().get(domain).alternatives().size(); value++) {
 				var actual = lazy.domains().get(domain).alternatives().get(value);
 				var legacy = eager.domains().get(domain).alternatives().get(value);
+				Assert.assertArrayEquals(legacy.signature().getBytes(StandardCharsets.UTF_8),
+					actual.signature().getBytes(StandardCharsets.UTF_8));
+				Assert.assertEquals(
+					ExactPhysicalCostModel.physicalAlternativeSignatureFingerprintForTest(legacy),
+					ExactPhysicalCostModel.physicalAlternativeSignatureFingerprintForTest(actual));
 				Assert.assertEquals(legacy, actual);
 				Assert.assertEquals(legacy.hashCode(), actual.hashCode());
 				Assert.assertEquals(legacy.toString(), actual.toString());
@@ -141,6 +146,206 @@ public class ExactInputAuthorityOptimizationTest {
 		Assert.assertSame("stable lexical sort must retain the first generated duplicate",
 			sample, deduplicated.get(0));
 	}
+
+	@Test
+	public void relocationExecutionAndInputAuthoritySignaturesReuseExactSegments()
+		throws Exception {
+		var analysis = privateAggregateAnalysis();
+		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
+		ExactPhysicalModel.Alternative execution = model.domains().stream()
+			.flatMap(domain -> domain.alternatives().stream())
+			.filter(ExactPhysicalModel.Alternative::captured)
+			.filter(alternative -> alternative.inputAuthorities().stream().anyMatch(authority ->
+				authority.sourceDecision() != null || authority.relocationAction() != null))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"fixture must expose a captured input-authority signature"));
+		var action = analysis.graph().relocationActions().stream().findFirst().orElseThrow(() ->
+			new AssertionError("fixture must expose a relocation action"));
+		var node = analysis.graph().node(execution.decision()).orElseThrow();
+		RelocationSignaturePair pair = relocationSignaturePair(node, action, execution);
+		Assert.assertArrayEquals(pair.eager().signature().getBytes(StandardCharsets.UTF_8),
+			pair.lazy().signature().getBytes(StandardCharsets.UTF_8));
+		Assert.assertEquals(
+			ExactPhysicalCostModel.physicalAlternativeSignatureFingerprintForTest(pair.eager()),
+			ExactPhysicalCostModel.physicalAlternativeSignatureFingerprintForTest(pair.lazy()));
+		Assert.assertTrue(sameAuthorityIdentities(pair.lazy().inputAuthorities(),
+			execution.inputAuthorities()));
+		Assert.assertTrue("relocation/captured signatures must share canonical child text",
+			shareCanonicalDescendant(pair.lazy(), pair.captured()));
+		Assert.assertNotNull("input authority must have a segmented normalized representation",
+			pair.authorityText());
+		Assert.assertEquals(pair.segmentedAuthority().signature(),
+			pair.authorityText().materialize());
+		Assert.assertTrue("input authority must share nested source/action text",
+			hasCanonicalChild(pair.authorityText()));
+
+		SignatureRepresentation eagerRepresentation = signatureRepresentation(List.of(pair.eager()));
+		SignatureRepresentation lazyRepresentation = signatureRepresentation(List.of(pair.lazy()));
+		Assert.assertTrue("segmented relocation signatures must retain fewer literal characters: eager="
+			+ eagerRepresentation + ",lazy=" + lazyRepresentation,
+			lazyRepresentation.uniqueLiteralCharacters()
+				< eagerRepresentation.uniqueLiteralCharacters());
+		System.out.println("EXACT_SIGNATURE_SHARING_EVIDENCE|eagerRelocations="
+			+ eagerRepresentation + "|lazyRelocations=" + lazyRepresentation);
+	}
+
+	private static RelocationSignaturePair relocationSignaturePair(
+		org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node node,
+		org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction action,
+		ExactPhysicalModel.Alternative execution) throws Exception {
+		var method = java.util.Arrays.stream(ExactPhysicalModel.class.getDeclaredMethods())
+			.filter(candidate -> candidate.getName().equals("nonCandidate"))
+			.max(java.util.Comparator.comparingInt(candidate -> candidate.getParameterTypes().length))
+			.orElseThrow();
+		method.setAccessible(true);
+		var candidate = java.util.Arrays.stream(ExactPhysicalModel.class.getDeclaredMethods())
+			.filter(candidateMethod -> candidateMethod.getName().equals("candidate"))
+			.findFirst().orElseThrow();
+		candidate.setAccessible(true);
+		Class<?> contextClass = candidate.getParameterTypes()[candidate.getParameterCount() - 1];
+		var constructor = contextClass.getDeclaredConstructor();
+		constructor.setAccessible(true);
+		Object context = constructor.newInstance();
+		ExactPhysicalModel.InputAuthority segmentedAuthority = execution.inputAuthorities().stream()
+			.filter(authority -> authority.sourceDecision() != null
+				|| authority.relocationAction() != null).findFirst().orElseThrow();
+		org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedText authorityText = null;
+		try {
+			var authorityMethod = contextClass.getDeclaredMethod("inputAuthority",
+				ExactPhysicalModel.InputAuthority.class);
+			authorityMethod.setAccessible(true);
+			authorityText = (org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedText)
+				authorityMethod.invoke(context, segmentedAuthority);
+		}
+		catch(NoSuchMethodException ignored) {
+			// The frozen V34 implementation is the intentional RED oracle.
+		}
+		ExactPhysicalModel.Alternative captured = (ExactPhysicalModel.Alternative) candidate.invoke(null,
+			node, execution.state(), execution.candidateRule(), execution.candidateEmission(),
+			execution.realization(), execution.supportClause(), execution.derivedFoutAction(),
+			execution.inputAuthorities(), context);
+		List<Object> arguments = new java.util.ArrayList<>(List.of(node, execution.state(),
+			ExactPhysicalModel.AuthorityKind.RELOCATION_SOURCE, action.key().durableAnchor(), action,
+			execution.candidateRule(), execution.candidateEmission(), execution.realization(),
+			execution.supportClause(), execution.inputAuthorities()));
+		ExactPhysicalModel.Alternative eager;
+		ExactPhysicalModel.Alternative lazy;
+		if(method.getParameterCount() == 11) {
+			arguments.add(null);
+			eager = (ExactPhysicalModel.Alternative) method.invoke(null, arguments.toArray());
+			arguments.set(10, context);
+			lazy = (ExactPhysicalModel.Alternative) method.invoke(null, arguments.toArray());
+		}
+		else {
+			eager = (ExactPhysicalModel.Alternative) method.invoke(null, arguments.toArray());
+			lazy = (ExactPhysicalModel.Alternative) method.invoke(null, arguments.toArray());
+		}
+		return new RelocationSignaturePair(eager, lazy, captured,
+			segmentedAuthority, authorityText);
+	}
+
+	private record RelocationSignaturePair(ExactPhysicalModel.Alternative eager,
+		ExactPhysicalModel.Alternative lazy,
+		ExactPhysicalModel.Alternative captured,
+		ExactPhysicalModel.InputAuthority segmentedAuthority,
+		org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedText authorityText) { }
+
+	private static boolean sameAuthorityIdentities(
+		List<ExactPhysicalModel.InputAuthority> left,
+		List<ExactPhysicalModel.InputAuthority> right) {
+		if(left.size() != right.size())
+			return false;
+		for(int index = 0; index < left.size(); index++)
+			if(left.get(index) != right.get(index))
+				return false;
+		return true;
+	}
+
+	private static SignatureRepresentation signatureRepresentation(
+		List<ExactPhysicalModel.Alternative> alternatives)
+		throws Exception {
+		var textField = org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedText.class
+			.getDeclaredField("text");
+		textField.setAccessible(true);
+		var piecesField = textField.getType().getDeclaredField("pieces");
+		piecesField.setAccessible(true);
+		IdentityHashMap<Object,Boolean> canonicalTexts = new IdentityHashMap<>();
+		IdentityHashMap<String,Boolean> literals = new IdentityHashMap<>();
+		java.util.ArrayDeque<Object> pending = new java.util.ArrayDeque<>();
+		for(var alternative : alternatives)
+			pending.addLast(textField.get(alternative.normalizedSignature()));
+		long characters = 0L;
+		long utf8Bytes = 0L;
+		int references = 0;
+		while(!pending.isEmpty()) {
+			Object text = pending.removeLast();
+			if(canonicalTexts.put(text, Boolean.TRUE) != null)
+				continue;
+			for(Object piece : (List<?>) piecesField.get(text)) {
+				if(piece instanceof String literal) {
+					references++;
+					if(literals.put(literal, Boolean.TRUE) == null) {
+						characters += literal.length();
+						utf8Bytes += literal.getBytes(StandardCharsets.UTF_8).length;
+					}
+				}
+				else
+					pending.addLast(piece);
+			}
+		}
+		return new SignatureRepresentation(characters, utf8Bytes, literals.size(),
+			canonicalTexts.size(), references);
+	}
+
+	private static boolean shareCanonicalDescendant(ExactPhysicalModel.Alternative left,
+		ExactPhysicalModel.Alternative right) throws ReflectiveOperationException {
+		Set<Object> leftDescendants = canonicalDescendants(left, false);
+		return canonicalDescendants(right, false).stream().anyMatch(leftDescendants::contains);
+	}
+
+	private static Set<Object> canonicalDescendants(ExactPhysicalModel.Alternative alternative,
+		boolean includeRoot) throws ReflectiveOperationException {
+		var textField = org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedText.class
+			.getDeclaredField("text");
+		textField.setAccessible(true);
+		var piecesField = textField.getType().getDeclaredField("pieces");
+		piecesField.setAccessible(true);
+		Object root = textField.get(alternative.normalizedSignature());
+		Set<Object> result = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+		java.util.ArrayDeque<Object> pending = new java.util.ArrayDeque<>();
+		pending.add(root);
+		while(!pending.isEmpty()) {
+			Object text = pending.removeLast();
+			if(!result.add(text))
+				continue;
+			for(Object piece : (List<?>) piecesField.get(text))
+				if(!(piece instanceof String))
+					pending.addLast(piece);
+		}
+		if(!includeRoot)
+			result.remove(root);
+		return result;
+	}
+
+	private static boolean hasCanonicalChild(
+		org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedText value) {
+		try {
+			var textField = org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedText.class
+				.getDeclaredField("text");
+			textField.setAccessible(true);
+			var piecesField = textField.getType().getDeclaredField("pieces");
+			piecesField.setAccessible(true);
+			return ((List<?>) piecesField.get(textField.get(value))).stream()
+				.anyMatch(piece -> !(piece instanceof String));
+		}
+		catch(ReflectiveOperationException ex) {
+			throw new AssertionError(ex);
+		}
+	}
+
+	private record SignatureRepresentation(long uniqueLiteralCharacters,
+		long uniqueLiteralUtf8Bytes, int uniqueLiterals, int canonicalTexts,
+		int literalReferences) { }
 
 	@Test
 	public void lazyRegionalStateKeysPreserveLegacySeedRepairAndAssignmentTrace() throws Exception {

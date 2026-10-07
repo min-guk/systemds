@@ -160,6 +160,146 @@ public class ExactInputAuthoritySourceReceiptProjectionTest {
 		assertEveryCell(canonical, encoded);
 	}
 
+	@Test
+	public void indexedContextMatchesColdObservationAcrossAllReceiptFields() throws Exception {
+		RelocationAction first = action(OUTSIDE, 0, "indexed-a");
+		RelocationAction second = action(OUTSIDE, 1, "indexed-b");
+		RelocationAction equalForeign = action(key("outside"), 0, "indexed-a");
+		Assert.assertEquals(first.key(), equalForeign.key());
+		Assert.assertNotSame(first.key(), equalForeign.key());
+		CandidateRealizationReference source = reference(SOURCE, "indexed");
+		List<CandidateSelectionReceipt> receipts = List.of(
+			receipt(SOURCE, "source", null, null),
+			receipt(ALIAS, "alias", null, null),
+			receipt(OUTSIDE, "direct", CandidateRealizationInputBinding.direct(0, source), null),
+			receipt(OUTSIDE, "irrelevant", CandidateRealizationInputBinding.direct(3, source), null),
+			receipt(OUTSIDE, "relocation", CandidateRealizationInputBinding.relocation(0, source,
+				equalForeign.key()), null),
+			durableReceipt(OUTSIDE, anchor("indexed-pool")),
+			derivedReceipt(OUTSIDE, anchor("indexed-derived")));
+		for(List<RelocationAction> actions : List.of(List.<RelocationAction>of(),
+			List.of(first), List.of(first, second, equalForeign)))
+			for(Set<CompiledHopKey> owners : List.of(identitySet(), identitySet(SOURCE, ALIAS),
+				identitySet(key("source")))) {
+				Object context = observationContext(actions, owners);
+				Assert.assertNull(indexedObservation(context, null));
+				for(CandidateSelectionReceipt receipt : receipts) {
+					Object expected = observe(receipt, actions, owners);
+					Object actual = indexedObservation(context, receipt);
+					Assert.assertEquals(expected, actual);
+					Assert.assertEquals(expected.hashCode(), actual.hashCode());
+					Assert.assertSame("same exact receipt reuses the immutable observation", actual,
+						indexedObservation(context, receipt));
+				}
+			}
+	}
+
+	@Test
+	public void equalForeignReceiptDoesNotAcquireCachedOwnerIdentity() throws Exception {
+		CompiledHopKey foreignOwner = key("source");
+		CandidateSelectionReceipt owned = receipt(SOURCE, "same", null, null);
+		CandidateSelectionReceipt foreign = receipt(foreignOwner, "same", null, null);
+		Assert.assertEquals(owned, foreign);
+		Assert.assertNotSame(owned, foreign);
+		List<RelocationAction> actions = List.of(action(OUTSIDE, 0, "identity-memo"));
+		Set<CompiledHopKey> owners = identitySet(SOURCE);
+		Object context = observationContext(actions, owners);
+		Object ownedObservation = indexedObservation(context, owned);
+		Object foreignObservation = indexedObservation(context, foreign);
+		Assert.assertEquals(observe(owned, actions, owners), ownedObservation);
+		Assert.assertEquals(observe(foreign, actions, owners), foreignObservation);
+		Assert.assertNotEquals(ownedObservation, foreignObservation);
+	}
+
+	@Test
+	public void receiptMemoIsIsolatedAcrossDifferentSourceContexts() throws Exception {
+		RelocationAction first = action(OUTSIDE, 0, "context-a");
+		RelocationAction second = action(OUTSIDE, 1, "context-b");
+		CandidateSelectionReceipt receipt = receipt(OUTSIDE, "context",
+			CandidateRealizationInputBinding.direct(0, reference(SOURCE, "context")), null);
+		List<RelocationAction> firstActions = List.of(first);
+		List<RelocationAction> secondActions = List.of(second);
+		Object firstContext = observationContext(firstActions, identitySet(OUTSIDE));
+		Object secondContext = observationContext(secondActions, identitySet(SOURCE));
+		Object firstObservation = indexedObservation(firstContext, receipt);
+		Object secondObservation = indexedObservation(secondContext, receipt);
+		Assert.assertEquals(observe(receipt, firstActions, identitySet(OUTSIDE)), firstObservation);
+		Assert.assertEquals(observe(receipt, secondActions, identitySet(SOURCE)), secondObservation);
+		Assert.assertNotEquals(firstObservation, secondObservation);
+		Assert.assertSame(firstObservation, indexedObservation(firstContext, receipt));
+	}
+
+	@Test
+	public void indexedQueriesDoNotRescanTheSourceActionInventory() throws Exception {
+		List<RelocationAction> backing = new java.util.ArrayList<>();
+		for(int index = 0; index < 200; index++)
+			backing.add(action(OUTSIDE, index, "work-" + index));
+		CountingActions actions = new CountingActions(backing);
+		Set<CompiledHopKey> owners = identitySet(SOURCE);
+		CandidateSelectionReceipt receipt = receipt(OUTSIDE, "work",
+			CandidateRealizationInputBinding.relocation(0, reference(SOURCE, "work"),
+				backing.get(backing.size() - 1).key()), null);
+		Method indexer = ExactPhysicalModel.class.getDeclaredMethod("relevantDirectBindingPositions", List.class);
+		indexer.setAccessible(true);
+		Object positions = indexer.invoke(null, actions);
+		Method cold = ExactPhysicalModel.class.getDeclaredMethod("receiptObservation",
+			CandidateSelectionReceipt.class, List.class, Map.class, Set.class);
+		cold.setAccessible(true);
+		actions.reads = 0;
+		Object expected = null;
+		for(int query = 0; query < 100; query++)
+			expected = cold.invoke(null, receipt, actions, positions, owners);
+		Assert.assertEquals("legacy inventory scan per query", 20_000, actions.reads);
+		actions.reads = 0;
+		Object context = observationContext(actions, owners);
+		int preparationReads = actions.reads;
+		Assert.assertTrue("index construction is linear", preparationReads <= 2 * backing.size());
+		for(int query = 0; query < 100; query++)
+			Assert.assertEquals(expected, indexedObservation(context, receipt));
+		Assert.assertEquals("queries never traverse action inventory", preparationReads, actions.reads);
+	}
+
+	@Test
+	public void actionHashCollisionsRemainDistinctMemberships() throws Exception {
+		RelocationAction present = action(OUTSIDE, 0, "Aa");
+		RelocationAction absent = action(OUTSIDE, 0, "BB");
+		Assert.assertEquals(present.key().hashCode(), absent.key().hashCode());
+		Assert.assertNotEquals(present.key(), absent.key());
+		CandidateRealizationReference source = reference(SOURCE, "collision");
+		CandidateSelectionReceipt atPresent = receipt(OUTSIDE, "same",
+			CandidateRealizationInputBinding.relocation(0, source, present.key()), null);
+		CandidateSelectionReceipt atAbsent = receipt(OUTSIDE, "same",
+			CandidateRealizationInputBinding.relocation(0, source, absent.key()), null);
+		List<RelocationAction> actions = List.of(present);
+		Set<CompiledHopKey> owners = identitySet(SOURCE);
+		Object context = observationContext(actions, owners);
+		Assert.assertEquals(observe(atPresent, actions, owners), indexedObservation(context, atPresent));
+		Assert.assertEquals(observe(atAbsent, actions, owners), indexedObservation(context, atAbsent));
+		Assert.assertNotEquals(indexedObservation(context, atPresent), indexedObservation(context, atAbsent));
+	}
+
+	private static Object observationContext(List<RelocationAction> actions,
+		Set<CompiledHopKey> owners) throws Exception {
+		Class<?> type = Class.forName(ExactPhysicalModel.class.getName() + "$ReceiptObservationContext");
+		var constructor = type.getDeclaredConstructor(List.class, Set.class);
+		constructor.setAccessible(true);
+		return constructor.newInstance(actions, owners);
+	}
+
+	private static Object indexedObservation(Object context, CandidateSelectionReceipt receipt) throws Exception {
+		Method method = context.getClass().getDeclaredMethod("observe", CandidateSelectionReceipt.class);
+		method.setAccessible(true);
+		return method.invoke(context, receipt);
+	}
+
+	private static final class CountingActions extends java.util.AbstractList<RelocationAction> {
+		private final List<RelocationAction> values;
+		private int reads;
+		private CountingActions(List<RelocationAction> values) { this.values = List.copyOf(values); }
+		@Override public RelocationAction get(int index) { reads++; return values.get(index); }
+		@Override public int size() { return values.size(); }
+	}
+
 	@SuppressWarnings("unchecked")
 	private static Set<CompiledHopKey> sourceOwners(NeutralPlacementGraph graph) throws Exception {
 		Method method = ExactPhysicalModel.class.getDeclaredMethod(

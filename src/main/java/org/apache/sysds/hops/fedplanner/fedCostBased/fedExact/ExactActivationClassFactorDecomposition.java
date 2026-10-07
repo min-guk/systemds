@@ -19,7 +19,6 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
@@ -142,8 +141,7 @@ final class ExactActivationClassFactorDecomposition {
 			activeSource, prices);
 		if(identicallyZero)
 			return new Decomposition(canonical, List.of(), List.of(), null, descriptor(key, source,
-				activeSource, prices, demands, consumers, mergedMasks, List.of(), List.of())
-				+ "|identicallyZero=true");
+				activeSource, prices, demands, consumers, mergedMasks, List.of(), List.of(), true));
 
 		List<ExactCategoricalSolver.Variable> auxiliaries = new ArrayList<>();
 		List<ExactCategoricalSolver.Factor> solverFactors = new ArrayList<>();
@@ -176,7 +174,7 @@ final class ExactActivationClassFactorDecomposition {
 		solverFactors.add(monetary);
 
 		return new Decomposition(canonical, auxiliaries, solverFactors, monetary, descriptor(key, source,
-			activeSource, prices, demands, consumers, mergedMasks, auxiliaries, solverFactors));
+			activeSource, prices, demands, consumers, mergedMasks, auxiliaries, solverFactors, false));
 	}
 
 	private static boolean anyTrue(boolean[] values) {
@@ -198,11 +196,13 @@ final class ExactActivationClassFactorDecomposition {
 		List<ExactCategoricalSolver.Variable> consumers,
 		IdentityHashMap<ExactCategoricalSolver.Variable,boolean[]> mergedMasks,
 		List<ExactCategoricalSolver.Variable> accumulators,
-		List<ExactCategoricalSolver.Factor> solverFactors) {
-		StringBuilder descriptor = new StringBuilder("EXACT_ACTIVATION_CLASS_OR_V1|key=")
+		List<ExactCategoricalSolver.Factor> solverFactors, boolean identicallyZero) {
+		ExactPhysicalCostModel.FingerprintWriter descriptor =
+			new ExactPhysicalCostModel.FingerprintWriter();
+		descriptor.append("EXACT_ACTIVATION_CLASS_OR_V1|key=")
 			.append(key).append("|source=").append(source.key()).append(':')
 			.append(source.domainSize()).append("|sourceActive=")
-			.append(Arrays.toString(activeSource)).append("|sourcePrices=");
+			.appendBooleanArray(activeSource).append("|sourcePrices=");
 		for(double price : prices)
 			descriptor.append(Long.toUnsignedString(Double.doubleToRawLongBits(price), 16))
 				.append(',');
@@ -210,17 +210,35 @@ final class ExactActivationClassFactorDecomposition {
 			Demand demand = demands.get(index);
 			descriptor.append("|demand=").append(index).append(':')
 				.append(demand.consumer.key()).append(':').append(demand.consumer.domainSize())
-				.append(":active=").append(Arrays.toString(demand.activeConsumerValues));
+				.append(":active=").appendBooleanArray(demand.activeConsumerValues);
 		}
 		for(ExactCategoricalSolver.Variable consumer : consumers)
 			descriptor.append("|merged=").append(consumer.key()).append(':')
-				.append(Arrays.toString(mergedMasks.get(consumer)));
-		descriptor.append("|accumulators=").append(accumulators.stream()
-			.map(variable -> variable.key() + ':' + variable.domainSize()).toList());
-		descriptor.append("|solverScopes=").append(solverFactors.stream().map(factor ->
-			factor.scope().stream().map(variable -> variable.key() + ':' + variable.domainSize())
-				.toList()).toList());
-		return descriptor.toString();
+				.appendBooleanArray(mergedMasks.get(consumer));
+		descriptor.append("|accumulators=");
+		appendVariableList(descriptor, accumulators);
+		descriptor.append("|solverScopes=[");
+		for(int index = 0; index < solverFactors.size(); index++) {
+			if(index > 0)
+				descriptor.append(", ");
+			appendVariableList(descriptor, solverFactors.get(index).scope());
+		}
+		descriptor.append(']');
+		if(identicallyZero)
+			descriptor.append("|identicallyZero=true");
+		return "EXACT_ACTIVATION_CLASS_OR_V2|semanticSha256=" + descriptor.finish();
+	}
+
+	private static void appendVariableList(ExactPhysicalCostModel.FingerprintWriter descriptor,
+		List<ExactCategoricalSolver.Variable> variables) {
+		descriptor.append('[');
+		for(int index = 0; index < variables.size(); index++) {
+			if(index > 0)
+				descriptor.append(", ");
+			ExactCategoricalSolver.Variable variable = variables.get(index);
+			descriptor.append(variable.key()).append(':').append(variable.domainSize());
+		}
+		descriptor.append(']');
 	}
 
 	private static IdentityHashMap<ExactCategoricalSolver.Variable,Integer> positions(

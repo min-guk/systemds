@@ -5,6 +5,7 @@ import static org.junit.Assert.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Test;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Limits;
@@ -30,6 +31,80 @@ public class IncrementalRegionalOptimizerTest {
 			assertTrue(cp.lower() >= lastLower); assertTrue(cp.upper() <= lastUpper);
 			lastLower = cp.lower(); lastUpper = cp.upper();
 		}
+	}
+	private IncrementalRegionalOptimizer.Result runProduction(List<Variable> variables,
+		List<Factor> factors, List<Integer> seed, IncrementalRegionalOptimizer.BoundaryMerger merger) {
+		var problem = RegionalSearchProblem.generic(variables,factors);
+		return IncrementalRegionalOptimizer.optimize(problem,problem.reducedRoot(LIMITS),seed,
+			LIMITS,new IncrementalRegionalOptimizer.Options(0,0,0,0,0,false),cp -> { },null,merger);
+	}
+	@Test public void actualMergeAllocationFailureReturnsCertifiedIncumbentWithoutConditionalRestart() {
+		var x=new Variable("oom-x",2); var y=new Variable("oom-y",2); var z=new Variable("oom-z",2);
+		var variables=List.of(x,y,z);
+		var factors=List.of(Factor.dense(List.of(x,y),9,3,4,1),
+			Factor.dense(List.of(y,z),7,2,5,1),Factor.dense(List.of(x,z),8,6,2,1));
+		double optimum=ExactCategoricalSolver.solve(variables,factors,LIMITS).objective();
+		assertEquals(3d,optimum,0d);
+		AtomicInteger attempts=new AtomicInteger();
+		var result=runProduction(variables,factors,List.of(0,0,0),
+			(messages,boundary,limits,maximumAssignments,counters) -> {
+				if(attempts.incrementAndGet()==2)
+					throw PlannerResourceGuard.allocationFailure("regional-merge",-1L,
+						"injected-boundary-message",new OutOfMemoryError("injected optimizer merge"));
+				return ExactCategoricalSolver.mergeBoundary(messages,boundary,limits,counters);
+			});
+
+		assertEquals("RESOURCE",result.stopReason());
+		assertEquals(2,attempts.get());
+		assertEquals(variables.size(),result.assignment().size());
+		assertEquals(result.upper(),RegionalSearchProblem.evaluateFactors(
+			variables,factors,result.assignment()),0d);
+		var successfulMerge=result.checkpoints().stream()
+			.filter(checkpoint -> checkpoint.phase().equals("MERGE")).findFirst().orElseThrow();
+		assertEquals(successfulMerge.lower(),result.lower(),0d);
+		assertEquals(successfulMerge.conditionalAttempts(),result.checkpoints().get(
+			result.checkpoints().size()-1).conditionalAttempts());
+		assertTrue(result.lower() <= optimum);
+		assertTrue(result.upper() >= optimum);
+		assertTrue(result.checkpoints().get(result.checkpoints().size()-1).dpNanos()
+			> successfulMerge.dpNanos());
+	}
+	@Test public void ordinaryMergeFailureStillPropagatesAfterSuccessfulMerge() {
+		var x=new Variable("failure-x",2); var y=new Variable("failure-y",2); var z=new Variable("failure-z",2);
+		var variables=List.of(x,y,z);
+		var factors=List.of(Factor.dense(List.of(x,y),9,3,4,1),
+			Factor.dense(List.of(y,z),7,2,5,1),Factor.dense(List.of(x,z),8,6,2,1));
+		AtomicInteger attempts=new AtomicInteger();
+		IllegalStateException failure=assertThrows(IllegalStateException.class,
+			() -> runProduction(variables,factors,List.of(0,0,0),
+				(messages,boundary,limits,maximumAssignments,counters) -> {
+					if(attempts.incrementAndGet()==2)
+						throw new IllegalStateException("INJECTED_ORDINARY_MERGE_FAILURE");
+					return ExactCategoricalSolver.mergeBoundary(messages,boundary,limits,counters);
+				}));
+
+		assertEquals("INJECTED_ORDINARY_MERGE_FAILURE",failure.getMessage());
+		assertEquals(2,attempts.get());
+	}
+	@Test public void preflightResourceRejectionStillTriesAnotherPivot() {
+		var x=new Variable("preflight-x",2); var y=new Variable("preflight-y",2);
+		var z=new Variable("preflight-z",2);
+		var variables=List.of(x,y,z);
+		var factors=List.of(Factor.dense(List.of(x,y),9,3,4,1),
+			Factor.dense(List.of(y,z),7,2,5,1),Factor.dense(List.of(x,z),8,6,2,1));
+		AtomicInteger attempts=new AtomicInteger();
+		var result=runProduction(variables,factors,List.of(0,0,0),
+			(messages,boundary,limits,maximumAssignments,counters) -> {
+				if(attempts.incrementAndGet()==1)
+					PlannerResourceGuard.checkAdditionalBytes(1_001,"regional-merge",
+						new PlannerResourceGuard.HeapSnapshot(1_000,1_000,64));
+				return ExactCategoricalSolver.mergeBoundary(messages,boundary,limits,counters);
+			});
+
+		assertTrue(attempts.get()>1);
+		assertTrue(result.checkpoints().stream().anyMatch(checkpoint -> checkpoint.phase().equals("MERGE")));
+		assertEquals(result.upper(),RegionalSearchProblem.evaluateFactors(
+			variables,factors,result.assignment()),0d);
 	}
 	@Test public void productionPathHasNoFormerMillionAssignmentOrElapsedStop() {
 		var x = new Variable("unbounded-production-x",1025);

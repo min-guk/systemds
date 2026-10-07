@@ -73,12 +73,13 @@ public class EarlyPrivacyPruningLegalSpaceParityTest {
 	// Complete legal-space baselines, with audited updates documented below.
 	private static final String PROTECTED_AGGREGATE_GOLDEN =
 		"09e2e4069fefd2f280f137b7c042182cc6a7e2e994169aca9ccc9c4c77e23ea2";
-	// d7e88516a1 preserves the full native output geometry; 0146f043e0 includes
-	// layout and exact/dynamic precision in native/transient realization identities.
+	// Geometry/precision baselines include the exact native-reader worker-pool
+	// routes restored for function and branch outputs. See the audited tuple delta
+	// and Closure-only ablation in SESSION_ISSUES_2026-10-07.md.
 	private static final String METADATA_AND_HANDLE_GOLDEN =
-		"811d78e00e9566e9997c39aa8527c9a96d2e50af7575ec42f291f74c705629d6";
+		"d5d6a770a1a979338ca1c15f7a104b03d985a8eec574720f06009b1eb91ee141";
 	private static final String CONTROL_FLOW_GOLDEN =
-		"b9b2d88c077b94dd1df073861fcb4dece09d14c06370585829fe974df24e69cd";
+		"21f99b5cd1532ea3a803b76529184c238c0f0b31892bd85946f7a535dfb552d3";
 	// 3d0d683c1b changed only colMean's materialization ID and its consumer reference
 	// versus adaebee9cc. Keep exact action identities and support bindings in the digest.
 	private static final String UNKNOWN_WIDTH_GOLDEN =

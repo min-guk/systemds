@@ -75,6 +75,16 @@ final class IncrementalRegionalOptimizer {
 		int internalDecisions, int conditionalAttempts, int conditionalImprovements) { }
 	record Result(List<Integer> assignment, double lower, double upper, String stopReason,
 		List<Checkpoint> checkpoints) { }
+	@FunctionalInterface
+	interface BoundaryMerger {
+		BoundaryMessage merge(List<BoundaryMessage> messages, List<Variable> boundary,
+			Limits limits, Long maximumAssignments,
+			ExactCategoricalSolver.BoundaryMergeCounters counters);
+	}
+	private static final BoundaryMerger DEFAULT_BOUNDARY_MERGER =
+		(messages,boundary,limits,maximumAssignments,counters) -> maximumAssignments == null
+			? ExactCategoricalSolver.mergeBoundary(messages,boundary,limits,counters)
+			: ExactCategoricalSolver.mergeBoundary(messages,boundary,limits,maximumAssignments,counters);
 
 	private static final class Node {
 		final int id;
@@ -107,6 +117,8 @@ final class IncrementalRegionalOptimizer {
 	private final Options options;
 	private final Consumer<Checkpoint> observer;
 	private final ExactCategoricalSolver.BoundaryMergeCounters mergeCounters;
+	private final BoundaryMerger boundaryMerger;
+	private final BitSet coverOwners;
 	private final List<Node> active = new ArrayList<>();
 	private final List<Node> sealed = new ArrayList<>();
 	private final Map<Variable,Set<Node>> incidence = new LinkedHashMap<>();
@@ -124,10 +136,12 @@ final class IncrementalRegionalOptimizer {
 
 	private IncrementalRegionalOptimizer(RegionalSearchProblem problem,
 		ExactPhysicalReducedSolver.CompactModel root, List<Integer> originalSeed, Limits limits,
-		Options options, Consumer<Checkpoint> observer, ExactCategoricalSolver.BoundaryMergeCounters mergeCounters) {
+		Options options, Consumer<Checkpoint> observer, ExactCategoricalSolver.BoundaryMergeCounters mergeCounters,
+		BoundaryMerger boundaryMerger) {
 		this.problem = problem; this.root = root; this.variables = root.variables();
 		this.limits = limits; this.options = options; this.observer = observer;
-		this.mergeCounters = mergeCounters;
+		this.mergeCounters = mergeCounters; this.boundaryMerger = boundaryMerger;
+		this.coverOwners = new BitSet(root.factors().size());
 		for(int i=0; i<variables.size(); i++) positions.put(variables.get(i),i);
 		incumbent = IncrementalRegionalSeed.lift(root, originalSeed, limits);
 		upper = validate(incumbent);
@@ -143,8 +157,16 @@ final class IncrementalRegionalOptimizer {
 	static Result optimize(RegionalSearchProblem problem, ExactPhysicalReducedSolver.CompactModel root,
 		List<Integer> originalSeed, Limits limits, Options options, Consumer<Checkpoint> observer,
 		ExactCategoricalSolver.BoundaryMergeCounters mergeCounters) {
-		return new IncrementalRegionalOptimizer(problem, root, originalSeed, limits, options, observer, mergeCounters)
+		return new IncrementalRegionalOptimizer(problem, root, originalSeed, limits, options, observer, mergeCounters,
+			DEFAULT_BOUNDARY_MERGER)
 			.run();
+	}
+
+	static Result optimize(RegionalSearchProblem problem, ExactPhysicalReducedSolver.CompactModel root,
+		List<Integer> originalSeed, Limits limits, Options options, Consumer<Checkpoint> observer,
+		ExactCategoricalSolver.BoundaryMergeCounters mergeCounters, BoundaryMerger boundaryMerger) {
+		return new IncrementalRegionalOptimizer(problem, root, originalSeed, limits, options, observer, mergeCounters,
+			java.util.Objects.requireNonNull(boundaryMerger, "boundaryMerger")).run();
 	}
 
 	private Result run() {
@@ -220,22 +242,24 @@ final class IncrementalRegionalOptimizer {
 				discard(candidate.pivot()); resourceRejected++; continue;
 			}
 			BoundaryMessage merged;
-			dpStarted = System.nanoTime();
 			try {
-				List<BoundaryMessage> messages = candidate.inputs().stream().map(n -> n.message).toList();
-				merged = options.boundedTest()
-					? ExactCategoricalSolver.mergeBoundary(messages,candidate.boundary(),limits,
-						options.maximumMergeAssignments(),mergeCounters)
-					: ExactCategoricalSolver.mergeBoundary(messages,candidate.boundary(),limits,mergeCounters);
+				merged = mergeCandidate(candidate);
 			}
 			catch(IllegalArgumentException | IllegalStateException ex) {
 				if(!(ex instanceof IllegalArgumentException)
 					|| !RegionalSearchProblem.isResourceLimit((IllegalArgumentException)ex)) throw ex;
+				if(ex instanceof PlannerResourceGuard.ResourceExhaustedException exhausted
+					&& exhausted.actualAllocationFailure()) {
+					resourceRejected++;
+					candidate = null;
+					releaseAfterActualMergeAllocationFailure();
+					traceResourceRejection("merge",ex);
+					return finish("RESOURCE");
+				}
 				traceResourceRejection("merge",ex);
 				discard(candidate.pivot()); resourceRejected++;
 				continue;
 			}
-			finally { dpNanos += System.nanoTime() - dpStarted; }
 			long start = System.nanoTime();
 			Set<Variable> affected = new LinkedHashSet<>();
 			int[] owners = candidate.inputs().stream().flatMapToInt(n -> Arrays.stream(n.owners)).sorted().toArray();
@@ -273,6 +297,24 @@ final class IncrementalRegionalOptimizer {
 				}
 			}
 			checkpoint("MERGE");
+		}
+	}
+
+	private BoundaryMessage mergeCandidate(Candidate candidate) {
+		long started = System.nanoTime();
+		try {
+			List<BoundaryMessage> messages = new ArrayList<>(candidate.inputs().size());
+			for(int index=0; index<candidate.inputs().size(); index++)
+				messages.add(candidate.inputs().get(index).message);
+			Long maximumAssignments = options.boundedTest() ? options.maximumMergeAssignments() : null;
+			return boundaryMerger.merge(messages,candidate.boundary(),limits,maximumAssignments,mergeCounters);
+		}
+		catch(OutOfMemoryError failure) {
+			throw PlannerResourceGuard.allocationFailure("regional-merge",-1L,
+				"boundary-input-list",failure);
+		}
+		finally {
+			dpNanos += System.nanoTime()-started;
 		}
 	}
 
@@ -559,6 +601,15 @@ final class IncrementalRegionalOptimizer {
 		checkpoint("CONDITIONAL_READY");
 	}
 
+	/** The merge is pure, so a failed allocation leaves this certified cover intact. */
+	private void releaseAfterActualMergeAllocationFailure() {
+		verifyCover();
+		active.clear(); sealed.clear(); incidence.clear(); candidates.clear(); queue.clear();
+		rejectedNeighborhoods.clear();
+		slots = 0;
+		coverReleased = true;
+	}
+
 	/** Private variables cannot affect another owner; project them once before bucket scheduling. */
 	private void normalizePrivate() {
 		int[] counts = new int[variables.size()];
@@ -742,15 +793,22 @@ final class IncrementalRegionalOptimizer {
 		lower = published;
 	}
 	private void verifyCover() {
-		BitSet owners = new BitSet();
-		for(Node node : java.util.stream.Stream.concat(active.stream(),sealed.stream()).toList()) {
-			for(int owner : node.owners) {
-				if(owner < 0 || owner >= root.factors().size() || owners.get(owner))
+		coverOwners.clear();
+		verifyCoverNodes(active);
+		verifyCoverNodes(sealed);
+		if(coverOwners.cardinality() != root.factors().size())
+			throw new IllegalStateException("INCREMENTAL_FACTOR_COVER_MISSING");
+	}
+	private void verifyCoverNodes(List<Node> nodes) {
+		for(int nodeIndex=0; nodeIndex<nodes.size(); nodeIndex++) {
+			int[] nodeOwners = nodes.get(nodeIndex).owners;
+			for(int ownerIndex=0; ownerIndex<nodeOwners.length; ownerIndex++) {
+				int owner = nodeOwners[ownerIndex];
+				if(owner < 0 || owner >= root.factors().size() || coverOwners.get(owner))
 					throw new IllegalStateException("INCREMENTAL_FACTOR_DOUBLE_OWNER");
-				owners.set(owner);
+				coverOwners.set(owner);
 			}
 		}
-		if(owners.cardinality() != root.factors().size()) throw new IllegalStateException("INCREMENTAL_FACTOR_COVER_MISSING");
 	}
 	private void seal(Node node) {
 		sealed.add(node);

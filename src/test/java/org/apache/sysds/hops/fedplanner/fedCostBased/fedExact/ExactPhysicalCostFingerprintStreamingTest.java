@@ -1,6 +1,7 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -63,6 +64,41 @@ public class ExactPhysicalCostFingerprintStreamingTest {
 			legacy.append(String.valueOf(chunk));
 		Assert.assertEquals(textFingerprint(legacy.toString()),
 			ExactPhysicalCostModel.fingerprintTextChunksForTest(chunks));
+	}
+
+	@Test
+	public void bufferedUtf8MatchesLegacyAtExactAndMalformedBoundaries() throws Exception {
+		List<Object> chunks = Arrays.asList(
+			"a".repeat(8191) + "\ud83d",
+			"\ude80",
+			"한글/astral-\ud83d\ude00".repeat(2000),
+			"\ud800",
+			123456789L,
+			"|lone-low=\udc00|",
+			Boolean.TRUE,
+			"z".repeat(16_385),
+			"\ud800");
+		StringBuilder legacy = new StringBuilder();
+		for(Object chunk : chunks)
+			legacy.append(String.valueOf(chunk));
+		Assert.assertEquals(textFingerprint(legacy.toString()),
+			ExactPhysicalCostModel.fingerprintTextChunksForTest(chunks));
+	}
+
+	@Test
+	public void optimizedNumericAndBooleanTokensFlushMalformedSurrogatesInOrder() throws Exception {
+		ExactPhysicalCostModel.FingerprintWriter writer = new ExactPhysicalCostModel.FingerprintWriter();
+		Method appendHex = ExactPhysicalCostModel.FingerprintWriter.class
+			.getDeclaredMethod("appendUnsignedHexWithComma", long.class);
+		appendHex.setAccessible(true);
+		writer.append("\ud800");
+		appendHex.invoke(writer, 0x1afL);
+		writer.append("\ud800").appendBooleanArray(new boolean[] {true, false, true});
+		writer.append("\ud800");
+
+		String legacy = "\ud800" + Long.toUnsignedString(0x1afL, 16) + ','
+			+ "\ud800" + Arrays.toString(new boolean[] {true, false, true}) + "\ud800";
+		Assert.assertEquals(textFingerprint(legacy), writer.finish());
 	}
 
 	@Test

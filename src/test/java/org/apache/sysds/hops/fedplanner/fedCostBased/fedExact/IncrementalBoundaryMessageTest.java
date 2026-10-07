@@ -1,6 +1,7 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
+import java.util.AbstractList;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -106,6 +107,90 @@ public class IncrementalBoundaryMessageTest {
 		Assert.assertEquals(0d, accepted.minimum(), 0d);
 		Assert.assertEquals(4, leftEvaluations.get());
 		Assert.assertEquals(4, rightEvaluations.get());
+	}
+
+	@Test
+	public void nonArrayAllocationFailureReportsResourceExhaustionWithoutChangingInputs() {
+		var x = variable("allocation-x", 2);
+		var variables = List.of(x);
+		var leaf = ExactCategoricalSolver.boundaryLeaf(variables,
+			ExactCategoricalSolver.Factor.dense(variables, 3d, 1d), GENEROUS);
+		OutOfMemoryError allocationFailure = new OutOfMemoryError("injected merge workspace allocation");
+		List<ExactCategoricalSolver.BoundaryMessage> unavailableWorkspace = new AbstractList<>() {
+			@Override public ExactCategoricalSolver.BoundaryMessage get(int index) {
+				throw allocationFailure;
+			}
+			@Override public int size() { return 1; }
+		};
+		for(boolean boundedTest : new boolean[] {false, true}) {
+			var failure = Assert.assertThrows(PlannerResourceGuard.ResourceExhaustedException.class, () -> {
+				if(boundedTest)
+					ExactCategoricalSolver.mergeBoundary(unavailableWorkspace, List.of(), GENEROUS, 2L);
+				else
+					ExactCategoricalSolver.mergeBoundary(unavailableWorkspace, List.of(), GENEROUS);
+			});
+			Assert.assertSame(allocationFailure, failure.getCause());
+			Assert.assertTrue(failure.getMessage().contains("phase=regional-merge"));
+		}
+		Assert.assertArrayEquals(new double[] {3d, 1d}, leaf.minMarginals(x), 0d);
+		var retried = ExactCategoricalSolver.mergeBoundary(List.of(leaf), List.of(), GENEROUS);
+		Assert.assertEquals(1d, retried.minimum(), 0d);
+		int[] selected = {-1};
+		retried.decodeInto(selected, variables);
+		Assert.assertArrayEquals(new int[] {1}, selected);
+		var invalid = Assert.assertThrows(IllegalArgumentException.class,
+			() -> ExactCategoricalSolver.mergeBoundary(List.of(), List.of(), GENEROUS));
+		Assert.assertEquals("INCREMENTAL_MESSAGE_INPUT_EMPTY", invalid.getMessage());
+	}
+
+	@Test
+	public void workspaceFailureAfterFirstOutputCellLeavesBothMessagesReusable() {
+		var x = variable("partial-allocation-x", 2);
+		var variables = List.of(x);
+		var left = ExactCategoricalSolver.boundaryLeaf(variables,
+			ExactCategoricalSolver.Factor.dense(variables, 3d, 1d), GENEROUS);
+		var right = ExactCategoricalSolver.boundaryLeaf(variables,
+			ExactCategoricalSolver.Factor.dense(variables, 4d, 2d), GENEROUS);
+		var messages = List.of(left, right);
+		double leftLower = left.lowerBound();
+		double rightLower = right.lowerBound();
+		for(boolean boundedTest : new boolean[] {false, true}) {
+			var counters = new ExactCategoricalSolver.BoundaryMergeCounters();
+			OutOfMemoryError allocationFailure = new OutOfMemoryError("injected second output cell allocation");
+			List<ExactCategoricalSolver.BoundaryMessage> failing = new AbstractList<>() {
+				@Override public ExactCategoricalSolver.BoundaryMessage get(int index) {
+					if(index == 1 && counters.childEvaluations() >= 3)
+						throw allocationFailure;
+					return messages.get(index);
+				}
+				@Override public int size() { return messages.size(); }
+			};
+			var failure = Assert.assertThrows(PlannerResourceGuard.ResourceExhaustedException.class, () -> {
+				if(boundedTest)
+					ExactCategoricalSolver.mergeBoundary(failing, variables, GENEROUS, 2L, counters);
+				else
+					ExactCategoricalSolver.mergeBoundary(failing, variables, GENEROUS, counters);
+			});
+			Assert.assertSame(allocationFailure, failure.getCause());
+			Assert.assertTrue(RegionalSearchProblem.isResourceLimit(failure));
+			Assert.assertEquals(3L, counters.childEvaluations());
+		}
+		Assert.assertArrayEquals(new double[] {3d, 1d}, left.minMarginals(x), 0d);
+		Assert.assertArrayEquals(new double[] {4d, 2d}, right.minMarginals(x), 0d);
+		Assert.assertEquals(1d, left.minimum(), 0d);
+		Assert.assertEquals(2d, right.minimum(), 0d);
+		Assert.assertEquals(leftLower, left.lowerBound(), 0d);
+		Assert.assertEquals(rightLower, right.lowerBound(), 0d);
+		for(var message : messages) {
+			int[] selected = {1};
+			message.decodeInto(selected, variables);
+			Assert.assertArrayEquals(new int[] {1}, selected);
+		}
+		var retried = ExactCategoricalSolver.mergeBoundary(messages, List.of(), GENEROUS);
+		Assert.assertEquals(3d, retried.minimum(), 0d);
+		int[] optimum = {-1};
+		retried.decodeInto(optimum, variables);
+		Assert.assertArrayEquals(new int[] {1}, optimum);
 	}
 
 	@Test

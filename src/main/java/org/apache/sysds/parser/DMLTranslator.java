@@ -117,6 +117,7 @@ import org.apache.sysds.runtime.instructions.cp.VariableCPInstruction;
 
 public class DMLTranslator 
 {
+	static final String PRODUCTION_METRICS_PROPERTY = "sysds.fedplanner.liveMetrics";
 	private static final Log LOG = LogFactory.getLog(DMLTranslator.class.getName());
 	private DMLProgram _dmlProg;
 
@@ -370,9 +371,11 @@ public class DMLTranslator
 			CandidateFormationTiming.Scope candidateTimingScope = collectCandidateTiming ?
 				CandidateFormationTiming.begin(commonPreparationStarted) : null;
 			try {
-			SearchSpacePreparation searchSpace = prepareCommonSearchSpace(dmlp, null,
+			SearchSpaceMetrics commonMetrics = productionSearchSpaceMetrics();
+			SearchSpacePreparation searchSpace = prepareCommonSearchSpace(dmlp, commonMetrics,
 				collectCandidateTiming, commonPreparationStarted);
 			PlacementAnalysis analysis = searchSpace.analysis();
+			emitProductionSearchSpaceMetrics(commonMetrics, searchSpace.analysisFingerprint());
 			org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = searchSpace.functionCallGraph();
 			org.apache.sysds.hops.ipa.FunctionCallSizeInfo fcallSizes = searchSpace.functionCallSizes();
 			boolean phaseMarkers = Boolean.getBoolean("sysds.fedplanner.phaseMarkers");
@@ -522,6 +525,76 @@ public class DMLTranslator
 			org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry.clear();
 			org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.clear();
 		}
+	}
+
+	static SearchSpaceMetrics productionSearchSpaceMetrics() {
+		return Boolean.getBoolean(PRODUCTION_METRICS_PROPERTY) ? new SearchSpaceMetrics() : null;
+	}
+
+	static void emitProductionSearchSpaceMetrics(SearchSpaceMetrics metrics,
+		String analysisFingerprint) {
+		if(metrics == null)
+			return;
+		SearchSpaceMetrics.Snapshot snapshot = metrics.snapshot();
+		System.err.println("SEARCH_SPACE_TOPOLOGY|analysis=" + analysisFingerprint
+			+ "|builds=" + snapshot.topologyExpansionBuilds()
+			+ "|hits=" + snapshot.topologyExpansionHits()
+			+ "|rowsBuilt=" + snapshot.topologyRowsBuilt()
+			+ "|rowsCollapsed=" + snapshot.topologyRowsCollapsed()
+			+ "|revisionEntriesReused=" + snapshot.topologyRevisionEntriesReused()
+			+ "|evictions=" + snapshot.topologyCacheEvictions()
+			+ "|bypasses=" + snapshot.topologyCacheBypasses()
+			+ "|residentEntries=" + snapshot.topologyCacheEntries()
+			+ "|retainedRows=" + snapshot.topologyCacheRetainedRows());
+		System.err.println("SEARCH_SPACE_PROOF_MEMO|analysis=" + analysisFingerprint
+			+ "|hits=" + snapshot.memoHits() + "|misses=" + snapshot.memoMisses()
+			+ "|evictions=" + snapshot.memoEvictions()
+			+ "|lastReportedEntries=" + snapshot.memoEntries()
+			+ "|lastReportedProofs=" + snapshot.memoRetainedProofs()
+			+ "|lastReportedEstimatedBytes=" + snapshot.memoRetainedEstimatedBytes()
+			+ "|supportHits=" + snapshot.supportMemoHits()
+			+ "|supportMisses=" + snapshot.supportMemoMisses()
+			+ "|supportEvictions=" + snapshot.supportMemoEvictions()
+			+ "|supportLastReportedEntries=" + snapshot.supportMemoEntries()
+			+ "|supportLastReportedTemplates=" + snapshot.supportMemoRetainedTemplates()
+			+ "|supportLastReportedEstimatedBytes=" + snapshot.supportMemoRetainedEstimatedBytes()
+			+ "|supportRevisionEntriesReused=" + snapshot.supportMemoRevisionEntriesReused());
+		SearchSpaceMetrics.SignatureAdmissionSnapshot admission =
+			metrics.signatureAdmissionSnapshot();
+		System.err.println("SEARCH_SPACE_SIGNATURE_ADMISSION|analysis=" + analysisFingerprint
+			+ "|identityHits=" + snapshot.signatureIdentityCacheHits()
+			+ "|structuralHits=" + snapshot.signatureStructuralCacheHits()
+			+ "|misses=" + snapshot.signatureCacheMisses()
+			+ "|admitted=" + admission.admittedSerializations()
+			+ "|admittedUtf16=" + admission.admittedUtf16Units()
+			+ "|rejected=" + admission.rejectedSerializations()
+			+ "|rejectedUtf16=" + admission.rejectedUtf16Units()
+			+ "|oversized=" + admission.oversizedRejections()
+			+ "|remainingCapacity=" + admission.remainingCapacityRejections()
+			+ "|observedFirst=" + admission.observedFirstContents()
+			+ "|observedRepeats=" + admission.observedRepeatSerializations()
+			+ "|observedOverflow=" + admission.observedOverflowSerializations()
+			+ "|repeatUtf16LowerBound=" + admission.observedRepeatUtf16LowerBound()
+			+ "|sameFirstKeyIdentityRepeats=" + admission.sameFirstKeyIdentityRepeats()
+			+ "|firstKeyClearedBeforeRepeat=" + admission.firstKeyClearedBeforeRepeat()
+			+ "|peakStructuralEntries=" + admission.peakStructuralEntries()
+			+ "|peakIdentityEntries=" + admission.peakIdentityEntries()
+			+ "|peakRetainedChars=" + admission.peakRetainedChars()
+			+ "|endStructuralEntries=" + admission.endStructuralEntries()
+			+ "|endIdentityEntries=" + admission.endIdentityEntries()
+			+ "|endRetainedChars=" + admission.endRetainedChars()
+			+ "|firstRejectMaxHeapBytes=" + admission.firstRejectMaxHeapBytes()
+			+ "|firstRejectUsedHeapBytes=" + admission.firstRejectUsedHeapBytes());
+		for(SearchSpaceMetrics.SignatureClassAdmission keyClass : admission.classes())
+			System.err.println("SEARCH_SPACE_SIGNATURE_ADMISSION_CLASS|analysis=" + analysisFingerprint
+				+ "|class=" + keyClass.keyClass()
+				+ "|admitted=" + keyClass.admittedSerializations()
+				+ "|admittedUtf16=" + keyClass.admittedUtf16Units()
+				+ "|rejected=" + keyClass.rejectedSerializations()
+				+ "|rejectedUtf16=" + keyClass.rejectedUtf16Units()
+				+ "|oversized=" + keyClass.oversizedRejections()
+				+ "|remainingCapacity=" + keyClass.remainingCapacityRejections());
+		System.err.flush();
 	}
 
 	private static SearchSpacePreparation prepareCommonSearchSpace(DMLProgram dmlp,

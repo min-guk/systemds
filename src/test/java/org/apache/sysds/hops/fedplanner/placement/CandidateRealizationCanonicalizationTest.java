@@ -499,6 +499,47 @@ public class CandidateRealizationCanonicalizationTest {
 	}
 
 	@Test
+	public void overlappingRunsDeduplicateExactAuthoritiesBeforeCanonicalSort() {
+		CandidateEmissionRealization template = fixture().get(0);
+		int groupCount = 64, sharedCount = 80;
+		List<CandidateRealizationSupportClause> shared = new ArrayList<>();
+		for(int index = 0; index < sharedCount; index++)
+			shared.add(new CandidateRealizationSupportClause(
+				List.of(proof(String.format("shared-overlap-%03d", index))), List.of()));
+		List<CandidateEmissionRealization> groups = new ArrayList<>();
+		List<CandidateRealizationSupportClause> expected = new ArrayList<>(shared);
+		for(int group = 0; group < groupCount; group++) {
+			List<CandidateRealizationSupportClause> clauses = new ArrayList<>();
+			for(CandidateRealizationSupportClause clause : shared)
+				clauses.add(group == 0 ? clause : copy(clause));
+			CandidateRealizationSupportClause added = new CandidateRealizationSupportClause(
+				List.of(proof(String.format("unique-overlap-%03d", group))), List.of());
+			clauses.add(added);
+			expected.add(added);
+			groups.add(new CandidateEmissionRealization(template.key(), clauses));
+		}
+		expected.sort(java.util.Comparator.naturalOrder());
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.setActiveMetrics(metrics);
+		try {
+			CandidateEmissionRealization union = new CandidateEmissionFact(
+				EMISSION, FType.ROW, null, groups).realizations().get(0);
+			Assert.assertEquals(expected, union.supportClauses());
+			for(int index = 0; index < expected.size(); index++)
+				Assert.assertSame("keep the earliest full authority", expected.get(index),
+					union.supportClauses().get(index));
+			SearchSpaceMetrics.Snapshot work = metrics.snapshot();
+			Assert.assertEquals(expected.size(), work.realizationMergeUniqueClauses());
+			Assert.assertEquals((groupCount - 1L) * sharedCount, work.realizationMergeDuplicateClauses());
+			Assert.assertTrue("compare unique clauses, not every repeated run: " + work.canonicalComparisons(),
+				work.canonicalComparisons() < expected.size() * 5L);
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
+	}
+
+	@Test
 	public void threeWayDescriptorTiePreservesStableAuthorityOrderAndExactDeduplication()
 		throws Exception {
 		CandidateEmissionRealization template = fixture().get(0);

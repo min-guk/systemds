@@ -21,6 +21,9 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Arrays;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
@@ -31,6 +34,37 @@ import org.apache.sysds.hops.fedplanner.placement.OccurrenceExecutionFrequencyFa
 import org.junit.Test;
 
 public class ExactDerivedSupplySharingTest {
+	@Test
+	public void streamedSharingFingerprintMatchesLegacyText() throws Exception {
+		var source = new ExactCategoricalSolver.Variable("source-공급", 2);
+		var first = new ExactCategoricalSolver.Variable("first", 3);
+		var second = new ExactCategoricalSolver.Variable("second", 2);
+		var event = new ExactMaterializationActivation.Event(0.5d, List.of(
+			new ExactPhysicalCostModel.BranchLiteral("branch", true)));
+		var repeated = new ExactPhysicalCostModel.ActivationDemand(List.of(first, second),
+			List.of(new boolean[] {false, true, false}, new boolean[] {true, false}), event, true);
+		var singleUse = new ExactPhysicalCostModel.ActivationDemand(List.of(second),
+			List.of(new boolean[] {false, true}),
+			new ExactMaterializationActivation.Event(1d, List.of()), false);
+		var group = new ExactPhysicalCostModel.SupplySharingGroup("REFED|value|ROW|anchor|scope",
+			source, new boolean[] {true, false}, List.of(repeated, singleUse));
+		StringBuilder legacy = new StringBuilder("before|sharing-group:")
+			.append(group.physicalEmissionIdentity()).append("|source=").append(source.key())
+			.append("|active=").append(Arrays.toString(group.activeSource()));
+		for(var demand : group.demands())
+			legacy.append("|demand=").append(demand.variables().stream()
+				.map(ExactCategoricalSolver.Variable::key).toList())
+				.append(':').append(demand.observations().stream().map(Arrays::toString).toList())
+				.append(":event=").append(demand.event())
+				.append(":crossExecution=").append(demand.crossExecutionReuse());
+		legacy.append("|after");
+		var streamed = new ExactPhysicalCostModel.FingerprintWriter().append("before|sharing-group:");
+		group.appendSemanticDescriptor(streamed);
+		streamed.append("|after");
+		assertEquals(java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+			.digest(legacy.toString().getBytes(StandardCharsets.UTF_8))), streamed.finish());
+	}
+
 	@Test
 	public void selectedSharingUsesExactSourceAndDemandMasks() {
 		var source = new ExactCategoricalSolver.Variable("source", 2);

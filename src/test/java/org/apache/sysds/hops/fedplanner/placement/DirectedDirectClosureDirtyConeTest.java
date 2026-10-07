@@ -44,6 +44,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRea
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -214,6 +215,50 @@ public class DirectedDirectClosureDirtyConeTest {
 		Assert.assertNull("new global durable seed may enable a previously absent source",
 			postPhysicalDirty(List.of(source, consumer), facts, List.of(), Map.of(),
 				List.of(anchored, consumer), facts, List.of(), Map.of(), Set.of()));
+	}
+
+	@Test
+	public void outerPassFallsBackWhenReferencedDerivedAnchorOwnerChanges() throws Exception {
+		Node anchorOwner = node("derived-anchor-owner"), producer = node("derived-producer");
+		CandidateRuleFact ownerBefore = localFact(anchorOwner);
+		CandidateRuleFact ownerAfter = excludedFact(anchorOwner);
+		CandidateRuleFact derived = derivedFact(producer, anchorOwner);
+		List<Node> nodes = List.of(anchorOwner, producer);
+
+		Assert.assertNull("derived action metadata reads the anchor owner's complete node/fact row",
+			outerDirty(nodes, List.of(ownerBefore, derived), List.of(), Map.of(),
+				nodes, List.of(ownerAfter, derived), List.of(), Map.of(), Set.of()));
+	}
+
+	@Test
+	public void outerPassKeepsIndependentPreparedRowsClean() throws Exception {
+		Node source = node("outer-source"), consumer = node("outer-consumer");
+		Node independent = node("outer-independent");
+		List<Node> nodes = List.of(source, consumer, independent);
+		List<CandidateRuleFact> before = List.of(
+			localFact(source), localFact(consumer), localFact(independent));
+		List<CandidateRuleFact> after = List.of(
+			excludedFact(source), before.get(1), before.get(2));
+		List<CompiledInputEdgeFact> edges = List.of(edge(source, consumer));
+
+		assertSameKeys(keys(source, consumer), outerDirty(nodes, before, edges, Map.of(),
+			nodes, after, edges, Map.of(), Set.of()));
+	}
+
+	@Test
+	public void outerPassFallsBackWhenUpstreamChangeDirtiesReferencedAnchorOwner() throws Exception {
+		Node source = node("metadata-source"), anchorOwner = node("metadata-anchor-owner");
+		Node producer = node("metadata-derived-producer");
+		CandidateRuleFact owner = localFact(anchorOwner);
+		CandidateRuleFact derived = derivedFact(producer, anchorOwner);
+		List<Node> nodes = List.of(source, anchorOwner, producer);
+		List<CandidateRuleFact> before = List.of(localFact(source), owner, derived);
+		List<CandidateRuleFact> after = List.of(excludedFact(source), owner, derived);
+		List<CompiledInputEdgeFact> edges = List.of(edge(source, anchorOwner));
+
+		Assert.assertNull("a dirty anchor owner can change metadata observed by an unrelated action",
+			outerDirty(nodes, before, edges, Map.of(),
+				nodes, after, edges, Map.of(), Set.of()));
 	}
 
 	@Test
@@ -604,6 +649,42 @@ public class DirectedDirectClosureDirtyConeTest {
 		return (Set<CompiledHopKey>)method.invoke(null,
 			beforeNodes, beforeFacts, beforeEdges, beforeReaching,
 			afterNodes, afterFacts, afterEdges, afterReaching, changedLoopSeeds);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Set<CompiledHopKey> outerDirty(List<Node> beforeNodes,
+		List<CandidateRuleFact> beforeFacts, List<CompiledInputEdgeFact> beforeEdges,
+		Map<CompiledHopKey,List<CompiledHopKey>> beforeReaching,
+		List<Node> afterNodes, List<CandidateRuleFact> afterFacts,
+		List<CompiledInputEdgeFact> afterEdges,
+		Map<CompiledHopKey,List<CompiledHopKey>> afterReaching,
+		Set<CompiledHopKey> changedLoopSeeds) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"initialOuterDirectDirty", List.class, List.class, List.class, Map.class,
+			List.class, List.class, List.class, Map.class, Set.class);
+		method.setAccessible(true);
+		return (Set<CompiledHopKey>)method.invoke(null,
+			beforeNodes, beforeFacts, beforeEdges, beforeReaching,
+			afterNodes, afterFacts, afterEdges, afterReaching, changedLoopSeeds);
+	}
+
+	private static CandidateRuleFact derivedFact(Node producer, Node anchorOwner) {
+		PlacementState source = new PlacementState(ExecType.FED, FederatedOutput.LOUT, FType.ROW, false);
+		PlacementState target = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
+		PlacementEmissionState emission = new PlacementEmissionState(target, true);
+		CandidateRuleKey rule = new CandidateRuleKey(producer.key(), List.of());
+		DurableAnchorKey anchor = new DurableAnchorKey("derived-anchor", FType.ROW,
+			List.of(new AnchorPartition("worker:9010", List.of(0L, 0L), List.of(8L, 3L))));
+		DerivedFoutMaterializationActionKey action = new DerivedFoutMaterializationActionKey(
+			producer.key(), producer.valueVersion(), rule, source, target, anchor,
+			anchorOwner.key(), FType.ROW, FType.ROW, REGION.normalizedSignature());
+		CandidateEmissionFact output = new CandidateEmissionFact(emission, FType.ROW, action,
+			List.of(CandidateEmissionRealization.durable(emission, anchor, List.of(), List.of())));
+		return new CandidateRuleFact(rule, CandidateEvaluationStatus.AVAILABLE,
+			new CandidateCapabilityFact(OpCategory.OTHER, "derived", ExecType.FED,
+				FederatedOutput.FOUT, FType.ROW, ReasonCode.OK, "derived", List.of()),
+			new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
+			new CandidateProfileFact(List.of(FType.ROW), ""), List.of(output), "");
 	}
 
 	private static CandidateRuleFact supportFact(Node source, Node owner) {

@@ -13,6 +13,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
@@ -299,6 +300,108 @@ public class CfgReplayMemoTest {
 	}
 
 	@Test
+	public void unchangedReplayEvidenceValidatesReceiptWithoutRepeatingNativeProofSearch()
+		throws Exception {
+		CompiledHopKey source = owner("native-receipt-hit");
+		CandidateEmissionRealization realization = durable("native-receipt-layout", "native-receipt-proof");
+		CandidateRealizationReference reference = reference(
+			rule(source, CandidateInputState.present(FType.FULL)), realization);
+		DurableAnchorKey seed = anchor("native-receipt-seed");
+		IdentityHashMap<CompiledHopKey,List<NativePlacementContinuity.NativeContinuityProof>> answers =
+			new IdentityHashMap<>();
+		answers.put(source, List.of(nativeProof(seed, anchor("native-receipt-output"), List.of())));
+		NativePlacementContinuity nativePools = nativePools(answers);
+		Object inventory = inventory(List.of());
+		Object dependencies = dependencies(inventory, nativePools);
+
+		dependencyNativeProofs(dependencies, source, reference, seed);
+		Object evidence = field(dependencies, "evidence");
+		Assert.assertTrue(matches(evidence, inventory, nativePools));
+		Mockito.verify(nativePools, Mockito.times(1)).proveCandidateReplay(reference, seed);
+		Mockito.verify(nativePools, Mockito.times(1)).matchesReplayProofReceipt(
+			Mockito.any(), Mockito.eq(reference), Mockito.eq(seed));
+		Mockito.verify(nativePools, Mockito.never()).proveCandidateAlternatives(
+			Mockito.any(CandidateRealizationReference.class), Mockito.any(DurableAnchorKey.class));
+	}
+
+	@Test
+	public void invalidReceiptReprovesCurrentOutputsRenewsAndThenUsesTheFastPath()
+		throws Exception {
+		CompiledHopKey source = owner("native-receipt-renew");
+		CandidateEmissionRealization realization = durable("native-renew-layout", "native-renew-proof");
+		CandidateRealizationReference reference = reference(
+			rule(source, CandidateInputState.present(FType.FULL)), realization);
+		DurableAnchorKey seed = anchor("native-renew-seed");
+		DurableAnchorKey output = anchor("native-renew-output");
+		IdentityHashMap<CompiledHopKey,List<NativePlacementContinuity.NativeContinuityProof>> answers =
+			new IdentityHashMap<>();
+		answers.put(source, List.of(nativeProof(seed, output, List.of())));
+		AtomicInteger forcedReceiptMisses = new AtomicInteger();
+		NativePlacementContinuity nativePools = nativePools(answers, forcedReceiptMisses, false);
+		Object inventory = inventory(List.of());
+		Object dependencies = dependencies(inventory, nativePools);
+
+		List<?> coldOutputs = dependencyNativeProofs(dependencies, source, reference, seed);
+		Object evidence = field(dependencies, "evidence");
+		Object originalReceipt = nativeEvidenceReceipt(evidence);
+		forcedReceiptMisses.set(1);
+		Assert.assertTrue("an invalid token revalidates the cached CFG against current exact outputs",
+			matches(evidence, inventory, nativePools));
+		Mockito.verify(nativePools, Mockito.times(2)).proveCandidateReplay(reference, seed);
+		Assert.assertNotSame("equal current outputs renew the receipt", originalReceipt,
+			nativeEvidenceReceipt(evidence));
+		Assert.assertTrue("the renewed receipt validates the next pass", matches(evidence, inventory, nativePools));
+		Mockito.verify(nativePools, Mockito.times(2)).proveCandidateReplay(reference, seed);
+
+		Object coldDependencies = dependencies(inventory, nativePools(answers));
+		Assert.assertEquals("revalidation preserves the cold transient proof output", coldOutputs,
+			dependencyNativeProofs(coldDependencies, source, reference, seed));
+		answers.put(source, List.of(nativeProof(seed, output, false, List.of())));
+		Assert.assertFalse("changed exact-layout output rejects the cached CFG replay",
+			matches(evidence, inventory, nativePools));
+		Mockito.verify(nativePools, Mockito.times(3)).proveCandidateReplay(reference, seed);
+		answers.put(source, List.of(nativeProof(seed, anchor("native-renew-changed"), List.of())));
+		Assert.assertFalse("changed current output rejects the cached CFG replay",
+			matches(evidence, inventory, nativePools));
+		Mockito.verify(nativePools, Mockito.times(4)).proveCandidateReplay(reference, seed);
+		answers.put(source, List.of());
+		Assert.assertFalse("withdrawn current output also rejects the cached CFG replay",
+			matches(evidence, inventory, nativePools));
+		Mockito.verify(nativePools, Mockito.times(5)).proveCandidateReplay(reference, seed);
+	}
+
+	@Test
+	public void absentReceiptReprovesEqualNonemptyAndEmptyOutputsEveryTime() throws Exception {
+		CompiledHopKey source = owner("native-null-receipt");
+		CandidateEmissionRealization realization = durable("native-null-layout", "native-null-proof");
+		CandidateRealizationReference reference = reference(
+			rule(source, CandidateInputState.present(FType.FULL)), realization);
+		DurableAnchorKey seed = anchor("native-null-seed");
+		IdentityHashMap<CompiledHopKey,List<NativePlacementContinuity.NativeContinuityProof>> answers =
+			new IdentityHashMap<>();
+		answers.put(source, List.of(nativeProof(seed, anchor("native-null-output"), List.of())));
+		NativePlacementContinuity nativePools = nativePools(answers, new AtomicInteger(), true);
+		Object inventory = inventory(List.of());
+		Object dependencies = dependencies(inventory, nativePools);
+
+		dependencyNativeProofs(dependencies, source, reference, seed);
+		Object evidence = field(dependencies, "evidence");
+		Assert.assertNull(nativeEvidenceReceipt(evidence));
+		Assert.assertTrue(matches(evidence, inventory, nativePools));
+		Assert.assertTrue(matches(evidence, inventory, nativePools));
+		Mockito.verify(nativePools, Mockito.times(3)).proveCandidateReplay(reference, seed);
+
+		answers.put(source, List.of());
+		Object emptyDependencies = dependencies(inventory, nativePools);
+		dependencyNativeProofs(emptyDependencies, source, reference, seed);
+		Object emptyEvidence = field(emptyDependencies, "evidence");
+		Assert.assertTrue("an empty result is accepted only after a current proof",
+			matches(emptyEvidence, inventory, nativePools));
+		Assert.assertTrue(matches(emptyEvidence, inventory, nativePools));
+		Mockito.verify(nativePools, Mockito.times(6)).proveCandidateReplay(reference, seed);
+	}
+
+	@Test
 	public void replayContextInvalidatesEveryCapturedReaderAndDefinitionAuthority() throws Exception {
 		DataOp sourceHop = write("source");
 		DataOp readerHop = read("reader");
@@ -443,18 +546,75 @@ public class CfgReplayMemoTest {
 
 	private static NativePlacementContinuity.NativeContinuityProof nativeProof(DurableAnchorKey seed,
 		DurableAnchorKey output, List<CandidateRealizationInputBinding> bindings) {
-		return new NativePlacementContinuity.NativeContinuityProof(seed, output, true, bindings);
+		return nativeProof(seed, output, true, bindings);
+	}
+
+	private static NativePlacementContinuity.NativeContinuityProof nativeProof(DurableAnchorKey seed,
+		DurableAnchorKey output, boolean exactPartitionRanges,
+		List<CandidateRealizationInputBinding> bindings) {
+		return new NativePlacementContinuity.NativeContinuityProof(
+			seed, output, exactPartitionRanges, bindings);
 	}
 
 	private static NativePlacementContinuity nativePools(
-		IdentityHashMap<CompiledHopKey,List<NativePlacementContinuity.NativeContinuityProof>> answers) {
+		IdentityHashMap<CompiledHopKey,List<NativePlacementContinuity.NativeContinuityProof>> answers)
+		throws Exception {
+		return nativePools(answers, new AtomicInteger(), false);
+	}
+
+	private static NativePlacementContinuity nativePools(
+		IdentityHashMap<CompiledHopKey,List<NativePlacementContinuity.NativeContinuityProof>> answers,
+		AtomicInteger forcedReceiptMisses, boolean nullReceipts) throws Exception {
 		NativePlacementContinuity nativePools = Mockito.mock(NativePlacementContinuity.class);
+		IdentityHashMap<NativePlacementContinuity.ReplayProofReceipt,MockReplaySnapshot> receipts =
+			new IdentityHashMap<>();
+		Constructor<NativePlacementContinuity.ReplayProofReceipt> constructor =
+			NativePlacementContinuity.ReplayProofReceipt.class.getDeclaredConstructor(Object.class,
+				CandidateRealizationReference.class, DurableAnchorKey.class, Map.class, boolean.class);
+		constructor.setAccessible(true);
 		Mockito.doAnswer(invocation -> {
 			CandidateRealizationReference reference = invocation.getArgument(0);
-			return answers.getOrDefault(reference.rule().parentOccurrence(), List.of());
-		}).when(nativePools).proveCandidateAlternatives(
+			DurableAnchorKey seed = invocation.getArgument(1);
+			List<NativePlacementContinuity.NativeContinuityProof> proofs =
+				answers.getOrDefault(reference.rule().parentOccurrence(), List.of());
+			NativePlacementContinuity.ReplayProofReceipt receipt = nullReceipts ? null
+				: constructor.newInstance(new Object(), reference, seed, Map.of(), proofs.isEmpty());
+			if(receipt != null)
+				receipts.put(receipt, new MockReplaySnapshot(reference, seed, nativeOutputs(proofs)));
+			return new NativePlacementContinuity.ReplayProofResult(proofs, receipt);
+		}).when(nativePools).proveCandidateReplay(
 			Mockito.any(CandidateRealizationReference.class), Mockito.any(DurableAnchorKey.class));
+		Mockito.doAnswer(invocation -> {
+			NativePlacementContinuity.ReplayProofReceipt receipt = invocation.getArgument(0);
+			CandidateRealizationReference reference = invocation.getArgument(1);
+			DurableAnchorKey seed = invocation.getArgument(2);
+			if(forcedReceiptMisses.getAndUpdate(value -> Math.max(0, value - 1)) > 0)
+				return false;
+			MockReplaySnapshot snapshot = receipts.get(receipt);
+			return snapshot != null
+				&& snapshot.reference().rule().parentOccurrence() == reference.rule().parentOccurrence()
+				&& snapshot.reference().equals(reference) && snapshot.seed().equals(seed)
+				&& snapshot.outputs().equals(nativeOutputs(
+					answers.getOrDefault(reference.rule().parentOccurrence(), List.of())));
+		}).when(nativePools).matchesReplayProofReceipt(
+			Mockito.any(), Mockito.any(CandidateRealizationReference.class), Mockito.any(DurableAnchorKey.class));
 		return nativePools;
+	}
+
+	private static Object nativeEvidenceReceipt(Object evidence) throws Exception {
+		Map<?,?> nativeProofs = (Map<?,?>)field(evidence, "nativeProofs");
+		Assert.assertEquals(1, nativeProofs.size());
+		return field(nativeProofs.values().iterator().next(), "receipt");
+	}
+
+	private record MockNativeOutput(DurableAnchorKey witness, boolean exactPartitionRanges) { }
+	private record MockReplaySnapshot(CandidateRealizationReference reference, DurableAnchorKey seed,
+		List<MockNativeOutput> outputs) { }
+
+	private static List<MockNativeOutput> nativeOutputs(
+		List<NativePlacementContinuity.NativeContinuityProof> proofs) {
+		return proofs.stream().map(proof -> new MockNativeOutput(
+			proof.outputWorkerPoolWitness(), proof.exactPartitionRanges())).distinct().toList();
 	}
 
 	private static CandidateRuleFact fact(CandidateRuleKey rule, CandidateEmissionFact... emissions) {

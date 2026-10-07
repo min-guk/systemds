@@ -7,11 +7,13 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.lang.management.ManagementFactory;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -206,6 +208,8 @@ public final class SearchSpaceMetrics {
 	private long signatureCacheMisses;
 	private long signatureSerializations;
 	private long signatureSerializedChars;
+	private SignatureAdmissionObserver signatureAdmissionObserver;
+	private SignatureAdmissionSnapshot signatureAdmissionSnapshot = SignatureAdmissionSnapshot.EMPTY;
 	private long canonicalSortCalls;
 	private long canonicalSortElements;
 	private long canonicalOrderingKeys;
@@ -285,6 +289,10 @@ public final class SearchSpaceMetrics {
 		factorizedProofListsReused = factorizedBindingListsReused = 0;
 		signatureIdentityCacheHits = signatureStructuralCacheHits = signatureCacheMisses = 0;
 		signatureSerializations = signatureSerializedChars = 0;
+		if(signatureAdmissionObserver != null)
+			signatureAdmissionObserver.clear();
+		signatureAdmissionObserver = null;
+		signatureAdmissionSnapshot = SignatureAdmissionSnapshot.EMPTY;
 		canonicalSortCalls = canonicalSortElements = canonicalOrderingKeys = canonicalComparisons = 0;
 		realizationMergeInputs = realizationMergeUniqueClauses = realizationMergeDuplicateClauses = 0;
 		realizationMergeReusedRealizations = 0;
@@ -590,6 +598,37 @@ public final class SearchSpaceMetrics {
 		signatureSerializations++;
 		signatureSerializedChars += characters;
 	}
+	void recordSignatureAdmission(Object compilerKey, String signature, boolean admitted,
+		boolean oversized, int structuralEntries, int identityEntries, long retainedChars) {
+		if(signatureAdmissionObserver == null)
+			signatureAdmissionObserver = new SignatureAdmissionObserver();
+		signatureAdmissionObserver.record(compilerKey, signature, admitted, oversized,
+			structuralEntries, identityEntries, retainedChars);
+	}
+	void recordSignatureCacheState(int structuralEntries, int identityEntries, long retainedChars) {
+		if(signatureAdmissionObserver != null)
+			signatureAdmissionObserver.recordCacheState(
+				structuralEntries, identityEntries, retainedChars);
+	}
+	void finishSignatureAdmissionScope(int structuralEntries, int identityEntries,
+		long retainedChars) {
+		if(signatureAdmissionObserver == null)
+			return;
+		try {
+			signatureAdmissionSnapshot = signatureAdmissionObserver.finish(
+				structuralEntries, identityEntries, retainedChars);
+		}
+		finally {
+			signatureAdmissionObserver.clear();
+			signatureAdmissionObserver = null;
+		}
+	}
+	public SignatureAdmissionSnapshot signatureAdmissionSnapshot() {
+		return signatureAdmissionSnapshot;
+	}
+	boolean hasActiveSignatureAdmissionObserver() {
+		return signatureAdmissionObserver != null;
+	}
 	void recordCanonicalSort(long elements) {
 		canonicalSortCalls++;
 		canonicalSortElements += elements;
@@ -638,6 +677,140 @@ public final class SearchSpaceMetrics {
 	void recordTopologyCacheResident(long entries, long rows) {
 		topologyCacheEntries = entries;
 		topologyCacheRetainedRows = rows;
+	}
+
+	public record SignatureClassAdmission(String keyClass,
+		long admittedSerializations, long admittedUtf16Units,
+		long rejectedSerializations, long rejectedUtf16Units,
+		long oversizedRejections, long remainingCapacityRejections) { }
+
+	public record SignatureAdmissionSnapshot(List<SignatureClassAdmission> classes,
+		long admittedSerializations, long admittedUtf16Units,
+		long rejectedSerializations, long rejectedUtf16Units,
+		long oversizedRejections, long remainingCapacityRejections,
+		long observedFirstContents, long observedRepeatSerializations,
+		long observedOverflowSerializations, long observedRepeatUtf16LowerBound,
+		long sameFirstKeyIdentityRepeats, long firstKeyClearedBeforeRepeat,
+		long peakStructuralEntries, long peakIdentityEntries, long peakRetainedChars,
+		long endStructuralEntries, long endIdentityEntries, long endRetainedChars,
+		long firstRejectMaxHeapBytes, long firstRejectUsedHeapBytes) {
+		private static final SignatureAdmissionSnapshot EMPTY = new SignatureAdmissionSnapshot(
+			List.of(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0, -1, -1);
+	}
+
+	private static final class SignatureAdmissionObserver {
+		private static final int MAX_REJECTED_CONTENTS = 256;
+		private static final long MAX_REJECTED_UTF16_UNITS = 1024L * 1024L;
+		private final Map<Class<?>,MutableSignatureClassAdmission> byClass = new LinkedHashMap<>();
+		private final Map<RejectedContentKey,RejectedContent> rejectedContents = new HashMap<>();
+		private long rejectedContentUtf16Units;
+		private long admittedSerializations, admittedUtf16Units;
+		private long rejectedSerializations, rejectedUtf16Units;
+		private long oversizedRejections, remainingCapacityRejections;
+		private long observedFirstContents, observedRepeatSerializations;
+		private long observedOverflowSerializations, observedRepeatUtf16LowerBound;
+		private long sameFirstKeyIdentityRepeats, firstKeyClearedBeforeRepeat;
+		private long peakStructuralEntries, peakIdentityEntries, peakRetainedChars;
+		private long firstRejectMaxHeapBytes = -1, firstRejectUsedHeapBytes = -1;
+
+		private void record(Object compilerKey, String signature, boolean admitted,
+			boolean oversized, int structuralEntries, int identityEntries, long retainedChars) {
+			Class<?> keyClass = compilerKey.getClass();
+			MutableSignatureClassAdmission stats = byClass.computeIfAbsent(
+				keyClass, ignored -> new MutableSignatureClassAdmission());
+			if(admitted) {
+				admittedSerializations++;
+				admittedUtf16Units += signature.length();
+				stats.admittedSerializations++;
+				stats.admittedUtf16Units += signature.length();
+			}
+			else {
+				rejectedSerializations++;
+				rejectedUtf16Units += signature.length();
+				stats.rejectedSerializations++;
+				stats.rejectedUtf16Units += signature.length();
+				if(oversized) {
+					oversizedRejections++;
+					stats.oversizedRejections++;
+				}
+				else {
+					remainingCapacityRejections++;
+					stats.remainingCapacityRejections++;
+				}
+				if(firstRejectMaxHeapBytes < 0) {
+					Runtime runtime = Runtime.getRuntime();
+					firstRejectMaxHeapBytes = runtime.maxMemory();
+					firstRejectUsedHeapBytes = runtime.totalMemory() - runtime.freeMemory();
+				}
+				recordRejectedContent(keyClass, compilerKey, signature);
+			}
+			recordCacheState(structuralEntries, identityEntries, retainedChars);
+		}
+
+		private void recordRejectedContent(Class<?> keyClass, Object compilerKey, String signature) {
+			RejectedContentKey lookup = new RejectedContentKey(keyClass, signature);
+			RejectedContent known = rejectedContents.get(lookup);
+			if(known != null) {
+				observedRepeatSerializations++;
+				observedRepeatUtf16LowerBound += signature.length();
+				Object first = known.firstCompilerKey.get();
+				if(first == null)
+					firstKeyClearedBeforeRepeat++;
+				else if(first == compilerKey)
+					sameFirstKeyIdentityRepeats++;
+				return;
+			}
+			if(rejectedContents.size() >= MAX_REJECTED_CONTENTS
+				|| signature.length() > MAX_REJECTED_UTF16_UNITS - rejectedContentUtf16Units) {
+				observedOverflowSerializations++;
+				return;
+			}
+			rejectedContents.put(lookup, new RejectedContent(new WeakReference<>(compilerKey)));
+			rejectedContentUtf16Units += signature.length();
+			observedFirstContents++;
+		}
+
+		private void recordCacheState(int structuralEntries, int identityEntries, long retainedChars) {
+			peakStructuralEntries = Math.max(peakStructuralEntries, structuralEntries);
+			peakIdentityEntries = Math.max(peakIdentityEntries, identityEntries);
+			peakRetainedChars = Math.max(peakRetainedChars, retainedChars);
+		}
+
+		private SignatureAdmissionSnapshot finish(int structuralEntries, int identityEntries,
+			long retainedChars) {
+			recordCacheState(structuralEntries, identityEntries, retainedChars);
+			List<SignatureClassAdmission> classes = byClass.entrySet().stream()
+				.map(entry -> entry.getValue().snapshot(entry.getKey().getName()))
+				.sorted(java.util.Comparator.comparing(SignatureClassAdmission::keyClass)).toList();
+			return new SignatureAdmissionSnapshot(classes, admittedSerializations, admittedUtf16Units,
+				rejectedSerializations, rejectedUtf16Units, oversizedRejections,
+				remainingCapacityRejections, observedFirstContents, observedRepeatSerializations,
+				observedOverflowSerializations, observedRepeatUtf16LowerBound,
+				sameFirstKeyIdentityRepeats, firstKeyClearedBeforeRepeat,
+				peakStructuralEntries, peakIdentityEntries, peakRetainedChars,
+				structuralEntries, identityEntries, retainedChars,
+				firstRejectMaxHeapBytes, firstRejectUsedHeapBytes);
+		}
+
+		private void clear() {
+			byClass.clear();
+			rejectedContents.clear();
+			rejectedContentUtf16Units = 0;
+		}
+	}
+
+	private record RejectedContentKey(Class<?> keyClass, String signature) { }
+	private record RejectedContent(WeakReference<Object> firstCompilerKey) { }
+	private static final class MutableSignatureClassAdmission {
+		private long admittedSerializations, admittedUtf16Units;
+		private long rejectedSerializations, rejectedUtf16Units;
+		private long oversizedRejections, remainingCapacityRejections;
+		private SignatureClassAdmission snapshot(String keyClass) {
+			return new SignatureClassAdmission(keyClass, admittedSerializations, admittedUtf16Units,
+				rejectedSerializations, rejectedUtf16Units,
+				oversizedRejections, remainingCapacityRejections);
+		}
 	}
 
 	public Snapshot snapshot() {

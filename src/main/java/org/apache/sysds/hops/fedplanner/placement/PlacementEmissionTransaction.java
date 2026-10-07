@@ -1013,6 +1013,12 @@ public final class PlacementEmissionTransaction {
 		Map<CompiledHopKey, PlacementEmissionState> selected,
 		List<CandidateSelectionReceipt> selectedCandidates) {
 		List<SelectedFoutMaterialization> resolved = new ArrayList<>();
+		Map<CompiledHopKey,CandidateSelectionReceipt> selectedCandidatesByOwner =
+			new IdentityHashMap<>();
+		for(CandidateSelectionReceipt candidate : selectedCandidates)
+			if(selectedCandidatesByOwner.put(candidate.rule().parentOccurrence(), candidate) != null)
+				throw new PlacementEmissionException(
+					"Derived FOUT validation received duplicate selected candidate authority");
 		for(Node node : analysis.graph().decisionNodes()) {
 			PlacementEmissionState selectedState = exactEmissionState(selected, node.key());
 			if(selectedState == null || !analysis.isCompiledHopOccurrence(node.key()))
@@ -1052,8 +1058,10 @@ public final class PlacementEmissionTransaction {
 				throw new PlacementEmissionException(
 					"Selected derived candidate is not the exact analysis-owned emission fact");
 			DerivedFoutMaterializationActionKey action = candidate.emission().derivedFoutAction();
-			long graphIdentityCount = analysis.graph().derivedFoutMaterializationActions().stream()
-				.filter(graphAction -> graphAction.key() == action).count();
+			List<NeutralPlacementGraph.DerivedFoutMaterializationAction> graphActions =
+				analysis.graph().derivedFoutMaterializationActions().stream()
+					.filter(graphAction -> graphAction.key() == action).toList();
+			long graphIdentityCount = graphActions.size();
 			if(graphIdentityCount != 1 || action.producer() != node.key()
 				|| action.producerValueVersion() != node.valueVersion()
 				|| action.candidateRule() != candidate.rule()
@@ -1072,6 +1080,10 @@ public final class PlacementEmissionTransaction {
 						+ ", targetPlacementEqual="
 						+ action.targetPlacement().equals(selectedState.placementState())
 						+ ", producer=" + node.key().normalizedSignature());
+			if(!DerivedFoutAnchorCompatibility.prepare(analysis, graphActions.get(0))
+				.matches(selectedCandidatesByOwner, false))
+				throw new PlacementEmissionException(
+					"Selected derived FOUT action does not match its exact native anchor authority");
 			HopOccurrenceProjection producer = exactOccurrence(occurrences, node.key());
 			if(producer == null)
 				throw new PlacementEmissionException("Derived FOUT producer occurrence is not compiled");

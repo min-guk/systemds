@@ -178,6 +178,12 @@ public class PlacementEmissionDerivedAuthorityRedTest {
 	}
 
 	@Test
+	public void completeCandidateValidationRejectsSameFTypeAnchorFromAnotherWorkerPool() {
+		Assert.assertThrows("FOUT/FType equality is not authority for a different physical worker pool",
+			IllegalStateException.class, () -> exactFixture(true));
+	}
+
+	@Test
 	public void derivedFalseIsAppliedInsideTheSameTransaction() {
 		Fixture fixture = fixture(false);
 		fixture.firstHop().setFederatedOutputDerived(true);
@@ -399,6 +405,10 @@ public class PlacementEmissionDerivedAuthorityRedTest {
 	}
 
 	private static ExactFixture exactFixture() throws Exception {
+		return exactFixture(false);
+	}
+
+	private static ExactFixture exactFixture(boolean selectDifferentAnchorPool) throws Exception {
 		String fingerprint = "exact-derived-action-red";
 		ControlRegionKey region = new ControlRegionKey(fingerprint, "main", List.of("sb-1"),
 			"main", "compiled");
@@ -412,12 +422,23 @@ public class PlacementEmissionDerivedAuthorityRedTest {
 			VersionKind.ORDINARY, List.of());
 		DurableAnchorKey anchor = new DurableAnchorKey("exact-anchor", FType.ROW,
 			List.of(new AnchorPartition("localhost:1234", List.of(0L, 0L), List.of(4L, 2L))));
+		DurableAnchorKey selectedAnchor = selectDifferentAnchorPool
+			? new DurableAnchorKey("other-anchor", FType.ROW,
+				List.of(new AnchorPartition("localhost:4321", List.of(0L, 0L), List.of(4L, 2L))))
+			: anchor;
 		CandidateRuleKey rule = new CandidateRuleKey(key, List.of());
+		CandidateRuleKey anchorRule = new CandidateRuleKey(anchorKey, List.of());
 		DerivedFoutMaterializationActionKey action = new DerivedFoutMaterializationActionKey(
 			key, value, rule, FED_LOUT, FED_FOUT, anchor, anchorKey, FType.ROW, FType.ROW,
 			region.normalizedSignature());
 		CandidateEmissionFact nativeEmission = new CandidateEmissionFact(
 			new PlacementEmissionState(FED_LOUT, false), FType.ROW);
+		PlacementEmissionState anchorState = new PlacementEmissionState(FED_FOUT, false);
+		CandidateEmissionFact anchorEmission = new CandidateEmissionFact(anchorState, FType.ROW, null,
+			List.of(PlacementAnalysis.CandidateEmissionRealization.durable(anchorState, selectedAnchor,
+				List.of(new PlacementIdentity.PlacementProofKey(
+					PlacementIdentity.PlacementProofKind.DURABLE_ANCHOR,
+					anchorKey, selectedAnchor.normalizedSignature())), List.of())));
 		PlacementEmissionState derivedState = new PlacementEmissionState(FED_FOUT, true);
 		// Publish the exact action-owned target layout, not an ungrounded staging row.
 		CandidateEmissionFact emission = new CandidateEmissionFact(derivedState, FType.ROW, action,
@@ -431,10 +452,19 @@ public class PlacementEmissionDerivedAuthorityRedTest {
 				org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.OK, "exact-derived", List.of()),
 			new CandidateShapeProofFact(Map.of("fixture", "exact"), List.of(), List.of()),
 			new CandidateProfileFact(List.of(FType.ROW), ""), List.of(nativeEmission, emission), "");
+		CandidateRuleFact anchorFact = new CandidateRuleFact(anchorRule,
+			CandidateEvaluationStatus.AVAILABLE,
+			new CandidateCapabilityFact(
+				org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory.OTHER, "anchor-fixture",
+				ExecType.FED, FederatedOutput.FOUT, null,
+				org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.OK, "exact-anchor", List.of()),
+			new CandidateShapeProofFact(Map.of("fixture", "anchor"), List.of(), List.of()),
+			new CandidateProfileFact(List.of(FType.ROW), ""), List.of(anchorEmission), "");
 		Node node = new Node(key, NodeKind.OPERATION, value, true,
 			List.of(LOCAL, FED_LOUT, FED_FOUT), List.of(), List.of());
 		Node anchorNode = new Node(anchorKey, NodeKind.OPERATION, anchorValue, true,
-			List.of(FED_FOUT), List.of(), List.of(anchor));
+			List.of(FED_FOUT), List.of(), selectDifferentAnchorPool
+				? List.of(anchor, selectedAnchor) : List.of(anchor));
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(List.of(anchorNode, node), List.of(), List.of(),
 			List.of(new NeutralPlacementGraph.DerivedFoutMaterializationAction(action)));
 		LiteralOp hop = new LiteralOp(7L);
@@ -446,16 +476,18 @@ public class PlacementEmissionDerivedAuthorityRedTest {
 			new PlacementShapeFacts(Map.of(anchorKey, new NodeShapeFact(DataType.SCALAR, -1, -1),
 				key, new NodeShapeFact(DataType.SCALAR, -1, -1)), Set.of(anchorKey, key)),
 			fingerprint + "-analysis", new HeuristicPolicyFacts(List.of()),
-			List.of(rule), List.of(fact), List.of(), List.of());
+			List.of(rule, anchorRule), List.of(fact, anchorFact), List.of(), List.of());
 		program.install(analysis);
 		CandidateSelectionReceipt candidate = new CandidateSelectionReceipt(rule, emission, List.of());
+		CandidateSelectionReceipt anchorCandidate = new CandidateSelectionReceipt(
+			anchorRule, anchorEmission, List.of());
 		Map<CompiledHopKey,PlacementState> states = Map.of(anchorKey, FED_FOUT, key, FED_FOUT);
 		Map<CompiledHopKey,PlacementEmissionState> emissions = Map.of(
-			anchorKey, new PlacementEmissionState(FED_FOUT, false), key, emission.emissionState());
+			anchorKey, anchorState, key, emission.emissionState());
 		ExactActionResult draft = new ExactActionResult(analysis, states,
-			emissions, List.of(candidate), "unused");
+			emissions, List.of(candidate, anchorCandidate), "unused");
 		NormalizedPlannerResult plan = new ExactActionResult(analysis, states,
-			emissions, List.of(candidate),
+			emissions, List.of(candidate, anchorCandidate),
 			PlacementEmissionTransaction.canonicalPlanHash(draft));
 		return new ExactFixture(program, analysis, plan);
 	}

@@ -61,13 +61,54 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Immutable result of constructing one neutral placement universe for a compiled program. */
 public final class PlacementAnalysis {
-	private static final class SharedCanonicalList<T> extends java.util.AbstractList<T>
+	private abstract static class HashCachedImmutableList<T> extends java.util.AbstractList<T>
 		implements java.util.RandomAccess {
-		private static final int IDENTITY_INDEX_MIN_SIZE = 16;
-		private final List<T> values;
-		private final List<CanonicalText> orderingKeys;
 		private int cachedHash;
 		private volatile boolean hashComputed;
+		protected abstract List<T> values();
+		@Override public T get(int index) { return values().get(index); }
+		@Override public int size() { return values().size(); }
+		@Override public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			List<T> values = values();
+			if(!(other instanceof List<?> that) || values.size() != that.size())
+				return false;
+			if(that instanceof java.util.RandomAccess)
+				for(int index = 0; index < values.size(); index++) {
+					if(!Objects.equals(values.get(index), that.get(index)))
+						return false;
+				}
+			else {
+				java.util.Iterator<?> iterator = that.iterator();
+				for(T value : values)
+					if(!Objects.equals(value, iterator.next()))
+						return false;
+			}
+			return true;
+		}
+		@Override public int hashCode() {
+			// Values are immutable for the lifetime of this wrapper. Publish the cached
+			// value only after computing it, including the valid zero hash.
+			if(!hashComputed) {
+				cachedHash = values().hashCode();
+				hashComputed = true;
+			}
+			return cachedHash;
+		}
+	}
+
+	private static final class CachedImmutableList<T> extends HashCachedImmutableList<T> {
+		private final List<T> values;
+		private CachedImmutableList(List<T> values) { this.values = List.copyOf(values); }
+		@Override protected List<T> values() { return values; }
+	}
+
+	private static final class SharedCanonicalList<T> extends HashCachedImmutableList<T> {
+		private static final int IDENTITY_INDEX_MIN_SIZE = 16;
+		// Retain this field on the canonical marker for its existing reflection/test contract.
+		private final List<T> values;
+		private final List<CanonicalText> orderingKeys;
 		private volatile IdentityHashMap<T,Integer> identityFirstOrdinals;
 		private SharedCanonicalList(List<T> values) { this(values, null); }
 		private SharedCanonicalList(List<T> values, List<CanonicalText> orderingKeys) {
@@ -76,8 +117,7 @@ public final class PlacementAnalysis {
 			if(orderingKeys != null && orderingKeys.size() != values.size())
 				throw new IllegalArgumentException("Canonical descriptor count differs from value count");
 		}
-		@Override public T get(int index) { return values.get(index); }
-		@Override public int size() { return values.size(); }
+		@Override protected List<T> values() { return values; }
 		private int firstIdentityOrdinal(Object value) {
 			if(values.size() < IDENTITY_INDEX_MIN_SIZE) {
 				for(int index = 0; index < values.size(); index++)
@@ -102,19 +142,6 @@ public final class PlacementAnalysis {
 		@Override public List<T> subList(int fromIndex, int toIndex) {
 			return new SharedCanonicalList<>(List.copyOf(values.subList(fromIndex, toIndex)),
 				orderingKeys == null ? null : List.copyOf(orderingKeys.subList(fromIndex, toIndex)));
-		}
-		@Override public boolean equals(Object other) {
-			return this == other || values.equals(other instanceof SharedCanonicalList<?> shared
-				? shared.values : other);
-		}
-		@Override public int hashCode() {
-			// Canonical authority elements and their nested lists are immutable.
-			// Publish the cached value only after computing it, including a zero hash.
-			if(!hashComputed) {
-				cachedHash = values.hashCode();
-				hashComputed = true;
-			}
-			return cachedHash;
 		}
 	}
 
@@ -337,6 +364,11 @@ public final class PlacementAnalysis {
 				compared += count;
 			}
 			return Integer.compare(left.length, right.length);
+		}
+
+		private void clear() {
+			leftCursor.clear();
+			rightCursor.clear();
 		}
 	}
 
@@ -727,6 +759,27 @@ public final class PlacementAnalysis {
 		@Override public String toString() { return materialize(); }
 	}
 
+	/** Returns one thread-confined exact UTF-16 comparator with reusable traversal cursors. */
+	static java.util.Comparator<NormalizedText> normalizedTextComparator() {
+		return new ReusableNormalizedTextComparator();
+	}
+
+	private static final class ReusableNormalizedTextComparator
+		implements java.util.Comparator<NormalizedText> {
+		private final CanonicalTextComparison comparison = new CanonicalTextComparison();
+
+		@Override public int compare(NormalizedText left, NormalizedText right) {
+			try {
+				Objects.requireNonNull(left, "left normalized text");
+				Objects.requireNonNull(right, "right normalized text");
+				return comparison.compare(left.text, right.text);
+			}
+			finally {
+				comparison.clear();
+			}
+		}
+	}
+
 	/**
 	 * Opt-in, invocation-local replay of small immutable signature subtrees.
 	 * Only consumers insensitive to UTF-16 chunk boundaries may use this session;
@@ -825,6 +878,10 @@ public final class PlacementAnalysis {
 				Objects.requireNonNull(value, "value"), context));
 		}
 		public NormalizedText emissionRealization(CandidateEmissionRealization value) {
+			return new NormalizedText(canonicalOrderingKey(
+				Objects.requireNonNull(value, "value"), context));
+		}
+		public NormalizedText binding(CandidateRealizationInputBinding value) {
 			return new NormalizedText(canonicalOrderingKey(
 				Objects.requireNonNull(value, "value"), context));
 		}
@@ -1055,6 +1112,18 @@ public final class PlacementAnalysis {
 			if(copy.get(index - 1).equals(copy.get(index)))
 				throw new IllegalArgumentException("Duplicate " + label);
 		return new SharedCanonicalList<>(List.copyOf(copy));
+	}
+
+	/** Immutable List semantics with a cached hash, without canonical-order marker authority. */
+	@SuppressWarnings("unchecked")
+	static <T> List<T> sharedImmutableList(java.util.Collection<T> values, String label) {
+		Objects.requireNonNull(values, label + "s");
+		if(values instanceof CachedImmutableList<?>)
+			return (List<T>)values;
+		List<T> copy = new ArrayList<>(values.size());
+		for(T value : values)
+			copy.add(Objects.requireNonNull(value, label));
+		return new CachedImmutableList<>(copy);
 	}
 
 	private static List<CanonicalText> retainedCanonicalOrderingKeys(List<?> values) {
@@ -1342,7 +1411,7 @@ public final class PlacementAnalysis {
 				PlacementIdentity.cachedRequiredInputSupport(this);
 			return cached != null ? cached : PlacementIdentity.rememberRequiredInputSupport(this,
 				inputBindings.stream().map(CandidateRealizationInputBinding::source)
-					.distinct().sorted().toList());
+					.distinct().sorted(PlacementAnalysis.canonicalComparator()).toList());
 		}
 		public String normalizedSignature() {
 			String cached = PlacementIdentity.cachedSignature(this);
@@ -1839,45 +1908,34 @@ public final class PlacementAnalysis {
 		private record MergedClauseRuns(List<CandidateRealizationSupportClause> clauses,
 			List<CanonicalText> keys) { }
 
-		/** Stable exact union of already-canonical runs without recursively hashing every clause. */
+		/** Stable exact union; remove identical authorities before comparing their ordering text. */
 		private static MergedClauseRuns mergeCanonicalClauseRuns(
 			List<List<CandidateRealizationSupportClause>> clausesByGroup,
 			List<List<CanonicalText>> keysByGroup, int totalClauses, SearchSpaceMetrics metrics) {
 			CanonicalTextComparison comparison = new CanonicalTextComparison();
 			List<ClauseRunEntry> ordered = new ArrayList<>(totalClauses);
+			Set<CandidateRealizationSupportClause> seen = new java.util.HashSet<>();
 			for(int group = 0; group < clausesByGroup.size(); group++)
-				for(int position = 0; position < clausesByGroup.get(group).size(); position++)
-					ordered.add(new ClauseRunEntry(clausesByGroup.get(group).get(position),
-						keysByGroup.get(group).get(position)));
-			// The input is a concatenation of sorted runs. The stable JDK sort keeps
-			// original group order for descriptor ties and exploits those runs.
+				for(int position = 0; position < clausesByGroup.get(group).size(); position++) {
+					CandidateRealizationSupportClause clause = clausesByGroup.get(group).get(position);
+					boolean unique = seen.add(clause);
+					if(metrics != null)
+						metrics.recordRealizationMergeClause(unique);
+					if(unique)
+						ordered.add(new ClauseRunEntry(clause, keysByGroup.get(group).get(position)));
+				}
+			// Full immutable clause equality implies equal canonical text. Deduplication
+			// therefore keeps the same first authority and descriptor as the stable sort
+			// followed by equality checks. Hash collisions still require full equality.
+			// The remaining entries retain sorted runs and stable order for text ties.
 			ordered.sort((left, right) ->
 				compareCanonicalText(left.key(), right.key(), metrics, comparison));
 
-			List<CandidateRealizationSupportClause> union = new ArrayList<>(totalClauses);
-			List<CanonicalText> unionKeys = new ArrayList<>(totalClauses);
-			List<CandidateRealizationSupportClause> equalKeyAuthorities = new ArrayList<>();
-			CanonicalText equalKey = null;
+			List<CandidateRealizationSupportClause> union = new ArrayList<>(ordered.size());
+			List<CanonicalText> unionKeys = new ArrayList<>(ordered.size());
 			for(ClauseRunEntry current : ordered) {
-				if(equalKey == null || compareCanonicalText(
-					equalKey, current.key(), metrics, comparison) != 0) {
-					equalKey = current.key();
-					equalKeyAuthorities.clear();
-				}
-				CandidateRealizationSupportClause clause = current.clause();
-				boolean unique = true;
-				for(CandidateRealizationSupportClause retained : equalKeyAuthorities)
-					if(clause.equals(retained)) {
-						unique = false;
-						break;
-					}
-				if(metrics != null)
-					metrics.recordRealizationMergeClause(unique);
-				if(unique) {
-					equalKeyAuthorities.add(clause);
-					union.add(clause);
-					unionKeys.add(current.key());
-				}
+				union.add(current.clause());
+				unionKeys.add(current.key());
 			}
 			if(metrics != null)
 				metrics.recordCanonicalSort(union.size());
@@ -3042,6 +3100,8 @@ public final class PlacementAnalysis {
 	private final CandidateReceiptDomain candidateReceiptDomain;
 	private final RelocationSelections.CanonicalOrderIndex relocationOrder;
 	private volatile RelocationSelections.RelocationPrivacyIndex relocationPrivacy;
+	private final Map<NeutralPlacementGraph.DerivedFoutMaterializationAction,
+		DerivedFoutAnchorCompatibility.Prepared> derivedFoutAnchorCompatibility = new IdentityHashMap<>();
 	private final Map<NeutralPlacementGraph.RelocationAction,Boolean> relocationActionsByIdentity;
 	private final CandidateConsumerProfileFacts candidateConsumerProfileFacts;
 	private final DetachedConsumerProfileFacts detachedConsumerProfileFacts;
@@ -3386,6 +3446,16 @@ public final class PlacementAnalysis {
 		this.candidateRuleFacts = new CandidateRuleFacts(this.candidateRuleDomain, candidateRuleFacts);
 		this.realizationsByRule = indexRealizations(this.candidateRuleFacts);
 		this.candidateReceiptDomain = new CandidateReceiptDomain(this.candidateRuleFacts);
+		for(var action : graph.derivedFoutMaterializationActions())
+			for(var authority : action.nativeAnchorAuthorities()) {
+				var reference = authority.reference();
+				var fact = this.candidateRuleFacts.requireExact(reference.rule().parentOccurrence(),
+					reference.rule().orderedInputs());
+				if(fact.key() != reference.rule()
+					|| requireReferencedRealization(reference) != authority.realization()
+					|| !authority.realization().ownsSupportClauseIdentity(authority.clause()))
+					throw new IllegalArgumentException("Derived FOUT native anchor certificate is not analysis-owned");
+			}
 		Map<NeutralPlacementGraph.RelocationAction,Boolean> ownedRelocationActions = new IdentityHashMap<>();
 		for(NeutralPlacementGraph.RelocationAction action : graph.relocationActions())
 			ownedRelocationActions.put(action, Boolean.TRUE);
@@ -4680,6 +4750,14 @@ public final class PlacementAnalysis {
 	public CandidateEmissionRealization requireExactCandidateRealization(
 		CandidateRealizationReference reference) {
 		return requireReferencedRealization(Objects.requireNonNull(reference, "reference"));
+	}
+
+	synchronized DerivedFoutAnchorCompatibility.Prepared derivedFoutAnchorCompatibility(
+		NeutralPlacementGraph.DerivedFoutMaterializationAction action) {
+		if(graph.derivedFoutMaterializationActions().stream().noneMatch(owned -> owned == action))
+			throw new IllegalArgumentException("Derived FOUT action is not analysis-owned");
+		return derivedFoutAnchorCompatibility.computeIfAbsent(action,
+			owned -> new DerivedFoutAnchorCompatibility.Prepared(this, owned));
 	}
 
 	/** Exact compatibility edges for one chosen reader realization across all reaching writers. */

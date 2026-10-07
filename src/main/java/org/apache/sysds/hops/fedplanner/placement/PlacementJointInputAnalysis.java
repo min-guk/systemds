@@ -12,16 +12,21 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.util.AbstractSet;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.SortedSet;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Function;
 
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
@@ -156,48 +161,72 @@ public final class PlacementJointInputAnalysis {
 	}
 
 	private static final class Environment implements Comparable<Environment> {
+		private static final PlacementAnalysis.NormalizedText EMPTY_TEXT =
+			PlacementAnalysis.NormalizedText.literal("");
 		private final Map<String,Definition> values;
 		private final Map<Integer,Definition> readSources;
-		private final String valuesKey;
-		private final String readSourcesKey;
-		private final String stableKey;
+		private final Function<Definition,String> definitionKey;
+		private final PlacementAnalysis.NormalizedText valuesText;
+		private final PlacementAnalysis.NormalizedText readSourcesText;
+		private final PlacementAnalysis.NormalizedText orderingText;
 		private final int hashCode;
+		private volatile String stableKey;
 
 		Environment(Map<String,Definition> values, Map<Integer,Definition> readSources) {
-			this(immutableSorted(values), immutableSorted(readSources), null, null);
+			this(values, readSources, Definition::stableKey);
+		}
+		Environment(Map<String,Definition> values, Map<Integer,Definition> readSources,
+			Function<Definition,String> definitionKey) {
+			this(values, readSources, definitionKey, false, null, null);
 		}
 		private Environment(Map<String,Definition> values, Map<Integer,Definition> readSources,
-			String valuesKey, String readSourcesKey) {
-			this.values = values;
-			this.readSources = readSources;
-			this.valuesKey = valuesKey == null ? valuesKey(values) : valuesKey;
-			this.readSourcesKey = readSourcesKey == null ? readSourcesKey(readSources) : readSourcesKey;
-			stableKey = this.valuesKey + "|reads=" + this.readSourcesKey;
-			hashCode = 31 * values.hashCode() + readSources.hashCode();
+			Function<Definition,String> definitionKey, boolean trustedImmutable,
+			PlacementAnalysis.NormalizedText retainedValuesText,
+			PlacementAnalysis.NormalizedText retainedReadSourcesText) {
+			this.values = trustedImmutable ? values : immutableSortedCopy(values);
+			this.readSources = trustedImmutable ? readSources : immutableSortedCopy(readSources);
+			this.definitionKey = definitionKey;
+			valuesText = retainedValuesText == null
+				? valuesText(this.values, definitionKey) : retainedValuesText;
+			readSourcesText = retainedReadSourcesText == null
+				? readSourcesText(this.readSources, definitionKey) : retainedReadSourcesText;
+			orderingText = new PlacementAnalysis.NormalizedTextBuilder()
+				.append(valuesText).append("|reads=").append(readSourcesText).build();
+			hashCode = 31 * this.values.hashCode() + this.readSources.hashCode();
 		}
 		Map<String,Definition> values() { return values; }
 		Map<Integer,Definition> readSources() { return readSources; }
 		Environment with(String variable, Definition definition) {
-			if(values.containsKey(variable) && Objects.equals(values.get(variable), definition))
+			if(Objects.equals(values.get(variable), definition))
 				return this;
 			Map<String,Definition> copy = new TreeMap<>(values);
 			copy.put(variable, definition);
-			Map<String,Definition> immutable = Collections.unmodifiableMap(copy);
-			return new Environment(immutable, readSources, valuesKey(immutable), readSourcesKey);
+			return new Environment(Collections.unmodifiableMap(copy), readSources, definitionKey,
+				true, null, readSourcesText);
 		}
 		Environment observe(int readOrdinal, Definition definition) {
-			if(readSources.containsKey(readOrdinal) && Objects.equals(readSources.get(readOrdinal), definition))
+			if(Objects.equals(readSources.get(readOrdinal), definition))
 				return this;
 			Map<Integer,Definition> copy = new TreeMap<>(readSources);
 			copy.put(readOrdinal, definition);
-			Map<Integer,Definition> immutable = Collections.unmodifiableMap(copy);
-			return new Environment(values, immutable, valuesKey, readSourcesKey(immutable));
+			return new Environment(values, Collections.unmodifiableMap(copy), definitionKey,
+				true, valuesText, null);
 		}
 		Environment nextBlock() {
-			return readSources.isEmpty() ? this : new Environment(values, Map.of(), valuesKey, "");
+			return readSources.isEmpty() ? this
+				: new Environment(values, Map.of(), definitionKey, true, valuesText, EMPTY_TEXT);
 		}
-		@Override public int compareTo(Environment that) { return stableKey.compareTo(that.stableKey); }
-		String stableKey() { return stableKey; }
+		@Override public int compareTo(Environment that) {
+			return this == that ? 0 : orderingText.compareTo(that.orderingText);
+		}
+		String stableKey() {
+			String key = stableKey;
+			if(key == null) {
+				key = orderingText.materialize();
+				stableKey = key;
+			}
+			return key;
+		}
 
 		@Override public boolean equals(Object other) {
 			return this == other || other instanceof Environment that
@@ -208,35 +237,69 @@ public final class PlacementJointInputAnalysis {
 			return hashCode;
 		}
 
-		private static String valuesKey(Map<String,Definition> values) {
-			StringBuilder key = new StringBuilder();
+		private static PlacementAnalysis.NormalizedText valuesText(Map<String,Definition> values,
+			Function<Definition,String> definitionKey) {
+			if(values.isEmpty())
+				return EMPTY_TEXT;
+			PlacementAnalysis.NormalizedTextBuilder key = new PlacementAnalysis.NormalizedTextBuilder();
+			boolean first = true;
 			for(Map.Entry<String,Definition> entry : values.entrySet()) {
-				if(key.length() > 0)
-					key.append(';');
-				key.append(entry.getKey()).append('=').append(entry.getValue().stableKey());
+				if(!first)
+					key.append(";");
+				key.append(entry.getKey()).append("=").append(definitionKey.apply(entry.getValue()));
+				first = false;
 			}
-			return key.toString();
+			return key.build();
 		}
 
-		private static String readSourcesKey(Map<Integer,Definition> readSources) {
-			StringBuilder key = new StringBuilder();
+		private static PlacementAnalysis.NormalizedText readSourcesText(
+			Map<Integer,Definition> readSources, Function<Definition,String> definitionKey) {
+			if(readSources.isEmpty())
+				return EMPTY_TEXT;
+			PlacementAnalysis.NormalizedTextBuilder key = new PlacementAnalysis.NormalizedTextBuilder();
 			boolean firstRead = true;
 			for(Map.Entry<Integer,Definition> entry : readSources.entrySet()) {
 				if(!firstRead)
-					key.append(';');
-				key.append(entry.getKey()).append("=>").append(entry.getValue().stableKey());
+					key.append(";");
+				key.append(entry.getKey().toString()).append("=>")
+					.append(definitionKey.apply(entry.getValue()));
 				firstRead = false;
 			}
-			return key.toString();
+			return key.build();
 		}
 
-		private static <K extends Comparable<? super K>,V> Map<K,V> immutableSorted(Map<K,V> source) {
+		private static <K,V> Map<K,V> immutableSortedCopy(Map<K,V> source) {
 			return Collections.unmodifiableMap(new TreeMap<>(source));
 		}
 	}
 
+	/** Immutable marker retaining the exact comparator used by every analysis-local environment set. */
+	private static final class OrderedEnvironments extends AbstractSet<Environment>
+		implements SortedSet<Environment> {
+		private final SortedSet<Environment> values;
+
+		private OrderedEnvironments(TreeSet<Environment> ownedValues) {
+			values = Collections.unmodifiableSortedSet(ownedValues);
+		}
+
+		@Override public Comparator<? super Environment> comparator() { return values.comparator(); }
+		@Override public Environment first() { return values.first(); }
+		@Override public Environment last() { return values.last(); }
+		@Override public int size() { return values.size(); }
+		@Override public boolean contains(Object value) { return values.contains(value); }
+		@Override public Iterator<Environment> iterator() { return values.iterator(); }
+		@Override public SortedSet<Environment> subSet(Environment from, Environment to) {
+			return values.subSet(from, to);
+		}
+		@Override public SortedSet<Environment> headSet(Environment to) { return values.headSet(to); }
+		@Override public SortedSet<Environment> tailSet(Environment from) { return values.tailSet(from); }
+	}
+
 	private record Observation(String context, StatementBlock block, Environment environment) { }
+	private record InvocationInput(String context, Environment callee) { }
 	private record InvocationResult(Set<Environment> callerEnvironments) { }
+	private record AnalysisSlice(Set<String> trackedVariables,
+		Map<Integer,List<Map<Integer,Definition>>> readSourcesByWitness) { }
 
 	private final DMLProgram program;
 	private final List<PlacementGraphFingerprint.HopOccurrence> occurrences;
@@ -247,9 +310,21 @@ public final class PlacementJointInputAnalysis {
 	private final Set<String> functionBoundaryVariables;
 	private final Map<Integer,Set<Observation>> observationsByRead = new TreeMap<>();
 	private final Set<String> activeFunctions = new LinkedHashSet<>();
+	private final Map<FunctionStatementBlock,Map<InvocationInput,Set<Environment>>> invocationExitMemo =
+		new IdentityHashMap<>();
 	private final Map<List<Integer>,List<JointTuple>> tupleCache = new java.util.HashMap<>();
 	private final Map<String,Definition[]> occurrenceDefinitionCache = new java.util.HashMap<>();
+	private final Map<Set<String>,Set<String>> expandedTrackedSlices = new java.util.HashMap<>();
+	private final Comparator<PlacementAnalysis.NormalizedText> normalizedTextOrder =
+		PlacementAnalysis.normalizedTextComparator();
+	private final Comparator<Environment> environmentOrder = (left, right) -> left == right ? 0
+		: normalizedTextOrder.compare(left.orderingText, right.orderingText);
 	private Set<String> trackedVariables = Set.of();
+	private AnalysisSlice recentSlice;
+	private Map<Set<String>,List<List<Integer>>> consumerReadsBySlice;
+	private int analysisPassCount;
+	private int invocationAttempts;
+	private int functionBodyExecutions;
 
 	private PlacementJointInputAnalysis(DMLProgram program,
 		List<PlacementGraphFingerprint.HopOccurrence> retainedOccurrences,
@@ -326,24 +401,31 @@ public final class PlacementJointInputAnalysis {
 		List<JointTuple> cached = tupleCache.get(reads);
 		if(cached != null)
 			return cached;
-		analyzeFor(reads);
+		Set<String> tracked = trackedSlice(reads);
+		if(recentSlice == null || !recentSlice.trackedVariables().equals(tracked))
+			recentSlice = analyzeFor(tracked);
+		List<JointTuple> result = project(reads, recentSlice);
+		tupleCache.put(reads, result);
+		return result;
+	}
+
+	private List<JointTuple> project(List<Integer> reads, AnalysisSlice slice) {
 		int witnessOrdinal = reads.stream().max(Integer::compareTo).orElseThrow();
 		Set<JointTuple> tuples = new TreeSet<>();
-		for(Observation observation : observationsByRead.getOrDefault(witnessOrdinal, Set.of())) {
+		for(Map<Integer,Definition> readSources :
+			slice.readSourcesByWitness().getOrDefault(witnessOrdinal, List.of())) {
 			List<InputDefinition> inputs = new ArrayList<>(reads.size());
 			boolean complete = true;
 			for(int input = 0; input < reads.size(); input++) {
 				int readOrdinal = reads.get(input);
-				Definition source = observation.environment().readSources().get(readOrdinal);
+				Definition source = readSources.get(readOrdinal);
 				if(source == null) { complete = false; break; }
 				inputs.add(new InputDefinition(input, readOrdinal, source));
 			}
 			if(complete)
 				tuples.add(new JointTuple(inputs));
 		}
-		List<JointTuple> result = List.copyOf(tuples);
-		tupleCache.put(reads, result);
-		return result;
+		return List.copyOf(tuples);
 	}
 
 	/** Identity-exact integration adapter for the placement graph's canonical keys. */
@@ -353,7 +435,7 @@ public final class PlacementJointInputAnalysis {
 	}
 
 	/** Convenience lookup for direct transient-read inputs of one compiled consumer occurrence. */
-	public List<JointTuple> tuplesForConsumer(int consumerOrdinal) {
+	public synchronized List<JointTuple> tuplesForConsumer(int consumerOrdinal) {
 		Hop consumer = occurrenceHop(consumerOrdinal);
 		List<Integer> reads = new ArrayList<>();
 		for(Hop input : consumer.getInput()) {
@@ -362,6 +444,7 @@ public final class PlacementJointInputAnalysis {
 					+ occurrenceKey(consumerOrdinal).normalizedSignature());
 			reads.add(uniqueOrdinal(input, occurrences.get(consumerOrdinal).block()));
 		}
+		cacheConsumerSlice(reads);
 		return tuplesForReads(reads);
 	}
 
@@ -377,15 +460,91 @@ public final class PlacementJointInputAnalysis {
 		return current;
 	}
 
-	private synchronized void analyzeFor(List<Integer> reads) {
+	private Set<String> trackedSlice(List<Integer> reads) {
+		Set<String> requested = new TreeSet<>();
+		for(int read : reads)
+			requested.add(variable(read));
+		Set<String> key = Collections.unmodifiableSet(requested);
+		Set<String> cached = expandedTrackedSlices.get(key);
+		if(cached != null)
+			return cached;
+		Set<String> tracked = new TreeSet<>(requested);
+		expandFunctionBoundarySlice(tracked);
+		Set<String> result = Collections.unmodifiableSet(tracked);
+		expandedTrackedSlices.put(key, result);
+		return result;
+	}
+
+	private void cacheConsumerSlice(List<Integer> requestedReads) {
+		List<Integer> requested = List.copyOf(requestedReads);
+		if(tupleCache.containsKey(requested))
+			return;
+		Set<String> tracked = trackedSlice(requested);
+		List<List<Integer>> related = consumerReadsBySlice().get(tracked);
+		if(related == null)
+			return;
+		AnalysisSlice slice = recentSlice != null && recentSlice.trackedVariables().equals(tracked)
+			? recentSlice : analyzeFor(tracked);
+		recentSlice = slice;
+		for(List<Integer> reads : related)
+			tupleCache.computeIfAbsent(reads, ignored -> project(reads, slice));
+	}
+
+	private Map<Set<String>,List<List<Integer>>> consumerReadsBySlice() {
+		if(consumerReadsBySlice != null)
+			return consumerReadsBySlice;
+		Map<Set<String>,List<List<Integer>>> grouped = new java.util.LinkedHashMap<>();
+		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
+			Hop consumer = occurrenceHop(ordinal);
+			if(consumer instanceof FunctionOp || consumer.getInput().size() < 2
+				|| !consumer.getInput().stream().allMatch(PlacementProgramFacts::isTransientRead))
+				continue;
+			List<Integer> reads = new ArrayList<>(consumer.getInput().size());
+			try {
+				for(Hop input : consumer.getInput())
+					reads.add(uniqueOrdinal(input, occurrences.get(ordinal).block()));
+			}
+			catch(IllegalArgumentException ambiguousOccurrence) {
+				// This is only an eager reuse index. Preserve the existing on-demand error boundary.
+				continue;
+			}
+			List<Integer> immutableReads = List.copyOf(reads);
+			grouped.computeIfAbsent(trackedSlice(immutableReads), ignored -> new ArrayList<>())
+				.add(immutableReads);
+		}
+		Map<Set<String>,List<List<Integer>>> immutable = new java.util.LinkedHashMap<>();
+		for(Map.Entry<Set<String>,List<List<Integer>>> entry : grouped.entrySet())
+			immutable.put(entry.getKey(), List.copyOf(entry.getValue()));
+		consumerReadsBySlice = Collections.unmodifiableMap(immutable);
+		return consumerReadsBySlice;
+	}
+
+	private AnalysisSlice analyzeFor(Set<String> tracked) {
 		observationsByRead.clear();
 		activeFunctions.clear();
-		Set<String> tracked = new TreeSet<>();
-		for(int read : reads)
-			tracked.add(variable(read));
-		expandFunctionBoundarySlice(tracked);
-		trackedVariables = Collections.unmodifiableSet(tracked);
-		executeSequence(program.getStatementBlocks(), Set.of(new Environment(Map.of(), Map.of())), "main");
+		invocationExitMemo.clear();
+		invocationAttempts = 0;
+		functionBodyExecutions = 0;
+		trackedVariables = tracked;
+		analysisPassCount++;
+		try {
+			executeSequence(program.getStatementBlocks(),
+				Set.of(new Environment(Map.of(), Map.of())), "main");
+			Map<Integer,List<Map<Integer,Definition>>> compact = new TreeMap<>();
+			for(Map.Entry<Integer,Set<Observation>> entry : observationsByRead.entrySet()) {
+				Set<Map<Integer,Definition>> snapshots = new LinkedHashSet<>();
+				for(Observation observation : entry.getValue())
+					snapshots.add(observation.environment().readSources());
+				compact.put(entry.getKey(), List.copyOf(snapshots));
+			}
+			return new AnalysisSlice(tracked, Collections.unmodifiableMap(compact));
+		}
+		finally {
+			observationsByRead.clear();
+			activeFunctions.clear();
+			invocationExitMemo.clear();
+			trackedVariables = Set.of();
+		}
 	}
 
 	private void expandFunctionBoundarySlice(Set<String> tracked) {
@@ -468,12 +627,12 @@ public final class PlacementJointInputAnalysis {
 		for(int ordinal : ordinalsByBlock.getOrDefault(block, List.of())) {
 			Hop hop = occurrences.get(ordinal).hop();
 			if(PlacementProgramFacts.isTransientRead(hop) && tracks(variable(ordinal), context)) {
-				Set<Environment> observed = new TreeSet<>();
+				TreeSet<Environment> observed = newEnvironmentSet();
 				for(Environment state : states) {
 					Definition source = state.values().get(variable(ordinal));
 					observed.add(source == null ? state : state.observe(ordinal, source));
 				}
-				states = bounded(observed);
+				states = freezeOwned(observed);
 				Set<Observation> observations = observationsByRead.computeIfAbsent(ordinal,
 					ignored -> new LinkedHashSet<>());
 				for(Environment state : states)
@@ -483,10 +642,10 @@ public final class PlacementJointInputAnalysis {
 				states = invoke(ordinal, call, states, context).callerEnvironments();
 			else if(PlacementProgramFacts.isTransientWrite(hop)
 				&& tracks(variable(ordinal), context)) {
-				Set<Environment> updated = new TreeSet<>();
+				TreeSet<Environment> updated = newEnvironmentSet();
 				for(Environment state : states)
 					updated.add(state.with(variable(ordinal), writeDefinition(ordinal, state, context)));
-				states = bounded(updated);
+				states = freezeOwned(updated);
 			}
 		}
 		return states;
@@ -512,10 +671,22 @@ public final class PlacementJointInputAnalysis {
 			List<String> formalInputs = statement.getInputParams().stream().map(parameter -> parameter.getName()).toList();
 			List<String> formalOutputs = statement.getOutputParams().stream().map(parameter -> parameter.getName()).toList();
 			String context = parentContext + "/call-" + callOrdinal;
-			Set<Environment> result = new TreeSet<>();
+			TreeSet<Environment> result = newEnvironmentSet();
 			for(Environment caller : callerStates) {
 				Environment callee = bindArguments(callOrdinal, call, formalInputs, caller, context);
-				Set<Environment> exits = executeBlock(function, Set.of(callee), context);
+				invocationAttempts++;
+				InvocationInput input = new InvocationInput(context, callee);
+				Map<InvocationInput,Set<Environment>> exitsByInput = invocationExitMemo.get(function);
+				Set<Environment> exits = exitsByInput == null ? null : exitsByInput.get(input);
+				if(exits == null) {
+					functionBodyExecutions++;
+					exits = executeBlock(function, Set.of(callee), context);
+					if(exitsByInput == null) {
+						exitsByInput = new java.util.HashMap<>();
+						invocationExitMemo.put(function, exitsByInput);
+					}
+					exitsByInput.put(input, exits);
+				}
 				for(Environment exit : exits) {
 					Environment returned = caller;
 					String[] outputNames = call.getOutputVariableNames();
@@ -525,13 +696,14 @@ public final class PlacementJointInputAnalysis {
 						if(source != null && outputNames[position] != null
 							&& trackedVariables.contains(outputNames[position]))
 							returned = returned.with(outputNames[position], new Definition(SourceKind.FUNCTION_RETURN,
-								occurrenceKeys.get(callOrdinal), callOrdinal, position, context, source.stableKey(),
+								occurrenceKeys.get(callOrdinal), callOrdinal, position, context,
+								source.stableKey(),
 								source.valueOccurrence()));
 					}
 					result.add(returned);
 				}
 			}
-			return new InvocationResult(bounded(result));
+			return new InvocationResult(freezeOwned(result));
 		}
 		finally {
 			activeFunctions.remove(functionKey);
@@ -611,25 +783,48 @@ public final class PlacementJointInputAnalysis {
 	}
 
 	private Set<Environment> union(Set<Environment> left, Set<Environment> right) {
-		Set<Environment> result = new TreeSet<>(left);
+		TreeSet<Environment> result = mutableOrderedCopy(left);
 		result.addAll(right);
-		return bounded(result);
+		return freezeOwned(result);
 	}
 
-	private Set<Environment> ordered(Set<Environment> values) { return bounded(new TreeSet<>(values)); }
+	private Set<Environment> ordered(Set<Environment> values) {
+		return values instanceof OrderedEnvironments ordered
+			&& ordered.comparator() == environmentOrder ? values : bounded(values);
+	}
 
 	private Set<Environment> nextBlock(Set<Environment> values) {
-		Set<Environment> result = new TreeSet<>();
+		TreeSet<Environment> result = newEnvironmentSet();
 		for(Environment value : values)
 			result.add(value.nextBlock());
-		return bounded(result);
+		return freezeOwned(result);
 	}
 
 	private Set<Environment> bounded(Set<Environment> values) {
+		if(values instanceof OrderedEnvironments ordered
+			&& ordered.comparator() == environmentOrder)
+			return values;
+		return freezeOwned(mutableOrderedCopy(values));
+	}
+
+	private TreeSet<Environment> newEnvironmentSet() {
+		return new TreeSet<>(environmentOrder);
+	}
+
+	@SuppressWarnings("unchecked")
+	private TreeSet<Environment> mutableOrderedCopy(Set<Environment> values) {
+		if(values instanceof SortedSet<?> sorted && sorted.comparator() == environmentOrder)
+			return new TreeSet<>((SortedSet<Environment>)sorted);
+		TreeSet<Environment> result = newEnvironmentSet();
+		result.addAll(values);
+		return result;
+	}
+
+	private Set<Environment> freezeOwned(TreeSet<Environment> values) {
 		if(values.size() > MAX_ENVIRONMENTS)
 			throw new ResourceLimitException("Joint-input CFG exceeded finite environment limit "
 				+ MAX_ENVIRONMENTS + "; refusing an inexact Cartesian fallback");
-		return Collections.unmodifiableSet(values);
+		return new OrderedEnvironments(values);
 	}
 
 	private static <K> Map<K,List<Integer>> immutableIdentityLists(Map<K,List<Integer>> source) {

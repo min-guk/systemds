@@ -25,6 +25,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
+import org.apache.sysds.hops.fedplanner.placement.DerivedFoutAnchorCompatibility;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.DerivedFoutMaterializationAction;
@@ -322,6 +323,30 @@ final class ExactPhysicalModel {
 		private NormalizedText literal(Object owner, java.util.function.Supplier<String> value) {
 			return literals.computeIfAbsent(owner, ignored -> NormalizedText.literal(value.get()));
 		}
+		private NormalizedText inputAuthority(InputAuthority authority) {
+			NormalizedText retained = literals.get(authority);
+			if(retained != null)
+				return retained;
+			NormalizedTextBuilder signature = new NormalizedTextBuilder()
+				.append(Integer.toString(authority.inputPosition())).append(":")
+				.append(authority.kind().toString()).append(":")
+				.append(authority.expectedFType() == null ? "-" : authority.expectedFType().toString())
+				.append(":");
+			if(authority.sourceDecision() == null)
+				signature.append("-");
+			else
+				signature.append(literal(authority.sourceDecision(),
+					authority.sourceDecision()::normalizedSignature));
+			signature.append(":");
+			if(authority.relocationAction() == null)
+				signature.append("-");
+			else
+				signature.append(literal(authority.relocationAction(),
+					authority.relocationAction()::normalizedSignature));
+			NormalizedText result = signature.build();
+			literals.put(authority, result);
+			return result;
+		}
 	}
 
 	private static final class MutableCandidateRuleLookupStatistics {
@@ -531,7 +556,7 @@ final class ExactPhysicalModel {
 		addLogicalBoundaryFactors(analysis, byDecision, factors);
 		RealizationSupportPreparationStatistics realizationSupportStatistics =
 			addRealizationSupportFactors(analysis, byDecision, factors, hardFactorizations);
-		addDerivedFoutAnchorFactors(analysis.graph(), byDecision, factors);
+		addDerivedFoutAnchorFactors(analysis, byDecision, factors);
 		InputAuthorityPreparationStatistics inputAuthorityStatistics =
 			addInputAuthorityFactors(analysis, relocationPrivacy, incoming, byDecision, factors,
 				allocationFreeInputAuthorityEvaluation, hardFactorizations);
@@ -719,7 +744,7 @@ final class ExactPhysicalModel {
 		if(isSyntheticFunctionBoundary(node)) {
 			for(PlacementState state : node.legalAlternatives())
 				alternatives.add(nonCandidate(node, state, AuthorityKind.SYNTHETIC_BOUNDARY,
-					null, null));
+					null, null, signatureContext));
 			return alternatives;
 		}
 		for(CandidateRuleFact rule : ownerRules) {
@@ -767,7 +792,7 @@ final class ExactPhysicalModel {
 						}
 						else
 							alternatives.add(nonCandidate(node, state, AuthorityKind.DURABLE_ANCHOR,
-								anchor, null));
+								anchor, null, signatureContext));
 					}
 			for(RelocationAction action : analysis.graph().relocationActions()) {
 				if(!action.key().sourceValueVersion().equals(node.valueVersion())
@@ -787,11 +812,12 @@ final class ExactPhysicalModel {
 						if(execution.candidateEmission().emissionState().placementState() == state)
 							alternatives.add(nonCandidate(node, state, AuthorityKind.RELOCATION_SOURCE,
 								action.key().durableAnchor(), action, execution.candidateRule(),
-								execution.candidateEmission(), execution.realization(), execution.supportClause(), execution.inputAuthorities()));
+								execution.candidateEmission(), execution.realization(), execution.supportClause(),
+								execution.inputAuthorities(), signatureContext));
 				}
 				else
 					alternatives.add(nonCandidate(node, state, AuthorityKind.RELOCATION_SOURCE,
-						action.key().durableAnchor(), action));
+						action.key().durableAnchor(), action, signatureContext));
 			}
 			long membershipStates = node.legalAlternatives().stream().filter(candidate ->
 				candidate.execType() == state.execType() && candidate.output() == state.output()).count();
@@ -799,7 +825,7 @@ final class ExactPhysicalModel {
 				&& (state.execType() != ExecType.FED || !hasAuthorityBearingInputs(analysis, node.key()));
 			if(legalSingleton && alternatives.stream().noneMatch(candidate -> candidate.state().equals(state)))
 				alternatives.add(nonCandidate(node, state, AuthorityKind.LEGAL_SINGLETON,
-					null, null));
+					null, null, signatureContext));
 		}
 		List<Alternative> unique;
 		if(lazyAlternativeSignatures) {
@@ -889,7 +915,7 @@ final class ExactPhysicalModel {
 			if(index > 0)
 				signature.append(", ");
 			InputAuthority authority = bindings.get(index);
-			signature.append(context.literal(authority, authority::signature));
+			signature.append(context.inputAuthority(authority));
 		}
 		signature.append("]");
 		return new Alternative(node.key(), state, AuthorityKind.CAPTURED_RULE, rule, emission,
@@ -898,26 +924,73 @@ final class ExactPhysicalModel {
 	}
 
 	private static Alternative nonCandidate(Node node, PlacementState state, AuthorityKind kind,
-		DurableAnchorKey anchor, RelocationAction action) {
-		return nonCandidate(node, state, kind, anchor, action, null, null, null, null, List.of());
+		DurableAnchorKey anchor, RelocationAction action, AlternativeSignatureContext context) {
+		return nonCandidate(node, state, kind, anchor, action, null, null, null, null, List.of(),
+			context);
 	}
 
 	private static Alternative nonCandidate(Node node, PlacementState state, AuthorityKind kind,
 		DurableAnchorKey anchor, RelocationAction action, CandidateRuleFact executionRule,
 		CandidateEmissionFact executionEmission, CandidateEmissionRealization realization,
 		PlacementAnalysis.CandidateRealizationSupportClause supportClause,
-		List<InputAuthority> bindings) {
-		String signature = kind + "|" + state.normalizedSignature()
-			+ "|anchor=" + (anchor == null ? "-" : anchor.normalizedSignature())
-			+ "|action=" + (action == null ? "-" : action.normalizedSignature())
-			+ "|executionRule=" + (executionRule == null ? "-" : executionRule.key().normalizedSignature())
-			+ "|executionEmission=" + (executionEmission == null ? "-" : executionEmission.selectionSignature())
-			+ "|realization=" + (realization == null ? "-" : realization.key().normalizedSignature())
-			+ "|clause=" + (supportClause == null ? "-" : supportClause.normalizedSignature())
-			+ "|inputs=" + bindings.stream().map(InputAuthority::signature).toList();
+		List<InputAuthority> bindings, AlternativeSignatureContext context) {
+		if(context == null) {
+			String signature = kind + "|" + state.normalizedSignature()
+				+ "|anchor=" + (anchor == null ? "-" : anchor.normalizedSignature())
+				+ "|action=" + (action == null ? "-" : action.normalizedSignature())
+				+ "|executionRule=" + (executionRule == null ? "-" : executionRule.key().normalizedSignature())
+				+ "|executionEmission=" + (executionEmission == null ? "-" : executionEmission.selectionSignature())
+				+ "|realization=" + (realization == null ? "-" : realization.key().normalizedSignature())
+				+ "|clause=" + (supportClause == null ? "-" : supportClause.normalizedSignature())
+				+ "|inputs=" + bindings.stream().map(InputAuthority::signature).toList();
+			return new Alternative(node.key(), state, kind, null, null, executionRule, executionEmission,
+				anchor, action, null, executionRule == null ? List.of() : executionRule.key().orderedInputs(),
+				bindings, realization, supportClause, signature);
+		}
+		NormalizedTextBuilder signature = new NormalizedTextBuilder().append(kind.toString())
+			.append("|").append(context.literal(state, state::normalizedSignature)).append("|anchor=");
+		appendLiteral(signature, context, anchor,
+			anchor == null ? null : anchor::normalizedSignature);
+		signature.append("|action=");
+		appendLiteral(signature, context, action,
+			action == null ? null : action::normalizedSignature);
+		signature.append("|executionRule=");
+		if(executionRule == null)
+			signature.append("-");
+		else
+			signature.append(context.canonical.candidateRule(executionRule.key()));
+		signature.append("|executionEmission=");
+		appendLiteral(signature, context, executionEmission,
+			executionEmission == null ? null : executionEmission::selectionSignature);
+		signature.append("|realization=");
+		if(realization == null)
+			signature.append("-");
+		else
+			signature.append(context.canonical.realizationKey(realization.key()));
+		signature.append("|clause=");
+		if(supportClause == null)
+			signature.append("-");
+		else
+			signature.append(context.canonical.supportClause(supportClause));
+		signature.append("|inputs=[");
+		for(int index = 0; index < bindings.size(); index++) {
+			if(index > 0)
+				signature.append(", ");
+			signature.append(context.inputAuthority(bindings.get(index)));
+		}
+		signature.append("]");
 		return new Alternative(node.key(), state, kind, null, null, executionRule, executionEmission,
 			anchor, action, null, executionRule == null ? List.of() : executionRule.key().orderedInputs(), bindings,
-			realization, supportClause, signature);
+			realization, supportClause, signature.build());
+	}
+
+	private static void appendLiteral(NormalizedTextBuilder signature,
+		AlternativeSignatureContext context, Object owner,
+		java.util.function.Supplier<String> value) {
+		if(owner == null)
+			signature.append("-");
+		else
+			signature.append(context.literal(owner, value));
 	}
 
 	private static List<List<InputAuthority>> inputAuthorityProducts(PlacementAnalysis analysis,
@@ -1620,31 +1693,89 @@ final class ExactPhysicalModel {
 	 * prevalidation so the exact optimizer cannot select a plan that the runtime
 	 * transaction must reject later.
 	 */
-	private static void addDerivedFoutAnchorFactors(NeutralPlacementGraph graph,
+	private static void addDerivedFoutAnchorFactors(PlacementAnalysis analysis,
 		Map<CompiledHopKey,DecisionDomain> domains, List<ExactCategoricalSolver.Factor> factors) {
-		for(DerivedFoutMaterializationAction action : graph.derivedFoutMaterializationActions()) {
+		for(DerivedFoutMaterializationAction action : analysis.graph().derivedFoutMaterializationActions()) {
 			DecisionDomain producer = domains.get(action.key().producer());
-			DecisionDomain owner = domains.get(action.key().durableAnchorOwner());
-			if(producer == null || owner == null)
+			DerivedFoutAnchorCompatibility.Prepared compatibility =
+				DerivedFoutAnchorCompatibility.prepare(analysis, action);
+			List<DecisionDomain> scope = new ArrayList<>();
+			Set<CompiledHopKey> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+			if(producer != null && seen.add(producer.node().key()))
+				scope.add(producer);
+			for(CompiledHopKey supportOwner : compatibility.supportOwners()) {
+				DecisionDomain domain = domains.get(supportOwner);
+				if(domain == null)
+					throw new IllegalArgumentException("EXACT_PHYSICAL_FOUT_SUPPORT_DOMAIN_MISSING|action="
+						+ action.normalizedSignature() + "|support=" + supportOwner.normalizedSignature());
+				if(seen.add(supportOwner))
+					scope.add(domain);
+			}
+			if(producer == null)
 				throw new IllegalArgumentException("EXACT_PHYSICAL_FOUT_OWNER_DOMAIN_MISSING|action="
 					+ action.normalizedSignature());
-			if(producer == owner) {
-				factors.add(ExactCategoricalSolver.Factor.lazy(List.of(producer.variable()), values -> {
-					Alternative selected = producer.alternatives().get(values[0]);
-					return selected.derivedFoutAction() != action || derivedFoutOwnerSatisfied(action, selected)
-						? 0.0 : Double.POSITIVE_INFINITY;
-				}));
+			List<ExactCategoricalSolver.Variable> variables = scope.stream()
+				.map(DecisionDomain::variable).toList();
+			CompiledHopKey[] scopeOwners = scope.stream().map(domain -> domain.node().key())
+				.toArray(CompiledHopKey[]::new);
+			CandidateSelectionReceipt[][] receipts = new CandidateSelectionReceipt[scope.size()][];
+			for(int axis = 0; axis < scope.size(); axis++) {
+				DecisionDomain domain = scope.get(axis);
+				receipts[axis] = new CandidateSelectionReceipt[domain.alternatives().size()];
+				for(int value = 0; value < receipts[axis].length; value++)
+					receipts[axis][value] = candidateReceipt(analysis, domain.alternatives().get(value));
 			}
-			else {
-				factors.add(ExactCategoricalSolver.Factor.lazy(
-					List.of(producer.variable(), owner.variable()), values -> {
-						Alternative selectedProducer = producer.alternatives().get(values[0]);
-						Alternative selectedOwner = owner.alternatives().get(values[1]);
-						return selectedProducer.derivedFoutAction() != action
-							|| derivedFoutOwnerSatisfied(action, selectedOwner)
-							? 0.0 : Double.POSITIVE_INFINITY;
-					}));
+			ExactCategoricalSolver.PartialHardCostFunction evaluator =
+				new ExactCategoricalSolver.PartialHardCostFunction() {
+			@Override public double cost(int[] values) {
+				CandidateSelectionReceipt[] selectedReceipts = new CandidateSelectionReceipt[scope.size()];
+				Alternative selectedProducer = null;
+				Alternative selectedOwner = null;
+				for(int index = 0; index < scope.size(); index++) {
+					DecisionDomain domain = scope.get(index);
+					Alternative alternative = domain.alternatives().get(values[index]);
+					if(domain == producer)
+						selectedProducer = alternative;
+					if(domain.node().key() == action.key().durableAnchorOwner())
+						selectedOwner = alternative;
+					selectedReceipts[index] = receipts[index][values[index]];
+				}
+				if(selectedProducer == null || selectedProducer.derivedFoutAction() != action)
+					return 0.0;
+				return selectedOwner != null && derivedFoutOwnerSatisfied(action, selectedOwner)
+					&& compatibility.matches(new OrderedReceiptMap(scopeOwners, selectedReceipts), false)
+					? 0.0 : Double.POSITIVE_INFINITY;
 			}
+			@Override public ExactCategoricalSolver.PartialTruth partialTruth(int[] values) {
+				if(values.length == 0 || values[0] < 0)
+					return ExactCategoricalSolver.PartialTruth.UNKNOWN;
+				Alternative selected = producer.alternatives().get(values[0]);
+				return selected.derivedFoutAction() == action
+					? ExactCategoricalSolver.PartialTruth.UNKNOWN
+					: ExactCategoricalSolver.PartialTruth.ALL_ZERO;
+			}
+			};
+			factors.add(ExactCategoricalSolver.Factor.lazy(variables, evaluator));
+		}
+	}
+
+	private static final class OrderedReceiptMap
+		extends java.util.AbstractMap<CompiledHopKey,CandidateSelectionReceipt> {
+		private final CompiledHopKey[] owners;
+		private final CandidateSelectionReceipt[] receipts;
+		private OrderedReceiptMap(CompiledHopKey[] owners, CandidateSelectionReceipt[] receipts) {
+			this.owners = owners;
+			this.receipts = receipts;
+		}
+		@Override public CandidateSelectionReceipt get(Object owner) {
+			for(int index = 0; index < owners.length; index++)
+				if(owners[index] == owner)
+					return receipts[index];
+			return null;
+		}
+		@Override public boolean containsKey(Object owner) { return get(owner) != null; }
+		@Override public Set<Entry<CompiledHopKey,CandidateSelectionReceipt>> entrySet() {
+			throw new UnsupportedOperationException("ordered receipt view has no entry iteration");
 		}
 	}
 
@@ -1668,7 +1799,7 @@ final class ExactPhysicalModel {
 		actionsBySourceVersion.replaceAll((ignored, actions) -> List.copyOf(actions));
 		Map<ValueVersionKey,Set<CompiledHopKey>> sourceOwnersByVersion =
 			relocationSourceOwnersByVersion(analysis.graph());
-		Map<ValueVersionKey,Map<CompiledHopKey,Set<Integer>>> directBindingPositionsBySourceVersion =
+		Map<ValueVersionKey,ReceiptObservationContext> observationsBySourceVersion =
 			new java.util.HashMap<>();
 		Map<Alternative,CandidateSelectionReceipt> receiptByAlternative = new IdentityHashMap<>();
 		Map<DecisionDomain,CandidateSelectionReceipt[]> receiptTableByDomain = new IdentityHashMap<>();
@@ -1677,8 +1808,15 @@ final class ExactPhysicalModel {
 		int indexedDirectFoutRows = 0;
 		// Identity lookup is required for authority, but its iteration order is not
 		// stable across JVMs. A stable factor order also fixes mini-bucket partitions.
-		for(Map.Entry<CompiledHopKey,List<Link>> entry : incoming.entrySet().stream()
-			.sorted(Comparator.comparing(item -> item.getKey().normalizedSignature())).toList()) {
+		List<Map.Entry<CompiledHopKey,List<Link>>> orderedIncoming = incoming.entrySet().stream()
+			.sorted(Comparator.comparing(item -> item.getKey().normalizedSignature())).toList();
+		Map<ValueVersionKey,Integer> remainingObservationLinks = new java.util.HashMap<>();
+		for(Map.Entry<CompiledHopKey,List<Link>> entry : orderedIncoming)
+			if(domains.containsKey(entry.getKey()))
+				for(Link link : entry.getValue())
+					if(domains.containsKey(link.sourceNode.key()))
+						remainingObservationLinks.merge(link.sourceNode.valueVersion(), 1, Integer::sum);
+		for(Map.Entry<CompiledHopKey,List<Link>> entry : orderedIncoming) {
 			DecisionDomain consumer = domains.get(entry.getKey());
 			if(consumer == null)
 				continue;
@@ -1701,9 +1839,9 @@ final class ExactPhysicalModel {
 					link.sourceNode.valueVersion(), List.of());
 				Set<CompiledHopKey> sourceOwners = sourceOwnersByVersion.getOrDefault(
 					link.sourceNode.valueVersion(), Set.of());
-				Map<CompiledHopKey,Set<Integer>> directBindingPositions =
-					directBindingPositionsBySourceVersion.computeIfAbsent(link.sourceNode.valueVersion(),
-						ignored -> relevantDirectBindingPositions(sourceActions));
+				ReceiptObservationContext receiptObservations =
+					observationsBySourceVersion.computeIfAbsent(link.sourceNode.valueVersion(),
+						ignored -> new ReceiptObservationContext(sourceActions, sourceOwners));
 				for(Alternative selectedConsumer : consumer.alternatives()) {
 					InputAuthorityFactorRow row = prepareInputAuthorityRow(sourceActions, link,
 						consumer, selectedConsumer);
@@ -1744,7 +1882,7 @@ final class ExactPhysicalModel {
 							receiptTable[scopeIndex][value],
 							row, scopeIndex == 0 && (alternative.orderedInputs().isEmpty()
 								|| link.position >= alternative.orderedInputs().size()),
-							sourceActions, directBindingPositions, sourceOwners, derivedTargets);
+							receiptObservations, derivedTargets);
 						keys.add(link.kind() == LinkKind.LOGICAL_FUNCTION
 							? java.util.Arrays.asList(observation,
 								logicalBoundaryObservation(receiptTable[scopeIndex][value])) : observation);
@@ -1758,6 +1896,13 @@ final class ExactPhysicalModel {
 				if(encoded != null)
 					factorizations.put(factor, encoded);
 				factorCount++;
+				// Observation decomposition retains categories, not these temporary rows.
+				// Drop each context as soon as its last link has consumed the observations.
+				ValueVersionKey sourceVersion = link.sourceNode.valueVersion();
+				if(remainingObservationLinks.compute(sourceVersion, (ignored, left) -> left - 1) == 0) {
+					observationsBySourceVersion.remove(sourceVersion);
+					remainingObservationLinks.remove(sourceVersion);
+				}
 			}
 		}
 		return new InputAuthorityPreparationStatistics(factorCount, consumerAlternativeRows,
@@ -1787,11 +1932,10 @@ final class ExactPhysicalModel {
 
 	private static InputAuthorityObservation inputAuthorityObservation(Alternative alternative,
 		CandidateSelectionReceipt receipt, InputAuthorityFactorRow row, boolean unconstrained,
-		List<RelocationAction> relevantActions, Map<CompiledHopKey,Set<Integer>> directBindingPositions,
-		Set<CompiledHopKey> sourceOwners, List<PlacementState> derivedTargets) {
+		ReceiptObservationContext receiptObservations, List<PlacementState> derivedTargets) {
 		InputAuthority authority = row == null ? null : row.authority();
 		return new InputAuthorityObservation(stateObservation(alternative.state(), derivedTargets),
-			receiptObservation(receipt, relevantActions, directBindingPositions, sourceOwners),
+			receiptObservations.observe(receipt),
 			authority == null ? null : authority.kind(),
 			authority == null ? null : authority.expectedFType(),
 			identity(authority == null ? null : authority.sourceDecision()),
@@ -1834,11 +1978,43 @@ final class ExactPhysicalModel {
 		return Collections.unmodifiableMap(owners);
 	}
 
+	/** Source-version observations are immutable for this model construction only. */
+	private static final class ReceiptObservationContext {
+		private final Set<PlacementIdentity.RelocationActionKey> actionKeys = new java.util.HashSet<>();
+		private final Map<CompiledHopKey,Set<Integer>> directBindingPositions;
+		private final Set<CompiledHopKey> sourceOwners;
+		private final Map<CandidateSelectionReceipt,ReceiptObservation> observations = new IdentityHashMap<>();
+
+		private ReceiptObservationContext(List<RelocationAction> relevantActions,
+			Set<CompiledHopKey> sourceOwners) {
+			for(RelocationAction action : relevantActions)
+				actionKeys.add(action.key());
+			directBindingPositions = relevantDirectBindingPositions(relevantActions);
+			this.sourceOwners = sourceOwners;
+		}
+
+		private ReceiptObservation observe(CandidateSelectionReceipt receipt) {
+			// Equal-but-foreign receipts must not inherit an owner's identity observation.
+			return receipt == null ? null : observations.computeIfAbsent(receipt, current ->
+				createReceiptObservation(current, actionKeys.isEmpty(), directBindingPositions,
+					sourceOwners, actionKeys::contains));
+		}
+	}
+
+	/** Cold inventory scan retained for differential observation tests. */
 	private static ReceiptObservation receiptObservation(CandidateSelectionReceipt receipt,
 		List<RelocationAction> relevantActions, Map<CompiledHopKey,Set<Integer>> directBindingPositions,
 		Set<CompiledHopKey> sourceOwners) {
 		if(receipt == null)
 			return null;
+		return createReceiptObservation(receipt, relevantActions.isEmpty(), directBindingPositions,
+			sourceOwners, key -> relevantActions.stream().anyMatch(action -> action.key().equals(key)));
+	}
+
+	private static ReceiptObservation createReceiptObservation(CandidateSelectionReceipt receipt,
+		boolean noRelevantActions, Map<CompiledHopKey,Set<Integer>> directBindingPositions,
+		Set<CompiledHopKey> sourceOwners,
+		java.util.function.Predicate<PlacementIdentity.RelocationActionKey> relevantRelocation) {
 		// Relocation activity reads DIRECT bindings only at its obligation consumers'
 		// input positions. Keep every alias/self-owner obligation, not just this Link.
 		Set<Integer> directPositions = directBindingPositions.getOrDefault(
@@ -1850,8 +2026,7 @@ final class ExactPhysicalModel {
 				bindings.add(new BindingObservation(binding.kind(), binding.inputPosition(),
 					binding.source(), null));
 			else if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.RELOCATION
-				&& relevantActions.stream().anyMatch(action ->
-					action.key().equals(binding.relocationAction())))
+				&& relevantRelocation.test(binding.relocationAction()))
 				bindings.add(new BindingObservation(binding.kind(), binding.inputPosition(),
 					null, binding.relocationAction()));
 		}
@@ -1859,7 +2034,7 @@ final class ExactPhysicalModel {
 		// Do not infer source membership from its current consumer role. Keep the
 		// empty-action case unchanged; no new authority-completeness assumption.
 		return new ReceiptObservation(identity(receipt.rule().parentOccurrence()),
-			relevantActions.isEmpty() || sourceOwners.contains(receipt.rule().parentOccurrence())
+			noRelevantActions || sourceOwners.contains(receipt.rule().parentOccurrence())
 				? CandidateRealizationReference.of(receipt.rule(), receipt.realization()) : null,
 			List.copyOf(bindings), receipt.provenWorkerPool(),
 			receipt.nativeWorkerPoolResidencyWitness(),

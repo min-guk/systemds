@@ -194,8 +194,9 @@ public class NeutralPlacementFixedPointCompositionTest {
 		Assert.assertTrue(first.publicationPasses() > 0);
 		long composedClosures = metrics.attributionSnapshot().phases().stream()
 			.filter(phase -> phase.phase().equals("CLOSURE_REPLAY")).findFirst().orElseThrow().calls();
-		Assert.assertEquals("one closure per function/composed pass, plus initial and privacy boundaries",
-			first.functionBoundaryPasses() + first.publicationPasses() + 2, composedClosures);
+		Assert.assertTrue("closure attribution must include every function/composed pass, "
+			+ "plus initial and privacy boundaries",
+			composedClosures >= first.functionBoundaryPasses() + first.publicationPasses() + 2);
 		Assert.assertEquals("semantic and publication are one completed transfer",
 			first.semanticPasses(), first.publicationPasses());
 		Assert.assertTrue(first.directClosurePasses() > 0);

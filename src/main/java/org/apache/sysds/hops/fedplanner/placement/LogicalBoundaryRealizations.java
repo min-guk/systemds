@@ -58,6 +58,7 @@ public final class LogicalBoundaryRealizations {
 	private final Map<CompiledHopKey,List<CompiledHopKey>> sources = new IdentityHashMap<>();
 	private final Set<CompiledHopKey> declared = Collections.newSetFromMap(new IdentityHashMap<>());
 	private final Set<CompiledHopKey> encoded = Collections.newSetFromMap(new IdentityHashMap<>());
+	private final Set<CompiledHopKey> formalInputs = Collections.newSetFromMap(new IdentityHashMap<>());
 	private final Map<CompiledHopKey,List<Option>> options = new IdentityHashMap<>();
 	private final List<Relation> relations;
 
@@ -227,6 +228,9 @@ public final class LogicalBoundaryRealizations {
 			boolean read = valueRead && edge.kind() == ConstraintKind.SAME_PLACEMENT
 				&& (edge.evidence().startsWith("cfg-function-output-value:")
 					|| "function-formal-input".equals(edge.evidence()));
+			if(valueRead && edge.kind() == ConstraintKind.SAME_PLACEMENT
+				&& "function-formal-input".equals(edge.evidence()))
+				formalInputs.add(edge.right());
 			boolean argument = target != null && target.kind() == NodeKind.FUNCTION_INPUT
 				&& (FunctionInputTransfer.isArgumentConstraint(edge)
 					|| edge.kind() == ConstraintKind.CONJUNCTIVE
@@ -410,6 +414,11 @@ public final class LogicalBoundaryRealizations {
 		return List.copyOf(result);
 	}
 
+	/** Uses this snapshot's canonical boundary sources to bind one replacement candidate. */
+	CandidateRuleFact bindDeclaredCandidate(CandidateRuleFact fact) {
+		return bind(fact);
+	}
+
 	private List<CandidateRuleFact> bind(List<CandidateRuleFact> facts, Set<CompiledHopKey> targets,
 		Map<CompiledHopKey,List<Integer>> slots, Session session) {
 		List<CandidateRuleFact> result = new ArrayList<>(facts);
@@ -427,6 +436,13 @@ public final class LogicalBoundaryRealizations {
 	private CandidateRuleFact bind(CandidateRuleFact fact) {
 		CompiledHopKey target = fact.key().parentOccurrence();
 		if(!declared.contains(target) || fact.status() != CandidateEvaluationStatus.AVAILABLE)
+			return fact;
+		return bindBoundaryCandidate(fact);
+	}
+
+	private CandidateRuleFact bindBoundaryCandidate(CandidateRuleFact fact) {
+		CompiledHopKey target = fact.key().parentOccurrence();
+		if(fact.status() != CandidateEvaluationStatus.AVAILABLE)
 			return fact;
 		List<CandidateEmissionFact> emissions = new ArrayList<>();
 		boolean unchanged = true;
@@ -470,8 +486,10 @@ public final class LogicalBoundaryRealizations {
 		if(type == null || type == FType.PART || type == FType.OTHER || sources(target).isEmpty())
 			return null;
 		List<List<Option>> choices = new ArrayList<>();
+		boolean completeSources = true;
 		for(CompiledHopKey source : sources(target)) {
-			List<Option> candidates = options.getOrDefault(source, List.of()).stream()
+			List<Option> available = options.getOrDefault(source, List.of());
+			List<Option> candidates = available.stream()
 				.filter(option -> option.state().output() == FederatedOutput.FOUT
 					&& option.state().fType() == type
 					&& (option.realization().key().layoutKind() == PlacementLayoutKind.VALUE_MAP
@@ -483,10 +501,22 @@ public final class LogicalBoundaryRealizations {
 			for(Option candidate : candidates)
 				unique.putIfAbsent(candidate.reference(), candidate);
 			List<Option> exact = List.copyOf(unique.values());
-			if(exact.isEmpty())
+			if(exact.isEmpty()) {
+				// Calls to one shared function body can form an acyclic runtime chain
+				// that appears cyclic in the context-insensitive graph (Y=f(X), Z=f(Y)).
+				// Seed the formal from already grounded call sites; the incremental
+				// session revisits it when later call sources become executable. Final
+				// validation still requires every declared source in one completed clause.
+				if(formalInputs.contains(target) && available.isEmpty()) {
+					completeSources = false;
+					continue;
+				}
 				return null;
+			}
 			choices.add(exact);
 		}
+		if(choices.isEmpty())
+			return null;
 		List<List<Option>> products = new ArrayList<>();
 		enumerateOptions(choices, 0, new ArrayList<>(), products);
 		List<CandidateRealizationSupportClause> clauses = new ArrayList<>(products.size());
@@ -494,7 +524,8 @@ public final class LogicalBoundaryRealizations {
 			// A shared fixed map already has a native realization. Retain every
 			// heterogeneous product even if another product has a common map.
 			DurableAnchorKey first = product.get(0).pool();
-			if(first != null && product.stream().allMatch(option -> option.pool() != null
+			if(completeSources && !formalInputs.contains(target) && first != null
+				&& product.stream().allMatch(option -> option.pool() != null
 				&& PlacementIdentity.samePhysicalWorkerPool(first, option.pool())))
 				continue;
 			List<CandidateRealizationInputBinding> bindings = new ArrayList<>(product.size());

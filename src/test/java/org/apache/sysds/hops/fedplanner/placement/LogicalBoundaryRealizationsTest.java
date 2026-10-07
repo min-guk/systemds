@@ -169,7 +169,7 @@ public class LogicalBoundaryRealizationsTest {
 		CandidateEmissionFact emission = reader.allowedEmissionFacts().get(0);
 		CandidateEmissionRealization valueMap = emission.realizations().stream().filter(realization ->
 			realization.key().layoutKind() == PlacementIdentity.PlacementLayoutKind.VALUE_MAP).findFirst().orElseThrow();
-		Assert.assertEquals("Only AB/BA need a relation; AA/BB retain fixed-map candidates", 2,
+		Assert.assertEquals("The formal keeps all call-context maps, including fixed-pool contexts", 4,
 			valueMap.supportClauses().size());
 		CandidateSelectionReceipt argumentA = receipt(closed, f.argument, POOL_A);
 		CandidateSelectionReceipt writerB = receipt(closed, f.writer, POOL_B);
@@ -195,6 +195,41 @@ public class LogicalBoundaryRealizationsTest {
 		List<CandidateRuleFact> missing = closed.stream().filter(fact -> fact.key().parentOccurrence() != f.writer).toList();
 		var relation = new LogicalBoundaryRealizations(f.nodes, f.edges, f.origins, missing);
 		Assert.assertThrows(IllegalArgumentException.class, () -> relation.validate(missing));
+	}
+
+	@Test
+	public void formalInputCanBootstrapFromGroundedCallButMustCloseEveryCallBeforeValidation() {
+		Fixture f = new Fixture();
+		List<CandidateRuleFact> missingWriter = replaceOwner(f.facts, f.writer,
+			unavailable(fact(f.facts, f.writer)));
+		List<CandidateRuleFact> seeded = LogicalBoundaryRealizations.close(
+			f.nodes, f.edges, f.origins, missingWriter);
+		CandidateEmissionRealization provisional = fact(seeded, f.reader).allowedEmissionFacts().stream()
+			.flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> realization.key().layoutKind()
+				== PlacementIdentity.PlacementLayoutKind.VALUE_MAP)
+			.findFirst().orElseThrow();
+		Assert.assertTrue("The grounded call argument must seed the shared formal",
+			provisional.supportClauses().stream().anyMatch(clause -> clause.inputBindings().stream()
+				.anyMatch(binding -> binding.source().rule().parentOccurrence() == f.argument)));
+		Assert.assertThrows("A provisional seed cannot publish before every call source is grounded",
+			IllegalArgumentException.class,
+			() -> new LogicalBoundaryRealizations(f.nodes, f.edges, f.origins, seeded).validate(seeded));
+
+		List<CandidateRuleFact> completed = replaceOwner(seeded, f.writer, fact(f.facts, f.writer));
+		completed = LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, completed);
+		new LogicalBoundaryRealizations(f.nodes, f.edges, f.origins, completed).validate(completed);
+		CandidateEmissionRealization completeMap = fact(completed, f.reader).allowedEmissionFacts().stream()
+			.flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> realization.key().layoutKind()
+				== PlacementIdentity.PlacementLayoutKind.VALUE_MAP)
+			.findFirst().orElseThrow();
+		Assert.assertTrue("The completed formal proof must name both call sources",
+			completeMap.supportClauses().stream().anyMatch(clause -> {
+				Set<CompiledHopKey> sources = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+				clause.inputBindings().forEach(binding -> sources.add(binding.source().rule().parentOccurrence()));
+				return sources.containsAll(List.of(f.argument, f.writer));
+			}));
 	}
 
 	@Test

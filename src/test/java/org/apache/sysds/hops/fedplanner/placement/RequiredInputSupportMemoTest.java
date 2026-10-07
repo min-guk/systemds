@@ -71,6 +71,37 @@ public class RequiredInputSupportMemoTest {
 	}
 
 	@Test
+	public void coldSortSerializesSharedLayoutOnceWhenGlobalCachesAreFull() {
+		CandidateEmissionRealization sharedLayout = durable("shared-layout");
+		java.util.ArrayList<CandidateRealizationReference> sources = new java.util.ArrayList<>();
+		for(int index = 0; index < 96; index++)
+			sources.add(CandidateRealizationReference.of(rule("source-" + index), sharedLayout));
+		java.util.Collections.shuffle(sources, new java.util.Random(20261007));
+		sources.add(sources.get(10));
+		CandidateRealizationSupportClause clause = clause(sources.toArray(CandidateRealizationReference[]::new));
+		List<CandidateRealizationReference> expected = clause.inputBindings().stream()
+			.map(CandidateRealizationInputBinding::source).distinct().sorted().toList();
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.setNormalizedSignatureCacheMaxCharsForTest(0L);
+		PlacementIdentity.setActiveMetrics(metrics);
+		try(PlacementAnalysis.CanonicalTextScope ignored = PlacementAnalysis.beginCanonicalTextScope(0, 0)) {
+			List<CandidateRealizationReference> actual = clause.requiredInputSupport();
+			long serializations = metrics.snapshot().signatureSerializations();
+			Assert.assertEquals(expected, actual);
+			for(int index = 0; index < expected.size(); index++)
+				Assert.assertSame("stable sorting retains the original reference", expected.get(index), actual.get(index));
+			// Each distinct rule serializes its occurrence, region and input state;
+			// the shared realization's emission, anchor and partition are rendered once.
+			Assert.assertTrue("one sort context must reuse each structural key: " + serializations,
+				serializations <= 3L * 96 + 3);
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+			PlacementIdentity.setNormalizedSignatureCacheMaxCharsForTest(null);
+		}
+	}
+
+	@Test
 	public void equalForeignClauseDoesNotShareExactIdentityEntry() {
 		CandidateRealizationReference first = reference("foreign-a");
 		CandidateRealizationReference second = reference("foreign-b");

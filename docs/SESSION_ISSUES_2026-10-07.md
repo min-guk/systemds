@@ -435,6 +435,279 @@
 
 - **StepLM 통합 게시 검증 완료**: d26bb59610 통합 코드의 common88건+joint/cost/sparse121건=Java209/209 PASS(실패·오류·skip0), Python35/35 및 package/diff check PASS. `steplm-joint-publication-04` 실제 Docker10/10 PASS, StepLM5계수·선택순서 `[3,1,5]`는 CP와 정확히 같고 전체 audit/conversion 위반0이다. 소스3,614개·class/resource4,390개가 테스트·빌드 기준과 같다. 독립 병합 리뷰 CLEAR. 상세는 `docs/experiments/steplm-joint-compact-20261007/publication-validation.json`; 이후20초 목표의 baseline으로 이 게시본을 사용한다.
 
+
+## P1/GLM 로컬 통합 검증 기록
+
+## P1_FULL / GLM correctness 수정과 origin/main 통합 — 검증 중
+
+- **문제 정의/요청**: 장시간 진행된 P1_FULL/GLM provenance·authority·binding 수정을 보존하면서, 사용자의 요청에 따라 최신 `origin/main`을 fetch/merge하고 실험과 검증을 다시 실행한다.
+- **통합 환경**: worktree `/home/mchoi/w1357-cost-model-main-20261006`, branch `integrate/cost-model-main-20261006`. 기존 HEAD `7b0656c29c456cec47ab04ea456265c057763b83`에서 `origin/main`의 `129a2ad268`로 fast-forward했다. 커밋·push는 수행하지 않았다.
+- **보존/재현 자료**: `/home/mchoi/fedplanner-boundary-correctness-20261006/main-integration-129a2ad/`에 원래 20개 수정 파일의 hash, patch, tar, 정확한 stash 식별자와 적용 로그를 보존했다. `verification/` scratch는 stash/commit 대상에서 제외했다. stash는 검증 완료 전까지 유지한다.
+- **관측 충돌/원인**: `PlacementRelationClosure.java`, `JointValueMapRelations.java`, 10월 6일 세션 문서의 동시 수정. 원격의 CFG grounding·partial-factor 개선과 로컬의 exact native output authority·DIRECT/VALUE_MAP 재바인딩이 같은 위치에 추가되어 텍스트 충돌이 발생했다.
+- **해결 요약**: Closure는 원격의 전체 CFG grounding과 `ruleKeys` 수렴 조건을 유지하고 grounding 뒤 coupled DIRECT/VALUE_MAP 재바인딩을 실행한다. Joint는 partialAlignment의 absent-key/selected-null 의미와 selected fixed-pool authority 검증을 각각 유지했다. 원격의 geometry 정밀도·prefix pruning·runtime relocation 공유와 로컬의 selected-anchor prevalidation도 보존한다. 두 세션 문서의 기록을 모두 남겼다.
+- **의사결정 근거/고정 원칙**: analysis가 소유한 정확한 후보·clause·source occurrence를 authority로 사용한다. 합법 후보 삭제, 부분 Global 처리, planner 시간/메모리 budget, TW/TR 또는 recompile CP/FOUT 완화, runtime fallback/repair를 추가하지 않는다.
+- **기존 실행의 처리**: v31 Maven은 209 tests 중 208 PASS/기존 skip1, 실패·오류 0으로 완료했다. v30 GLM은 W3가 publication을 통과했지만 전체 선택 완료 전에 main 통합 요청으로 소유한 두 container만 종료했다. 이를 planner 실패나 전체 성공으로 계산하지 않는다. 종료 영수증은 `superseded-premerge-runs.json`에 남겼다.
+- **수정 파일**: 위 두 production 충돌 파일 및 10월 6일 문서. 나머지 기존 correctness 파일은 자동 병합했으며, 정확한 목록은 통합 manifest와 git diff로 확인한다.
+- **검증 계획/현재 결과**: 충돌 marker 및 `git diff --check` 검사 통과. merged source의 기존 20개 회귀 클래스와 원격 변경에 대응하는 8개 클래스를 Maven으로 검증 중이다 (`merged-v32-maven-command.json`, `merged-v32-maven.log`). 완료 후 새 class snapshot으로 Docker P1_FULL Local W1/W3·Global W3, GLM Local W1/W3 및 수치/runtime 회귀를 수행한다. 실험 진입점은 `scripts/fedplanner/run_LAN_docker.sh`만 사용한다.
+- **잔여 이슈**: 병합본 GLM 전체 계획 선택과 runtime 검증은 아직 확인되지 않았다. 기존 HEAD의 검사 결과로 병합본 성공을 주장하지 않는다.
+- **잠재 회귀 위험/감지**: grounding 순서·exact/dynamic geometry·selected-null 의미가 달라지면 합법해 누락 또는 잘못된 authority가 생길 수 있다. P1 반복 함수, native VALUE_MAP authority, partial truth 전체 completion 대조, emission 음성 테스트와 실제 Docker case를 함께 검사한다.
+
+### 병합본 검증 결과 누적
+
+- **동결 입력**: `engine-merged-v32/freeze-receipt.json`에 main classes 4,373개, test classes 2,827개와 전체 Java source inventory를 보존했다. 복사 전후 hash를 대조했다. 실행 중인 실험은 mutable Maven target을 참조하지 않는다.
+- **P1_FULL 계획**: Local W1 **PASS 95.893초**, Local W3 **PASS 63.133초**, Global Exact W3 **PASS 65.408초**. 모두 `planningSucceeded=true`, `runtimeExecuted=false`. 증거 `merged-v32-p1-summary.json` 및 `p1-merged-v32-{local,global}/results/B/`.
+- **경계 실행 검증**: `run_LAN_docker.sh --joint-boundary-e2e`로 model-proof **10/10 PASS (37.318초)**, 선택한 경계 cases **6/6 PASS**. 정상 5개(function calls, loop toggle, dynamic reverse, correlated AA/BB)는 CP/FED 수치 일치 및 runtime audit 위반 0, private 함수 입력 혼합 음성 1개는 예상대로 거부했다. 기본 전체 13개를 실행한 결과가 아니다. 증거 `/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/joint-runtime/merged-v32-boundaries/result.json`.
+- **첫 Maven 결과**: 28 classes, 253 tests 중 failure1/error0/기존 skip1. 유일한 실패는 신규 원격 `JointPartialTruthTest.functionAliasesPreserveSelectedPoolProof`의 early-proof 개수 기대다. exact truth·frozen dense parity는 통과했다. 나머지 251개는 PASS이며 원본 결과는 `merged-v32-surefire-reports/`, `merged-v32-maven-results.json`에 보존했다.
+- **테스트 기대 실패의 원인**: native TRead origin 복원 상태에서 동일 factor의 81개 조합은 모두 합법이다. 이 origin 복원만 제거한 scratch 대조에서는 80개 합법 조합을 잘못 거부하고 8개 prefix를 조기에 FORBIDDEN으로 인증했다. 기존 `provenSubtrees>0`은 이 잘못된 거부에 의존했다. production의 provenance/authority 규칙을 유지하고, 합법 공간 복원을 직접 검증하면서 실제 합법·불법 조합이 공존하는 fixture로 조기 proof 검사를 분리한다. 증거 `joint-partial-v32-diagnostic-1/`; 독립 검토로 같은 pool의 다른 writer·foreign key·계산 operand를 origin으로 차용하지 않음을 확인했다.
+- **v32 최종 GLM 결과**: W1/W3는 모두 publication을 통과했으나 JVM 10GiB heap 부족으로 전체 planning은 실패했다. W1 1,975.560초는 activation descriptor의 StringBuilder 확장, W3 1,925.163초는 regional merge의 PreciseCost 생성에서 OOME가 발생했다. 증거 `glm-merged-v32-local/results/B/glm_w{1,3}.{json,log}`. 둘 다 `planningSucceeded=false`, `runtimeExecuted=false`다.
+- **테스트 기대 보완/최종 Maven**: 원래 PRIVATE_AGGREGATE 함수 fixture는 합법 completion이 존재하며 false forbidden이 0임을 직접 검사한다. 조기 subtree proof는 같은 PRIVATE_AGGREGATE source의 `colSums(X/Y)` 결과를 함수 인자로 넣어 합법·불법 completion이 공존하는 별도 fixture에서 검사한다. PUBLIC-only test는 추가하지 않았다. `JointPartialTruthTest`와 `NativeAliasOriginProjectionTest` focused Maven **8/8 PASS**, `test jar:jar` 성공. 최초 전체 실행에서 변경되지 않은 클래스와 합친 최종 증거는 **28 classes, 254 tests 중 253 PASS/기존 skip1, failure/error0**이다 (`merged-v32-final-verification.json`). 전체 28개를 동일한 source로 재실행했다는 의미는 아니며, 첫 전체 실행 후 test-only 수정에 해당하는 두 클래스를 다시 실행했다.
+- **실험/최종 jar 동등성**: 최종 production Java source 1,652개 및 jar 내 class 3,793개의 hash가 frozen engine과 모두 일치한다 (`merged-v32-final-jar-frozen-parity.json`). jar SHA256 `5a7e8e30723edd05d5dc75d6b99fa899349b6b4514b8fbb75d0ec402f03763fc`. source 기대 오류 보완 과정에서 production 동작은 변경하지 않았다. 이 jar로 `--cost-runtime-validation`의 별도 6개 수치 실행을 시작했다.
+- **최종 수치 실행**: aggregate/shape/linear/control/branch_true/branch_false **6/6 PASS**, 각각 기대값 92/4480/3588/304/95/92와 일치, runtime fallback·repair 각각 0. Docker 전체 46.558초, exit0. 증거 `merged-v32-numeric-summary.json`, `merged-v32-numeric-runtime/run-q7fdb7pd/receipt.json`.
+- **GLM 중간 단계**: W3는 937.825초, W1은 약 1,117.171초에 common analysis/final publication을 통과해 planner/model 생성으로 진입했다. 두 조건 모두 원래 `Final publication has an unbound relocation action` 지점을 통과했다. 이는 전체 계획 선택 성공을 뜻하지 않는다.
+
+## GLM joint CFG 분석의 모델 생성 지연 — 관측 완료, 성능 개선 미적용
+
+- **증상/환경**: 위 병합본 GLM의 `planner_begin` 이후에도 `MODEL_SETUP` 전에 CPU 작업이 이어진다. W3의 main stack은 `ExactPhysicalModel.addJointFactors → JointValueMapRelations.from → PlacementJointInputAnalysis.analyzeFor → Environment.stableKey`였다. 증거 `merged-v32-glm_w3-late-thread-sample.txt`.
+- **원인으로 확인한 코드**: `tuplesForReads`는 동일한 read-ordinal 목록만 cache하며 다른 목록은 main CFG 전체를 다시 분석한다. loop fixed point는 누적 header 전체를 재처리하고 함수 body는 각 caller 환경마다 다시 실행한다. fixed-map relation을 제외하는 factor 단계도 relation 생성 뒤다. 이 반복 작업은 확인했지만, 실제 query별 상태 수나 조합 폭발 발생 여부는 계측하지 않았다.
+- **최종 관측/검증 경계**: W3는 model setup 678.753초를 마치고 Local merge 단계까지 진행했다. 마지막 checkpoint는 merges12,465, retainedSlots263,201,084, canonical upper20824.35973022729였지만 이후 OOME로 실패했다. 합법 incumbent가 있었다는 사실을 전체 계획 성공으로 계산하지 않는다. 이 반복 CFG 분석의 성능 refactor는 수행하지 않았다.
+- **잔여 제약**: 현재 main의 CFG 분석에는 기존 `MAX_ENVIRONMENTS=16_384` 초과 시 예외를 던지는 제한이 남아 있다. 이 세션에서 추가하지 않았고 이번 GLM 실행이 한도에 도달했다는 증거도 없다. DP solver의 시간/메모리 budget과 별개로 확인한 기존 분석 한도이며, 제거·표현 개선 여부를 별도로 점검할 대상으로 기록한다. 한도 도달을 정상 계획으로 처리하거나 Cartesian fallback으로 바꾸지 않는다.
+- **잠재 회귀 위험**: 성능 때문에 CFG row 상관관계를 버리면 함수·분기·loop의 정확성이 손상된다. 표현/재사용을 변경할 때는 exhaustive partial truth 및 실제 CP/FED 수치 검증을 유지해야 한다.
+
+
+## 최신 main `93706bbaa9` 재통합과 GLM 메모리 부족 — 검증 중
+
+- **문제 정의/환경**: 사용자가 최신 origin/main에서도 같은지 재확인을 요청했다. fetch 결과 이전 `129a2ad268` 이후 7개 새 커밋이 발견되어 `93706bbaa9e054e8db4c014ce2dd529498fc0e2b`로 fast-forward했다. 기존 수정 25개 파일은 `main-integration-93706bbaa9/`의 tar/patch/hash 및 stash `8c3edcf4003cd71d8ddb51e547bad3d16e582776`로 보존했다. 현재 branch와 origin/main의 commit은 동일하고 로컬 수정은 별도다.
+- **충돌/해결**: `CandidateSelections`는 complete selected derived-anchor 검증과 새 joint 최종 gate를 모두 유지했다. `JointValueMapRelations`는 support-certified alias projection과 기존 SourceQuery/native alias/fixed-pool proof를 함께 유지하며, fixed-pool 전용 생성자의 새 final map을 empty로 초기화했다. `JointPartialTruthTest`는 matrix-scalar partial proof와 기존 PRIVATE_AGGREGATE alias 전체 truth/mixed-choice 검사를 모두 남겼다. Oct 6/7 문서도 양쪽 기록을 보존했다.
+- **원격 변경의 범위**: 새 alias projection은 기존 support 제약을 전제로 joint factor의 내부 alias 축 하나만 없애며 domain/합법 후보/cost 자체를 제거하지 않는다. 원격 7개 커밋은 activation descriptor 및 regional merge의 OOME 지점을 직접 수정하지 않았다. 실제 GLM 전체 결과는 병합본 재실행으로 판단한다.
+- **OOM 수정 1**: `ExactPhysicalCostModel`의 전체 activation descriptor를 큰 StringBuilder로 만들지 않고 기존 FingerprintWriter로 V1 의미 문자열의 SHA-256을 순차 계산한다. 저장 descriptor는 V2 digest 표현이므로 outer cost fingerprint는 달라질 수 있지만 후보/비용은 유지된다. per-class decomposition descriptor는 이 변경의 범위 밖이다. 독립 legacy digest 대조, 2백만 observation mask 크기/민감도 및 canonical cost 회귀를 추가했다.
+- **OOM 수정 2**: `ExactCategoricalSolver`의 순수 boundary merge 전체에서 발생하는 실제 OOME를 기존 `PlannerResourceGuard.ResourceExhaustedException`으로 바꾼다. 배열 외 PreciseCost 등 임시 allocation도 기존 Local 자원 부족 경로에 전달한다. 기존 message는 읽기만 하고 cover 교체는 성공 이후이므로 실패한 merge가 부분 결과를 게시하지 않는다. Global exact 경로는 이 API를 사용하지 않으며 실패를 부분 Global 해로 바꾸지 않는다. 시간/메모리 예산·후보 cap은 추가하지 않았다.
+- **회귀/검증**: v32 동결 classes에서 metadata 할당 및 첫 output cell 작성 후 실패를 주입한 새 boundary 회귀 두 개는 예상대로 raw OOME로 RED였다 (`glm-oom-v33-boundary/red-v2-junit.log`). 수정 뒤에는 typed resource 예외·원래 cause·입력 비용/하한/decode 불변·정상 재병합을 검증한다. 병합본 40개 Java 클래스 Maven 및 새 동결 Docker P1/GLM 검증을 진행 중이다.
+- **독립 검토**: joint/provenance/derived-anchor/final gate 통합에서 blocking issue 없음. merge OOME 처리도 입력 불변 및 성공 후 cover 교체 범위에 한정되어 CLEAR다. optimizer 전체 OOME catch나 오류 무시는 추가하지 않는다.
+- **잔여 이슈/잠재 회귀**: GLM 전체 성공은 아직 미확인이다. merge 이외 단계의 할당 실패 및 per-class descriptor 메모리 사용은 남을 수 있다. streaming 의미 digest 변경은 모델 식별자에 영향을 주므로 descriptor 동치와 비용 회귀로 감지한다. support-conjoined alias projection을 독립 predicate 동치로 오용하지 않도록 exhaustive truth 회귀를 유지한다.
+
+
+### v33 최초 회귀 결과와 새 privacy golden 차이
+
+- **최초 회귀**: 40개 클래스 337건 중 334 PASS, 기존 skip1, failure2/error0. 실패는 `EarlyPrivacyPruningLegalSpaceParityTest`의 새 metadata/control-flow normalized snapshot golden 두 개뿐이다. 원본 reports/log/source hash는 `merged-v33-initial-surefire-reports/`, `merged-v33-initial-maven-results.json`, `merged-v33-maven-command.json`에 보존했다. build 중 Java source 변경 0이다. 별도 동결 class의 derived-anchor selection 및 joint physical proof 11건도 통과했다 (`merged-v33-extra-unit.log`).
+- **원인 분리**: 순수 HEAD `93706bbaa9` 소스 overlay에서 원래 golden 두 개가 정확히 재현됐다. 병합본과 비교했을 때 node/state 및 AVAILABLE fact key 수, relocation action 4/8개, derived action 0개는 동일하다. 달라진 것은 metadata 4개·control 9개 AVAILABLE fact의 realization 내용이다. `PlacementRelationClosure`만 HEAD로 되돌린 격리 대조에서 원래 두 golden이 복원되고 Joint/LogicalBoundary 파일만 되돌려서는 복원되지 않는다. 기존 local closure의 exact native-output/DURABLE_MAP·CFG TRead realization 복원 영향으로 좁혔으며 구체적인 의미 assertion을 보강 중이다. 근거 `merged-v33-privacy-golden/`.
+
+- **golden 최종 처리**: 위 두 전체 snapshot golden만 갱신하고 기존 native geometry, privacy, early-pruning on/off parity assertion은 그대로 유지했다. 복원된 입력 경로의 의미 검증은 기존 NativeAliasOriginProjection/NativeValueMapFixedPool/DerivedFoutNativeAnchor 회귀가 담당한다. 표현의 개수에 의존하는 추가 `>=2` assertion 시도는 source reference가 같은 경우까지 구분하려 해 현재 코드에서도 실패했으므로 제거했다. 이를 이유로 production을 변경하거나 기존 검사를 약화하지 않았다. Closure-only ablation은 갱신된 전체 snapshot을 다시 이전 값으로 돌려 회귀를 검출한다.
+- **검증 중 동시 test 편집 감지**: 첫 focused build 도중 test helper가 수정됐으며 source hash 검사로 감지했다 (`merged-v33-final-focused-exit.json`). 해당 빌드는 실패했고 성공 근거로 쓰지 않는다. root가 test 소유권을 회수해 위 최소 변경으로 고정하고 `merged-v33-final2-focused-*`에서 재검증한다. production source 변경은 없다.
+
+
+### v33 최종 단위 검증 및 Docker 재실행 시작
+
+- 마지막 focused Maven은 7/7 PASS 및 `test jar:jar` exit0, Java source 변경0이다 (`merged-v33-final2-focused-*`). production source는 최초 40-class 실행과 동일하다. 최초 실행의 변경되지 않은 클래스와 test-only 재검증을 합친 결과는 40 classes337 tests 중 **336 PASS/기존 skip1, failure/error0**다. 별도2 classes11 tests도 PASS했다. 전체40개를 test-only 수정 뒤 다시 실행한 결과로 표현하지 않는다 (`merged-v33-final-verification.json`).
+- `engine-merged-v33/freeze-receipt.json`에 main4,378 files/test2,835 files/main-source1,652/test-source1,940을 고정하고 복사 전후 hash를 대조했다. 최종 jar class들도 동결 main classes와 일치한다 (`merged-v33-jar-frozen-parity.json`).
+- 이 snapshot으로 `run_LAN_docker.sh`를 통해 GLM Local W1/W3, P1_FULL Local W1/W3·Global W3 및 선택된 경계6개/수치6개를 재실행한다. GLM/P1은 동일 Docker image/CPU4/memory16GiB/JVM10GiB compile-only 조건이다. 런타임 경계/수치 검증은 별도 기존 Docker lane이다. 현재는 시작 상태이며 완료 결과를 확인해야 한다.
+
+
+### v33 P1 및 실제 경계/수치 runtime 결과
+
+- **P1_FULL**: Local W1/W3·Global Exact W3 모두 PASS, `planningSucceeded=true`, `runtimeExecuted=false`. 각 case의 objective raw bits는 v32와 동일하다. W3 Local/Global의 categorical assignment도 동일하며 W1 Local은 동일 비용의 assignment가 달라졌다. 모델 비용 동일을 모든 계획의 물리 실행 동일로 확장하지 않는다. Local materialization/relocation 수는 W1 2/0, W3 0/0으로 유지됐다. 증거 `merged-v33-p1-summary.json`.
+- **경계 runtime**: model-proof10/10 및 선택한6 cases 모두 PASS. 양성5개 CP/FED 검증과 PRIVATE 혼합 음성1개 예상 거부를 확인했다. runtimeConversionViolations는 빈 목록이다. 기본 전체13개 실행은 아니다. 원본 `/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/joint-runtime/merged-v33-boundaries/result.json`, 요약 `merged-v33-joint-summary.json`.
+- **수치 runtime**: aggregate/shape/linear/control/branch_true/branch_false 6/6 PASS, 기대값 92/4480/3588/304/95/92와 일치했다. runner exit0, 증거 `merged-v33-numeric-summary.json` 및 `merged-v33-numeric-runtime/run-ahggfmqq/receipt.json`.
+- **현재 남은 실행**: GLM W1/W3의 전체 계획 선택 완료 여부를 확인 중이다. 위 성공을 GLM 전체 성공으로 계산하지 않는다.
+- **정적 후속 관찰**: 큰 Boolean mask를 문자열로 전개하는 경로가 resolved per-class `ExactActivationClassFactorDecomposition.descriptor` 및 cross-execution upload `SupplySharingGroup.semanticDescriptor`에 남아 있다. 전자는 cost-surface 생성 중 문자열이 누적 보관되고 후자는 transient peak다. 현재 global activation digest 수정으로 바뀌지 않은 범위이며 v33에서 실제 OOM 재발을 확인한 것은 아니다. 새 후보 cap/timeout을 추가하지 않고 실행 결과로 다음 변경의 필요성을 판단한다.
+
+
+### 실험 자료 보관 공간 부족 — 안전하게 공간 확보
+
+- v33 GLM 실행 중 진단 thread dump를 저장하려다 root filesystem의 `No space left on device`가 발생했다. 현재 GLM 로그/실행 실패로 관측한 오류는 아니며 진단 저장만 실패했다. `/` 여유281MiB, `/grid/3` 여유761GiB였다.
+- 실행 중 Docker mount와 겹치지 않음을 확인한 완료 artifact `glm-v2-engine`, `glm-v3-runtime-engine`, `diagnostic-engine`, `joint-stages`만 `/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/archived-artifacts/`로 복사했다. 모든 file hash가 원본·사본·복사 후 원본 사이에 일치함을 확인한 후 이전 위치를 symlink로 연결했다. 원본 경로와 데이터는 보존되며 이동 영수증도 destination에 기록했다. 현재 GLM input snapshot/campaign 및 다른 작업의 파일/컨테이너는 변경하지 않았다.
+- 조치 후 root filesystem 여유2.5GiB를 확보했다. 현재 실행을 유지하며 진단 저장을 재시도했다. 이 이동으로 측정시간 개선을 주장하지 않는다.
+
+- 컨테이너 image에는 `jcmd`가 없어 첫 재시도는 exit127이었다. host JDK의 jcmd로 현재 소유한 GLM W3의 host PID를 조회해 Thread.print를 저장했다 (`merged-v33-glm-w3-host-analysis-stack.txt`). 약610초 시점 main thread는 RUNNABLE이며 CPU588.5초, `WorkerPoolAnchorResolver.resolveDirectSourcePools → relocationsMeasured → closePlacementAndFeasibility`에서 실제 연산 중이었다. 디스크 조치 때문에 GLM을 중단/재시작하지 않았다.
+
+
+### v33 GLM 최종 실패와 v34 문자열 메모리 축소 — 진행 중
+
+- **실행 결과**: 최신 origin/main `93706bbaa9`와 로컬 correctness 수정의 병합본에서 GLM W1/W3 모두 `planningSucceeded=false`, `runtimeExecuted=false`다. W1 1,356.828초는 `freezeOrdinaryFactorsAfterPreflight → freezeValidatedFactor`의 double[] 할당(592,096 bytes)에서 실제 OOME가 발생했다. W3 1,451.950초는 merge12,470/clusters11,161까지 진행한 뒤 raw OOME로 종료됐다. 기존 provenance/unbound relocation 오류는 발생하지 않았다. 증거 `merged-v33-glm-final-summary.json`, `glm-merged-v33-local/results/B/`이며 main 단독 검증으로 표현하지 않는다.
+- **추가 관측/판단 경계**: W3의 merge wrapper는 실제 OOME를 typed resource 예외로 전달했지만, 기존 optimizer는 계속 다음 merge를 시도했다. 마지막 checkpoint resourceRejected4,631 이후에도 여러 실제 실패를 받은 뒤 종료됐다. 최종 raw OOME stack이 없어 마지막 할당 위치는 특정하지 않는다. host jcmd의 live histogram에서 double[] 4,879,922,488 bytes, byte[] 4,298,968,544 bytes를 확인했다 (`merged-v33-glm-w3-live-histogram.txt`). byte[] 전체를 descriptor 문자열에 귀속할 증거는 없다.
+- **v34 변경**: resolved/zero-cost activation-class descriptor도 V1 의미 바이트를 순서대로 SHA-256에 넣고 V2 digest만 보관한다. SupplySharingGroup는 전체 문자열을 만들지 않고 outer fingerprint에 동일 legacy 바이트를 직접 흘려보낸다. Boolean 배열은 작은 기존 digest buffer에 ASCII를 채워 원소마다 임시 UTF-8 배열도 만들지 않는다. 후보/비용/정렬 기준을 변경하지 않으며 숫자 비용표 자체의 메모리가 줄었다고 주장하지 않는다.
+- **수정 파일**: `ExactActivationClassFactorDecomposition.java`, `ExactPhysicalCostModel.java`, 해당 activation-class/derived-sharing 테스트. v33의 merge OOME wrapper는 그대로다.
+- **검증**: 독립 legacy descriptor digest와 canonical/encoded 비용 raw-bit 대조, 2백만 원소의 resolved/zero-cost mask 회귀, 복수 demand/branch/reuse 및 UTF-8 이름을 포함한 sharing fingerprint legacy 대조를 실행한다. 기존 streaming fingerprint/preflight/activation/alias 회귀를 focused Maven에서 함께 확인한다 (`merged-v34-descriptor-focused-*`).
+- **잔여 이슈/위험**: W1 비용표 구축 및 W3 실제 메모리 부족 처리가 여전히 재검증 대상이다. 큰 동적 식별자 중복은 enum으로 표현할 수 없으므로 기존 shared canonical text/사전 공유를 재사용할 수 있는지 별도로 확인한다. digest 표현 변경으로 outer certificate는 달라질 수 있다. 정상 비용·후보·최적해, legacy 바이트, 실행 수치 회귀로 감지한다. 임의 budget/candidate cap/부분 Global/runtime fallback은 추가하지 않는다.
+
+
+### enum/사전 공유 검토와 v35 구현 계획 — 진행 중
+
+- **사용자 질문/판단**: 문자열을 enum 또는 dictionary로 대체할 수 있는지 검토했다. AuthorityKind/InputAuthorityKind, ExecType/FType/FederatedOutput은 이미 enum이다. 실행 시 생성되는 source/action/rule/realization/clause 식별자는 동적 값이며 기존 per-node `AlternativeSignatureContext`와 `NormalizedText`의 공유 표현을 재사용한다. 전역 interning이나 순회 순서 ID/해시로 authority를 치환하지 않는다.
+- **확인된 복사 경로**: `ExactPhysicalModel.nonCandidate`는 context가 있는데도 긴 전체 signature를 평탄화한다. relocation-source 후보가 동일 execution의 rule/realization/clause/input 내용을 반복 보관할 수 있다. CAPTURED 후보 역시 InputAuthority 전체 signature를 flat leaf로 만든다. context를 두 경로에 연결하고 동일한 legacy 바이트 순서의 공통 조각을 공유하는 것이 최소 변경이다. 4.30GB byte[] 전체가 이 경로라고 단정하지 않으며 작은 독립 fixture와 재실행에서 측정한다.
+- **사전 회귀 계획**: 기존 eager 생성기를 oracle로 두고 domain 순서·중복 제거·전체 signature 바이트·fingerprint·hard truth·canonical 비용을 비교한다. 새 회귀는 기존 CAPTURED 공유만으로 통과하지 않도록 relocation-source/input-authority 경로의 중복 표현을 직접 검사한다.
+- **Local 실제 OOM 처리 계획**: 순수 atomic merge가 실제 allocation OOM으로 실패한 시점의 cover/전체 검증된 incumbent는 바뀌지 않았다. 이 경계에서 message/candidate/cache 참조를 해제한 뒤 인증된 lower/upper/전체 assignment로 기존 RESOURCE 결과를 만든다. 단일 요청이 JVM 최대치보다 큰 preflight 거절은 다른 pivot 탐색을 유지한다. Guard의 diagnostic fallback도 실제 allocation failure 여부를 typed flag로 보존한다. 부분 변경된 cover 복구나 optimizer 전체 OOM catch를 추가하지 않는다.
+- **검증/원칙**: v34 focused Maven 9 classes 50/50 PASS, source 변경0, main/test/source 동결 완료 (`merged-v34-descriptor-focused-summary.json`, grid3 `engine-merged-v34/freeze-receipt.json`). v35는 실제 merge OOM 주입 RED/GREEN 및 Global 전체 exact 완료/실패 보장을 함께 검증한다. 비용/합법 후보/authority를 축소하지 않고 임의 시간·메모리 budget, runtime fallback, 부분 Global 성공을 추가하지 않는다.
+- **잔여 이슈/회귀 위험**: 공유 캐시에서 객체 종류별 의미가 섞이거나 문자열 field 순서가 바뀌면 정렬/fingerprint가 달라질 수 있다. 실제 OOM과 preflight를 혼동하면 Local이 불필요하게 빨리 종료할 수 있다. 위 byte-level parity와 실제 원인 구분/전체 assignment 검증으로 감지한다.
+
+
+### v35 코드 준비 및 독립 회귀 근거
+
+- **문자열 공유 구현**: 모든 nonCandidate 생성 경로에 기존 per-node context를 전달했다. InputAuthority는 position/kind/FType/source/action 순서의 조각으로 공유하고 nonCandidate는 state/rule/emission/realization/clause/action을 같은 canonical text에 연결한다. eager oracle는 유지한다. 변경 파일 `ExactPhysicalModel.java`, `ExactInputAuthorityOptimizationTest.java`.
+- **문자열 회귀**: 자연스러운 작은 fixture에는 relocation 실행 후보가 없어 첫 assertion 시도는 실패했다. 이 사실을 숨기지 않고 기존 PRIVATE_AGGREGATE 도메인/비용 검사는 그대로 복구한 뒤, 같은 실제 fact/authority로 formatter를 직접 호출하는 작은 독립 회귀를 추가했다. 이는 runtime 합법한 relocation 계획의 실행 증거가 아니라 representation 단위 증거다. v34에서 공유 child 부재로 RED, 수정 overlay에서 GREEN. legacy UTF-8/검증 fingerprint 일치, 원래 authority 객체 identity, shared canonical child 및 전체 domain/raw truth parity를 확인했다. 샘플 rope의 unique literal payload는 3,678→2,385 bytes/chars(35.2% 감소)이며 전체 heap 감소율로 주장하지 않는다. grid3 `signature-sharing-v35/`의 final logs에 보존했다. 처음 전체 클래스 실행은 잘못된 fixture 실패 이후 대형 logreg 완료 전에 중단해 superseded로 기록했다. 최종 통합은 큰 분석 method 한 개를 제외한 해당 클래스 8개 method를 명시적으로 선택한다.
+- **Local 실제 OOM 구현**: pure merge helper가 입력 list 생성까지 보호하고 실제 allocation failure를 typed flag로 구분한다. preallocated diagnostic fallback도 flag=true다. 실제 실패에서는 allocation-free cover 검사(미리 할당한 BitSet)를 통과한 뒤 message/candidate/cache 참조부터 해제하고 기존 RESOURCE 결과를 만든다. preflight 예외는 종전대로 다른 pivot을 시도한다. 실패 merge 시간도 최종 checkpoint 이전 helper finally에서 dpNanos에 반영한다. 변경 파일 `IncrementalRegionalOptimizer.java`, `PlannerResourceGuard.java`와 두 테스트.
+- **Local 회귀**: 새 seam/flag가 없는 v34 compile RED는 API 차이 증거로만 보존했다. 별도 scratch mutant에서 새 API/seam을 유지하고 실제 allocation branch만 비활성화한 결과 22 tests 중 정확히 새 OOM 회귀 한 개가 `expected RESOURCE but was EXACT`로 실패했다. 수정본은 관련 30/30 PASS. 첫 성공 merge 후 OOM, 독립 optimum3 대비 lower≤3≤upper, 전체 assignment/canonical 비용, 추가 conditional 탐색 없음, 마지막 merge 시간 포함, 일반 오류 전파 및 preflight 재시도를 검증했다. grid3 `regional-exhaustion-v35/{mutant-junit,green-junit}.log`.
+- **통합 진행**: writer 모두 수정 중단 후 root만 shared target Maven을 실행한다 (`merged-v35-integration-*`). Java source 전후 hash를 검사한다. 성공 후 별도 immutable v35 snapshot에서 P1 Local W1/W3·Global W3, GLM Local W1/W3 및 경계/수치 runtime을 재검증한다. GLM은 동일 CPU4/container16GiB/JVM10GiB이며 실제 OOM 시 grid3에 heap dump를 저장한다. 진단 저장 시간 때문에 순수 성능 비교로 사용하지 않는다.
+- **보관 조치**: 완료한 v32/v33 engine도 active Docker mount와 겹치지 않음을 확인한 뒤 grid3 archive로 hash 검증 복사하고 원래 경로를 symlink로 유지했다. 코드/원본 입력/기존 검증 경로는 보존되며 이동 receipt는 archive에 있다.
+
+
+### v35 통합 PASS 및 Docker 저장 경로 복구
+
+- **통합 결과**: 20개 선택 클래스, 140/140 PASS, failure/error/skip0. Java source 변경0, Maven `test jar:jar` exit0, 313.731초다. `engine-merged-v35`의 main4,379/test2,837/source1,652+1,940 파일을 hash 검증해 동결했다. JAR의 class3,799개가 동결본과 일치하며 SHA-256은 `f22ab0aaa3dbb756fc9d1e4f68c4ee67ae90b647f26e0371c5bb2a9ae7343d3f`다. grid3 `merged-v35-integration-*`, `merged-v35-jar-frozen-parity.json`. 독립 resource 검토는 CLEAR이고 보호 범위는 pure main merge다. scoring/private projection 등 모든 OOM을 복구한다는 의미는 아니다.
+- **실행 시작 실패/원인**: 처음 v35 campaign/engine을 grid3에서 직접 Docker bind했다. Snap Docker daemon은 이 경로를 빈 폴더로 보며 P1은 probe ClassNotFound, GLM은 JFR 출력 파일 생성 실패로 JVM 초기화 중 종료됐다. 모두 1초 이내, planner 미실행이다. 같은 immutable class 파일을 /home 경로로 바꿨을 때 Docker 파일 조회가 성공했다. 이를 planner/실험 성능 실패로 계산하지 않는다. 최초 grid3 `merged-v35-{glm-w1,glm-w3,p1-local,p1-global}-*` 기록은 보존했다.
+- **복구**: main/test/source snapshot을 /home의 새 v35 engine에 실제 복사하고 원래 freeze manifest와 전부 대조했다. campaign metadata 경로와 classpath도 /home로 설정했다. 과거 v32/v33 archive의 host symlink는 유효하지만 Snap Docker에서 재실행하려면 같은 방식으로 /home에 restage해야 한다. 기존 동결 데이터/로그를 삭제하지 않았다.
+- **진단 조건**: GLM은 `settings=profile,dumponexit=true`의 JFR CPU 샘플을 저장한다. /home 여유가 2GB 미만이므로 최대10GB의 자동 uncompressed heap dump는 제거했다. 주어진 CPU4/container16GiB/JVM10GiB와 planner 후보/비용은 그대로다. profiler가 있으므로 순수 성능 개선 수치로 비교하지 않는다. root에서 표준 JDK RecordingFile로 execution sample의 단계/leaf/project-method 및 GC pause를 요약한다.
+- **현재 실행**: home `glm-merged-v35-w1`, `glm-merged-v35-w3`, `p1-merged-v35-local`, `p1-merged-v35-global`을 `run_LAN_docker.sh`로 시작했다. runner 기록은 grid3 `merged-v35r1-*`다. 경계6개와 수치6개도 같은 runner로 시작했다. 경계 stage는 Snap이 볼 수 있는 새 home `joint-stages-v35`이며 결과 자료는 host writer가 grid3에 보관한다. 아직 최종 성공으로 주장하지 않는다.
+
+
+### v35 P1/경계/수치 검증 완료 및 GLM 초기 CPU 프로파일
+
+- **P1_FULL 계획**: Local W1 113.239초, Local W3 71.655초, Global Exact W3 76.568초로 세 case 모두 PASS다. `planningSucceeded=true`, `runtimeExecuted=false`. 각 case를 같은 모드의 v33과 대조했을 때 objective raw bits와 categorical assignment가 모두 동일하다. Local W1 materialization/relocation은 2/0, W3는 0/0이다. descriptor V2로 outer fingerprint는 달라질 수 있다. grid3 `merged-v35-p1-summary.json`. 공유 host·동시 실행 조건이므로 순수 속도 개선으로 해석하지 않는다.
+- **경계 runtime**: model proof 10/10과 선택된 6 cases 모두 PASS다. 양성 5개는 CP/FED 수치 일치, private 함수 입력 혼합 음성 1개는 예상 거부를 확인했다. class/overlay preflight PASS, runtime conversion/audit 위반 0이다. 기본 전체 13개를 실행한 것은 아니다. grid3 `merged-v35-joint-summary.json`, `joint-runtime/merged-v35-boundaries/result.json`.
+- **수치 runtime**: aggregate/shape/linear/control/branch_true/branch_false 6/6 PASS, 기대값 92/4480/3588/304/95/92와 일치했다. 각 runtime fallback/repair count는 0이다. grid3 `merged-v35-numeric-summary.json`, home `merged-v35-numeric-runtime/run-vtc9v86s/receipt.json`.
+- **GLM 초기 측정**: W3의 실행 초반 JFR execution sample 5,597개 중 `Environment.stableKey` 2,337개와 `Definition.stableKey` 492개로 합계 50.5%를 차지한다. 전체 5,483개가 placement-analysis stack으로 분류됐다. 이 구간 GC pause 합계는 6.121초다. grid3 `merged-v35-w3-early-jfr-summary.tsv`, home `glm-merged-v35-w3/early-analysis.jfr`. 샘플 비율은 정확한 CPU 시간 비율 또는 전체 GLM 실행 비율이 아니다.
+- **원인과 범위**: `PlacementJointInputAnalysis.Environment`는 완성된 key를 이미 캐시하지만, with/observe/nextBlock에서 새 Environment를 만들 때 맵 전체를 복사하고 모든 Definition을 다시 문자열화한다. loop/header·함수 호출·read query 반복에서 이 비용이 누적된다. Definition key는 provenance를 생략하지만 record equality는 포함하므로 key-only interning으로 바꾸면 의미가 달라진다. 동일 Definition 갱신 생략·불변 map 공유·기존 문자열 key의 lazy memoization은 별도 최소 개선 후보이며 현재 수정하지 않았다.
+- **판단/잔여 작업**: 초기 공통 분석에서는 반복 문자열 생성이 큰 CPU 병목이라는 근거가 있다. 전체 GLM의 최대 병목 및 이전 live byte[] 4.30GB의 소유자가 이 경로라고는 아직 결론 내리지 않는다. GLM W1/W3는 같은 frozen engine에서 실행 중이며 모델 생성·DP와 전체 planning 완료를 확인해야 한다.
+
+- **더 긴 분석 샘플로 보정**: 00:24:35–00:36:28 UTC 누적 JFR에서 28,584 execution samples 중 Environment/Definition stableKey는 5,364+1,241=6,605개(**23.1%**)다. 첫 약5분에는 비중이 높지만 00:30 이후에는 이 두 경로의 CPU sample이 없고 closure의 geometry/support 비교·hash·canonical text 비교가 중심이다. 초기 50.5%를 전체 GLM 비율로 일반화하지 않는다. grid3 `merged-v35-in-progress-profile-summary.json`, `merged-v35-w3-late-analysis-{jfr-summary,hotspots}.tsv`. 전체 allocation sample의 weight 합계는 누적 임시 할당량 추정이며 live heap 크기가 아니다.
+- **추가 보관**: /home 여유가 816MiB로 줄어 완료된 v32/v33 GLM/P1 campaign과 두 진단 폴더를 grid3 archive로 옮겼다. active Docker mount와 무관함 및 source/copy/source-after inventory hash 일치를 확인하고 원래 경로는 symlink로 유지했다. v35 active engine/campaign은 이동하지 않았다. archive의 각 `*-move-receipt.json`에 근거를 보존했고 /home 여유1.5GiB를 확보했다.
+
+
+### v35 GLM 모델 재분석 및 DP 메모리 관측 — 실행 중
+
+- **단계 진행**: 공통 분석은 W1 1,185.949초/W3 978.269초로 완료됐다. W3 MODEL_SETUP도 749.986초에 완료됐으며 seed 52.976초 후 full encoded model의 지역 DP로 진입했다. 아직 최종 계획 선택 성공으로 기록하지 않는다. profiling 및 공유 host 실행이므로 v33 대비 시간 개선/퇴보를 단정하지 않는다.
+- **모델 생성의 CPU 경로**: `ExactPhysicalModel.addJointFactors → JointValueMapRelations.from → PlacementJointInputAnalysis.tuplesForConsumer/analyzeFor`에서 입력 관계를 다시 분석하며 Environment/Definition key를 재생성하는 stack을 W1/W3 모두 관측했다. W3 시작부터 약20분까지의 profile은 54,671 samples이며 두 stableKey 경로 8,828개 외에 `PlacementIdentity.fields`, appendToken/list 및 signature cache 작업도 상위에 있다. 전체 GLM의 최종 비율은 아니다. grid3 `merged-v35-w3-model-{jfr-summary,hotspots}.tsv` 및 `merged-v35-{w1,w3}-late-model-thread.txt`.
+- **메모리 단계 구분**: W3 모델 생성 중 live histogram의 byte[]는 1,315,396,344 bytes, full-GC 직후 총 heap은 2,093,340,040 bytes였다. 이후 DP 초기 live histogram에서는 double[] 3,283,174,448 bytes가 가장 크고 byte[]는 362,732,552 bytes였다. 따라서 문자열 재생성의 CPU 비용과 숫자 비용표의 메모리 비용을 구분한다. 서로 다른 시점의 byte[] 전체를 문자열 또는 특정 변경의 절감량으로 단정하지 않는다. 두 명시적 histogram GC는 각각 약1.44/1.42초이며 프로파일에 포함되어 있다. grid3 `merged-v35-w3-{model,dp}-live-histogram.txt`.
+- **입력/fingerprint 독립 확인**: v33/v35 GLM의 공통 analysis fingerprint가 달라 입력 변화를 점검했다. metadata/privacy/shape(n=50,000,d=128)/worker endpoint·ROW range/GLM 인자/비용 환경은 동일하다. script/config는 run root 치환 후 동일하며 Docker/Java 명령은 경로·container name·JFR 옵션 외에 동일하다. 동결 placement Java68개/class581개 및 builtin DML299개도 동일하다. 전체 federated address가 AnchorPartition.workerId signature에 포함되고 analysis fingerprint는 경로를 제거하지 않으므로 경로 차이로 hash 변화가 가능하다. 동일 경로 재실험으로 유일 원인을 입증한 것은 아니다. 후보/비용/실행 의미를 fingerprint 문자열만으로 비교하지 않는다.
+
+
+### v35 GLM 최종 결과와 v36 support table 수명 개선
+
+- **상태/증상**: v35 Local W3는 전체 planning 1,995.001초로 PASS, W1은 2,083.803초 후 binary support restriction의 double[] 30,563,872-byte allocation에서 실제 OOM으로 실패했다. W3는 Local TARGET_REACHED이며 upper20,824.359728278476/lower20,821.370754298612, gap0.0143553%다. Global optimum 또는 runtime 실행 성공이 아니다. 공통 분석978.269초, MODEL_SETUP749.986초, OPTIMIZATION249.686초다.
+- **원인/해결**: support arc consistency 뒤에도 FrozenInputs가 이미 소비한 lazy 원본 표를 계속 보유했다. `ExactPhysicalReducedSolver.restrictToSupportedValues`에서 `values(index)`를 `takeValues(index)`로 바꿔 ordinal별 source 소유권을 넘긴다. 현재 변환 중 source/destination의 동시 존재와 원래 dense factor 소유권은 유지된다. 후보/비용/순서/동률 의미를 바꾸지 않는다.
+- **검증**: frozen v35에서 80MB 회귀 1/2 OOM RED, 수정 후 같은 heap 2/2 GREEN. 기존 reducer 포함37/37, root Maven12 classes121/121 PASS, source변경0. v36 P1 Local W1 55.036초/W3 36.202초, Global Exact W3 36.738초 모두 PASS이며 v35 objective raw bits와 전체 assignment가 동일하다. v36 GLM W1/W3는 같은 CPU4/container16GiB/JVM10GiB에서 profiler를 끄고 재실행 중이다. 근거 grid3 `support-transfer-v36/`, `merged-v36-integration-summary.json`, `merged-v36-p1-summary.json`, home `engine-merged-v36/freeze-receipt.json`.
+- **pruning 범위**: 숫자 DP는 이미 동일 output boundary별 최소 비용, 불가능 prefix 제거, 관측상 동일 value quotient를 수행한다. 그러나 regional merge는 output Cartesian 크기의 dense 배열을 먼저 할당하며, 초기 support restriction/quotient도 큰 임시 표를 먼저 구축한다. pruning이 전혀 없는 것이 아니라 열거/저장 전에 충분히 이용하지 않는 경로가 있다.
+- **프로파일**: v35 W3 전체103,660 execution samples 중 Environment/Definition stableKey 및 PlacementIdentity fields/appendToken/list 직접 문자열 생성 경로33,097개(31.9%). DP live histogram에서 double[]3.283GB가 가장 크다. sampling비율은 정확한 wall/CPU시간 비율이 아니며 cumulative allocation은 retained heap이 아니다.
+- **잔여/위험**: 전체 GLM W1 완료는 v36에서 재검증 중이며 sparse merge나 공통 분석 재사용은 아직 이 변경에 포함되지 않는다. 중복 factor occurrence, support identity/reindex, mapping/canonical tie 및 original model 재사용 회귀로 ownership 오류를 감지한다.
+
+### GLM 전체 planning 20초 목표 — 진행 중
+
+- **요청/기준**: 사용자가 GLM 전체 planning이20초 미만일 때까지 계속하도록 명시했다. 기존 W1/W3 shape/privacy/cost, Docker image, CPU4/container16GiB/JVM10GiB를 고정한다. 각각 fresh JVM 3회 모두 whole compile-only `wallSeconds < 20`이고 완전한 선택/인증/최종검증이 성공해야 통과다. JVM 시작 전 container setup은 이 probe 값에 포함되지 않는다. 후보 축소, 비용/authority 완화, 임의 planner budget, 부분 Global, runtime fallback, persisted plan cache로 맞추지 않는다. Local 품질 기준도 유지한다.
+- **측정/상태**: `.omx/goals/performance/glm-under-20s/`에 evaluator command/contract, immutable 조건 baseline, 초기 FAIL checkpoint를 작성했다. `performance-goal` workflow와 명시적 Codex goal을 시작했다. source base는93706bbaa9+보존 로컬 수정이며 움직인 remote tracking2faff2a2를 최신 통합본이라고 주장하지 않는다.
+- **수정 계획**: (1) 동일 compiled program의 joint analysis cache를 publication 때 버리지 않고 유지한다. 같은 tracked-variable slice의 반복 실행과 Environment의 이중 map복사/반복 문자열 생성을 없앤다. (2) single-partition support proof는 전체 realization을 매번 훑는 동기 반복 대신 의존성이 바뀐 realization만 worklist로 갱신한다. finite3-bit monotone lattice의 least fixed point와 정확한 reference authority를 유지하며 입력 graph 자체를 줄이지 않는다. (3) regional numeric merge는 pure-hard message의 finite-support join을 먼저 적용해 합법 조합만 열거하고 기존 합산/동률을 보존한다.
+- **검증 계획**: 기존 frozen 의미 oracle 및 작은 랜덤/순환/누락 reference/동률 회귀를 먼저 작성한다. root만 Maven/shared target을 소유한다. source를 동결한 뒤 Docker GLM/P1과 correctness 검사를 반복한다. 전체 후보/비용/authority 계약은 단위 raw-bit·법적 상태 대조, P1 plan parity 및 runtime 수치 검증으로 확인한다.
+- **잔여/잠재 회귀**: 아직20초 미달성. logical tuple cache와 function boundary physical projection의 수명이 다르므로 후자의 기존 invalidation은 유지해야 한다. Definition.stableKey는 provenance를 생략하지만 equals는 포함한다. 새 worklist는 monotone/정확한 source match를 증명하며 누락 reference는 unavailable을 유지한다.
+
+### v37 분석/배치 proof 구현 및 단위 검증
+
+- **구현**: `PlacementJointInputAnalysis`는 full Definition.equals에 기반한 Environment no-op, 변경하지 않은 불변 map 공유, legacy key lazy 생성, analysis 수명 weak-key memo를 적용했다. 정확히 같은 expanded tracked-variable slice에 속한 consumer query를 함께 처리하고 tuple만 cache한다. arbitrary query는 최근1개 slice의 compact readSources만 재사용하며 전체 Observation 환경은 즉시 해제한다. 서로 다른 slice를 합치지 않는다. `PlacementRelationClosure.publish`는 이미 생성한 동일 jointInputAnalysis를 보존하고 기존 physical relation invalidation을 유지한다.
+- **proof 변경**: `exactSinglePartitionRealizationProofs`는 정확한 reference lookup을 local ordinal로 한 번 변환하고 static native/relocation/missing-ref clause를 준비한다. 세 비트가 단조 증가하는 동안 변경 source의 종속 realization만 queue에서 재검사한다. 전체 candidate inventory와 결과 enum 우선순위는 동일하다.
+- **회귀**: old frozenv36와 새 closure overlay에서 기존5+50개 무작위 순환 graph oracle1 테스트6/6 각각 PASS. 첫 랜덤 fixture의 중복 clause는 input contract 위반이어서 fixture에서 distinct 처리 후 검사했다. publication cache 회귀는 frozenv36에서 정확히 cache 보존 assertion RED, 새 closure에서 GREEN1/1. builder cleanup/재사용 후 이전 published logical tuple identity와 physical relation signature를 확인한다. 초기 scratch JVM의 vector module 누락은 실행 설정 오류였으며 --add-modules jdk.incubator.vector로 고쳐 측정했다.
+- **joint 검사**: environment/reaching-definition/value-map18/18 PASS. 별도 같은 compiled key를 가진 함수 context와 nonempty provenance의 warm/cold full JointTuple equality를 추가했고 reaching-definition12/12 PASS. 이 fixture들은 privacy-independent CFG 의미 회귀이며 PUBLIC-only planner acceptance 또는 privacy 검증으로 주장하지 않는다.
+- **독립 검토/잔여**: worklist 단조 고정점, missing/native/relocation, publication cache 수명 및 same-slice batch에 대해 CLEAR. 근거 grid3 `closure-worklist-v37/`, `joint-analysis-v37/`, `joint-analysis-v37-strengthened/`. 전체통합/GLM20초 목표는 미검증이며 숫자 DP의 sparse-hard merge를 같은 동결본에 통합 중이다. runtime/authority/후보 계약을 줄이지 않는다.
+
+### v36 전체 GLM 결과 및 v37 통합 시작
+
+- **v36 결과**: profiler 없는 같은 Docker 조건에서 W3는 전체1,445.893초 PASS, W1은1,464.117초 후 실패했다. W3의 objective raw bits와 전체 categorical assignment는 profiled v35와 동일하다. common671.196초/MODEL_SETUP548.939초/OPTIMIZATION208.881초/SELECTION12.566초다. profiler 조건 차이와 동시 실행 영향이 있으므로 v35대비 단순 성능 개선율은 주장하지 않는다.
+- **W1 잔여 문제**: v36도 binary support restriction의 dense 재구축에서 실제 OOM이다. 이번 요청 배열은57,666,744bytes(7,208,343doubles), available174,005,632bytes, max10GiB이며 committedProgramsAfterFailure0. takeValues의 임시 수명 개선만으로 전체 peak를 해결하지 못했다. 합법 후보를 버리지 않고 표 표현/사전 support 처리의 개선을 조사한다. 근거 grid3 `merged-v36-glm-final-summary.json`, home `glm-merged-v36-w1/results/B/glm_w1.log`.
+- **v37 Regional 변경**: pure-hard(+0/+INF, low raw+0, lower==high) message의 정확한 finite relation 교집합으로 union assignment를 방문한다. 합법 assignment에서는 hard+0을 포함한 모든 child를 종전 순서대로 합산하므로 double-double/lower 원래 연산을 보존한다. join 방문 순서가 canonical order와 달라 동률 cost-cut/backpointer는 unionCell순서를 비교하고 unreachable+INF row는 choice=-1을 유지한다.
+- **검증**: 전용4+기존 solver/boundary/regional/ablation 합계80/80PASS. frozenv36 RED2/4는 child evaluation13→6,10→4감소 assertion이다. canonical-tie cut을 다시 구형으로 만든 mutant는 [2,0]선택으로 canonical[0,1]기대에 실패했다. 근거 grid3 `regional-hard-join-v37/`. assignments/fullChildEvaluations는 논리적 full-product 상한을 유지하며 실제 sparse방문 횟수로 해석하지 않는다. 추가 finiteCells int[]는 actual heap에는 포함되지만 기존 retainedCells지표에는 포함되지 않으므로 정확한 retained byte총량을 주장하지 않는다.
+- **통합**: writer 모두 중단 후 root가 v37 23classes Maven test+jar와 source provenance 동결을 시작했다. 성공한 동일 snapshot에서만 다음 Docker실험을 실행한다. `.omx/goals/performance/glm-under-20s/build_iteration.py`가 root 소유 재현 커맨드다. 목표20초는 아직 달성하지 않았다.
+
+
+### v37 최종 결과와 v38 수정/통합 — 진행 중
+
+- **v37 결과**: 23 classes218/218PASS, source변경0으로 동결했다. Docker P1 LocalW1 49.927초/LocalW3 35.742초/GlobalW3 34.206초 모두 planningPASS이며 v36 objective raw bits와 전체 assignment가 같다. GLM W3는810.870초 planningPASS, common521.566초/model87.949초/optimization180.578초/selection15.814초이며 v36 objective/assignment와 같다. 이 실행은 중간에 JFR를 붙였으므로 최종20초 평가/정밀 성능 비교에 사용하지 않는다. W1은828.353초 뒤 binary restriction에서57,666,744bytes를 할당하다 실제 OOM, committedProgramsAfterFailure0이었다. 증거 grid3 `merged-v37-{integration,p1,glm-final}-summary.json`.
+- **v38 메모리 변경**: `ExactPhysicalReducedSolver`가 lazy PartialHardCostFunction binary를 full Cartesian 배열로 먼저 보관하지 않는다. 원래 구조/cap/dense/partial UNKNOWN-leaf 검증을 유지하고 dense와 deferred를 같은 AC fixed point에서 처리한 뒤 축소 표만 최종 freeze한다. frozenv37 -Xmx96m RED는38.72MB destination allocation OOM, 수정 회귀43/43PASS다. 검토 중 non-prefix[-1,value] 호출과 equal-but-distinct Variable에 대한 IdentityHashMap 오류를 발견해 prefix-only 호출/기존 equals mapping으로 수정했다. 두 오류를 복원한 mutant는2개 회귀가 예상대로 실패했다. dense/nonpartial source+destination peak는 종전대로 남는다. `deferred-binary-v38/`.
+- **v38 반복 계산 변경**: elimination order는 mutation step마다 fill-edge/degree/neighbor-cell을 한 번 계산하고 boxed ordinal/buffer를 재사용한다. 4개 기존 order, lexical tie 및 saturation을 independent legacy oracle와 대조했다. Closure는 CandidateRuleKey별 최신 logical replay fact 하나만 보관하며 owner identity/opcode/state/input/full proof-bearing realization이 모두 같을 때만 동일 fact를 재사용한다. legacy detail 전체는 유지하고 build 종료 때 비운다. relocation product 내부 signature 재사용도 기존 String 순서를 유지한다. 관련 focused6/6PASS, broader20PASS+기존ignored5이며 ignored를 검증 완료로 세지 않는다. `order-scoring-v38/`, `replay-fact-relocation-v38/`.
+- **pruning correctness 수정**: 독립 검토가 v37 sparse join에서 뒤쪽 hard infinity가 앞쪽 numeric overflow를 숨길 수 있음을 발견했다. `[MAX,1]+[MAX,2]+[INF,0]` 반례는 frozenv37에서 오류 없이3을 반환하여 RED다. 모든 합산 prefix가 exact/finite인 기존 dyadic certificate를 통과할 때만 모든 hard relation을 이용하고, 그렇지 않으면 첫 child hard만 이용한다. 정상 값/비용/후보는 삭제하지 않으며 기존 overflow와 canonical tie 계약을 복원했다. 첫 hard의 absorbing infinity 회귀도 추가했다. solver/merge/order/shared-preparation58/58PASS, `sparse-overflow-v38/`.
+- **검토/잔여**: reducer, sparse gate, order memo, Closure cache 모두 독립 코드 검토 CLEAR다. root만 v38 Maven28classes+jar/source동결을 실행 중이다. GLM20초는 미달성이고 W1 전체 완료도 아직 필요하다. 이후 같은 입력/자원, profiler 없는 새 JVM에서 측정한다. runtime fallback, Global 부분풀이, 임의 planner budget은 추가하지 않았다.
+
+
+### v38 통합/실험과 v39 추가 병목 제거 — 진행 중
+
+- **v38 통합**: 28classes243/243PASS, 실패/error/skip0, source변경0,206.432초. `engine-merged-v38`를 동결하고 동일 Docker 조건 GLM W1/W3를 실행했다. P1 LocalW1 50.388초/LocalW3 32.582초/GlobalW3 33.799초 PASS, v37 objective raw bits/전체 assignment 동일(`merged-v38-p1-summary.json`). GLM은 아직 최종 완료 전이며 두 경우 모두20초를 초과한 뒤 진단용 JFR를 붙였으므로 qualifying 성능 run으로 세지 않는다.
+- **관측**: W1의117초 profile 구간은5,040samples 중 Environment.stableKey stack1,119개, cumulative byte[] allocation weight481GB가 이 경로에 귀속됐다. lazy flat key도 새 environment마다 한 번 거대 문자열을 복사했다. W3 후반 common150초 profile은7,404samples이며 DurableAnchorKey 정렬/정규화와 continuity projection/single-partition graph 준비가 남았다. cumulative allocation은 추정 누적값이며 live memory 또는 wall시간 비율이 아니다. W3 common은506.858초로 아직20초와 큰 차이가 있다.
+- **v39 구현**: Environment는 기존 NormalizedText로 legacy UTF-16 연결 문자열과 같은 순서를 비교하고 명시적 stableKey 호출 때만 평탄화한다. 값/read map의 불변 segment를 공유하고 full Definition.equals/provenance 계약은 그대로다. 250개 randomized delimiter/Unicode/2-vs10 oracle와 cache미평탄화/공유 검사, joint21/21PASS. WorkerPool 직접 source 수집은 한 query 안에서 exact anchor signature를 한 번만 만들어 기존 TreeSet 순서/동등성/첫 객체를 유지한다. 두 anchor×48clauses fixture의 legacy frozenv38 직렬화858회 RED에서 수정6회 이하GREEN, 관련53/53PASS(`direct-pool-sort-v39/`). 실제 후보/authority 집합은 바꾸지 않는다.
+- **비용 fingerprint/model**: FingerprintWriter가 UTF-8 bytes를 기존8KiB buffer에 직접 쓰고 짧은 segment를 모아 digest에 넣는다. 유효 surrogate, malformed '?' replacement, chunk 및 numeric/boolean/finish 순서를 legacy SHA-256 oracle와 대조해9/9PASS. producer별 immutable output layout identity도 sharing group/consumer마다 재생성하지 않고 method-local identity cache를 쓴다. 출력map/가격/그룹화 키의 내용과 호출 필터는 유지한다. 독립 검토는 이 세 cache/encoding 영역 CLEAR.
+- **검증 중 발견한 기존 실패**: 추가 cost/sharing/fingerprint scratch31개 중30PASS, `ExactDownloadAuthorityAmbiguityRedTest.downloadIsCostedFromDurableFoutSourceAndNeverEncodedAsRelocationDemand`는 Global PCA order preparation에서 EXACT_VE_FACTOR_CELL_OVERFLOW로 실패했다. frozenv38 동일 class2개에서도 동일 method/stack으로1FAIL을 재현했다. cache 회귀로 단정하지 않으며 변경 코드의 PASS로 숨기지 않는다. 관련 cost assertions 뒤 optimize 단계의 기존 한계로 별도 남아 있다. 근거 `output-layout-cache-v39/{junit,frozen-v38-download-baseline}.log`. v39 정규 통합은 이 기존 실패 class를 제외한 관련 passed cost/sharing 회귀를 실행한다.
+- **Native revision 계획/위험**: 같은 bound owner를 root마다 DFS하던 검증은 before/after graph에서 각각 changed-owner 역도달성을 계산해 대조한다. 서로 다른 revision의 edge를 섞지 않으며 derived-FOUT/generated-root 예외와 exact identity를 유지한다. 100PASS+ignored1의 독립 continuity/lifecycle suite와 legacy DFS oracle를 확보했다. 검토가 freshQueryState에서 eager index rebuild의 불필요한 전체 scan을 지적해 immutable lazy index로 보완 중이다. 모든 writer 중단 후 root가 v39 source동결/통합을 진행한다.20초 및 최종 runtime 검증은 아직 남았다.
+
+
+### v38 최종 결과 / v39 진단 snapshot / v40 최적화 계획 — 진행 중
+
+- **관측**: v38 GLM W3는784.548688365초 전체 planning PASS다. common506.857910초, model29.397358초, cost surface71.094136초, optimizer157.511037초, selection14.759090초다. W1은994.946159556초에 exact numeric double[7,208,343] (57,666,744bytes) 할당 OOM으로 실패했고 committedProgramsAfterFailure0이다. 두 run 모두20초 초과 후 붙인 JFR 진단 run이며 qualifying 결과가 아니다.
+- **v39 검증/수명 보완**: Maven39classes381 tests중380PASS/기존 PUBLIC-only ignored1, failure/error0, source변경0이었다. helper의 skip0 gate는 의도대로 freeze를 거부했다. root는 동일 source receipt를 다시 검증해 이 결과를 **진단 전용** snapshot으로 별도 동결했다(`merged-v39-diagnostic-freeze.json`); 최종20초 evaluator의 skip0 기준은 바꾸지 않는다. Native lazy index/5개 reused-cache guard 수정은 독립 최종 검토 CLEAR다.
+- **v40 변경 계획**: requiredInputSupport의 distinct 후 natural sort가 comparator 호출마다 canonical context를 재생성하는 stack을 W1 model phase에서 확인했다. 기존 segmented canonicalComparator를 sort마다 하나 재사용하고 String 순서, distinct-equals 및 tie의 안정성을 유지한다. 기존 RequiredInputSupportMemo/Canonical tests와 cache 포화 시 실제 serializer call count 회귀로 검증한다. PhysicalCandidateState의 owner realization projection이 정확히 같은 commit은 single-partition fixed-point를 유지하고, 유효한 source-free clauses의3bits OR를 합친다. 변경 projection/missing-reference/last-key-wins/recursive dependencies는 보존한다. numeric lane은 W1의 계속 남은 dense allocation 원인을 별도로 해결한다.
+- **잔여/위험**: 목표20초, W1 전체 완료, 최종 same-source runtime은 미달성이다. 모든 변경은 불변 표현/동일 분석 재사용의 범위이며 후보 삭제·비용 변경·Global 부분풀이·임의 budget을 도입하지 않는다. cache key가 authority/proof 변화를 놓치거나 canonical order/tie를 바꾸는 회귀는 legacy differential oracle와 P1 exact parity로 검출한다.
+
+- **v40 root sort 검증**: RequiredInputSupportMemoTest에96개 input의 동일 layout 공유/중복 source/canonical legacy stable order를 고정했다. frozenv39는 global cache0일 때3,605회 직렬화로 RED, sort-scoped context 적용 후 상한291이하GREEN이며 관련8classes80/80PASS다. 더 넓은 KnownEqualityContractTest의 `knownFunctionBoundaryCanonicalOriginRemainsByteIdentical`는 frozenv39에서도 `PLACEMENT_FUNCTION_ROOT_UNPROVEN|function=pca`로 실패한다. 초기 scratch는 incubator module 누락도 있었으며 module을 넣은 baseline 재현과 구분해 기록했다(`required-support-sort-v40/`).
+- **v40 cost scope reuse**: v38 W3 compiled transfer path2,409samples 중 top-level realizationWorkerCount 경로498개가 반복 group×alternative worker 계산이다. 이미 불변 producer별 output-layout을 보관하는 동일 수명에서 worker count도 exact Alternative identity마다 한 번 계산하도록 변경한다. analysis/fallbackWorkers/physicalWorkerCounts는 해당 호출 중 고정이며 recursive visiting state는 매 top-level 첫 계산에서 그대로 유지한다. 비용/순서/최초 오류는 바꾸지 않으며 existing transfer-sharing/worker topology 회귀와 P1 objective parity로 검증한다.
+
+- **v40 Native comparison 계획**: v39 profile에서도 continuityProjection/중첩 hash가 계속 상위다. 하나의 old/next revision 비교에서 bound-owner 변경 seed 계산과 root/derived metadata 검사가 동일 owner의 exact projection을 중복 계산한다. revision-local identity map에 기존 before.equals→full projection 비교 결과와 projection 필요 여부만 저장해 두 경로가 재사용하도록 바꾼다. complete-delta hint 검증/우회, generated-root의 별도 약한 projection, before/after 역도달성을 그대로 둔다. 다른 revision 비교로 캐시를 넘기지 않으며 기존 비교 요청 metrics도 유지한다. legacy projection oracle/동등하지만 다른 owner identity/증거 변경과 기존 lifecycle 회귀로 확인한다.
+
+- **v40 현재 검증**: single-partition projection/3bit OR는10/10PASS+독립 검토CLEAR, Native revision 비교 memo는136PASS+기존PUBLIC-only ignore1/독립검토CLEAR, worker-count memo 및 비용/공유/UTF8 회귀36/36PASS/독립검토CLEAR다. Native 새 테스트의 frozen39 RED는 API 부재(NoSuchMethod)이며 성능 측정이 아니다. sort/context의80/80PASS도 독립검토CLEAR다.
+- **Outer direct closure 검토**: 완성 continuity와 invocation-local direct snapshot을 재사용하는 변경은24개 dirty-cone/집중 composition parity가 PASS였다. full composition suite의aggregate CLOSURE_REPLAY count expected8/actual10은 frozen39에도 그대로 재현되는 기존 mismatch다. reviewer는 derived anchor owner의 entry row가 같더라도 upstream 변화로 dirty cone에 들어가 pass중 변할 수 있음을 지적했다. referenced derived owner가 dirty일 때 전체 재계산하는 보완 회귀를 진행하며 이를 CLEAR 전 완료로 세지 않는다.
+
+- **v39 cost-surface 성능 회귀 확인**: W3 전체798.24430452초 PASS/기존objective·assignment 동일이나 cost surface125.965405초로 v38의71.094136초보다 길었다(둘 다 late-JFR진단 run). v39 해당 phase8195samples 중 FingerprintWriter.appendUtf8CodePoint1834/appendUtf81764 top samples이며 candidate/domain fingerprint stack5501개다. v38 같은phase3381samples 중해당candidate/domain286개였다. per-codepoint scalar encoder는 큰 immutable signature segment에 대한 JVM bulk UTF8 intrinsic을 잃었다. root는 pending-surrogate/buffer 수명/정확한 UTF8 digest 계약은 유지하면서 완전한 string segment를 getBytes(UTF8)로 일괄 인코딩하고 작은 encoded chunks만 digest buffer에 모으도록 수정한다. 기존 Unicode malformed/chunk-boundary/legacy digest differential9개와 비용공유 suite를 다시 검증한다. 반복 구간차이가 있으므로 정밀 개선율은 다음동결Docker에서확인한다.
+
+- **v39 최종**: GLM W3는798.24430452초PASS/이전objective raw bits·assignment 동일, W1은961.916307971초에 같은57,666,744-byte reduced dense allocation OOM, committedProgramsAfterFailure0이다. 두 run 모두late-JFR진단용이다. 원본 `merged-v39-glm-final-summary.json`. v40 bulk UTF8 수정 후cost/sharing/Unicode36/36PASS. Outer transitive metadata fallback 독립 재검토CLEAR,25/25 dirty suite와focused composition/lifecycle PASS. Numeric HardTable 통합·메모리 검증은 진행 중이다.
+
+- **v40 cache lifecycle 버그**: PlacementIdentity의analysis strong signature maps는end에서폐기되지만공유retained-char counter는남아후속cost/model의emptyweakcache가새문자열을저장하지못했다. begin/end에서signature전용weakmaps와counter도같이release한다. 한scope의budget을다른scope가재사용하지못하던계수오류만수정하며limit/후보/authority/physical/supportmemo는바꾸지않는다. budget8짜리scope종료후retained8 RED→0 GREEN, active→weak→active의수명/originalexactString검증포함7/7PASS. `/tmp`증거를grid3 `signature-lifecycle-v40/`로복사후모든hash대조했다.
+- **v40 HardTable 통합 계획/검증**: raw+0/+INF만비트셋에저장하고나머지값(예:-0)은기존dense로승격한다. callback/partial-prefix질의순서·검증·원본factor occurrence·cost/tie/overflow를유지한다. FrozenInputs/quotient/restrict/DenseFactor/dyadic/BoundaryMessage및singletoncompact가compactbacking을전달한다. 초기review가hardleaf merge의nullarray직접접근3곳을발견해lowerAt으로고쳤으며sparse/majority-finite merge→decode회귀를추가했다. partial-hard도prefixDFS로range를직접채운다. 최종실행자overlay `hard-table-v40l`12classes112/112PASS,48MiB constrained검증포함이다. root는동일source의42classes Maven test+jar+sourcehashfreeze를시작했으며finalnumericreview는진행중이다. 추가한Exact-FrozenRepresentation trace로다음W1의hardCells/numericCells실제구성을확인한다. 아직20초목표/W1완료를주장하지않는다.
+
+- **v40 빌드 중단/검증 경계**: 숫자 표현 재검토에서 BoundaryMessage.lowerMinMarginals에남은dense배열직접접근을발견했다. 현재src/main호출자는찾지못했지만hard-message API 동등성을깨므로수정한다. root는자신의v40 Maven자식PID만SIGTERM,33.324초후exit143/sourceChanges0 확인, engine동결없음이다. helper가중단된run에이전XML31개를복사한사실도발견해해당summary를fresh증거가아님으로표시하고, 이후helper는report mtime>=invocation start만집계하도록고쳤다. 다음동결은v41로새영수증을만든다. partial-hard가densetemporary를남긴다는review초기설명은stale read였고현재code는prefixDFS→bitset직접작성임을재확인했다.
+
+
+### v41 통합에서 확인한 메모리 fixture 전제 — 진행 중
+
+- **결과**: v41 전체42classes319tests 중318PASS/1FAIL, error/skip0, source변경0,222.830초다. 실패는 GlobalExactCompletionTest의 dense-first 가정이다. 4000² lazy factor가 평가 전128MB double배열을 할당해야 한다고 assertion하지만 새 표현은2MB bitset으로 시작하므로 callback에 도달한다. 후보/최적해 오류는 관측되지 않았고 동결은 자동 거부했다.
+- **수정 근거**: 물리적으로 필요한 메모리만으로 resource exhaustion을 판단한다. 표현이 작아졌는데 과거dense크기를 강제로 요구하는 guard는 추가하지 않는다. production 소스는 그대로 두고 테스트를 (1)40000² bitset200MB가64MiB JVM에서 callback0회로 실패, (2)4000²가첫숫자1d를읽은후128MB dense승격에서callback1회로실패, 두 경우 모두 plan반환없음으로 강화했다. retainedarrays의 실제 JVM OOM 검증은 유지한다.
+- **검증/위험**: v41r1은 변경된GlobalExactCompletionTest와ExactHardTableRepresentationTest를 Maven test+jar로 다시 실행한 뒤동결한다. v41에서 통과한318건은 같은 production source 증거이며 focused재검증과 구분한다. 마지막lowerMinMarginals수정포함HardTable113/113과독립검토CLEAR를확보했다.20초/W1전체완료는미달성이다.
+- **다음 병목**: v39 RegionalDP107.392초/12,609merges/866,973,741logicalassignments다. JFR추정 PreciseCost67.672GB 중valueAt43.450GB+plus20.250GB가94.1%다. 실제liveheap이아닌누적할당추정이다. 동일primitive high/low수식을써서임시객체만없애는scratchpatch를준비한다. 네가지legacy elimination order는word-bitset graph로같은결과를내는별도patch/2oraclePASS를준비했으며아직repo에적용하지않았다.
+
+
+### v42 common canonical union 개선 계획 — 진행 중
+
+- **관측**: v41r1 W3 common JFR6,474samples 중CanonicalTextComparison stack2,010개다. 주호출은3개이상realization group의mergeCanonicalClauseRuns sorting및후속중복검사이며단순String교체만의문제가아니다.
+- **계획/보존 조건**: immutable clause의전체equals/hash(공유canonical child list는hash를캐시)를사용하여안정적인입력순서대로정확중복을먼저제거한다. 이후unique entries만기존UTF-16 canonicalstable sort한다. hash충돌은equals로구분하고다른proof/binding/owner/pool을제거하지않는다. semantic equality는동일canonical text를보장하므로첫authority객체/descriptor와comparator-tie순서를보존한다. 기존post-sort중복pass는불필요하여삭제한다.
+- **검증 계획**: 먼저64개의부분중첩canonical runs회귀에서전체relation/첫authority/중복metrics를legacy와맞추고canonical comparisons가unique clause수에비례하는지RED확인한다. 기존Unicode/descriptor collision/hash collision/역순/foreignidentity/canonicalcache테스트를재사용한다. 성능향상은동결Docker에서측정하며현재계획은scratch가아닌root소유PlacementAnalysis영역에만적용한다.
+- **잠재 회귀**: fullhash비용이unique-heavy입력에서늘가능성이있으므로JFR에서반드시확인한다. cache/equals에누락된authority가없는지독립검토한다. 후보제약/비용/solver결과는변경하지않는다.
+
+- **v41r1 P1 path길이 대조 완료**: 최초P1 세run 모두PASS/assignment동일이나objective +25/+12/+12ULP였다. engine/source를그대로두고campaign tag길이만v39와같은v41로바꾸자 LocalW1 46.33796691초/LocalW3 32.879079792초/GlobalW3 31.708278357초 모두v39objective raw bits및전체assignment가정확히복귀했다. v41r1의2글자긴literal path가각각4bytes를추가하며W1 2literal/W3 4literal memory-writecost차이를설명한다. 근거 `merged-v41-path-length-p1-summary.json`. 다음timingtag는기존과같은두자리버전을쓴다.
+- **canonical union RED/GREEN**: 새64×81overlapfixture의fullrelation/firstauthority는같지만frozenv41r1은33,992canonical comparisons로RED였다. exact HashSetdedup→unique-onlystable sort구현은기존fullcanonical/cache/Unicode/collision/jointproof등8classes93/93PASS다. 첫broaderlaunch는잘못된testpackage로0개의유효test가실행돼ClassNotFound였으며, actualclass경로를해석한재실행만93PASS근거다. `canonical-union-v42/{red-junit,green-resolved-junit}.log`.
+- **추가patch 준비**: primitive boundarymerge29/29+독립CLEAR를root가적용했다. adaptive eliminationgraph는sparse지원유지, densewordpayload가sparsedirectedentry최소payload보다작을때만전환하여exact ordering을유지한다.3oraclePASS/독립CLEAR후적용했다. 고립100k fixture는구성메모리검증이지전체ordering성능검증이아니다. sparse score배열/boxing의기존재사용유지는보완중이다.
+- **v41r1 중간측정**: W3common431.041792232초/model+cost81.435648933초, W1common587.223269608초다. W3rootfreeze는16976factors/hard405430470cells/numeric32699209cells로compact실제사용을확인했다. 두GLM은20초초과후JFR진단모드이며전체완료/20초달성은아직주장하지않는다.
+
+
+### v41r1 completion and v42 frozen regression result (2026-10-07 03:33 UTC)
+
+- GLM W1 completed whole compile-only planning in 969.720425247s; W3 in 667.721132606s. Both planningSucceeded/executeScriptReturned=true with complete selected states. W1 no longer fails the 10GiB heap at factor freezing. Both are late-JFR diagnostic runs and neither meets 20s.
+- P1 v41r1 same-length campaign paths reproduced v39 selected assignments and raw objective bits for Local W1/W3 and Global W3. Initial two-extra-character paths legitimately changed string-literal memory cost; evidence in G/merged-v41-path-length-p1-summary.json and G/p1-v41r1-path-objective-explanation.txt. GLM next comparison uses ordinary v42 tag length.
+- v42 Maven freeze: 52 selected/reported classes, 414 tests, zero failures/errors/skips, no concurrent source changes; 238.098s build/test. Frozen H/engine-merged-v42. Integrated primitive merge, adaptive word-bitset order plus sparse buffer reuse, strict direct-frontier no-op reuse, full-equality canonical dedup before sort, cached immutable Native projection-set hashes, and corrected existing BoundaryPruning test fixture.
+- v42 Docker GLM W1/W3 and P1 Local W1/W3 + Global W3 launched with original image/resources/privacy/costs; qualification still pending.
+
+
+### v43 전송 단가 벡터 재사용 계획 — 진행 중
+
+- v41r1 W3 late JFR에서 physicalCostSurface stack2366개 중compiled transfer생성1244개이며 group×producer alternative 반복(worker memo lookup344개 포함)이 남아 있다. 단가 계산은 producer/analysis/frequency/alternative가 고정될 때 direction/FType/targetWorkers/bytes에만 의존한다. emission identity와 boundary는 active mask·소유권·공유그룹을 구별하지만 이 단가 자체에는 쓰이지 않는다.
+- 같은 producer 호출 안에서 이4항목의 exact key별 unitPrices 벡터를 최초 계산·검증 뒤 재사용한다. 그룹·activeSource·uploadSource·factor occurrence·creation scope는 합치지 않는다. Worker count는 producer alternatives의 순번별 primitive array로 최초 질의 시에만 계산한다. Cache는 호출밖으로 나가지 않고 현재 frozen 후보/cost context만 사용한다.
+- 기존 private-aggregation function GET, activation, compiled/native/staged transfer, worker-layout tests와frozen42 전체cost-surfacefingerprint대조를 먼저 준비한다. 실제속도는다음Docker에서검증한다. 위험은누락한단가의존성/공유배열변경이며모든unitPrices사용처가읽기전용임을확인했다. 이수정은runtime/candidate rule변경이아니다.
+
+- **v43 quotient 검증/통합**: factor별scope와axis stride를한번준비하고기존observation DFS에logicalcell을전달하여leaf마다전체tuple을다시encode하던반복을제거한다. factor/axis/active value/hash mix/raw bits/충돌시full equality/첫representative순서유지. unequal-domain40random및partial-hard/tie/repeatedfactor대조2/2,관련60/60PASS, frozen42 semantic transcript동일. 독립검토CLEAR후root통합. isolatedmicrobenchmark2.284x는Docker전체시간증거가아니며다음통합실험이필요하다.
+- **단가cache parity 조사**: 기존36회귀PASS지만두분석을같은JVM에서연속생성한probe의두번째wholefingerprint가달랐다. 413개의candidate/factor/transfer대조중3개의JOINT_VALUE_MAP unary factor순서만바뀌고scope별rawvalues는모두동일했다. 원인은단가계산보다앞선addJointPhysicalExecutionFactors의IdentityHashMap.values순회가allocation history에좌우되는기존비결정성이다. 현재patch는그순서를바꾸지않았으며freshJVM별fixture대조로분리확인중이다. 숫자값동일과전체지문동일을혼동하지않는다.
+
+- **v43 단가cache 최종대조**: freshJVM별functionfalse/true의모든DETAIL/FACTOR/TRANSFER/PARITY231/184줄이frozen42와byte동일이다. 각SHA c5b9d25d…/c3015d39…; 36/36회귀및독립검토CLEAR. 연속두분석probe의두번째순서차이는기존JOINT_VALUE_MAP factor순회비결정성으로별도기록하며, 이수정에서factorordering정책은변경하지않는다.
+- **v42 중간**: commonanalysis W1 504.365166480s/W3 418.181884794s; 이전587.223/431.042보다감소했지만20s목표미달성이다. P1 LocalW1 47.664948013s/LocalW3 35.247925437s/GlobalW3 32.619429058s 모두PASS및v39objective rawbits·assignment일치.
+
+
+### origin/main 93e82fecd5 통합 — 진행 중
+
+- **요청/상태**: 사용자 요청대로 fetch 후 HEAD를93706bbaa9→93e82fecd5 fast-forward했다. 기존62개변경파일은 grid3/merge-origin-main-20261007-v43의tar·staged/unstaged binarypatch·SHA manifest와gitstash67a1ccdabd14017c7249810858f4ef4231e084e7에보존했다. stash --index는upstream중첩으로적용전실패, 일반3-way apply후7파일충돌을해결중이다. verification/은stash/stage대상에서제외했다.
+- **통합 판단**: 양쪽문서는모두보존. JointValueMap은upstreamiterative alias DFS/memo와localexactnativeTRead compatibility bridge를결합(current기준조회). JointInput은upstreamimmutableDefinition자체stableKey와localsegmentedEnvironment/order/slice reuse를결합하고중복WeakMap은제거했다.
+- **physical proof index**: upstreamincrementalSinglePartitionProofIndex가동일ownerprojection이면즉시반환하도록localprojection재사용을합쳤다. local의standaloneprimitive3bitworklist는staticfixed-point경로에유지하고upstreammap기반평가기는incrementalindex에유지한다. 두경로모두동일leastfixedpoint/oracle로검증한다. 기존private캐시의mapobject교체여부는upstream의in-placeproofindex계약과달라질수있어값의정확성으로검증해야한다.
+- **relocation SCC**: upstreamproducer→consumercomponent순서를유지. 각SCC는동일Nativecontinuitysnapshot을읽고, completecomponentreplacement후nextRevisionWithCompleteCandidateDelta를한번호출한다. 변경된생산자를inventory에는반영하면서fixedVALUE_MAP증명만이전snapshot으로읽는자동병합오류를막는다. rawoptiondedup은resolver와독립이며fixedpool은exactreference의universalquery로사용시검증한다.
+- **검증/잔여**: JointInputscratch25/25PASS. 전체병합빌드/회귀·같은코드DockerGLM/P1·20초및runtime최종검증은아직남음. 기존엔진v42시간은병합본의성능근거가아니다.
+
 ## 최신 main ALS 확인 — 워크스페이스 정리 및 기존 실패 회귀 PASS
 
 - **요청/기준**: workspace를 정리하고 origin/main 기반으로 ALS를 확인한다. fetch로 확인한 `9668cb432f051d0313c5668719b9adadb0c60314`에 `verify/als-main-20261007`을 고정했다. 실행 중 remote ref가 전진해도 이번 결과의 기준을 바꾸지 않는다.
@@ -473,3 +746,180 @@
 - **실제 JAR 검증**: 방금 빌드한 JAR의 `scripts/builtin/steplm.dml`, `lmCG.dml`가 source/evaluation 정본과 정확히 같다. 이전 main의 실제 JAR는 새 preflight가 stale builtin bytes로 거부했다. 수정한7개 source/test/runner 파일은 두 저장소에서 byte-for-byte 일치한다.
 - **동기화 부수 차이**: 평가 runner에만 남아 있던 기존 cleanup 들여쓰기 및 profiling CSV 열 누락을 현재 SystemDS main의 버전으로 맞췄다. 새 cleanup 정책을 임의로 만든 것이 아니라 이미 main에 있는 파일을 그대로 동기화했으며 양쪽 전체32개 offline 회귀가 통과했다.
 - **게시 범위**: 기존 evaluation의 maxi10/max_features2 설정은 그대로이고 별도 planner Java 수정/LogReg 수정/실험 재시작은 포함하지 않는다. 이번 결과는 source/JAR/호출 그래프/수치·예산 회귀 검증이며50K×128 전체 플래닝이나 학습 runtime 완주를 뜻하지 않는다. 기록은 `steplm-origin-sync-20261007/validation.json`, `build-test.log`, `guard-validation/`에 보존한다.
+
+### v43 main 통합 후 검증 — 진행 중
+
+- 최신 fetch의 `9409f503d8965d9e40c11718d0be3d5f139c419e`까지 fast-forward하고 7개 충돌 해결 및 기존 local 변경을 복원했다. 후속 main 문서 추가는 원본/원격/병합본 SHA 보존 후 양쪽 내용을 유지했다. 이전 stash와 전체 binary patch/tar는 삭제하지 않았다.
+- **통합 결함 발견/수정**: upstream sparse storage accounting이 `DenseFactor.values.length`를 읽지만 local packed HardTable은 values=null이다. 9개 hard-table 회귀 중4개가 NPE로 재현됐고, 두 초기 집계를 기존 `DenseFactor::storedCells`로 바꿨다. 이 메서드의 logical cardinality 계약은 바꾸지 않는다. scratch 관련89/89 PASS이며 shared-source 전체검증은 별도다.
+- **정확성 보존 개선**: 전체 logical-cell 순회를 유지하는 quotient stride 전달, producer-local exact 단가 벡터 재사용, +0/+INF hard-boundary certificate 및 support iteration 단축, 현재 immutable CandidateRuleFact에 한정한 Native projection memo를 통합했다. 모두 기존 후보/비용/권한을 유지하며 임의 budget이나 fallback을 추가하지 않았다. Native owner/fresh-query revision의 cold 동작도 유지한다.
+- **v42 종료 기준**: GLM W1 873.439797425초, W3 633.04915213초, 양쪽 전체계획 성공. W3는v39 objective raw bits 및 assignment 동일. 진단 JFR 부착 run이며20초목표미달성이다. P1 LocalW1/W3 및GlobalW3 모두PASS와v39 objective/assignment 일치. `merged-v42-glm-final-summary.json`에 구간별 근거를 보존했다.
+- **다음 검증/위험**: 병합된 SCC producer→consumer 처리가 새 authority를 같은 component에 조기 노출하지 않는지, incremental partition proof 값이 cold fixedpoint와 같은지 검사한다. 기존 private map object replacement assertion은 실제 proof 값의 변경 및 cold oracle로 강화한다. shared Maven build와 동일 frozen Docker GLM/P1 결과 전에는 병합본 성능/정확성 완료를 주장하지 않는다.
+
+- **첫 전체 빌드 중단/수정**: production compile은 성공했지만 upstream `ExactPhysicalCostSurfaceEstimateSnapshotTest`가 local에서 streaming으로 교체한 `SupplySharingGroup.semanticDescriptor()`를 참조해 testCompile에서 실패했다(유효실행0, 동결없음). Test에 독립 legacy descriptor oracle를 두어 전체 내용 비교를 보존하고 production에 불필요한 문자열 API를 복원하지 않았다. 첫실패 command/log/summary는 `merged-v43-compile-attempt1`에 보존했다.
+- **SCC 빈 delta 최적화**: replacement fact는 모두 commit하되 full equals로 값이 달라진 owner만 complete delta에 넣고, 변화가 없는 component는 inventory/continuity revision을 생략한다. owner identity는 기존 fact.key로 유지되고 full equality가 실제 binding/action/provenance를 포함하므로 의미는 같다. 독립 검토CLEAR, multi-owner withdrawal/restore 및 cold pool oracle16/16scratchPASS; 중앙78classes 회귀를 진행중이다.
+
+- **v43 동결 검증 완료**: Maven78classes578/578PASS, 실패·오류·skip0, sourceChanges0,411.104초. source/main/test classes 및JAR 대조 후H/engine-merged-v43를 동결했다. 동일 classes의NativePlacementContinuityTest 별도 실행80PASS+기존PUBLIC-only ignore1로 freshQueryState/nextOwnerRevision 의미도 검사했다. GLM W1/W3와P1 LocalW1/W3 GlobalW3를 같은 pinned Docker/원래privacy·비용·입력 조건으로 시작했다. 원격 기준9409f503이며 아직실험진행중이다.
+
+- **v43 P1 완료**: LocalW1 37.212082594초/LocalW3 25.281267193초/GlobalW3 25.486696211초 모두PASS. 세case 모두v39 objective rawbits·전체assignment 정확히동일하다. `merged-v43-p1-summary.json`. GLM은20초를넘겨55초부터JFR진단을부착했으며20초최종측정으로사용하지않는다.
+- **v43 새 주병목**: 중간common-only JFR의W1 3021common샘플 중Environment.compareTo2293, W3 3286중2132다. comparator/cursor의수십GB누적할당도확인했다. `bounded`의unmodifiableSet wrapper가TreeSet의SortedSetmarker를감춰반복copy가bulkcopy대신재정렬된다. Exact정렬순서/first대표를유지하는SortedSet노출과analysis-local재사용comparator를scratch에서회귀로준비한다. 전체시간완료전개선율을주장하지않는다.
+- **v44 relocation proof scope 준비/통합**: bind호출+owneridentity별로기존immutableaction의proof/signature를공유하고매product/derived-FOUT clause마다재생성하던부분을제거한다. fullactionequality와기존identity binding/productmemo/order/metrics는그대로다. 새2건및관련29/29PASS, 독립검토CLEAR후root적용했으며v43엔진은불변이다. 최종shared-source회귀와Docker검증은아직남음.
+
+- **v43 GLM W3 완료/회귀**: 전체731.788240337초PASS, v42 objective rawbits와전체assignment동일. common517.224238s/model21.043454s/cost49.217650s/optimizer135.610158s다. v42전체633.049s보다느려졌으며새main병합을성능완료로주장하지않는다. 동일조건late-JFR진단관측이고원인별ablation은아니다. W1은계속실행중이다.
+- **profile 해석 보완**: 초기window의Environment65–76%를전체common비율로확장하지않는다. 후속긴snapshot에서해당샘플수2293/2132는그대로이고전체common18434/18169대비약12%가된다. 후반Native revision/index/직접증명생성이남는다. indexBoundCandidateReaders는W1 1553/W3 851샘플로반복중첩clause순회를추가대상으로확인했다. `*late-snapshot.tsv` 보존.
+- **v44 추가정확성최적화 통합**: numeric min/marginal/merge scan에서per-cellPreciseCost객체를없애고기존high/low비교·반올림·overflow·첫동률선택을유지했다. 35,450-byte무작위baseline/proposedtranscript가동일하고관련38PASS/독립CLEAR다. Environment는analysis전용재사용textcomparator와immutableSortedSetmarker로불필요한재정렬/cursor할당을줄이며fullprovenance/compare-equal첫대표를유지한다. 관련34PASS/독립CLEAR후통합했고새source동결은아직전이다.
+
+
+- **v43 GLM W1 최종 완료**: 전체1,151.299037068초PASS, common793.270038s/model32.387998s/cost77.306696s/optimizer236.108541s. v42 W1 전체873.439797425초보다 느리며 objective raw bits와전체assignment는정확히동일하다. W3도731.788240337초/동일계획이다. 두run모두20초초과뒤JFR을붙인진단실행으로최종성능통과근거가아니다. `merged-v43-glm-final-summary.json`에전체phase와parity보존. 최신main병합이완료됐다는것과20초목표달성을구분한다.
+- **v44 invocation memo 계획**: 반복고정점의같은함수body identity·전체호출context·full Environment.equals를키로성공한불변callee exit만같은분석pass에서재사용한다. recursion guard를조회보다먼저적용하고, 인자binding·caller별return mapping을cache밖에둔다. observationsByRead는pass내add-only이며body의판단에읽히지않는다. entry/finally에서cache를비워다른slice/recompile로전달하지않는다. 설계독립검토CLEAR, scratch구현/호출관계·provenance·failure cleanup회귀후최종패치를검토한다. cache메모리는보유exit집합에비례하며실제GLM에서peak/hit를확인하되임의budget은도입하지않는다.
+
+- **v44 invocation memo 통합**: 최종patch SHA3c3e33a33b69a98732788125961bad7c7aceda972906955aad589efab1f1f4a3를독립검토CLEAR후통합했다. focused28/28PASS, reuse분기를끈mutant6중3RED, full Definition/provenance transcript17,369bytes가baseline과정확히같다. 재귀guard·caller별상관관계·tracked slice·분석실패후cleanup회귀포함. v44는4개개선이합쳐진같은source로86classes Maven+jar 동결검증한다.
+
+
+### v45 반복 갱신의 정확한 영향 범위 재사용 — 준비 중
+
+- **문제/근거**: v43 optimizer JFR W1은21,491samples중seed lift3,641개, SparseEliminationGraph fill/neighbor/degree도큰비중이다. common후반은같은immutablefact의boundreaderindex를각revision에서중첩재순회한다. 전체walltime목표는아직미달이다.
+- **Native bound-reader 수정 계획/검증**: 기존FactProjectionMemo에exactfact identity별source-owner 목록을추가하고현재inventory에남은동일fact만nextRevision에전달한다. VALUE_MAP/noownednativepool/non-RELOCATION 필터·첫source/reader순서·before/afterreversecone를보존한다. fresh/ownerrevision은cold다. 독립CLEAR/34testsPASS,baselineRED는missingAPI9개compilefailure이며behaviorRED로세지않는다. patch935cdf5510bdd17ac887d2714db941c99ae23e15f3d4f98508f1809ed921a7ab.
+- **memo복사 보완**: reviewer가owner당k개fact를각각listidentity탐색해O(k²)가될수있음을확인했다. root는현재inventory한번순회+oldIdentityMap조회+owneridentity검사로O(F)복사하도록별도scratchpatchfdc4e6e6d9ccfcd69e1bacf8a7819528d434b055f88fa52c69fc1d3343704a07를작성했다. 독립CLEAR,기존+새34/34PASS. withdrawn/foreignequalfact가복사되지않는다.
+- **seed support 수정 계획/검증**: frozenfactor scope를lift당한번준비하고지원값workspace하나를재사용한다. active domain이변한변수에연결된factor occurrence만기존오름차순round로다시검사한다. 모든cell/원본factoroccurrence/실패·조건부exact풀이를보존하고지원되지않은후보를추정으로제거하지않는다. patchae3499351e0ad92b200de080ddcf03ef213494a4fa536f4a97191efc8f888ef3는8/8PASS,baseline/optimized1,442line동일,dirty-skip을끈mutant1/4RED이며root독립code검토CLEAR다.
+- **elimination score 계획**: 선택변수제거·separatorclique가실제로영향주는인접범위의점수만무효화한다. 네가지기존ordering의정확한선택/동률/전체순서를유지하는oracle로검증한다. 구현은scratch진행중이다.
+- **상태/위험**: 모든v45작업은scratch이며현재v44 source freeze를변경하지않았다. 메모키누락·무효화누락·authority객체합침은coldoracle/전후revision/원본결과대조로검출한다. 새후보제한·비용변경·임의solverbudget·runtimefallback은없다. 다음same-source통합테스트및Docker검증이남았다.
+
+- **v44 동결**: 86classes611/611PASS, failure/error/skip0, 동시source변경0. test+jar468.818초; H/engine-merged-v44에source/classhash와JAR일치검증후동결. 원래Docker조건GLMW1/W3 및P1LocalW1/W3·GlobalW3실행시작.
+- **v45 통합**: Nativebound-reader·linearcopy·seedsupport·eliminationscore4patch를검토후통합했다. 최종orderpatch0bf838387af6f0bad389a46e44b36b2aeadc43c8626b21d4954d72405780c53b는100graphs×4orders동일/관련40PASS이며chain점수평가1,787회대비기존98,688회다(전체GLM시간아님). root검토로separator의degree/cells/fill및2-hop commonneighbor의fill무효화충분성을확인했다. 동일source89classes Maven+jar 검증을시작한다.
+
+
+- **v44 P1**: LocalW1 38.489845816s, LocalW3 24.711881019s, GlobalW3 23.889870566s 모두planningPASS/executeScriptReturned이며v43 objectivebits/전체assignment동일. 실제script runtime실행은아니다. GLMW1/W3는20초를넘어170.451/171.020초시점에본인campaignPID를확인한후lateJFR진단을붙였다. 최종qualifyingrun으로세지않는다.
+
+### v46 Native proof 문자열 중간 생성 제거 — 준비 중
+
+- **근거**: v43 complete JFR재집계에서 NativeContinuityProof.normalizedSignature 경로sampledallocation weight는W1 100,171,001,744bytes/W3 58,772,815,176bytes다. CPU는common28,493/18,169samples중617/279로약2.17%/1.54%이며큰할당이곧같은비율시간절감을뜻하지않는다. W1최종proofbuilder/string직접할당추정은23.51GB정도로,상당부분이중간binding/reference/fields 문자열이다. 실제retainedheap값이아니다.
+- **원인/계획**: templateproofsort와estimatedProofBytes가fullproofString을즉시요구한다. 기존proof Stringcache는있지만새proof마다중간signature가생성된다. 기존NormalizedTextBinding의정확한UTF-16rope를재사용해정렬·length기반동일estimate를수행하고최종publication에서필요한String만한번만든다. 한batch의context만공유하고proof는자기불변text만보유한다. signature본문·순서·stabletie·캐시단가수식·proofidentity/authority는유지한다.
+- **주의/검증**: DirectNativePublicationKey는proof.equals가아닌identity이므로새동등proof의memo hit를근거로삼지않는다. 후보삭제·캐시상한증가·hash-only동일성은도입하지않는다. legacyString/length/order·Unicode·same-textforeignowner·실제materialization회수·cold/warm/revision회귀및새Docker측정이필요하다. 현재scratch구현진행중이다.
+
+
+### v44 최종 GLM 결과, v45 검증, v46 준비 — 진행 중
+
+- **v44 전체 결과**: 같은 고정 입력/Docker에서 W1 917.003215073초, W3 620.377287757초 planning PASS. 이전 v43 대비 W1 1,151.299→917.003초, W3 731.788→620.377초다. objective raw bits와 전체 categorical assignment는 두 경우 모두 정확히 같다. W1 common568.030/model32.373/cost74.241/optimizer230.014초, W3 common427.182/model18.813/cost45.468/optimizer120.646초다. late-JFR 진단 실행이므로 최종 무계측20초 통과 근거가 아니다. `merged-v44-glm-summary.json`에 보존했다.
+- **v45 동결/검증**: 동일 source89classes 623/623PASS, failure/error/skip0, source changes0. build427.256초 뒤 H/engine-merged-v45 동결. P1 LocalW1 44.619786345초/LocalW3 29.668558970초/GlobalW3 29.072800750초 planningPASS이며 v44 objectivebits/전체assignment와 같다. runtimeExecuted=false다. GLM은 아직 진행 중이며20초를 넘은383.181/384.328초 시점에 정확한 본인 PID를 재확인하고 JFR를 붙였다. 다른 실험/프로세스는 변경하지 않았다.
+- **JFR 할당 해석 정정**: v44 부분 profile의 main thread 첫 allocation sample은 W1 178.5GB/W3 170.6GB를 한 번에 보고한다. 기록 시작 전 누적분이 포함될 수 있으므로 해당 stack의 현재 window 할당으로 간주하지 않는다. thread별 첫 sample을 제외한 sensitivity 총량은166.0/166.2GB, 이 중 requiredInputSupport46.1/66.7GB, Native proof22.4/18.3GB다. 이 수치는 sampled cumulative weight이며 live heap 또는 절감 가능한 wall time이 아니다. CPU표본에서 continuity projection은 common의13.7%/17.1%다. 이전 v43 할당표도 첫-event 오염 가능성을 가진다.
+- **v46 proof text 수정**: 독립검토 CLEAR인 patch9b49bfd7을 통합했다. 정확한 binding/reference text를 rope로 공유해 두 정렬과 기존 byte estimate를 계산하고, publication시 최종 String만 만든다. cache hit/평탄화 후 fullrope를 exactString을 참조하는 literal로 바꿔 중복 구조 보유를 없앴다. 기존 signature본문, UTF-16 stable순서, 캐시 상한과 단가식, proof/binding authority를 바꾸지 않는다. scratch120PASS+기존ignored1; eagerflatten mutant1/7RED다. 통합후 same-source검증은 아직 남는다.
+- **v46 required support 계획/회귀**: immutableclause에만 의존하는 Native입력목록을 별도 weakidentity 캐시에 보관하고 resolver별 기존 fastmap을 유지한다. owner identity를 포함한 dedup/stable순서를 그대로 사용하며, 현재revision의 dependency/proof 검증은 다시 실행한다. value는 clause를 역참조하지 않는 immutable referencekey목록이다. reset에서 제거하며 다음 cache접근의ReferenceQueue정리도 유지한다. endAnalysisScope 즉시해제를 주장하지 않는다. 새3회귀는 baseline3/3RED(재직렬화480→960 포함), scratch3/3GREEN이다. 실제authority철회 oracle와독립 actualpatch검토를 추가한다.
+- **잔여/회귀위험**: 20초 목표 미달이며 qualifyingrun0개다. weakmemo namespace혼용/foreignequalowner병합/철회된authority재사용/rope보유를 각 oracle로 검출한다. Nativeprojection하위불변구조 재사용도 별도scratch에서 검증 중이다. 후보/비용/global exact 전체풀이/runtime규칙은 유지한다.
+
+
+- **v45 W3 완료**: 전체596.138065285초 planningPASS, v44 objectivebits/assignment동일. common422.111658/model19.398557/cost45.482842/optimizer98.981004초. v44 optimizer120.646초보다줄었으나 common은큰병목으로남고20초미달이다. W1 common570.310074초후planner실행중이며전체완료전비교를하지않는다. v45별도frozenNativeLifecycle80PASS+기존ignored1도확인했다.
+- **v46 support 통합/권한회귀**: 별도weakidentity목록patch293dccdb를독립CLEAR후통합했다. 추가withdrawal fixture는같은목록이nextRevision/freshQueryState에서재사용됨을확인한후sourcefact를철회한다. 목록자체는여전히같지만fixedValueMapPool/proveCandidate는null이며cache reset후coldresolver와proof관계가같다. 최종107PASS+기존ignored1. pure reference list가runtime/현재authority증명으로오인되지않음을검사한다.
+- **v46 hierarchy 통합**: patch68c7a7f4는같은owneridentity+orderedinputrow에서emission/realization/clause/binding의정확한불변객체 projection을재사용한다. 재구성된부모는현재자식만등록하고모호한row/header/key는coldfallback한다. published/generatedprojection은분리하며statelesscoldoracle를유지한다. 39PASS/독립CLEAR후root적용했다. 새5baselineRED는emissions필드부재에의한representation/reuse실패이며기존correctness결함으로주장하지않는다. retainedclause도currentbindingmap등록을위해binding순회는남으며0순회최적화라고하지않는다.
+- **v46 검증 시작**: 세패치를같은source로92classes Maven+jar동결검증중이다. 에이전트는scratch/read-only만사용하고root만sharedsource/target/Git를관리한다. v47에는v44optimizerprofile에서매observation의long[2]+capturinglambda할당을보여준quotienthash(샘플W1 7.958GB/W3 3.638GB,phase22.126/7.271초)를정확한재사용accumulator로바꾸는별도scratch를준비한다. 후보다이어트/임의budget/Global부분풀이등은추가하지않는다.
+
+
+- **v45 W1 최종**: 전체893.917230530초 planningPASS. W3는596.138065285초이고두경우모두v44 objectivebits와assignment동일. W1 common570.310361/model30.319123/cost74.992180/optimizer206.242310초다. 공통분석은v44보다개선되지않았고전체20초목표는미달이다.
+- **v46 동결/실험**: 동일source92classes639/639PASS,failure/error/skip0,sourceChanges0,446.469초. H/engine-merged-v46동결후GLMW1/W3,P1LocalW1/W3,GlobalW3원조건Docker실행시작. 아직전체결과는없다.
+- **v47 profile계획**: v45 W3 latecommon29.1초/1,361CPU표본에서v46세패치stack을제외하고도불변identity hashleaf300개(22.0%),Anchor/Durableequals97개(7.1%)가남는다. 전체common비율로확대하지않는다. immutablecomponentlist의정확한cachedhash/indexedequals를scratch에서검증하며, 정렬/중복제거를보증하는SharedCanonicalList marker에임의list를넣지않도록분리한다. 캐시한도포화는현재로그에직접counter가없어입증되지않았으며용량을임의로키우지않았다.
+- **추가 schema 설계**: contributionfingerprint가candidate/alternative의중복문자열을다시SHA256에넣는작업을불변의미구조별digest로공유할수있는지별도scratch설계중이다. 독립계약검토는버전이있는내부schema변경가능으로CLEAR이나실제구현승인은아니다. 이전costFingerprint/planHash는의도적으로달라질수있으며runtime normalizedstrings/factorID/rawcostbits/순서/모든후보/권한객체검사는보존해야한다. 참조는upstreamfact를따라가지않고rule/realizationkey에서끝나며, 객체identity나rope분할/캐시상태가digest값에영향주면안된다. 필드별변형·독립oracle·freshJVM결정성·numeric golden검증을통과한뒤에만통합한다.
+
+
+### v46 결과 및 v47 동결, v48 준비
+
+- **v46 전체 GLM**: W1 811.692905564초, W3 488.595081946초 planning PASS; v45의893.917/596.138초보다 줄었고 두 경우 objective raw bits·전체 assignment는 정확히 같다. W1 common459.790/model40.087/cost80.622/optimizer218.938초, W3 common310.245/model19.807/cost48.121/optimizer99.917초다. late-JFR 진단 실행이며 20초 qualifying은0개다. `merged-v46-glm-summary.json`.
+- **v46 P1/Native**: P1 LocalW1 40.126990200초/LocalW3 25.067410337초/GlobalW3 24.791907954초 planning PASS, v45 objectivebits와assignment동일. runtimeExecuted=false다. 별도frozenNativeLifecycle80PASS+기존ignored1.
+- **v47 통합/동결**: 정확한 immutablecomponentlist hash/equality(0c0151c2), quotientprimitivehash accumulator(614714ce portability보완), axisprofilehash memo(5f1d9692)를각 독립검토CLEAR 후 통합했다. ThreadMXBean allocation회귀는지원확인/원래상태복구를포함한다. 같은source97classes662/662PASS,failure/error/skip0,sourceChanges0,450.332초; H/engine-merged-v47동결후 GLMW1/W3·P1LocalW1/W3·GlobalW3 원조건Docker실험시작.
+- **v48 support epoch 설계**: 각 AC호출 안에서 실제 domain제거 횟수를세고 factor occurrence가방문직전에본 scopedepoch와같을때만 frozen표 재검색을생략한다. partialcallback/round/error순서는유지하고 모든 제거지점이epoch를올린다. 기존coldroundoracle3/3PASS후scratch구현관련92PASS; binarypartial/higherarity회귀를추가중이다. 후보수·cost·authority·Global전체exact조건은바꾸지않는다.
+- **v48 fingerprint 검토 공백**: typedsemanticDAGschema 패치는아직미적용이다. 독립리뷰가 같은 productionencoder를다시호출하는검사를독립oracle로부를수없다는점, arbitrary Alternative signature를단순파생값으로제외한계약문제를발견했다. 실제별도oracle/fieldcoverage/생성계약을보완후재검토한다. 버전변경에따른costFingerprint/planHash 변경은승인된설계범위이나 numeric/rawbits/assignment불변검증은계속필요하다.
+- **v46 잔여 common 근거**: common JFR window(W1 218.5초/W3 190.5초)에서 dependency skeleton재구성11.71%/18.51%, replayvalidation8.50%/10.77%다. firstallocation/thread는제외했다. currentinventory의exact불변template재사용을scratch설계중이며전체phase비율이나절감확정값으로확대하지않는다.
+
+
+### v47 전체 결과와 v48 정확성 개선 통합
+
+- **v47 GLM 완료**: W1 769.577515992초/W3 482.367548888초 planningPASS. v46 대비811.693→769.578초/488.595→482.368초이며 objective rawbits와전체assignment는정확히같다. W1 common461.815/model34.707/cost73.201/optimizer187.974초, W3 common315.313/model18.239/cost45.459/optimizer92.453초. common은개선되지않았으며20초목표미달이다. 253.530/252.550초에 JFR부착한diagnostic이므로qualifyingrun으로세지않는다. `merged-v47-glm-summary.json`.
+- **v47 P1 완료**: LocalW1 41.082443615초/LocalW3 26.168735180초/GlobalW3 25.350591519초 모두planningPASS, v46objectivebits/assignment동일. runtimeExecuted=false다. `merged-v47-p1-summary.json`.
+- **v48 supportepoch 통합**: patch73ea5373을독립CLEAR후적용했다. baseline4/4, overlay93/93PASS; factoroccurrence별pre-visit epoch, partialunary/binary네제거지점, duplicate/higherarity/latepropagation/callback전체transcript/예외순서검증포함.
+- **v48 frozenfactor projection 통합**: patche610f96a를독립CLEAR후적용했다. frozen표를축소하는두복제루프에서매cell decode/map/encode를행우선증분sourceoffset으로바꾸었다. identityrebind/resourceguard/allocation순서/원본factor순서/rawdoublebits/hardrepresentation은유지한다. 160개mixedmodel의모든outputcell을독립source좌표oracle로대조한baseline1PASS, 관련90PASS. sourcecell범위가int로사전검증되어각carry중간offset도유효좌표범위안이며overflow를새로숨기지않는다.
+- **v48 fingerprint v2 통합**: 기존미적용v1의null/customsignature공백을해결한patchd39a5089만독립CLEAR후통합했다. 모든Alternative suppliedsignature를UTF16content로stream하고nullableconsultedvalue를구분하며모델/생성자계약을바꾸지않았다. 실제별도 no-memo oracle와1KiB buffer를대조했다. worker5+22+9PASS/freshJVM동일; root가긴segment/surrogate분할/깊은bindingoracle를추가검증중이다. native-local golden에서schemafingerprint한개만변경하고rawcost/구조golden은유지한다. 서로다른Alternative마다전체signature순회가남는성능한계를명시한다.
+- **skeleton 통합 보류/검증**: a8177코드독립검토는correctnessBLOCK없음이나claimedmatrix시험부족WATCH다. baselineRED는NoSuchFieldException이며성능behaviorRED로부르면안된다. generated/unownedtemporaryclause를cache하지않고currentfact/clause만재key한다. ownedmemo를먼저채운fresh/nextOwnercold및querywitness분리회귀는84PASS로보완했으며 ambiguity/proofowner/relocationconsumer/pool/layout개별무효화시험을계속추가중이다. everyrevision추가inventoryscan의성능손익은wholeDocker측정에서확인한다.
+
+### v48 결과와 v49 통합 검증 — 진행 중
+
+- **v48 검증**: skeleton supplemental tests 5b197d58까지 독립 CLEAR 후 통합했다. 같은 source 103 classes, 691 tests PASS, failure/error/skip 0, sourceChanges 0, 485.362초. H/engine-merged-v48에 동결했고 NativeLifecycle은 별도로 86 PASS + 기존 PUBLIC ignore 1이다. P1 Local W1/W3 및 Global W3는 각각 39.946/27.276/25.283초 planning PASS, v47 objective raw bits와 전체 assignment가 같다. runtimeExecuted=false다.
+- **v48 성능 회귀**: W3 전체 534.822초로 v47 482.368초보다 느리다. common 368.045초(기존 315.313), model 16.703, cost 57.075, optimizer 84.950초다. objective raw bits와 assignment는 동일하다. W1은 아직 진행 중이다. JFR은 317초 이후 붙였으므로 진단 실행이며 qualifying 0개다. skeleton inventory 재순회가 원인인지 profile로 분리한다. 최적화의 효과를 추정만으로 확정하지 않는다.
+- **v49 replay receipt**: 현재 resolver revision의 exact owner tokens와 완전한 proof footprint가 같을 때만 기존 ordinary native 증명을 재사용한다. nextRevision은 기존 full continuity 비교와 before/after bound-owner 영향 범위를 보존한다. fresh/owner/structural 변경은 cold이며 generated query는 대상이 아니다. a02f4eec + 0a4d896b를 독립 CLEAR 후 통합했다. 모든 5개 일반 memo를 비운 receipt-only 회귀에서 영향 범위 검사를 유지한다. R→T→S의 T가 equal-but-foreign S key로 바뀌는 실제 stale-positive RED를 재현했고, direct continuity shortcut을 같은 immutable fact 객체에만 허용해 해결했다. 재구성된 equal facts는 기존 identity-aware projection으로 검증한다.
+- **v49 seed support**: propagateFiniteSupport 호출 안에서 현재 살아 있는 값의 오름차순 배열을 유지해 비활성 값을 재검사하지 않는다. 원본 domain stride/행 순서, factor occurrence, assignment, raw cost를 유지한다. 7bd0c00f 독립 CLEAR, 150 random models × 4 seeds conditioned exact oracle와 기존 테스트 통과. 24개 scratch 진단의 factorRevisions/visitedCells/assignment가 기존과 동일하다. 작은 unwarmed 진단은 오히려 느렸으므로 속도 향상 증거로 쓰지 않는다.
+- **v49 derived anchor**: 822e80a4 패치의 producer가 exact action을 선택하지 않은 prefix만 ALL_ZERO로 인증한다. active prefix는 UNKNOWN이며 기존 owner/authority/compatibility 검사를 유지한다. 현재 analysis 소유의 canonical receipt를 축별로 미리 생성하고 identity lookup view로 선택한다. 생성·metric 및 잘못된 내부 객체의 오류 시점까지 같다고 주장하지 않는다. 새 테스트는 fresh factory의 모든 factor와 action을 직접 대응해 5 factors/121 leaves/116 certified completions를 독립 legacy evaluator와 raw bits로 비교한다. 30 focused PASS, independent CLEAR, ASF header 포함. 광범위 ExactPhysicalModelCertificateTest scratch 실행은 완료되지 않았으므로 PASS로 세지 않는다.
+- **통합/잔여**: replay+seed combined overlay 138 PASS + 기존 ignore 1. root가 source/target/Git를 관리하며 v49 105 classes 같은-source Maven+freeze를 다음 실행한다. 후보/비용/Global 전체 exact/임의 budget 없음/runtime fallback 없음 조건을 유지한다. 전체 GLM 20초, final runtime correctness 및 무계측 fresh JVM W1/W3 각 3회는 아직 남는다. 메모 재사용 권한 누락, prefix 오인증, active stride 오류는 cold/current-revision 및 전체 leaf oracle로 감지한다.
+
+### v49 검증 및 v50 반복 할당 제거 — 진행 중
+
+- **v49 검증**: 같은 source 105 classes, 694 tests PASS, failure/error/skip 0, sourceChanges 0, 488.684초. H/engine-merged-v49 동결 후 같은 Docker 조건에서 실험했다. NativeLifecycle 별도 91 PASS + 기존 PUBLIC ignore 1. P1 Local W1/W3 및 Global W3는 42.442/29.163/29.478초 planning PASS, v48 objective raw bits와 전체 assignment가 동일하다. runtimeExecuted=false다.
+- **v49 중간 GLM 결과**: W3 전체 519.486초, common359.568/model17.946/cost58.236/optimizer73.949/selection5.105초다. v48 534.822초보다 감소했지만 v47 482.368초보다 느리고, 20초에는 미달한다. objective raw bits/assignment는 동일하다. W1은 아직 진행 중이다. JFR은 W1 195.400/W3 193.670초 이후 붙인 진단 실행으로 qualifying에 포함하지 않는다.
+- **v48 회귀 원인**: late-common 표본에서 skeleton copy가 W1 CPU9.56%/sampled allocation6.40GB, W3 CPU7.18%/0.95GB다. 단순 재사용을 위해 모든 clause/template를 매 revision 복사했다. GC pause비율은 W1 v47/v48 4.76/4.94%, W3 3.89/3.63%로 유사했다. 수집 구간이 다르므로 전부의 원인이라고 단정하지 않는다. `common-v48-profile-v50/diagnosis.md`.
+- **v50 skeleton 수정**: 동일 immutable fact가 현재 inventory에 남을 때 handle-free memo를 공유하고 새 witness를 기록할 때 fact와 해당 clause만 copy-on-write한다. owner token은 resolver를 참조하지 않는다. 재구성된 fact는 기존 authority/ambiguity 필터로 복사하고 fresh/owner/structural revision은 cold다. immutable owned-clause set으로 반복 owner scan도 피한다. patch516b4caa 독립 CLEAR 및 Native92 PASS + 기존 ignore1. detached child→equal rebuilt donor를 확인하는 test-only50fd335e도 추가했다. template count/donor rekey/fork별 변경 독립성은 cold oracle와 직접 검사한다.
+- **v50 activation 수정**: 두 unresolved activation factor의 immutable event grouping/sort/subset 관계를 한 번 준비한다. duplicate OR, 원래 정렬, proper-subset 및 weight 조건을 보존하고 기존 DoubleStream의 보정 합산 및 overflow fallback 연산 순서를 그대로 적용한다. plain addition mutant가 1 ULP 차이로 실패하는 것을 확인했다. 최종9a34f873 독립 CLEAR, baseline31/optimized37 PASS, empty/zero/MAX_VALUE 모든 mask와 concurrent1600회 raw-bit 대조 포함. 20,000회 micro allocation은 기존41,760,000B/새0B이며 전체 GLM 시간의 증거는 아니다. descriptor·후보·factor 순서·비용은 유지한다.
+- **직접 closure checkpoint 통합 보류**: publication 내 성공한 direct 출력과 원래 template를 다음 호출의 dirty 기준으로 보관하는 scratch를 만들었다. 교체된 모든 fact/node identity와 reaching identity를 existing old/new cone 및 derived-anchor fallback 전에 추가한다. 보호된 actions/분기/함수/중첩loop 전체 재계산 oracle 및 focused49 tests PASS. 그러나 baseline 대비 실제 재계산 facts 수가 모두 같아 이득을 입증하지 못했다. 사용하지 않는 과거 Native resolver를 checkpoint가 보유하는 memory WATCH도 있다. 이 수정은 shared source에 적용하지 않았다. 첫 oracle의 `normalizedSignatureWithLegalAssignments`가 중첩loop에서 지수적 나열을 수행한 진단은 보존했고, API 문서대로 모든 정규화 graph surfaces를 직접 비교하도록 수정한 뒤 baseline/optimized를 새로 통과했다. production solver에 예산을 추가하거나 중단한 것이 아니다.
+- **다음 검증/위험**: v49에서 broad105classes를 완료했으며 v50의 두 변경에는 관련32classes targeted Maven+freeze, 별도 NativeLifecycle, 같은 frozen Docker GLM/P1을 적용한다. 최종 종료 전에는 최종 source의 관련 전체 회귀와 실제 runtime 검증을 다시 확인한다. COW 누락으로 sibling memo가 바뀌는 위험, grouping/subsumption/보정 합산에서 raw 비용이 달라지는 위험을 각각 fork/cold oracle와 독립 legacy evaluator로 검출한다. 최종 20초 및 무계측 W1/W3 각3회는 여전히 남는다.
+
+
+### v50 검증과 v51 반복 비용표 읽기 제거 — 진행 중
+
+- **v50 검증**: 같은 source32classes188/188PASS, failure/error/skip0, sourceChanges0, build235.797초. H/engine-merged-v50 동결 뒤 Native92PASS+기존PUBLIC ignore1. P1 LocalW1 41.363/LocalW3 25.351/GlobalW3 26.165초 planningPASS, v49 objective rawbits와전체assignment동일. runtimeExecuted=false다. GLM W3는완료했고W1은계속진행중이다.
+- **v51 통합/원칙**: uniform hard table의축별profile은모두같으므로shape검사후class0을반환한다(71189663). CfgReplayMemo는receipt miss에도현재authority로다시증명하고실제소비되는ordered witness/exact flag가같을때만기존결과를재사용한다(72e3bc37). ExactPhysicalReducedSolver는모든원본변수의observation hash를factor당한번의active row-major순회에서계산한다(5077ba15). factor순서/rawbits/tie/정확한collision검사/대표선택과suffix주소계산은보존한다. 새cache상한이나후보제한은없다.
+- **검증/위험**: 각각scratch91PASS/13PASS/49PASS, independentCLEAR. all-axis legacy-read mutant는예상10대비14회읽어RED다. uniform의count invariant, receipt철회/empty/currentauthority, inactive domain과original stride/hash collision을coldoracle로검증했다. 전체performance개선은아직확인전이며같은source통합검증과Docker비교를한다.
+- **캐시 측정 정정**: v49 candidateTopology의86.72%/90.85%는JFR inclusive CPU표본비율이지정확한cache miss율이아니다. DMLTranslator가SearchSpaceMetrics를null로전달하여existing eviction/bypass/hit counter는없었다. 상한을키울근거가없으므로동일전체경로에서진단용counter수집을준비한다. G/topology-cache-audit-v52/audit.md에근거보존.
+- **잔여**: 전체20초목표/최종runtime검증/무계측3회씩은미달이다. candidate공간이나cost/global exact조건을줄여서성공으로처리하지않는다.
+
+- **v50 GLM 최종**: W1 전체780.13527856초/W3 505.896920026초, objective rawbits/전체assignment는v49와동일하다. W1 common487.703/model37.030/cost111.960/optimizer133.156초; W3 common345.145/model19.988/cost54.744/optimizer75.466초. v49 823.314/519.486초보다감소했으나20초목표는미달이다. 303.15/301.47초이후JFR진단으로qualifying0개이며OMX fail checkpoint를기록했다.
+
+- **v51 동결/실험**: 동일source47classes298PASS,failure/error/skip0,sourceChanges0,248.788초. H/engine-merged-v51 동결후원조건Docker GLM W1/W3 및P1Local/Global실험을시작했다.
+- **v52 진단계측**: DMLTranslator의기존liveMetrics property가true일때만같은전체production경로에invocation-local SearchSpaceMetrics를연결한다. false/default는기존null이며출력도없다. 성공한common종료뒤topology9counter와fingerprint를출력한다. patch4c3b8087 독립CLEAR 및small common/경계5PASS. enabled는기존timer/contextobserver부하가있어최종무계측성능통과근거가아니다. residentEntries/retainedRows는마지막resolver보고값이며전체resolver합계나liveheap이아니다.
+- **v52 구조개선계획**: source seed projection을한binder호출의source owner identity/FType별로공유한다. 전역last-wins realization/executable와현재VALUE_MAP proof를검증한뒤LinkedHashSet으로first-equal seed를보존한다. 호출사이에는캐시하지않아깊은upstream변경도재관측한다. 별도dense boundary merge에서는mixed-radix odometer로같은순서의child cell주소를증분갱신하되비용덧셈/상한cut/동률/backpointer는유지한다. 양쪽scratch회귀가진행중이다.
+
+
+### v51 전체 검증 결과와 v52 구조 개선
+
+- **v51 결과**: GLM W1 765.717초, W3 487.592초로 계획 생성에 성공했다. v50의 780.135/505.897초보다 감소했고 objective raw bits 및 전체 assignment는 같다. W1은 common 482.716/model 39.784/cost 98.817/optimizer 130.171초, W3는 329.295/17.317/54.166/77.397초다. 269.32/267.68초에 JFR을 붙인 진단 실행이며 20초 목표는 미달이다.
+- **P1 및 Native**: Local W1 39.681초, Local W3 25.488초, Global W3 25.897초 모두 v50과 같은 objective bits/assignment다. 별도 frozen Native 92 PASS + 기존 PUBLIC ignore 1. script 실제 runtime은 아직 실행하지 않았다.
+- **source seed 개선**: 한 direct binder 호출에서 owner identity/FType별 배치 목록을 공유한다. 현재 전역 last-wins realization/executable 필터와 VALUE_MAP 권한 증명, 첫 동등 객체, 기존 합치기·정렬·Native query 순서를 보존한다. focused 30 PASS, 캐시를 끈 mutant는 clause 방문 200회 대신 20,000회로 실패한다. 호출을 새로 시작하면 깊은 VALUE_MAP 입력 철회도 다시 반영한다. 독립 코드 검토 CLEAR이며 전체 builder 전후 대조를 추가한다.
+- **boundary 좌표 개선**: dense boundary merge의 내부 좌표를 같은 mixed-radix 순서로 증분 갱신한다. child 읽기/부동소수점 덧셈/상한 cut/동률/backpointer/overflow 동작과 hard join은 보존한다. frozen v51 overlay 48 PASS, 기존 transcript 2e6b7411:22612 동일, 독립 CLEAR. 384→144는 테스트가 계산한 주소 투영 항 수이며 전체 시간이나 실제 instrumentation counter가 아니다. 작은 내부 Cartesian 공간에서는 초기 색인 비용이 더 클 수 있어 Docker 결과로 판단한다.
+- **receipt observation 개선**: 모델 생성 중 같은 source-version의 relocation key membership을 full-equality set으로 준비하고, 동일한 canonical receipt identity의 관찰 결과를 공유한다. owner/direct binding 권한은 identity를 보존하고 link별 authority·state·derivedTarget·logical boundary는 공유 밖에 둔다. 마지막 해당-version 링크 처리 후 context를 제거한다. baseline 계약 19 PASS, 초기 수정 27 PASS, 최종 lifetime 회귀 18 PASS, 해시 충돌 추가 후 SourceProjection 10 PASS다. 기존 scan을 넣은 실제 mutant는 기대 준비 읽기 400회 대신 600회로 실패했다. 여러 version의 유효 기간이 겹치면 그 합만큼 임시 메모리를 유지할 수 있다.
+- **잔여 및 위험**: 세 개선의 최종 통합 source와 Docker 비교는 아직 남았다. 후보·비용·Global 전체 exact를 축소하지 않았으며 20초 달성으로 표시하지 않는다. seed의 다음 revision 오염, receipt의 equal-foreign owner 공유, odometer carry/FP 순서 변경은 각각 current/cold oracle와 raw-bit 대조로 검출한다.
+
+- **seed 전체 의미 대조**: frozen v51과 seed overlay의 서로 다른 JVM에서 ACTIONS/TRANSIENT_CFG/FUNCTION/중첩 RECURSIVE_DIRECT를 실행했다. 입력 hash, 분석 fingerprint, graph normalizedSignature, 모든 candidate fact와 logical transient를 출력한 136,036,969 bytes가 완전히 같았다(SHA256 72aedbdbe96e7db67d0cfc856799562441d8f3a964654aab9827be7a698764c4). legal assignment 전체 나열은 사용하지 않았다. 기존 NeutralPlacementFixedPointCompositionTest는 baseline/overlay 모두 12개 중 같은 counter 회귀 하나(expected8/actual10)가 실패했고 11개는 통과했다. 새 seed 변경이 만든 실패로 보지 않지만 최종 전체 gate의 미해결 사항으로 남긴다.
+- **v52 통합**: metrics4c3b8087/seed a1309311/odometer1f4cd7a5/receipt46000ee5를 독립 CLEAR 후 적용했다. 같은 source60classes Maven+freeze와 실제 Docker 검증을 시작한다.
+
+- **v52 동결**: 같은 source60classes383/383PASS, failure/error/skip0, sourceChanges0,449.731초. H/engine-merged-v52의 source/classes/JAR hash 일치를 확인했다. GLM W1/W3에는 기존 liveMetrics=true만 추가해 정확한 topology counter를 수집한다. 계측 overhead 때문에 default-off 이전 시간과 직접 속도 비교하거나 qualifying으로 세지 않는다. 비용/입력/privacy는 같고, P1 Local/Global 및 Native는 default-off다. 실행별 변경 receipt는 G/merged-v52-diagnostic-metrics-staging.json에 보존했다.
+
+
+### v53 추가 origin/main 통합 — 진행 중
+
+- **기준/보존**: 추가 fetch에서 main0b6dc235를 확인해9409f503에서 fast-forward했다. binary staged/unstaged patches 및 untracked archive를 G/merge-origin-main-20261007-v53에 저장했고 v52 소스는 H/engine-merged-v52에 동결돼 있다. 보존 stash85a0d00a/d51b713a는 삭제하지 않았다. 첫 stash는 ignored .omx exclusion 때문에 저장 뒤 cleanup이 실패했으며, ignored 경로를 명시하지 않은 재시도로 작업 내용을 보존하고 clean tracked 상태에서 병합했다.
+- **충돌 해결**: numeric solver는 upstream 중복 odometer/order cache보다 완전한 local HardTable·primitive·sparse/OOM·adaptive graph 구현을 유지한다. factor profile hash는 upstream 대표-slot+정확한 memory fallback 방식으로 통합한다. scratch68PASS. IdentityList 검증 marker와 일반 CachedImmutableList를 구분해 sorted 권한을 부여하지 않으며 문자열 cache lifecycle을 보존한다. Closure의 고정 input/base-seed index와 binder-call-local source pool projection을 합성한다. Native snapshot/receipt/skeleton 충돌은 별도 검토 중이다.
+- **별도 workload 변경**: upstream StepLM/CG builtin 동기화는 GLM 입력을 바꾸지 않는다. 새 source/JAR preflight 및 관련 회귀는 최종 병합 검증에 포함한다.
+- **v52 P1**: LocalW1 45.025초/LocalW3 27.601초/GlobalW3 26.345초 planningPASS, v51 objective raw bits·전체assignment 동일. frozen Native92PASS+기존PUBLICignore1. GLM은 진단 계측 실행 중이며 실제 학습/runtime 검증은 아직 남는다.
+- **위험/검출**: 자동 merge가 성공한 코드도 authority/identity/session 수명 합성이 틀릴 수 있어 양쪽 회귀와 같은-source 동결 Docker 검증이 필요하다. 후보·비용·Global exact 범위나 privacy/runtime 규칙은 축소하지 않는다.
+
+- **v53 병합 완료/검증 시작**:7개 충돌을 모두 해결했다. Native exact fact snapshot 및 structural handle 검증은 local receipt/skeleton/projection authority와 합성했으며 scratch Native96PASS,관련Native191PASS,continuity/revision177PASS다(겹치는 suite 수를 합산하지 않는다). Identity/Closure와 counter contract 독립검토CLEAR; numeric68PASS. root는전체132classes Maven+jar/sourcehash/freeze 검증을 시작한다.
+- **추가 정규화 텍스트 개선**: immutable RelocationAction identity별 exact String을 한 cost fingerprint 호출에서 공유한다(cf2b3a75). 각 occurrence의 기존 framing/UTF16/임의 supplied signature는 유지한다. 독립oracle/관련28PASS,실제 allocation 회귀는51,923,728→246,376B다(테스트 fixture 수치). 선택적인 sharing 계측(fc3b7b51)은 기존liveMetrics=true일때만생성하고 마지막DAG사용직후강한참조를해제한다. 전체cost certificate on/off동일성 회귀를추가했다. hypothetical payload 수치는실제절감allocation이아니며header/map메모리는제외한다.
+- **기존 counter 테스트 정정**: NeutralPlacementFixedPointCompositionTest의8회고정식은새pre-privacy VALUE_MAP grounding2회를반영하지못했다. mandatory function/publication/initial/privacy호출의하한으로검사하며전체 graph/facts/parity/reset검사는유지한다. baseline12중1RED(expected8/actual10),test-onlyoverlay12PASS,독립CLEAR다. production closure를제거하지않았다.
+
+- **v52 GLM 완료**: metrics+lateJFR 진단 W1 785.281초/W3 489.408초. v51과 objective rawbits/전체assignment 동일. common484.282/334.414초,model35.840/17.772,cost103.725/56.938,optimizer147.823/70.696초다. 계측이달라default-off속도비교나최종통과근거로쓰지않고failcheckpoint로기록했다. topology W1 builds14,530/hits613,327, W3 builds14,607/hits538,547이며둘다eviction/bypass0이다. cache용량증설근거는없다. proof-result/support memo는별도이며현재출력은그eviction/retainedbytes를포함하지않는다.
+- **v54 계획 근거**: W3 commonJFR기록구간13,472samples에서direct binding37.1%,topology27.0%,relocation15.1%다(inclusive중복,첫87초제외). 문자열직렬화12,111,050회/17.389b chars는정확한진단counter이며전체배치의authority문자열목록과내부membership직렬화를구분한다. DirectSourceIndex 내부문자열key를정확한reference key로바꾸기전에legacy문자열동치/duplicate/global-last-wins/업데이트증명을검사한다.
+
+- **artifact 저장소 정리**: home 여유공간이3.4GiB로 줄어 완료된v43–v50의GLM JFR/log42개(2,893,338,083bytes)를G/completed-diagnostic-storage-v53으로옮기고원래경로는symlink로유지했다. 복사전후SHA와source변경없음을검사했고각경로/bytes/SHA를relocation-receipt.json에기록했다. source/classes/frozenengine/실행중campaign은변경하지않았다.
+
+- **v53 동결/실험**:132classes871/871PASS,실패/오류/skip0,sourceChanges0,775.385초. Python matrix campaign32PASS도확인했다. H/engine-merged-v53에source/classes/JAR일치를검사해동결하고GLM W1/W3(liveMetrics진단)와P1Local/Global(defaultoff),Native별도실험을시작했다. Native/numeric최종mergedsource도독립검토CLEAR다.
+
+
+### v53 병합본 검증 완료 및 v54 중간 작업 축소
+
+- **전체 GLM 결과**: origin/main `0b6dc235`를 포함한 v53에서 W1은 677.824초, W3는 463.636초로 planning PASS다. v52와 objective raw bits 및 전체 assignment가 같다. W1 common/model/cost/optimizer는 420.559/24.025/90.576/136.189초, W3는 285.404/17.093/82.829/71.583초다. 기존 liveMetrics와 late JFR을 켠 진단 실행이므로 qualifying은 0개이며 20초 목표는 미달이다. 새 문자열 공유 진단의 overhead도 포함되어 있어 각 phase 차이를 최적화 효과로 단정하지 않는다.
+- **P1 및 Native**: P1 Local W1 38.082초, Local W3 22.672초, Global W3 23.344초로 모두 planning PASS이며 v52의 objective bits/assignment를 그대로 유지한다. frozen Native는 96 PASS + 기존 PUBLIC ignore 1이다. 모든 workload 결과는 runtimeExecuted=false다. 실제 runtime 최종 검증은 남아 있다.
+- **문자열 공유 근거**: cost fingerprint에서 W3의 NormalizedText 객체 487,676개는 모두 서로 다른 identity지만, 내부 literal 110,247,971회 중 identity는 1,337,267개다. 전체 10,380,393,193 UTF16 units 중 unique는 161,713,629이고 반복은 10,218,679,564다. W1은 literal 198,780,643회/2,125,017 identities, unique 207,790,843 units다. 이는 전체 문자열 서명이나 실제 heap bytes 측정이 아니며 SHA 입력량 자체가 사라짐을 뜻하지 않는다.
+- **v54 typed membership**: DirectSourceIndex의 내부 실행 가능 목록을 String 대신 CandidateRealizationReference key로 관리하는 patch `346b6ee7`을 독립 CLEAR 후 통합했다. 중복 개수, 전역 last-wins, owner identity 검사, 정렬/외부 서명은 유지한다. 별도 JVM 전체 builder 출력 136,036,973 bytes SHA256 `c56db23ab358f5a87bae44a5dfd8990b19252e741cf55ee8b899914fb1e1ca91`가 baseline과 일치했다. focused 8 PASS, 직렬화 회귀 baseline 1,027→overlay 0. root가 layout만 다른 `'-'` fixture를 보강했으므로 최종 통합 테스트에서 다시 검증한다.
+- **v54 exact clause support**: patch `052cc779`을 독립 CLEAR 후 통합했다. 현재 fact/clause 소유 검사 후 동일한 clause 객체의 불변 지원 목록만 기존 skeleton memo에 보관한다. 별개 객체인 structural donor는 현재 reference로 목록을 다시 준비하며 COW와 현재 handle/authority 검사를 유지한다. focused 4, core 104, Native 198, revision/replay 181 PASS는 겹치는 테스트 수이며 합산하지 않는다. baseline은 cache reset 후 직렬화가 기대 0 대신 10회 발생한다.
+
+
+### v54 검증 및 사용자 요청에 따른 게시 준비
+
+- 같은 source의 Maven test/jar 빌드는 성공했다. 전체 39개 클래스 중 일반 회귀 38개 클래스 245개 테스트가 PASS이며 failure/error 0, sourceChanges 0이다. `SearchSpaceMetricsEvaluatorTest.requestedFixtureWritesBoundedAggregateMetrics` 한 항목은 `-Dg009.metrics.output` 옵션이 없는 opt-in GLM 평가기라 실행되지 않았다. 원래 skipped XML/summary를 보존하고 제외 이유 및 passing XML SHA를 `G/merged-v54-validated-compilation.json`에 별도로 기록했다. 실제 workload는 공식 Docker harness로 실행한다. 소스/JAR/classes hash를 다시 확인해 H/engine-merged-v54를 동결했다.
+- frozen Native 96 PASS + 기존 PUBLIC ignore 1. P1 Local W1 37.369초, Local W3 26.679초, Global W3 23.007초로 planning PASS이며 v53 objective bits와 assignment가 같다. runtimeExecuted=false다.
+- v54에 문자열 캐시의 admission/rejection 및 재사용 진단을 기본 비활성 상태로 추가했다. cap/후보/비용/탐색 범위는 바꾸지 않는다. 진단 표본은 최대 256개 content/1Mi UTF16 units로만 보관하고 compiler key는 weak reference다. snapshot 실패 시에도 finally에서 캐시와 observer를 해제한다. patch390e5dab은 독립 CLEAR, focused 27 PASS, cleanup 제거 mutant는 2개 실패다.
+- 사용자 요청으로 현재 개선본을 origin/main에 게시한다. GLM 전체 20초 목표는 아직 미달이며 마지막 완료 진단은 v53 W1 677.824초/W3 463.636초다. v54 GLM은 진행 중이고 실제 runtime 최종 검증도 남아 있다. v55의 후속 아이디어는 scratch에만 있으며 이 source에 포함하지 않았다.

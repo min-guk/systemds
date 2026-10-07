@@ -74,6 +74,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutM
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
@@ -384,6 +385,63 @@ public class NativePlacementContinuityTest {
 			if(broadcastValues.contains(node.valueVersion()))
 				result.add(node.key());
 		return result;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<?> dependencySkeletons(NativePlacementContinuity resolver,
+		CandidateRuleFact fact, CandidateRealizationSupportClause clause, Hop owner,
+		DurableAnchorKey anchor) throws Exception {
+		Method nativeWitness = NativePlacementContinuity.class.getDeclaredMethod(
+			"nativeWitness", DurableAnchorKey.class);
+		nativeWitness.setAccessible(true);
+		Object witness = nativeWitness.invoke(resolver, anchor);
+		Method skeletons = NativePlacementContinuity.class.getDeclaredMethod(
+			"candidateDependencySkeletons", CandidateRuleFact.class,
+			CandidateRealizationSupportClause.class, Hop.class, witness.getClass());
+		skeletons.setAccessible(true);
+		return (List<?>)skeletons.invoke(resolver, fact, clause, owner, witness);
+	}
+
+	private static long skeletonCounter(NativePlacementContinuity resolver, String name)
+		throws Exception {
+		return accessibleField(NativePlacementContinuity.class, name).getLong(resolver);
+	}
+
+	private static Object replayProof(NativePlacementContinuity resolver,
+		CandidateRealizationReference reference, DurableAnchorKey seed) throws Exception {
+		Method method = NativePlacementContinuity.class.getDeclaredMethod(
+			"proveCandidateReplay", CandidateRealizationReference.class, DurableAnchorKey.class);
+		method.setAccessible(true);
+		return method.invoke(resolver, reference, seed);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<NativePlacementContinuity.NativeContinuityProof> replayProofs(Object result)
+		throws Exception {
+		Method method = result.getClass().getDeclaredMethod("proofs");
+		method.setAccessible(true);
+		return (List<NativePlacementContinuity.NativeContinuityProof>)method.invoke(result);
+	}
+
+	private static Object replayReceipt(Object result) throws Exception {
+		Method method = result.getClass().getDeclaredMethod("receipt");
+		method.setAccessible(true);
+		return method.invoke(result);
+	}
+
+	private static boolean matchesReplayReceipt(NativePlacementContinuity resolver,
+		Object receipt, CandidateRealizationReference reference, DurableAnchorKey seed)
+		throws Exception {
+		Method method = NativePlacementContinuity.class.getDeclaredMethod(
+			"matchesReplayProofReceipt", receipt.getClass(),
+			CandidateRealizationReference.class, DurableAnchorKey.class);
+		method.setAccessible(true);
+		return (boolean)method.invoke(resolver, receipt, reference, seed);
+	}
+
+	private static long replayReceiptCounter(NativePlacementContinuity resolver, String name)
+		throws Exception {
+		return accessibleField(NativePlacementContinuity.class, name).getLong(resolver);
 	}
 
 	@SuppressWarnings("unchecked")
@@ -1218,6 +1276,777 @@ public class NativePlacementContinuityTest {
 			.continuityProjectionsCompared() > 0);
 		Assert.assertTrue("changed rows cannot reuse a stale support",
 			metrics.snapshot().proofGraphsBuilt() > beforeChangedRevision);
+	}
+
+	@Test
+	public void dependencySkeletonTemplateRebindsCurrentClauseAuthorityAcrossRevision()
+		throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.federatedSource("seed",
+			anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("root", OpOp1.LOG, seed, false);
+		List<CandidateInputState> seedInputs = List.of(
+			CandidateInputState.absentLocal(), CandidateInputState.absentLocal());
+		CandidateRealizationReference seedReference = full.reference(seed, seedInputs);
+		List<CandidateInputState> rootInputs =
+			List.of(CandidateInputState.present(FType.FULL));
+		full.withClauses(root, rootInputs, List.of(new CandidateRealizationSupportClause(
+			List.of(), List.of(CandidateRealizationInputBinding.direct(0, seedReference)))));
+		CandidateRuleFact original = full.fact(root, rootInputs);
+		CandidateRealizationSupportClause originalClause = original.allowedEmissionFacts().get(0)
+			.realizations().get(0).supportClauses().get(0);
+		NativePlacementContinuity first = full.resolver(new SearchSpaceMetrics(), 0, 0);
+		List<?> originalSkeletons = dependencySkeletons(
+			first, original, originalClause, root.hop, seed.anchor);
+		long firstBuilds = skeletonCounter(first, "dependencySkeletonBuilds");
+		Assert.assertFalse(originalSkeletons.isEmpty());
+
+		CandidateRealizationReference currentSeedReference = new CandidateRealizationReference(
+			new CandidateRuleKey(seed.key, seedInputs), seedReference.realization());
+		Assert.assertEquals(seedReference, currentSeedReference);
+		Assert.assertNotSame(seedReference, currentSeedReference);
+		CandidateRealizationSupportClause currentClause = new CandidateRealizationSupportClause(
+			originalClause.proofDependencies(),
+			List.of(CandidateRealizationInputBinding.direct(0, currentSeedReference)),
+			originalClause.nativeWorkerPoolWitness(), originalClause.nativeWorkerPoolLayoutExact());
+		CandidateEmissionRealization currentRealization = new CandidateEmissionRealization(
+			original.allowedEmissionFacts().get(0).realizations().get(0).key(), List.of(currentClause));
+		CandidateEmissionFact currentEmission = new CandidateEmissionFact(
+			original.allowedEmissionFacts().get(0).emissionState(),
+			original.allowedEmissionFacts().get(0).executionFType(),
+			original.allowedEmissionFacts().get(0).derivedFoutAction(), List.of(currentRealization));
+		CandidateRuleFact currentFact = new CandidateRuleFact(original.key(), original.status(),
+			original.capability(), original.shapeProof(), original.profile(), List.of(currentEmission),
+			original.failureCode());
+		List<CandidateRuleFact> revisedFacts = new ArrayList<>(full.candidates);
+		revisedFacts.set(revisedFacts.indexOf(original), currentFact);
+		NativePlacementContinuity revised = first.nextRevision(revisedFacts);
+		List<?> actual = dependencySkeletons(
+			revised, currentFact, currentClause, root.hop, seed.anchor);
+
+		Assert.assertEquals(originalSkeletons, actual);
+		Assert.assertEquals(1, firstBuilds);
+		Assert.assertEquals("an exact donor must avoid rebuilding the dependency relation", 0,
+			skeletonCounter(revised, "dependencySkeletonBuilds"));
+		Assert.assertEquals(1, skeletonCounter(revised, "dependencySkeletonReuses"));
+		Assert.assertEquals(1, skeletonCounter(revised, "dependencySkeletonTemplatesCarried"));
+		Object pinned = accessibleField(actual.get(0).getClass(), "clausePinned").get(actual.get(0));
+		Assert.assertSame("the template must resolve the current clause's reference",
+			currentSeedReference, pinned);
+
+		NativePlacementContinuity cold = new NativePlacementContinuity(full.nodes, full.origins,
+			revisedFacts, full.edges, full.reaching, Set.of(), full.privacy);
+		Assert.assertEquals(dependencySkeletons(
+			cold, currentFact, currentClause, root.hop, seed.anchor), actual);
+		Assert.assertEquals("the cold oracle must perform the eliminated builder work", 1,
+			skeletonCounter(cold, "dependencySkeletonBuilds"));
+		CandidateRealizationReference currentRoot = CandidateRealizationReference.of(
+			currentFact.key(), currentRealization);
+		Assert.assertEquals("warm and cold resolvers must publish identical full proofs",
+			cold.proveCandidateAlternatives(currentRoot, seed.anchor),
+			revised.proveCandidateAlternatives(currentRoot, seed.anchor));
+	}
+
+	@Test
+	public void temporaryAndQueryResetClausesNeverEnterDependencySkeletonRevisionState()
+		throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("root", OpOp1.LOG, seed, false);
+		List<CandidateInputState> inputs =
+			List.of(CandidateInputState.present(FType.FULL));
+		full.withClauses(root, inputs,
+			List.of(new CandidateRealizationSupportClause(List.of(), List.of())));
+		CandidateRuleFact fact = full.fact(root, inputs);
+		CandidateRealizationSupportClause owned = fact.allowedEmissionFacts().get(0)
+			.realizations().get(0).supportClauses().get(0);
+		CandidateRealizationSupportClause temporary =
+			new CandidateRealizationSupportClause(List.of(), List.of());
+		NativePlacementContinuity resolver = full.resolver(new SearchSpaceMetrics(), 0, 0);
+		Assert.assertNotNull(dependencySkeletons(resolver, fact, owned, root.hop, seed.anchor));
+		Map<?,?> retained = (Map<?,?>)accessibleField(NativePlacementContinuity.class,
+			"dependencySkeletonMemo").get(resolver);
+		Assert.assertFalse(retained.isEmpty());
+		int retainedFacts = retained.size();
+		long beforeTemporary = skeletonCounter(resolver, "dependencySkeletonBuilds");
+
+		Assert.assertEquals(dependencySkeletons(
+			resolver, fact, temporary, root.hop, seed.anchor), dependencySkeletons(
+				resolver, fact, temporary, root.hop, seed.anchor));
+		Assert.assertEquals("an unowned generated clause must stay cold", beforeTemporary + 2,
+			skeletonCounter(resolver, "dependencySkeletonBuilds"));
+		Assert.assertEquals(0, skeletonCounter(resolver, "dependencySkeletonReuses"));
+		Assert.assertEquals("temporary clauses cannot enlarge revision state", retainedFacts,
+			((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+				"dependencySkeletonMemo").get(resolver)).size());
+
+		NativePlacementContinuity fresh = resolver.freshQueryState();
+		Assert.assertEquals(0, skeletonCounter(fresh, "dependencySkeletonBuilds"));
+		Assert.assertTrue(((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+			"dependencySkeletonMemo").get(fresh)).isEmpty());
+		NativePlacementContinuity ownerRevision = resolver.nextOwnerRevision(
+			root.key, List.of(fact));
+		Assert.assertEquals(0, skeletonCounter(ownerRevision, "dependencySkeletonTemplatesCarried"));
+		Assert.assertTrue(((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+			"dependencySkeletonMemo").get(ownerRevision)).isEmpty());
+	}
+
+	@Test
+	public void dependencySkeletonQueryWitnessMismatchBuildsColdThenReusesExactWitness()
+		throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("root", OpOp1.LOG, seed, false);
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		full.withClauses(root, inputs,
+			List.of(new CandidateRealizationSupportClause(List.of(), List.of())));
+		CandidateRuleFact fact = full.fact(root, inputs);
+		CandidateRealizationSupportClause clause = fact.allowedEmissionFacts().get(0)
+			.realizations().get(0).supportClauses().get(0);
+		NativePlacementContinuity resolver = full.resolver(new SearchSpaceMetrics(), 0, 0);
+		DurableAnchorKey other = anchor(FType.FULL, "worker2:8002", 0, 50);
+
+		dependencySkeletons(resolver, fact, clause, root.hop, seed.anchor);
+		List<?> otherFirst = dependencySkeletons(resolver, fact, clause, root.hop, other);
+		List<?> otherSecond = dependencySkeletons(resolver, fact, clause, root.hop, other);
+		NativePlacementContinuity cold = full.resolver(new SearchSpaceMetrics(), 0, 0);
+		Assert.assertEquals(dependencySkeletons(cold, fact, clause, root.hop, other), otherFirst);
+		Assert.assertEquals(otherFirst, otherSecond);
+		Assert.assertEquals("different witnesses require independent exact templates", 2,
+			skeletonCounter(resolver, "dependencySkeletonBuilds"));
+		Assert.assertEquals(1, skeletonCounter(resolver, "dependencySkeletonReuses"));
+	}
+
+	@Test
+	public void exactSkeletonMemoCarriesWithoutCopiesAndForksOnFirstNewWitness()
+		throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("copy-seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("copy-root", OpOp1.LOG, seed, false);
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		full.withClauses(root, inputs,
+			List.of(new CandidateRealizationSupportClause(List.of(), List.of())));
+		CandidateRuleFact fact = full.fact(root, inputs);
+		CandidateRealizationSupportClause clause = fact.allowedEmissionFacts().get(0)
+			.realizations().get(0).supportClauses().get(0);
+		NativePlacementContinuity parent = full.resolver(new SearchSpaceMetrics(), 0, 0);
+		List<?> baseline = dependencySkeletons(parent, fact, clause, root.hop, seed.anchor);
+		Object parentMemo = ((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+			"dependencySkeletonMemo").get(parent)).get(fact);
+		Object parentOwned = ((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+			"ownedCandidateClausesByFact").get(parent)).get(fact);
+		Assert.assertNotNull(parentMemo);
+		Assert.assertNotNull(parentOwned);
+		Assert.assertThrows("the clause-ownership proof must be safe to share",
+			UnsupportedOperationException.class, () -> ((Set<?>)parentOwned).clear());
+
+		NativePlacementContinuity left = parent.nextRevision(List.copyOf(full.candidates));
+		NativePlacementContinuity right = parent.nextRevision(List.copyOf(full.candidates));
+		Object leftMemo = ((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+			"dependencySkeletonMemo").get(left)).get(fact);
+		Object rightMemo = ((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+			"dependencySkeletonMemo").get(right)).get(fact);
+		Assert.assertSame("exact immutable facts share the handle-free descriptor", parentMemo, leftMemo);
+		Assert.assertSame(parentMemo, rightMemo);
+		Assert.assertSame("exact owned-clause identity proof is immutable", parentOwned,
+			((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+				"ownedCandidateClausesByFact").get(left)).get(fact));
+		Assert.assertEquals(1, skeletonCounter(left, "dependencySkeletonTemplatesCarried"));
+		Assert.assertEquals(baseline, dependencySkeletons(left, fact, clause, root.hop, seed.anchor));
+		Assert.assertEquals("the carried exact clause proof avoids the owner-fact scan", 0,
+			skeletonCounter(left, "dependencySkeletonOwnerFactScans"));
+
+		DurableAnchorKey leftWitness = anchor(FType.FULL, "worker2:8002", 0, 50);
+		DurableAnchorKey rightWitness = anchor(FType.FULL, "worker3:8003", 0, 50);
+		List<?> leftAdded = dependencySkeletons(left, fact, clause, root.hop, leftWitness);
+		Object leftAfter = ((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+			"dependencySkeletonMemo").get(left)).get(fact);
+		Assert.assertNotSame("the first write detaches the left fork", parentMemo, leftAfter);
+		Assert.assertSame("the sibling remains on the shared read-only descriptor", parentMemo,
+			((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+				"dependencySkeletonMemo").get(right)).get(fact));
+		List<?> rightAdded = dependencySkeletons(right, fact, clause, root.hop, rightWitness);
+		Object rightAfter = ((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+			"dependencySkeletonMemo").get(right)).get(fact);
+		Assert.assertNotSame(parentMemo, rightAfter);
+		Assert.assertNotSame(leftAfter, rightAfter);
+
+		NativePlacementContinuity coldLeft = full.resolver(new SearchSpaceMetrics(), 0, 0);
+		NativePlacementContinuity coldRight = full.resolver(new SearchSpaceMetrics(), 0, 0);
+		Assert.assertEquals(dependencySkeletons(
+			coldLeft, fact, clause, root.hop, leftWitness), leftAdded);
+		Assert.assertEquals(dependencySkeletons(
+			coldRight, fact, clause, root.hop, rightWitness), rightAdded);
+		Assert.assertEquals("the parent shared descriptor does not receive fork writes", 1,
+			((Number)accessibleField(parentMemo.getClass(), "templateCount").get(parentMemo)).longValue());
+		Assert.assertEquals(2,
+			((Number)accessibleField(leftAfter.getClass(), "templateCount").get(leftAfter)).longValue());
+		Assert.assertEquals(2,
+			((Number)accessibleField(rightAfter.getClass(), "templateCount").get(rightAfter)).longValue());
+
+		CandidateRealizationSupportClause rebuiltClause =
+			new CandidateRealizationSupportClause(List.of(), List.of());
+		CandidateEmissionFact originalEmission = fact.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization rebuiltRealization = new CandidateEmissionRealization(
+			originalEmission.realizations().get(0).key(), List.of(rebuiltClause));
+		CandidateEmissionFact rebuiltEmission = new CandidateEmissionFact(
+			originalEmission.emissionState(), originalEmission.executionFType(),
+			originalEmission.derivedFoutAction(), List.of(rebuiltRealization));
+		CandidateRuleFact rebuiltFact = new CandidateRuleFact(fact.key(), fact.status(), fact.capability(),
+			fact.shapeProof(), fact.profile(), List.of(rebuiltEmission), fact.failureCode());
+		List<CandidateRuleFact> rebuiltFacts = full.candidates.stream()
+			.map(candidate -> candidate == fact ? rebuiltFact : candidate).toList();
+		NativePlacementContinuity rebuilt = left.nextRevision(rebuiltFacts);
+		List<?> rebuiltResult = dependencySkeletons(
+			rebuilt, rebuiltFact, rebuiltClause, root.hop, leftWitness);
+		Assert.assertEquals("the detached fork must rekey its current structural donor", leftAdded,
+			rebuiltResult);
+		Assert.assertEquals(0, skeletonCounter(rebuilt, "dependencySkeletonBuilds"));
+		Assert.assertEquals(1, skeletonCounter(rebuilt, "dependencySkeletonReuses"));
+		Assert.assertEquals(2, skeletonCounter(rebuilt, "dependencySkeletonTemplatesCarried"));
+
+		DurableAnchorKey parentWitness = anchor(FType.FULL, "worker4:8004", 0, 50);
+		dependencySkeletons(parent, fact, clause, root.hop, parentWitness);
+		Object parentAfter = ((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+			"dependencySkeletonMemo").get(parent)).get(fact);
+		Assert.assertNotSame("the donor also detaches before a later write", parentMemo, parentAfter);
+		Assert.assertEquals(2,
+			((Number)accessibleField(parentAfter.getClass(), "templateCount").get(parentAfter)).longValue());
+		Assert.assertEquals("a donor write cannot leak into an already detached child", 2,
+			((Number)accessibleField(leftAfter.getClass(), "templateCount").get(leftAfter)).longValue());
+
+		NativePlacementContinuity grandchild = left.nextRevision(List.copyOf(full.candidates));
+		Object grandchildShared = ((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+			"dependencySkeletonMemo").get(grandchild)).get(fact);
+		Assert.assertSame(leftAfter, grandchildShared);
+		Assert.assertEquals(2, skeletonCounter(grandchild, "dependencySkeletonTemplatesCarried"));
+		DurableAnchorKey grandchildWitness = anchor(FType.FULL, "worker5:8005", 0, 50);
+		dependencySkeletons(grandchild, fact, clause, root.hop, grandchildWitness);
+		Object grandchildAfter = ((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+			"dependencySkeletonMemo").get(grandchild)).get(fact);
+		Assert.assertNotSame(leftAfter, grandchildAfter);
+		Assert.assertEquals(3,
+			((Number)accessibleField(grandchildAfter.getClass(), "templateCount")
+				.get(grandchildAfter)).longValue());
+		Assert.assertEquals("later revisions cannot mutate the earlier fork", 2,
+			((Number)accessibleField(leftAfter.getClass(), "templateCount").get(leftAfter)).longValue());
+	}
+
+	@Test
+	public void dependencySkeletonRejectsProofOwnerNativePoolAndOwnerHopChanges()
+		throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.federatedSource("seed",
+			anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("root", OpOp1.LOG, seed, false);
+		Ref other = full.unary("other", OpOp1.LOG, seed, false);
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		CandidateRealizationReference seedReference = full.reference(seed,
+			List.of(CandidateInputState.absentLocal(), CandidateInputState.absentLocal()));
+		PlacementProofKey proof = new PlacementProofKey(
+			PlacementProofKind.NATIVE_CONTINUITY, seed.key, "proof");
+		ValueVersionKey version = new ValueVersionKey(seed.key.programFingerprint(), "value",
+			seed.key.controlRegion(),
+			0, VersionKind.ORDINARY, List.of());
+		PlacementState relocated = new PlacementState(
+			ExecType.FED, FederatedOutput.FOUT, FType.FULL, false);
+		RelocationActionKey action = new RelocationActionKey(
+			version, relocated, seed.anchor, "scope", List.of(root.key));
+		CandidateRealizationSupportClause initialClause = new CandidateRealizationSupportClause(
+			List.of(proof), List.of(CandidateRealizationInputBinding.relocation(
+				0, seedReference, action)),
+			seed.anchor, true);
+		full.withClauses(root, inputs, List.of(initialClause));
+		CandidateRuleFact original = full.fact(root, inputs);
+		CandidateRealizationSupportClause owned = original.allowedEmissionFacts().get(0)
+			.realizations().get(0).supportClauses().get(0);
+		NativePlacementContinuity first = full.resolver(new SearchSpaceMetrics(), 0, 0);
+		List<?> baseline = dependencySkeletons(first, original, owned, root.hop, seed.anchor);
+
+		CompiledHopKey foreignProofOwner = new CompiledHopKey(seed.key.programFingerprint(),
+			seed.key.functionNamespace(), seed.key.callSitePath(), seed.key.recompileContext(),
+			seed.key.controlRegion(), seed.key.emittedHopInstance(), seed.key.canonicalSourceOrigin());
+		Assert.assertEquals(seed.key, foreignProofOwner);
+		Assert.assertNotSame(seed.key, foreignProofOwner);
+		CandidateRealizationSupportClause changed = new CandidateRealizationSupportClause(
+			List.of(new PlacementProofKey(
+				PlacementProofKind.NATIVE_CONTINUITY, foreignProofOwner, "proof")),
+			owned.inputBindings(), owned.nativeWorkerPoolWitness(), owned.nativeWorkerPoolLayoutExact());
+		CandidateRuleFact changedFact = replaceOnlyClause(original, changed);
+		List<CandidateRuleFact> facts = new ArrayList<>(full.candidates);
+		facts.set(facts.indexOf(original), changedFact);
+		NativePlacementContinuity revised = first.nextRevision(facts);
+		List<?> actual = dependencySkeletons(revised, changedFact, changed, root.hop, seed.anchor);
+		NativePlacementContinuity cold = new NativePlacementContinuity(full.nodes, full.origins,
+			facts, full.edges, full.reaching, Set.of(), full.privacy);
+		Assert.assertEquals(dependencySkeletons(cold, changedFact, changed, root.hop, seed.anchor), actual);
+		Assert.assertEquals(0, skeletonCounter(revised, "dependencySkeletonTemplatesCarried"));
+		Assert.assertEquals(1, skeletonCounter(revised, "dependencySkeletonBuilds"));
+
+		CompiledHopKey foreignConsumer = new CompiledHopKey(root.key.programFingerprint(),
+			root.key.functionNamespace(), root.key.callSitePath(), root.key.recompileContext(),
+			root.key.controlRegion(), root.key.emittedHopInstance(), root.key.canonicalSourceOrigin());
+		RelocationActionKey foreignAction = new RelocationActionKey(
+			version, relocated, seed.anchor, "scope", List.of(foreignConsumer));
+		CandidateRealizationSupportClause actionClause = new CandidateRealizationSupportClause(
+			owned.proofDependencies(), List.of(CandidateRealizationInputBinding.relocation(
+				0, seedReference, foreignAction)), owned.nativeWorkerPoolWitness(),
+			owned.nativeWorkerPoolLayoutExact());
+		CandidateRuleFact actionFact = replaceOnlyClause(original, actionClause);
+		List<CandidateRuleFact> actionFacts = new ArrayList<>(full.candidates);
+		actionFacts.set(actionFacts.indexOf(original), actionFact);
+		NativePlacementContinuity actionRevision = first.nextRevision(actionFacts);
+		List<?> actionActual = dependencySkeletons(
+			actionRevision, actionFact, actionClause, root.hop, seed.anchor);
+		NativePlacementContinuity actionCold = new NativePlacementContinuity(full.nodes, full.origins,
+			actionFacts, full.edges, full.reaching, Set.of(), full.privacy);
+		Assert.assertEquals(dependencySkeletons(
+			actionCold, actionFact, actionClause, root.hop, seed.anchor), actionActual);
+		Assert.assertEquals(0, skeletonCounter(actionRevision, "dependencySkeletonTemplatesCarried"));
+
+		Assert.assertEquals("a different owner Hop must preserve the cold result", baseline,
+			dependencySkeletons(first, original, owned, other.hop, seed.anchor));
+		Assert.assertEquals("owner Hop identity mismatch must not reuse", 2,
+			skeletonCounter(first, "dependencySkeletonBuilds"));
+
+		DurableAnchorKey otherPool = anchor(FType.FULL, "worker2:8002", 0, 50);
+		CandidateRealizationSupportClause poolClause = new CandidateRealizationSupportClause(
+			owned.proofDependencies(), owned.inputBindings(), otherPool, false);
+		CandidateRuleFact poolFact = replaceOnlyClause(original, poolClause);
+		List<CandidateRuleFact> poolFacts = new ArrayList<>(full.candidates);
+		poolFacts.set(poolFacts.indexOf(original), poolFact);
+		NativePlacementContinuity poolRevision = first.nextRevision(poolFacts);
+		List<?> poolActual = dependencySkeletons(
+			poolRevision, poolFact, poolClause, root.hop, seed.anchor);
+		NativePlacementContinuity poolCold = new NativePlacementContinuity(full.nodes, full.origins,
+			poolFacts, full.edges, full.reaching, Set.of(), full.privacy);
+		Assert.assertEquals(dependencySkeletons(
+			poolCold, poolFact, poolClause, root.hop, seed.anchor), poolActual);
+		Assert.assertEquals(0, skeletonCounter(poolRevision, "dependencySkeletonTemplatesCarried"));
+	}
+
+	private static CandidateRuleFact replaceOnlyClause(CandidateRuleFact source,
+		CandidateRealizationSupportClause clause) {
+		CandidateEmissionFact emission = source.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization realization = emission.realizations().get(0);
+		CandidateEmissionRealization replacementRealization = new CandidateEmissionRealization(
+			realization.key(), List.of(clause));
+		CandidateEmissionFact replacementEmission = new CandidateEmissionFact(emission.emissionState(),
+			emission.executionFType(), emission.derivedFoutAction(), List.of(replacementRealization));
+		return new CandidateRuleFact(source.key(), source.status(), source.capability(),
+			source.shapeProof(), source.profile(), List.of(replacementEmission), source.failureCode());
+	}
+
+	@Test
+	public void dependencySkeletonAmbiguousEqualDonorsFailCold() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.federatedSource("seed",
+			anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("root", OpOp1.LOG, seed, false);
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		full.withClauses(root, inputs,
+			List.of(new CandidateRealizationSupportClause(List.of(), List.of())));
+		CandidateRuleFact firstFact = full.fact(root, inputs);
+		CandidateRealizationSupportClause firstClause = firstFact.allowedEmissionFacts().get(0)
+			.realizations().get(0).supportClauses().get(0);
+		CandidateRealizationSupportClause secondClause = new CandidateRealizationSupportClause(
+			firstClause.proofDependencies(), firstClause.inputBindings(),
+			firstClause.nativeWorkerPoolWitness(), firstClause.nativeWorkerPoolLayoutExact());
+		CandidateRuleFact secondFact = replaceOnlyClause(firstFact, secondClause);
+		List<CandidateRuleFact> donors = new ArrayList<>(full.candidates);
+		donors.add(secondFact);
+		NativePlacementContinuity resolver = new NativePlacementContinuity(full.nodes, full.origins,
+			donors, full.edges, full.reaching, Set.of(), full.privacy);
+		dependencySkeletons(resolver, firstFact, firstClause, root.hop, seed.anchor);
+		dependencySkeletons(resolver, secondFact, secondClause, root.hop, seed.anchor);
+
+		CandidateRealizationSupportClause currentClause = new CandidateRealizationSupportClause(
+			firstClause.proofDependencies(), firstClause.inputBindings(),
+			firstClause.nativeWorkerPoolWitness(), firstClause.nativeWorkerPoolLayoutExact());
+		CandidateRuleFact currentFact = replaceOnlyClause(firstFact, currentClause);
+		List<CandidateRuleFact> currentFacts = full.candidates.stream()
+			.map(fact -> fact == firstFact ? currentFact : fact).toList();
+		NativePlacementContinuity revised = resolver.nextRevision(currentFacts);
+		List<?> actual = dependencySkeletons(
+			revised, currentFact, currentClause, root.hop, seed.anchor);
+		NativePlacementContinuity cold = new NativePlacementContinuity(full.nodes, full.origins,
+			currentFacts, full.edges, full.reaching, Set.of(), full.privacy);
+		Assert.assertEquals(dependencySkeletons(
+			cold, currentFact, currentClause, root.hop, seed.anchor), actual);
+		Assert.assertEquals(0, skeletonCounter(revised, "dependencySkeletonTemplatesCarried"));
+		Assert.assertEquals(1, skeletonCounter(revised, "dependencySkeletonBuilds"));
+	}
+
+	@Test
+	public void dependencySkeletonDonorRejectsForeignOwnerAndDoesNotSurviveWithdrawal()
+		throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.federatedSource("seed",
+			anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("root", OpOp1.LOG, seed, false);
+		List<CandidateInputState> seedInputs = List.of(
+			CandidateInputState.absentLocal(), CandidateInputState.absentLocal());
+		List<CandidateInputState> rootInputs =
+			List.of(CandidateInputState.present(FType.FULL));
+		CandidateRealizationReference seedReference = full.reference(seed, seedInputs);
+		full.withClauses(root, rootInputs, List.of(new CandidateRealizationSupportClause(
+			List.of(), List.of(CandidateRealizationInputBinding.direct(0, seedReference)))));
+		CandidateRuleFact original = full.fact(root, rootInputs);
+		CandidateEmissionFact originalEmission = original.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization originalRealization = originalEmission.realizations().get(0);
+		CandidateRealizationSupportClause originalClause = originalRealization.supportClauses().get(0);
+		NativePlacementContinuity first = full.resolver(new SearchSpaceMetrics(), 0, 0);
+		dependencySkeletons(first, original, originalClause, root.hop, seed.anchor);
+
+		CompiledHopKey foreignSeed = new CompiledHopKey(seed.key.programFingerprint(),
+			seed.key.functionNamespace(), seed.key.callSitePath(), seed.key.recompileContext(),
+			seed.key.controlRegion(), seed.key.emittedHopInstance(), seed.key.canonicalSourceOrigin());
+		Assert.assertEquals(seed.key, foreignSeed);
+		Assert.assertNotSame(seed.key, foreignSeed);
+		CandidateRealizationReference foreignReference = new CandidateRealizationReference(
+			new CandidateRuleKey(foreignSeed, seedInputs), seedReference.realization());
+		CandidateRealizationSupportClause foreignClause = new CandidateRealizationSupportClause(
+			originalClause.proofDependencies(),
+			List.of(CandidateRealizationInputBinding.direct(0, foreignReference)),
+			originalClause.nativeWorkerPoolWitness(), originalClause.nativeWorkerPoolLayoutExact());
+		CandidateEmissionRealization foreignRealization = new CandidateEmissionRealization(
+			originalRealization.key(), List.of(foreignClause));
+		CandidateEmissionFact foreignEmission = new CandidateEmissionFact(
+			originalEmission.emissionState(), originalEmission.executionFType(),
+			originalEmission.derivedFoutAction(), List.of(foreignRealization));
+		CandidateRuleFact foreignFact = new CandidateRuleFact(original.key(), original.status(),
+			original.capability(), original.shapeProof(), original.profile(), List.of(foreignEmission),
+			original.failureCode());
+		List<CandidateRuleFact> foreignFacts = new ArrayList<>(full.candidates);
+		foreignFacts.set(foreignFacts.indexOf(original), foreignFact);
+		NativePlacementContinuity foreignRevision = first.nextRevision(foreignFacts);
+		List<?> foreignActual = dependencySkeletons(
+			foreignRevision, foreignFact, foreignClause, root.hop, seed.anchor);
+		NativePlacementContinuity foreignCold = new NativePlacementContinuity(full.nodes, full.origins,
+			foreignFacts, full.edges, full.reaching, Set.of(), full.privacy);
+		Assert.assertEquals(dependencySkeletons(
+			foreignCold, foreignFact, foreignClause, root.hop, seed.anchor), foreignActual);
+		Assert.assertEquals("equal-but-foreign source authority must miss", 0,
+			skeletonCounter(foreignRevision, "dependencySkeletonReuses"));
+		Assert.assertEquals(1, skeletonCounter(foreignRevision, "dependencySkeletonBuilds"));
+		Assert.assertEquals(0, skeletonCounter(foreignRevision,
+			"dependencySkeletonTemplatesCarried"));
+
+		List<CandidateRuleFact> withdrawnFacts = full.candidates.stream()
+			.filter(fact -> fact != original).toList();
+		NativePlacementContinuity withdrawn = first.nextRevision(withdrawnFacts);
+		NativePlacementContinuity restored = withdrawn.nextRevision(List.copyOf(full.candidates));
+		dependencySkeletons(restored, original, originalClause, root.hop, seed.anchor);
+		Assert.assertEquals("withdrawal must sever the template lineage", 0,
+			skeletonCounter(restored, "dependencySkeletonTemplatesCarried"));
+		Assert.assertEquals(1, skeletonCounter(restored, "dependencySkeletonBuilds"));
+
+		NativePlacementContinuity structural = first.structuralRevision(full.nodes, full.origins,
+			List.copyOf(full.candidates), full.edges, full.reaching, Set.of(), full.privacy);
+		dependencySkeletons(structural, original, originalClause, root.hop, seed.anchor);
+		Assert.assertEquals("a structural revision must start cold", 0,
+			skeletonCounter(structural, "dependencySkeletonTemplatesCarried"));
+		Assert.assertEquals(1, skeletonCounter(structural, "dependencySkeletonBuilds"));
+	}
+
+	@Test
+	public void replayProofReceiptCarriesOnlyAcrossExactUnchangedCandidateRevision()
+		throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("receipt-seed",
+			anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("receipt-root", OpOp1.LOG, seed, false);
+		List<CandidateInputState> inputs =
+			List.of(CandidateInputState.present(FType.FULL));
+		CandidateRuleFact rootFact = full.fact(root, inputs);
+		CandidateRealizationReference reference = full.reference(root, inputs);
+		NativePlacementContinuity first = full.resolver(new SearchSpaceMetrics(), 8, 128);
+		Object result = replayProof(first, reference, seed.anchor);
+		Object receipt = replayReceipt(result);
+		Assert.assertFalse(replayProofs(result).isEmpty());
+		Assert.assertNotNull(receipt);
+
+		NativePlacementContinuity unknown = first.nextRevision(List.copyOf(full.candidates));
+		Assert.assertTrue(matchesReplayReceipt(unknown, receipt, reference, seed.anchor));
+		Assert.assertEquals(1, replayReceiptCounter(unknown, "replayReceiptHits"));
+		Assert.assertEquals(0, replayReceiptCounter(unknown, "replayReceiptMisses"));
+		Assert.assertEquals("shared fact objects retain the allocation-free identity fast path", 0,
+			unknown.revisionComparisonSnapshot().continuityProjectionsCompared());
+		NativePlacementContinuity hinted = first.nextRevisionWithCompleteCandidateDelta(
+			List.copyOf(full.candidates), Set.of());
+		Assert.assertTrue(matchesReplayReceipt(hinted, receipt, reference, seed.anchor));
+		Assert.assertTrue(hinted.revisionComparisonSnapshot().hintedOwnersBypassed() > 0);
+
+		List<CandidateRuleFact> withdrawnFacts = full.candidates.stream()
+			.filter(fact -> fact != rootFact).toList();
+		NativePlacementContinuity withdrawn = first.nextRevisionWithCompleteCandidateDelta(
+			withdrawnFacts, identitySet(root.key));
+		Assert.assertFalse(matchesReplayReceipt(withdrawn, receipt, reference, seed.anchor));
+		NativePlacementContinuity restored = withdrawn.nextRevision(List.copyOf(full.candidates));
+		Assert.assertFalse("restoration cannot revive a historical revision token",
+			matchesReplayReceipt(restored, receipt, reference, seed.anchor));
+
+		CompiledHopKey foreignOwner = new CompiledHopKey(root.key.programFingerprint(),
+			root.key.functionNamespace(), root.key.callSitePath(), root.key.recompileContext(),
+			root.key.controlRegion(), root.key.emittedHopInstance(), root.key.canonicalSourceOrigin());
+		CandidateRealizationReference foreignReference = new CandidateRealizationReference(
+			new CandidateRuleKey(foreignOwner, reference.rule().orderedInputs()), reference.realization());
+		Assert.assertEquals(reference, foreignReference);
+		Assert.assertNotSame(reference.rule().parentOccurrence(),
+			foreignReference.rule().parentOccurrence());
+		Assert.assertFalse(matchesReplayReceipt(unknown, receipt, foreignReference, seed.anchor));
+		Assert.assertFalse(matchesReplayReceipt(unknown, receipt, reference,
+			anchor(FType.FULL, "worker2:8002", 0, 50)));
+
+		Assert.assertFalse(matchesReplayReceipt(first.freshQueryState(),
+			receipt, reference, seed.anchor));
+		Assert.assertFalse(matchesReplayReceipt(first.nextOwnerRevision(root.key, List.of(rootFact)),
+			receipt, reference, seed.anchor));
+		Assert.assertFalse(matchesReplayReceipt(first.structuralRevision(full.nodes, full.origins,
+			List.copyOf(full.candidates), full.edges, full.reaching, Set.of(), full.privacy),
+			receipt, reference, seed.anchor));
+	}
+
+	@Test
+	public void completeEmptyReplayReceiptInvalidatesWhenNativeSupportAppears()
+		throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey seed = anchor(FType.FULL, "worker1:8001", 0, 50);
+		Ref late = full.logicalRead("receipt-late");
+		List<CandidateInputState> inputs =
+			List.of(CandidateInputState.present(FType.FULL));
+		CandidateRuleFact staging = full.fact(late, inputs);
+		CandidateEmissionFact stagingEmission = staging.allowedEmissionFacts().get(0);
+		PlacementProofKey nativeAuthority = new PlacementProofKey(
+			PlacementProofKind.NATIVE_CONTINUITY, late.key, "receipt-native");
+		CandidateRealizationSupportClause groundedClause = new CandidateRealizationSupportClause(
+			List.of(nativeAuthority), List.of(), seed);
+		CandidateEmissionRealization grounded = CandidateEmissionRealization.nativeLineage(
+			stagingEmission.emissionState(), "receipt-grounded", seed,
+			List.of(nativeAuthority), List.of());
+		CandidateEmissionFact groundedEmission = new CandidateEmissionFact(
+			stagingEmission.emissionState(), stagingEmission.executionFType(),
+			stagingEmission.derivedFoutAction(), List.of(new CandidateEmissionRealization(
+				grounded.key(), List.of(groundedClause))));
+		CandidateRuleFact available = new CandidateRuleFact(staging.key(), staging.status(),
+			staging.capability(), staging.shapeProof(), staging.profile(), List.of(groundedEmission),
+			staging.failureCode());
+		CandidateRealizationReference reference = CandidateRealizationReference.of(
+			available.key(), groundedEmission.realizations().get(0));
+		full.candidates.remove(staging);
+		NativePlacementContinuity absent = full.resolver(new SearchSpaceMetrics(), 8, 128);
+		Object empty = replayProof(absent, reference, seed);
+		Object emptyReceipt = replayReceipt(empty);
+		Assert.assertTrue(replayProofs(empty).isEmpty());
+		Assert.assertNotNull("a root-bearing empty proof has a complete negative footprint",
+			emptyReceipt);
+		Assert.assertTrue(matchesReplayReceipt(absent.nextRevision(List.of()),
+			emptyReceipt, reference, seed));
+
+		NativePlacementContinuity added = absent.nextRevisionWithCompleteCandidateDelta(
+			List.of(available), identitySet(late.key));
+		Assert.assertFalse("new support must invalidate the negative receipt",
+			matchesReplayReceipt(added, emptyReceipt, reference, seed));
+		Object positive = replayProof(added, reference, seed);
+		Assert.assertFalse(replayProofs(positive).isEmpty());
+		Object positiveReceipt = replayReceipt(positive);
+		Assert.assertNotNull(positiveReceipt);
+		NativePlacementContinuity removed = added.nextRevisionWithCompleteCandidateDelta(
+			List.of(), identitySet(late.key));
+		Assert.assertFalse("withdrawal must invalidate the positive receipt",
+			matchesReplayReceipt(removed, positiveReceipt, reference, seed));
+		Assert.assertTrue(replayProofs(replayProof(removed, reference, seed)).isEmpty());
+	}
+
+	@Test
+	public void negativeReplayReceiptTracksLateBoundSourceWithAllNormalMemosDisabled()
+		throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey seed = anchor(FType.FULL, "worker1:8001", 0, 50);
+		Ref boundSource = full.logicalRead("receipt-bound-source");
+		Ref formal = full.logicalRead("receipt-formal");
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		CandidateRuleFact sourceFact = full.fact(boundSource, inputs);
+		CandidateRealizationReference sourceReference = full.reference(boundSource, inputs);
+		CandidateRuleFact originalFormalFact = full.fact(formal, inputs);
+		CandidateEmissionFact formalEmission = originalFormalFact.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization formalValueMap = CandidateEmissionRealization.valueMap(
+			formalEmission.emissionState(), "receipt-formal-binding",
+			List.of(new CandidateRealizationSupportClause(List.of(),
+				List.of(CandidateRealizationInputBinding.direct(0, sourceReference)))));
+		CandidateEmissionFact boundFormalEmission = new CandidateEmissionFact(
+			formalEmission.emissionState(), formalEmission.executionFType(),
+			formalEmission.derivedFoutAction(), List.of(formalValueMap));
+		CandidateRuleFact formalFact = new CandidateRuleFact(originalFormalFact.key(),
+			originalFormalFact.status(), originalFormalFact.capability(), originalFormalFact.shapeProof(),
+			originalFormalFact.profile(), List.of(boundFormalEmission), originalFormalFact.failureCode());
+		full.candidates.set(full.candidates.indexOf(originalFormalFact), formalFact);
+		CandidateRealizationReference formalReference = CandidateRealizationReference.of(
+			formalFact.key(), formalValueMap);
+		full.candidates.remove(sourceFact);
+
+		NativePlacementContinuity absent = full.resolver(new SearchSpaceMetrics(), 0, 0);
+		Object negative = replayProof(absent, formalReference, seed);
+		Object receipt = replayReceipt(negative);
+		Assert.assertTrue(replayProofs(negative).isEmpty());
+		Assert.assertNotNull("the formal root supplies the complete negative query footprint", receipt);
+		for(String cache : List.of("candidateTopologies", "completedSupportMemo",
+			"acyclicRootSupportMemo", "completedProofMemo", "acyclicComponentMemo"))
+			((Map<?,?>)accessibleField(NativePlacementContinuity.class, cache).get(absent)).clear();
+
+		PlacementProofKey nativeAuthority = new PlacementProofKey(
+			PlacementProofKind.NATIVE_CONTINUITY, boundSource.key, "receipt-late-bound-native");
+		CandidateEmissionFact sourceEmission = sourceFact.allowedEmissionFacts().get(0);
+		CandidateRealizationSupportClause groundedClause = new CandidateRealizationSupportClause(
+			List.of(nativeAuthority), List.of(), seed);
+		CandidateEmissionRealization grounded = new CandidateEmissionRealization(
+			sourceEmission.realizations().get(0).key(), List.of(groundedClause));
+		CandidateEmissionFact groundedEmission = new CandidateEmissionFact(
+			sourceEmission.emissionState(), sourceEmission.executionFType(),
+			sourceEmission.derivedFoutAction(), List.of(grounded));
+		CandidateRuleFact groundedSource = new CandidateRuleFact(sourceFact.key(), sourceFact.status(),
+			sourceFact.capability(), sourceFact.shapeProof(), sourceFact.profile(),
+			List.of(groundedEmission), sourceFact.failureCode());
+		NativePlacementContinuity added = absent.nextRevisionWithCompleteCandidateDelta(
+			List.of(groundedSource, formalFact), identitySet(boundSource.key));
+
+		Assert.assertFalse("the reverse bound-owner cone invalidates the unchanged formal root token",
+			matchesReplayReceipt(added, receipt, formalReference, seed));
+		Assert.assertFalse("the cold fallback observes the newly grounded bound source",
+			replayProofs(replayProof(added, formalReference, seed)).isEmpty());
+		Assert.assertTrue("receipt-only state must activate exact revision comparison",
+			added.revisionComparisonSnapshot().ownersCompared() > 0
+				|| added.revisionComparisonSnapshot().hintedOwnersBypassed() > 0);
+	}
+
+	@Test
+	public void replayReceiptIncludesEveryOwnerInAGroundedLoopScc() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref entry = full.source("receipt-loop-entry",
+			anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref first = full.logicalRead("receipt-loop-first");
+		Ref second = full.logicalRead("receipt-loop-second");
+		full.reaching.put(first.key, List.of(entry.key, second.key));
+		full.reaching.put(second.key, List.of(first.key));
+		Ref root = full.unary("receipt-loop-root", OpOp1.ABS, first, false);
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		CandidateRealizationReference reference = full.reference(root, inputs);
+		CandidateRuleFact secondFact = full.fact(second, inputs);
+		NativePlacementContinuity initial = full.resolver(new SearchSpaceMetrics(), 0, 0);
+		Object proof = replayProof(initial, reference, entry.anchor);
+		Object receipt = replayReceipt(proof);
+
+		Assert.assertFalse("the loop SCC is grounded by its entry", replayProofs(proof).isEmpty());
+		Assert.assertNotNull(receipt);
+		List<CandidateRuleFact> withdrawnFacts = full.candidates.stream()
+			.filter(fact -> fact != secondFact).toList();
+		NativePlacementContinuity withdrawn = initial.nextRevisionWithCompleteCandidateDelta(
+			withdrawnFacts, identitySet(second.key));
+		Assert.assertFalse("withdrawing any owner in the SCC invalidates the complete proof receipt",
+			matchesReplayReceipt(withdrawn, receipt, reference, entry.anchor));
+		Assert.assertTrue("the cold oracle also rejects the broken loop SCC",
+			replayProofs(replayProof(withdrawn, reference, entry.anchor)).isEmpty());
+	}
+
+	@Test
+	public void replayReceiptRejectsStructurallyEqualForeignBoundOwnerInNestedValueMaps()
+		throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey seed = anchor(FType.FULL, "worker1:8001", 0, 50);
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		Ref source = full.logicalRead("receipt-identity-source");
+		CandidateRuleFact originalSource = full.fact(source, inputs);
+		CandidateEmissionFact sourceEmission = originalSource.allowedEmissionFacts().get(0);
+		PlacementProofKey nativeAuthority = new PlacementProofKey(
+			PlacementProofKind.NATIVE_CONTINUITY, source.key, "receipt-identity-native");
+		CandidateRealizationSupportClause sourceClause = new CandidateRealizationSupportClause(
+			List.of(nativeAuthority), List.of(), seed);
+		CandidateEmissionRealization sourceRealization = new CandidateEmissionRealization(
+			sourceEmission.realizations().get(0).key(), List.of(sourceClause));
+		CandidateEmissionFact groundedSourceEmission = new CandidateEmissionFact(
+			sourceEmission.emissionState(), sourceEmission.executionFType(),
+			sourceEmission.derivedFoutAction(), List.of(sourceRealization));
+		CandidateRuleFact sourceFact = new CandidateRuleFact(originalSource.key(),
+			originalSource.status(), originalSource.capability(), originalSource.shapeProof(),
+			originalSource.profile(), List.of(groundedSourceEmission), originalSource.failureCode());
+		full.candidates.set(full.candidates.indexOf(originalSource), sourceFact);
+		CandidateRealizationReference sourceReference = CandidateRealizationReference.of(
+			sourceFact.key(), sourceRealization);
+
+		Ref middle = full.logicalRead("receipt-identity-middle");
+		CandidateRuleFact originalMiddle = full.fact(middle, inputs);
+		CandidateEmissionFact middleEmission = originalMiddle.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization middleValueMap = CandidateEmissionRealization.valueMap(
+			middleEmission.emissionState(), "receipt-identity-middle-map",
+			List.of(new CandidateRealizationSupportClause(List.of(),
+				List.of(CandidateRealizationInputBinding.direct(0, sourceReference)))));
+		CandidateEmissionFact mappedMiddleEmission = new CandidateEmissionFact(
+			middleEmission.emissionState(), middleEmission.executionFType(),
+			middleEmission.derivedFoutAction(), List.of(middleValueMap));
+		CandidateRuleFact middleFact = new CandidateRuleFact(originalMiddle.key(),
+			originalMiddle.status(), originalMiddle.capability(), originalMiddle.shapeProof(),
+			originalMiddle.profile(), List.of(mappedMiddleEmission), originalMiddle.failureCode());
+		full.candidates.set(full.candidates.indexOf(originalMiddle), middleFact);
+		CandidateRealizationReference middleReference = CandidateRealizationReference.of(
+			middleFact.key(), middleValueMap);
+
+		Ref root = full.logicalRead("receipt-identity-root");
+		CandidateRuleFact originalRoot = full.fact(root, inputs);
+		CandidateEmissionFact rootEmission = originalRoot.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization rootValueMap = CandidateEmissionRealization.valueMap(
+			rootEmission.emissionState(), "receipt-identity-root-map",
+			List.of(new CandidateRealizationSupportClause(List.of(),
+				List.of(CandidateRealizationInputBinding.direct(0, middleReference)))));
+		CandidateEmissionFact mappedRootEmission = new CandidateEmissionFact(
+			rootEmission.emissionState(), rootEmission.executionFType(),
+			rootEmission.derivedFoutAction(), List.of(rootValueMap));
+		CandidateRuleFact rootFact = new CandidateRuleFact(originalRoot.key(), originalRoot.status(),
+			originalRoot.capability(), originalRoot.shapeProof(), originalRoot.profile(),
+			List.of(mappedRootEmission), originalRoot.failureCode());
+		full.candidates.set(full.candidates.indexOf(originalRoot), rootFact);
+		CandidateRealizationReference rootReference = CandidateRealizationReference.of(
+			rootFact.key(), rootValueMap);
+
+		NativePlacementContinuity initial = full.resolver(new SearchSpaceMetrics(), 0, 0);
+		Object initialProof = replayProof(initial, rootReference, seed);
+		Object receipt = replayReceipt(initialProof);
+		Assert.assertFalse(replayProofs(initialProof).isEmpty());
+		Assert.assertNotNull(receipt);
+		for(String cache : List.of("candidateTopologies", "completedSupportMemo",
+			"acyclicRootSupportMemo", "completedProofMemo", "acyclicComponentMemo"))
+			((Map<?,?>)accessibleField(NativePlacementContinuity.class, cache).get(initial)).clear();
+
+		CompiledHopKey foreignSource = new CompiledHopKey(source.key.programFingerprint(),
+			source.key.functionNamespace(), source.key.callSitePath(), source.key.recompileContext(),
+			source.key.controlRegion(), source.key.emittedHopInstance(), source.key.canonicalSourceOrigin());
+		Assert.assertEquals(source.key, foreignSource);
+		Assert.assertNotSame(source.key, foreignSource);
+		CandidateRealizationReference foreignReference = CandidateRealizationReference.of(
+			new CandidateRuleKey(foreignSource, sourceReference.rule().orderedInputs()), sourceRealization);
+		CandidateRealizationSupportClause foreignClause = new CandidateRealizationSupportClause(
+			List.of(), List.of(CandidateRealizationInputBinding.direct(0, foreignReference)));
+		CandidateEmissionRealization foreignMiddleValueMap = CandidateEmissionRealization.valueMap(
+			middleEmission.emissionState(), "receipt-identity-middle-map", List.of(foreignClause));
+		CandidateEmissionFact foreignMiddleEmission = new CandidateEmissionFact(
+			middleEmission.emissionState(), middleEmission.executionFType(),
+			middleEmission.derivedFoutAction(), List.of(foreignMiddleValueMap));
+		CandidateRuleFact changedMiddle = new CandidateRuleFact(middleFact.key(), middleFact.status(),
+			middleFact.capability(), middleFact.shapeProof(), middleFact.profile(),
+			List.of(foreignMiddleEmission), middleFact.failureCode());
+		Assert.assertEquals("record equality deliberately omits nested owner identity",
+			middleFact, changedMiddle);
+		List<CandidateRuleFact> revisedFacts = full.candidates.stream()
+			.map(fact -> fact == middleFact ? changedMiddle : fact).toList();
+		NativePlacementContinuity revised = initial.nextRevisionWithCompleteCandidateDelta(
+			revisedFacts, identitySet(middle.key));
+		NativePlacementContinuity cold = new NativePlacementContinuity(full.nodes, full.origins,
+			revisedFacts, full.edges, full.reaching, Set.of(), full.privacy,
+			new SearchSpaceMetrics(), 0, 0);
+
+		Assert.assertTrue("fresh identity lookup rejects the foreign source owner",
+			replayProofs(replayProof(cold, rootReference, seed)).isEmpty());
+		Assert.assertFalse("revision-carried receipt must match the fresh cold oracle",
+			matchesReplayReceipt(revised, receipt, rootReference, seed));
 	}
 
 	@Test

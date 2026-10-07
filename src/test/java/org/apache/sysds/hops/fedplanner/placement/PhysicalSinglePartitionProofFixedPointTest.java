@@ -373,6 +373,83 @@ public class PhysicalSinglePartitionProofFixedPointTest {
 		return names;
 	}
 
+	@Test
+	public void cyclicInventoriesMatchSynchronousThreeBitOracle() throws Exception {
+		Random random = new Random(732191);
+		for(int trial = 0; trial < 50; trial++) {
+			int count = 8 + random.nextInt(16);
+			int[] seeds = new int[count];
+			List<List<int[]>> clauses = new ArrayList<>();
+			CandidateRuleKey[] rules = new CandidateRuleKey[count + 1];
+			CandidateEmissionRealization[] keys = new CandidateEmissionRealization[count + 1];
+			for(int i = 0; i <= count; i++) {
+				rules[i] = rule("random-" + i);
+				int kind = i == count ? 0 : random.nextInt(5);
+				if(i < count)
+					seeds[i] = kind == 1 ? 1 : kind == 2 ? 2 : kind == 3 ? 4 : 0;
+				keys[i] = kind == 1 || kind == 2 ? durable("random-" + i, kind == 2)
+					: valueMap("random-" + i, List.of(unknownClause()));
+			}
+			List<List<CandidateRuleFact>> inventory = new ArrayList<>();
+			for(int i = 0; i < count; i++) {
+				List<int[]> nodeClauses = new ArrayList<>();
+				List<CandidateRealizationSupportClause> physicalClauses = new ArrayList<>();
+				if(seeds[i] == 0)
+					for(int c = 0, n = 1 + random.nextInt(3); c < n; c++) {
+						int[] sources = new int[1 + random.nextInt(3)];
+						CandidateRealizationReference[] references = new CandidateRealizationReference[sources.length];
+						for(int s = 0; s < sources.length; s++) {
+							sources[s] = random.nextInt(count + 1);
+							references[s] = ref(rules[sources[s]], keys[sources[s]]);
+						}
+						nodeClauses.add(sources);
+						physicalClauses.add(clause(references));
+					}
+				clauses.add(nodeClauses);
+				CandidateEmissionRealization realization = seeds[i] == 0
+					? valueMap("random-" + i, physicalClauses.stream().distinct().toList()) : keys[i];
+				inventory.add(List.of(fact(rules[i], realization)));
+			}
+			int[] expected = seeds.clone();
+			boolean changed;
+			do {
+				changed = false;
+				int[] previous = expected.clone();
+				for(int i = 0; i < count; i++) {
+					int state = seeds[i];
+					for(int[] sources : clauses.get(i)) {
+						boolean available = true, exact = true;
+						int nonExact = 0;
+						for(int source : sources) {
+							int input = source == count ? 0 : previous[source];
+							available &= input != 0;
+							exact &= (input & 1) != 0;
+							nonExact |= input & 6;
+						}
+						if(available)
+							state |= nonExact | (exact ? 1 : 0);
+					}
+					changed |= state != previous[i];
+					expected[i] = state;
+				}
+			} while(changed);
+			Map<?,?> actual = fixedPoint(inventory);
+			for(int i = 0; i < count; i++) {
+				String proof = (expected[i] & 2) != 0 ? "NON_SINGLE" : (expected[i] & 4) != 0
+					? "UNKNOWN" : (expected[i] & 1) != 0 ? "EXACT" : "UNAVAILABLE";
+				Assert.assertEquals("trial=" + trial + ", node=" + i, proof,
+					actual.get(ref(rules[i], keys[i])).toString());
+			}
+		}
+	}
+
+	private static Map<?,?> fixedPoint(List<List<CandidateRuleFact>> inventory) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"exactSinglePartitionRealizationProofs", List.class);
+		method.setAccessible(true);
+		return (Map<?,?>)method.invoke(null, inventory);
+	}
+
 	@SuppressWarnings("unchecked")
 	private static Optional<Boolean> singlePartition(List<CandidateRuleFact> sourceFacts,
 		List<List<CandidateRuleFact>> inventory) throws Exception {

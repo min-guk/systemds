@@ -18,7 +18,11 @@
  */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import org.junit.Assert;
@@ -107,7 +111,8 @@ public class ExactActivationClassFactorDecompositionTest {
 						new boolean[] {false, true}))))) {
 			Assert.assertTrue(decomposition.auxiliaryVariables().isEmpty());
 			Assert.assertTrue(decomposition.solverFactors().isEmpty());
-			Assert.assertTrue(decomposition.semanticDescriptor().contains("identicallyZero=true"));
+			Assert.assertTrue(decomposition.semanticDescriptor().startsWith(
+				"EXACT_ACTIVATION_CLASS_OR_V2|semanticSha256="));
 		}
 	}
 
@@ -183,6 +188,70 @@ public class ExactActivationClassFactorDecompositionTest {
 	}
 
 	@Test
+	public void descriptorDigestMatchesLegacyTextAndPreservesCanonicalCosts() {
+		var source = new ExactCategoricalSolver.Variable("digest-source", 2);
+		var consumer = new ExactCategoricalSolver.Variable("digest-consumer", 3);
+		boolean[] sourceActive = {true, false};
+		double[] prices = {2.5d, 7d};
+		boolean[] demandActive = {false, true, true};
+		var decomposition = ExactActivationClassFactorDecomposition.create("digest", source,
+			sourceActive, prices, List.of(new ExactActivationClassFactorDecomposition.Demand(
+				consumer, demandActive)));
+
+		String accumulator = "digest|active-after=0:2";
+		String legacy = new StringBuilder("EXACT_ACTIVATION_CLASS_OR_V1|key=digest")
+			.append("|source=digest-source:2|sourceActive=").append(Arrays.toString(sourceActive))
+			.append("|sourcePrices=")
+			.append(Long.toUnsignedString(Double.doubleToRawLongBits(prices[0]), 16)).append(',')
+			.append(Long.toUnsignedString(Double.doubleToRawLongBits(prices[1]), 16)).append(',')
+			.append("|demand=0:digest-consumer:3:active=").append(Arrays.toString(demandActive))
+			.append("|merged=digest-consumer:").append(Arrays.toString(demandActive))
+			.append("|accumulators=[").append(accumulator).append(']')
+			.append("|solverScopes=[[digest-consumer:3, ").append(accumulator)
+			.append("], [digest-source:2, ").append(accumulator).append("]]")
+			.toString();
+		Assert.assertEquals("EXACT_ACTIVATION_CLASS_OR_V2|semanticSha256=" + sha256(legacy),
+			decomposition.semanticDescriptor());
+
+		for(int sourceValue = 0; sourceValue < source.domainSize(); sourceValue++)
+			for(int consumerValue = 0; consumerValue < consumer.domainSize(); consumerValue++) {
+				List<ExactCategoricalSolver.Variable> variables = new ArrayList<>(List.of(source, consumer));
+				variables.addAll(decomposition.auxiliaryVariables());
+				List<ExactCategoricalSolver.Factor> factors =
+					new ArrayList<>(decomposition.solverFactors());
+				factors.add(fixed(source, sourceValue));
+				factors.add(fixed(consumer, consumerValue));
+				double expected = ExactCategoricalSolver.evaluate(List.of(source, consumer),
+					List.of(decomposition.canonicalFactor()), TEST_LIMITS,
+					List.of(sourceValue, consumerValue));
+				Assert.assertEquals(Double.doubleToRawLongBits(expected),
+					Double.doubleToRawLongBits(ExactCategoricalSolver.solve(variables, factors,
+						TEST_LIMITS).objective()));
+			}
+	}
+
+	@Test
+	public void largeResolvedAndZeroCostDescriptorsStayBounded() {
+		int domain = 2_000_000;
+		var source = new ExactCategoricalSolver.Variable("large-source", 2);
+		var consumer = new ExactCategoricalSolver.Variable("large-consumer", domain);
+		boolean[] observations = new boolean[domain];
+		observations[domain - 1] = true;
+		var demand = new ExactActivationClassFactorDecomposition.Demand(consumer, observations);
+
+		var resolved = ExactActivationClassFactorDecomposition.create("large", source,
+			new boolean[] {true, true}, new double[] {1d, 2d}, List.of(demand));
+		var zeroCost = ExactActivationClassFactorDecomposition.create("large-zero", source,
+			new boolean[] {true, true}, new double[] {0d, 0d}, List.of(demand));
+		Assert.assertTrue(resolved.semanticDescriptor().startsWith(
+			"EXACT_ACTIVATION_CLASS_OR_V2|semanticSha256="));
+		Assert.assertTrue(resolved.semanticDescriptor().length() < 256);
+		Assert.assertTrue(zeroCost.semanticDescriptor().startsWith(
+			"EXACT_ACTIVATION_CLASS_OR_V2|semanticSha256="));
+		Assert.assertTrue(zeroCost.semanticDescriptor().length() < 256);
+	}
+
+	@Test
 	public void manyConsumersKeepBoundedWidthAndBooleanAuxiliaries() {
 		var source = new ExactCategoricalSolver.Variable("wide-source", 4);
 		List<ExactCategoricalSolver.Variable> originals = new ArrayList<>();
@@ -213,5 +282,19 @@ public class ExactActivationClassFactorDecompositionTest {
 		ExactCategoricalSolver.Variable variable, int accepted) {
 		return ExactCategoricalSolver.Factor.lazy(List.of(variable), values ->
 			values[0] == accepted ? 0d : Double.POSITIVE_INFINITY);
+	}
+
+	private static String sha256(String value) {
+		try {
+			byte[] digest = MessageDigest.getInstance("SHA-256")
+				.digest(value.getBytes(StandardCharsets.UTF_8));
+			StringBuilder hex = new StringBuilder(64);
+			for(byte octet : digest)
+				hex.append(String.format("%02x", octet));
+			return hex.toString();
+		}
+		catch(NoSuchAlgorithmException ex) {
+			throw new AssertionError(ex);
+		}
 	}
 }

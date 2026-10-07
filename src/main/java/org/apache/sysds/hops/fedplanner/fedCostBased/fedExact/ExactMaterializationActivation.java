@@ -166,6 +166,84 @@ final class ExactMaterializationActivation {
 		return Math.min(scopeWeight, minimal.stream().mapToDouble(node -> node.weight).sum());
 	}
 
+	static PreparedConservativeUnion prepareConservativeUnion(List<Event> inputEvents,
+		double scopeWeight) {
+		return new PreparedConservativeUnion(validatedEvents(inputEvents, scopeWeight), scopeWeight);
+	}
+
+	static final class PreparedConservativeUnion {
+		private final List<PreparedEvent> events;
+		private final int inputSize;
+		private final double scopeWeight;
+
+		private PreparedConservativeUnion(List<Event> inputEvents, double scopeWeight) {
+			inputSize = inputEvents.size();
+			this.scopeWeight = scopeWeight;
+			Map<EventKey,List<Integer>> indexes = new LinkedHashMap<>();
+			for(int index = 0; index < inputEvents.size(); index++) {
+				Event event = inputEvents.get(index);
+				if(event.weight > 0d)
+					indexes.computeIfAbsent(new EventKey(event.weight, event.conditions),
+						ignored -> new ArrayList<>()).add(index);
+			}
+			List<PreparedEvent> prepared = new ArrayList<>(indexes.size());
+			for(var entry : indexes.entrySet())
+				prepared.add(new PreparedEvent(entry.getKey().weight, entry.getKey().conditions,
+					entry.getValue().stream().mapToInt(Integer::intValue).toArray()));
+			prepared.sort(PREPARED_EVENT_ORDER);
+			events = List.copyOf(prepared);
+		}
+
+		double evaluate(boolean[] active) {
+			boolean[] snapshot = Objects.requireNonNull(active, "active").clone();
+			return evaluateOwned(snapshot);
+		}
+
+		/** The caller transfers a fresh invocation-local mask that cannot be mutated concurrently. */
+		double evaluateOwned(boolean[] active) {
+			Objects.requireNonNull(active, "active");
+			if(active.length != inputSize)
+				throw new IllegalArgumentException("EXACT_MATERIALIZATION_ACTIVE_SIZE_MISMATCH");
+			double sum = 0d;
+			double compensation = 0d;
+			double simpleSum = 0d;
+			for(int index = 0; index < events.size(); index++) {
+				PreparedEvent event = events.get(index);
+				if(!event.active(active))
+					continue;
+				boolean subsumed = false;
+				for(int previous = 0; previous < index && !subsumed; previous++) {
+					PreparedEvent broader = events.get(previous);
+					subsumed = broader.active(active)
+						&& event.conditions.size() > broader.conditions.size()
+						&& event.conditions.containsAll(broader.conditions)
+						&& broader.weight >= event.weight;
+				}
+				if(!subsumed) {
+					double corrected = event.weight - compensation;
+					double next = sum + corrected;
+					compensation = (next - sum) - corrected;
+					sum = next;
+					simpleSum += event.weight;
+				}
+			}
+			double precise = sum - compensation;
+			if(Double.isNaN(precise) && Double.isInfinite(simpleSum))
+				precise = simpleSum;
+			return Math.min(scopeWeight, precise);
+		}
+	}
+
+	private record PreparedEvent(double weight,
+		List<ExactPhysicalCostModel.BranchLiteral> conditions, int[] inputIndexes) {
+		private boolean active(boolean[] values) {
+			for(int index : inputIndexes)
+				if(values[index])
+					return true;
+			return false;
+		}
+	}
+
 	private static List<Event> validatedEvents(List<Event> inputEvents, double scopeWeight) {
 		if(!Double.isFinite(scopeWeight) || scopeWeight < 0d
 			|| Double.doubleToRawLongBits(scopeWeight) == Double.doubleToRawLongBits(-0d))
@@ -259,6 +337,12 @@ final class ExactMaterializationActivation {
 			.thenComparing(node -> node.conditions,
 				ExactMaterializationActivation::compareConditions)
 			.thenComparing((Node node) -> node.weight, Comparator.reverseOrder());
+
+	private static final Comparator<PreparedEvent> PREPARED_EVENT_ORDER = Comparator
+			.comparingInt((PreparedEvent event) -> event.conditions.size())
+			.thenComparing(event -> event.conditions,
+				ExactMaterializationActivation::compareConditions)
+			.thenComparing((PreparedEvent event) -> event.weight, Comparator.reverseOrder());
 
 	private static int compareConditions(
 		List<ExactPhysicalCostModel.BranchLiteral> left,

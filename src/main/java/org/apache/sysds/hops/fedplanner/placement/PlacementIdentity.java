@@ -59,6 +59,8 @@ public final class PlacementIdentity {
 		ThreadLocal.withInitial(WeakIdentityCache::new);
 	private static final ThreadLocal<WeakIdentityCache<List<CandidateRealizationReference>>>
 		REQUIRED_INPUT_SUPPORT_BY_CLAUSE_IDENTITY = ThreadLocal.withInitial(WeakIdentityCache::new);
+	private static final ThreadLocal<WeakIdentityCache<List<CandidateRealizationReference>>>
+		NATIVE_REQUIRED_INPUT_SUPPORT_BY_CLAUSE_IDENTITY = ThreadLocal.withInitial(WeakIdentityCache::new);
 	private static final long NORMALIZED_SIGNATURE_CACHE_MAX_CHARS = Math.max(0,
 		Long.getLong("sysds.fedplanner.signatureCache.maxChars", 64L * 1024 * 1024));
 	// Equal aliases share text but otherwise could grow the identity front cache
@@ -681,6 +683,17 @@ public final class PlacementIdentity {
 		return !leftEndpoints.isEmpty() && leftEndpoints.equals(physicalWorkerEndpoints(right));
 	}
 
+	/** Same normalized worker endpoint set without asserting a partition-axis identity. */
+	static boolean samePhysicalWorkerEndpointSet(DurableAnchorKey left, DurableAnchorKey right) {
+		Objects.requireNonNull(left, "left anchor");
+		Objects.requireNonNull(right, "right anchor");
+		if(left.fType() == FType.PART || left.fType() == FType.OTHER
+			|| right.fType() == FType.PART || right.fType() == FType.OTHER)
+			return false;
+		List<String> leftEndpoints = physicalWorkerEndpoints(left);
+		return !leftEndpoints.isEmpty() && leftEndpoints.equals(physicalWorkerEndpoints(right));
+	}
+
 	/** Exact endpoint comparison under a relocation action's materialization type. */
 	static boolean sameWorkerEndpointsForMaterialization(DurableAnchorKey residency,
 		DurableAnchorKey durableAnchor, FType materializationFType) {
@@ -1119,8 +1132,10 @@ public final class PlacementIdentity {
 			? NORMALIZED_SIGNATURES_BY_IDENTITY.get().get(identity)
 			: activeIdentity.get(identity);
 		if(signature != null) {
-			if(metrics != null)
+			if(metrics != null) {
 				metrics.recordSignatureIdentityCacheHit();
+				recordSignatureCacheState(metrics, activeStructural, activeIdentity);
+			}
 			return signature;
 		}
 		signature = activeStructural == null ? NORMALIZED_SIGNATURES.get().get(identity)
@@ -1130,8 +1145,10 @@ public final class PlacementIdentity {
 				NORMALIZED_SIGNATURES_BY_IDENTITY.get().put(identity, signature);
 			else if(activeIdentity.size() < NORMALIZED_SIGNATURE_CACHE_MAX_IDENTITIES)
 				activeIdentity.put(identity, signature);
-			if(metrics != null)
+			if(metrics != null) {
 				metrics.recordSignatureStructuralCacheHit();
+				recordSignatureCacheState(metrics, activeStructural, activeIdentity);
+			}
 			return signature;
 		}
 		if(metrics != null)
@@ -1148,7 +1165,8 @@ public final class PlacementIdentity {
 		long[] retained = NORMALIZED_SIGNATURE_CHARS.get();
 		long limit = NORMALIZED_SIGNATURE_TEST_MAX_CHARS.get() == null
 			? NORMALIZED_SIGNATURE_CACHE_MAX_CHARS : NORMALIZED_SIGNATURE_TEST_MAX_CHARS.get();
-		if(signature.length() <= limit - retained[0]) {
+		boolean admitted = signature.length() <= limit - retained[0];
+		if(admitted) {
 			if(activeIdentity == null) {
 				NORMALIZED_SIGNATURES.get().put(identity, signature);
 				NORMALIZED_SIGNATURES_BY_IDENTITY.get().put(identity, signature);
@@ -1160,6 +1178,9 @@ public final class PlacementIdentity {
 			}
 			retained[0] += signature.length();
 		}
+		if(metrics != null)
+			metrics.recordSignatureAdmission(identity, signature, admitted, signature.length() > limit,
+				cacheSize(activeStructural), cacheSize(activeIdentity), retained[0]);
 		return signature;
 	}
 
@@ -1177,6 +1198,22 @@ public final class PlacementIdentity {
 		return support;
 	}
 
+	// Native support preserves exact owner identity in addition to reference equality,
+	// so it must not share the ordinary clause's structural-deduplication cache.
+	static List<CandidateRealizationReference> cachedNativeRequiredInputSupport(
+		CandidateRealizationSupportClause clause) {
+		return NATIVE_REQUIRED_INPUT_SUPPORT_BY_CLAUSE_IDENTITY.get().get(
+			Objects.requireNonNull(clause, "support clause"));
+	}
+
+	static List<CandidateRealizationReference> rememberNativeRequiredInputSupport(
+		CandidateRealizationSupportClause clause, List<CandidateRealizationReference> support) {
+		NATIVE_REQUIRED_INPUT_SUPPORT_BY_CLAUSE_IDENTITY.get().put(
+			Objects.requireNonNull(clause, "support clause"),
+			Objects.requireNonNull(support, "required input support"));
+		return support;
+	}
+
 	/** Starts a new compiler analysis with an empty, bounded serialization cache. */
 	static void resetNormalizedSignatureCache() {
 		NORMALIZED_SIGNATURES.remove();
@@ -1184,13 +1221,19 @@ public final class PlacementIdentity {
 		PHYSICAL_WORKER_LAYOUTS_BY_IDENTITY.remove();
 		PHYSICAL_WORKER_ENDPOINTS_BY_IDENTITY.remove();
 		REQUIRED_INPUT_SUPPORT_BY_CLAUSE_IDENTITY.remove();
+		NATIVE_REQUIRED_INPUT_SUPPORT_BY_CLAUSE_IDENTITY.remove();
 		NORMALIZED_SIGNATURE_CHARS.remove();
 	}
 
 	static void setActiveMetrics(SearchSpaceMetrics metrics) {
 		if(metrics == null) {
-			ACTIVE_METRICS.remove();
-			endActiveSignatureCache();
+			try {
+				finishSignatureAdmissionScope();
+			}
+			finally {
+				ACTIVE_METRICS.remove();
+				endActiveSignatureCache();
+			}
 		}
 		else {
 			ACTIVE_METRICS.set(metrics);
@@ -1213,11 +1256,36 @@ public final class PlacementIdentity {
 
 	static void endAnalysisScope() {
 		ACTIVE_STRUCTURAL_ARENA.remove();
-		ACTIVE_METRICS.remove();
-		endActiveSignatureCache();
+		try {
+			finishSignatureAdmissionScope();
+		}
+		finally {
+			ACTIVE_METRICS.remove();
+			endActiveSignatureCache();
+		}
+	}
+
+	private static void finishSignatureAdmissionScope() {
+		SearchSpaceMetrics metrics = ACTIVE_METRICS.get();
+		if(metrics != null)
+			metrics.finishSignatureAdmissionScope(cacheSize(ACTIVE_STRUCTURAL_SIGNATURES.get()),
+				cacheSize(ACTIVE_IDENTITY_SIGNATURES.get()), NORMALIZED_SIGNATURE_CHARS.get()[0]);
+	}
+
+	private static void recordSignatureCacheState(SearchSpaceMetrics metrics,
+		Map<Object,String> structural, Map<Object,String> identity) {
+		metrics.recordSignatureCacheState(cacheSize(structural), cacheSize(identity),
+			NORMALIZED_SIGNATURE_CHARS.get()[0]);
+	}
+
+	private static int cacheSize(Map<?,?> cache) {
+		return cache == null ? 0 : cache.size();
 	}
 
 	private static void beginActiveSignatureCache() {
+		NORMALIZED_SIGNATURES.remove();
+		NORMALIZED_SIGNATURES_BY_IDENTITY.remove();
+		NORMALIZED_SIGNATURE_CHARS.remove();
 		ACTIVE_STRUCTURAL_SIGNATURES.set(new java.util.HashMap<>());
 		ACTIVE_IDENTITY_SIGNATURES.set(new java.util.IdentityHashMap<>());
 	}

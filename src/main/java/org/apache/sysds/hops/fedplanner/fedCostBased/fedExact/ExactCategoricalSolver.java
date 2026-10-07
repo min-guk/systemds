@@ -7,6 +7,7 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -69,9 +70,10 @@ public final class ExactCategoricalSolver {
 	public static final class Factor {
 		private final List<Variable> scope;
 		private final double[] denseValues;
+		private final HardTable hardValues;
 		private final CostFunction evaluator;
 
-		private Factor(List<Variable> scope, double[] denseValues, CostFunction evaluator,
+		private Factor(List<Variable> scope, double[] denseValues, HardTable hardValues, CostFunction evaluator,
 			boolean copyDenseValues) {
 			this.scope = List.copyOf(Objects.requireNonNull(scope, "scope"));
 			if(denseValues != null && copyDenseValues) {
@@ -80,29 +82,44 @@ public final class ExactCategoricalSolver {
 			}
 			else
 				this.denseValues = denseValues;
+			this.hardValues = hardValues;
 			this.evaluator = evaluator;
-			if((denseValues == null) == (evaluator == null))
+			if((denseValues != null ? 1 : 0) + (hardValues != null ? 1 : 0)
+				+ (evaluator != null ? 1 : 0) != 1)
 				throw new IllegalArgumentException("EXACT_VE_FACTOR_REPRESENTATION_INVALID");
 		}
 
 		public static Factor dense(List<Variable> scope, double... values) {
-			return new Factor(scope, Objects.requireNonNull(values, "values"), null, true);
+			return new Factor(scope, Objects.requireNonNull(values, "values"), null, null, true);
 		}
 
 		/** Internal ownership transfer; the caller must never mutate {@code values} again. */
 		static Factor denseOwned(List<Variable> scope, double[] values) {
-			return new Factor(scope, Objects.requireNonNull(values, "values"), null, false);
+			return new Factor(scope, Objects.requireNonNull(values, "values"), null, null, false);
+		}
+
+		/** Internal exact hard-table ownership transfer. */
+		static Factor hardOwned(List<Variable> scope, HardTable values) {
+			return new Factor(scope, null, Objects.requireNonNull(values, "values"), null, false);
 		}
 
 		public static Factor lazy(List<Variable> scope, CostFunction evaluator) {
-			return new Factor(scope, null, Objects.requireNonNull(evaluator, "evaluator"), false);
+			return new Factor(scope, null, null, Objects.requireNonNull(evaluator, "evaluator"), false);
 		}
 
 		List<Variable> scope() { return scope; }
+		boolean isHardTable() { return hardValues != null; }
+		Factor rebindOwned(List<Variable> reboundScope) {
+			if(denseValues != null)
+				return denseOwned(reboundScope, denseValues);
+			if(hardValues != null)
+				return hardOwned(reboundScope, hardValues);
+			throw new IllegalStateException("EXACT_VE_FACTOR_NOT_FROZEN");
+		}
 		double denseCostAt(int cell) {
-			if(denseValues == null)
+			if(denseValues == null && hardValues == null)
 				throw new IllegalStateException("EXACT_VE_FACTOR_NOT_DENSE");
-			return denseValues[cell];
+			return hardValues == null ? denseValues[cell] : hardValues.costAt(cell);
 		}
 		double cost(int[] values) {
 			if(values == null || values.length != scope.size())
@@ -115,7 +132,7 @@ public final class ExactCategoricalSolver {
 					throw new IllegalArgumentException("EXACT_VE_FACTOR_ASSIGNMENT_VALUE_INVALID");
 				cell = cell * scope.get(index).domainSize() + values[index];
 			}
-			return denseValues[cell];
+			return hardValues == null ? denseValues[cell] : hardValues.costAt(cell);
 		}
 		boolean supportsPartialTruth() {
 			return evaluator instanceof PartialHardCostFunction;
@@ -127,6 +144,123 @@ public final class ExactCategoricalSolver {
 				return PartialTruth.UNKNOWN;
 			return Objects.requireNonNull(partial.partialTruth(values),
 				"EXACT_VE_PARTIAL_TRUTH_NULL");
+		}
+	}
+
+	/** Exact +0.0/+INF table; a set bit denotes a forbidden logical cell. */
+	static final class HardTable {
+		private final int cells;
+		private final long[] forbidden;
+		private int forbiddenCount;
+
+		private HardTable(int cells, long[] forbidden) {
+			this.cells = cells;
+			this.forbidden = forbidden;
+		}
+
+		static HardTable allocate(int cells) {
+			return new HardTable(cells, PlannerResourceGuard.allocateLongs((int)(((long)cells + 63L) >>> 6),
+				"exact-hard-table"));
+		}
+
+		double costAt(int cell) {
+			return (forbidden.length == 0 || (forbidden[cell >>> 6] & 1L << (cell & 63)) == 0L)
+				? 0d : Double.POSITIVE_INFINITY;
+		}
+
+		void forbid(int cell) {
+			long bit = 1L << (cell & 63);
+			int word = cell >>> 6;
+			if((forbidden[word] & bit) == 0L) {
+				forbidden[word] |= bit;
+				forbiddenCount++;
+			}
+		}
+		void forbidRange(int start, int end) {
+			while(start < end && (start & 63) != 0)
+				forbid(start++);
+			int fullEnd = end & ~63;
+			if(start < fullEnd) {
+				Arrays.fill(forbidden,start >>> 6,fullEnd >>> 6,-1L);
+				forbiddenCount += fullEnd - start;
+				start = fullEnd;
+			}
+			while(start < end)
+				forbid(start++);
+		}
+		int cells() { return cells; }
+		int finiteCount() { return cells - forbiddenCount; }
+		HardTable compactAllFeasible() {
+			return forbiddenCount == 0 ? new HardTable(cells,new long[0]) : this;
+		}
+
+		int[] axisClasses(int domain, int stride) {
+			int[] classes = PlannerResourceGuard.allocateInts(domain,"exact-hard-classes");
+			long blockSize = (long)domain * stride;
+			if(domain <= 0 || stride <= 0 || blockSize > Integer.MAX_VALUE || cells % blockSize != 0)
+				throw new IllegalArgumentException("Dense factor shape does not match axis domain and stride");
+			// A uniform hard table gives every axis value the same response profile.
+			if(forbiddenCount == 0 || forbiddenCount == cells)
+				return classes;
+			long required = Math.max(1L,(3L * domain + 1L) / 2L);
+			if(required > 1L << 30)
+				return identityClasses(classes);
+			int capacity = 1;
+			while(capacity < required)
+				capacity <<= 1;
+			PlannerResourceGuard.HeapSnapshot heap = PlannerResourceGuard.currentSnapshot();
+			if(16L + (long)Integer.BYTES * capacity > heap.availableBytes() / 2L)
+				return identityClasses(classes);
+			int[] representatives = PlannerResourceGuard.allocateInts(capacity,"exact-hard-classes");
+			int[] profileHashes = PlannerResourceGuard.allocateInts(domain,"exact-hard-profile-hashes");
+			int mask = capacity - 1;
+			int classCount = 0;
+			for(int value = 0; value < domain; value++) {
+				int hash = profileHashes[value] = profileHash(domain,stride,value);
+				int slot = (hash ^ hash >>> 16) & mask;
+				int matching = -1;
+				while(representatives[slot] != 0) {
+					int representative = representatives[slot] - 1;
+					if(profileHashes[representative] == hash
+						&& sameProfile(domain,stride,value,representative)) {
+						matching = classes[representative];
+						break;
+					}
+					slot = (slot + 1) & mask;
+				}
+				if(matching < 0) {
+					matching = classCount++;
+					representatives[slot] = value + 1;
+				}
+				classes[value] = matching;
+			}
+			return classes;
+		}
+
+		private int profileHash(int domain, int stride, int value) {
+			int hash = 1;
+			int blockSize = domain * stride;
+			for(int base = 0; base < cells; base += blockSize)
+				for(int inner = 0; inner < stride; inner++)
+					hash = 31 * hash + Long.hashCode(Double.doubleToRawLongBits(
+						costAt(base + value * stride + inner)));
+			return hash;
+		}
+
+		private boolean sameProfile(int domain, int stride, int left, int right) {
+			int blockSize = domain * stride;
+			for(int base = 0; base < cells; base += blockSize)
+				for(int inner = 0; inner < stride; inner++)
+					if(costAt(base + left * stride + inner)
+						!= costAt(base + right * stride + inner))
+						return false;
+			return true;
+		}
+
+		private static int[] identityClasses(int[] classes) {
+			for(int value = 0; value < classes.length; value++)
+				classes[value] = value;
+			return classes;
 		}
 	}
 
@@ -188,23 +322,28 @@ public final class ExactCategoricalSolver {
 	static final class FrozenInputs {
 		private final int[] domains;
 		private final List<int[]> scopes;
-		private final List<double[]> values;
+		private final List<Factor> factors;
 
-		private FrozenInputs(InputDefinition definition, List<DenseFactor> factors) {
+		private FrozenInputs(InputDefinition definition, List<Factor> factors) {
 			// Both inputs are solve-local immutable structures. Retaining their arrays avoids
 			// copying every dense table once more between materialization and reduction.
 			domains = definition.domains;
 			scopes = definition.scopes;
-			values = new ArrayList<>(factors.size());
-			for(DenseFactor factor : factors)
-				values.add(factor.values);
+			this.factors = new ArrayList<>(factors);
 		}
 
 		int domainSize(int variable) { return domains[variable]; }
 		int[] scope(int factor) { return scopes.get(factor); }
-		double[] values(int factor) { return values.get(factor); }
+		double costAt(int factor, int cell) { return factors.get(factor).denseCostAt(cell); }
+		double[] values(int factor) {
+			Factor frozen = factors.get(factor);
+			if(frozen.hardValues != null)
+				throw new IllegalStateException("EXACT_VE_HARD_TABLE_NOT_DENSE");
+			return frozen.denseValues;
+		}
+		Factor factor(int factor) { return factors.get(factor); }
 		/** After support/quotient analysis, transfer each table to its reduced replacement. */
-		double[] takeValues(int factor) { return values.set(factor, null); }
+		Factor takeFactor(int factor) { return factors.set(factor, null); }
 		int factorCount() { return scopes.size(); }
 	}
 
@@ -216,6 +355,8 @@ public final class ExactCategoricalSolver {
 		private final int[] scopeIndices;
 		private final int[] strides;
 		private final double[] values;
+		private final HardTable hardValues;
+		private final int logicalCells;
 		private final double[] lowValues;
 		private final double[] lowerValues;
 		private final PreciseCost cachedMinimum;
@@ -225,25 +366,36 @@ public final class ExactCategoricalSolver {
 		private final int[] unionChoices;
 		private final long retainedCells;
 		private final long assignments;
+		private final ExactFiniteSupportJoin.Relation hardSupport;
 
 		private BoundaryMessage(List<Variable> variables, int[] domains,
 			List<Variable> scope, int[] scopeIndices, double[] values, double[] lowValues,
 			double[] lowerValues, List<BoundaryMessage> children,
 			int[] unionScope, int[] unionChoices, long retainedCells, long assignments) {
 			this(variables, domains, scope, scopeIndices, values, lowValues, lowerValues,
-				children, unionScope, unionChoices, retainedCells, assignments, null, 0d);
+				children, unionScope, unionChoices, retainedCells, assignments, null, null, 0d);
+		}
+
+		private BoundaryMessage(List<Variable> variables, int[] domains,
+			List<Variable> scope, int[] scopeIndices, HardTable hardValues,
+			List<BoundaryMessage> children, int[] unionScope, int[] unionChoices,
+			long retainedCells, long assignments) {
+			this(variables, domains, scope, scopeIndices, null, null, null, children,
+				unionScope, unionChoices, retainedCells, assignments, hardValues, null, 0d);
 		}
 
 		private BoundaryMessage(List<Variable> variables, int[] domains,
 			List<Variable> scope, int[] scopeIndices, double[] values, double[] lowValues,
 			double[] lowerValues, List<BoundaryMessage> children,
 			int[] unionScope, int[] unionChoices, long retainedCells, long assignments,
-			PreciseCost knownMinimum, double knownLowerBound) {
+			HardTable hardValues, PreciseCost knownMinimum, double knownLowerBound) {
 			this.variables = variables;
 			this.domains = domains;
 			this.scope = List.copyOf(scope);
 			this.scopeIndices = scopeIndices.clone();
 			this.values = values;
+			this.hardValues = hardValues;
+			this.logicalCells = hardValues == null ? values.length : hardValues.cells();
 			this.lowValues = lowValues;
 			this.lowerValues = lowerValues;
 			this.children = List.copyOf(children);
@@ -251,22 +403,34 @@ public final class ExactCategoricalSolver {
 			this.unionChoices = unionChoices;
 			this.retainedCells = retainedCells;
 			this.assignments = assignments;
+			this.hardSupport = hardValues == null
+				? sparseHardSupport(scopeIndices,values,lowValues,lowerValues)
+				: sparseHardSupport(scopeIndices,hardValues);
 			strides = new int[scopeIndices.length];
 			int stride = 1;
 			for(int index = scopeIndices.length - 1; index >= 0; index--) {
 				strides[index] = stride;
 				stride = Math.multiplyExact(stride, domains[scopeIndices[index]]);
 			}
-			if(knownMinimum == null) {
-				PreciseCost minimum = PreciseCost.POSITIVE_INFINITY;
+			if(knownMinimum == null && hardValues != null) {
+				boolean finite = hardValues.finiteCount() > 0;
+				cachedMinimum = finite ? PreciseCost.ZERO : PreciseCost.POSITIVE_INFINITY;
+				cachedLowerBound = finite ? 0d : Double.POSITIVE_INFINITY;
+			}
+			else if(knownMinimum == null) {
+				double minimumHigh = Double.POSITIVE_INFINITY;
+				double minimumLow = 0d;
 				double lower = Double.POSITIVE_INFINITY;
-				for(int cell = 0; cell < values.length; cell++) {
-					PreciseCost candidate = valueAt(cell);
-					if(candidate.compareTo(minimum) < 0)
-						minimum = candidate;
-					lower = Math.min(lower, lowerValues[cell]);
+				for(int cell = 0; cell < logicalCells; cell++) {
+					double candidateHigh = highAt(cell);
+					double candidateLow = lowAt(cell);
+					if(compareBoundaryCost(candidateHigh,candidateLow,minimumHigh,minimumLow) < 0) {
+						minimumHigh = candidateHigh;
+						minimumLow = candidateLow;
+					}
+					lower = Math.min(lower, lowerAt(cell));
 				}
-				cachedMinimum = minimum;
+				cachedMinimum = new PreciseCost(minimumHigh,minimumLow,0L);
 				cachedLowerBound = lower;
 			}
 			else {
@@ -276,9 +440,10 @@ public final class ExactCategoricalSolver {
 		}
 
 		List<Variable> scope() { return scope; }
-		long cells() { return values.length; }
+		long cells() { return logicalCells; }
 		long retainedCells() { return retainedCells; }
 		long assignments() { return assignments; }
+		ExactFiniteSupportJoin.Relation hardSupport() { return hardSupport; }
 
 		double lowerBound() {
 			return cachedLowerBound;
@@ -292,30 +457,39 @@ public final class ExactCategoricalSolver {
 			int position = marginalPosition(variable);
 			if(value < 0 || value >= variable.domainSize())
 				throw new IllegalArgumentException("INCREMENTAL_MESSAGE_VALUE_INVALID");
-			PreciseCost minimum = PreciseCost.POSITIVE_INFINITY;
-			for(int cell = 0; cell < values.length; cell++)
+			double minimumHigh = Double.POSITIVE_INFINITY;
+			double minimumLow = 0d;
+			for(int cell = 0; cell < logicalCells; cell++)
 				if((cell / strides[position]) % domains[scopeIndices[position]] == value) {
-					PreciseCost candidate = valueAt(cell);
-					if(candidate.compareTo(minimum) < 0)
-						minimum = candidate;
+					double candidateHigh = highAt(cell);
+					double candidateLow = lowAt(cell);
+					if(compareBoundaryCost(candidateHigh,candidateLow,minimumHigh,minimumLow) < 0) {
+						minimumHigh = candidateHigh;
+						minimumLow = candidateLow;
+					}
 				}
-			return minimum.rounded();
+			return roundBoundaryCost(minimumHigh,minimumLow);
 		}
 
 		/** Computes every value marginal in one table scan; the caller owns the result. */
 		double[] minMarginals(Variable variable) {
 			int position = marginalPosition(variable);
-			PreciseCost[] minima = new PreciseCost[variable.domainSize()];
-			Arrays.fill(minima, PreciseCost.POSITIVE_INFINITY);
-			for(int cell = 0; cell < values.length; cell++) {
+			double[] minimumLow = lowValues == null ? null : new double[variable.domainSize()];
+			double[] result = PlannerResourceGuard.allocateDoubles(variable.domainSize(), "exact-numeric");
+			Arrays.fill(result, Double.POSITIVE_INFINITY);
+			for(int cell = 0; cell < logicalCells; cell++) {
 				int value = (cell / strides[position]) % domains[scopeIndices[position]];
-				PreciseCost candidate = valueAt(cell);
-				if(candidate.compareTo(minima[value]) < 0)
-					minima[value] = candidate;
+				double candidateHigh = highAt(cell);
+				double candidateLow = lowAt(cell);
+				if(compareBoundaryCost(candidateHigh,candidateLow,
+					result[value],minimumLow == null ? 0d : minimumLow[value]) < 0) {
+					result[value] = candidateHigh;
+					if(minimumLow != null)
+						minimumLow[value] = candidateLow;
+				}
 			}
-			double[] result = PlannerResourceGuard.allocateDoubles(minima.length, "exact-numeric");
 			for(int value = 0; value < result.length; value++)
-				result[value] = minima[value].rounded();
+				result[value] = roundBoundaryCost(result[value],minimumLow == null ? 0d : minimumLow[value]);
 			return result;
 		}
 
@@ -323,9 +497,9 @@ public final class ExactCategoricalSolver {
 			int position = marginalPosition(variable);
 			double[] minima = new double[variable.domainSize()];
 			Arrays.fill(minima, Double.POSITIVE_INFINITY);
-			for(int cell = 0; cell < lowerValues.length; cell++) {
+			for(int cell = 0; cell < logicalCells; cell++) {
 				int value = (cell / strides[position]) % domains[scopeIndices[position]];
-				minima[value] = Math.min(minima[value], lowerValues[cell]);
+				minima[value] = Math.min(minima[value], lowerAt(cell));
 			}
 			return minima;
 		}
@@ -364,7 +538,7 @@ public final class ExactCategoricalSolver {
 
 		private void decodeInto(int[] assignment) {
 			int cell = boundaryCell(assignment);
-			if(values[cell] == Double.POSITIVE_INFINITY)
+			if(valueAt(cell).high == Double.POSITIVE_INFINITY)
 				throw new IllegalArgumentException("INCREMENTAL_MESSAGE_BOUNDARY_INFEASIBLE");
 			if(children.isEmpty())
 				return;
@@ -412,11 +586,23 @@ public final class ExactCategoricalSolver {
 		}
 
 		private PreciseCost valueAt(int cell) {
-			return new PreciseCost(values[cell], lowValues == null ? 0d : lowValues[cell], 0L);
+			return new PreciseCost(highAt(cell),lowAt(cell),0L);
+		}
+
+		private double highAt(int cell) {
+			return hardValues == null ? values[cell] : hardValues.costAt(cell);
+		}
+
+		private double lowAt(int cell) {
+			return lowValues == null ? 0d : lowValues[cell];
+		}
+
+		private double lowerAt(int cell) {
+			return hardValues == null ? lowerValues[cell] : hardValues.costAt(cell);
 		}
 
 		private double lowerValue(int[] assignment) {
-			return lowerValues[boundaryCell(assignment)];
+			return lowerAt(boundaryCell(assignment));
 		}
 	}
 
@@ -601,7 +787,24 @@ public final class ExactCategoricalSolver {
 	static FrozenInputs freezeInputs(List<Variable> variables, List<Factor> factors,
 		Limits limits) {
 		InputDefinition definition = validateInputs(variables, factors, limits);
-		return new FrozenInputs(definition, materializeInputs(definition, factors));
+		List<Factor> frozen = new ArrayList<>(factors.size());
+		long hardCells = 0L;
+		long numericCells = 0L;
+		for(Factor factor : factors) {
+			Factor materialized = freezeValidatedFactor(factor);
+			frozen.add(materialized);
+			long cells = 1L;
+			for(Variable variable : materialized.scope)
+				cells = saturatedMultiply(cells,variable.domainSize());
+			if(materialized.hardValues != null)
+				hardCells = saturatedAdd(hardCells,cells);
+			else
+				numericCells = saturatedAdd(numericCells,cells);
+		}
+		if(FederatedPlannerTrace.isEnabled())
+			FederatedPlannerTrace.logGlobal("Exact-FrozenRepresentation", "factors=" + factors.size()
+				+ " hardCells=" + hardCells + " numericCells=" + numericCells);
+		return new FrozenInputs(definition, frozen);
 	}
 
 	static void validateInputStructure(List<Variable> variables, List<Factor> factors,
@@ -643,10 +846,11 @@ public final class ExactCategoricalSolver {
 					cells = Math.min((long)Integer.MAX_VALUE + 1L,
 						cells * canonical.get(variable).domainSize());
 			}
-			if(factor.denseValues != null) {
+			if(factor.denseValues != null || factor.hardValues != null) {
 				if(cells > Integer.MAX_VALUE)
 					throw new IllegalArgumentException("EXACT_VE_FACTOR_CELL_OVERFLOW");
-				if(factor.denseValues.length != (int)cells)
+				if(factor.denseValues != null && factor.denseValues.length != (int)cells
+					|| factor.hardValues != null && factor.hardValues.cells() != (int)cells)
 					throw new IllegalArgumentException("EXACT_VE_DENSE_FACTOR_SIZE_MISMATCH");
 				denseCells = checkedAdd(denseCells, cells, "EXACT_VE_MATERIALIZED_CELL_OVERFLOW");
 				maximumDenseCells = Math.max(maximumDenseCells, cells);
@@ -668,21 +872,111 @@ public final class ExactCategoricalSolver {
 
 	static Factor freezeValidatedFactor(Factor factor) {
 		Objects.requireNonNull(factor, "factor");
-		if(factor.denseValues != null)
+		if(factor.denseValues != null || factor.hardValues != null)
 			return factor;
 		int cells = 1;
 		for(Variable variable : factor.scope)
 			cells = Math.multiplyExact(cells, variable.domainSize());
-		PlannerResourceGuard.checkAdditionalCells(cells, "freeze-lazy-factor");
-		double[] values = PlannerResourceGuard.allocateDoubles(cells, "exact-numeric");
-		materializeFactorValues(factor, values, true);
-		return Factor.denseOwned(factor.scope, values);
+		if(!factor.supportsPartialTruth())
+			return freezeGenericFactor(factor, cells);
+		return freezePartialHardFactor(factor,cells);
+	}
+
+	private static Factor freezeGenericFactor(Factor factor, int cells) {
+		HardTable hard = HardTable.allocate(cells);
+		double[] values = null;
+		int[] local = new int[factor.scope.size()];
+		int[] domains = factor.scope.stream().mapToInt(Variable::domainSize).toArray();
+		for(int cell = 0; cell < cells; cell++) {
+			double value = factor.evaluator.cost(local);
+			validateCost(value);
+			if(values == null && value == Double.POSITIVE_INFINITY)
+				hard.forbid(cell);
+			else if(values == null && Double.doubleToRawLongBits(value) != 0L) {
+				PlannerResourceGuard.checkAdditionalCells(cells, "freeze-lazy-factor");
+				values = PlannerResourceGuard.allocateDoubles(cells, "exact-numeric");
+				for(int prior = 0; prior < cell; prior++)
+					values[prior] = hard.costAt(prior);
+				values[cell] = value;
+			}
+			else if(values != null)
+				values[cell] = value;
+			for(int position = local.length - 1; position >= 0; position--) {
+				if(++local[position] < domains[position])
+					break;
+				local[position] = 0;
+			}
+		}
+		return values == null ? Factor.hardOwned(factor.scope, hard.compactAllFeasible())
+			: Factor.denseOwned(factor.scope, values);
+	}
+
+	private static Factor freezePartialHardFactor(Factor factor, int cells) {
+		HardTable hard = HardTable.allocate(cells);
+		double[] values = null;
+		int arity = factor.scope.size();
+		int[] local = new int[arity];
+		Arrays.fill(local,-1);
+		int[] domains = factor.scope.stream().mapToInt(Variable::domainSize).toArray();
+		int[] suffixCells = new int[arity + 1];
+		suffixCells[arity] = 1;
+		for(int position=arity-1; position>=0; position--)
+			suffixCells[position] = Math.multiplyExact(suffixCells[position+1],domains[position]);
+		int depth = 0;
+		int cell = 0;
+		while(true) {
+			PartialTruth truth = factor.partialTruth(local);
+			if(truth != PartialTruth.UNKNOWN) {
+				int end = Math.addExact(cell,suffixCells[depth]);
+				if(values == null) {
+					if(truth == PartialTruth.ALL_FORBIDDEN)
+						hard.forbidRange(cell,end);
+				}
+				else
+					Arrays.fill(values,cell,end,truth == PartialTruth.ALL_ZERO
+						? 0d : Double.POSITIVE_INFINITY);
+				cell = end;
+			}
+			else if(depth == arity) {
+				double value = factor.evaluator.cost(local);
+				validateCost(value);
+				if(values == null && value == Double.POSITIVE_INFINITY)
+					hard.forbid(cell);
+				else if(values == null && Double.doubleToRawLongBits(value) != 0L) {
+					PlannerResourceGuard.checkAdditionalCells(cells,"freeze-lazy-factor");
+					values = PlannerResourceGuard.allocateDoubles(cells,"exact-numeric");
+					for(int prior=0; prior<cell; prior++)
+						values[prior] = hard.costAt(prior);
+					values[cell] = value;
+				}
+				else if(values != null)
+					values[cell] = value;
+				cell++;
+			}
+			else {
+				local[depth++] = 0;
+				continue;
+			}
+			while(depth > 0) {
+				int position = depth - 1;
+				if(++local[position] < domains[position])
+					break;
+				local[position] = -1;
+				depth--;
+			}
+			if(depth == 0)
+				break;
+		}
+		if(cell != cells)
+			throw new IllegalStateException("EXACT_VE_PARTIAL_MATERIALIZATION_SIZE_MISMATCH");
+		return values == null ? Factor.hardOwned(factor.scope,hard.compactAllFeasible())
+			: Factor.denseOwned(factor.scope,values);
 	}
 
 	static void materializeFactorValues(Factor factor, double[] values, boolean validateCosts) {
 		Objects.requireNonNull(factor, "factor");
 		Objects.requireNonNull(values, "values");
-		if(factor.denseValues != null)
+		if(factor.denseValues != null || factor.hardValues != null)
 			throw new IllegalArgumentException("EXACT_VE_FACTOR_ALREADY_DENSE");
 		int cells = 1;
 		for(Variable variable : factor.scope)
@@ -798,7 +1092,7 @@ public final class ExactCategoricalSolver {
 	 */
 	static long boundaryLeafRetainedCells(Factor factor) {
 		Objects.requireNonNull(factor, "factor");
-		if(factor.denseValues != null)
+		if(factor.denseValues != null || factor.hardValues != null)
 			return 0L;
 		long cells = 1L;
 		for(Variable variable : factor.scope)
@@ -829,14 +1123,18 @@ public final class ExactCategoricalSolver {
 		for(int factorIndex = 0; factorIndex < factors.size(); factorIndex++) {
 			Factor factor = factors.get(factorIndex);
 			DenseFactor dense = denseFactors.get(factorIndex);
-			for(double value : dense.values)
-				if(value < 0d)
+			for(int cell = 0; cell < dense.logicalCells(); cell++)
+				if(dense.valueAt(cell) < 0d)
 					throw new IllegalArgumentException(
-						"INCREMENTAL_MESSAGE_COST_INVALID|value=" + value);
-			leaves.add(new BoundaryMessage(input.variables, input.domains,
-				factor.scope, input.scopes.get(factorIndex), dense.values,
-				null, dense.values, List.of(), null, null,
-				boundaryLeafRetainedCells(factor), dense.values.length));
+						"INCREMENTAL_MESSAGE_COST_INVALID|value=" + dense.valueAt(cell));
+			leaves.add(dense.hardValues == null
+				? new BoundaryMessage(input.variables, input.domains,
+					factor.scope, input.scopes.get(factorIndex), dense.values,
+					null, dense.values, List.of(), null, null,
+					boundaryLeafRetainedCells(factor), dense.logicalCells())
+				: new BoundaryMessage(input.variables, input.domains,
+					factor.scope, input.scopes.get(factorIndex), dense.hardValues,
+					List.of(), null, null, boundaryLeafRetainedCells(factor), dense.logicalCells()));
 		}
 		return List.copyOf(leaves);
 	}
@@ -868,7 +1166,8 @@ public final class ExactCategoricalSolver {
 		}
 		return new BoundaryMessage(input.variables, input.domains, retainedVariables,
 			retainedScope, input.values, input.lowValues, input.lowerValues, List.of(input),
-			removedScope, null, 0L, 0L, input.cachedMinimum, input.cachedLowerBound);
+			removedScope, null, 0L, 0L, input.hardValues,
+			input.cachedMinimum, input.cachedLowerBound);
 	}
 
 	static BoundaryMessage mergeBoundary(BoundaryMessage left, BoundaryMessage right,
@@ -906,6 +1205,19 @@ public final class ExactCategoricalSolver {
 	}
 
 	private static BoundaryMessage mergeBoundaryInternal(List<BoundaryMessage> inputMessages,
+		List<Variable> outputBoundary, Limits limits, Long maximumAssignments,
+		BoundaryMergeCounters counters) {
+		try {
+			return computeBoundaryMerge(inputMessages, outputBoundary, limits, maximumAssignments, counters);
+		}
+		catch(OutOfMemoryError failure) {
+			// The merge only reads its inputs and publishes a completed message. If any
+			// workspace allocation fails, Local can retain its already validated cover.
+			throw PlannerResourceGuard.allocationFailure("regional-merge", -1L, "boundary-message", failure);
+		}
+	}
+
+	private static BoundaryMessage computeBoundaryMerge(List<BoundaryMessage> inputMessages,
 		List<Variable> outputBoundary, Limits limits, Long maximumAssignments,
 		BoundaryMergeCounters counters) {
 		Objects.requireNonNull(inputMessages, "inputMessages");
@@ -970,8 +1282,16 @@ public final class ExactCategoricalSolver {
 		if(counters != null)
 			counters.fullChildEvaluations += unionCells * inputMessages.size();
 		boolean localPrefixCuts = PruningAblation.current().local();
+		boolean exactNonnegativeSum = exactNonnegativeBoundarySum(inputMessages);
+		// A later forbidden row may only be skipped when every earlier numeric
+		// prefix is certified exact and finite. Otherwise an earlier addition must
+		// still report overflow, even if the final hard child would be infinite.
+		// The first child's infinity is unconditionally absorbing, as in FiniteRowIndex.
+		List<ExactFiniteSupportJoin.Relation> hardSupports = exactNonnegativeSum
+			? inputMessages.stream().map(BoundaryMessage::hardSupport).filter(Objects::nonNull).toList()
+			: first.hardSupport() == null ? List.of() : List.of(first.hardSupport());
 		boolean localCostCut = localPrefixCuts && inputMessages.size() > 1 && internalCells > 1
-			&& exactNonnegativeBoundarySum(inputMessages);
+			&& exactNonnegativeSum;
 		// Three double arrays and one int backpointer array; borrowed inputs are
 		// already reflected in the JVM's used heap, not charged a second time.
 		PlannerResourceGuard.checkAdditionalBytes(outputCells * (3L * Double.BYTES + Integer.BYTES),
@@ -984,63 +1304,127 @@ public final class ExactCategoricalSolver {
 		int[] choices = PlannerResourceGuard.allocateInts(cells, "exact-backpointer");
 		Arrays.fill(choices, -1);
 		int[] assignment = new int[first.variables.size()];
+		double[] candidateCost = new double[2];
+		if(!hardSupports.isEmpty()) {
+			Arrays.fill(values,Double.POSITIVE_INFINITY);
+			Arrays.fill(lowerValues,Double.POSITIVE_INFINITY);
+			ExactFiniteSupportJoin.forEach(unionScope,first.domains,hardSupports,selected -> {
+				int outputCell = encode(outputScope,first.domains,selected);
+				int unionCell = encode(unionScope,first.domains,selected);
+				double bestHigh = values[outputCell];
+				double bestLow = lowValues[outputCell];
+				candidateCost[0] = 0d;
+				candidateCost[1] = 0d;
+				double candidateLower = 0d;
+				boolean cut = false;
+				for(int messageIndex=0; messageIndex<inputMessages.size(); messageIndex++) {
+					BoundaryMessage message = inputMessages.get(messageIndex);
+					int childCell = message.boundaryCellUnchecked(selected);
+					addBoundaryCost(candidateCost,message.highAt(childCell),message.lowAt(childCell));
+					candidateLower = addBoundaryLower(candidateLower,message.lowerAt(childCell));
+					if(counters != null)
+						counters.childEvaluations++;
+					if(localPrefixCuts && messageIndex + 1 < inputMessages.size()
+						&& absorbingBoundaryInfinity(candidateCost[0],candidateLower)) {
+						if(counters != null)
+							counters.infeasibleCuts++;
+						cut = true;
+						break;
+					}
+					int comparison = compareBoundaryCost(candidateCost[0],candidateCost[1],bestHigh,bestLow);
+					if(messageIndex + 1 < inputMessages.size() && localCostCut
+						&& (comparison > 0 || comparison == 0 && choices[outputCell] >= 0
+							&& unionCell >= choices[outputCell])) {
+						if(counters != null)
+							counters.costCuts++;
+						cut = true;
+						break;
+					}
+				}
+				if(cut)
+					return;
+				int comparison = compareBoundaryCost(candidateCost[0],candidateCost[1],bestHigh,bestLow);
+				if(comparison < 0 || comparison == 0 && choices[outputCell] >= 0
+					&& unionCell < choices[outputCell]) {
+					values[outputCell] = candidateCost[0];
+					lowValues[outputCell] = candidateCost[1];
+					choices[outputCell] = unionCell;
+				}
+				lowerValues[outputCell] = Math.min(lowerValues[outputCell],candidateLower);
+			});
+			double messageMinimumHigh = Double.POSITIVE_INFINITY;
+			double messageMinimumLow = 0d;
+			double messageLowerBound = Double.POSITIVE_INFINITY;
+			for(int cell=0; cell<cells; cell++) {
+				if(compareBoundaryCost(values[cell],lowValues[cell],
+					messageMinimumHigh,messageMinimumLow) < 0) {
+					messageMinimumHigh = values[cell];
+					messageMinimumLow = lowValues[cell];
+				}
+				messageLowerBound = Math.min(messageLowerBound,lowerValues[cell]);
+			}
+			return new BoundaryMessage(first.variables,first.domains,outputBoundary,outputScope,
+				values,lowValues,lowerValues,inputMessages,unionScope,choices,
+				retained,unionCells,null,
+				new PreciseCost(messageMinimumHigh,messageMinimumLow,0L),messageLowerBound);
+		}
 		int[] outputLocal = new int[outputScope.length];
-		InternalChildStrides internalChildStrides = internalCells == 1L ? null
-			: internalChildStrides(inputMessages, internalScope, first.variables.size());
-		int[] childCells = new int[inputMessages.size()];
-		PreciseCost messageMinimum = PreciseCost.POSITIVE_INFINITY;
+		BoundaryProjectionOdometer projection = new BoundaryProjectionOdometer(
+			inputMessages,internalScope,first.domains,assignment);
+		double messageMinimumHigh = Double.POSITIVE_INFINITY;
+		double messageMinimumLow = 0d;
 		double messageLowerBound = Double.POSITIVE_INFINITY;
 		for(int outputCell = 0; outputCell < cells; outputCell++) {
 			decode(outputCell, outputScope, first.domains, outputLocal, assignment);
-			for(int variable : internalScope)
-				assignment[variable] = 0;
-			for(int message = 0; message < inputMessages.size(); message++)
-				childCells[message] = inputMessages.get(message).boundaryCellUnchecked(assignment);
-			PreciseCost best = PreciseCost.POSITIVE_INFINITY;
+			projection.initialize();
+			double bestHigh = Double.POSITIVE_INFINITY;
+			double bestLow = 0d;
 			double bestLower = Double.POSITIVE_INFINITY;
 			int bestUnionCell = -1;
-			for(int internalCell = 0; internalCell < (int)internalCells; internalCell++,
-				advanceInternalAssignment(internalScope, first.domains, assignment,
-					internalChildStrides, childCells)) {
-				int childCell = childCells[0];
-				PreciseCost candidate = first.valueAt(childCell);
-				double candidateLower = first.lowerValues[childCell];
+			for(int internalCell = 0; internalCell < (int)internalCells; internalCell++) {
+				if(internalCell > 0)
+					projection.advance();
+				int childCell = projection.childCell(0);
+				candidateCost[0] = first.highAt(childCell);
+				candidateCost[1] = first.lowAt(childCell);
+				double candidateLower = first.lowerAt(childCell);
 				if(counters != null)
 					counters.childEvaluations++;
 				boolean cut = false;
 				// Both infinities are absorbing; no unread child can restore feasibility.
 				if(localPrefixCuts && inputMessages.size() > 1
-					&& absorbingBoundaryInfinity(candidate.high, candidateLower)) {
+					&& absorbingBoundaryInfinity(candidateCost[0], candidateLower)) {
 					if(counters != null)
 						counters.infeasibleCuts++;
 					continue;
 				}
 				// The certificate proves exact partial sums and nonnegative unread terms.
 				// Equality is also removable because canonical enumeration keeps the first tie.
-				if(inputMessages.size() > 1 && localCostCut && candidate.compareTo(best) >= 0) {
+				if(inputMessages.size() > 1 && localCostCut
+					&& compareBoundaryCost(candidateCost[0],candidateCost[1],bestHigh,bestLow) >= 0) {
 					if(counters != null)
 						counters.costCuts++;
 					continue;
 				}
 				for(int messageIndex = 1; messageIndex < inputMessages.size(); messageIndex++) {
 					BoundaryMessage message = inputMessages.get(messageIndex);
-					childCell = childCells[messageIndex];
-					candidate = candidate.plus(message.valueAt(childCell));
+					childCell = projection.childCell(messageIndex);
+					addBoundaryCost(candidateCost,message.highAt(childCell),message.lowAt(childCell));
 					candidateLower = addBoundaryLower(candidateLower,
-						message.lowerValues[childCell]);
+						message.lowerAt(childCell));
 					if(counters != null)
 						counters.childEvaluations++;
 					// Apply the same absorbing-infinity and exact nonnegative-prefix proofs
 					// after each canonical child, but only when a suffix remains unread.
 					if(localPrefixCuts && messageIndex + 1 < inputMessages.size()
-						&& absorbingBoundaryInfinity(candidate.high, candidateLower)) {
+						&& absorbingBoundaryInfinity(candidateCost[0], candidateLower)) {
 						if(counters != null)
 							counters.infeasibleCuts++;
 						cut = true;
 						break;
 					}
 					if(messageIndex + 1 < inputMessages.size() && localCostCut
-						&& candidate.compareTo(best) >= 0) {
+						&& compareBoundaryCost(candidateCost[0],candidateCost[1],bestHigh,bestLow) >= 0) {
 						if(counters != null)
 							counters.costCuts++;
 						cut = true;
@@ -1049,93 +1433,167 @@ public final class ExactCategoricalSolver {
 				}
 				if(cut)
 					continue;
-				if(candidate.compareTo(best) < 0) {
-					best = candidate;
+				if(compareBoundaryCost(candidateCost[0],candidateCost[1],bestHigh,bestLow) < 0) {
+					bestHigh = candidateCost[0];
+					bestLow = candidateCost[1];
 					bestUnionCell = encode(unionScope, first.domains, assignment);
 				}
 				bestLower = Math.min(bestLower, candidateLower);
 			}
-			values[outputCell] = best.high;
-			lowValues[outputCell] = best.low;
+			values[outputCell] = bestHigh;
+			lowValues[outputCell] = bestLow;
 			lowerValues[outputCell] = bestLower;
 			choices[outputCell] = bestUnionCell;
-			if(best.compareTo(messageMinimum) < 0)
-				messageMinimum = best;
+			if(compareBoundaryCost(bestHigh,bestLow,messageMinimumHigh,messageMinimumLow) < 0) {
+				messageMinimumHigh = bestHigh;
+				messageMinimumLow = bestLow;
+			}
 			messageLowerBound = Math.min(messageLowerBound, bestLower);
 		}
 		return new BoundaryMessage(first.variables, first.domains, outputBoundary, outputScope,
 			values, lowValues, lowerValues, inputMessages, unionScope, choices,
-			retained, unionCells, messageMinimum, messageLowerBound);
+			retained, unionCells, null,
+			new PreciseCost(messageMinimumHigh,messageMinimumLow,0L),messageLowerBound);
 	}
 
-	private record InternalChildStrides(int[][] messages, int[][] strides) { }
+	private static final class BoundaryProjectionOdometer {
+		private final List<BoundaryMessage> messages;
+		private final int[] internalScope;
+		private final int[] domains;
+		private final int[] assignment;
+		private final int[] childCells;
+		private final int[][] childMessages;
+		private final int[][] childStrides;
 
-	private static InternalChildStrides internalChildStrides(List<BoundaryMessage> messages,
-		int[] internalScope, int variableCount) {
-		int[] internalPosition = new int[variableCount];
-		Arrays.fill(internalPosition, -1);
-		for(int position = 0; position < internalScope.length; position++)
-			internalPosition[internalScope[position]] = position;
-		int[] counts = new int[internalScope.length];
-		for(BoundaryMessage message : messages)
-			for(int variable : message.scopeIndices) {
-				int internal = internalPosition[variable];
-				if(internal >= 0)
-					counts[internal]++;
-			}
-		int[][] affectedMessages = new int[internalScope.length][];
-		int[][] affectedStrides = new int[internalScope.length][];
-		for(int internal = 0; internal < internalScope.length; internal++) {
-			affectedMessages[internal] = new int[counts[internal]];
-			affectedStrides[internal] = new int[counts[internal]];
-		}
-		Arrays.fill(counts, 0);
-		for(int messageIndex = 0; messageIndex < messages.size(); messageIndex++) {
-			BoundaryMessage message = messages.get(messageIndex);
-			for(int position = 0; position < message.scopeIndices.length; position++) {
-				int internal = internalPosition[message.scopeIndices[position]];
-				if(internal >= 0) {
-					int offset = counts[internal]++;
-					affectedMessages[internal][offset] = messageIndex;
-					affectedStrides[internal][offset] = message.strides[position];
+		private BoundaryProjectionOdometer(List<BoundaryMessage> messages, int[] internalScope,
+			int[] domains, int[] assignment) {
+			this.messages = messages;
+			this.internalScope = internalScope;
+			this.domains = domains;
+			this.assignment = assignment;
+			childCells = PlannerResourceGuard.allocateInts(messages.size(),
+				"regional-merge-projection");
+			childMessages = new int[internalScope.length][];
+			childStrides = new int[internalScope.length][];
+			for(int axis = 0; axis < internalScope.length; axis++) {
+				int variable = internalScope[axis];
+				int count = 0;
+				for(BoundaryMessage message : messages)
+					for(int scopedVariable : message.scopeIndices)
+						if(scopedVariable == variable) {
+							count++;
+							break;
+						}
+				int[] messageIndexes = childMessages[axis] = PlannerResourceGuard.allocateInts(
+					count,"regional-merge-projection");
+				int[] strides = childStrides[axis] = PlannerResourceGuard.allocateInts(
+					count,"regional-merge-projection");
+				int output = 0;
+				for(int messageIndex = 0; messageIndex < messages.size(); messageIndex++) {
+					BoundaryMessage message = messages.get(messageIndex);
+					for(int position = 0; position < message.scopeIndices.length; position++)
+						if(message.scopeIndices[position] == variable) {
+							messageIndexes[output] = messageIndex;
+							strides[output++] = message.strides[position];
+							break;
+						}
 				}
 			}
 		}
-		return new InternalChildStrides(affectedMessages, affectedStrides);
+
+		private void initialize() {
+			for(int variable : internalScope)
+				assignment[variable] = 0;
+			for(int messageIndex = 0; messageIndex < messages.size(); messageIndex++)
+				childCells[messageIndex] = messages.get(messageIndex)
+					.boundaryCellUnchecked(assignment);
+		}
+
+		private int childCell(int message) {
+			return childCells[message];
+		}
+
+		private void advance() {
+			for(int axis = internalScope.length - 1; axis >= 0; axis--) {
+				int variable = internalScope[axis];
+				int previous = assignment[variable];
+				int next = previous + 1;
+				int delta;
+				if(next < domains[variable]) {
+					assignment[variable] = next;
+					delta = 1;
+				}
+				else {
+					assignment[variable] = 0;
+					delta = -previous;
+				}
+				int[] messageIndexes = childMessages[axis];
+				int[] strides = childStrides[axis];
+				for(int index = 0; index < messageIndexes.length; index++)
+					childCells[messageIndexes[index]] += delta * strides[index];
+				if(next < domains[variable])
+					return;
+			}
+			throw new IllegalStateException("INCREMENTAL_MESSAGE_PROJECTION_EXHAUSTED");
+		}
 	}
 
-	private static void advanceInternalAssignment(int[] internalScope, int[] domains,
-		int[] assignment, InternalChildStrides childStrides, int[] childCells) {
-		if(childStrides == null)
-			return;
-		for(int position = internalScope.length - 1; position >= 0; position--) {
-			int variable = internalScope[position];
-			int next = assignment[variable] + 1;
-			if(next < domains[variable]) {
-				assignment[variable] = next;
-				for(int offset = 0; offset < childStrides.messages[position].length; offset++)
-					childCells[childStrides.messages[position][offset]] +=
-						childStrides.strides[position][offset];
-				return;
-			}
-			assignment[variable] = 0;
-			int reset = domains[variable] - 1;
-			for(int offset = 0; offset < childStrides.messages[position].length; offset++)
-				childCells[childStrides.messages[position][offset]] -=
-					reset * childStrides.strides[position][offset];
+	private static ExactFiniteSupportJoin.Relation sparseHardSupport(int[] scope,
+		double[] values, double[] lowValues, double[] lowerValues) {
+		int finite = 0;
+		for(int cell=0; cell<values.length; cell++) {
+			double high = values[cell];
+			double low = lowValues == null ? 0d : lowValues[cell];
+			if(Double.doubleToRawLongBits(low) != 0L
+				|| Double.doubleToRawLongBits(lowerValues[cell]) != Double.doubleToRawLongBits(high))
+				return null;
+			if(high == Double.POSITIVE_INFINITY)
+				continue;
+			if(Double.doubleToRawLongBits(high) != 0L)
+				return null;
+			finite++;
 		}
+		if(finite == values.length)
+			return null;
+		int[] finiteCells = new int[finite];
+		int output = 0;
+		for(int cell=0; cell<values.length; cell++)
+			if(values[cell] != Double.POSITIVE_INFINITY)
+				finiteCells[output++] = cell;
+		return new ExactFiniteSupportJoin.Relation(scope,finiteCells);
+	}
+
+	private static ExactFiniteSupportJoin.Relation sparseHardSupport(int[] scope,
+		HardTable values) {
+		int finite = values.finiteCount();
+		if(finite == values.cells() || (long)finite * 2 > values.cells())
+			return null;
+		int[] finiteCells = PlannerResourceGuard.allocateInts(finite, "exact-hard-support");
+		int output = 0;
+		for(int word = 0; word < values.forbidden.length; word++) {
+			long finiteBits = ~values.forbidden[word];
+			if(word == values.forbidden.length - 1 && (values.cells() & 63) != 0)
+				finiteBits &= (1L << (values.cells() & 63)) - 1L;
+			while(finiteBits != 0L) {
+				finiteCells[output++] = (word << 6) + Long.numberOfTrailingZeros(finiteBits);
+				finiteBits &= finiteBits - 1L;
+			}
+		}
+		return new ExactFiniteSupportJoin.Relation(scope,finiteCells);
 	}
 
 	private static boolean exactNonnegativeBoundarySum(List<BoundaryMessage> inputMessages) {
 		List<double[]> tables = new ArrayList<>(inputMessages.size());
 		for(BoundaryMessage message : inputMessages) {
+			if(message.hardValues != null)
+				continue;
 			tables.add(message.values);
-			for(int cell = 0; cell < message.values.length; cell++) {
-				double high = message.values[cell];
+			for(int cell = 0; cell < message.logicalCells; cell++) {
+				double high = message.valueAt(cell).high;
 				double low = message.lowValues == null ? 0d : message.lowValues[cell];
 				if(high != Double.POSITIVE_INFINITY && high < 0d)
 					return false;
-				if(low != 0d || Double.doubleToRawLongBits(message.lowerValues[cell])
+				if(low != 0d || Double.doubleToRawLongBits(message.lowerAt(cell))
 					!= Double.doubleToRawLongBits(high))
 					return false;
 			}
@@ -1192,8 +1650,8 @@ public final class ExactCategoricalSolver {
 			active = dyadicInputs(prepared.domains, active, dyadic);
 		boolean sparseEligible = tieCostFunction == null
 			&& (dyadic != null || sparseRangeSafe(prepared, active));
-		long storedCells = active.stream().mapToLong(factor -> factor.values.length).sum();
-		long maximumStoredCells = active.stream().mapToLong(factor -> factor.values.length)
+		long storedCells = active.stream().mapToLong(DenseFactor::storedCells).sum();
+		long maximumStoredCells = active.stream().mapToLong(DenseFactor::storedCells)
 			.max().orElse(0L);
 		List<Backpointer> backpointers = new ArrayList<>(prepared.variables.size());
 		int[] global = new int[prepared.variables.size()];
@@ -1379,7 +1837,8 @@ public final class ExactCategoricalSolver {
 			return false;
 		for(DenseFactor factor : factors) {
 			int finiteCount = 0;
-			for(double value : factor.values) {
+			for(int cell = 0; cell < factor.logicalCells(); cell++) {
+				double value = factor.valueAt(cell);
 				if(value != Double.POSITIVE_INFINITY && Math.abs(value) > 0x1.0p400)
 					return false;
 				if(value != Double.POSITIVE_INFINITY)
@@ -1476,10 +1935,10 @@ public final class ExactCategoricalSolver {
 
 		private long logicalFiniteCells(DenseFactor factor) {
 			long count = 0L;
-			for(int stored = 0; stored < factor.values.length; stored++) {
-				if(factor.values[stored] == Double.POSITIVE_INFINITY)
+			for(int stored = 0; stored < factor.storedCells(); stored++) {
+				if(factor.storedValue(stored) == Double.POSITIVE_INFINITY)
 					continue;
-				int cell = factor.sparseCells == null ? stored : factor.sparseCells[stored];
+				int cell = factor.storedLogicalCell(stored);
 				long multiplicity = 1L;
 				for(int axis = 0; axis < factor.scope.length; axis++)
 					multiplicity = saturatedMultiply(multiplicity, weights[factor.scope[axis]][
@@ -1700,10 +2159,10 @@ public final class ExactCategoricalSolver {
 			int logicalCell = baseCells[index]
 				+ (coordinate - zeroCoordinates[index]) * strides[index];
 			int cell = factor.storageCell(logicalCell);
-			if(cell < 0 || factor.values[cell] == Double.POSITIVE_INFINITY)
+			if(cell < 0 || factor.valueAt(logicalCell) == Double.POSITIVE_INFINITY)
 				return PreciseCost.POSITIVE_INFINITY;
 			long lowSum = low + (factor.lowValues == null ? 0L : (long)factor.lowValues[cell]);
-			high += (long)factor.values[cell] + (lowSum >>> 53);
+			high += (long)factor.valueAt(logicalCell) + (lowSum >>> 53);
 			if(high > mask)
 				throw new IllegalArgumentException("EXACT_VE_DYADIC_WORD_OVERFLOW");
 			low = lowSum & mask;
@@ -1723,12 +2182,12 @@ public final class ExactCategoricalSolver {
 		for(int cell = 0; cell < outputCells; cell++) {
 			decode(cell, factor.scope, domains, local, global);
 			int stored = factor.storageCell(factor.cell(global));
-			high[cell] = stored < 0 ? Double.POSITIVE_INFINITY : factor.values[stored];
+			high[cell] = stored < 0 ? Double.POSITIVE_INFINITY : factor.valueAt(factor.cell(global));
 			low[cell] = stored < 0 || factor.lowValues == null ? 0d : factor.lowValues[stored];
 			choices[cell] = backpointer.choice(backpointer.cell(global, domains));
 		}
 		observer.accept(new EliminationSnapshot(backpointer.variable, factor.scope.clone(),
-			high, low, choices, factor.sparseCells != null, factor.values.length));
+			high, low, choices, factor.sparseCells != null, factor.storedCells()));
 	}
 
 	/** Evaluates one complete assignment using the same validation and arithmetic as solve. */
@@ -1866,7 +2325,8 @@ public final class ExactCategoricalSolver {
 				scope[i] = variableIndex;
 			}
 			int cells = checkedCells(scope, domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
-			if(factor.denseValues != null && factor.denseValues.length != cells)
+			if(factor.denseValues != null && factor.denseValues.length != cells
+				|| factor.hardValues != null && factor.hardValues.cells() != cells)
 				throw new IllegalArgumentException("EXACT_VE_DENSE_FACTOR_SIZE_MISMATCH");
 			inputCells = checkedAdd(inputCells, cells, "EXACT_VE_MATERIALIZED_CELL_OVERFLOW");
 			maximumInputCells = Math.max(maximumInputCells, cells);
@@ -2033,216 +2493,456 @@ public final class ExactCategoricalSolver {
 
 	private static Plan eliminationPlan(List<Variable> variables, int[] domains,
 		List<int[]> initialScopes, PlanOrdering ordering) {
-		List<Set<Integer>> graph = interactionGraph(variables.size(), initialScopes);
-		Set<Integer> remaining = new HashSet<>();
-		for(int i = 0; i < variables.size(); i++)
-			remaining.add(i);
-		EliminationMetrics[] metrics = new EliminationMetrics[variables.size()];
-		for(int variable = 0; variable < variables.size(); variable++)
-			metrics[variable] = new EliminationMetrics(
-				variable, variables, domains, graph, remaining, ordering);
+		EliminationGraph graph = interactionGraph(variables.size(), initialScopes);
 		List<Step> steps = new ArrayList<>(variables.size());
+		OrderScoreCache scores = new OrderScoreCache(graph,domains,variables.size());
 		int width = 0;
-		while(!remaining.isEmpty()) {
-			int selected = selectEliminationVariable(metrics, remaining);
-			int[] separator = graph.get(selected).stream().filter(remaining::contains)
-				.sorted().mapToInt(Integer::intValue).toArray();
+		while(graph.hasRemaining()) {
+			Comparator<Integer> comparator = switch(ordering) {
+				case MIN_FILL -> Comparator
+					.comparingLong((Integer variable) -> scores.fillEdges(variable))
+					.thenComparingLong(scores::neighborCells);
+				case MIN_SEPARATOR_CELLS -> Comparator
+					.comparingLong((Integer variable) -> scores.neighborCells(variable))
+					.thenComparingLong(scores::fillEdges);
+				case MIN_ELIMINATION_ASSIGNMENTS -> Comparator
+					.comparingLong((Integer variable) -> saturatedMultiply(
+						scores.neighborCells(variable),domains[variable]))
+					.thenComparingLong(scores::neighborCells)
+					.thenComparingLong(scores::fillEdges);
+				case MIN_DEGREE -> Comparator
+					.comparingLong((Integer variable) -> scores.remainingDegree(variable))
+					.thenComparingLong(scores::neighborCells)
+					.thenComparingLong(scores::fillEdges);
+			};
+			comparator = comparator.thenComparing(variable -> variables.get(variable).key());
+			int selected = -1;
+			for(int variable = graph.nextRemaining(0); variable >= 0;
+				variable = graph.nextRemaining(variable + 1))
+				if(selected < 0 || comparator.compare(variable,selected) < 0)
+					selected = variable;
+			if(selected < 0)
+				throw new IllegalStateException("EXACT_VE_ORDER_SELECTION_EMPTY");
+			int[] separator = graph.remainingNeighbors(selected);
 			width = Math.max(width, separator.length);
-			for(int i = 0; i < separator.length; i++)
-				for(int j = i + 1; j < separator.length; j++) {
-					int left = separator[i];
-					int right = separator[j];
-					if(graph.get(left).contains(right))
-						continue;
-					invalidateCommonNeighborFill(metrics, graph, remaining, selected, left, right);
-					graph.get(left).add(right);
-					graph.get(right).add(left);
-				}
-			remaining.remove(selected);
-			for(int neighbor : separator)
-				metrics[neighbor].invalidateAll();
+			scores.invalidateAfterElimination(separator);
+			graph.connectClique(separator);
+			graph.removeRemaining(selected);
+			EliminationGraph adapted = densifyIfBeneficial(graph);
+			if(adapted != graph) {
+				graph = adapted;
+				scores.setGraph(graph);
+			}
 			steps.add(new Step(selected, separator));
 		}
 		return new Plan(List.copyOf(steps), width);
-	}
-
-	/** Computes each current graph metric once per candidate instead of once per comparator call. */
-	private static int selectEliminationVariable(EliminationMetrics[] metrics,
-		Set<Integer> remaining) {
-		EliminationMetrics selected = null;
-		for(int variable : remaining) {
-			EliminationMetrics candidate = metrics[variable];
-			if(selected == null || candidate.compareTo(selected) < 0)
-				selected = candidate;
-		}
-		if(selected == null)
-			throw new IllegalStateException("EXACT_VE_ELIMINATION_SELECTION_EMPTY");
-		return selected.variable;
-	}
-
-	private static void invalidateCommonNeighborFill(EliminationMetrics[] metrics,
-		List<Set<Integer>> graph, Set<Integer> remaining, int selected, int left, int right) {
-		Set<Integer> leftNeighbors = graph.get(left);
-		Set<Integer> rightNeighbors = graph.get(right);
-		Set<Integer> smaller = leftNeighbors.size() <= rightNeighbors.size()
-			? leftNeighbors : rightNeighbors;
-		Set<Integer> larger = smaller == leftNeighbors ? rightNeighbors : leftNeighbors;
-		for(int common : smaller)
-			if(common != selected && remaining.contains(common) && larger.contains(common))
-				metrics[common].invalidateFill();
-	}
-
-	private static final class EliminationMetrics {
-		private final int variable;
-		private final List<Variable> variables;
-		private final int[] domains;
-		private final List<Set<Integer>> graph;
-		private final Set<Integer> remaining;
-		private final PlanOrdering ordering;
-		private long cells = -1L;
-		private long fill = -1L;
-		private long degree = -1L;
-
-		private EliminationMetrics(int variable, List<Variable> variables, int[] domains,
-			List<Set<Integer>> graph, Set<Integer> remaining, PlanOrdering ordering) {
-			this.variable = variable;
-			this.variables = variables;
-			this.domains = domains;
-			this.graph = graph;
-			this.remaining = remaining;
-			this.ordering = ordering;
-		}
-
-		private void invalidateAll() {
-			cells = -1L;
-			fill = -1L;
-			degree = -1L;
-		}
-
-		private void invalidateFill() {
-			fill = -1L;
-		}
-
-		private int compareTo(EliminationMetrics other) {
-			int comparison = Long.compare(primary(), other.primary());
-			if(comparison == 0)
-				comparison = Long.compare(secondary(), other.secondary());
-			if(comparison == 0)
-				comparison = Long.compare(tertiary(), other.tertiary());
-			return comparison != 0 ? comparison
-				: variables.get(variable).key().compareTo(variables.get(other.variable).key());
-		}
-
-		private long primary() {
-			return switch(ordering) {
-				case MIN_FILL -> fill();
-				case MIN_SEPARATOR_CELLS -> cells();
-				case MIN_ELIMINATION_ASSIGNMENTS -> saturatedMultiply(cells(), domains[variable]);
-				case MIN_DEGREE -> degree();
-			};
-		}
-
-		private long secondary() {
-			return switch(ordering) {
-				case MIN_FILL -> cells();
-				case MIN_SEPARATOR_CELLS -> fill();
-				case MIN_ELIMINATION_ASSIGNMENTS, MIN_DEGREE -> cells();
-			};
-		}
-
-		private long tertiary() {
-			return ordering == PlanOrdering.MIN_ELIMINATION_ASSIGNMENTS
-				|| ordering == PlanOrdering.MIN_DEGREE ? fill() : 0L;
-		}
-
-		private long cells() {
-			if(cells < 0L)
-				cells = neighborCells(variable, graph, remaining, domains);
-			return cells;
-		}
-
-		private long fill() {
-			if(fill < 0L)
-				fill = fillEdges(variable, graph, remaining);
-			return fill;
-		}
-
-		private long degree() {
-			if(degree < 0L)
-				degree = remainingDegree(variable, graph, remaining);
-			return degree;
-		}
 	}
 
 	private static Plan eliminationPlan(List<Variable> variables,
 		List<int[]> initialScopes, int[] order) {
-		List<Set<Integer>> graph = interactionGraph(variables.size(), initialScopes);
-		Set<Integer> remaining = new HashSet<>();
-		for(int index = 0; index < variables.size(); index++)
-			remaining.add(index);
+		EliminationGraph graph = interactionGraph(variables.size(), initialScopes);
 		List<Step> steps = new ArrayList<>(variables.size());
 		int width = 0;
 		for(int selected : order) {
-			if(!remaining.remove(selected))
+			if(!graph.removeRemaining(selected))
 				throw new IllegalArgumentException("EXACT_VE_PREFERRED_ORDER_INVALID");
-			int[] separator = graph.get(selected).stream().filter(remaining::contains)
-				.sorted().mapToInt(Integer::intValue).toArray();
+			int[] separator = graph.remainingNeighbors(selected);
 			width = Math.max(width, separator.length);
-			for(int i = 0; i < separator.length; i++)
-				for(int j = i + 1; j < separator.length; j++) {
-					graph.get(separator[i]).add(separator[j]);
-					graph.get(separator[j]).add(separator[i]);
-				}
+			graph.connectClique(separator);
+			graph = densifyIfBeneficial(graph);
 			steps.add(new Step(selected, separator));
 		}
-		if(!remaining.isEmpty())
+		if(graph.hasRemaining())
 			throw new IllegalArgumentException("EXACT_VE_PREFERRED_ORDER_INVALID");
 		return new Plan(List.copyOf(steps), width);
 	}
 
-	private static List<Set<Integer>> interactionGraph(int variableCount,
+	private static EliminationGraph interactionGraph(int variableCount,
 		List<int[]> initialScopes) {
-		List<Set<Integer>> graph = new ArrayList<>(variableCount);
-		for(int index = 0; index < variableCount; index++)
-			graph.add(new HashSet<>());
+		SparseEliminationGraph sparse = new SparseEliminationGraph(variableCount);
 		for(int[] scope : initialScopes)
 			for(int i = 0; i < scope.length; i++)
-				for(int j = i + 1; j < scope.length; j++) {
-					graph.get(scope[i]).add(scope[j]);
-					graph.get(scope[j]).add(scope[i]);
+				for(int j = i + 1; j < scope.length; j++)
+					sparse.connect(scope[i],scope[j]);
+		return densifyIfBeneficial(sparse);
+	}
+
+	private static EliminationGraph densifyIfBeneficial(EliminationGraph graph) {
+		if(!(graph instanceof SparseEliminationGraph sparse))
+			return graph;
+		long denseWords = (long)sparse.variableCount
+			* ((sparse.variableCount + (long)Long.SIZE - 1) / Long.SIZE);
+		return denseWords <= sparse.adjacencyEntries() / 2L
+			? new DenseEliminationGraph(sparse) : sparse;
+	}
+
+	private interface EliminationGraph {
+		boolean hasRemaining();
+		int nextRemaining(int from);
+		boolean removeRemaining(int variable);
+		int[] remainingNeighbors(int variable);
+		void connectClique(int[] variables);
+		long fillEdges(int variable);
+		long neighborCells(int variable, int[] domains);
+		long remainingDegree(int variable);
+	}
+
+	private static final class DenseEliminationGraph implements EliminationGraph {
+		private final int variableCount;
+		private final int wordCount;
+		private final long[][] adjacency;
+		private final long[] remaining;
+		private final long[] cliqueBuffer;
+
+		private DenseEliminationGraph(SparseEliminationGraph sparse) {
+			this(sparse.variableCount);
+			System.arraycopy(sparse.remaining,0,remaining,0,remaining.length);
+			for(int left = 0; left < variableCount; left++) {
+				Set<Integer> neighbors = sparse.adjacency[left];
+				if(neighbors != null)
+					for(int right : neighbors)
+						connect(left,right);
+			}
+		}
+
+		private DenseEliminationGraph(int variableCount) {
+			this.variableCount = variableCount;
+			wordCount = (variableCount + Long.SIZE - 1) / Long.SIZE;
+			adjacency = new long[variableCount][wordCount];
+			remaining = new long[wordCount];
+			Arrays.fill(remaining,-1L);
+			if(wordCount > 0 && (variableCount & (Long.SIZE - 1)) != 0)
+				remaining[wordCount - 1] = (1L << (variableCount & (Long.SIZE - 1))) - 1L;
+			cliqueBuffer = new long[wordCount];
+		}
+
+		private void connect(int left, int right) {
+			adjacency[left][right >>> 6] |= 1L << right;
+			adjacency[right][left >>> 6] |= 1L << left;
+		}
+
+		@Override
+		public boolean hasRemaining() {
+			for(long word : remaining)
+				if(word != 0L)
+					return true;
+			return false;
+		}
+
+		@Override
+		public int nextRemaining(int from) {
+			if(from < 0 || from >= variableCount)
+				return -1;
+			int word = from >>> 6;
+			long candidates = remaining[word] & (-1L << from);
+			while(true) {
+				if(candidates != 0L)
+					return (word << 6) + Long.numberOfTrailingZeros(candidates);
+				if(++word >= wordCount)
+					return -1;
+				candidates = remaining[word];
+			}
+		}
+
+		@Override
+		public boolean removeRemaining(int variable) {
+			long mask = 1L << variable;
+			int word = variable >>> 6;
+			if((remaining[word] & mask) == 0L)
+				return false;
+			remaining[word] &= ~mask;
+			return true;
+		}
+
+		@Override
+		public int[] remainingNeighbors(int variable) {
+			int count = 0;
+			for(int word = 0; word < wordCount; word++)
+				count += Long.bitCount(adjacency[variable][word] & remaining[word]);
+			int[] neighbors = new int[count];
+			int offset = 0;
+			for(int word = 0; word < wordCount; word++) {
+				long candidates = adjacency[variable][word] & remaining[word];
+				while(candidates != 0L) {
+					int bit = Long.numberOfTrailingZeros(candidates);
+					neighbors[offset++] = (word << 6) + bit;
+					candidates &= candidates - 1L;
 				}
-		return graph;
-	}
-
-	private static long remainingDegree(int variable, List<Set<Integer>> graph,
-		Set<Integer> remaining) {
-		return graph.get(variable).stream().filter(remaining::contains).count();
-	}
-
-	private static long fillEdges(int variable, List<Set<Integer>> graph, Set<Integer> remaining) {
-		long missing = 0;
-		for(int left : graph.get(variable)) {
-			if(!remaining.contains(left))
-				continue;
-			for(int right : graph.get(variable))
-				if(left < right && remaining.contains(right)
-					&& !graph.get(left).contains(right))
-					missing++;
+			}
+			return neighbors;
 		}
-		return missing;
+
+		@Override
+		public void connectClique(int[] variables) {
+			Arrays.fill(cliqueBuffer,0L);
+			for(int variable : variables)
+				cliqueBuffer[variable >>> 6] |= 1L << variable;
+			for(int variable : variables) {
+				boolean selfConnected = connected(variable,variable);
+				for(int word = 0; word < wordCount; word++)
+					adjacency[variable][word] |= cliqueBuffer[word];
+				if(!selfConnected)
+					adjacency[variable][variable >>> 6] &= ~(1L << variable);
+			}
+		}
+
+		private boolean connected(int left, int right) {
+			return (adjacency[left][right >>> 6] & (1L << right)) != 0L;
+		}
+
+		@Override
+		public long fillEdges(int variable) {
+			long missing = 0L;
+			for(int neighborWord = 0; neighborWord < wordCount; neighborWord++) {
+				long neighbors = adjacency[variable][neighborWord] & remaining[neighborWord];
+				while(neighbors != 0L) {
+					int bit = Long.numberOfTrailingZeros(neighbors);
+					int neighbor = (neighborWord << 6) + bit;
+					long higherInWord = bit == Long.SIZE - 1 ? 0L : -1L << (bit + 1);
+					missing += Long.bitCount(adjacency[variable][neighborWord]
+						& remaining[neighborWord] & higherInWord & ~adjacency[neighbor][neighborWord]);
+					for(int word = neighborWord + 1; word < wordCount; word++)
+						missing += Long.bitCount(adjacency[variable][word]
+							& remaining[word] & ~adjacency[neighbor][word]);
+					neighbors &= neighbors - 1L;
+				}
+			}
+			return missing;
+		}
+
+		@Override
+		public long neighborCells(int variable, int[] domains) {
+			long cells = 1L;
+			for(int word = 0; word < wordCount; word++) {
+				long neighbors = adjacency[variable][word] & remaining[word];
+				while(neighbors != 0L) {
+					int neighbor = (word << 6) + Long.numberOfTrailingZeros(neighbors);
+					if(cells > Long.MAX_VALUE / domains[neighbor])
+						return Long.MAX_VALUE;
+					cells *= domains[neighbor];
+					neighbors &= neighbors - 1L;
+				}
+			}
+			return cells;
+		}
+
+		@Override
+		public long remainingDegree(int variable) {
+			long degree = 0L;
+			for(int word = 0; word < wordCount; word++)
+				degree += Long.bitCount(adjacency[variable][word] & remaining[word]);
+			return degree;
+		}
 	}
 
-	private static long neighborCells(int variable, List<Set<Integer>> graph,
-		Set<Integer> remaining, int[] domains) {
-		long cells = 1;
-		for(int neighbor : graph.get(variable)) {
-			if(!remaining.contains(neighbor))
-				continue;
-			if(cells > Long.MAX_VALUE / domains[neighbor])
-				return Long.MAX_VALUE;
-			cells *= domains[neighbor];
+	private static final class SparseEliminationGraph implements EliminationGraph {
+		private final int variableCount;
+		private final Set<Integer>[] adjacency;
+		private final Integer[] ordinals;
+		private final long[] remaining;
+		private final int[] neighborBuffer;
+		private long adjacencyEntries;
+
+		@SuppressWarnings("unchecked")
+		private SparseEliminationGraph(int variableCount) {
+			this.variableCount = variableCount;
+			adjacency = (Set<Integer>[])new Set<?>[variableCount];
+			ordinals = new Integer[variableCount];
+			for(int variable = 0; variable < variableCount; variable++)
+				ordinals[variable] = Integer.valueOf(variable);
+			remaining = new long[(variableCount + Long.SIZE - 1) / Long.SIZE];
+			Arrays.fill(remaining,-1L);
+			if(remaining.length > 0 && (variableCount & (Long.SIZE - 1)) != 0)
+				remaining[remaining.length - 1] =
+					(1L << (variableCount & (Long.SIZE - 1))) - 1L;
+			neighborBuffer = new int[variableCount];
 		}
-		return cells;
+
+		private void connect(int left, int right) {
+			if(adjacency[left] == null)
+				adjacency[left] = new HashSet<>();
+			if(adjacency[left].add(ordinals[right]))
+				adjacencyEntries++;
+			if(adjacency[right] == null)
+				adjacency[right] = new HashSet<>();
+			if(adjacency[right].add(ordinals[left]))
+				adjacencyEntries++;
+		}
+
+		private long adjacencyEntries() {
+			return adjacencyEntries;
+		}
+
+		@Override
+		public boolean hasRemaining() {
+			for(long word : remaining)
+				if(word != 0L)
+					return true;
+			return false;
+		}
+
+		@Override
+		public int nextRemaining(int from) {
+			if(from < 0 || from >= variableCount)
+				return -1;
+			int word = from >>> 6;
+			long candidates = remaining[word] & (-1L << from);
+			while(true) {
+				if(candidates != 0L)
+					return (word << 6) + Long.numberOfTrailingZeros(candidates);
+				if(++word >= remaining.length)
+					return -1;
+				candidates = remaining[word];
+			}
+		}
+
+		@Override
+		public boolean removeRemaining(int variable) {
+			long mask = 1L << variable;
+			int word = variable >>> 6;
+			if((remaining[word] & mask) == 0L)
+				return false;
+			remaining[word] &= ~mask;
+			return true;
+		}
+
+		private boolean isRemaining(int variable) {
+			return (remaining[variable >>> 6] & (1L << variable)) != 0L;
+		}
+
+		@Override
+		public int[] remainingNeighbors(int variable) {
+			Set<Integer> row = adjacency[variable];
+			if(row == null)
+				return new int[0];
+			int count = 0;
+			for(int neighbor : row)
+				if(isRemaining(neighbor))
+					count++;
+			int[] neighbors = new int[count];
+			int offset = 0;
+			for(int neighbor : row)
+				if(isRemaining(neighbor))
+					neighbors[offset++] = neighbor;
+			Arrays.sort(neighbors);
+			return neighbors;
+		}
+
+		@Override
+		public void connectClique(int[] variables) {
+			for(int i = 0; i < variables.length; i++)
+				for(int j = i + 1; j < variables.length; j++)
+					connect(variables[i],variables[j]);
+		}
+
+		@Override
+		public long fillEdges(int variable) {
+			Set<Integer> variableRow = adjacency[variable];
+			if(variableRow == null)
+				return 0L;
+			int neighborCount = 0;
+			for(int neighbor : variableRow)
+				if(isRemaining(neighbor))
+					neighborBuffer[neighborCount++] = neighbor;
+			long missing = 0L;
+			for(int i = 0; i < neighborCount; i++)
+				for(int j = i + 1; j < neighborCount; j++) {
+					Set<Integer> row = adjacency[neighborBuffer[i]];
+					if(row == null || !row.contains(ordinals[neighborBuffer[j]]))
+						missing++;
+				}
+			return missing;
+		}
+
+		@Override
+		public long neighborCells(int variable, int[] domains) {
+			long cells = 1L;
+			Set<Integer> row = adjacency[variable];
+			if(row == null)
+				return cells;
+			for(int neighbor : row) {
+				if(!isRemaining(neighbor))
+					continue;
+				if(cells > Long.MAX_VALUE / domains[neighbor])
+					return Long.MAX_VALUE;
+				cells *= domains[neighbor];
+			}
+			return cells;
+		}
+
+		@Override
+		public long remainingDegree(int variable) {
+			long degree = 0L;
+			Set<Integer> row = adjacency[variable];
+			if(row != null)
+				for(int neighbor : row)
+					if(isRemaining(neighbor))
+						degree++;
+			return degree;
+		}
+	}
+
+	private static final class OrderScoreCache {
+		private EliminationGraph graph;
+		private final int[] domains;
+		private final long[] fillEdges;
+		private final long[] neighborCells;
+		private final long[] remainingDegrees;
+		private final boolean[] fillValid;
+		private final boolean[] neighborValid;
+		private final boolean[] degreeValid;
+
+		private OrderScoreCache(EliminationGraph graph, int[] domains, int variableCount) {
+			this.graph = graph;
+			this.domains = domains;
+			fillEdges = new long[variableCount];
+			neighborCells = new long[variableCount];
+			remainingDegrees = new long[variableCount];
+			fillValid = new boolean[variableCount];
+			neighborValid = new boolean[variableCount];
+			degreeValid = new boolean[variableCount];
+		}
+
+		private void setGraph(EliminationGraph graph) {
+			this.graph = graph;
+		}
+
+		private void invalidateAfterElimination(int[] separator) {
+			// Removing the selected variable and completing its separator changes degree and
+			// neighbor cells only on the separator. A new separator edge can additionally
+			// reduce fill for any common neighbor, so invalidate fill over the two-hop cone.
+			for(int variable : separator) {
+				fillValid[variable] = false;
+				neighborValid[variable] = false;
+				degreeValid[variable] = false;
+				for(int neighbor : graph.remainingNeighbors(variable))
+					fillValid[neighbor] = false;
+			}
+		}
+
+		private long fillEdges(int variable) {
+			if(fillValid[variable])
+				return fillEdges[variable];
+			fillEdges[variable] = graph.fillEdges(variable);
+			fillValid[variable] = true;
+			return fillEdges[variable];
+		}
+
+		private long neighborCells(int variable) {
+			if(neighborValid[variable])
+				return neighborCells[variable];
+			neighborCells[variable] = graph.neighborCells(variable,domains);
+			neighborValid[variable] = true;
+			return neighborCells[variable];
+		}
+
+		private long remainingDegree(int variable) {
+			if(degreeValid[variable])
+				return remainingDegrees[variable];
+			remainingDegrees[variable] = graph.remainingDegree(variable);
+			degreeValid[variable] = true;
+			return remainingDegrees[variable];
+		}
 	}
 
 	private static long saturatedCells(int[] scope, int[] domains) {
@@ -2274,8 +2974,10 @@ public final class ExactCategoricalSolver {
 			checkedCells(scope, prepared.domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
 			// All input caps and scopes were validated before any callback. Reuse the
 			// same last-axis-fastest freezer; dense owned tables remain shared as before.
-			double[] values = freezeValidatedFactor(factor).denseValues;
-			result.add(new DenseFactor(scope, prepared.domains, values, null, null));
+			Factor frozen = freezeValidatedFactor(factor);
+			result.add(frozen.hardValues == null
+				? new DenseFactor(scope, prepared.domains, frozen.denseValues, null, null)
+				: new DenseFactor(scope, prepared.domains, frozen.hardValues));
 		}
 		return result;
 	}
@@ -2290,6 +2992,10 @@ public final class ExactCategoricalSolver {
 		List<DenseFactor> converted = new ArrayList<>(factors.size());
 		ExactDyadicCosts maximum = ExactDyadicCosts.ofWords(0, 0);
 		for(DenseFactor factor : factors) {
+			if(factor.hardValues != null) {
+				converted.add(factor);
+				continue;
+			}
 			PlannerResourceGuard.checkAdditionalCells(factor.values.length, "exact-dyadic-input");
 			double[] high = new double[factor.values.length];
 			double[] low = null;
@@ -2330,11 +3036,13 @@ public final class ExactCategoricalSolver {
 		for(int index = 0; index < factors.size(); index++) {
 			DenseFactor factor = factors.get(index);
 			int cell = factor.summedCell(global, baseCells, valueStrides, index, value);
-			if(cell < 0 || factor.values[cell] == Double.POSITIVE_INFINITY)
+			int logicalCell = baseCells == null ? factor.cell(global)
+				: baseCells[index] + value * valueStrides[index];
+			if(cell < 0 || factor.valueAt(logicalCell) == Double.POSITIVE_INFINITY)
 				return PreciseCost.POSITIVE_INFINITY;
 			// Each word is at most 53 bits, so both long additions below fit exactly.
 			long lowSum = low + (factor.lowValues == null ? 0L : (long)factor.lowValues[cell]);
-			high += (long)factor.values[cell] + (lowSum >>> 53);
+			high += (long)factor.valueAt(logicalCell) + (lowSum >>> 53);
 			if(high > mask)
 				throw new IllegalArgumentException("EXACT_VE_DYADIC_WORD_OVERFLOW");
 			low = lowSum & mask;
@@ -2359,7 +3067,9 @@ public final class ExactCategoricalSolver {
 			int cell = factor.summedCell(global, baseCells, valueStrides, index, value);
 			if(cell < 0)
 				return PreciseCost.POSITIVE_INFINITY;
-			double valueHigh = factor.values[cell];
+			int logicalCell = baseCells == null ? factor.cell(global)
+				: baseCells[index] + value * valueStrides[index];
+			double valueHigh = factor.valueAt(logicalCell);
 			double valueLow = factor.lowValues == null ? 0d : factor.lowValues[cell];
 			long valueTie = factor.tieCosts == null ? 0L : factor.tieCosts[cell];
 			if(valueHigh == Double.POSITIVE_INFINITY)
@@ -2431,6 +3141,44 @@ public final class ExactCategoricalSolver {
 		if(left > Long.MAX_VALUE / right)
 			throw incrementalResource(operation, kind, "overflow");
 		return left * right;
+	}
+
+	/** PreciseCost.plus in caller-owned primitive storage, preserving its error order. */
+	private static void addBoundaryCost(double[] cost, double valueHigh, double valueLow) {
+		if(cost[0] == Double.POSITIVE_INFINITY || valueHigh == Double.POSITIVE_INFINITY) {
+			cost[0] = Double.POSITIVE_INFINITY;
+			cost[1] = 0d;
+			return;
+		}
+		double sum = cost[0] + valueHigh;
+		if(!Double.isFinite(sum))
+			throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
+		double virtual = sum - cost[0];
+		double error = (cost[0] - (sum - virtual)) + (valueHigh - virtual);
+		error += cost[1] + valueLow;
+		if(!Double.isFinite(error))
+			throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
+		double normalizedHigh = sum + error;
+		if(!Double.isFinite(normalizedHigh))
+			throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
+		cost[1] = error - (normalizedHigh - sum);
+		cost[0] = normalizedHigh;
+	}
+
+	/** PreciseCost.compareTo for boundary costs, whose tie cost is always zero. */
+	private static int compareBoundaryCost(double leftHigh, double leftLow,
+		double rightHigh, double rightLow) {
+		return Double.compare(roundBoundaryCost(leftHigh,leftLow),
+			roundBoundaryCost(rightHigh,rightLow));
+	}
+
+	private static double roundBoundaryCost(double high, double low) {
+		if(high == Double.POSITIVE_INFINITY)
+			return high;
+		double result = high + low;
+		if(!Double.isFinite(result))
+			throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
+		return result;
 	}
 
 	private static double addBoundaryLower(double left, double right) {
@@ -2605,16 +3353,16 @@ public final class ExactCategoricalSolver {
 		}
 
 		private static FiniteRowIndex create(DenseFactor first, int variable, int domain) {
-			if(first.finiteCount == first.values.length)
+			if(first.finiteCount == first.logicalCells())
 				return null;
 			int stride = first.stride(variable);
-			int rows = first.values.length / domain;
+			int rows = first.logicalCells() / domain;
 			int words = (domain - 1) / Long.SIZE + 1;
 			// words <= domain, so the index cannot exceed the validated input cells.
 			long[] forbidden = null;
 			long count = 0L;
-			for(int cell = 0; cell < first.values.length; cell++) {
-				if(first.values[cell] != Double.POSITIVE_INFINITY)
+			for(int cell = 0; cell < first.logicalCells(); cell++) {
+				if(first.valueAt(cell) != Double.POSITIVE_INFINITY)
 					continue;
 				if(forbidden == null)
 					forbidden = new long[rows * words];
@@ -2710,6 +3458,7 @@ public final class ExactCategoricalSolver {
 		private final int[] strides;
 		private final int[] dimensions;
 		private final double[] values;
+		private final HardTable hardValues;
 		private final double[] lowValues;
 		private final long[] tieCosts;
 		private final int[] sparseCells;
@@ -2727,6 +3476,7 @@ public final class ExactCategoricalSolver {
 			long[] tieCosts, int[] sparseCells) {
 			this.scope = scope.clone();
 			this.values = values;
+			this.hardValues = null;
 			this.lowValues = lowValues;
 			this.tieCosts = tieCosts;
 			this.sparseCells = sparseCells;
@@ -2738,6 +3488,51 @@ public final class ExactCategoricalSolver {
 				dimensions[index] = domains[scope[index]];
 				stride = Math.multiplyExact(stride, dimensions[index]);
 			}
+		}
+
+		private DenseFactor(int[] scope, int[] domains, HardTable hardValues) {
+			this.scope = scope.clone();
+			this.values = null;
+			this.hardValues = hardValues;
+			this.lowValues = null;
+			this.tieCosts = null;
+			this.sparseCells = null;
+			this.strides = new int[scope.length];
+			this.dimensions = new int[scope.length];
+			int stride = 1;
+			for(int index = scope.length - 1; index >= 0; index--) {
+				strides[index] = stride;
+				dimensions[index] = domains[scope[index]];
+				stride = Math.multiplyExact(stride, dimensions[index]);
+			}
+			if(stride != hardValues.cells())
+				throw new IllegalArgumentException("EXACT_VE_DENSE_FACTOR_SIZE_MISMATCH");
+		}
+
+		private int logicalCells() {
+			if(hardValues != null)
+				return hardValues.cells();
+			if(sparseCells == null)
+				return values.length;
+			int cells = 1;
+			for(int dimension : dimensions)
+				cells = Math.multiplyExact(cells, dimension);
+			return cells;
+		}
+
+		private double valueAt(int logicalCell) {
+			if(hardValues != null)
+				return hardValues.costAt(logicalCell);
+			int stored = storageCell(logicalCell);
+			return stored < 0 ? Double.POSITIVE_INFINITY : values[stored];
+		}
+
+		private int storedCells() { return hardValues == null ? values.length : hardValues.cells(); }
+		private double storedValue(int stored) {
+			return hardValues == null ? values[stored] : hardValues.costAt(stored);
+		}
+		private int storedLogicalCell(int stored) {
+			return hardValues != null || sparseCells == null ? stored : sparseCells[stored];
 		}
 
 		private int axis(int variable) {
@@ -2755,7 +3550,10 @@ public final class ExactCategoricalSolver {
 			if(responseClasses == null)
 				responseClasses = new int[scope.length][];
 			if(responseClasses[axis] == null) {
-				if(sparseCells == null)
+				if(hardValues != null) {
+					responseClasses[axis] = hardValues.axisClasses(dimensions[axis],strides[axis]);
+				}
+				else if(sparseCells == null)
 					responseClasses[axis] = ExactFactorValueClasses.denseAxisClasses(
 						values, lowValues, dimensions[axis], strides[axis]);
 				else {
@@ -2776,9 +3574,9 @@ public final class ExactCategoricalSolver {
 
 		/** Lift stored finite tuples through the bucket's exact common refinement. */
 		private int[] projectedFiniteCells(BucketProjection projection) {
-			if(values.length == 0)
+			if(logicalCells() == 0)
 				return new int[0];
-			if(sparseCells == null && finiteCount == values.length)
+			if(sparseCells == null && finiteCount == logicalCells())
 				return null;
 			boolean identity = true;
 			for(int axis = 0; identity && axis < scope.length; axis++) {
@@ -2800,10 +3598,10 @@ public final class ExactCategoricalSolver {
 				stride = Math.multiplyExact(stride, representatives.length);
 			}
 			long finite = 0L;
-			for(int stored = 0; stored < values.length; stored++) {
-				if(values[stored] == Double.POSITIVE_INFINITY)
+			for(int stored = 0; stored < storedCells(); stored++) {
+				if(storedValue(stored) == Double.POSITIVE_INFINITY)
 					continue;
-				int cell = sparseCells == null ? stored : sparseCells[stored];
+				int cell = storedLogicalCell(stored);
 				long multiplicity = 1L;
 				for(int axis = 0; axis < scope.length; axis++)
 					multiplicity *= inverse[axis].size(cell / strides[axis] % dimensions[axis]);
@@ -2818,10 +3616,10 @@ public final class ExactCategoricalSolver {
 			int output = 0;
 			int[] first = new int[scope.length];
 			int[] positions = new int[scope.length];
-			for(int stored = 0; stored < values.length; stored++) {
-				if(values[stored] == Double.POSITIVE_INFINITY)
+			for(int stored = 0; stored < storedCells(); stored++) {
+				if(storedValue(stored) == Double.POSITIVE_INFINITY)
 					continue;
-				int cell = sparseCells == null ? stored : sparseCells[stored];
+				int cell = storedLogicalCell(stored);
 				boolean empty = false;
 				for(int axis = 0; axis < scope.length; axis++) {
 					first[axis] = inverse[axis].first(cell / strides[axis] % dimensions[axis]);
@@ -2867,17 +3665,17 @@ public final class ExactCategoricalSolver {
 				return sparseCells;
 			if(finiteCount < 0) {
 				finiteCount = 0;
-				for(double value : values)
-					if(value != Double.POSITIVE_INFINITY)
+				for(int cell = 0; cell < logicalCells(); cell++)
+					if(valueAt(cell) != Double.POSITIVE_INFINITY)
 						finiteCount++;
 			}
 			int count = finiteCount;
-			if((long)count * 2 > values.length)
+			if((long)count * 2 > logicalCells())
 				return null;
 			int[] cells = PlannerResourceGuard.allocateInts(count, "exact-sparse-support");
 			int output = 0;
-			for(int cell = 0; cell < values.length; cell++)
-				if(values[cell] != Double.POSITIVE_INFINITY)
+			for(int cell = 0; cell < logicalCells(); cell++)
+				if(valueAt(cell) != Double.POSITIVE_INFINITY)
 					cells[output++] = cell;
 			return cells;
 		}

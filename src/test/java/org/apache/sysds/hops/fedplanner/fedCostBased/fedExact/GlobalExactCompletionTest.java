@@ -61,8 +61,13 @@ public class GlobalExactCompletionTest {
 	}
 
 	@Test
-	public void actualHeapExhaustionFailsBeforeLazyAllocationAndNeverReturnsAPlan() throws Exception {
-		runHeapProbe("oversized");
+	public void oversizedPackedAllocationFailsBeforeEvaluationAndNeverReturnsAPlan() throws Exception {
+		runHeapProbe("oversized-packed");
+	}
+
+	@Test
+	public void oversizedNumericPromotionFailsAtFirstNumericValueAndNeverReturnsAPlan() throws Exception {
+		runHeapProbe("oversized-numeric");
 	}
 
 	@Test
@@ -99,17 +104,25 @@ public class GlobalExactCompletionTest {
 			}
 			return;
 		}
-		var a = variable("a", 4000);
-		var b = variable("b", 4000);
+		boolean packed = args[0].equals("oversized-packed");
+		// The packed 16-million-cell table fits in this heap; only a numeric
+		// value requires its 128MB double array. A 1.6-billion-cell bitset does not fit.
+		var a = variable("a", packed ? 40000 : 4000);
+		var b = variable("b", packed ? 40000 : 4000);
+		int[] evaluations = {0};
 		try {
 			ExactCategoricalSolver.solve(List.of(a, b), List.of(
 				ExactCategoricalSolver.Factor.lazy(List.of(a, b), values -> {
-					throw new AssertionError("Oversized allocation must be rejected before evaluation");
+					if(packed || ++evaluations[0] > 1)
+						throw new AssertionError("Evaluation continued past the impossible allocation");
+					return 1d;
 				})), ExactPhysicalOptimizer.PRODUCTION_LIMITS);
 			throw new AssertionError("A resource failure must not produce a partial plan");
 		}
 		catch(PlannerResourceGuard.ResourceExhaustedException expected) {
-			if(!expected.getMessage().contains("phase=freeze-lazy-factor"))
+			String phase = packed ? "exact-hard-table" : "freeze-lazy-factor";
+			if(!expected.getMessage().contains("phase=" + phase)
+				|| evaluations[0] != (packed ? 0 : 1))
 				throw new AssertionError(expected);
 			System.out.println("GLOBAL_RESOURCE_FAILURE_WITHOUT_PLAN");
 		}

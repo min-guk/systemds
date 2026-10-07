@@ -996,3 +996,48 @@ python3 .omx/unknown-shape-golden-20261006/compare_snapshots.py
 ### 최종 결과 — 2026-10-07 완료
 
 자동 DML4/4 및 메모리 profile2/2가 통과했다. Updated는 새 outer version3개를 각각 inner loop에서3회 사용하는 사례로,9번 공급·3번 생성·6번 hit와 GET/PUT3회를 검증했다. Java75건 중68건 통과와 기존 reflection 오류7건의 HEAD 재현, Python35건 통과를 구분해 기록한다. 자세한 완료·잔여 범위는 [다음 날짜 세션 기록](SESSION_ISSUES_2026-10-07.md)과 [최종 결과 보고서](DERIVED_SUPPLY_AUTOMATIC_E2E_RESULTS_2026-10-07_KO.md)에 있다.
+
+### P1_FULL / GLM 함수 경계 correctness 수정 — 10월 7일 main 병합 검증으로 이어짐
+
+- **요청/원칙**: provenance/authority/binding 오류를 수정한다. runtime repair, privacy 완화, 임의 후보 삭제, planner 시간·메모리 budget 또는 부분 Global 처리는 추가하지 않았다. TW/TR 배치와 recompile CP/FOUT 규칙을 유지한다. base commit은 `7b0656c29c456cec47ab04ea456265c057763b83`, 증거 root는 `/home/mchoi/fedplanner-boundary-correctness-20261006`이다.
+- **환경/재현**: 실제 P1_FULL 및 GLM, worker 1개/3개, 동일 Docker image와 cost environment. `bash scripts/fedplanner/run_LAN_docker.sh --function-boundary-compare --artifact-root <증거 root>/<campaign> --variant B --cases <case names> --jobs 2`. 각 campaign의 `runner-settings.json`, `cases`, `results/B/*.command.json`에 config/input/실행 명령을 보존했다. 이 lane은 compile-only이며 runtime 성공과 구분한다.
+
+**문제 정의와 원인**
+
+1. GLM의 `abs(Y)` 결과를 FOUT으로 materialize할 때 함수 formal TRead의 native worker-map authority가 graph action에 보존되지 않았다. 다른 owner나 선택되지 않은 clause의 worker pool을 빌리면 잘못된 계획이 되므로 exact selected authority가 필요하다.
+2. P1의 PCA→kmeans 및 반복 `scale` 호출에서 physical realization 교체 후 DIRECT binding과 함수 반환 alias가 낡았다. VALUE_MAP을 통해 보장되는 고정 worker pool도 native 연산의 authority로 전달되지 않았다. 반복 함수 formal의 임시 연결과 최종 binding 완결 조건을 구분하지 못했다.
+3. 통합 과정에서 BROADCAST 출력의 worker 정보를 ROW/FULL **원본 seed anchor**로 돌려주는 resolver와 이를 비교하는 publication이 불일치했다. 이를 고친 뒤에도 GLM `glm_log_likelihood_part`, `glm.dml:869:28 b(*)` input1에 `Final publication has an unbound relocation action`이 남았다. 정확한 source는 유일한 `abs(Y)`의 `value-523`이며, AVAILABLE **CP/FOUT/BROADCAST DURABLE_MAP** 출력과 목적지 X의 ROW anchor는 같은 worker 19101/19102/19103을 사용한다. 기존 seed resolver는 FED FOUT/input lineage 중심으로 조회하여 이미 materialize된 CP 출력의 exact owned BROADCAST anchor를 놓쳤다. binder는 이 출력으로 DIRECT 연결하지만 publication에는 직접 연결 가능성이 기록되지 않았다.
+4. 복원된 native TRead metadata leaf는 candidate inputBindings 없이도 정확한 CFG writer 관계를 갖는다. joint origin 추적이 이를 놓쳐 정상 VALUE_MAP projection을 거부하고 support scope를 2→8로 늘렸다.
+
+**해결과 의사결정 근거**
+
+- `DerivedFoutAnchorAuthority`로 exact owner realization/clause를 보존하고, selection·Exact factor·emission이 동일한 selected-owner pool 계약을 검사한다. `DerivedFoutAnchorCompatibility`와 fixed-pool VALUE_MAP proof는 모든 선택된 source를 검사하며, 선택되지 않은 좋은 clause나 seed 없는 cycle의 authority를 빌리지 않는다. 가능한 map의 `Node.anchors` 합집합으로 우회하지 않는다.
+- 함수 반환 alias 생성 책임을 `LogicalBoundaryRealizations`로 일원화하고 physical 재생성 뒤 DIRECT/VALUE_MAP closure를 완결한다. 반복 호출의 formal input은 분석 중 provisional VALUE_MAP으로 연결하되 최종 AVAILABLE fact는 완전한 binding을 요구한다. 전이적 metadata 변경은 native proof cache를 무효화한다. provisional/coupled closure를 제거한 격리 비교에서 원래 P1 실패가 재현되어 이 변경을 유지했다.
+- 고정 VALUE_MAP pool을 DIRECT와 relocation binder에도 연결한다. DIRECT의 partition-axis exactness와 relocation 생략에 필요한 전체 physical geometry exactness를 별도로 추적한다. ROW의 열 범위가 다른 경우 DIRECT authority는 유지해도 전체 geometry 동일성은 인정하지 않는다.
+- **출력 후보와 materialization FType이 BROADCAST임을 별도로 확인한 경로에서만**, seed anchor와 목적지의 정규화된 worker endpoint 집합을 비교한다. ROW/COL/FULL은 기존 엄격한 physical-pool 비교를 유지한다. 정확한 source occurrence/value-version, consumer/input obligation, selected receipt 및 runtime residency 검사를 유지한다. 사용되지 않은 action을 삭제해 실패를 숨기지 않는다.
+- native TRead metadata leaf의 joint origin 추적은 `analysis.transientCompatibilityForReader(reference)`의 exact owned writer realization을 따른다. 같은 pool·변수 이름·계산 operand를 alias 증거로 삼지 않는다. 불변 source projection의 완료 결과만 identity key로 memoize한다. 동일 106 nodes/326 alternatives/3 rows/25 VALUE_MAP clauses를 보존하고 support scope 8→2를 확인했다.
+- **수정 파일**: `PlacementRelationClosure`, `LogicalBoundaryRealizations`, `NativePlacementContinuity`, `PlacementIdentity`, `NeutralPlacementGraph`, `PlacementAnalysis`, `DerivedFoutAnchorCompatibility`(신규), `JointValueMapRelations`, `CandidateSelections`, `ExactPhysicalModel`, `PlacementEmissionTransaction` 및 해당 Java 회귀 테스트. 비용식/runtime 정책은 변경하지 않았다.
+
+**검증 근거와 진행 상태**
+
+- 최종 검증 snapshot은 `engine-v29/freeze-receipt.json`이다. source 19개와 production overlay 139개 class 해시를 기록했다. Closure SHA256 `e3bfc11da67be0c50bc08ba353d312206ceb38a1b9b5b08cca02a0b174e76bde`, PlacementIdentity `e3214519b33482d991636531eabb93a207484627129a02e92500e862155bebb2`. 독립 architecture 검토 CLEAR.
+- v29c focused native VALUE_MAP **11/11 PASS**, 원래 P1 producer-replacement 회귀 **1/1 PASS**. 실제 ROW seed를 가진 derived BROADCAST output, 다른 endpoint 거부, partition/full geometry 구분, mixed-pool 및 dynamic-layout 음성 검사를 포함한다. `p1-broadcast-resolver-v29c/{test,p1-single}.log`.
+- **v29 실제 Docker P1_FULL**: Local W1 **PASS 70.537초**, Local W3 **PASS 56.334초**, Global Exact W3 **PASS 53.648초**. 모두 `planningSucceeded=true`, `runtimeExecuted=false`; 전체 계획 선택 성공이며 부분 Global 결과가 아니다. `p1-v29-local/results/B/P1_FULL_w{1,3}.json`, `p1-v29-global/results/B/P1_FULL_w3.json`.
+- **v29 Maven**: 20 classes, 207 tests 중 **206 PASS/기존 skip1**, failure/error0, `test jar:jar` 성공 (`v29-maven-results.json`). 수정 source 전체 hash가 frozen engine과 일치하며 관련 308 class의 `javap -p -c -s -constants` 출력도 동일하다 (`v29-maven-frozen-parity.json`). Docker 계획 선택 overlay와 Maven runtime jar 사이에 의미상 class 차이가 없음을 확인했다.
+- **v29 추가 검증**: frozen joint model proof **10/10 PASS**, exit0, 329.171초 (`v29-joint-proof-result.json`, `v29-joint-proof.log`). 새 Maven jar의 aggregate/shape/linear/control/branch_true/branch_false 수치 runtime **6/6 PASS**, 기대값 일치, fallback·repair 각0 (`v29-numeric-summary.json`, `v29-numeric-runtime/run-geo_fgnh/receipt.json`).
+- **v29 GLM 실패/진행 중**: Local W1/W3 모두 `Final publication has an unbound relocation action`으로 실패했다 (985.787초/803.464초, `glm-v29-local/results/B/glm_w{1,3}.json`). BROADCAST seed FType 비교 수정만으로 GLM 전체 문제를 해결했다는 가설은 기각한다. 새 first-action inventory (`glm-v29-local/diag-unbound-v1`)와 축소 DML을 재현 중이다. 별도 scratch에서 explicit FOUT output anchor를 publication resolver가 무시하는 RED를 확인했지만, 실제 실패와 대조 전이므로 main에 반영하지 않았다.
+- **v30/v31 최종 수정 검증 중**: `directSourcePlacements` 전용 조회에 exact AVAILABLE source realization의 owned output pool 증명을 추가했다. 전역 resolver/후보 domain/CP-FOUT generation gate는 바꾸지 않았다. 기존 seed 증명도 유지한다. 실제 CP/FOUT/BROADCAST 원인을 포함한 회귀 13/13 및 원래 P1 회귀 1/1 PASS, 동일 coarse state의 pool A/B 선택 음성 검사 PASS, 독립 검토 CLEAR. `glm-publication-authority-v31b`; 실제 first-action 증거는 `glm-v29-local/diag-unbound-v1/first-action-compact.txt`. main에 반영한 뒤 새 Maven을 실행 중이다 (`v31-maven-command.json`). 실행 중인 frozen `engine-v30-candidate`와 main의 production 차이는 같은 helper의 설명 주석뿐이며 Maven 후 class 의미 동등성을 검사한다. 실제 P1 Local W1/W3·Global W3 모두 PASS (82.268/65.159/63.865초, `p1-v30-{local,global}`), 추가 joint model proof 10/10 PASS (293.576초, `v30-joint-proof-result.json`). GLM W1/W3는 `glm-v30-local`에서 실행 중이다.
+- joint origin 회귀는 수정 전 RED 1/3, 수정 후 관련 **14/14 PASS** (`native-alias-origin-{red,green}`). root origin fix와 frozen v23를 사용한 host joint model proof **10/10 PASS** (`native-alias-origin-green/joint-proof.log`); 이는 v29 전체 최종 검증을 대신하지 않는다.
+
+**실패 이력과 기각한 가설**
+
+- v23 P1 Local W1/W3·Global W3는 통과했지만 GLM W1/W3는 unbound relocation으로 실패했다. v24 fixed VALUE_MAP relocation bridge만으로도 GLM은 실패했다. v26은 전체 geometry 검사를 DIRECT까지 적용하고 BROADCAST raw seed 비교를 고치지 못해 P1·GLM 모두 실패했다. 각각 `final-glm-local`, `glm-v24-local`, `p1-v26-{local,global}`, `glm-v26-local`에 보존했다.
+- P1 v26의 `value-31`에 여러 producer가 섞였다는 가설은 **기각**했다. division `Y` producer는 유일하며 두 사용 위치는 같은 compiled key와 같은 Hop 객체를 참조한다 (`p1-v26-local/diag-source-identity-v1/result-summary.txt`). 해당 noncausal multiple-producer 확장은 제거했다. GLM의 formal Y도 abs 출력의 predecessor일 뿐 동일 value가 아니다.
+- 앞선 GLM v2 계획 선택, v3 numeric runtime 6/6, v4 joint runtime 12/12 성공은 과거 snapshot 근거로만 보존한다. v23 확대 joint runtime은 model-proof 고정 300초 제한 및 l2svm candidate-audit JSON 직렬화의 3GiB heap 부족을 겪었다. 이 실패를 planner budget이나 후보 축소로 우회하지 않았다. mutable target을 Maven이 교체하는 동안 실행한 별도 host proof의 ClassNotFound도 유효한 회귀 결과로 계산하지 않는다.
+
+**잔여 이슈와 잠재 회귀 위험**
+
+- GLM v29 실패의 exact output-authority 누락은 반영했으며 v30 전체 계획 선택/최종 Maven 재검증이 진행 중이다. 별도 합성 `NullFunctionOpBoundaryIdentityPcaContractTest`의 `PLACEMENT_FUNCTION_ROOT_UNPROVEN|function=pca`는 exact base commit `7b0656c`의 깨끗한 detached worktree에서도 원본 test 1개가 동일하게 실패했다. test blob도 동일하므로 기존 baseline 문제로 구분하고 수정하지 않았다 (`null-function-exact-head-7b0656c/{result-summary.txt,test.log,evidence-sha256.txt}`). 큰 Global cost-factor 표현/리소스 문제, 전체 14개 workload 및 대규모 P1/GLM 수치 runtime은 이 작업의 완료 주장에 포함하지 않는다.
+- 잘못된 metadata authority는 다른 worker나 선택되지 않은 clause의 데이터를 사용할 수 있다. exact owner/foreign-clause/다른 endpoint/geometry 음성 테스트로 감지한다. closure 누락·순서 의존은 반복 함수, cache withdrawal, source 순서 교환 회귀로 검사한다. runtime은 계획을 그대로 실행하며 fallback·repair를 추가하지 않는다.
+
+- **10월 7일 상태 정정**: 위 v30/v31의 실행 중 표기는 과거 체크포인트다. v31 Maven은 209 tests 중 208 PASS/기존 skip1, failure/error0으로 완료했다. v30 GLM W3는 final graph publication을 통과해 planner 단계에 도달했지만, 전체 완료 전에 사용자의 origin/main 병합 요청으로 두 GLM container를 종료했다. 실패로 분류하지 않으며 병합본으로 다시 검증한다. 상세 통합 기록은 `SESSION_ISSUES_2026-10-07.md`에 이어 쓴다.

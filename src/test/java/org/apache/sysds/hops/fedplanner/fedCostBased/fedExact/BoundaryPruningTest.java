@@ -42,7 +42,9 @@ public class BoundaryPruningTest {
 		List<ExactCategoricalSolver.Variable> variables = List.of(x);
 		double unsafe = 0x1p53;
 		double[][] tables = {
-			{0d, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY},
+			// A positive cost keeps this numeric so the test exercises prefix cuts,
+			// rather than the earlier finite-support join for pure +0/+INF tables.
+			{1d, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY},
 			{unsafe, 0d, 0d, 0d},
 			{1d, 1d, 1d, 1d}
 		};
@@ -50,11 +52,34 @@ public class BoundaryPruningTest {
 		var root = ExactCategoricalSolver.mergeBoundary(
 			leaves(variables, x, tables), List.of(), GENEROUS, 4L, counters);
 
-		Assert.assertEquals(unsafe, root.minimum(), 0d);
+		Assert.assertEquals(unsafe + 2d, root.minimum(), 0d);
 		Assert.assertEquals(6L, counters.childEvaluations());
 		Assert.assertEquals(3L, counters.infeasibleCuts());
 		Assert.assertEquals(0L, counters.costCuts());
 		Assert.assertTrue(counters.childEvaluations() < 12L);
+	}
+
+	@Test
+	public void firstHardSupportSkipsForbiddenRowsEvenWhenCostCertificateIsUnsafe() {
+		var x = variable("infinite-hard-prefix-x", 4);
+		List<ExactCategoricalSolver.Variable> variables = List.of(x);
+		double unsafe = 0x1p53;
+		double[][] tables = {
+			{0d, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY},
+			{unsafe, 0d, 0d, 0d},
+			{1d, 1d, 1d, 1d}
+		};
+		var counters = new ExactCategoricalSolver.BoundaryMergeCounters();
+		var root = ExactCategoricalSolver.mergeBoundary(
+			leaves(variables, x, tables), List.of(), GENEROUS, 4L, counters);
+		Assert.assertEquals(unsafe, root.minimum(), 0d);
+		int[] assignment = {-1};
+		root.decodeInto(assignment, variables);
+		Assert.assertArrayEquals(new int[] {0}, assignment);
+		Assert.assertEquals(3L, counters.childEvaluations());
+		Assert.assertEquals(12L, counters.fullChildEvaluations());
+		Assert.assertEquals(0L, counters.infeasibleCuts());
+		Assert.assertEquals(0L, counters.costCuts());
 	}
 
 	@Test

@@ -510,23 +510,9 @@ final class ExactPhysicalReducedSolver {
 		for(ExactCategoricalSolver.Factor factor : reduction.factors()) {
 			List<ExactCategoricalSolver.Variable> compactScope = factor.scope().stream()
 				.filter(variable -> reducedToCompiled[reducedIndexes.get(variable)] >= 0).toList();
-			int cells = compactScope.stream().mapToInt(
-				ExactCategoricalSolver.Variable::domainSize).reduce(1, Math::multiplyExact);
-			PlannerResourceGuard.checkAdditionalCells(cells, "exact-compact-factor");
-			double[] values = PlannerResourceGuard.allocateDoubles(cells, "exact-numeric");
-			int[] compactLocal = new int[compactScope.size()];
-			int[] reducedLocal = new int[factor.scope().size()];
-			for(int cell = 0; cell < cells; cell++) {
-				decode(cell, compactScope, compactLocal);
-				int compactPosition = 0;
-				for(int position = 0; position < factor.scope().size(); position++) {
-					int reducedVariable = reducedIndexes.get(factor.scope().get(position));
-					reducedLocal[position] = reducedToCompiled[reducedVariable] < 0
-						? 0 : compactLocal[compactPosition++];
-				}
-				values[cell] = factor.cost(reducedLocal);
-			}
-			compactFactors.add(ExactCategoricalSolver.Factor.denseOwned(compactScope, values));
+			// Removed axes have domain one. Last-axis-fastest cell order and count are
+			// therefore unchanged, so both dense and packed hard storage can be rebound.
+			compactFactors.add(factor.rebindOwned(compactScope));
 		}
 		return new Compaction(List.copyOf(compactVariables), List.copyOf(compactFactors),
 			reducedToCompiled);
@@ -562,22 +548,22 @@ final class ExactPhysicalReducedSolver {
 		timer.supportNanos = elapsedNanos(phaseStarted);
 		phaseStarted = System.nanoTime();
 		EarlyReduction unaryReduced = restrictToSupportedValues(
-			variables, factors, unaryFactors, unary, unaryActive);
+			variables, factors, unaryFactors, unary, unaryActive, false);
 		timer.rebuildNanos = elapsedNanos(phaseStarted);
 
 		phaseStarted = System.nanoTime();
 		List<ExactCategoricalSolver.Factor> binaryFactors = unaryReduced.factors().stream()
 			.filter(factor -> factor.scope().size() <= 2).toList();
-		ExactCategoricalSolver.FrozenInputs binary = ExactCategoricalSolver.freezeInputs(
+		ExactCategoricalSolver.FrozenInputs binary = freezeNonPartialBinaryInputs(
 			unaryReduced.variables(), binaryFactors, limits);
 		timer.freezeNanos += elapsedNanos(phaseStarted);
 		phaseStarted = System.nanoTime();
 		boolean[][] binaryActive = fullDomains(unaryReduced.variables());
-		arcConsistency(binary, binaryActive);
+		arcConsistency(unaryReduced.variables(), binaryFactors, binary, binaryActive);
 		timer.supportNanos += elapsedNanos(phaseStarted);
 		phaseStarted = System.nanoTime();
 		EarlyReduction binaryReduced = restrictToSupportedValues(unaryReduced.variables(),
-			unaryReduced.factors(), binaryFactors, binary, binaryActive);
+			unaryReduced.factors(), binaryFactors, binary, binaryActive, true);
 		EarlyReduction early = composeSourceValues(unaryReduced, binaryReduced);
 		timer.rebuildNanos += elapsedNanos(phaseStarted);
 
@@ -609,6 +595,8 @@ final class ExactPhysicalReducedSolver {
 
 		phaseStarted = System.nanoTime();
 		List<List<Integer>> incident = incidentFactors(frozen, variableCount);
+		ObservationHashes observationHashes = constantObservationHash ? null
+			: compileObservationHashes(frozen, active, tieCosts, originalVariableCount, null);
 		int[][][] classValues = new int[variableCount][][];
 		int[][] frozenRepresentatives = new int[variableCount][];
 		int[][] representatives = new int[variableCount][];
@@ -618,7 +606,7 @@ final class ExactPhysicalReducedSolver {
 		for(int variable = 0; variable < variableCount; variable++) {
 			classValues[variable] = variable < originalVariableCount
 				? quotientClasses(frozen, variable, active, incident.get(variable),
-					tieCosts[variable], constantObservationHash)
+					tieCosts[variable], observationHashes, constantObservationHash)
 				: singletonClasses(active[variable]);
 			frozenRepresentatives[variable] = Arrays.stream(classValues[variable])
 				.mapToInt(values -> values[0]).toArray();
@@ -634,6 +622,7 @@ final class ExactPhysicalReducedSolver {
 				"exact-reduced|" + variable + '|' + variables.get(variable).key(),
 					classValues[variable].length));
 		}
+		observationHashes = null;
 		timer.quotientNanos = elapsedNanos(phaseStarted);
 		phaseStarted = System.nanoTime();
 		List<ExactCategoricalSolver.Factor> reducedFactors = new ArrayList<>(frozen.factorCount());
@@ -643,7 +632,7 @@ final class ExactPhysicalReducedSolver {
 				.mapToObj(reducedVariables::get).toList();
 			// All observations are complete. Release each old table as its replacement
 			// is built instead of retaining two complete copies of the factor model.
-			double[] source = frozen.takeValues(factor);
+			ExactCategoricalSolver.Factor source = frozen.takeFactor(factor);
 			boolean identity = true;
 			for(int variable : scope)
 				if(!identityRepresentatives(frozenRepresentatives[variable],
@@ -652,22 +641,10 @@ final class ExactPhysicalReducedSolver {
 					break;
 				}
 			if(identity) {
-				reducedFactors.add(ExactCategoricalSolver.Factor.denseOwned(reducedScope, source));
+				reducedFactors.add(source.rebindOwned(reducedScope));
 				continue;
 			}
-			int cells = reducedScope.stream().mapToInt(
-				ExactCategoricalSolver.Variable::domainSize).reduce(1, Math::multiplyExact);
-			PlannerResourceGuard.checkAdditionalCells(cells, "exact-reduced-factor");
-			double[] values = PlannerResourceGuard.allocateDoubles(cells, "exact-numeric");
-			int[] reducedLocal = new int[scope.length];
-			int[] originalLocal = new int[scope.length];
-			for(int cell = 0; cell < cells; cell++) {
-				decode(cell, reducedScope, reducedLocal);
-				for(int position = 0; position < scope.length; position++)
-					originalLocal[position] = frozenRepresentatives[scope[position]][reducedLocal[position]];
-				values[cell] = source[encodeOriginal(originalLocal, scope, frozen)];
-			}
-			reducedFactors.add(ExactCategoricalSolver.Factor.denseOwned(reducedScope, values));
+			reducedFactors.add(projectFrozenFactor(source, reducedScope, scope, frozen, frozenRepresentatives));
 		}
 
 		IdentityHashMap<ExactCategoricalSolver.Variable,Integer> reducedIndexes =
@@ -710,6 +687,52 @@ final class ExactPhysicalReducedSolver {
 		return active;
 	}
 
+	private static ExactCategoricalSolver.FrozenInputs freezeNonPartialBinaryInputs(
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Limits limits) {
+		// Preserve the full binary batch's structural and logical-cell validation before
+		// invoking any lazy evaluator. Partial-hard factors are then validated in the
+		// same factor order without retaining their Cartesian products.
+		ExactCategoricalSolver.validateInputStructure(variables,factors,limits);
+		List<ExactCategoricalSolver.Factor> materialized = new ArrayList<>();
+		for(ExactCategoricalSolver.Factor factor : factors) {
+			if(factor.supportsPartialTruth())
+				validatePartialHardFactor(factor);
+			else
+				materialized.add(ExactCategoricalSolver.freezeValidatedFactor(factor));
+		}
+		return ExactCategoricalSolver.freezeInputs(variables,materialized,limits);
+	}
+
+	private static void validatePartialHardFactor(ExactCategoricalSolver.Factor factor) {
+		int[] local = new int[factor.scope().size()];
+		Arrays.fill(local,-1);
+		validatePartialHardFactor(factor,local,0);
+	}
+
+	private static void validatePartialHardFactor(ExactCategoricalSolver.Factor factor,
+		int[] local, int depth) {
+		ExactCategoricalSolver.PartialTruth truth = factor.partialTruth(local);
+		if(truth != ExactCategoricalSolver.PartialTruth.UNKNOWN)
+			return;
+		if(depth == local.length) {
+			validateDeferredCost(factor.cost(local));
+			return;
+		}
+		for(int value=0; value<factor.scope().get(depth).domainSize(); value++) {
+			local[depth] = value;
+			validatePartialHardFactor(factor,local,depth+1);
+		}
+		local[depth] = -1;
+	}
+
+	private static void validateDeferredCost(double value) {
+		if(Double.isNaN(value) || value == Double.NEGATIVE_INFINITY
+			|| Double.doubleToRawLongBits(value) == Double.doubleToRawLongBits(-0.0d))
+			throw new IllegalArgumentException("EXACT_VE_FACTOR_COST_INVALID|value=" + value);
+	}
+
 	private static EarlyReduction composeSourceValues(EarlyReduction source,
 		EarlyReduction reduced) {
 		int[][] composed = new int[source.sourceValues().length][];
@@ -725,7 +748,8 @@ final class ExactPhysicalReducedSolver {
 		List<ExactCategoricalSolver.Variable> variables,
 		List<ExactCategoricalSolver.Factor> factors,
 		List<ExactCategoricalSolver.Factor> supportFactors,
-		ExactCategoricalSolver.FrozenInputs support, boolean[][] active) {
+		ExactCategoricalSolver.FrozenInputs support, boolean[][] active,
+		boolean deferredPartialHard) {
 		int[][] sourceValues = new int[variables.size()][];
 		List<ExactCategoricalSolver.Variable> reducedVariables = new ArrayList<>(variables.size());
 		Map<ExactCategoricalSolver.Variable,Integer> sourceIndexes = new LinkedHashMap<>();
@@ -740,14 +764,16 @@ final class ExactPhysicalReducedSolver {
 		}
 		List<ExactCategoricalSolver.Factor> reducedFactors = new ArrayList<>(factors.size());
 		int supportOrdinal = 0;
+		int materializedOrdinal = 0;
 		for(ExactCategoricalSolver.Factor factor : factors) {
 			int[] scope = factor.scope().stream().mapToInt(sourceIndexes::get).toArray();
 			List<ExactCategoricalSolver.Variable> reducedScope = Arrays.stream(scope)
 				.mapToObj(reducedVariables::get).toList();
 			Integer supportIndex = supportOrdinal < supportFactors.size()
 				&& factor == supportFactors.get(supportOrdinal) ? supportOrdinal++ : null;
-			if(supportIndex != null) {
-				double[] source = support.values(supportIndex);
+			if(supportIndex != null && !(deferredPartialHard && factor.supportsPartialTruth())) {
+				int frozenIndex = materializedOrdinal++;
+				ExactCategoricalSolver.Factor source = support.takeFactor(frozenIndex);
 				boolean identity = true;
 				for(int variable : scope)
 					if(!identityRepresentatives(sourceValues[variable],
@@ -756,23 +782,10 @@ final class ExactPhysicalReducedSolver {
 						break;
 					}
 				if(identity) {
-					reducedFactors.add(ExactCategoricalSolver.Factor.denseOwned(reducedScope, source));
+					reducedFactors.add(source.rebindOwned(reducedScope));
 					continue;
 				}
-				int cells = reducedScope.stream().mapToInt(
-					ExactCategoricalSolver.Variable::domainSize).reduce(1, Math::multiplyExact);
-				PlannerResourceGuard.checkAdditionalCells(cells, "exact-reduced-factor");
-				double[] values = PlannerResourceGuard.allocateDoubles(cells, "exact-numeric");
-				int[] reducedLocal = new int[scope.length];
-				int[] sourceLocal = new int[scope.length];
-				for(int cell = 0; cell < cells; cell++) {
-					decode(cell, reducedScope, reducedLocal);
-					for(int position = 0; position < scope.length; position++)
-						sourceLocal[position] = sourceValues[scope[position]][reducedLocal[position]];
-					values[cell] = source[encodeOriginal(sourceLocal,
-						support.scope(supportIndex), support)];
-				}
-				reducedFactors.add(ExactCategoricalSolver.Factor.denseOwned(reducedScope, values));
+				reducedFactors.add(projectFrozenFactor(source, reducedScope, scope, support, sourceValues));
 			}
 			else {
 				boolean identity = true;
@@ -794,8 +807,55 @@ final class ExactPhysicalReducedSolver {
 		}
 		if(supportOrdinal != supportFactors.size())
 			throw new IllegalArgumentException("EXACT_PHYSICAL_REDUCED_SUPPORT_ORDER_INVALID");
+		if(materializedOrdinal != support.factorCount())
+			throw new IllegalArgumentException("EXACT_PHYSICAL_REDUCED_SUPPORT_ORDER_INVALID");
 		return new EarlyReduction(List.copyOf(reducedVariables),
 			List.copyOf(reducedFactors), sourceValues);
+	}
+
+	/** Copy a frozen factor in target row-major order, advancing its source offset without division. */
+	private static ExactCategoricalSolver.Factor projectFrozenFactor(
+		ExactCategoricalSolver.Factor source, List<ExactCategoricalSolver.Variable> reducedScope,
+		int[] scope, ExactCategoricalSolver.FrozenInputs frozen, int[][] representatives) {
+		int cells = reducedScope.stream().mapToInt(
+			ExactCategoricalSolver.Variable::domainSize).reduce(1, Math::multiplyExact);
+		ExactCategoricalSolver.HardTable hard = source.isHardTable()
+			? ExactCategoricalSolver.HardTable.allocate(cells) : null;
+		if(hard == null)
+			PlannerResourceGuard.checkAdditionalCells(cells, "exact-reduced-factor");
+		double[] values = hard == null
+			? PlannerResourceGuard.allocateDoubles(cells, "exact-numeric") : null;
+		int[] coordinates = new int[scope.length];
+		int[] strides = new int[scope.length];
+		int sourceCell = 0;
+		for(int axis = scope.length - 1, stride = 1; axis >= 0; axis--) {
+			strides[axis] = stride;
+			sourceCell += representatives[scope[axis]][0] * stride;
+			stride *= frozen.domainSize(scope[axis]);
+		}
+		for(int cell = 0; cell < cells; cell++) {
+			double value = source.denseCostAt(sourceCell);
+			if(hard != null) {
+				if(value == Double.POSITIVE_INFINITY)
+					hard.forbid(cell);
+			}
+			else
+				values[cell] = value;
+			for(int axis = scope.length - 1; axis >= 0; axis--) {
+				int[] mapped = representatives[scope[axis]];
+				int previous = coordinates[axis];
+				int next = previous + 1;
+				if(next < mapped.length) {
+					sourceCell += (mapped[next] - mapped[previous]) * strides[axis];
+					coordinates[axis] = next;
+					break;
+				}
+				sourceCell -= (mapped[previous] - mapped[0]) * strides[axis];
+				coordinates[axis] = 0;
+			}
+		}
+		return hard == null ? ExactCategoricalSolver.Factor.denseOwned(reducedScope, values)
+			: ExactCategoricalSolver.Factor.hardOwned(reducedScope, hard.compactAllFeasible());
 	}
 
 	private static int[] activeValues(boolean[] active) {
@@ -835,52 +895,224 @@ final class ExactPhysicalReducedSolver {
 		return new ExactCategoricalSolver.Result(reduced.objective(), expanded, reduced.statistics());
 	}
 
+	/** Per-call epochs track removals; each frozen factor occurrence retains its pre-visit epochs. */
+	private static final class FrozenSupportEpochs {
+		private final int[] removals;
+		private final int[][] seen;
+
+		private FrozenSupportEpochs(int variables, int factors) {
+			removals = new int[variables];
+			seen = new int[factors][];
+		}
+
+		private boolean needsVisit(int factor, int[] scope) {
+			int[] previous = seen[factor];
+			boolean changed = previous == null;
+			if(previous == null)
+				previous = seen[factor] = new int[scope.length];
+			for(int axis = 0; axis < scope.length; axis++) {
+				changed |= previous[axis] != removals[scope[axis]];
+				previous[axis] = removals[scope[axis]];
+			}
+			return changed;
+		}
+	}
+
 	private static void arcConsistency(ExactCategoricalSolver.FrozenInputs frozen,
 		boolean[][] active) {
+		FrozenSupportEpochs epochs = new FrozenSupportEpochs(active.length, frozen.factorCount());
 		boolean changed;
 		do {
 			changed = false;
-			for(int factor = 0; factor < frozen.factorCount(); factor++) {
-				int[] scope = frozen.scope(factor);
-				double[] values = frozen.values(factor);
-				if(scope.length == 1) {
-					for(int value = 0; value < active[scope[0]].length; value++)
-						if(active[scope[0]][value] && !Double.isFinite(values[value])) {
-							active[scope[0]][value] = false;
-							changed = true;
-						}
-				}
-				else if(scope.length == 2) {
-					for(int side = 0; side < 2; side++) {
-						int other = 1 - side;
-						for(int value = 0; value < active[scope[side]].length; value++) {
-							if(!active[scope[side]][value])
-								continue;
-							boolean supported = false;
-							for(int otherValue = 0; otherValue < active[scope[other]].length; otherValue++) {
-								if(!active[scope[other]][otherValue])
-									continue;
-								int cell = side == 0
-									? value * active[scope[1]].length + otherValue
-									: otherValue * active[scope[1]].length + value;
-								if(Double.isFinite(values[cell])) {
-									supported = true;
-									break;
-								}
-							}
-							if(!supported) {
-								active[scope[side]][value] = false;
-								changed = true;
-							}
-						}
-					}
-				}
-			}
+			for(int factor=0; factor<frozen.factorCount(); factor++)
+				if(epochs.needsVisit(factor, frozen.scope(factor)))
+					changed |= reviseFrozenSupport(frozen,factor,active,epochs.removals);
 			for(boolean[] domain : active)
 				if(none(domain))
 					throw new IllegalArgumentException("EXACT_VE_NO_FEASIBLE_ASSIGNMENT");
 		}
 		while(changed);
+	}
+
+	private static void arcConsistency(List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.FrozenInputs materialized, boolean[][] active) {
+		Map<ExactCategoricalSolver.Variable,Integer> indexes = new LinkedHashMap<>();
+		for(int variable=0; variable<variables.size(); variable++)
+			indexes.put(variables.get(variable),variable);
+		FrozenSupportEpochs epochs = new FrozenSupportEpochs(active.length, materialized.factorCount());
+		boolean changed;
+		do {
+			changed = false;
+			int materializedOrdinal = 0;
+			for(ExactCategoricalSolver.Factor factor : factors) {
+				if(factor.supportsPartialTruth()) {
+					int[] scope = factor.scope().stream().mapToInt(indexes::get).toArray();
+					changed |= revisePartialHardFactor(factor,scope,active,epochs.removals);
+				}
+				else {
+					int ordinal = materializedOrdinal++;
+					if(epochs.needsVisit(ordinal, materialized.scope(ordinal)))
+						changed |= reviseFrozenSupport(materialized,ordinal,active,epochs.removals);
+				}
+			}
+			if(materializedOrdinal != materialized.factorCount())
+				throw new IllegalArgumentException("EXACT_PHYSICAL_REDUCED_SUPPORT_ORDER_INVALID");
+			for(boolean[] domain : active)
+				if(none(domain))
+					throw new IllegalArgumentException("EXACT_VE_NO_FEASIBLE_ASSIGNMENT");
+		}
+		while(changed);
+	}
+
+	private static boolean reviseFrozenSupport(ExactCategoricalSolver.FrozenInputs frozen,
+		int factor, boolean[][] active) {
+		return reviseFrozenSupport(frozen, factor, active, null);
+	}
+
+	private static boolean reviseFrozenSupport(ExactCategoricalSolver.FrozenInputs frozen,
+		int factor, boolean[][] active, int[] removals) {
+		int[] scope = frozen.scope(factor);
+		boolean changed = false;
+		if(scope.length == 1) {
+			for(int value=0; value<active[scope[0]].length; value++)
+				if(active[scope[0]][value] && !Double.isFinite(frozen.costAt(factor,value))) {
+					active[scope[0]][value] = false;
+					if(removals != null)
+						removals[scope[0]]++;
+					changed = true;
+				}
+		}
+		else if(scope.length == 2) {
+			for(int side=0; side<2; side++) {
+				int other = 1-side;
+				for(int value=0; value<active[scope[side]].length; value++) {
+					if(!active[scope[side]][value])
+						continue;
+					boolean supported = false;
+					for(int otherValue=0; otherValue<active[scope[other]].length; otherValue++) {
+						if(!active[scope[other]][otherValue])
+							continue;
+						int cell = side == 0
+							? value * active[scope[1]].length + otherValue
+							: otherValue * active[scope[1]].length + value;
+						if(Double.isFinite(frozen.costAt(factor,cell))) {
+							supported = true;
+							break;
+						}
+					}
+					if(!supported) {
+						active[scope[side]][value] = false;
+						if(removals != null)
+							removals[scope[side]]++;
+						changed = true;
+					}
+				}
+			}
+		}
+		return changed;
+	}
+
+	private static boolean reviseDenseSupport(int[] scope, double[] values,
+		boolean[][] active) {
+		boolean changed = false;
+		if(scope.length == 1) {
+			for(int value=0; value<active[scope[0]].length; value++)
+				if(active[scope[0]][value] && !Double.isFinite(values[value])) {
+					active[scope[0]][value] = false;
+					changed = true;
+				}
+		}
+		else if(scope.length == 2) {
+			for(int side=0; side<2; side++) {
+				int other = 1-side;
+				for(int value=0; value<active[scope[side]].length; value++) {
+					if(!active[scope[side]][value])
+						continue;
+					boolean supported = false;
+					for(int otherValue=0; otherValue<active[scope[other]].length; otherValue++) {
+						if(!active[scope[other]][otherValue])
+							continue;
+						int cell = side == 0
+							? value * active[scope[1]].length + otherValue
+							: otherValue * active[scope[1]].length + value;
+						if(Double.isFinite(values[cell])) {
+							supported = true;
+							break;
+						}
+					}
+					if(!supported) {
+						active[scope[side]][value] = false;
+						changed = true;
+					}
+				}
+			}
+		}
+		return changed;
+	}
+
+	private static boolean revisePartialHardFactor(ExactCategoricalSolver.Factor factor,
+		int[] scope, boolean[][] active) {
+		return revisePartialHardFactor(factor, scope, active, null);
+	}
+
+	private static boolean revisePartialHardFactor(ExactCategoricalSolver.Factor factor,
+		int[] scope, boolean[][] active, int[] removals) {
+		boolean changed = false;
+		int[] local = new int[scope.length];
+		Arrays.fill(local,-1);
+		if(scope.length == 1) {
+			for(int value=0; value<active[scope[0]].length; value++)
+				if(active[scope[0]][value]) {
+					local[0] = value;
+					if(!partialAssignmentFinite(factor,local)) {
+						active[scope[0]][value] = false;
+						if(removals != null)
+							removals[scope[0]]++;
+						changed = true;
+					}
+				}
+		}
+		else if(scope.length == 2) {
+			for(int side=0; side<2; side++) {
+				int other = 1-side;
+				for(int value=0; value<active[scope[side]].length; value++) {
+					if(!active[scope[side]][value])
+						continue;
+					Arrays.fill(local,-1);
+					local[side] = value;
+					ExactCategoricalSolver.PartialTruth truth = side == 0
+						? factor.partialTruth(local) : ExactCategoricalSolver.PartialTruth.UNKNOWN;
+					boolean supported = truth == ExactCategoricalSolver.PartialTruth.ALL_ZERO
+						? !none(active[scope[other]]) : false;
+					if(truth == ExactCategoricalSolver.PartialTruth.UNKNOWN)
+						for(int otherValue=0; otherValue<active[scope[other]].length; otherValue++) {
+							if(!active[scope[other]][otherValue])
+								continue;
+							local[other] = otherValue;
+							if(partialAssignmentFinite(factor,local)) {
+								supported = true;
+								break;
+							}
+						}
+					if(!supported) {
+						active[scope[side]][value] = false;
+						if(removals != null)
+							removals[scope[side]]++;
+						changed = true;
+					}
+				}
+			}
+		}
+		return changed;
+	}
+
+	private static boolean partialAssignmentFinite(ExactCategoricalSolver.Factor factor,
+		int[] local) {
+		ExactCategoricalSolver.PartialTruth truth = factor.partialTruth(local);
+		return truth == ExactCategoricalSolver.PartialTruth.ALL_ZERO
+			|| truth == ExactCategoricalSolver.PartialTruth.UNKNOWN
+				&& Double.isFinite(factor.cost(local));
 	}
 
 	private static List<List<Integer>> incidentFactors(ExactCategoricalSolver.FrozenInputs frozen,
@@ -897,18 +1129,34 @@ final class ExactPhysicalReducedSolver {
 	private static int[][] quotientClasses(ExactCategoricalSolver.FrozenInputs frozen,
 		int variable, boolean[][] active, List<Integer> incident, long[] tieCosts,
 		boolean constantObservationHash) {
+		long[][] allTieCosts = new long[active.length][];
+		for(int index = 0; index < allTieCosts.length; index++)
+			allTieCosts[index] = index == variable ? tieCosts : new long[active[index].length];
+		ObservationHashes hashes = constantObservationHash ? null
+			: compileObservationHashes(frozen,active,allTieCosts,variable + 1,
+				incident.stream().mapToInt(Integer::intValue).toArray());
+		return quotientClasses(frozen,variable,active,incident,tieCosts,hashes,
+			constantObservationHash);
+	}
+
+	private static int[][] quotientClasses(ExactCategoricalSolver.FrozenInputs frozen,
+		int variable, boolean[][] active, List<Integer> incident, long[] tieCosts,
+		ObservationHashes observationHashes, boolean constantObservationHash) {
+		ObservationTraversal[] observations = incident.stream()
+			.map(factor -> new ObservationTraversal(frozen, factor, variable))
+			.toArray(ObservationTraversal[]::new);
 		Map<ObservationHash,List<List<Integer>>> buckets = new LinkedHashMap<>();
 		for(int value = 0; value < active[variable].length; value++) {
 			if(!active[variable][value])
 				continue;
 			ObservationHash hash = constantObservationHash ? new ObservationHash(0L, 0L)
-				: observationHash(frozen, variable, value, active, incident, tieCosts[value]);
+				: observationHashes.hash(variable,value);
 			List<List<Integer>> candidates = buckets.computeIfAbsent(hash,
 				ignored -> new ArrayList<>());
 			List<Integer> equivalent = null;
 			for(List<Integer> candidate : candidates)
-				if(observationsEqual(frozen, variable, candidate.get(0), value, active,
-					incident, tieCosts)) {
+				if(observationsEqual(frozen, candidate.get(0), value, active,
+					observations, tieCosts)) {
 					equivalent = candidate;
 					break;
 				}
@@ -924,97 +1172,167 @@ final class ExactPhysicalReducedSolver {
 	}
 
 	private static ObservationHash observationHash(ExactCategoricalSolver.FrozenInputs frozen,
-		int variable, int value, boolean[][] active, List<Integer> incident, long tieCost) {
-		long first = mix(0x9e3779b97f4a7c15L, tieCost);
-		long second = mix(0xc2b2ae3d27d4eb4fL, tieCost);
-		for(int factor : incident) {
-			first = mix(first, factor);
-			second = mix(second, ~factor);
-			long[] state = {first, second};
-			visitObservations(frozen, factor, variable, value, active, bits -> {
-				state[0] = mix(state[0], bits);
-				state[1] = mix(state[1], Long.rotateLeft(bits, 23));
-			});
-			first = state[0];
-			second = state[1];
-		}
-		return new ObservationHash(first, second);
+		int value, boolean[][] active, ObservationTraversal[] observations, long tieCost) {
+		return observationHash(frozen, value, active, observations, tieCost,
+			new ObservationHashAccumulator());
+	}
+
+	private static ObservationHash observationHash(ExactCategoricalSolver.FrozenInputs frozen,
+		int value, boolean[][] active, ObservationTraversal[] observations, long tieCost,
+		ObservationHashAccumulator accumulator) {
+		accumulator.reset(mix(0x9e3779b97f4a7c15L, tieCost),
+			mix(0xc2b2ae3d27d4eb4fL, tieCost));
+		if(observations.length == 0)
+			return new ObservationHash(accumulator.first,accumulator.second);
+		int variable = observations[0].scope[observations[0].variablePosition];
+		long[][] tieCosts = new long[active.length][];
+		for(int index = 0; index < tieCosts.length; index++)
+			tieCosts[index] = new long[active[index].length];
+		tieCosts[variable][value] = tieCost;
+		boolean[][] compilationActive = active.clone();
+		compilationActive[variable] = active[variable].clone();
+		compilationActive[variable][value] = true;
+		int[] factorOrder = Arrays.stream(observations)
+			.mapToInt(observation -> observation.factor).toArray();
+		ObservationHashes hashes = compileObservationHashes(frozen,compilationActive,tieCosts,
+			active.length,factorOrder);
+		return hashes.hash(variable,value);
 	}
 
 	private static boolean observationsEqual(ExactCategoricalSolver.FrozenInputs frozen,
-		int variable, int left, int right, boolean[][] active, List<Integer> incident,
+		int left, int right, boolean[][] active, ObservationTraversal[] observations,
 		long[] tieCosts) {
 		if(tieCosts[left] != tieCosts[right])
 			return false;
-		for(int factor : incident)
-			if(!factorObservationsEqual(frozen, factor, variable, left, right, active))
+		for(ObservationTraversal observation : observations)
+			if(!factorObservationsEqual(frozen, observation, left, right, active, 0, 0))
 				return false;
 		return true;
 	}
 
 	private static boolean factorObservationsEqual(ExactCategoricalSolver.FrozenInputs frozen,
-		int factor, int variable, int left, int right, boolean[][] active) {
-		int[] scope = frozen.scope(factor);
-		int variablePosition = 0;
-		while(scope[variablePosition] != variable)
-			variablePosition++;
-		return factorObservationsEqual(frozen, scope, frozen.values(factor), variable,
-			variablePosition, left, right, active, new int[scope.length], 0);
-	}
-
-	private static boolean factorObservationsEqual(ExactCategoricalSolver.FrozenInputs frozen,
-		int[] scope, double[] values, int variable, int variablePosition, int left, int right,
-		boolean[][] active, int[] local, int position) {
-		if(position == scope.length) {
-			local[variablePosition] = left;
+		ObservationTraversal observation, int left, int right, boolean[][] active,
+		int position, int cell) {
+		if(position == observation.scope.length) {
+			int stride = observation.strides[observation.variablePosition];
 			long leftBits = Double.doubleToRawLongBits(
-				values[encodeOriginal(local, scope, frozen)]);
-			local[variablePosition] = right;
+				frozen.costAt(observation.factor, cell + left * stride));
 			return leftBits == Double.doubleToRawLongBits(
-				values[encodeOriginal(local, scope, frozen)]);
+				frozen.costAt(observation.factor, cell + right * stride));
 		}
-		int scopedVariable = scope[position];
-		if(scopedVariable == variable)
-			return factorObservationsEqual(frozen, scope, values, variable, variablePosition,
-				left, right, active, local, position + 1);
+		if(position == observation.variablePosition)
+			return factorObservationsEqual(frozen, observation, left, right, active,
+				position + 1, cell);
+		int scopedVariable = observation.scope[position];
+		int stride = observation.strides[position];
 		for(int value = 0; value < active[scopedVariable].length; value++)
-			if(active[scopedVariable][value]) {
-				local[position] = value;
-				if(!factorObservationsEqual(frozen, scope, values, variable, variablePosition,
-					left, right, active, local, position + 1))
-					return false;
-			}
+			if(active[scopedVariable][value]
+				&& !factorObservationsEqual(frozen, observation, left, right, active,
+					position + 1, cell + value * stride))
+				return false;
 		return true;
 	}
 
-	private static void visitObservations(ExactCategoricalSolver.FrozenInputs frozen,
-		int factor, int variable, int fixedValue, boolean[][] active, LongVisitor visitor) {
-		int[] scope = frozen.scope(factor);
-		double[] values = frozen.values(factor);
-		int[] local = new int[scope.length];
-		visitObservations(frozen, scope, values, variable, fixedValue, active, visitor, local, 0);
+	private static ObservationHashes compileObservationHashes(
+		ExactCategoricalSolver.FrozenInputs frozen, boolean[][] active, long[][] tieCosts,
+		int quotientVariableCount, int[] factorOrder) {
+		long[][] first = new long[quotientVariableCount][];
+		long[][] second = new long[quotientVariableCount][];
+		int maxArity = 0;
+		for(int variable = 0; variable < quotientVariableCount; variable++) {
+			first[variable] = PlannerResourceGuard.allocateLongs(active[variable].length,
+				"exact-quotient-observation-hash");
+			second[variable] = PlannerResourceGuard.allocateLongs(active[variable].length,
+				"exact-quotient-observation-hash");
+			for(int value = 0; value < active[variable].length; value++)
+				if(active[variable][value]) {
+					first[variable][value] = mix(0x9e3779b97f4a7c15L,tieCosts[variable][value]);
+					second[variable][value] = mix(0xc2b2ae3d27d4eb4fL,tieCosts[variable][value]);
+				}
+		}
+		int factorCount = factorOrder == null ? frozen.factorCount() : factorOrder.length;
+		for(int ordinal = 0; ordinal < factorCount; ordinal++) {
+			int factor = factorOrder == null ? ordinal : factorOrder[ordinal];
+			int[] scope = frozen.scope(factor);
+			for(int scopedVariable : scope)
+				if(scopedVariable < quotientVariableCount) {
+				maxArity = Math.max(maxArity,scope.length);
+					break;
+				}
+		}
+		ObservationHashes hashes = new ObservationHashes(first,second,
+			PlannerResourceGuard.allocateInts(maxArity,"exact-quotient-observation-coordinates"));
+		for(int ordinal = 0; ordinal < factorCount; ordinal++) {
+			int factor = factorOrder == null ? ordinal : factorOrder[ordinal];
+			int[] scope = frozen.scope(factor);
+			boolean relevant = false;
+			for(int scopedVariable : scope)
+				if(scopedVariable < quotientVariableCount) {
+					relevant = true;
+					for(int value = 0; value < active[scopedVariable].length; value++)
+						if(active[scopedVariable][value]) {
+							hashes.first[scopedVariable][value] = mix(
+								hashes.first[scopedVariable][value],factor);
+							hashes.second[scopedVariable][value] = mix(
+								hashes.second[scopedVariable][value],~factor);
+						}
+				}
+			if(relevant)
+				compileFactorObservations(frozen,factor,scope,active,quotientVariableCount,
+					hashes,0,0);
+		}
+		return hashes;
 	}
 
-	private static void visitObservations(ExactCategoricalSolver.FrozenInputs frozen,
-		int[] scope, double[] values, int variable, int fixedValue, boolean[][] active,
-		LongVisitor visitor, int[] local, int position) {
+	private static void compileFactorObservations(ExactCategoricalSolver.FrozenInputs frozen,
+		int factor, int[] scope, boolean[][] active, int quotientVariableCount,
+		ObservationHashes hashes, int position, int cell) {
 		if(position == scope.length) {
-			visitor.accept(Double.doubleToRawLongBits(values[encodeOriginal(local, scope, frozen)]));
-			return;
-		}
-		int scopedVariable = scope[position];
-		if(scopedVariable == variable) {
-			local[position] = fixedValue;
-			visitObservations(frozen, scope, values, variable, fixedValue, active, visitor,
-				local, position + 1);
-			return;
-		}
-		for(int value = 0; value < active[scopedVariable].length; value++)
-			if(active[scopedVariable][value]) {
-				local[position] = value;
-				visitObservations(frozen, scope, values, variable, fixedValue, active, visitor,
-					local, position + 1);
+			long bits = Double.doubleToRawLongBits(frozen.costAt(factor,cell));
+			hashes.cellReads++;
+			for(int axis = 0; axis < scope.length; axis++) {
+				int variable = scope[axis];
+				if(variable < quotientVariableCount) {
+					int value = hashes.coordinates[axis];
+					hashes.first[variable][value] = mix(hashes.first[variable][value],bits);
+					hashes.second[variable][value] = mix(hashes.second[variable][value],
+						Long.rotateLeft(bits,23));
+				}
 			}
+			return;
+		}
+		int variable = scope[position];
+		for(int value = 0; value < active[variable].length; value++)
+			if(active[variable][value]) {
+				hashes.coordinates[position] = value;
+				compileFactorObservations(frozen,factor,scope,active,quotientVariableCount,
+					hashes,position + 1,cell * active[variable].length + value);
+			}
+	}
+
+	private static final class ObservationTraversal {
+		private final int factor;
+		private final int[] scope;
+		private final int[] strides;
+		private final int variablePosition;
+
+		private ObservationTraversal(ExactCategoricalSolver.FrozenInputs frozen,
+			int factor, int variable) {
+			this.factor = factor;
+			scope = frozen.scope(factor);
+			strides = new int[scope.length];
+			int found = -1;
+			int stride = 1;
+			for(int position = scope.length - 1; position >= 0; position--) {
+				strides[position] = stride;
+				stride = Math.multiplyExact(stride, frozen.domainSize(scope[position]));
+				if(scope[position] == variable)
+					found = position;
+			}
+			if(found < 0)
+				throw new IllegalArgumentException("EXACT_VE_FACTOR_VARIABLE_UNKNOWN");
+			variablePosition = found;
+		}
 	}
 
 	private static int[][] singletonClasses(boolean[] active) {
@@ -1023,23 +1341,6 @@ final class ExactPhysicalReducedSolver {
 			if(active[value])
 				values.add(new int[] {value});
 		return values.toArray(int[][]::new);
-	}
-
-	private static int encodeOriginal(int[] local, int[] scope,
-		ExactCategoricalSolver.FrozenInputs frozen) {
-		int cell = 0;
-		for(int position = 0; position < scope.length; position++)
-			cell = Math.addExact(Math.multiplyExact(cell, frozen.domainSize(scope[position])),
-				local[position]);
-		return cell;
-	}
-
-	private static void decode(int cell, List<ExactCategoricalSolver.Variable> scope,
-		int[] values) {
-		for(int position = scope.size() - 1; position >= 0; position--) {
-			values[position] = cell % scope.get(position).domainSize();
-			cell /= scope.get(position).domainSize();
-		}
 	}
 
 	private static boolean none(boolean[] values) {
@@ -1055,7 +1356,33 @@ final class ExactPhysicalReducedSolver {
 		return Long.rotateLeft(hash ^ mixed, 27) * 5 + 0x52dce729;
 	}
 
-	@FunctionalInterface
-	private interface LongVisitor { void accept(long value); }
+	private static final class ObservationHashAccumulator {
+		private long first;
+		private long second;
+
+		private void reset(long nextFirst, long nextSecond) {
+			first = nextFirst;
+			second = nextSecond;
+		}
+
+	}
+
+	private static final class ObservationHashes {
+		private final long[][] first;
+		private final long[][] second;
+		private final int[] coordinates;
+		private long cellReads;
+
+		private ObservationHashes(long[][] first, long[][] second, int[] coordinates) {
+			this.first = first;
+			this.second = second;
+			this.coordinates = coordinates;
+		}
+
+		private ObservationHash hash(int variable, int value) {
+			return new ObservationHash(first[variable][value],second[variable][value]);
+		}
+	}
+
 	private record ObservationHash(long first, long second) { }
 }

@@ -22,10 +22,10 @@ import java.util.Objects;
 public final class PlannerResourceGuard {
 	private static final long BYTES_PER_CELL = Double.BYTES;
 	private static final ResourceExhaustedException DIAGNOSTIC_ALLOCATION_FALLBACK =
-		new ResourceExhaustedException("SYSTEM_RESOURCE_EXHAUSTED|diagnostic=unavailable");
+		new ResourceExhaustedException("SYSTEM_RESOURCE_EXHAUSTED|diagnostic=unavailable", true);
 	private static final ExhaustionFormatter DEFAULT_EXHAUSTION_FORMATTER =
 		(phase,bytes,allocation,cause) -> exhausted(phase,Long.toString(bytes),
-			currentSnapshot(),allocation,cause);
+			currentSnapshot(),allocation,cause,true);
 
 	@FunctionalInterface
 	interface ExhaustionFormatter {
@@ -114,7 +114,9 @@ public final class PlannerResourceGuard {
 	static ResourceExhaustedException allocationFailure(String phase, long bytes,
 		String allocation, OutOfMemoryError cause, ExhaustionFormatter formatter) {
 		try {
-			return formatter.format(phase,bytes,allocation,cause);
+			ResourceExhaustedException formatted = formatter.format(phase,bytes,allocation,cause);
+			return formatted.actualAllocationFailure() ? formatted
+				: new ResourceExhaustedException(formatted.getMessage(),formatted.getCause(),true);
 		}
 		catch(OutOfMemoryError diagnosticFailure) {
 			return DIAGNOSTIC_ALLOCATION_FALLBACK;
@@ -141,10 +143,16 @@ public final class PlannerResourceGuard {
 
 	private static ResourceExhaustedException exhausted(String phase, String required, HeapSnapshot snapshot,
 		String allocation, Throwable cause) {
+		return exhausted(phase,required,snapshot,allocation,cause,false);
+	}
+
+	private static ResourceExhaustedException exhausted(String phase, String required, HeapSnapshot snapshot,
+		String allocation, Throwable cause, boolean actualAllocationFailure) {
 		String message = "SYSTEM_RESOURCE_EXHAUSTED|phase=" + phase + "|requiredBytes=" + required
 			+ "|availableBytes=" + snapshot.availableBytes() + "|maxMemory=" + snapshot.maxMemory()
 			+ (allocation == null ? "" : "|allocation=" + allocation);
-		return cause == null ? new ResourceExhaustedException(message) : new ResourceExhaustedException(message, cause);
+		return cause == null ? new ResourceExhaustedException(message,actualAllocationFailure)
+			: new ResourceExhaustedException(message,cause,actualAllocationFailure);
 	}
 
 	static record HeapSnapshot(long maxMemory, long totalMemory, long freeMemory) {
@@ -162,13 +170,28 @@ public final class PlannerResourceGuard {
 
 	public static final class ResourceExhaustedException extends IllegalArgumentException {
 		private static final long serialVersionUID = 4934660911717295727L;
+		private final boolean actualAllocationFailure;
 
 		private ResourceExhaustedException(String message) {
+			this(message,false);
+		}
+
+		private ResourceExhaustedException(String message, boolean actualAllocationFailure) {
 			super(message);
+			this.actualAllocationFailure = actualAllocationFailure;
 		}
 
 		private ResourceExhaustedException(String message, Throwable cause) {
-			super(message, cause);
+			this(message,cause,false);
+		}
+
+		private ResourceExhaustedException(String message, Throwable cause, boolean actualAllocationFailure) {
+			super(message,cause);
+			this.actualAllocationFailure = actualAllocationFailure;
+		}
+
+		boolean actualAllocationFailure() {
+			return actualAllocationFailure;
 		}
 	}
 }

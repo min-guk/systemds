@@ -1429,14 +1429,14 @@ public final class CandidateSelections {
 	public static boolean realizationsCanStillBeCompatible(PlacementAnalysis analysis,
 		Map<CompiledHopKey,PlacementState> assignment,
 		Collection<CandidateSelectionReceipt> receipts) {
-		return realizationsCanStillBeCompatible(analysis, assignment, receipts, Map.of());
+		return realizationsCanStillBeCompatible(analysis, assignment, receipts, Map.of(), null, true);
 	}
 
 	private static boolean realizationsCanStillBeCompatible(PlacementAnalysis analysis,
 		Map<CompiledHopKey,PlacementState> assignment,
 		Collection<CandidateSelectionReceipt> receipts,
 		Map<CompiledHopKey,List<PlacementState>> remaining) {
-		return realizationsCanStillBeCompatible(analysis, assignment, receipts, remaining, null);
+		return realizationsCanStillBeCompatible(analysis, assignment, receipts, remaining, null, true);
 	}
 
 	private static boolean realizationsCanStillBeCompatible(PlacementAnalysis analysis,
@@ -1444,6 +1444,16 @@ public final class CandidateSelections {
 		Collection<CandidateSelectionReceipt> receipts,
 		Map<CompiledHopKey,List<PlacementState>> remaining,
 		Map<CandidateSelectionReceipt,List<CandidateRealizationReference>> requiredSupports) {
+		return realizationsCanStillBeCompatible(analysis, assignment, receipts, remaining,
+			requiredSupports, true);
+	}
+
+	private static boolean realizationsCanStillBeCompatible(PlacementAnalysis analysis,
+		Map<CompiledHopKey,PlacementState> assignment,
+		Collection<CandidateSelectionReceipt> receipts,
+		Map<CompiledHopKey,List<PlacementState>> remaining,
+		Map<CandidateSelectionReceipt,List<CandidateRealizationReference>> requiredSupports,
+		boolean allowUnassigned) {
 		Map<CompiledHopKey,CandidateSelectionReceipt> selected = new IdentityHashMap<>();
 		for(CandidateSelectionReceipt receipt : receipts) {
 			if(selected.put(receipt.rule().parentOccurrence(), receipt) != null)
@@ -1466,7 +1476,25 @@ public final class CandidateSelections {
 			if(!supported)
 				return false;
 		}
-		return analysis.logicalBoundaryRealizations().canStillBeCompatible(assignment, selected, remaining);
+		return analysis.logicalBoundaryRealizations().canStillBeCompatible(assignment, selected, remaining)
+			&& derivedFoutAnchorsCanStillBeCompatible(analysis, selected, allowUnassigned);
+	}
+
+	private static boolean derivedFoutAnchorsCanStillBeCompatible(PlacementAnalysis analysis,
+		Map<CompiledHopKey,CandidateSelectionReceipt> selected, boolean allowUnassigned) {
+		for(CandidateSelectionReceipt receipt : selected.values()) {
+			DerivedFoutMaterializationActionKey selectedAction =
+				receipt.emission().derivedFoutAction();
+			if(selectedAction == null)
+				continue;
+			List<NeutralPlacementGraph.DerivedFoutMaterializationAction> exactActions =
+				analysis.graph().derivedFoutMaterializationActions().stream()
+					.filter(action -> action.key() == selectedAction).toList();
+			if(exactActions.size() != 1 || !DerivedFoutAnchorCompatibility
+				.prepare(analysis, exactActions.get(0)).matches(selected, allowUnassigned))
+				return false;
+		}
+		return true;
 	}
 
 	public static boolean matchesRealization(CandidateRealizationReference reference,
@@ -1530,8 +1558,9 @@ public final class CandidateSelections {
 	public static void validateRealizationSelections(PlacementAnalysis analysis,
 		Map<CompiledHopKey,PlacementState> assignment, Collection<CandidateSelectionReceipt> receipts,
 		Collection<RelocationChoiceReceipt> choices) {
-		if(!realizationsCanStillBeCompatible(analysis, assignment, receipts))
-			throw new IllegalArgumentException("Selected candidate realizations violate transient compatibility");
+		if(!realizationsCanStillBeCompatible(analysis, assignment, receipts, Map.of(), null, false))
+			throw new IllegalArgumentException(
+				"Selected candidate realizations violate transient or derived-FOUT anchor compatibility");
 		validateJointValueMapSelections(analysis, assignment, receipts);
 		// This verifies the exact chosen actions as well as origin-residency/privacy;
 		// relation support alone is not authority to emit an upload.
@@ -1707,8 +1736,9 @@ public final class CandidateSelections {
 		if(selected.size() != feasible.size() || !selected.keySet().containsAll(feasible.keySet()))
 			throw new IllegalArgumentException("Candidate selections do not cover every active consumer: expected="
 				+ feasible.size() + " selected=" + selected.size());
-		if(!realizationsCanStillBeCompatible(analysis, assignment, selected.values()))
-			throw new IllegalArgumentException("Candidate selection violates exact transient realization support");
+		if(!realizationsCanStillBeCompatible(analysis, assignment, selected.values(), Map.of(), null, false))
+			throw new IllegalArgumentException(
+				"Candidate selection violates exact transient or derived-FOUT anchor support");
 		List<CandidateSelectionReceipt> canonical = analysis.canonicalCandidateReceipts(selected.values());
 		validateJointValueMapSelections(analysis, assignment, canonical);
 		return canonical;
@@ -1794,8 +1824,10 @@ public final class CandidateSelections {
 					+ receipt.normalizedSignature()
 					+ " reachability=" + reachabilityDetails(analysis, actionUniverse, assignment, receipt));
 		}
-		if(!realizationsCanStillBeCompatible(analysis, assignment, selected.values()))
-			throw new IllegalArgumentException("Candidate selection violates exact transient realization support");
+		if(!realizationsCanStillBeCompatible(analysis, assignment, selected.values(), Map.of(), null,
+			allowUnassigned))
+			throw new IllegalArgumentException(
+				"Candidate selection violates exact transient or derived-FOUT anchor support");
 		return analysis.canonicalCandidateReceipts(selected.values());
 	}
 

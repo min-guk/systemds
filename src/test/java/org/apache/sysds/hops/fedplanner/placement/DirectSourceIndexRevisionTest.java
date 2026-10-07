@@ -165,7 +165,7 @@ public class DirectSourceIndexRevisionTest {
 
 	private static boolean executable(Object index, CandidateRealizationReference reference)
 		throws Exception {
-		return (boolean) invoke(index, "executable", new Class<?>[]{String.class},
-			reference.normalizedSignature());
+		return (boolean) invoke(index, "executable", new Class<?>[]{CandidateRealizationReference.class},
+			reference);
 	}
 }

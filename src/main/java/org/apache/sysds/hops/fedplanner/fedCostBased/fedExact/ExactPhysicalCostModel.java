@@ -153,18 +153,22 @@ public final class ExactPhysicalCostModel {
 				&& demand.active(values, positions));
 		}
 
-		String semanticDescriptor() {
-			StringBuilder result = new StringBuilder(physicalEmissionIdentity)
+		void appendSemanticDescriptor(FingerprintWriter result) {
+			result.append(physicalEmissionIdentity)
 				.append("|source=").append(source.key())
-				.append("|active=").append(java.util.Arrays.toString(activeSource));
-			for(ActivationDemand demand : demands)
+				.append("|active=").appendBooleanArray(activeSource);
+			for(ActivationDemand demand : demands) {
 				result.append("|demand=").append(demand.variables().stream()
 					.map(ExactCategoricalSolver.Variable::key).toList())
-					.append(':').append(demand.observations().stream()
-						.map(java.util.Arrays::toString).toList())
-					.append(":event=").append(demand.event())
+					.append(":").append('[');
+				for(int index = 0; index < demand.observations().size(); index++) {
+					if(index > 0)
+						result.append(", ");
+					result.appendBooleanArray(demand.observations().get(index));
+				}
+				result.append(']').append(":event=").append(demand.event())
 					.append(":crossExecution=").append(demand.crossExecutionReuse());
-			return result.toString();
+			}
 		}
 	}
 
@@ -579,7 +583,11 @@ public final class ExactPhysicalCostModel {
 			frozenByOriginal.put(ordinaryFactors.get(index), frozenOrdinary.get(index));
 
 		FingerprintWriter normalized = new FingerprintWriter();
+		var textDiagnostics = Boolean.getBoolean("sysds.fedplanner.liveMetrics")
+			? new PhysicalSemanticDagFingerprint.NormalizedTextSharingDiagnostics() : null;
+		PhysicalSemanticDagFingerprint semanticDag = new PhysicalSemanticDagFingerprint(textDiagnostics);
 		normalized.append(analysis.analysisFingerprint());
+		semanticDag.appendSchema(normalized);
 		// The in-process optimization receipt binds published candidate facts and the
 		// physical factor universe, not merely factor scopes. Compact omission proofs
 		// are validated by the owning analysis; this is not a standalone legality proof.
@@ -587,14 +595,14 @@ public final class ExactPhysicalCostModel {
 		// a changed numeric factor table must therefore produce a different certificate
 		// even when a reconstructed analysis reuses the old structural fingerprint.
 		for(CandidateRuleFact fact : analysis.candidateRuleFacts().orderedFacts())
-			appendPhysicalCandidateFact(normalized, fact);
+			semanticDag.appendCandidateOccurrence(normalized, fact);
 		for(ExactPhysicalModel.DecisionDomain domain : model.domains()) {
 			normalized.append("|domain:").append(domain.node().key().normalizedSignature());
 			for(ExactPhysicalModel.Alternative alternative : domain.alternatives()) {
-				normalized.append("|alternative:");
-				normalized.appendSignature(alternative.normalizedSignature());
+				semanticDag.appendAlternativeOccurrence(normalized, alternative);
 			}
 		}
+		var textSharing = textDiagnostics == null ? null : textDiagnostics.snapshotAndClear();
 		for(String descriptor : model.exactSolverHardFactorDescriptors())
 			normalized.append("|hard-encoding:").append(descriptor);
 		List<ExactCategoricalSolver.Factor> exactSolverFactors = new ArrayList<>();
@@ -637,15 +645,20 @@ public final class ExactPhysicalCostModel {
 		}
 		for(PhysicalTransferKey key : transferKeys)
 			normalized.append("|transfer:").append(key);
-		for(SupplySharingGroup group : supplySharingGroups)
-			normalized.append("|sharing-group:").append(group.semanticDescriptor());
-		String contributionFingerprint = normalized.finish();
+		for(SupplySharingGroup group : supplySharingGroups) {
+			normalized.append("|sharing-group:");
+			group.appendSemanticDescriptor(normalized);
+		}
+		String contributionFingerprint = PhysicalSemanticDagFingerprint.SCHEMA + ':' + normalized.finish();
 		FrozenDyadicCostTransport dyadicTransport = new FrozenDyadicCostTransport(analysis,
 			analysis.analysisFingerprint(), contributionFingerprint, exactSolverFactors, dyadicEncodings);
 		PhysicalCostSurface surface = new PhysicalCostSurface(analysis, analysis.analysisFingerprint(),
 			model.variables(), contributions, transferKeys, supplySharingGroups, contributionFingerprint,
 			exactSolverVariables, exactSolverFactors, dyadicTransport);
 		dyadicTransport.bind(surface);
+		if(textSharing != null)
+			System.err.println("SEARCH_SPACE_TEXT|analysis=" + analysis.analysisFingerprint()
+				+ "|schema=" + PhysicalSemanticDagFingerprint.SCHEMA + '|' + textSharing);
 		return surface;
 	}
 
@@ -768,6 +781,15 @@ public final class ExactPhysicalCostModel {
 		return normalized.finish();
 	}
 
+	static String physicalCandidateFactsDagFingerprintForTest(List<CandidateRuleFact> facts) {
+		return new PhysicalSemanticDagFingerprint().candidateFactsForTest(facts);
+	}
+
+	static String physicalAlternativeDagFingerprintForTest(
+		ExactPhysicalModel.Alternative alternative) {
+		return new PhysicalSemanticDagFingerprint().alternativeForTest(alternative);
+	}
+
 	private static void appendPhysicalFactorValues(FingerprintWriter normalized,
 		ExactCategoricalSolver.Factor factor) {
 		long cells = 1L;
@@ -792,9 +814,11 @@ public final class ExactPhysicalCostModel {
 		return normalized.finish();
 	}
 
-	private static final class FingerprintWriter {
+	static final class FingerprintWriter {
 		private static final byte[] LOWER_HEX =
 			"0123456789abcdef".getBytes(StandardCharsets.US_ASCII);
+		private static final byte[] TRUE_TEXT = "true".getBytes(StandardCharsets.US_ASCII);
+		private static final byte[] FALSE_TEXT = "false".getBytes(StandardCharsets.US_ASCII);
 		private final MessageDigest digest;
 		// Share immutable nested signature segments only within this fingerprint.
 		private final PlacementAnalysis.NormalizedTextContext candidateText =
@@ -808,7 +832,7 @@ public final class ExactPhysicalCostModel {
 		private long lastBits;
 		private char pendingHighSurrogate;
 
-		private FingerprintWriter() {
+		FingerprintWriter() {
 			try {
 				digest = MessageDigest.getInstance("SHA-256");
 			}
@@ -817,8 +841,7 @@ public final class ExactPhysicalCostModel {
 			}
 		}
 
-		private FingerprintWriter append(Object value) {
-			flush();
+		FingerprintWriter append(Object value) {
 			appendUtf8(String.valueOf(value));
 			return this;
 		}
@@ -834,31 +857,63 @@ public final class ExactPhysicalCostModel {
 		private void appendUtf8(String value) {
 			if(value.isEmpty())
 				return;
-			int start = 0;
+			int index = 0;
 			if(pendingHighSurrogate != 0) {
 				if(Character.isLowSurrogate(value.charAt(0))) {
 					int codePoint = Character.toCodePoint(pendingHighSurrogate, value.charAt(0));
-					digest.update((byte)(0xf0 | (codePoint >>> 18)));
-					digest.update((byte)(0x80 | ((codePoint >>> 12) & 0x3f)));
-					digest.update((byte)(0x80 | ((codePoint >>> 6) & 0x3f)));
-					digest.update((byte)(0x80 | (codePoint & 0x3f)));
-					start = 1;
+					appendUtf8CodePoint(codePoint);
+					index = 1;
 				}
 				else
-					digest.update(String.valueOf(pendingHighSurrogate)
-						.getBytes(StandardCharsets.UTF_8));
+					appendMalformedSurrogate();
 				pendingHighSurrogate = 0;
 			}
-			if(start == value.length())
-				return;
 			int end = value.length();
-			if(Character.isHighSurrogate(value.charAt(end - 1)))
+			if(index < end && Character.isHighSurrogate(value.charAt(end - 1)))
 				pendingHighSurrogate = value.charAt(--end);
-			if(start < end) {
-				String complete = start == 0 && end == value.length()
-					? value : value.substring(start, end);
-				digest.update(complete.getBytes(StandardCharsets.UTF_8));
+			if(index < end) {
+				String complete = index == 0 && end == value.length() ? value : value.substring(index, end);
+				// Whole segments use the JVM's bulk encoder. A scalar code-point loop
+				// loses its optimized Latin-1/ASCII path for long repeated signatures.
+				byte[] encoded = complete.getBytes(StandardCharsets.UTF_8);
+				if(encoded.length > digestBuffer.length - buffered)
+					flush();
+				if(encoded.length >= digestBuffer.length)
+					digest.update(encoded);
+				else {
+					System.arraycopy(encoded, 0, digestBuffer, buffered, encoded.length);
+					buffered += encoded.length;
+				}
 			}
+		}
+
+		private void appendUtf8CodePoint(int codePoint) {
+			int length = codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
+			if(buffered + length > digestBuffer.length)
+				flush();
+			if(length == 1)
+				digestBuffer[buffered++] = (byte)codePoint;
+			else if(length == 2) {
+				digestBuffer[buffered++] = (byte)(0xc0 | (codePoint >>> 6));
+				digestBuffer[buffered++] = (byte)(0x80 | (codePoint & 0x3f));
+			}
+			else if(length == 3) {
+				digestBuffer[buffered++] = (byte)(0xe0 | (codePoint >>> 12));
+				digestBuffer[buffered++] = (byte)(0x80 | ((codePoint >>> 6) & 0x3f));
+				digestBuffer[buffered++] = (byte)(0x80 | (codePoint & 0x3f));
+			}
+			else {
+				digestBuffer[buffered++] = (byte)(0xf0 | (codePoint >>> 18));
+				digestBuffer[buffered++] = (byte)(0x80 | ((codePoint >>> 12) & 0x3f));
+				digestBuffer[buffered++] = (byte)(0x80 | ((codePoint >>> 6) & 0x3f));
+				digestBuffer[buffered++] = (byte)(0x80 | (codePoint & 0x3f));
+			}
+		}
+
+		private void appendMalformedSurrogate() {
+			if(buffered == digestBuffer.length)
+				flush();
+			digestBuffer[buffered++] = '?';
 		}
 
 		private FingerprintWriter appendUnsignedHexWithComma(long value) {
@@ -881,6 +936,22 @@ public final class ExactPhysicalCostModel {
 			return this;
 		}
 
+		FingerprintWriter appendBooleanArray(boolean[] values) {
+			append('[');
+			for(int index = 0; index < values.length; index++) {
+				byte[] token = values[index] ? TRUE_TEXT : FALSE_TEXT;
+				if(buffered + token.length + 2 > digestBuffer.length)
+					flush();
+				if(index > 0) {
+					digestBuffer[buffered++] = ',';
+					digestBuffer[buffered++] = ' ';
+				}
+				System.arraycopy(token, 0, digestBuffer, buffered, token.length);
+				buffered += token.length;
+			}
+			return append(']');
+		}
+
 		private void flush() {
 			if(buffered == 0)
 				return;
@@ -891,13 +962,13 @@ public final class ExactPhysicalCostModel {
 		private void flushPendingHighSurrogate() {
 			if(pendingHighSurrogate == 0)
 				return;
-			digest.update(String.valueOf(pendingHighSurrogate).getBytes(StandardCharsets.UTF_8));
+			appendMalformedSurrogate();
 			pendingHighSurrogate = 0;
 		}
 
-		private String finish() {
-			flush();
+		String finish() {
 			flushPendingHighSurrogate();
+			flush();
 			StringBuilder hex = new StringBuilder(64);
 			for(byte octet : digest.digest())
 				hex.append(String.format("%02x", octet));
@@ -1438,6 +1509,7 @@ public final class ExactPhysicalCostModel {
 			FusedFactorUse runtime, boolean[] active, EffectiveLogicalFunctionInput functionInput) { }
 		record Key(Direction direction, FType type, BoundaryMode boundary,
 			String physicalEmissionIdentity, int targetWorkers, double bytes) { }
+		record UnitPriceKey(Direction direction, FType type, int targetWorkers, double bytes) { }
 		record CreationScope(CompiledHopKey origin,
 			OccurrenceExecutionFrequencyFacts.OccurrenceProfileFact profile, long contextOrdinal) { }
 		record AliasCreation(CreationScope creation,
@@ -1482,6 +1554,14 @@ public final class ExactPhysicalCostModel {
 				continue;
 			double bytes = estimatedBytes(analysis, sparseAssignments, producer.node().key(), producerHop);
 			Map<Key,List<Demand>> grouped = new LinkedHashMap<>();
+			// Every consumer and sharing group reads the same immutable emitted map.
+			// Keep its full identity once for this producer, including after the
+			// analysis-wide serialization cache has reached its retention limit.
+			Map<ExactPhysicalModel.Alternative,String> outputLayouts = new IdentityHashMap<>();
+			int[] outputWorkerCounts = new int[producer.alternatives().size()];
+			// Group ownership and activation remain distinct. Only their unit prices
+			// share this producer-local observation of immutable alternatives and maps.
+			Map<UnitPriceKey,double[]> unitPriceRows = new LinkedHashMap<>();
 			for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 				if(edge.producer() != producer.node().key()
 					|| analysis.graph().node(edge.consumer()).orElseThrow().kind() == NodeKind.FUNCTION_CALL
@@ -1562,7 +1642,8 @@ public final class ExactPhysicalCostModel {
 					for(Key key : producer.alternatives().stream()
 						.filter(a -> a.state().output() == FederatedOutput.FOUT)
 						.map(a -> new Key(Direction.DOWNLOAD, a.state().fType(), BoundaryMode.ANCHOR_TRANSFER,
-							outputLayoutIdentity(a), 0, collect.getKey())).distinct().toList())
+							outputLayouts.computeIfAbsent(a, ExactPhysicalCostModel::outputLayoutIdentity),
+							0, collect.getKey())).distinct().toList())
 						grouped.computeIfAbsent(key, ignored -> new ArrayList<>())
 							.add(new Demand(endpoint, consumer, null, collect.getValue(), null));
 			}
@@ -1596,7 +1677,8 @@ public final class ExactPhysicalCostModel {
 					.filter(a -> a.state().output() == FederatedOutput.FOUT
 						&& retainedTypeEligibility.getOrDefault(a.state().fType(), false))
 					.map(a -> new Key(Direction.DOWNLOAD, a.state().fType(), BoundaryMode.ANCHOR_TRANSFER,
-						outputLayoutIdentity(a), 0, functionBytes)).distinct().toList()) {
+						outputLayouts.computeIfAbsent(a, ExactPhysicalCostModel::outputLayoutIdentity),
+						0, functionBytes)).distinct().toList()) {
 					grouped.computeIfAbsent(key, ignored -> new ArrayList<>())
 						.add(new Demand(endpoint, formal, null, collect, input));
 					retainedFunctionDownloads.add(new RetainedFunctionDownload(input, key.type()));
@@ -1607,7 +1689,8 @@ public final class ExactPhysicalCostModel {
 				for(Key key : producer.alternatives().stream()
 					.filter(a -> a.state().output() == FederatedOutput.FOUT)
 					.map(a -> new Key(Direction.DOWNLOAD, a.state().fType(), BoundaryMode.ANCHOR_TRANSFER,
-						outputLayoutIdentity(a), 0, bytes)).distinct().toList())
+						outputLayouts.computeIfAbsent(a, ExactPhysicalCostModel::outputLayoutIdentity),
+						0, bytes)).distinct().toList())
 					grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(new Demand(
 						new PhysicalTransferEndpoint(producer.node().key(), use.owner().node().key(), use.input().position()),
 						use.owner(), use, null, null));
@@ -1625,19 +1708,27 @@ public final class ExactPhysicalCostModel {
 				boolean sourceDownload = key.direction() == Direction.DOWNLOAD && key.targetWorkers() == 0;
 				boolean[] activeSource = new boolean[producer.alternatives().size()];
 				boolean[] uploadSource = new boolean[activeSource.length];
-				double[] unitPrices = new double[activeSource.length];
+				UnitPriceKey priceKey = new UnitPriceKey(key.direction(), key.type(), key.targetWorkers(), key.bytes());
+				double[] cachedPrices = unitPriceRows.get(priceKey);
+				double[] unitPrices = cachedPrices == null ? new double[activeSource.length] : cachedPrices;
 				for(int value = 0; value < activeSource.length; value++) {
 					var alternative = producer.alternatives().get(value);
 					var state = alternative.state();
-					int sourceWorkers = realizationWorkerCount(analysis, alternative, workers, physicalWorkerCounts);
+					int sourceWorkers = outputWorkerCounts[value];
+					if(sourceWorkers == 0)
+						outputWorkerCounts[value] = sourceWorkers =
+							realizationWorkerCount(analysis, alternative, workers, physicalWorkerCounts);
 					activeSource[value] = !sourceDownload || state.output() == FederatedOutput.FOUT
-						&& state.fType() == key.type() && outputLayoutIdentity(alternative).equals(key.physicalEmissionIdentity());
+						&& state.fType() == key.type() && outputLayouts.computeIfAbsent(alternative,
+							ExactPhysicalCostModel::outputLayoutIdentity).equals(key.physicalEmissionIdentity());
 					// Planned FOUT staging is part of the REFED supply action. On a cache miss it
 					// collects and uploads once; subsequent executions reuse the resulting copy
 					// under the original source/value-version lifetime proven below.
 					uploadSource[value] = key.direction() == Direction.UPLOAD
 						&& (state.output() == FederatedOutput.LOUT
 							|| state.output() == FederatedOutput.FOUT);
+					if(cachedPrices != null)
+						continue;
 					double unit = key.direction() == Direction.DOWNLOAD
 						? FederatedCostModel.computeReusableMaterializationDownloadCost(key.bytes(), key.type(),
 							sourceDownload ? sourceWorkers : key.targetWorkers())
@@ -1663,6 +1754,8 @@ public final class ExactPhysicalCostModel {
 					}
 					unitPrices[value] = requireCost(unit, "EXACT_PHYSICAL_MATERIALIZATION_UNIT_UNPROVEN");
 				}
+				if(cachedPrices == null)
+					unitPriceRows.put(priceKey, unitPrices);
 				for(var readProfile : exactOccurrenceProfiles(frequencies, producer.node().key())) {
 					CompiledHopKey origin = producer.node().key();
 					var sourceProfile = readProfile;
@@ -1740,9 +1833,9 @@ public final class ExactPhysicalCostModel {
 							boolean[]>> observations = new LinkedHashMap<>();
 						for(int value = 0; value < activeSource.length; value++) {
 							if(!activeSource[value]) continue;
-							var selected = producer.alternatives().get(value);
-							var layout = physicalValueLayout(analysis, selected,
-								realizationWorkerCount(analysis, selected, workers, physicalWorkerCounts), inputLayouts);
+								var selected = producer.alternatives().get(value);
+								var layout = physicalValueLayout(analysis, selected,
+									outputWorkerCounts[value], inputLayouts);
 							// A unique canonical creation origin and exact direct FED layout prove
 							// the same retained MatrixObject across its initializer, TWrite/TRead
 							// aliases and function formals. Fresh relocation/derived outputs and
@@ -2044,19 +2137,16 @@ public final class ExactPhysicalCostModel {
 		IdentityHashMap<ExactCategoricalSolver.Factor,String> factorKinds) {
 		List<ExactMaterializationActivation.Event> events = demands.stream().map(ActivationDemand::event).toList();
 		var partition = ExactMaterializationActivation.partition(events, scopeWeight);
-		StringBuilder descriptor = new StringBuilder("MATERIALIZATION_ACTIVATION_V1|")
-			.append(key).append('|').append(partition.semanticDescriptor())
-			.append("|source=").append(source.key()).append("|sourceActive=")
-			.append(java.util.Arrays.toString(activeSource));
-		for(double unit : unitPrices)
-			descriptor.append("|unitBits=").append(Long.toUnsignedString(Double.doubleToRawLongBits(unit), 16));
-		for(ActivationDemand demand : demands)
-			for(int index = 0; index < demand.variables().size(); index++)
-				descriptor.append("|observation=").append(demand.variables().get(index).key())
-					.append(':').append(java.util.Arrays.toString(demand.observations().get(index)));
+		// This digest is byte-for-byte the SHA-256 of the former V1 descriptor. Stream
+		// observation masks because one GLM source can own millions of Boolean entries.
+		String descriptor = "MATERIALIZATION_ACTIVATION_V2|semanticSha256="
+			+ materializationActivationSemanticDigest(key, source, activeSource, unitPrices,
+				demands, partition.semanticDescriptor());
 		if(!partition.resolved()) {
 			List<ExactCategoricalSolver.Variable> scope = activationScope(source, demands);
 			var positions = variablePositions(scope);
+			var conservative = ExactMaterializationActivation.prepareConservativeUnion(
+				events, scopeWeight);
 			ExactCategoricalSolver.Factor canonical = ExactCategoricalSolver.Factor.lazy(scope, values -> {
 				int sourceValue = values[positions.get(source)];
 				if(!activeSource[sourceValue])
@@ -2065,7 +2155,7 @@ public final class ExactPhysicalCostModel {
 				for(int index = 0; index < active.length; index++)
 					active[index] = demands.get(index).active(values, positions);
 				return requireCost(unitPrices[sourceValue]
-					* ExactMaterializationActivation.conservativeUnion(events, scopeWeight, active),
+					* conservative.evaluateOwned(active),
 					"EXACT_ACTIVATION_UNION_COST_UNPROVEN");
 			});
 			factors.add(canonical);
@@ -2089,12 +2179,14 @@ public final class ExactPhysicalCostModel {
 					false, auxiliaries, encoded));
 			}
 			List<ExactMaterializationActivation.Event> uniqueEvents = List.copyOf(byEvent.keySet());
+			var uniqueConservative = ExactMaterializationActivation.prepareConservativeUnion(
+				uniqueEvents, scopeWeight);
 			var monetary = ExactCategoricalSolver.Factor.lazy(monetaryScope, values -> {
 				if(!activeSource[values[0]]) return 0d;
 				boolean[] active = new boolean[uniqueEvents.size()];
 				for(int e = 0; e < active.length; e++) active[e] = values[e + 1] != 0;
 				return requireCost(unitPrices[values[0]]
-					* ExactMaterializationActivation.conservativeUnion(uniqueEvents, scopeWeight, active),
+					* uniqueConservative.evaluateOwned(active),
 					"EXACT_ACTIVATION_UNION_COST_UNPROVEN");
 			});
 			encoded.add(monetary);
@@ -2154,10 +2246,36 @@ public final class ExactPhysicalCostModel {
 			var canonical = ExactCategoricalSolver.Factor.lazy(activationScope(source, demands), values -> 0d);
 			factors.add(canonical);
 			factorizations.put(canonical, new SolverFactorization(List.of(), List.of(),
-				descriptor.toString(), List.of(), null, ZeroCostTransport.INSTANCE));
+				descriptor, List.of(), null, ZeroCostTransport.INSTANCE));
 			if(factorKinds != null)
 				factorKinds.put(canonical, "RUNTIME_FUSED_INPUT|ACTIVATION_CLASS");
 		}
+	}
+
+	static String materializationActivationSemanticDigestForTest(String key,
+		ExactCategoricalSolver.Variable source, boolean[] activeSource, double[] unitPrices,
+		List<ActivationDemand> demands, double scopeWeight) {
+		List<ExactMaterializationActivation.Event> events = demands.stream()
+			.map(ActivationDemand::event).toList();
+		return materializationActivationSemanticDigest(key, source, activeSource, unitPrices,
+			demands, ExactMaterializationActivation.partition(events, scopeWeight).semanticDescriptor());
+	}
+
+	private static String materializationActivationSemanticDigest(String key,
+		ExactCategoricalSolver.Variable source, boolean[] activeSource, double[] unitPrices,
+		List<ActivationDemand> demands, String partitionDescriptor) {
+		FingerprintWriter descriptor = new FingerprintWriter();
+		descriptor.append("MATERIALIZATION_ACTIVATION_V1|").append(key).append('|')
+			.append(partitionDescriptor).append("|source=").append(source.key())
+			.append("|sourceActive=").appendBooleanArray(activeSource);
+		for(double unit : unitPrices)
+			descriptor.append("|unitBits=")
+				.append(Long.toUnsignedString(Double.doubleToRawLongBits(unit), 16));
+		for(ActivationDemand demand : demands)
+			for(int index = 0; index < demand.variables().size(); index++)
+				descriptor.append("|observation=").append(demand.variables().get(index).key())
+					.append(':').appendBooleanArray(demand.observations().get(index));
+		return descriptor.finish();
 	}
 
 	/**

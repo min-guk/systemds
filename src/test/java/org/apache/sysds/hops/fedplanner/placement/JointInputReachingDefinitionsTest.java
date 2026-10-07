@@ -15,6 +15,8 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.lang.reflect.Field;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.DataType;
@@ -32,6 +34,91 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class JointInputReachingDefinitionsTest {
+	@Test
+	public void warmAndColdFunctionTuplesRetainFullDefinitionEquality() throws Exception {
+		PlacementJointInputAnalysis analysis = analyze(
+			"f=function(matrix[double] X,matrix[double] Y) return(matrix[double] A,matrix[double] B){"
+				+ "if(sum(X)>0){A=X;B=Y;}else{A=Y;B=X;}}"
+				+ "P=matrix(1,2,2);Q=matrix(2,2,2);[A,B]=f(P,Q);C=A+B;print(sum(C));");
+		List<Integer> reads = consumerReadOrdinals(analysis, "X", "Y", "function/");
+		List<JointTuple> warm = analysis.tuplesForReads(reads);
+		Assert.assertFalse(warm.isEmpty());
+		Assert.assertTrue("fixture must carry function-binding provenance",
+			warm.stream().flatMap(tuple -> tuple.inputs().stream())
+				.anyMatch(input -> !input.source().provenance().isEmpty()
+					&& input.source().callContext().contains("/call-")));
+
+		Field tupleCache = PlacementJointInputAnalysis.class.getDeclaredField("tupleCache");
+		Field recentSlice = PlacementJointInputAnalysis.class.getDeclaredField("recentSlice");
+		tupleCache.setAccessible(true);
+		recentSlice.setAccessible(true);
+		((Map<?,?>) tupleCache.get(analysis)).clear();
+		recentSlice.set(analysis, null);
+
+		List<JointTuple> cold = analysis.tuplesForReads(reads);
+		Assert.assertEquals("warm/cold reuse changed full tuple state, including provenance",
+			warm, cold);
+	}
+
+	@Test
+	public void sameSliceConsumersAreBatchedIntoOneCfgPass() throws Exception {
+		String script = "p=as.scalar(rand(rows=1,cols=1));"
+			+ "if(p>0.5){A=matrix(1,2,2);B=matrix(2,2,2);}"
+			+ "else{A=matrix(3,2,2);B=matrix(4,2,2);}"
+			+ "C=A+B;D=A*B;E=A-B;print(sum(C)+sum(D)+sum(E));";
+		PlacementJointInputAnalysis analysis = analyze(script);
+		PlacementJointInputAnalysis direct = analyze(script);
+		List<Integer> consumers = new ArrayList<>();
+		for(int ordinal = 0; ordinal < analysis.occurrenceCount(); ordinal++) {
+			List<org.apache.sysds.hops.Hop> inputs = analysis.occurrenceHop(ordinal).getInput();
+			if(inputs.size() == 2 && PlacementProgramFacts.isTransientRead(inputs.get(0))
+				&& PlacementProgramFacts.isTransientRead(inputs.get(1))
+				&& "A".equals(inputs.get(0).getName()) && "B".equals(inputs.get(1).getName()))
+				consumers.add(ordinal);
+		}
+		Assert.assertEquals("fixture must retain all three A/B consumers", 3, consumers.size());
+		for(int consumer : consumers) {
+			List<Integer> directReads = direct.occurrenceHop(consumer).getInput().stream()
+				.map(input -> uniqueReadOrdinal(direct, input, direct.occurrenceBlock(consumer)))
+				.toList();
+			Assert.assertEquals("batched projection changed the exact tuple bytes",
+				tupleSignatures(direct.tuplesForReads(directReads)),
+				tupleSignatures(analysis.tuplesForConsumer(consumer)));
+		}
+
+		Field passes = PlacementJointInputAnalysis.class.getDeclaredField("analysisPassCount");
+		passes.setAccessible(true);
+		Assert.assertEquals("all consumers of one exact dependency slice share one CFG execution", 1,
+			passes.getInt(analysis));
+	}
+
+	@Test
+	public void sameTrackedSliceReusesAnalysisAndPreservesRequestedOrderAndDuplicates() throws Exception {
+		PlacementJointInputAnalysis analysis = analyze("p=as.scalar(rand(rows=1,cols=1));"
+			+ "if(p>0.5){A=matrix(1,2,2);B=matrix(2,2,2);}"
+			+ "else{A=matrix(3,2,2);B=matrix(4,2,2);}C=A+B;print(sum(C));");
+		List<Integer> reads = consumerReadOrdinals(analysis, "A", "B", "main");
+		List<JointTuple> forward = analysis.tuplesForReads(reads);
+		List<JointTuple> reverse = analysis.tuplesForReads(List.of(reads.get(1), reads.get(0)));
+		List<JointTuple> duplicate = analysis.tuplesForReads(
+			List.of(reads.get(0), reads.get(1), reads.get(0)));
+
+		Field passes = PlacementJointInputAnalysis.class.getDeclaredField("analysisPassCount");
+		passes.setAccessible(true);
+		Assert.assertEquals("the same expanded variable slice must execute the CFG only once", 1,
+			passes.getInt(analysis));
+		Assert.assertEquals(forward.size(), reverse.size());
+		Assert.assertEquals(forward.size(), duplicate.size());
+		for(JointTuple tuple : reverse) {
+			Assert.assertEquals(reads.get(1).intValue(), tuple.inputs().get(0).readOrdinal());
+			Assert.assertEquals(reads.get(0).intValue(), tuple.inputs().get(1).readOrdinal());
+		}
+		for(JointTuple tuple : duplicate) {
+			Assert.assertEquals(3, tuple.inputs().size());
+			Assert.assertEquals(tuple.inputs().get(0).source(), tuple.inputs().get(2).source());
+		}
+	}
+
 	@Test
 	public void oneBranchDecisionRetainsOnlyAaAndBbTuples() throws Exception {
 		PlacementJointInputAnalysis analysis = analyze("p=as.scalar(rand(rows=1,cols=1));"
@@ -205,6 +292,12 @@ public class JointInputReachingDefinitionsTest {
 
 	private static List<JointTuple> readTuples(PlacementJointInputAnalysis analysis,
 		String leftName, String rightName, String pathFragment) {
+		List<Integer> reads = consumerReadOrdinals(analysis, leftName, rightName, pathFragment);
+		return analysis.tuplesForReads(reads);
+	}
+
+	private static List<Integer> consumerReadOrdinals(PlacementJointInputAnalysis analysis,
+		String leftName, String rightName, String pathFragment) {
 		int left = -1, right = -1;
 		for(int a = 0; a < analysis.occurrenceCount(); a++) {
 			if(!PlacementProgramFacts.isTransientRead(analysis.occurrenceHop(a))
@@ -221,11 +314,27 @@ public class JointInputReachingDefinitionsTest {
 		}
 		if(left < 0)
 			throw new AssertionError("No same-block reads for " + leftName + '/' + rightName);
-		return analysis.tuplesForReads(List.of(left, right));
+		return List.of(left, right);
 	}
 
 	private static List<String> tupleSignatures(List<JointTuple> tuples) {
 		return tuples.stream().map(JointTuple::stableKey).toList();
+	}
+
+	private static int uniqueReadOrdinal(PlacementJointInputAnalysis analysis,
+		org.apache.sysds.hops.Hop read,
+		StatementBlock block) {
+		int match = -1;
+		for(int ordinal = 0; ordinal < analysis.occurrenceCount(); ordinal++)
+			if(analysis.occurrenceBlock(ordinal) == block
+				&& analysis.occurrenceHop(ordinal) == read) {
+				if(match >= 0)
+					throw new AssertionError("Expected one compiled occurrence for the consumer read");
+				match = ordinal;
+			}
+		if(match < 0)
+			throw new AssertionError("Missing compiled occurrence for the consumer read");
+		return match;
 	}
 
 	private static DataOp transientWrite(String name, org.apache.sysds.hops.Hop input, int line) {
