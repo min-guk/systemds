@@ -1,0 +1,956 @@
+{
+  "records": [
+    {
+      "run": "alias-logreg-baseline-r1",
+      "variant": "baseline",
+      "diagnostic": false,
+      "status": "PASSED",
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisSeconds": 47.578939986,
+      "plannerSeconds": 11.336960696,
+      "phaseSeconds": {
+        "MODEL_SETUP": 4.769523078,
+        "OPTIMIZATION": 5.081659021,
+        "SELECTION": 0.475756545,
+        "POST_SEARCH_TRACE": 0.006481714,
+        "PLAN_CONVERSION": 0.767954885,
+        "EMISSION": 0.226219387,
+        "FINAL_BOUNDARY_VERIFY": 0.009416689
+      },
+      "compilationSeconds": 60.361898,
+      "executionSeconds": 3.894,
+      "checkpointCount": 1224,
+      "checkpointDigestWithoutTimes": "8c3a63d51a9a7e92dd6505de943cf2d6f6f3232e8d91eb3260758abb291ccbef",
+      "finalCheckpointWithoutTimes": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "upper": 122.26631334184357
+      },
+      "selectedNodeCount": 524,
+      "selectedExecutionPlacementDigest": "76adc157399188f5fda9ef7224bafb82d842d87b5d6283f0e1d2aa31177d829d",
+      "candidateSpaceRows": 653,
+      "candidateSpaceDigestWithoutPid": "3daa067cdf649f3b57020c84517c23eb3f4ca87a5fd3ffc5d3a29d39caf5ca70",
+      "analysisFingerprints": [
+        "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+      ],
+      "costFingerprints": [
+        "84b4118e430f578c46bc9ef2fbd6edca2175dceb2bc03d7fab6d230bc7b49e88"
+      ],
+      "planHashes": [
+        "b122febb8f017ef9c092f6c8f49b3d11211afe0c5ccef0ec4f0bc473355388ef"
+      ],
+      "fedModel": [
+        0.05965393185834544,
+        -0.05862009074532906,
+        -0.07989381416015325,
+        -0.018645374725826405,
+        -0.10221865125395352,
+        -0.011701563963106799,
+        0.16782329662593495,
+        -0.18618562626541882,
+        -0.1126700803727829,
+        -0.11768025189594139,
+        -0.10208221693350564,
+        -0.14057540782623118,
+        -0.18184673943569687,
+        -0.028567039827355596,
+        0.06489332677006672,
+        0.0160586311089769
+      ],
+      "aliasWork": [],
+      "inputDigest": "364c75a657ea1ba5e6706484e470d9d9d4fcbc4c8dd1553868a2cbbbd90f2fbe",
+      "fixtureDigest": "1b7de13204f77f1893898a30800434e780c7d41592a0bc0b23854d99b5739685",
+      "runnerSha256": {
+        "dispatch": "ea33fe475ab23bd9af70058677a879dc22f3a4b20b35a5bfa6942ed0831a727a",
+        "runner": "887af9540a6f64977e8f9c8868962a923edc7ccb7adac4219d2213ee0c99e036"
+      },
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "9c038baac540c40a7662b39b1065f46565b6a0f53a67e7418ededbedcd0d463e",
+        "mainSources": "e1804ae9050582df0f87b7b9b4c9c0d34310bbf23b39eca6c0797aa02f730c81",
+        "testClasses": "94b4fa09e3d42e11925b28d1c80ee19cfe5a803f4c76d83fcc9cb264f280bb6b",
+        "testSources": "aebc4fa7421cd4fcf20c21c1b088ddeed5e0bf43c8e9d4b2ad5b90b75d07b38b"
+      },
+      "logSha256": "eba4bf1b0b2ebd3c07832c4f3bbc6b33e1cb9eb2644505a7cc3deb591419e085",
+      "resultSha256": "afc75622171673b4e2f14ea18e21c425e1117151ab153930e8f98708605dac00"
+    },
+    {
+      "run": "alias-logreg-candidate-r1",
+      "variant": "candidate",
+      "diagnostic": false,
+      "status": "PASSED",
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisSeconds": 49.121009179,
+      "plannerSeconds": 13.101667721,
+      "phaseSeconds": {
+        "MODEL_SETUP": 5.687774594,
+        "OPTIMIZATION": 6.03959784,
+        "SELECTION": 0.393686429,
+        "POST_SEARCH_TRACE": 0.00602486,
+        "PLAN_CONVERSION": 0.750315277,
+        "EMISSION": 0.212654756,
+        "FINAL_BOUNDARY_VERIFY": 0.00929379
+      },
+      "compilationSeconds": 63.602374,
+      "executionSeconds": 3.927,
+      "checkpointCount": 1224,
+      "checkpointDigestWithoutTimes": "8c3a63d51a9a7e92dd6505de943cf2d6f6f3232e8d91eb3260758abb291ccbef",
+      "finalCheckpointWithoutTimes": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "upper": 122.26631334184357
+      },
+      "selectedNodeCount": 524,
+      "selectedExecutionPlacementDigest": "76adc157399188f5fda9ef7224bafb82d842d87b5d6283f0e1d2aa31177d829d",
+      "candidateSpaceRows": 653,
+      "candidateSpaceDigestWithoutPid": "3daa067cdf649f3b57020c84517c23eb3f4ca87a5fd3ffc5d3a29d39caf5ca70",
+      "analysisFingerprints": [
+        "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+      ],
+      "costFingerprints": [
+        "5a6443a78a3aa7cd58941ddb470d426de29be4619f60d889f30a7ba305adcfc4"
+      ],
+      "planHashes": [
+        "881a5578b9834342a4b3cbb6ddcb537729df960f5d22b61c170b074365759c2a"
+      ],
+      "fedModel": [
+        0.05965393185834544,
+        -0.05862009074532906,
+        -0.07989381416015325,
+        -0.018645374725826405,
+        -0.10221865125395352,
+        -0.011701563963106799,
+        0.16782329662593495,
+        -0.18618562626541882,
+        -0.1126700803727829,
+        -0.11768025189594139,
+        -0.10208221693350564,
+        -0.14057540782623118,
+        -0.18184673943569687,
+        -0.028567039827355596,
+        0.06489332677006672,
+        0.0160586311089769
+      ],
+      "aliasWork": [],
+      "inputDigest": "364c75a657ea1ba5e6706484e470d9d9d4fcbc4c8dd1553868a2cbbbd90f2fbe",
+      "fixtureDigest": "1b7de13204f77f1893898a30800434e780c7d41592a0bc0b23854d99b5739685",
+      "runnerSha256": {
+        "dispatch": "ea33fe475ab23bd9af70058677a879dc22f3a4b20b35a5bfa6942ed0831a727a",
+        "runner": "887af9540a6f64977e8f9c8868962a923edc7ccb7adac4219d2213ee0c99e036"
+      },
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "1bdaf0cd47e9bcdcf5652b1d65005db8cfbb735e4d13eda7128eb8be05b36cf4",
+        "mainSources": "94b09e9a99b44e48175c532119d2018fdf33858ee1de1354893913cb96cc668b",
+        "testClasses": "94b4fa09e3d42e11925b28d1c80ee19cfe5a803f4c76d83fcc9cb264f280bb6b",
+        "testSources": "aebc4fa7421cd4fcf20c21c1b088ddeed5e0bf43c8e9d4b2ad5b90b75d07b38b"
+      },
+      "logSha256": "4d2a1490e8d5e5b9ed1032b32966282246a84dd5d4a42cc849873328cc52e47c",
+      "resultSha256": "a0327f2f1cb69248e3e93e3480501b258fa052a8d1f656685c24ef6a4498abdc"
+    },
+    {
+      "run": "alias-logreg-candidate-r2",
+      "variant": "candidate",
+      "diagnostic": false,
+      "status": "PASSED",
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisSeconds": 49.185787518,
+      "plannerSeconds": 14.974047144,
+      "phaseSeconds": {
+        "MODEL_SETUP": 6.407866354,
+        "OPTIMIZATION": 7.27700076,
+        "SELECTION": 0.430136733,
+        "POST_SEARCH_TRACE": 0.005896921,
+        "PLAN_CONVERSION": 0.635851888,
+        "EMISSION": 0.207493079,
+        "FINAL_BOUNDARY_VERIFY": 0.007631613
+      },
+      "compilationSeconds": 65.541939,
+      "executionSeconds": 3.825,
+      "checkpointCount": 1224,
+      "checkpointDigestWithoutTimes": "8c3a63d51a9a7e92dd6505de943cf2d6f6f3232e8d91eb3260758abb291ccbef",
+      "finalCheckpointWithoutTimes": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "upper": 122.26631334184357
+      },
+      "selectedNodeCount": 524,
+      "selectedExecutionPlacementDigest": "76adc157399188f5fda9ef7224bafb82d842d87b5d6283f0e1d2aa31177d829d",
+      "candidateSpaceRows": 653,
+      "candidateSpaceDigestWithoutPid": "3daa067cdf649f3b57020c84517c23eb3f4ca87a5fd3ffc5d3a29d39caf5ca70",
+      "analysisFingerprints": [
+        "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+      ],
+      "costFingerprints": [
+        "cac7d690ea3c2c767ff957343f419bcc7aa6737064aef6abc4e1ad0568bb3af3"
+      ],
+      "planHashes": [
+        "8cbae60924eeef0f26c9ea40aaafd1332a259072d246882836606ffb8559a3e6"
+      ],
+      "fedModel": [
+        0.05965393185834544,
+        -0.05862009074532906,
+        -0.07989381416015325,
+        -0.018645374725826405,
+        -0.10221865125395352,
+        -0.011701563963106799,
+        0.16782329662593495,
+        -0.18618562626541882,
+        -0.1126700803727829,
+        -0.11768025189594139,
+        -0.10208221693350564,
+        -0.14057540782623118,
+        -0.18184673943569687,
+        -0.028567039827355596,
+        0.06489332677006672,
+        0.0160586311089769
+      ],
+      "aliasWork": [],
+      "inputDigest": "364c75a657ea1ba5e6706484e470d9d9d4fcbc4c8dd1553868a2cbbbd90f2fbe",
+      "fixtureDigest": "1b7de13204f77f1893898a30800434e780c7d41592a0bc0b23854d99b5739685",
+      "runnerSha256": {
+        "dispatch": "ea33fe475ab23bd9af70058677a879dc22f3a4b20b35a5bfa6942ed0831a727a",
+        "runner": "887af9540a6f64977e8f9c8868962a923edc7ccb7adac4219d2213ee0c99e036"
+      },
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "1bdaf0cd47e9bcdcf5652b1d65005db8cfbb735e4d13eda7128eb8be05b36cf4",
+        "mainSources": "94b09e9a99b44e48175c532119d2018fdf33858ee1de1354893913cb96cc668b",
+        "testClasses": "94b4fa09e3d42e11925b28d1c80ee19cfe5a803f4c76d83fcc9cb264f280bb6b",
+        "testSources": "aebc4fa7421cd4fcf20c21c1b088ddeed5e0bf43c8e9d4b2ad5b90b75d07b38b"
+      },
+      "logSha256": "7d228257b8110767b7e70cf7e7aeec015342bb9f1e95357f672033bc2c2f9e42",
+      "resultSha256": "c97e1cb3b8b142e9c553b8bd0a5ff8f049f6c5fefc02fbf698f218d45b4c9bd7"
+    },
+    {
+      "run": "alias-logreg-baseline-r2",
+      "variant": "baseline",
+      "diagnostic": false,
+      "status": "PASSED",
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisSeconds": 49.655246334,
+      "plannerSeconds": 13.80147519,
+      "phaseSeconds": {
+        "MODEL_SETUP": 6.101328643,
+        "OPTIMIZATION": 6.342344665,
+        "SELECTION": 0.465066686,
+        "POST_SEARCH_TRACE": 0.01365454,
+        "PLAN_CONVERSION": 0.648342593,
+        "EMISSION": 0.217627169,
+        "FINAL_BOUNDARY_VERIFY": 0.016113455
+      },
+      "compilationSeconds": 64.900271,
+      "executionSeconds": 3.75,
+      "checkpointCount": 1224,
+      "checkpointDigestWithoutTimes": "8c3a63d51a9a7e92dd6505de943cf2d6f6f3232e8d91eb3260758abb291ccbef",
+      "finalCheckpointWithoutTimes": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "upper": 122.26631334184357
+      },
+      "selectedNodeCount": 524,
+      "selectedExecutionPlacementDigest": "76adc157399188f5fda9ef7224bafb82d842d87b5d6283f0e1d2aa31177d829d",
+      "candidateSpaceRows": 653,
+      "candidateSpaceDigestWithoutPid": "3daa067cdf649f3b57020c84517c23eb3f4ca87a5fd3ffc5d3a29d39caf5ca70",
+      "analysisFingerprints": [
+        "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+      ],
+      "costFingerprints": [
+        "8c31f795db0cbb9336d4ca33a6491e4ad91244f62a698576fef85c09c5875376"
+      ],
+      "planHashes": [
+        "0eb9f709d82126c669d5e6150f2b9e3f6e35aa19f978b77849826b72234587dc"
+      ],
+      "fedModel": [
+        0.05965393185834544,
+        -0.05862009074532906,
+        -0.07989381416015325,
+        -0.018645374725826405,
+        -0.10221865125395352,
+        -0.011701563963106799,
+        0.16782329662593495,
+        -0.18618562626541882,
+        -0.1126700803727829,
+        -0.11768025189594139,
+        -0.10208221693350564,
+        -0.14057540782623118,
+        -0.18184673943569687,
+        -0.028567039827355596,
+        0.06489332677006672,
+        0.0160586311089769
+      ],
+      "aliasWork": [],
+      "inputDigest": "364c75a657ea1ba5e6706484e470d9d9d4fcbc4c8dd1553868a2cbbbd90f2fbe",
+      "fixtureDigest": "1b7de13204f77f1893898a30800434e780c7d41592a0bc0b23854d99b5739685",
+      "runnerSha256": {
+        "dispatch": "ea33fe475ab23bd9af70058677a879dc22f3a4b20b35a5bfa6942ed0831a727a",
+        "runner": "887af9540a6f64977e8f9c8868962a923edc7ccb7adac4219d2213ee0c99e036"
+      },
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "9c038baac540c40a7662b39b1065f46565b6a0f53a67e7418ededbedcd0d463e",
+        "mainSources": "e1804ae9050582df0f87b7b9b4c9c0d34310bbf23b39eca6c0797aa02f730c81",
+        "testClasses": "94b4fa09e3d42e11925b28d1c80ee19cfe5a803f4c76d83fcc9cb264f280bb6b",
+        "testSources": "aebc4fa7421cd4fcf20c21c1b088ddeed5e0bf43c8e9d4b2ad5b90b75d07b38b"
+      },
+      "logSha256": "b02271d9501b9f3d9ccd85b2299645dad67d239113e5bedf03ae8d941b178185",
+      "resultSha256": "373e71f775e615df401061ababcafe007d24e766044195a709cd7427845908bd"
+    },
+    {
+      "run": "alias-logreg-diagnostic-baseline",
+      "variant": "baseline",
+      "diagnostic": true,
+      "status": "PASSED",
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisSeconds": 44.11374425,
+      "plannerSeconds": 14.679075611,
+      "phaseSeconds": {
+        "MODEL_SETUP": 6.656120884,
+        "OPTIMIZATION": 6.711387967,
+        "SELECTION": 0.425931894,
+        "POST_SEARCH_TRACE": 0.006680576,
+        "PLAN_CONVERSION": 0.650734764,
+        "EMISSION": 0.218196824,
+        "FINAL_BOUNDARY_VERIFY": 0.008939427
+      },
+      "compilationSeconds": 60.158991,
+      "executionSeconds": 3.977,
+      "checkpointCount": 1224,
+      "checkpointDigestWithoutTimes": "8c3a63d51a9a7e92dd6505de943cf2d6f6f3232e8d91eb3260758abb291ccbef",
+      "finalCheckpointWithoutTimes": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "upper": 122.26631334184357
+      },
+      "selectedNodeCount": 524,
+      "selectedExecutionPlacementDigest": "76adc157399188f5fda9ef7224bafb82d842d87b5d6283f0e1d2aa31177d829d",
+      "candidateSpaceRows": 653,
+      "candidateSpaceDigestWithoutPid": "3daa067cdf649f3b57020c84517c23eb3f4ca87a5fd3ffc5d3a29d39caf5ca70",
+      "analysisFingerprints": [
+        "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+      ],
+      "costFingerprints": [
+        "84b4118e430f578c46bc9ef2fbd6edca2175dceb2bc03d7fab6d230bc7b49e88"
+      ],
+      "planHashes": [
+        "b122febb8f017ef9c092f6c8f49b3d11211afe0c5ccef0ec4f0bc473355388ef"
+      ],
+      "fedModel": [
+        0.05965393185834544,
+        -0.05862009074532906,
+        -0.07989381416015325,
+        -0.018645374725826405,
+        -0.10221865125395352,
+        -0.011701563963106799,
+        0.16782329662593495,
+        -0.18618562626541882,
+        -0.1126700803727829,
+        -0.11768025189594139,
+        -0.10208221693350564,
+        -0.14057540782623118,
+        -0.18184673943569687,
+        -0.028567039827355596,
+        0.06489332677006672,
+        0.0160586311089769
+      ],
+      "aliasWork": [
+        {
+          "queries": 1506,
+          "searches": 1506,
+          "cacheHits": 0,
+          "expansions": 6822
+        }
+      ],
+      "inputDigest": "364c75a657ea1ba5e6706484e470d9d9d4fcbc4c8dd1553868a2cbbbd90f2fbe",
+      "fixtureDigest": "1b7de13204f77f1893898a30800434e780c7d41592a0bc0b23854d99b5739685",
+      "runnerSha256": {
+        "dispatch": "ea33fe475ab23bd9af70058677a879dc22f3a4b20b35a5bfa6942ed0831a727a",
+        "runner": "887af9540a6f64977e8f9c8868962a923edc7ccb7adac4219d2213ee0c99e036"
+      },
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "487e80c120aee2f344d2100dace56d1c5ee35b9cdf9f1d08f00719ac4f6269a3",
+        "mainSources": "07374a6e01052c55f7bc53b24bbee88501d4ca8129eaa0a08db7d3f7fa0faad4",
+        "testClasses": "94b4fa09e3d42e11925b28d1c80ee19cfe5a803f4c76d83fcc9cb264f280bb6b",
+        "testSources": "aebc4fa7421cd4fcf20c21c1b088ddeed5e0bf43c8e9d4b2ad5b90b75d07b38b"
+      },
+      "logSha256": "6f9ad8107ab00d733be9ce374e76ad2a94204f20538d566d49cdc419e640609b",
+      "resultSha256": "98e51905ffbd84c325924cbc9ca3e05f4c61b2cdb1826d43b940df714f4a3470"
+    },
+    {
+      "run": "alias-logreg-diagnostic-candidate",
+      "variant": "candidate",
+      "diagnostic": true,
+      "status": "PASSED",
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisSeconds": 48.042712432,
+      "plannerSeconds": 14.575086502,
+      "phaseSeconds": {
+        "MODEL_SETUP": 6.33092963,
+        "OPTIMIZATION": 6.912541348,
+        "SELECTION": 0.369161334,
+        "POST_SEARCH_TRACE": 0.006816795,
+        "PLAN_CONVERSION": 0.691491753,
+        "EMISSION": 0.253355453,
+        "FINAL_BOUNDARY_VERIFY": 0.011083535
+      },
+      "compilationSeconds": 64.06571,
+      "executionSeconds": 4.696,
+      "checkpointCount": 1224,
+      "checkpointDigestWithoutTimes": "8c3a63d51a9a7e92dd6505de943cf2d6f6f3232e8d91eb3260758abb291ccbef",
+      "finalCheckpointWithoutTimes": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "upper": 122.26631334184357
+      },
+      "selectedNodeCount": 524,
+      "selectedExecutionPlacementDigest": "76adc157399188f5fda9ef7224bafb82d842d87b5d6283f0e1d2aa31177d829d",
+      "candidateSpaceRows": 653,
+      "candidateSpaceDigestWithoutPid": "3daa067cdf649f3b57020c84517c23eb3f4ca87a5fd3ffc5d3a29d39caf5ca70",
+      "analysisFingerprints": [
+        "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+      ],
+      "costFingerprints": [
+        "59f91c92a93c7593004c1706396d1cd2aa33c274d6339085b769330b414c29eb"
+      ],
+      "planHashes": [
+        "f0927e5baa40e95fdd3c84836320e1932562de919d6d03cf840d2bf04103ddcc"
+      ],
+      "fedModel": [
+        0.05965393185834544,
+        -0.05862009074532906,
+        -0.07989381416015325,
+        -0.018645374725826405,
+        -0.10221865125395352,
+        -0.011701563963106799,
+        0.16782329662593495,
+        -0.18618562626541882,
+        -0.1126700803727829,
+        -0.11768025189594139,
+        -0.10208221693350564,
+        -0.14057540782623118,
+        -0.18184673943569687,
+        -0.028567039827355596,
+        0.06489332677006672,
+        0.0160586311089769
+      ],
+      "aliasWork": [
+        {
+          "queries": 1506,
+          "searches": 14,
+          "cacheHits": 1492,
+          "expansions": 54
+        }
+      ],
+      "inputDigest": "364c75a657ea1ba5e6706484e470d9d9d4fcbc4c8dd1553868a2cbbbd90f2fbe",
+      "fixtureDigest": "1b7de13204f77f1893898a30800434e780c7d41592a0bc0b23854d99b5739685",
+      "runnerSha256": {
+        "dispatch": "ea33fe475ab23bd9af70058677a879dc22f3a4b20b35a5bfa6942ed0831a727a",
+        "runner": "887af9540a6f64977e8f9c8868962a923edc7ccb7adac4219d2213ee0c99e036"
+      },
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "3b4ce8b39c1bc6717772b33d228ce78aa51c98b6eae065dac731b230105df34e",
+        "mainSources": "fa1609700e222e1bd47a6a19cb4773ab80768b21ab944916b3f05c627162970d",
+        "testClasses": "94b4fa09e3d42e11925b28d1c80ee19cfe5a803f4c76d83fcc9cb264f280bb6b",
+        "testSources": "aebc4fa7421cd4fcf20c21c1b088ddeed5e0bf43c8e9d4b2ad5b90b75d07b38b"
+      },
+      "logSha256": "12927affacf54dd105de6a9d7e6e75a2c2d325ce011086d4a8630ce34633e607",
+      "resultSha256": "bd4da5f4f1023d8d1012549b4ebe6e79312053e2d87208136a4dd046267e590a"
+    }
+  ],
+  "parity": {
+    "checkpointDigestWithoutTimes": true,
+    "candidateSpaceDigestWithoutPid": true,
+    "selectedExecutionPlacementDigest": true,
+    "analysisFingerprints": true,
+    "costFingerprints": false,
+    "planHashes": false,
+    "inputDigest": true,
+    "fixtureDigest": true,
+    "runnerSha256": true,
+    "fedModelMaxAbsDifference": 0.0
+  },
+  "means": {
+    "baseline": {
+      "analysisSeconds": 48.617093159999996,
+      "plannerSeconds": 12.569217943,
+      "compilationSeconds": 62.6310845,
+      "executionSeconds": 3.822,
+      "modelSetupSeconds": 5.4354258605000005,
+      "runs": 2
+    },
+    "candidate": {
+      "analysisSeconds": 49.1533983485,
+      "plannerSeconds": 14.037857432500001,
+      "compilationSeconds": 64.5721565,
+      "executionSeconds": 3.8760000000000003,
+      "modelSetupSeconds": 6.047820474,
+      "runs": 2
+    }
+  },
+  "limitations": [
+    "Shared host; no exclusive CPU isolation.",
+    "A separate candidate W1 compile and unrelated host jobs overlapped some runs.",
+    "Diagnostic counter runs are excluded from latency averages."
+  ],
+  "smallExperimentsComplete": true,
+  "w1Status": "TIME_LIMIT_BEFORE_ALIAS",
+  "baselineHead": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+  "sourceSha256": "bdb85d9ae644bf4ff7e07d8dac0e25ef49f26337f42b9e9b99ae009ffb59649e",
+  "definitions": {
+    "queries": "sources alias fallback reference evaluations",
+    "searches": "root reachability computations, excluding completed-query cache hits",
+    "expansions": "adjacency lookup after owner, visited and alias-hop checks"
+  },
+  "interpretation": {
+    "workReductionPercent": 99.2084432717678,
+    "rootSearchReductionPercent": 99.07038512616202,
+    "smallLatencyImprovementDemonstrated": false,
+    "exactWholeCostSurfaceByteParityProven": false,
+    "costAndPlanHashNote": "Cost fingerprints differ even between identical-variant repeats. The plan hash includes the objective certificate, which includes costFingerprint. The exact differing cost-hash input is unresolved; semantic candidate/selected-state/checkpoint/numeric output comparisons are recorded separately.",
+    "w1EffectMeasured": false
+  },
+  "executionCommands": [
+    {
+      "run": "alias-logreg-baseline-r1",
+      "variant": "baseline",
+      "repeat": 1,
+      "returnCode": 0,
+      "wallSeconds": 113.54614107310772,
+      "artifact": "/grid/3/cofee-lm-sweep-mchoi-20260914/alias-reachability-20261007/alias-logreg-baseline-r1",
+      "command": [
+        "bash",
+        "scripts/fedplanner/run_LAN_docker.sh",
+        "--joint-boundary-e2e",
+        "--run-id",
+        "alias-logreg-baseline-r1",
+        "--output-root",
+        "/grid/3/cofee-lm-sweep-mchoi-20260914/alias-reachability-20261007",
+        "--stage-root",
+        "/home/mchoi/alias-reachability-validation-20261007/small/runtime",
+        "--case",
+        "ml_logreg",
+        "--timeout-seconds",
+        "600",
+        "--case-timeout-seconds",
+        "180",
+        "--classes",
+        "/home/mchoi/alias-reachability-validation-20261007/small/baseline/main-classes",
+        "--main-sources",
+        "/home/mchoi/alias-reachability-validation-20261007/small/baseline/main-sources",
+        "--test-classes",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/target/test-classes",
+        "--test-sources",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/src/test/java",
+        "--dependencies",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib"
+      ]
+    },
+    {
+      "run": "alias-logreg-candidate-r1",
+      "variant": "candidate",
+      "repeat": 1,
+      "returnCode": 0,
+      "wallSeconds": 111.87101355195045,
+      "artifact": "/grid/3/cofee-lm-sweep-mchoi-20260914/alias-reachability-20261007/alias-logreg-candidate-r1",
+      "command": [
+        "bash",
+        "scripts/fedplanner/run_LAN_docker.sh",
+        "--joint-boundary-e2e",
+        "--run-id",
+        "alias-logreg-candidate-r1",
+        "--output-root",
+        "/grid/3/cofee-lm-sweep-mchoi-20260914/alias-reachability-20261007",
+        "--stage-root",
+        "/home/mchoi/alias-reachability-validation-20261007/small/runtime",
+        "--case",
+        "ml_logreg",
+        "--timeout-seconds",
+        "600",
+        "--case-timeout-seconds",
+        "180",
+        "--classes",
+        "/home/mchoi/alias-reachability-validation-20261007/small/candidate/main-classes",
+        "--main-sources",
+        "/home/mchoi/alias-reachability-validation-20261007/small/candidate/main-sources",
+        "--test-classes",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/target/test-classes",
+        "--test-sources",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/src/test/java",
+        "--dependencies",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib"
+      ]
+    },
+    {
+      "run": "alias-logreg-candidate-r2",
+      "variant": "candidate",
+      "repeat": 2,
+      "returnCode": 0,
+      "wallSeconds": 117.27129723876715,
+      "artifact": "/grid/3/cofee-lm-sweep-mchoi-20260914/alias-reachability-20261007/alias-logreg-candidate-r2",
+      "command": [
+        "bash",
+        "scripts/fedplanner/run_LAN_docker.sh",
+        "--joint-boundary-e2e",
+        "--run-id",
+        "alias-logreg-candidate-r2",
+        "--output-root",
+        "/grid/3/cofee-lm-sweep-mchoi-20260914/alias-reachability-20261007",
+        "--stage-root",
+        "/home/mchoi/alias-reachability-validation-20261007/small/runtime",
+        "--case",
+        "ml_logreg",
+        "--timeout-seconds",
+        "600",
+        "--case-timeout-seconds",
+        "180",
+        "--classes",
+        "/home/mchoi/alias-reachability-validation-20261007/small/candidate/main-classes",
+        "--main-sources",
+        "/home/mchoi/alias-reachability-validation-20261007/small/candidate/main-sources",
+        "--test-classes",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/target/test-classes",
+        "--test-sources",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/src/test/java",
+        "--dependencies",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib"
+      ]
+    },
+    {
+      "run": "alias-logreg-baseline-r2",
+      "variant": "baseline",
+      "repeat": 2,
+      "returnCode": 0,
+      "wallSeconds": 114.05019277334213,
+      "artifact": "/grid/3/cofee-lm-sweep-mchoi-20260914/alias-reachability-20261007/alias-logreg-baseline-r2",
+      "command": [
+        "bash",
+        "scripts/fedplanner/run_LAN_docker.sh",
+        "--joint-boundary-e2e",
+        "--run-id",
+        "alias-logreg-baseline-r2",
+        "--output-root",
+        "/grid/3/cofee-lm-sweep-mchoi-20260914/alias-reachability-20261007",
+        "--stage-root",
+        "/home/mchoi/alias-reachability-validation-20261007/small/runtime",
+        "--case",
+        "ml_logreg",
+        "--timeout-seconds",
+        "600",
+        "--case-timeout-seconds",
+        "180",
+        "--classes",
+        "/home/mchoi/alias-reachability-validation-20261007/small/baseline/main-classes",
+        "--main-sources",
+        "/home/mchoi/alias-reachability-validation-20261007/small/baseline/main-sources",
+        "--test-classes",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/target/test-classes",
+        "--test-sources",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/src/test/java",
+        "--dependencies",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib"
+      ]
+    },
+    {
+      "run": "alias-logreg-diagnostic-baseline",
+      "variant": "baseline",
+      "repeat": 1,
+      "returnCode": 0,
+      "wallSeconds": 111.58701404184103,
+      "artifact": "/grid/3/cofee-lm-sweep-mchoi-20260914/alias-reachability-20261007/alias-logreg-diagnostic-baseline",
+      "command": [
+        "bash",
+        "scripts/fedplanner/run_LAN_docker.sh",
+        "--joint-boundary-e2e",
+        "--run-id",
+        "alias-logreg-diagnostic-baseline",
+        "--output-root",
+        "/grid/3/cofee-lm-sweep-mchoi-20260914/alias-reachability-20261007",
+        "--stage-root",
+        "/home/mchoi/alias-reachability-validation-20261007/diagnostic/runtime",
+        "--case",
+        "ml_logreg",
+        "--timeout-seconds",
+        "600",
+        "--case-timeout-seconds",
+        "180",
+        "--classes",
+        "/home/mchoi/alias-reachability-validation-20261007/diagnostic/baseline/main-classes",
+        "--main-sources",
+        "/home/mchoi/alias-reachability-validation-20261007/diagnostic/baseline/main-sources",
+        "--test-classes",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/target/test-classes",
+        "--test-sources",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/src/test/java",
+        "--dependencies",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib"
+      ]
+    },
+    {
+      "run": "alias-logreg-diagnostic-candidate",
+      "variant": "candidate",
+      "repeat": 1,
+      "returnCode": 0,
+      "wallSeconds": 116.41019442677498,
+      "artifact": "/grid/3/cofee-lm-sweep-mchoi-20260914/alias-reachability-20261007/alias-logreg-diagnostic-candidate",
+      "command": [
+        "bash",
+        "scripts/fedplanner/run_LAN_docker.sh",
+        "--joint-boundary-e2e",
+        "--run-id",
+        "alias-logreg-diagnostic-candidate",
+        "--output-root",
+        "/grid/3/cofee-lm-sweep-mchoi-20260914/alias-reachability-20261007",
+        "--stage-root",
+        "/home/mchoi/alias-reachability-validation-20261007/diagnostic/runtime",
+        "--case",
+        "ml_logreg",
+        "--timeout-seconds",
+        "600",
+        "--case-timeout-seconds",
+        "180",
+        "--classes",
+        "/home/mchoi/alias-reachability-validation-20261007/diagnostic/candidate/main-classes",
+        "--main-sources",
+        "/home/mchoi/alias-reachability-validation-20261007/diagnostic/candidate/main-sources",
+        "--test-classes",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/target/test-classes",
+        "--test-sources",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/src/test/java",
+        "--dependencies",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib"
+      ]
+    }
+  ],
+  "diagnosticSource": {
+    "baseline": {
+      "originalSourceSha256": "23c40ceded7743424971769141d3d69b80b50f2bf53b0b513f7b1cdc236b3490",
+      "instrumentedSourceSha256": "d1520333111d19479fa3f7b89069e5d34049f7f0b67a6fcc0de6c38df35e40d4",
+      "compileArgv": [
+        "/usr/lib/jvm/java-17-openjdk-amd64/bin/javac",
+        "--add-modules",
+        "jdk.incubator.vector",
+        "-cp",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/target/classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib/*",
+        "-d",
+        "/home/mchoi/alias-reachability-validation-20261007/diagnostic/baseline/main-classes",
+        "/home/mchoi/alias-reachability-validation-20261007/diagnostic/baseline/main-sources/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.java"
+      ]
+    },
+    "candidate": {
+      "originalSourceSha256": "bdb85d9ae644bf4ff7e07d8dac0e25ef49f26337f42b9e9b99ae009ffb59649e",
+      "instrumentedSourceSha256": "b633a32afe63df90f41b7f467c4412e991382afaaa3dd7b3f2d3a7d544a5b494",
+      "compileArgv": [
+        "/usr/lib/jvm/java-17-openjdk-amd64/bin/javac",
+        "--add-modules",
+        "jdk.incubator.vector",
+        "-cp",
+        "/home/mchoi/w1357-main-revalidation-r4-20261007/target/classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib/*",
+        "-d",
+        "/home/mchoi/alias-reachability-validation-20261007/diagnostic/candidate/main-classes",
+        "/home/mchoi/alias-reachability-validation-20261007/diagnostic/candidate/main-sources/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.java"
+      ]
+    }
+  },
+  "independentSmallEvidenceReview": {
+    "rawRunsRecomputed": 6,
+    "recordsMeansParityMatch": true,
+    "blockers": 0,
+    "scope": "Small workload only; W1 pending."
+  },
+  "status": "EXPERIMENTS_COMPLETE",
+  "w1Verdict": "w1-verdict.json",
+  "w1VerdictSha256": "249d2c6a5101f53e4cb067809928edf5465d3ef566d7a09a0c1e6719c43aceef",
+  "w1Summary": {
+    "deadlineSeconds": 1200,
+    "wallSeconds": 1204.8761935606599,
+    "analysisCompleted": false,
+    "plannerStarted": false,
+    "aliasPhaseReached": false,
+    "outputPresent": false,
+    "exceptionObserved": false,
+    "ownedExecutionCleanedUp": true,
+    "lastObservedWork": "CandidateEmissionFact.mergeCanonicalClauseRuns -> mergeRealizations -> bindDirectNativeCandidateRealizationsMeasured in common closure"
+  }
+}

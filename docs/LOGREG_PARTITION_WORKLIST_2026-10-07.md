@@ -55,3 +55,5 @@
 - GLM 환경 후보: `target/three-workload-evidence/handoff-glm-environment.patch`
 - StepLM/GLM harness 확장: `target/three-workload-evidence/handoff-steplm-glm-only.patch`
 - StepLM 진단과 미해결 후속: `SESSION_ISSUES_2026-10-07.md`의 LogReg 집중 범위 변경 기록.
+
+후속 측정과 최신 main 통합 결과는 [replay·proof·cost 보고서](LOGREG_REPLAY_COST_ABLATION_2026-10-07.md)를 참조한다. 새 profile에서 최대 hard factor는 이미 부분 증명으로 수 ms에 처리되므로 현재 주된 시간 병목으로 해석하지 않는다.

@@ -5118,6 +5118,7 @@ final class PlacementRelationClosure {
 				throw new IllegalStateException("Candidate rule fact/domain order differs before CFG replay");
 			candidateSlots.computeIfAbsent(key.parentOccurrence(), ignored -> new ArrayList<>()).add(i);
 		}
+		Set<CandidateRealizationReference> baselineReferences = candidateRealizationReferences(facts);
 		List<Node> replayedNodes = new ArrayList<>(nodes.size());
 		List<CandidateRuleKey> replayedKeys = new ArrayList<>();
 		List<CandidateRuleFact> replayedFacts = new ArrayList<>();
@@ -5165,18 +5166,20 @@ final class PlacementRelationClosure {
 			List<CandidateRuleFact> replacementFacts = replayedParent
 				? List.copyOf(replayedFacts.subList(replacementStart, replayedFacts.size())) : List.of();
 			if(replayedParent) {
-				List<CandidateRuleFact> liveFacts = new ArrayList<>(facts);
-				liveFacts.addAll(replacementFacts);
+				Set<CandidateRealizationReference> replacementReferences = candidateRealizationReferences(replacementFacts);
+				java.util.function.Predicate<CandidateRealizationReference> liveReference = reference ->
+					baselineReferences.contains(reference) || replacementReferences.contains(reference);
 				List<LogicalTransientInputFact> monotoneInputs = new ArrayList<>(replacementInputs.size());
 				for(LogicalTransientInputFact replacement : replacementInputs) {
 					java.util.TreeSet<TransientPlacementCompatibility> compatibility =
-						new java.util.TreeSet<>(replacement.compatibility());
+						new java.util.TreeSet<>(PlacementAnalysis.canonicalComparator());
+					compatibility.addAll(replacement.compatibility());
 					priorInputs.stream().filter(prior -> prior.sourceWrite() == replacement.sourceWrite()
 						&& prior.targetRead() == replacement.targetRead()
 						&& prior.logicalPosition() == replacement.logicalPosition())
 						.flatMap(prior -> prior.compatibility().stream())
-						.filter(edge -> candidateRealization(liveFacts, edge.sourceRealization()).isPresent()
-							&& candidateRealization(liveFacts, edge.readerRealization()).isPresent())
+						.filter(edge -> liveReference.test(edge.sourceRealization())
+							&& liveReference.test(edge.readerRealization()))
 						.forEach(compatibility::add);
 					monotoneInputs.add(new LogicalTransientInputFact(replacement.sourceWrite(),
 						replacement.targetRead(), replacement.logicalPosition(),
@@ -5813,6 +5816,17 @@ final class PlacementRelationClosure {
 			.distinct().sorted(PlacementAnalysis.<CandidateRealizationReference>canonicalComparator()).toList();
 	}
 
+	/** Exact membership only; matches candidateRealization without adding availability filters. */
+	private static Set<CandidateRealizationReference> candidateRealizationReferences(
+		List<CandidateRuleFact> candidateFacts) {
+		Set<CandidateRealizationReference> references = new HashSet<>();
+		for(CandidateRuleFact fact : candidateFacts)
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+				for(CandidateEmissionRealization realization : emission.realizations())
+					references.add(CandidateRealizationReference.of(fact.key(), realization));
+		return references;
+	}
+
 	private static Optional<CandidateEmissionRealization> candidateRealization(
 		List<CandidateRuleFact> candidateFacts, CandidateRealizationReference reference) {
 		return candidateFacts.stream().filter(fact -> fact.key().equals(reference.rule()))
@@ -6108,13 +6122,13 @@ final class PlacementRelationClosure {
 		}
 	}
 
-	/** Method-local physical authority: a complete owner commit also expires every lazy proof index. */
+	/** Method-local physical authority with complete owner revisions of its lazy proof indexes. */
 	private static final class PhysicalCandidateState {
 		private final List<Node> nodes;
 		private final List<List<CandidateRuleKey>> keysByOrdinal;
 		private final List<List<CandidateRuleFact>> factsByOrdinal;
 		private CommittedProofInventory proofInventory;
-		private Map<CandidateRealizationReference,SinglePartitionRealizationProof> singlePartitionProofs;
+		private SinglePartitionProofIndex singlePartitionProofs;
 
 		private PhysicalCandidateState(List<Node> nodes, List<List<CandidateRuleKey>> keysByOrdinal,
 			List<List<CandidateRuleFact>> factsByOrdinal) {
@@ -6132,13 +6146,14 @@ final class PlacementRelationClosure {
 			exactBlockNodes.put(hop, replacement);
 			keysByOrdinal.set(ordinal, List.copyOf(keys));
 			factsByOrdinal.set(ordinal, List.copyOf(facts));
-			singlePartitionProofs = null;
+			if(singlePartitionProofs != null)
+				singlePartitionProofs.replaceOwner(ordinal, facts);
 		}
 
 		private Map<CandidateRealizationReference,SinglePartitionRealizationProof> singlePartitionProofs() {
 			if(singlePartitionProofs == null)
-				singlePartitionProofs = exactSinglePartitionRealizationProofs(factsByOrdinal);
-			return singlePartitionProofs;
+				singlePartitionProofs = new SinglePartitionProofIndex(factsByOrdinal);
+			return singlePartitionProofs.proofs();
 		}
 	}
 
@@ -6649,74 +6664,162 @@ final class PlacementRelationClosure {
 	 */
 	private static Map<CandidateRealizationReference,SinglePartitionRealizationProof>
 		exactSinglePartitionRealizationProofs(List<List<CandidateRuleFact>> factsByOrdinal) {
-		Map<CandidateRealizationReference,CandidateEmissionRealization> realizations = new HashMap<>();
-		for(List<CandidateRuleFact> ownerFacts : factsByOrdinal)
-			for(CandidateRuleFact fact : ownerFacts) {
+		return new SinglePartitionProofIndex(factsByOrdinal).proofs();
+	}
+
+	/** One physical-closure authority. Owner replacement retracts the complete dependent cone. */
+	private static final class SinglePartitionProofIndex {
+		private static final SinglePartitionPossibilities BOTTOM =
+			new SinglePartitionPossibilities(false, false, false);
+		private final List<Map<CandidateRealizationReference,CandidateEmissionRealization>> owners = new ArrayList<>();
+		private final Map<CandidateRealizationReference,java.util.TreeMap<Integer,CandidateEmissionRealization>> slots =
+			new HashMap<>();
+		private final Map<CandidateRealizationReference,CandidateEmissionRealization> realizations = new HashMap<>();
+		private final Map<CandidateRealizationReference,Set<CandidateRealizationReference>> sources = new HashMap<>();
+		private final Map<CandidateRealizationReference,Set<CandidateRealizationReference>> dependents = new HashMap<>();
+		private final Map<CandidateRealizationReference,SinglePartitionPossibilities> states = new HashMap<>();
+		private final Map<CandidateRealizationReference,SinglePartitionRealizationProof> proofs = new HashMap<>();
+		private final Set<CandidateRealizationReference> dirty = new HashSet<>();
+
+		private SinglePartitionProofIndex(List<List<CandidateRuleFact>> factsByOrdinal) {
+			for(int ordinal = 0; ordinal < factsByOrdinal.size(); ordinal++) {
+				Map<CandidateRealizationReference,CandidateEmissionRealization> owner =
+					ownerRealizations(factsByOrdinal.get(ordinal));
+				owners.add(owner);
+				for(Map.Entry<CandidateRealizationReference,CandidateEmissionRealization> entry : owner.entrySet()) {
+					slots.computeIfAbsent(entry.getKey(), ignored -> new java.util.TreeMap<>())
+						.put(ordinal, entry.getValue());
+					realizations.put(entry.getKey(), entry.getValue());
+				}
+			}
+			realizations.forEach(this::addEdges);
+			dirty.addAll(realizations.keySet());
+		}
+
+		private void replaceOwner(int ordinal, List<CandidateRuleFact> facts) {
+			Map<CandidateRealizationReference,CandidateEmissionRealization> next = ownerRealizations(facts);
+			Set<CandidateRealizationReference> touched = new HashSet<>(owners.get(ordinal).keySet());
+			touched.addAll(next.keySet());
+			Map<CandidateRealizationReference,CandidateEmissionRealization> changed = new HashMap<>();
+			for(CandidateRealizationReference reference : touched) {
+				java.util.TreeMap<Integer,CandidateEmissionRealization> alternatives =
+					slots.computeIfAbsent(reference, ignored -> new java.util.TreeMap<>());
+				if(next.containsKey(reference))
+					alternatives.put(ordinal, next.get(reference));
+				else
+					alternatives.remove(ordinal);
+				CandidateEmissionRealization replacement = alternatives.isEmpty() ? null : alternatives.lastEntry().getValue();
+				if(alternatives.isEmpty())
+					slots.remove(reference);
+				if(!Objects.equals(realizations.get(reference), replacement))
+					changed.put(reference, replacement);
+			}
+			owners.set(ordinal, next);
+			invalidate(changed.keySet());
+			for(Map.Entry<CandidateRealizationReference,CandidateEmissionRealization> entry : changed.entrySet()) {
+				CandidateRealizationReference reference = entry.getKey();
+				for(CandidateRealizationReference source : sources.getOrDefault(reference, Set.of())) {
+					Set<CandidateRealizationReference> consumers = dependents.get(source);
+					consumers.remove(reference);
+					if(consumers.isEmpty())
+						dependents.remove(source);
+				}
+				sources.remove(reference);
+				if(entry.getValue() == null)
+					realizations.remove(reference);
+				else {
+					realizations.put(reference, entry.getValue());
+					addEdges(reference, entry.getValue());
+				}
+			}
+			invalidate(changed.keySet());
+		}
+
+		private void invalidate(Set<CandidateRealizationReference> roots) {
+			// A previously dirty reference may have acquired new dependents in a later
+			// batched commit. Each graph walk therefore needs its own visited set.
+			Set<CandidateRealizationReference> visited = new HashSet<>();
+			ArrayDeque<CandidateRealizationReference> pending = new ArrayDeque<>(roots);
+			while(!pending.isEmpty()) {
+				CandidateRealizationReference reference = pending.removeFirst();
+				if(!visited.add(reference))
+					continue;
+				dirty.add(reference);
+				pending.addAll(dependents.getOrDefault(reference, Set.of()));
+			}
+		}
+
+		private void addEdges(CandidateRealizationReference reference, CandidateEmissionRealization realization) {
+			Set<CandidateRealizationReference> inputs = new HashSet<>();
+			if(realization.key().layoutKind() == PlacementLayoutKind.VALUE_MAP)
+				for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+					if(realization.nativeWorkerPoolResidencyForOwnedClause(clause) != null)
+						continue;
+					for(CandidateRealizationInputBinding binding : clause.inputBindings())
+						if(binding.kind() != CandidateInputBindingKind.RELOCATION)
+							inputs.add(binding.source());
+				}
+			sources.put(reference, inputs);
+			// Missing sources retain edges so their later insertion reaches consumers.
+			for(CandidateRealizationReference source : inputs)
+				dependents.computeIfAbsent(source, ignored -> new HashSet<>()).add(reference);
+		}
+
+		private Map<CandidateRealizationReference,SinglePartitionRealizationProof> proofs() {
+			if(dirty.isEmpty())
+				return proofs;
+			ArrayDeque<CandidateRealizationReference> pending = new ArrayDeque<>();
+			Set<CandidateRealizationReference> queued = new HashSet<>();
+			// Reset the whole cone before evaluating any node. Keeping old true bits
+			// would leave a recursive component grounded after its last root vanished.
+			for(CandidateRealizationReference reference : dirty) {
+				if(realizations.containsKey(reference)) {
+					states.put(reference, BOTTOM);
+					pending.addLast(reference);
+					queued.add(reference);
+				}
+				else {
+					states.remove(reference);
+					proofs.remove(reference);
+				}
+			}
+			while(!pending.isEmpty()) {
+				CandidateRealizationReference reference = pending.removeFirst();
+				queued.remove(reference);
+				SinglePartitionPossibilities next = singlePartitionPossibilities(
+					realizations.get(reference), states, realizations.keySet());
+				if(next.equals(states.get(reference)))
+					continue;
+				states.put(reference, next);
+				for(CandidateRealizationReference dependent : dependents.getOrDefault(reference, Set.of()))
+					if(dirty.contains(dependent) && queued.add(dependent))
+						pending.addLast(dependent);
+			}
+			for(CandidateRealizationReference reference : dirty) {
+				SinglePartitionPossibilities state = states.get(reference);
+				if(state != null)
+					proofs.put(reference, state.nonSingle() ? SinglePartitionRealizationProof.NON_SINGLE
+						: state.unknown() ? SinglePartitionRealizationProof.UNKNOWN
+						: state.exact() ? SinglePartitionRealizationProof.EXACT
+						: SinglePartitionRealizationProof.UNAVAILABLE);
+			}
+			dirty.clear();
+			return proofs;
+		}
+
+		private static Map<CandidateRealizationReference,CandidateEmissionRealization> ownerRealizations(
+			List<CandidateRuleFact> facts) {
+			Map<CandidateRealizationReference,CandidateEmissionRealization> result = new HashMap<>();
+			for(CandidateRuleFact fact : facts) {
 				if(fact.status() != CandidateEvaluationStatus.AVAILABLE)
 					continue;
 				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
 					for(CandidateEmissionRealization realization : emission.realizations())
 						if(executableSourceRealization(fact.key(), realization))
-							realizations.put(CandidateRealizationReference.of(fact.key(), realization), realization);
+							result.put(CandidateRealizationReference.of(fact.key(), realization), realization);
 			}
-		Map<CandidateRealizationReference,SinglePartitionPossibilities> states = new HashMap<>();
-		realizations.keySet().forEach(reference -> states.put(reference,
-			new SinglePartitionPossibilities(false, false, false)));
-		List<Map.Entry<CandidateRealizationReference,CandidateEmissionRealization>> entries =
-			new ArrayList<>(realizations.entrySet());
-		Map<CandidateRealizationReference,Integer> ordinals = new HashMap<>();
-		List<List<Integer>> dependents = new ArrayList<>();
-		ArrayDeque<Integer> pending = new ArrayDeque<>();
-		boolean[] queued = new boolean[entries.size()];
-		for(int ordinal = 0; ordinal < entries.size(); ordinal++) {
-			ordinals.put(entries.get(ordinal).getKey(), ordinal);
-			dependents.add(new ArrayList<>());
-			pending.addLast(ordinal);
-			queued[ordinal] = true;
+			return result;
 		}
-		for(int ordinal = 0; ordinal < entries.size(); ordinal++) {
-			CandidateEmissionRealization realization = entries.get(ordinal).getValue();
-			if(realization.key().layoutKind() != PlacementLayoutKind.VALUE_MAP)
-				continue;
-			Set<Integer> sources = new HashSet<>();
-			for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
-				if(realization.nativeWorkerPoolResidencyForOwnedClause(clause) != null)
-					continue;
-				for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
-					if(binding.kind() == CandidateInputBindingKind.RELOCATION)
-						continue;
-					Integer source = ordinals.get(binding.source());
-					if(source != null)
-						sources.add(source);
-				}
-			}
-			for(int source : sources)
-				dependents.get(source).add(ordinal);
-		}
-		// The inventory is immutable here. Each of the three possibility bits grows
-		// monotonically, so only a changed source can enable another transfer step.
-		while(!pending.isEmpty()) {
-			int ordinal = pending.removeFirst();
-			queued[ordinal] = false;
-			Map.Entry<CandidateRealizationReference,CandidateEmissionRealization> entry = entries.get(ordinal);
-			SinglePartitionPossibilities next = singlePartitionPossibilities(
-				entry.getValue(), states, realizations.keySet());
-			if(next.equals(states.get(entry.getKey())))
-				continue;
-			states.put(entry.getKey(), next);
-			for(int dependent : dependents.get(ordinal))
-				if(!queued[dependent]) {
-					pending.addLast(dependent);
-					queued[dependent] = true;
-				}
-		}
-		Map<CandidateRealizationReference,SinglePartitionRealizationProof> result = new HashMap<>();
-		states.forEach((reference, state) -> result.put(reference,
-			state.nonSingle() ? SinglePartitionRealizationProof.NON_SINGLE
-				: state.unknown() ? SinglePartitionRealizationProof.UNKNOWN
-				: state.exact() ? SinglePartitionRealizationProof.EXACT
-				: SinglePartitionRealizationProof.UNAVAILABLE));
-		return result;
 	}
 
 	private static SinglePartitionPossibilities singlePartitionPossibilities(

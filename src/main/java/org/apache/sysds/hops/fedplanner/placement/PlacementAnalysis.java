@@ -870,9 +870,9 @@ public final class PlacementAnalysis {
 		else if(value instanceof CandidateEmissionRealization realization)
 			computed = canonicalRealizationOrderingText(realization, context);
 		else if(value instanceof TransientCompatibilityProof proof)
-			computed = CanonicalText.literal(proof.normalizedSignature());
+			computed = canonicalTransientProofOrderingText(proof, context);
 		else if(value instanceof TransientPlacementCompatibility compatibility)
-			computed = CanonicalText.literal(compatibility.normalizedSignature());
+			computed = canonicalTransientCompatibilityOrderingText(compatibility, context);
 		else
 			throw new IllegalArgumentException("Unsupported canonical comparable type "
 				+ value.getClass().getName());
@@ -898,6 +898,34 @@ public final class PlacementAnalysis {
 	private static int canonicalOrderingLength(Object value) {
 		return canonicalOrderingKey(Objects.requireNonNull(value, "canonical value"),
 			new CanonicalTextContext()).length;
+	}
+
+	private static CanonicalText canonicalTransientProofOrderingText(
+		TransientCompatibilityProof proof, CanonicalTextContext context) {
+		CanonicalTextBuilder text = new CanonicalTextBuilder()
+			.append(proof.sourceAnchor() == null ? "-" : proof.sourceAnchor().normalizedSignature())
+			.append("|reader=")
+			.append(proof.readerAnchor() == null ? "-" : proof.readerAnchor().normalizedSignature())
+			.append("|nativePool=")
+			.append(proof.nativeWorkerPoolWitness() == null ? "-" : proof.nativeWorkerPoolWitness().normalizedSignature());
+		if(proof.nativeWorkerPoolWitness() != null && !proof.nativeWorkerPoolLayoutExact())
+			text.append("|nativePoolLayout=dynamic");
+		text.append("|proofs=[");
+		for(int index = 0; index < proof.dependencies().size(); index++) {
+			if(index > 0) text.append(", ");
+			text.append(canonicalOrderingKey(proof.dependencies().get(index), context));
+		}
+		return text.append("]").build();
+	}
+
+	private static CanonicalText canonicalTransientCompatibilityOrderingText(
+		TransientPlacementCompatibility compatibility, CanonicalTextContext context) {
+		return new CanonicalTextBuilder()
+			.append(canonicalOrderingKey(compatibility.sourceRealization(), context)).append("|reader=")
+			.append(canonicalOrderingKey(compatibility.readerRealization(), context)).append("|sourceInput=")
+			.append(compatibility.sourceInput().normalizedSignature()).append("|readerInput=")
+			.append(compatibility.readerInput().normalizedSignature()).append("|proof=")
+			.append(canonicalOrderingKey(compatibility.proof(), context)).build();
 	}
 
 	private static CanonicalText canonicalClauseOrderingText(

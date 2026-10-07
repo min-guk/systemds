@@ -126,6 +126,31 @@
 - JFR evidence 검사에서 nonempty 손상 파일이 통과할 수 있다는 리뷰를 반영해 bounded jfr summary parser 성공도 필수로 했다. 실제 기록 성공과 잘린11바이트 파일 거부 smoke를 확인했다. 비프로파일 학습 경로에는 parser 호출을 추가하지 않는다.
 - 상세: [LogReg 보고서](LOGREG_PARTITION_WORKLIST_2026-10-07.md), [검증 JSON](experiments/logreg-partition-worklist-20261007/validation.json). StepLM/GLM 추가 변경은 인계 패치로 보존했으며 현재 production에 포함하지 않았다.
 
+## LogReg 후속 — 전체 컴파일 수십 초 해소를 위한 구조 수정 (진행 중)
+
+- **새 증상/목표**: 사용자는 다른 workload의 planning이1초대인데 LogReg가 여전히40초인 점을 지적했다. 기존 채택은 부분 개선이며 충분한 해결이 아니다. 이전동일run의 lmCG/L2SVM checkpoint1.005/1.847초와 비교하면 최신LogReg checkpoint7.716초도 느리다. 전체컴파일38.768초 중commonanalysis28.999초(74.8%)가 우선병목이다. 타이밍구간을혼동하지않는다.
+- **근거/가설**: 기존worklist는 한fixedpoint내fullsweep만줄였다. PhysicalCandidateState가 owner하나commit할때마다 singlePartitionProofs를폐기해 전체realization/역의존graph를새로만든다. WorkerPoolAnchorResolver는이미owner-delta색인을쓰므로이를새개선으로주장하지않으며, 전체mapcopy·querymemo초기화비용은별도로측정한다.
+- **수정전계획**: 먼저actualLogReg진단overlay에서기존SearchSpaceMetrics를켜analysisphase/작업량을기록한다(계측시간을성능근거로사용하지않음). single-partition은owner별동등reference마지막slot의미를보존하는revision-localindex를만들고, old/new dependency그래프의변경cone을bottom으로되돌려재계산한다. missingref의reverseedge도유지해나중source추가를전파한다. 물리closureinstance밖cache는없다.
+- **검증/위험**: source삭제로cycleground가사라지는경우, reference동일support변경, multipart/unknown뒤늦은추가, missingref추가·제거, 다중commit, owner간동등reference충돌을freshfullrecompute와비교한다. 기존250개독립synchronousoracle도유지한다. 모든legal선택·cost·학습16계수·runtimeaudit를보존하고계측없는Docker반복으로채택한다. 삭제시이전truebit를그대로재사용하는cache는금지한다.
+
+- **CFG 추가 수정 전 근거/계획**: 새 실제 LogReg 진단에서 CFG_REPLAY exclusive 10.253초, 누적 할당 18.406GB를 확인했다. JFR CFG CPU 178샘플 중 candidateRealization 전체 검색 69개, compatibility 문자열 생성 44개다. replay 내부 자연 TreeSet을 기존 canonicalComparator로 바꿔 동일 정렬 키를 재사용하고, 기존 facts와 해당 reader replacementFacts의 정확한 reference 합집합 membership으로 edge 생존을 판정한다. AVAILABLE/executable 필터를 추가하지 않으며 같은 owner의 기존 후보도 유지한다. 두 개선은 각각 동결하여 실제 학습 ablation으로 평가한다.
+- **선행 회귀 공백**: 기존 PhysicalGenerationEnvelopeTest 7건 중 4건은 baseline과 새 proof index 양쪽에서 동일 실패했다(3건 origins=null, 1건 null reflection receiver). 기존401건의 구성원이 아니며 이번 변경의 회귀 성공으로 집계하지 않는다. 기존 proof/refinement와 신규 incremental 회귀17건은 통과했다.
+- **진단 실행 환경**: metrics-01은 stage 도중 exit120, 원인은 미확정이다. metrics-02는 /grid stage가 Docker daemon에서 보이지 않아 container-run.sh missing으로 실행 전 실패했다. home stage를 사용한 metrics-03은 CP/FED 전체 학습 PASS. 실패 두 건을 성능 자료로 사용하지 않는다.
+
+- **Ablation 중간 판단**: sort-only 및 CFG index 단독 실행은 각각39.49/38.54초로 기준39.79초 대비 아직 효과가 작다. 기존 canonicalComparator가 transient compatibility/proof에 대해서는 긴 normalizedSignature 전체를 literal로 감싸므로, 다른 지원 타입처럼 source/reader/proof 하위 구조를 공유하는 segmented ordering으로 확장해 별도 평가한다. 기존 UTF-16 정렬과 구분자/길이/중복 제거 의미를 완전히 유지하며 서로 다른 anchor/native exactness/Unicode 입력을 legacy 문자열 oracle와 대조한다. 기존 결합 후보와 구분해 측정한다.
+
+- **비용 계산 추가 수정**: JFR에서 최종 planner 9.183초 중 비용 표면 2.931초, optimizer 3.996초를 확인했다. 동일 Alternative의 worker count를 새 visiting set으로 반복 계산하는 경로를 개선한다. PhysicalWorkerCounts 호출 범위에 완료된 root exact 결과만 identity memo로 저장하고, recursive 내부 결과와 caller별 fallback은 저장하지 않는다. 기존 durable anchor early return도 유지한다. 순환 A↔B, fallback 3/7, 공유 support, 동일/동등-but-distinct root와 호출 간 격리를 회귀로 검증했다. 실제 비용/탐색 parity와 성능 채택은 별도 최종 실행에서 확인한다.
+- **큰 factor 해석 정정**: metrics-03의 최대 1,470,976 logical-cell factor는 partial proof 9회·leaf 0회·약3.95ms로 전체 zero를 인증했다. 현재 wall-time 병목으로 지목하지 않는다. shared preparation 0.382초, seed boundary 40회가 약2.370초다. assignments 총수와 실제 시간 병목을 구분한다.
+
+
+### LogReg 후속 최종 검증 — 개선 채택, 1초 목표 미달
+
+- **통합**: origin/main의 StepLM closure 수정 fbfd4d790f를 보존해 af761a6fc1로 통합했다. activeLoopSeeds와 mandatory all-definition 검증이 유지됨을 독립 리뷰했다. 다른 담당자의 StepLM/GLM worktree는 수정하지 않았다.
+- **결과**: 같은 최신 기준에서 baseline→no-cost→final→final→baseline 실제 multiLogReg5회 PASS. 평균 analysis49.175→38.120초(22.48% 감소), compilation61.986→51.153초(17.48% 감소). 전체 planner11.418→11.621초로 개선을 확인하지 못했다. 이전40초대와 코드/호스트 조건이 달라 직접 비교하지 않는다. 1초 목표는 미달이다.
+- **메모리 근거**: 이전73d1eb 기준 별도 계측에서 전체 analysis 누적 할당27.794→13.650GB, CFG18.406→5.111GB다. 후보 계측은 Maven과 겹쳐 시간을 채택 근거로 사용하지 않았다. peak heap 감소로 해석하지 않는다.
+- **정확성**: 최신 Java63클래스477건 중472PASS/기존ignore5/실패0, package 및 Python30PASS. 실제16계수·shape8×2·audit/conversion gate와 시간 제외1,224개 DP checkpoints가 모든 군에서 같다. source1,651개/class-resource4,363개가 build와 같고 build 중 source 변경0이다.
+- **채택/위험**: 세production 파일에서 owner revision의 proof 철회, 정확한 reference membership, segmented canonical text, root exact worker-count 재사용을 반영했다. 합법 후보나 비용 공식을 줄이지 않는다. 삭제/순환/같은reference support변경, UTF-16 구분자/동률, fallback·context 혼합 위험은 differential 회귀로 확인했다. 공통분석 재구성과 seed 조건부 compile은 여전히 크며 전체 성능 문제 해결로 주장하지 않는다.
+- **상세**: [후속 보고서](LOGREG_REPLAY_COST_ABLATION_2026-10-07.md), [검증 JSON](experiments/logreg-replay-cost-20261007/validation.json). 기존 PhysicalGenerationEnvelopeTest4개 baseline fixture 실패는 별도 미해결로 남는다.
 ## Derived supply sharing 잔여 항목 — 구현·실험 완료, 확대 Exact 한계는 별도 잔여
 
 - **요청/환경**: 사용자가 이전 결과 보고서의 남은 항목 모두 진행을 요청했다. 전용 worktree `/home/mchoi/w1357-derived-supply-sharing-20261006`, 기준 `ada24ffd4be4d17240f32f5bd1c2b5a98e1a0c8a`에서 기존 변경을 보존했다. 결과는 [완료 보고서](DERIVED_SUPPLY_REMAINING_WORK_2026-10-07_KO.md)와 [remaining-validation.json](experiments/automatic-supply-sharing-20261007/remaining-validation.json)에 있다. 미커밋 상태다.
@@ -173,3 +198,75 @@
 - **검증 fixture 결정**: 최종 updated는 `S=B+i`로 바깥 iteration마다 새 값을 만들고 안쪽 loop에서 반복 사용한다. 단일 origin의 creation profile3과 consumer profile9를 production 코드가 추적할 수 있어, 같은 version의 공유와 서로 다른 version의 분리를 자동 선택부터 검증한다. 후보·privacy·비용을 강제하지 않는다. 직접 갱신 PHI의 여러 origin을 정밀하게 묶는 lifetime 증명은 이 결과의 범위 밖이다.
 - **기타 실패 보존**: 중간 elementwise fixture에서 보호된 Nary plus 및 nested divide의 privacy-safe placement 부재가 발생했다. Oracle 완화 없이 지원되는 matmul fixture로 검증했으며 실패 source/log는 보존했다.
 - **후속/회귀 위험**: r5 두 consumer의 대체 assignment를 완전한 제약 검사와 contribution별 비용 차이로 조사한다. 이번 중첩 loop의3회 생성을 단일 loop SINGLE_USE 자동 선택 증거로 혼동하지 않는다. 72 MiB보다 큰 working set 및 활성 spill cache의 비용 측정도 별도 범위다.
+
+
+### LogReg 게시 전 동시 main 업데이트 — 재통합 검증 완료
+
+- 푸시 직전에 origin/main이 shared-supply/loop-cost 수정8ae75aff00으로 전진해 non-fast-forward 거절이 발생했다. e605a032f8로 통합했고 세션 문서의 append 충돌은 양쪽 내용을 보존했다. production 비용 파일은 자동 병합됐으며 origin8ae와의 차이는 root memo뿐임을 재검토했다.
+- upstream의 materialization lifetime/activation 변경은 worker-count의 순수 root 계산과 독립적이다. 같은 analysis 안의 memo 범위, visiting 의존 재귀, fallback, durable early return을 보존했다. 신규 upstream 회귀까지 포함한67개 Java 클래스493건 중488PASS/기존ignore5/실패0 및 package, Python52건 PASS. build 중 source 변경0.
+- fbfd4d의 반복 측정은 해당 revision 결과로 그대로 보존한다. 게시본은8ae75aff00 기준 baseline/candidate 실제LogReg 한 번씩 추가해 양쪽 PASS, CP/FED16개 계수 최대 오차2.22e-16, audit/conversion 위반0을 확인했다. analysis fingerprint와 시간 제외 DP checkpoint1,224개, upper/lower/gap이 같다. 단일 pair를 반복 성능 추정으로 바꾸지 않는다.
+- 추가 pair의 공통 분석46.414→39.677초, 전체 planner14.449→11.701초, 컴파일62.255→52.850초다. 이전 반복 측정에서 전체 planner 개선은 확인하지 못했으며 1초 목표도 미달이다. 합법 후보·정책·비용 공식 변경 없이 반복 계산을 재사용한다는 채택 근거를 유지한다.
+- main source1,652개/class-resource4,374개가 Maven 산출물과 같고 전체 Java3,584개가 build freeze와 일치한다. 기준과 후보의 production 차이는 PlacementRelationClosure, PlacementAnalysis, ExactPhysicalCostModel 세 파일뿐이다. [상세 결과](LOGREG_REPLAY_COST_ABLATION_2026-10-07.md), [통합 검증 JSON/명령](experiments/logreg-replay-cost-20261007/publication-validation.json).
+- 잔여 이슈는 common closure의 replay 재구성/증명 문맥 재사용과 seed boundary 반복 compile이다. invalidation 누락·정렬 변화·문맥 의존 memo가 잠재 회귀 위험이며 새 proof/CFG/cost 회귀와 실제 학습의 checkpoint·audit 동치 비교로 감지한다. runtime fallback과 후보 cap은 추가하지 않았다.
+
+## StepLM·ALS overflow 및 큰 LogReg W1 첫 재검증 — 완료, 새 main 후속 검증 진행 중
+
+- **요청/기준**: 사용자가 이전 잔여 항목 1·3의 최신 main 동일 조건 검증을 요청했다. 새로 fetch한 `origin/main`은 `93706bbaa9`이며 별도 worktree `/home/mchoi/w1357-main-revalidation-20261007`에 고정한다. 기존 worktree·실행·artifact는 수정하지 않는다.
+- **범위/계획**: StepLM CFG closure의 정확한 기존 메서드, ALS/StepLM의 canonical cost-factor overflow 메서드, PRIVATE_AGGREGATE X/Y의 n=50,000·d=2,100·W1 LogReg compile/lowering을 확인한다. 같은 커밋·입력·소스에서 이미 실행한 결과는 provenance를 검증해 재사용한다. 해당 조건의 완료 확인을 192×8 소형 학습 성공으로 대체하지 않는다.
+- **검증/한계**: 새 main/test package와 source SHA를 고정한다. 비용 테스트는 각각 별도 JVM으로 실행하고, 실제 workload는 기존 `run_LAN_docker.sh`와 image/config를 재사용한다. 시간 상한에 도달하면 소유한 실행만 종료하고 현재 단계·stack·결과를 남긴다. 이번 단계의 목적은 실패/성공/시간 상한의 정확한 재분류이며 테스트 제외·기대값 완화·runtime fallback은 추가하지 않는다. 원본 명령·로그는 `/home/mchoi/main-revalidation-20261007/`에 보존한다.
+- **소형 StepLM 재현 재사용**: 바로 위 최신 Heuristic 통합의 같은 메서드가 229.971초 후 CFG transient candidate closure 비수렴으로 실패했다. 기록된 source manifest·log·thread dump·runner·JAR SHA를 확인하고 manifest 4,119개 파일을 이 worktree와 전수 대조해 모두 일치했다. 같은 source의 새 재현을 중복 실행하지 않는다. 로그의 281/423은 HOP ID가 아닌 compiled occurrence 인덱스이고 fact 수 626↔632가 반복된다. 정확한 변수명/교대 후보 내용은 기존 로그만으로 확정할 수 없다.
+- **큰 ALS/StepLM 새 재현**: 새 Maven package 성공(59.99초, Java/builtin/POM 3,771파일 SHA 불변) 후 기존 두 메서드를 별도 Java 17·8GiB JVM에서 기대값 변경 없이 실행했다. ALS `singleWorkerAlsPricesOneReusableCpRuntimeWeightMaterialization`은 13.114초, StepLM `costBasedSelectorsDoNotCollectTheFullFeatureMatrix`는 20.556초 후 각각 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패했다(JUnit 시간; JVM 전체 wall 15.00/22.00초). 공통 stack은 `physicalCostSurface` → `freezeOrdinaryFactorsAfterPreflight` → `validateInputStructure` → `checkedCells`이며 optimizer 선택 이전이다. ALS의 단일 assignment cost 검증에도 도달하지 않는다. StepLM은 첫 `compile_cost_based`에서 실패하므로 다음 `compile_exact` 성공 여부는 이 실행으로 확인하지 않았다.
+- **overflow의 구체적 범위**: 외부 source/class 복사본에 scope 크기 출력만 추가한 진단에서도 동일한 실패를 확인했다. 문제는 보조 cost factor가 아니라 이미 observation 변수로 표현한 joint **hard** truth factor다. ALS의 `alsCG.dml:135`는 667,285,920,000셀, StepLM의 `lmCG.dml:135`는 8,380,255,403,520셀, `lmCG.dml:129`는 16,942,865,164,620,595,200셀의 raw product를 갖는다. preflight가 support reduction 전에 Java 배열 크기를 요구해 거부한다. 이 수치는 실제 할당량이 아니며, 이미 해결한 repair 중 canonical fallback overflow 또는 LogReg의 한 alias 축 제거와 구분한다. 단순 guard 삭제만으로 모든 후속 factor가 처리된다는 결론은 내리지 않는다.
+
+- **큰 LogReg W1 첫 결과**: `93706bbaa9`의 n=50,000·d=2,100·W1·PRIVATE_AGGREGATE X/Y 동일 compile/lowering은 1,200초 제한 안에 완료되지 않았다. 공통 분석은 808.046초에 완료했고 이후 joint factor 모델 구성에서 `Grounding.supportOwners`→`aliasesOrigin`을 실행 중이었다(912초/1,182초 snapshot). 예외/OOM/privacy 실패 또는 최종 플랜 출력은 없었다. 1,203.584초에 소유한 container만 종료·제거했고 raw 결과·SHA·입력 parity는 `logreg-w1/verdict.json`에 있다. 시간 상한은 불법/불가능 판정이 아니다.
+- **실행 중 main 변경**: 원격이 `73d1eb024f`로 전진했다. 새 production 변경은 `exactSinglePartitionRealizationProofs`의 synchronous sweep을 dependent worklist로 바꾸므로 공통 분석 시간에 영향을 줄 수 있다. 이 첫 실행을 새 main의 증거로 전용하지 않고 `/home/mchoi/w1357-main-revalidation-r2-20261007`에서 package 후 동일 메서드·W1을 다시 검증한다. 첫 결과는 그대로 보존한다.
+
+## 73d1eb024f 잔여 항목 재검증 — 완료, 이후 StepLM 수정은 별도 검증
+
+- **기준/검증**: `73d1eb024f6f70a7d869f363d895d72313bcbff6`, 별도 worktree에서 Maven package 성공(63.562초), tracked main/test/builtin/POM manifest 3,782개 SHA 불변. 기존 ALS/대형 StepLM/소형 StepLM 메서드를 각각 별도 Java 17 JVM에서 실행한다. W1은 동일 fixture/image/cost/privacy/1,200초 제한이며 경로만 새 artifact root로 바꾼다. 정확한 명령·receipt는 [검증 JSON](experiments/main-revalidation-20261007/validation.json)에 기록한다.
+- **새 main ALS/대형 StepLM**: 기존 메서드는 모두 다시 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패했다. JUnit ALS 14.147초, StepLM 22.708초(전체 JVM 15.004/24.003초)이며 첫 실행과 같은 cost-surface preflight stack이다. 새 worklist 변경 후에도 이 두 실패는 남는다. 성능 A/B 결과로 해석하지 않는다.
+- **새 main 소형 StepLM**: 기존 메서드를 실제로 다시 실행해 JUnit 244.102초(전체 JVM 245.508초)에 같은 CFG closure 비수렴을 재현했다. 첫 오류 메시지의 전체 0~1,244 iteration trace를 이전 동일 메서드와 비교한 결과 완전히 같다. `626↔632` fact와 occurrence `[281,423]` 반복이 남아 있다. 최신 결과는 이전 재현 재사용과 구분해 저장한다.
+- **환경 실패 및 복구**: 최신 W1의 첫 시도는 약 5분 이후 host root filesystem 여유가 0이 되면서 runner의 `OSError: [Errno 28] No space left on device`로 중단됐다. planner 실패로 집계하지 않는다. 소유한 container만 종료·제거하고 무효 receipt를 별도로 보존했다. 완료된 Java 3건과 source/build는 불변이다. 첫 라운드의 재생성 가능한 target 7,509개 파일만 grid로 복사해 전수 SHA 일치를 확인한 뒤 원래 경로를 symlink로 보존했고 약 432MiB를 확보했다. 공유 /tmp·다른 worktree·Docker 자산은 삭제하지 않았다. 여유 758GiB의 grid artifact root에서 같은 최신 source/build·정규화 입력·Docker·privacy·비용 설정·1,200초 조건으로 W1만 재실행한다. 경로 변경/공유 호스트 때문에 이 재시도도 latency A/B로 해석하지 않는다.
+- **Docker 경로 제약/유효 재시도**: snap Docker는 grid bind mount를 읽지 못해 direct-grid 시도는 즉시 `ClassNotFound`로 끝났다. 이를 별도의 환경 무효 실행으로 기록했다. 시스템 snap 권한은 변경하지 않았다. 최종 재시도는 기존 `/home` 구조(`/home/mchoi/main-revalidation-r3-20261007/logreg-w1`)에서 시작하고 grid에 주기적으로 evidence만 복사한다. 시작 시 root 여유 3,947,737,088 bytes였다. 첫 라운드 archived target은 host symlink로 접근할 수 있으나 그 라운드를 Docker에서 다시 실행하려면 Docker가 읽을 수 있는 위치에 target을 복원해야 한다. 최신 target은 원래 위치에 보존돼 있다.
+- **73d1 W1 최종 결과**: 유효 재시도는 공통 분석 712.442초에 완료했으나 1,200초 제한 안에 compile/lowering을 끝내지 못했다. 900초와 1,181초 모두 `Grounding.supportOwners/aliasesOrigin`→`ExactPhysicalModel.addJointFactors`에서 joint 모델을 구성 중이며 solver/lowering에는 도달하지 않았다. 예외·OOM·overflow·privacy 실패는 없고 출력도 없다. watchdog 1,204.105초 후 소유 container 제거, root 여유 약 2.194GB를 확인했다. 서로 다른 source/공유 환경의 첫 라운드와 비교해 성능 개선을 주장하지 않는다.
+- **두 번째 main 변경**: 실행 중 `fbfd4d790f`가 게시됐다. 기존 loop seed를 한 pass 후 해제하던 문제를 수정했고 main 통합 후 소형 canonical **common closure** 회귀가 26.904초에 통과했다. 따라서 73d1의 소형 CFG 비수렴을 새 main에도 남은 것으로 보고하지 않는다. 전체 DP compile의 후단 overflow와 큰 W1은 구분해 새 코드로 확인하며, published fresh package/source 검증 근거는 가능한 한 재사용한다.
+
+## fbfd4d790f 최신 main 재검증 — 진단 전환으로 종료
+
+- **기준/빌드 재사용**: 실행 중 main에 들어온 StepLM active seed 수정까지 포함한 `fbfd4d790feccc84997c3ac749eb8742b9e03a59`를 별도 worktree에 고정했다. 게시 worktree의 frozen source 3,578개가 Git blob과 일치하고 main class 3,790개가 게시 JAR와 일치함을 독립 검토했다. 재컴파일 기록과 package/JAR SHA도 일치한다. main/test/resource 7,178개를 새 worktree로 복사해 전후 SHA를 비교했고 dependency 301개는 기존 Docker-visible R2 파일과 byte 일치하므로 재사용했다. 새 Maven 빌드는 중복하지 않는다.
+- **새 기존 메서드 결과**: 기대값 변경 없이 기존 3개 full compile/cost 메서드를 다시 실행했다. ALS 24.390초, 대형 StepLM 37.924초, 소형 StepLM 55.313초(JUnit)에 모두 cost-surface preflight의 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패했다. 소형은 이전 CFG 비수렴을 통과해 후단 오류로 이동했다. 따라서 **소형 CFG 비수렴은 해결됐지만 원래 전체 compile 테스트는 통과하지 않았다**. 기존 게시본의 26.904초 PASS는 common-closure 전용 회귀로 구분한다.
+- **큰 W1**: 사용자의 원인 진단 전환에 따라 694.811초에 소유 실행을 중단·정리했다. 상태는 `STOPPED_FOR_DIAGNOSIS`이며 timeout/planner failure로 집계하지 않는다. 마지막 685.22초 stack은 common analysis의 direct-native/CFG closure이고, 이번 실행은 후단 alias 탐색까지 도달하지 않았다. artifact는 `/home/mchoi/main-revalidation-r4-20261007/logreg-w1/verdict.json`(SHA256 `7d0ffaf87b84d1775cb93f5f717b00928bd2b9b748c4f172a8607259b879b2a8`)이다. 정확히 소유한 container와 runner/JVM 종료를 확인했다. 앞선 93706/73d1의 timeout을 새 main 결과로 전용하지 않는다.
+
+## Joint alias 합류 경로 반복 탐색 — 수정 및 집중 회귀 완료
+
+- **문제/범위**: 사용자가 `Grounding.supportOwners → aliasesOrigin`의 반복 탐색에 집중하도록 지정했다. 앞선 W1 두 실행의 모델 구성 stack과 현재 코드에서 원인을 확인했다. `active.remove(reference)`가 재귀 경로에서 빠질 때 방문 이력을 지워 합류한 같은 하위 그래프를 경로마다 다시 펼친다. overflow, common CFG closure, 대형 W1 재실행은 이번 수정 범위에 포함하지 않는다.
+- **수정 전 계획**: 작은 diamond/cycle/계산 경계 회귀를 먼저 추가하고 baseline의 중복 방문을 계수한다. 이후 query별 단조 visited와 반복 DFS를 적용하고, 같은 Grounding 안에서 완료된 root `(reference, origin)` 결과만 재사용한다. origin의 identity와 reference의 equals 계약, `sources` 우선순위, alias hop 및 null-hop 의미를 유지한다. 새 의존성·후보 삭제·heuristic pruning은 추가하지 않는다.
+- **검증 계획**: diamond의 realization 조회 횟수, cycle의 exit 유무/질의 순서, 서로 다른 origin/realization cache 분리, 독립 transitive-closure oracle의 전수 쌍, 기존 joint alias projection/partial truth/selection legality 회귀를 검사한다. 변경 클래스만 별도 overlay에 컴파일해 이전 frozen build와 증거를 보존한다.
+- **수정 파일**: `JointValueMapRelations.java`, `JointAliasReachabilityTest.java`, 본 문서.
+- **적용 결과**: 재귀 DFS를 `ArrayDeque` 기반 DFS로 바꾸고 visited를 query 종료까지 유지한다. 각 reachable realization의 support는 query당 최대 한 번 펼치므로 그래프 탐색 작업량은 O(V+E)다(reference 비교/조회 비용 제외). Grounding별 origin identity map 안에서 reference equality로 완료된 boolean만 캐시하고, 같은 analysis의 projected Grounding에는 내부 map을 복사한다. 기존 DFS의 support 순서도 보존한다.
+- **검증 결과**: production 수정 전에 추가한 diamond 회귀가 baseline에서 `expected 22, actual 3071`로 실패했다. 같은 22개 reachable realization에서 수정 후 조회22회로 통과했다. source fallback의 positive/negative 동일 query 재호출은 추가 조회0회다. cycle+exit의 양쪽 질의 순서, 닫힌 cycle, 계산/alias 구분, origin identity/realization 분리, 5,000-edge chain, 40개 무작위 그래프의 모든 쌍 2,560개를 독립 transitive closure와 비교했다. 새8건과 기존 `JointValueMapRelationsTest`, `JointValueMapSelectionLegalityTest`, `JointAliasProjectionTest`, `JointPartialTruthTest` 총22건이 26.598초에 통과했다. 기존 projection 회귀는1,872개 원본 joint assignment, exact4시나리오 및 regional4블록도 검사한다.
+- **빌드/검토**: Java17 `javac --add-modules jdk.incubator.vector -Xlint:unchecked`로 변경 production/test를 별도 class overlay에 컴파일했다. 경고는 incubator module 알림뿐이고 `git diff --check` 통과, 지정 두 파일의 독립 read-only 검토에서 blocker0이다. 이전 frozen class/JAR는 변경하지 않았다. 원본 baseline/final 로그와 재현 명령·SHA는 `docs/experiments/alias-reachability-20261007/validation.json`에 기록했다.
+- **잠재 회귀 위험**: cycle 중간의 실패를 영구 캐시하면 실제 도달 가능한 경로를 제거한다. 완료된 root 결과만 저장하고 cycle+exit 회귀로 감지한다. 캐시는 Grounding 수명 안에서만 유지하며 selected assignment에 의존하지 않는다.
+- **잔여 이슈/한계**: 최신 W1 전체 완료 및 wall latency 개선은 미검증이다. 작은 그래프의 중복 탐색량 감소를 workload 전체 시간 단축으로 해석하지 않는다.
+
+
+### Alias 수정 실제 Docker 검증 — 완료, 대형 W1 효과 미확인
+
+- **요청/고정 비교군**: 사용자가 실험·검증을 요청했다. `fbfd4d790f`의 동일 source/class/dependency를 기준으로 `JointValueMapRelations`만 baseline/candidate로 교체한다. 같은 Java17 명령으로 해당 파일을 각각 다시 컴파일했고 변경 class family가 이 파일의11개뿐임을 전수 SHA로 확인했다. 다른 main 변경은 추적하지 않는다.
+- **작은 실제 학습**: 기존 `run_LAN_docker.sh --joint-boundary-e2e --case ml_logreg`을 그대로 사용해 baseline→candidate→candidate→baseline 순으로 실행한다. 각 군은 동일192×8 PRIVATE_AGGREGATE X, public local labels,3 ROW workers, numclasses3, maxi10/maxii5, pinned Docker4CPU8GiB 조건이다. 전체16계수의 CP/FED 비교, runtime audit, conversion 금지, DP checkpoint/비용 및 분석 fingerprint 동등성을 확인한다. phase별 시간은 공유 호스트의 원수치와 함께 보고한다.
+- **탐색량 진단**: 별도 복사본에만 query/search/expansion counter와 shutdown marker를 추가해 같은 작은 LogReg를 각 군 한 번 실행한다. production 및 순수 시간 비교군에는 counter를 넣지 않는다. query는 sources의 alias fallback root 질의, search는 cache miss로 실행한 root 탐색, expansion은 alias hop 분류를 통과한 realization adjacency 조회다. diagnostic 시간으로 성능을 주장하지 않는다.
+- **대형 W1**: 같은 n50,000·d2,100·PRIVATE_AGGREGATE X/Y·worker1·4CPU16GiB·10GiB heap·비용 설정으로 candidate compile/lowering을1회 실행한다. 이전 조건처럼1,200초 상한과 단계/stack evidence를 둔다. 새 실패를 확인하면 반복하지 않는다. 이전 main의 timeout 및 latest baseline의 수동 중단은 새 candidate와의 정확한 latency A/B로 사용하지 않는다.
+- **소유 artifact**: `/home/mchoi/alias-reachability-validation-20261007/{small,diagnostic,w1}`; 작은 학습 완료 artifact는 `/grid/3/cofee-lm-sweep-mchoi-20260914/alias-reachability-20261007`로 보존한다. 새 전체 Maven build/worktree 없이 class overlay를 사용하며 unrelated container/파일을 정리하지 않는다.
+
+- **소형 최종 결과**: 순수 A/B/B/A 4회 및 별도 계측 2회 모두 실제 학습, CP/FED 전체 16계수 비교, audit를 통과했다. PID를 제외한 candidate-space, 524개 lowering 실행·저장 선택, 시간 필드를 제외한 DP 체크포인트 1,224개가 6회 모두 같다. alias 질의 1,506개는 같고 실제 root 탐색은 1,506→14회, adjacency 조회는 6,822→54회(99.21% 감소)다. 평균 컴파일은 62.631→64.572초로 latency 개선은 미확인이다. 공유 호스트·각 군 2회의 한계가 있다. 원자료 6회를 독립 재집계해 records/means/parity 일치와 blocker 0을 확인했다.
+- **해시 한계**: 동일 variant 반복에서도 costFingerprint가 다르고, 이를 objective certificate에 포함하는 planHash도 달라진다. 수치 비용, DP 체크포인트, 실행 배치, 계수의 일치와 분리해 기록한다. 최초 hash 입력 차이는 분리하지 못했고 전체 cost surface의 byte 동일성을 주장하지 않는다. 별도 해시 수정은 이번 범위에서 하지 않는다.
+- **보고서**: `docs/ALIAS_REACHABILITY_VALIDATION_2026-10-07.md` 및 `docs/experiments/alias-reachability-20261007/workload-validation.json`. W1은 20분 제한에서 alias 이전 공통 분석이 끝나지 않아 `TIME_LIMIT_BEFORE_ALIAS`로 종료했다.
+
+- **W1 최종 결과**: 유효 후보 실행 1회는 1,200초 상한에 도달했고, 정리까지 1,204.876초가 걸렸다. analysis_end/planner_begin 없이 공통 분석의 `mergeCanonicalClauseRuns → mergeRealizations → bindDirectNativeCandidateRealizationsMeasured`에 머물렀다. 예외·OOM·overflow는 없었고 plan/cost/output도 없으므로 대형 W1의 alias 효과는 미검증이다. owned container/runner/JVM 종료를 확인했다. 상세 receipt는 `docs/experiments/alias-reachability-20261007/w1-verdict.json`에 보존했다.
+
+### Alias 게시 전 main 통합 — 검증 완료
+
+- **통합**: `origin/main`의 `2faff2a2a53ed1f608f2e1f6b2a13ca427d71f52`에 rebase했다. Alias production 파일은 upstream 변경이 없었고, 이 문서의 append 충돌은 양쪽 내용을 보존했다. 후보/비용/정책 변경 없이 반복 탐색을 줄이는 수정 범위를 유지했다.
+- **검증**: Maven `test-compile` 성공 후 새 main/test class로 alias reachability, value-map relations, selection legality, alias projection, partial truth 5개 클래스 22건이 12.056초에 통과했다. 명령과 로그 SHA는 `docs/experiments/alias-reachability-20261007/publication-validation.json`에 기록했다.
+- **근거 보존**: 기존 Docker workload 결과의 기준은 `fbfd4d790f`로 유지한다. 편의용 실험 snapshot과 Maven class의 hardlink를 분리하기 위해 실제 측정의 독립 `frozen-inputs`에서 8개 source/class tree를 복원하고 파일별 SHA를 확인했다. 실제 Docker 원자료는 변하지 않았다.
+- **잔여/위험**: 대형 W1 완료와 전체 latency 개선은 여전히 미확인이다. 최신 main에서 workload를 다시 측정했다고 주장하지 않는다. cycle 및 cache 문맥 위험은 위 집중 회귀로 확인했다.
