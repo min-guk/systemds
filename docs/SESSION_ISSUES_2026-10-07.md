@@ -185,3 +185,13 @@
 - **검증 fixture 결정**: 최종 updated는 `S=B+i`로 바깥 iteration마다 새 값을 만들고 안쪽 loop에서 반복 사용한다. 단일 origin의 creation profile3과 consumer profile9를 production 코드가 추적할 수 있어, 같은 version의 공유와 서로 다른 version의 분리를 자동 선택부터 검증한다. 후보·privacy·비용을 강제하지 않는다. 직접 갱신 PHI의 여러 origin을 정밀하게 묶는 lifetime 증명은 이 결과의 범위 밖이다.
 - **기타 실패 보존**: 중간 elementwise fixture에서 보호된 Nary plus 및 nested divide의 privacy-safe placement 부재가 발생했다. Oracle 완화 없이 지원되는 matmul fixture로 검증했으며 실패 source/log는 보존했다.
 - **후속/회귀 위험**: r5 두 consumer의 대체 assignment를 완전한 제약 검사와 contribution별 비용 차이로 조사한다. 이번 중첩 loop의3회 생성을 단일 loop SINGLE_USE 자동 선택 증거로 혼동하지 않는다. 72 MiB보다 큰 working set 및 활성 spill cache의 비용 측정도 별도 범위다.
+
+
+### LogReg 게시 전 동시 main 업데이트 — 재통합 검증 완료
+
+- 푸시 직전에 origin/main이 shared-supply/loop-cost 수정8ae75aff00으로 전진해 non-fast-forward 거절이 발생했다. e605a032f8로 통합했고 세션 문서의 append 충돌은 양쪽 내용을 보존했다. production 비용 파일은 자동 병합됐으며 origin8ae와의 차이는 root memo뿐임을 재검토했다.
+- upstream의 materialization lifetime/activation 변경은 worker-count의 순수 root 계산과 독립적이다. 같은 analysis 안의 memo 범위, visiting 의존 재귀, fallback, durable early return을 보존했다. 신규 upstream 회귀까지 포함한67개 Java 클래스493건 중488PASS/기존ignore5/실패0 및 package, Python52건 PASS. build 중 source 변경0.
+- fbfd4d의 반복 측정은 해당 revision 결과로 그대로 보존한다. 게시본은8ae75aff00 기준 baseline/candidate 실제LogReg 한 번씩 추가해 양쪽 PASS, CP/FED16개 계수 최대 오차2.22e-16, audit/conversion 위반0을 확인했다. analysis fingerprint와 시간 제외 DP checkpoint1,224개, upper/lower/gap이 같다. 단일 pair를 반복 성능 추정으로 바꾸지 않는다.
+- 추가 pair의 공통 분석46.414→39.677초, 전체 planner14.449→11.701초, 컴파일62.255→52.850초다. 이전 반복 측정에서 전체 planner 개선은 확인하지 못했으며 1초 목표도 미달이다. 합법 후보·정책·비용 공식 변경 없이 반복 계산을 재사용한다는 채택 근거를 유지한다.
+- main source1,652개/class-resource4,374개가 Maven 산출물과 같고 전체 Java3,584개가 build freeze와 일치한다. 기준과 후보의 production 차이는 PlacementRelationClosure, PlacementAnalysis, ExactPhysicalCostModel 세 파일뿐이다. [상세 결과](LOGREG_REPLAY_COST_ABLATION_2026-10-07.md), [통합 검증 JSON/명령](experiments/logreg-replay-cost-20261007/publication-validation.json).
+- 잔여 이슈는 common closure의 replay 재구성/증명 문맥 재사용과 seed boundary 반복 compile이다. invalidation 누락·정렬 변화·문맥 의존 memo가 잠재 회귀 위험이며 새 proof/CFG/cost 회귀와 실제 학습의 checkpoint·audit 동치 비교로 감지한다. runtime fallback과 후보 cap은 추가하지 않았다.

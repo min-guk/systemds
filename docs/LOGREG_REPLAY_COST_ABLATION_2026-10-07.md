@@ -63,7 +63,7 @@ CFG JFR CPU178샘플 중 candidateRealization 전체 검색69개, compatibility 
 원자료: `/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-deeper-20261007`.
 명령·동결 source/classes·회귀 로그: `target/logreg-deeper-evidence/`.
 
-## 최신 main 기준 최종 결과 — 검증 완료, 1초 목표 미달
+## fbfd4d 기준 반복 측정 — 검증 완료, 1초 목표 미달
 
 비교 기준은 `fbfd4d790f`, 후보 code commit은 `af761a6fc1`이다. Maven을 마친 뒤 JFR 없이 `baseline → no-cost → final → final → baseline` 순서로 실행했다. no-cost는 최종 후보에서 worker-count root memo만 제외한다. 공유 호스트 상태는 완전히 통제하지 못하므로 반복 원자료를 모두 공개한다.
 
@@ -83,9 +83,9 @@ CFG JFR CPU178샘플 중 candidateRealization 전체 검색69개, compatibility 
 
 **채택 근거와 한계:** 합법 공간을 유지하면서 공통 분석 시간과 누적 할당을 줄였다. owner-delta proof, CFG membership/정렬 재사용, segmented text, root exact memo를 반영한다. segmented text 단독 wall-time 증분은 작으므로 단독 속도 개선률은 주장하지 않는다. 최종 컴파일51.2초, planner11.6초는 여전히 길다. **1초대 달성은 미완료이며 성능 문제 전체가 해결됐다는 결론이 아니다.** 남은 우선 대상은 common closure의 실제 replay 재구성·증명 context 재사용, 그리고 seed boundary의 반복 조건부 compile이다. 현재 큰 hard factor의 logical-cell 수만으로 우선순위를 정하지 않는다.
 
-## 최종 정확성·provenance
+## fbfd4d 비교군의 정확성·provenance
 
-- 최신 main 통합 Java63개 클래스: 총477건 중472건 PASS, 기존 ignore5건, failure/error0. Maven package 성공 및 build 중 Java source 변경0. ignore는 기존 TransientPlacementAlternativesTest5건이며 새 회귀를 skip하지 않았다.
+- fbfd4d main 통합 Java63개 클래스: 총477건 중472건 PASS, 기존 ignore5건, failure/error0. Maven package 성공 및 build 중 Java source 변경0. ignore는 기존 TransientPlacementAlternativesTest5건이며 새 회귀를 skip하지 않았다.
 - 새 Docker harness가 포함된 Python30건 PASS. 세 동결 variant 모두 독립 fixed-point oracle9건 PASS. full checkstyle/RAT는 targeted package 관행대로 skip했고 전체 정적 분석 성공으로 주장하지 않는다. Java 재컴파일·타입 검사와 `git diff --check`는 통과했다.
 - 실제 builtin multiLogReg 최종5/5 PASS. CP/FED 전체16계수, shape8×2, 최대 절대 오차2.22e-16. audit mismatch/missing 및 conversion 위반0.
 - 다섯 실행의 analysis fingerprint와 시간 제외1,224개 DP checkpoint가 전부 같다. upper122.26631334184357/lower120.54269578813249/gap1.429881%, assignments17,336,646/merges4,566도 같다. 전역 최적해 증명은 아니다.
@@ -93,3 +93,21 @@ CFG JFR CPU178샘플 중 candidateRealization 전체 검색69개, compatibility 
 - 독립 리뷰에서 owner-delta 철회, exact membership, UTF-16 정렬, root-only cache, upstream activeLoopSeeds 통합의 blocker0. durable-anchor early-return parity 지적은 기존 branch를 유지해 해결했다.
 
 [최종 검증 JSON](experiments/logreg-replay-cost-20261007/validation.json), [정확한 argv](experiments/logreg-replay-cost-20261007/commands.json). 재현 시 새 run ID를 사용한다. 원자료의 frozen-inputs에 모든 소스·클래스·의존성과 실제 runner가 남아 있다.
+
+## 게시 전 추가 main 통합 — 8ae75a 기준 검증 완료
+
+첫 push 직전에 origin/main이 shared-supply/loop-cost 수정 `8ae75aff00`으로 전진했다. 해당 변경을 `e605a032f8`로 통합한 뒤, 새 기준과 최종 후보를 다시 빌드해 실제 LogReg를 한 번씩 실행했다. 위 fbfd4d 반복 측정은 그대로 보존하며 아래 결과는 **통합 확인용 단일 pair**다.
+
+| 실행 | 공통 분석(s) | 비용 계산(s) | 전체 planner(s) | 컴파일(s) | 학습(s) |
+|---|---:|---:|---:|---:|---:|
+|8ae75a baseline|46.414|4.249|14.449|62.255|4.436|
+|e605a0 final|39.677|2.638|11.701|52.850|3.755|
+
+공통 분석과 전체 컴파일 감소는 이번 pair에서도 관측됐다. 전체 planner의 안정적인 개선은 앞선 반복 측정으로 확인하지 못했으므로, 이 단일 pair만으로 확정하지 않는다. 최신 후보도 공통 분석39.7초·전체 planner11.7초이며 **1초대 목표는 미달**이다.
+
+- 신규 upstream 회귀를 포함한67개 Java 클래스: 총493건 중488PASS, 기존 ignore5건, failure/error0. Maven package 및 Python52건 PASS. build 중 Java source 변경0. 이전 절의 전체 정적 분석 및 기존 fixture 검증 한계는 유지한다.
+- baseline/final 모두 실제 학습 PASS. CP/FED16개 계수의 최대 절대 오차2.22e-16, audit/conversion 위반0. analysis fingerprint와 시간 제외 DP checkpoint1,224개가 완전히 같다. upper122.26631334184357/lower120.54269578813249/gap1.429881%, assignments16,306,786/merges4,566도 양쪽이 같다. assignments의 이전 절과의 차이는 main revision 경계이므로 이번 최적화 효과로 집계하지 않는다.
+- 입력·fixture·image·runner·dependencies가 같다. 최종 main source1,652개와 class/resource4,374개가 Maven 결과와 일치하며 main/test Java3,584개가 build freeze와 같다. 기준과 후보의 production source 차이는 위3개 파일뿐이다. 두 variant 모두 독립 fixed-point oracle9건 PASS.
+- 독립 통합 리뷰에서 upstream lifetime/activation 변경과 root-worker memo의 문맥 분리가 유지됨을 확인했다. 새 후보 제한이나 비용 공식 변경은 추가하지 않았다.
+
+[8ae75a 통합 검증 JSON 및 실행 argv](experiments/logreg-replay-cost-20261007/publication-validation.json). raw run ID는 `logreg-publication-baseline-r1`, `logreg-publication-final-r1`이다.
