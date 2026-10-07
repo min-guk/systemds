@@ -127,3 +127,7 @@ StepLM 계획 탐색 자체는97.003초가 걸렸다. 기존 `RESOURCE` 종료 �
 - `run_joint_boundary_e2e.py` 및 해당 Python 테스트: 기존20×5 데이터를 파일 입력 없이 만드는 opt-in case와 동일 모델·변수 선택 검증.
 
 원시 로그와 compile-only 진단 소스는 이 worktree의 `target/joint-compact-evidence/`에 있다. 기준 실패는 `baseline-steplm.log`, 최초 완료는 `compact-steplm-01.log`, 최종 scope/width는 `publication-final-shape.log`, 132건 회귀는 `publication-final-common/`과 `publication-final-core/`다. 공통 publication 진단은 `publication-probes/`에 있다. 실제 실행 원본은 `/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-joint-compact-validation-20261007/`에 보존한다. 대형 학습과 별도 CSV 출력 오류 수정은 범위에서 제외한다.
+
+## 게시 전 최신 main 통합 검증
+
+원본 수정은 `879383b42c`로 커밋했다. 이후 main의 alias·sparse storage·비용 추정 snapshot·fingerprint 수정과 공통 분석 최적화 `d26bb59610`을 통합했다. 최종 Java209건·Python35건·실제 Docker10건이 모두 통과했으며 StepLM 모델·선택 결과와 runtime audit도 통과했다. 기존 본문의 수치는 각 명시된 실험 revision의 기록으로 유지한다. 게시 통합의 최신 결과는 [publication-validation.json](experiments/steplm-joint-compact-20261007/publication-validation.json)에 별도로 보존한다. 사용자의 추가20초 요청은 이 통합본을 기준으로 후속 평가한다.

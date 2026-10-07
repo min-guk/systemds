@@ -106,6 +106,10 @@ public final class LogicalBoundaryRealizations {
 		ClosureResult close(List<CandidateRuleFact> facts, Set<CompiledHopKey> completeChangedOwners) {
 			if(facts.size() != factCount)
 				throw new IllegalStateException("Logical boundary session changed candidate fact count");
+			// After the initial closure, a complete empty delta also proves that
+			// value-map carriers and all boundary inputs are unchanged.
+			if(!firstClose && completeChangedOwners.isEmpty())
+				return new ClosureResult(facts, Set.of());
 			List<CandidateRuleFact> input = facts;
 			Set<CompiledHopKey> revisedCarriers = valueMapCarriers(nodes, facts);
 			if(!revisedCarriers.equals(valueMapCarriers)) {

@@ -92,10 +92,11 @@ final class NativePlacementContinuity {
 	private final StructuralContext structuralContext;
 	private final Map<CompiledHopKey,Node> nodesByKey;
 	private final Map<CompiledHopKey,Hop> originsByKey;
+	private final CandidateFactsSnapshot candidateFactsSnapshot;
 	private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByKey;
 	private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edgesByConsumer;
 	private final Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions;
-	private final PlacementDependencyComponents occurrenceComponents;
+	private final LazyOccurrenceComponents occurrenceComponents;
 	private final Set<CompiledHopKey> incompleteSources;
 	private final Map<CompiledHopKey,Privacy> privacyByKey;
 	private final Map<CandidateRealizationSupportClause,List<CandidateRealizationReference>>
@@ -230,13 +231,13 @@ final class NativePlacementContinuity {
 	private NativePlacementContinuity(StructuralContext structuralContext,
 		List<CandidateRuleFact> candidateFacts, SearchSpaceMetrics metrics,
 		int memoMaxEntries, long memoMaxProofs, long memoMaxEstimatedBytes) {
-		this(structuralContext, indexCandidateFacts(candidateFacts), metrics,
-			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes, true);
+		this(structuralContext, CandidateFactsSnapshot.index(candidateFacts), metrics,
+			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
 	}
 
 	private NativePlacementContinuity(StructuralContext structuralContext,
-		Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByKey, SearchSpaceMetrics metrics,
-		int memoMaxEntries, long memoMaxProofs, long memoMaxEstimatedBytes, boolean ownerIndexed) {
+		CandidateFactsSnapshot candidateFactsSnapshot, SearchSpaceMetrics metrics,
+		int memoMaxEntries, long memoMaxProofs, long memoMaxEstimatedBytes) {
 		this.structuralContext = Objects.requireNonNull(structuralContext, "structuralContext");
 		nodesByKey = structuralContext.nodesByKey;
 		originsByKey = structuralContext.originsByKey;
@@ -275,21 +276,46 @@ final class NativePlacementContinuity {
 		completedSupportMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
 		acyclicRootSupportMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
 		acyclicComponentMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
-		this.candidateFactsByKey = immutableIdentityLists(candidateFactsByKey, "candidateFactsByKey");
+		this.candidateFactsSnapshot = Objects.requireNonNull(candidateFactsSnapshot,
+			"candidateFactsSnapshot");
+		candidateFactsByKey = candidateFactsSnapshot.factsByKey;
 	}
 
-	private static Map<CompiledHopKey,List<CandidateRuleFact>> indexCandidateFacts(
-		List<CandidateRuleFact> candidateFacts) {
-		Map<CompiledHopKey,List<CandidateRuleFact>> indexed = new IdentityHashMap<>();
-		for(CandidateRuleFact fact : List.copyOf(Objects.requireNonNull(candidateFacts, "candidateFacts")))
-			indexed.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
-		return indexed;
+	/** Immutable identity-indexed candidate authority shared by cold query states. */
+	private static final class CandidateFactsSnapshot {
+		private final Map<CompiledHopKey,List<CandidateRuleFact>> factsByKey;
+
+		private CandidateFactsSnapshot(Map<CompiledHopKey,List<CandidateRuleFact>> factsByKey) {
+			this.factsByKey = Collections.unmodifiableMap(factsByKey);
+		}
+
+		private static CandidateFactsSnapshot index(List<CandidateRuleFact> candidateFacts) {
+			Map<CompiledHopKey,List<CandidateRuleFact>> indexed = new IdentityHashMap<>();
+			for(CandidateRuleFact fact : List.copyOf(
+				Objects.requireNonNull(candidateFacts, "candidateFacts"))) {
+				CompiledHopKey owner = Objects.requireNonNull(fact.key().parentOccurrence(),
+					"candidateFacts owner");
+				indexed.computeIfAbsent(owner, ignored -> new ArrayList<>()).add(fact);
+			}
+			indexed.replaceAll((ignored, facts) -> List.copyOf(facts));
+			return new CandidateFactsSnapshot(indexed);
+		}
+
+		private CandidateFactsSnapshot withOwner(CompiledHopKey owner,
+			List<CandidateRuleFact> replacementFacts) {
+			Map<CompiledHopKey,List<CandidateRuleFact>> revised = new IdentityHashMap<>(factsByKey);
+			if(replacementFacts.isEmpty())
+				revised.remove(owner);
+			else
+				revised.put(owner, replacementFacts);
+			return new CandidateFactsSnapshot(revised);
+		}
 	}
 
 	/** Returns an exact resolver with no query-local history. */
 	NativePlacementContinuity freshQueryState() {
-		return new NativePlacementContinuity(structuralContext, candidateFactsByKey, metrics,
-			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes, true);
+		return new NativePlacementContinuity(structuralContext, candidateFactsSnapshot, metrics,
+			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
 	}
 
 	NativePlacementContinuity nextOwnerRevision(CompiledHopKey expectedOwner,
@@ -301,13 +327,9 @@ final class NativePlacementContinuity {
 				throw new IllegalArgumentException("Candidate owner delta contains a foreign fact");
 		if(!nodesByKey.containsKey(expectedOwner))
 			throw new IllegalArgumentException("Candidate owner delta has a foreign owner identity");
-		Map<CompiledHopKey,List<CandidateRuleFact>> revised = new IdentityHashMap<>(candidateFactsByKey);
-		if(replacement.isEmpty())
-			revised.remove(expectedOwner);
-		else
-			revised.put(expectedOwner, replacement);
+		CandidateFactsSnapshot revised = candidateFactsSnapshot.withOwner(expectedOwner, replacement);
 		NativePlacementContinuity next = new NativePlacementContinuity(structuralContext, revised, metrics,
-			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes, true);
+			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
 		return next;
 	}
 
@@ -323,14 +345,10 @@ final class NativePlacementContinuity {
 		for(CandidateRuleFact fact : replacement)
 			if(fact.key().parentOccurrence() != owner)
 				throw new IllegalArgumentException("Node-authority delta contains a foreign fact");
-		Map<CompiledHopKey,List<CandidateRuleFact>> revisedFacts = new IdentityHashMap<>(candidateFactsByKey);
-		if(replacement.isEmpty())
-			revisedFacts.remove(owner);
-		else
-			revisedFacts.put(owner, replacement);
+		CandidateFactsSnapshot revisedFacts = candidateFactsSnapshot.withOwner(owner, replacement);
 		NativePlacementContinuity next = new NativePlacementContinuity(
 			structuralContext.withNodeAuthority(replacementNode), revisedFacts, metrics,
-			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes, true);
+			memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
 		return next;
 	}
 
@@ -422,7 +440,7 @@ final class NativePlacementContinuity {
 			// ordinary queries and public dynamic-layout results still need full facts.
 			boolean generatedAcyclicRoot = entry.getKey().generated
 				&& nodesByKey.containsKey(root)
-				&& !occurrenceComponents.componentOf(root).cyclic();
+				&& !occurrenceComponents.components().componentOf(root).cyclic();
 			boolean unchanged = support.occurrences.stream().noneMatch(occurrence ->
 				!(generatedAcyclicRoot && occurrence == root
 					? unchangedGeneratedRoots.computeIfAbsent(root, key -> unchangedGeneratedRootFacts(
@@ -577,7 +595,7 @@ final class NativePlacementContinuity {
 
 	/**
 	 * Immutable program structure shared by every fact revision. Construction is
-	 * the sole validation boundary for compiled edges and the sole SCC build.
+	 * the sole validation boundary for compiled edges and owns the exact lazy SCC input.
 	 */
 	private static final class StructuralContext {
 		private final Map<CompiledHopKey,Node> nodesByKey;
@@ -586,7 +604,7 @@ final class NativePlacementContinuity {
 		private final Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions;
 		private final Set<CompiledHopKey> incompleteSources;
 		private final Map<CompiledHopKey,Privacy> privacyByKey;
-		private final PlacementDependencyComponents occurrenceComponents;
+		private final LazyOccurrenceComponents occurrenceComponents;
 		private final ComponentReadSet componentReadSet;
 
 		private StructuralContext(StructuralContext source, Map<CompiledHopKey,Node> nodesByKey) {
@@ -665,8 +683,7 @@ final class NativePlacementContinuity {
 			occurrenceComponents = reusableComponents != null
 				&& componentReadSet.matches(reusableComponents.componentReadSet)
 				? reusableComponents.occurrenceComponents
-				: new PlacementDependencyComponents(componentReadSet.owners(),
-					componentReadSet.dependencies(), List.of());
+				: new LazyOccurrenceComponents(componentReadSet);
 		}
 
 		private boolean matches(Map<CompiledHopKey,Node> nodes,
@@ -752,6 +769,28 @@ final class NativePlacementContinuity {
 			Set<CompiledHopKey> afterKeys = Collections.newSetFromMap(new IdentityHashMap<>());
 			afterKeys.addAll(after);
 			return afterKeys.size() == after.size() && before.stream().allMatch(afterKeys::contains);
+		}
+	}
+
+	/** Shared immutable SCC input whose expensive index is built only by SCC-aware optimizations. */
+	private static final class LazyOccurrenceComponents {
+		private final ComponentReadSet readSet;
+		private volatile PlacementDependencyComponents components;
+
+		private LazyOccurrenceComponents(ComponentReadSet readSet) {
+			this.readSet = Objects.requireNonNull(readSet, "readSet");
+		}
+
+		private PlacementDependencyComponents components() {
+			PlacementDependencyComponents current = components;
+			if(current != null)
+				return current;
+			synchronized(this) {
+				if(components == null)
+					components = new PlacementDependencyComponents(
+						readSet.owners(), readSet.dependencies(), List.of());
+				return components;
+			}
 		}
 	}
 
@@ -1139,7 +1178,7 @@ final class NativePlacementContinuity {
 	private AcyclicRootSupportKey acyclicRootSupportKey(CandidateRealizationReference source,
 		NativePoolWitness witness) {
 		CompiledHopKey occurrence = source.rule().parentOccurrence();
-		if(occurrenceComponents.componentOf(occurrence).cyclic())
+		if(occurrenceComponents.components().componentOf(occurrence).cyclic())
 			return null;
 		CandidateTopology topology = candidateTopology(occurrence, witness);
 		int handle = candidateHandle(source);
@@ -1700,12 +1739,13 @@ final class NativePlacementContinuity {
 		if(acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
 			|| acyclicComponentMaxAlternatives == 0)
 			return Map.of();
-		var rootComponent = occurrenceComponents.componentOf(root.key());
+		PlacementDependencyComponents components = occurrenceComponents.components();
+		var rootComponent = components.componentOf(root.key());
 		Map<CandidateProofState,AcyclicComponentFootprint> footprints = new java.util.LinkedHashMap<>();
 		for(SelectedCandidateProof alternative : graph.getOrDefault(root, List.of()))
 			for(CandidateProofDependency dependency : alternative.dependencies) {
 				CandidateProofState child = dependency.state();
-				if(occurrenceComponents.componentOf(child.key()) != rootComponent)
+				if(components.componentOf(child.key()) != rootComponent)
 					footprints.computeIfAbsent(child, state ->
 						acyclicComponentFootprint(state, graph, traversal));
 			}
