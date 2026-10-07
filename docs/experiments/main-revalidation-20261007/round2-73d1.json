@@ -1,0 +1,365 @@
+{
+  "schema": "systemds-main-remaining-revalidation-v2",
+  "status": "COMPLETE_AT_PINNED_HEAD_NEWER_STEPLM_FIX_REQUIRES_RECHECK",
+  "head": "73d1eb024f6f70a7d869f363d895d72313bcbff6",
+  "worktree": "/home/mchoi/w1357-main-revalidation-r2-20261007",
+  "artifactRoot": "/home/mchoi/main-revalidation-r2-20261007",
+  "priorRun": "round1-93706.json",
+  "reasonForSecondRun": "Origin main changed during the first W1 run; a production common-analysis worklist optimization requires fresh completion checks.",
+  "build": {
+    "exitCode": 0,
+    "seconds": 63.561672918498516,
+    "sourceCount": 3782,
+    "sourceUnchanged": true
+  },
+  "buildCommand": {
+    "argv": [
+      "/home/hadoop/apache-maven-3.9.7/bin/mvn",
+      "-B",
+      "-DskipTests",
+      "-Djacoco.skip=true",
+      "package"
+    ],
+    "cwd": "/home/mchoi/w1357-main-revalidation-r2-20261007",
+    "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-amd64",
+    "MAVEN_OPTS": "-Xmx6g -XX:ActiveProcessorCount=4",
+    "head": "73d1eb024f6f70a7d869f363d895d72313bcbff6"
+  },
+  "limitations": [
+    "Compile/placement verification, not distributed training or a latency A/B.",
+    "Shared host with unrelated workloads and separate focused test JVMs.",
+    "Production source, tests and expected values remain unchanged."
+  ],
+  "freshMethodResults": {
+    "als-canonical": {
+      "exitCode": 1,
+      "timedOut": false,
+      "seconds": 15.004120387136936,
+      "stdoutSha256": "fb80a56381fe53d51a8ba1af82e7170dac77d872f6edd6b28b4884ee6c397d56",
+      "stderrSha256": "edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0",
+      "command": {
+        "argv": [
+          "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+          "--add-modules",
+          "jdk.incubator.vector",
+          "--add-opens=java.base/java.nio=ALL-UNNAMED",
+          "--add-opens=java.base/java.io=ALL-UNNAMED",
+          "--add-opens=java.base/java.util=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+          "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+          "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+          "-Xmx8g",
+          "-XX:ActiveProcessorCount=4",
+          "-cp",
+          "/home/mchoi/main-revalidation-r2-20261007/runner-classes:/home/mchoi/w1357-main-revalidation-r2-20261007/target/classes:/home/mchoi/w1357-main-revalidation-r2-20261007/target/test-classes:/home/mchoi/w1357-main-revalidation-r2-20261007/target/lib/*",
+          "SingleMethodRunner",
+          "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+          "singleWorkerAlsPricesOneReusableCpRuntimeWeightMaterialization"
+        ],
+        "cwd": "/home/mchoi/w1357-main-revalidation-r2-20261007",
+        "head": "73d1eb024f6f70a7d869f363d895d72313bcbff6",
+        "timeoutSeconds": 600,
+        "parallelismNote": "Separate JVMs; compile-only verification on shared host, not a latency experiment."
+      },
+      "artifactDirectory": "/home/mchoi/main-revalidation-r2-20261007/als-canonical",
+      "junit": {
+        "run": 1,
+        "failures": 1,
+        "ignored": 0,
+        "runtimeMillis": 14147
+      },
+      "signature": "IllegalArgumentException: EXACT_VE_FACTOR_CELL_OVERFLOW",
+      "phase": "ExactPhysicalCostModel.freezeOrdinaryFactorsAfterPreflight -> ExactCategoricalSolver.validateInputStructure -> checkedCells, before optimizer selection"
+    },
+    "steplm-canonical": {
+      "exitCode": 1,
+      "timedOut": false,
+      "seconds": 24.003371194005013,
+      "stdoutSha256": "783084256687467ef55c267b1aff5c71b8ff520419433770adb684c9d0e293db",
+      "stderrSha256": "a755b63594f2fe9da9db86a56d5f57ab7fece22edd79f62dd4c2841f6ab83731",
+      "command": {
+        "argv": [
+          "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+          "--add-modules",
+          "jdk.incubator.vector",
+          "--add-opens=java.base/java.nio=ALL-UNNAMED",
+          "--add-opens=java.base/java.io=ALL-UNNAMED",
+          "--add-opens=java.base/java.util=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+          "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+          "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+          "-Xmx8g",
+          "-XX:ActiveProcessorCount=4",
+          "-cp",
+          "/home/mchoi/main-revalidation-r2-20261007/runner-classes:/home/mchoi/w1357-main-revalidation-r2-20261007/target/classes:/home/mchoi/w1357-main-revalidation-r2-20261007/target/test-classes:/home/mchoi/w1357-main-revalidation-r2-20261007/target/lib/*",
+          "SingleMethodRunner",
+          "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014StepLmLargeGetVarCostRedTest",
+          "costBasedSelectorsDoNotCollectTheFullFeatureMatrix"
+        ],
+        "cwd": "/home/mchoi/w1357-main-revalidation-r2-20261007",
+        "head": "73d1eb024f6f70a7d869f363d895d72313bcbff6",
+        "timeoutSeconds": 600,
+        "parallelismNote": "Separate JVMs; compile-only verification on shared host, not a latency experiment."
+      },
+      "artifactDirectory": "/home/mchoi/main-revalidation-r2-20261007/steplm-canonical",
+      "junit": {
+        "run": 1,
+        "failures": 1,
+        "ignored": 0,
+        "runtimeMillis": 22708
+      },
+      "signature": "IllegalArgumentException: EXACT_VE_FACTOR_CELL_OVERFLOW",
+      "phase": "ExactPhysicalCostModel.freezeOrdinaryFactorsAfterPreflight -> ExactCategoricalSolver.validateInputStructure -> checkedCells, before optimizer selection"
+    },
+    "steplm-small": {
+      "exitCode": 1,
+      "timedOut": false,
+      "seconds": 245.50816904008389,
+      "stdoutSha256": "425ba4d57c6d58dad7015cd31e1060f5857b5abdf3d8e2b7b95d530dfee9b7b5",
+      "stderrSha256": "edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0",
+      "command": {
+        "argv": [
+          "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+          "--add-modules",
+          "jdk.incubator.vector",
+          "--add-opens=java.base/java.nio=ALL-UNNAMED",
+          "--add-opens=java.base/java.io=ALL-UNNAMED",
+          "--add-opens=java.base/java.util=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+          "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+          "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+          "-Xmx8g",
+          "-XX:ActiveProcessorCount=4",
+          "-cp",
+          "/home/mchoi/main-revalidation-r2-20261007/runner-classes:/home/mchoi/w1357-main-revalidation-r2-20261007/target/classes:/home/mchoi/w1357-main-revalidation-r2-20261007/target/test-classes:/home/mchoi/w1357-main-revalidation-r2-20261007/target/lib/*",
+          "SingleMethodRunner",
+          "org.apache.sysds.test.component.federated.FederatedPlannerFallbackIntegrationTest",
+          "testDpPlansSteplmWithSameNamedFormalTransientBinding"
+        ],
+        "cwd": "/home/mchoi/w1357-main-revalidation-r2-20261007",
+        "head": "73d1eb024f6f70a7d869f363d895d72313bcbff6",
+        "timeoutSeconds": 600,
+        "parallelismNote": "Separate JVMs; compile-only verification on shared host, not a latency experiment."
+      },
+      "artifactDirectory": "/home/mchoi/main-revalidation-r2-20261007/steplm-small",
+      "junit": {
+        "run": 1,
+        "failures": 1,
+        "ignored": 0,
+        "runtimeMillis": 244102
+      },
+      "signature": "IllegalStateException: CFG transient candidate closure did not converge; facts 626/632, changed occurrences 281/423, terminal iteration 1244",
+      "phase": "Common placement analysis, before selector/optimizer",
+      "fullClosureTraceMatchesPrior": true,
+      "closureTraceSha256": "3e61b05b53e7d03ba085e9c73ff5a8ba909192b807e9c18dbbc1ab5c6fbc0b1a",
+      "closureTraceHashDefinition": {
+        "regex": "CFG transient candidate closure did not converge: \\[[^\\n]*",
+        "match": "first match",
+        "encoding": "UTF-8",
+        "scope": "Message prefix CFG transient candidate closure did not converge: plus complete iteration array; excludes test/exception-class prefix and trailing newline."
+      }
+    }
+  },
+  "invalidLogregAttempt": {
+    "schema": "logreg-w1-infrastructure-invalid-v1",
+    "status": "INFRASTRUCTURE_INVALID",
+    "repoHead": "73d1eb024f6f70a7d869f363d895d72313bcbff6",
+    "reason": "root filesystem reached 100% capacity during the run",
+    "plannerFailureObserved": false,
+    "runnerFailure": "OSError: [Errno 28] No space left on device",
+    "ownedArtifactBytesAtDiagnosis": 200704,
+    "rootFilesystemAtDiagnosis": {
+      "size": "413G",
+      "used": "392G",
+      "available": "0",
+      "usePercent": "100%"
+    },
+    "execution": {
+      "compileOnly": true,
+      "runtimeExecuted": false,
+      "outputPresent": false,
+      "lastCompleteDiagnosticElapsedSeconds": 301.46,
+      "lastCompletePhase": "closeFunctionBoundaryRelations",
+      "ownedContainer": "codex-function-boundary-b-logreg_w1-dc2bf5ac0b79",
+      "ownedContainerStoppedAndRemoved": true
+    },
+    "rawArtifacts": {
+      "command": "results/B/logreg_w1.command.json",
+      "commandSha256": "180709cb87f2d5b8da855af7a7d4ad18f7ea37bb049471c6b59738f4be95bf11",
+      "log": "results/B/logreg_w1.log",
+      "logSha256": "1272159c47f421e0e7d46aae8322e70f92ea4fa02b23994354632e5aba153237",
+      "runnerReceipt": "results/B/runs.json",
+      "runnerReceiptSha256": "ad257d748f8ae6c17a68fa937f6e5f52fcd1fabb560b9774229899a7a406c7df"
+    },
+    "disposition": "Do not use this run to judge planner completion or failure; rerun on the grid-backed artifact root.",
+    "receiptPath": "/home/mchoi/main-revalidation-r2-20261007/logreg-w1/infrastructure-verdict.json",
+    "receiptSha256": "ebd9eeb217683d24cecd5a87040a44fc6cb259ba0da47333d85089c705d7876d"
+  },
+  "logregRetry": {
+    "status": "COMPLETE_BOUNDED_INCOMPLETE",
+    "artifactRoot": "/home/mchoi/main-revalidation-r3-20261007/logreg-w1",
+    "gridMirror": "/grid/3/cofee-lm-sweep-mchoi-20260914/main-revalidation-retry-20261007/logreg-w1-r3-evidence",
+    "repoHead": "73d1eb024f6f70a7d869f363d895d72313bcbff6",
+    "sameBuiltWorktree": true,
+    "timeoutSeconds": 1200,
+    "initialRootFreeBytes": 3947737088,
+    "initialGridFreeBytes": 812047011840,
+    "ownedContainer": "codex-function-boundary-b-logreg_w1-49fd0f59f31e",
+    "observations": {
+      "commonPreparationSeconds": 712.441833298,
+      "analysisFingerprint": "89187641c94964da9266b11b8fa90870028e6e4e798f3ef9f25a5f07e533b129",
+      "at900Seconds": "JointValueMapRelations.Grounding.supportOwners/aliasesOrigin -> ExactPhysicalModel.addJointFactors; before solver and lowering",
+      "noLatencyCausalityClaim": true
+    }
+  },
+  "ownedBuildRelocation": {
+    "receipt": "/grid/3/cofee-lm-sweep-mchoi-20260914/main-revalidation-owned-builds-20261007/relocation-receipt.json",
+    "source": "/home/mchoi/w1357-main-revalidation-20261007/target",
+    "files": 7509,
+    "allHashesMatch": true,
+    "originalPathPreservedAsSymlink": true,
+    "latestBuildUntouched": true
+  },
+  "infrastructureRecoveryNotes": [
+    "The snap Docker cannot read a direct grid bind mount; the resulting immediate ClassNotFound attempt is infrastructure-invalid and excluded.",
+    "The valid retry uses the original Docker-visible /home layout and periodically mirrors evidence to grid.",
+    "The archived first-round target is available through a host symlink; Docker replay of that old round requires restoring target files to a Docker-visible location. The current round target was not moved."
+  ],
+  "completedMethodEvidenceVerification": {
+    "checkedAtUtc": "2026-10-06T23:48:22.372785+00:00",
+    "trackedBuildInputFiles": 3782,
+    "sourceChanges": [],
+    "verifiedFocusedLogs": [
+      "/home/mchoi/main-revalidation-r2-20261007/als-canonical/stdout.log",
+      "/home/mchoi/main-revalidation-r2-20261007/als-canonical/stderr.log",
+      "/home/mchoi/main-revalidation-r2-20261007/steplm-canonical/stdout.log",
+      "/home/mchoi/main-revalidation-r2-20261007/steplm-canonical/stderr.log",
+      "/home/mchoi/main-revalidation-r2-20261007/steplm-small/stdout.log",
+      "/home/mchoi/main-revalidation-r2-20261007/steplm-small/stderr.log"
+    ],
+    "productionTestBuiltinPomDiffEmpty": true
+  },
+  "independentEvidenceReview": {
+    "scope": "Completed focused-method results, first-round W1 receipt, source-version separation, infrastructure-invalid classification, and report claims. Latest W1 final result not yet reviewed.",
+    "blockingFindings": 0,
+    "verified": "Latest 3 + first-round 2 method stdout/stderr hashes, JUnit counts/times/preflight stack, complete small-StepLM closure trace equality.",
+    "clarificationApplied": "The exact input to closureTraceSha256 is specified, including message prefix, first-match regex, encoding and newline exclusion."
+  },
+  "logregW1": {
+    "schema": "logreg-w1-current-main-bounded-verdict-v1",
+    "status": "BOUNDED_LIMIT",
+    "repoHead": "73d1eb024f6f70a7d869f363d895d72313bcbff6",
+    "originMainAtLaunch": "73d1eb024f6f70a7d869f363d895d72313bcbff6",
+    "originMainAfterRun": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+    "compileOnly": true,
+    "runtimeExecuted": false,
+    "planner": "COMPILE_COST_BASED / FederatedPlanLocalCost",
+    "workload": {
+      "builtin": "multiLogReg",
+      "rows": 50000,
+      "features": 2100,
+      "classes": 2,
+      "maxi": 30,
+      "maxii": 5,
+      "workers": 1,
+      "partition": "ROW",
+      "privacyX": "PRIVATE_AGGREGATE",
+      "privacyY": "PRIVATE_AGGREGATE"
+    },
+    "execution": {
+      "deadlineSeconds": 1200,
+      "runnerWallSeconds": 1203.6979968175292,
+      "runnerReturnCode": 143,
+      "outputPresent": false,
+      "wholePlanCompleted": false,
+      "plannerExceptionObserved": false,
+      "privacyExceptionObserved": false,
+      "outOfMemoryObserved": false,
+      "factorOverflowObserved": false,
+      "analysisCompleted": true,
+      "analysisElapsedNanos": 712441833298,
+      "analysisFingerprint": "89187641c94964da9266b11b8fa90870028e6e4e798f3ef9f25a5f07e533b129",
+      "plannerStarted": true,
+      "solverReached": false,
+      "loweringCompleted": false,
+      "selectedP1kStatesAvailable": false,
+      "deadlineStopSent": true,
+      "ownedContainerRemoved": true
+    },
+    "progress": [
+      {
+        "elapsedSeconds": 121.02,
+        "phase": "closeFunctionBoundaryRelations",
+        "topPlannerFrame": "DirectSupportIndex.update"
+      },
+      {
+        "elapsedSeconds": 301.43,
+        "phase": "post-privacy replay",
+        "topPlannerFrame": "replayUniqueCfgTransientForwardsMeasured"
+      },
+      {
+        "elapsedSeconds": 601.9,
+        "phase": "closePlacementAndFeasibility",
+        "topPlannerFrame": "bindDirectNativeCandidateRealizationsMeasured"
+      },
+      {
+        "elapsedSeconds": 901.4,
+        "phase": "optimizer ExactPhysicalModel.addJointFactors",
+        "topPlannerFrame": "JointValueMapRelations.aliasesOrigin"
+      },
+      {
+        "elapsedSeconds": 1181.47,
+        "phase": "optimizer ExactPhysicalModel.addJointFactors",
+        "topPlannerFrame": "JointValueMapRelations.aliasesOrigin"
+      }
+    ],
+    "provenance": {
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "buildExitCode": 0,
+      "buildSourceCount": 3782,
+      "buildSourceUnchanged": true,
+      "placementRelationClosureSourceSha256": "bfbb037f0c4cc5f353e15922f0ffc8037344a6e60e7efc7aa3424adab74c78c6",
+      "placementRelationClosureClassSha256": "e8c966848d22aefb5ff6341c94a794d70a510d98dc923daa30c8c2343e28e091",
+      "nativePlacementContinuitySourceSha256": "90c04bfb459ad6331c65e8a0ebb4fd730c600e0daec54eee7cd063e778cf56a7",
+      "nativePlacementContinuityClassSha256": "27e5a5b572ad31229827b88ff8ac7dd01131793f2500e6dcf38188f615ba51f9",
+      "probeSourceSha256": "d6537c9d31e83eec0d08eb1b43e16b33a72776b288b867a2623d396133ee27b2",
+      "probeClassSha256": "c9a1799369e4eab7751e3e024ad8e4ae6a45c3c6c1f06e3bf403ab085e3260a3",
+      "normalizedScriptSha256": "1e10df76fae40c4a2824066e293771a3850a1e922f5c6d54a5f6d3a8856d138b",
+      "normalizedConfigSha256": "677ea2e45db4a90fc7dc9bed29b9ee0cf3ffaaffb91bcdcda7f2816ce2d54b2b",
+      "costEnvironmentSha256": "5d1eca12c17581ef734fd357257895d47798ef1ac380d78cfa2409ab7bf6c29c",
+      "xMetadataSha256": "6957e2d4e4bdbe1543979f9d2b61c91c0eaa8d4d26523f16f9114cc0c6473d12",
+      "yMetadataSha256": "2e6d30b0fc3e12a2a55d02aa3d8c9b5f61ec72331a215543365a54eef99a9d27",
+      "fixtureParityWithPriorRun": true,
+      "onlyFixturePathChanged": true
+    },
+    "disk": {
+      "initialRootAvailableBytes": 3947737088,
+      "finalRootAvailableBytes": 2194726912,
+      "initialGridAvailableBytes": 812047011840,
+      "finalGridAvailableBytes": 806515195904
+    },
+    "limits": [
+      "The shared host ran unrelated long-lived containers, so elapsed time is not a performance comparison.",
+      "origin/main advanced to fbfd4d790f during this run with a production change in PlacementRelationClosure; this receipt proves 73d1eb024f behavior, not the newer commit."
+    ],
+    "artifacts": {
+      "command": "results/B/logreg_w1.command.json",
+      "commandSha256": "b972cdb1318f332582068dea70dc7b3c14ac2d4f68a686c90d0f0b572cc75345",
+      "log": "results/B/logreg_w1.log",
+      "logSha256": "b81223462edd686c3c2e793e61feb8d8bb19ebd1422b5fe3dbb01c68e5583be4",
+      "runnerReceipt": "results/B/runs.json",
+      "runnerReceiptSha256": "7c171bebd6db0126eddc5f75e4d093b453bb129166cbbe8d60e315eef4f15b2a",
+      "watchdog": "metadata/watchdog.json",
+      "watchdogSha256": "e27b983d7d0e25fc8aeb532e605b87ccff33a66b4e5995fadc2b1230435615dd",
+      "gridMirror": "/grid/3/cofee-lm-sweep-mchoi-20260914/main-revalidation-retry-20261007/logreg-w1-r3-evidence"
+    }
+  },
+  "newerMainDuringRun": {
+    "head": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+    "change": "Provisional loop seed retained until composed closure stabilizes, followed by all-definition validation",
+    "impact": "Publication proves original small common closure now passes; full compile/cost overflow and large W1 require distinct validation."
+  }
+}

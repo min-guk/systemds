@@ -42,6 +42,13 @@ SAFE_JAVA_CLASS = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-
 DEFAULT_MODEL_PROOF_CLASS = (
     "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact."
     "JointBoundaryPhysicalModelProofTest")
+CANONICAL_PROBE_CLASS = (
+    "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact."
+    "AutomaticSupplySharingDockerProbe")
+PLANNERS = {
+    "local": {"config": "compile_cost_based", "normalized": "DP-LocalConflict"},
+    "global": {"config": "compile_exact", "normalized": "Exact"},
+}
 MARKER = re.compile(
     r"^JOINT_E2E_(SUM|NORM2|ROWS|COLS|CALL_C|CALL_D|WEIGHTED|LOSS_INITIAL|LOSS_FINAL)="
     r"([-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)$",
@@ -55,10 +62,18 @@ TERMINAL_CHECKPOINT_PHASES = {"EXACT", "TARGET_REACHED", "TIME", "RESOURCE"}
 ACTION_PATTERN = re.compile(
     r"(?i)(plannerSyntheticActionKey|localMaterializationAction|relocationAction|fed_refed|prefetch)")
 CLASS_PREFLIGHT_MAIN = (
+    "org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.class",
     "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class",
     "org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.class",
     "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.class",
     "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.class",
+    "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.class",
+    "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalSharedSourceEncoding.class",
+    "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolver.class",
+    "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalOptimizer.class",
+    "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.class",
+    "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver$SparseAccumulator.class",
+    "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactFiniteSupportJoin.class",
     "org/apache/sysds/runtime/controlprogram/context/ExecutionContext.class",
 )
 
@@ -147,7 +162,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="emit coordinator/worker federated request lifecycle diagnostics")
     parser.add_argument("--profile-jfr", action="store_true",
                         help="record JFR diagnostics for each FED coordinator process")
+    parser.add_argument("--planner", choices=tuple(PLANNERS), default="local",
+                        help="physical planner used by the frozen configuration")
+    parser.add_argument("--canonical-proof", action="store_true",
+                        help="require canonical selected-plan reconstruction (automatic for global)")
     return parser.parse_args(argv)
+
+
+def canonical_proof_required(planner: str, requested: bool) -> bool:
+    return requested or planner == "global"
 
 
 def sha256(path: Path) -> str:
@@ -169,12 +192,17 @@ def inventory_digest(inventory: dict[str, str]) -> str:
 
 
 def class_preflight_expectations(classes: Path, test_classes: Path,
-                                 model_proof_class: str) -> dict[str, dict[str, object]]:
+                                 model_proof_class: str,
+                                 canonical_proof: bool = False) -> dict[str, dict[str, object]]:
     proof_relative = str(Path(*model_proof_class.split(".")).with_suffix(".class"))
     entries = [("main", classes, Path(relative), Path("/engine/classes") / relative)
                for relative in CLASS_PREFLIGHT_MAIN]
     entries.append(("test", test_classes, Path(proof_relative),
                     Path("/engine/test-classes") / proof_relative))
+    if canonical_proof:
+        probe_relative = Path(*CANONICAL_PROBE_CLASS.split(".")).with_suffix(".class")
+        entries.append(("test", test_classes, probe_relative,
+                        Path("/engine/test-classes") / probe_relative))
     expected: dict[str, dict[str, object]] = {}
     missing: list[str] = []
     for kind, host_root, relative, container_path in entries:
@@ -523,12 +551,13 @@ def write_inputs(run: Path, selected: tuple[Case, ...] | None = None) -> dict[st
     return hashes
 
 
-def write_fixtures(run: Path, selected: tuple[Case, ...] | None = None) -> dict[str, dict[str, str]]:
+def write_fixtures(run: Path, selected: tuple[Case, ...] | None = None,
+                   planner: str = "local") -> dict[str, dict[str, str]]:
     config = run / "config.xml"
     config.write_text(
         "<root><sysds.native.blas>none</sysds.native.blas>"
         "<sysds.local.spark>true</sysds.local.spark>"
-        "<sysds.federated.planner>compile_cost_based</sysds.federated.planner>"
+        f"<sysds.federated.planner>{PLANNERS[planner]['config']}</sysds.federated.planner>"
         "<sysds.codegen.enabled>false</sysds.codegen.enabled>"
         "<sysds.localtmpdir>/evidence/tmp/local</sysds.localtmpdir>"
         "<sysds.scratch>/evidence/tmp/scratch</sysds.scratch></root>\n", encoding="utf-8")
@@ -546,7 +575,8 @@ def write_fixtures(run: Path, selected: tuple[Case, ...] | None = None) -> dict[
 
 
 def java_command(case: Case, mode: str, case_timeout_seconds: int = 300,
-                 profile_jfr: bool = False) -> str:
+                 profile_jfr: bool = False, planner: str = "local",
+                 canonical_proof: bool = False) -> str:
     audit = f"/evidence/audit/{case.name}-{mode}"
     properties = " ".join((
         "-Dsysds.fedplanner.runtime.audit=true",
@@ -569,11 +599,15 @@ def java_command(case: Case, mode: str, case_timeout_seconds: int = 300,
     if is_steplm(case):
         output_argument += (f' SELECTION_OUTPUT=/evidence/cases/{case.name}/'
                             f'{mode}-selection.csv')
+    use_probe = mode == "fed" and canonical_proof_required(planner, canonical_proof)
+    invocation = (f'{CANONICAL_PROBE_CLASS} /evidence/cases/{case.name}/{mode}.dml '
+                  f'/evidence/config.xml /evidence/cases/{case.name}/fed-canonical-proof.json'
+                  if use_probe else
+                  f'org.apache.sysds.api.DMLScript -f /evidence/cases/{case.name}/{mode}.dml '
+                  '-config /evidence/config.xml -exec singlenode -seed 7 '
+                  '-noFedRuntimeConversion -stats 100 -explain runtime')
     return (f'timeout {case_timeout_seconds} java --add-modules jdk.incubator.vector -Xmx3g '
-            f'-XX:ActiveProcessorCount=4 {jfr}{properties} -cp "$CP" '
-            f'org.apache.sysds.api.DMLScript -f /evidence/cases/{case.name}/{mode}.dml '
-            '-config /evidence/config.xml -exec singlenode -seed 7 '
-            '-noFedRuntimeConversion -stats 100 -explain runtime'
+            f'-XX:ActiveProcessorCount=4 {jfr}{properties} -cp "$CP" {invocation}'
             f'{output_argument}')
 
 
@@ -582,7 +616,9 @@ def write_container_script(run: Path, model_proof_class: str = DEFAULT_MODEL_PRO
                            selected: tuple[Case, ...] | None = None,
                            debug_fedreq: bool = False,
                            profile_jfr: bool = False,
-                           class_preflight: dict[str, dict[str, object]] | None = None) -> Path:
+                           class_preflight: dict[str, dict[str, object]] | None = None,
+                           planner: str = "local",
+                           canonical_proof: bool = False) -> Path:
     write_json(run / "class-preflight-expected.json", class_preflight or {})
     lines = [
         "#!/usr/bin/env bash", "set -euo pipefail", "cd /evidence",
@@ -621,7 +657,8 @@ def write_container_script(run: Path, model_proof_class: str = DEFAULT_MODEL_PRO
     for case in selected if selected is not None else default_cases():
         modes = ("fed",) if not case.expected_success else ("cp", "fed")
         for mode in modes:
-            command = java_command(case, mode, case_timeout_seconds, profile_jfr)
+            command = java_command(case, mode, case_timeout_seconds, profile_jfr,
+                                   planner, canonical_proof)
             lines.extend((
                 f"mkdir -p /evidence/audit/{case.name}-{mode}",
                 f"{command} > /evidence/cases/{case.name}/{mode}.log 2>&1",
@@ -892,16 +929,71 @@ def action_diagnostics(log: Path, audit_rows: list[dict]) -> list[str]:
     return sorted(values)
 
 
+def canonical_proof_evidence(case_dir: Path, planner: str,
+                             required: bool) -> dict[str, object]:
+    path = case_dir / "fed-canonical-proof.json"
+    evidence: dict[str, object] = {
+        "required": required,
+        "path": str(path),
+        "exists": path.is_file(),
+        "passed": not required,
+        "errors": [],
+    }
+    if not path.is_file():
+        if required:
+            evidence["errors"] = ["canonical proof receipt is missing"]
+        return evidence
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        evidence["errors"] = [f"invalid canonical proof receipt: {exc}"]
+        evidence["passed"] = False
+        return evidence
+    evidence["receipt"] = receipt
+    if not required:
+        return evidence
+    expected = PLANNERS[planner]
+    proof = receipt.get("canonicalProof")
+    errors: list[str] = []
+    if receipt.get("schema") != "automatic-supply-sharing-probe-v1":
+        errors.append("unexpected canonical proof schema")
+    if receipt.get("status") != "passed":
+        errors.append("canonical probe did not pass")
+    if receipt.get("configuredPlanner") != expected["config"]:
+        errors.append("configured planner does not match requested planner")
+    if receipt.get("expectedNormalizedPlanner") != expected["normalized"]:
+        errors.append("probe expected planner does not match requested planner")
+    if receipt.get("normalizedPlanner") != expected["normalized"]:
+        errors.append("selected planner does not match requested planner")
+    if not isinstance(proof, dict):
+        errors.append("canonical proof is missing")
+    else:
+        for field in ("objectiveMatches", "costSurfaceMatches",
+                      "selectedStatesMatch", "sharedLifetimesMatch"):
+            if proof.get(field) is not True:
+                errors.append(f"canonical proof {field} is not true")
+    if receipt.get("runtimeFallbackCount") != 0:
+        errors.append("runtime fallback count is not zero")
+    if receipt.get("runtimeRepairCount") != 0:
+        errors.append("runtime repair count is not zero")
+    evidence["errors"] = errors
+    evidence["passed"] = not errors
+    return evidence
+
+
 def evaluate(run: Path, container_returncode: int,
              selected: tuple[Case, ...] | None = None,
              profile_jfr: bool = False,
              case_timeout_seconds: int = 300,
-             jfr_profile_evidence: dict[str, object] | None = None) -> dict:
+             jfr_profile_evidence: dict[str, object] | None = None,
+             planner: str = "local",
+             canonical_proof: bool = False) -> dict:
     results: list[dict] = []
     all_frontiers: list[dict] = []
     all_actions: list[str] = []
     required_action_cases: dict[str, bool] = {}
     selected_cases = selected if selected is not None else default_cases()
+    proof_required = canonical_proof_required(planner, canonical_proof)
     for case in selected_cases:
         profile_files = (jfr_profile_evidence or {}).get("files", {})
         jfr_evidence = (profile_files.get(case.name) if profile_jfr and profile_files
@@ -953,12 +1045,13 @@ def evaluate(run: Path, container_returncode: int,
                 run / "cases" / case.name / "cp-selection.csv",
                 run / "cases" / case.name / "fed-selection.csv", 5)
                 if is_steplm(case) else None)
-            checkpoints = planner_checkpoints(text) if case.training else []
+            checkpoints = planner_checkpoints(text) if case.training and planner == "local" else []
             checkpoint_phases = {str(item.get("phase")) for item in checkpoints}
-            trace_complete = (not case.training or
+            trace_required = case.training and planner == "local"
+            trace_complete = (not trace_required or
                               ("INITIAL_BOUND" in checkpoint_phases and bool(checkpoints)
                                and checkpoints[-1].get("phase") in TERMINAL_CHECKPOINT_PHASES))
-            checkpoint_summary = (None if not case.training else {
+            checkpoint_summary = (None if not trace_required else {
                 "initial": next((item for item in checkpoints
                                  if item.get("phase") == "INITIAL_BOUND"), None),
                 "seedBoundary": next((item for item in checkpoints
@@ -968,6 +1061,8 @@ def evaluate(run: Path, container_returncode: int,
                                          for item in checkpoints),
             })
             audit_violations = AUDIT_VIOLATION.findall(text)
+            proof_evidence = canonical_proof_evidence(
+                run / "cases" / case.name, planner, proof_required)
             loss_progress = (None if not case.requires_loss_progress else {
                 "initial": reference.get("LOSS_INITIAL"),
                 "final": reference.get("LOSS_FINAL"),
@@ -990,6 +1085,7 @@ def evaluate(run: Path, container_returncode: int,
                       and (not case.requires_loss_progress or bool(
                            loss_progress and loss_progress["decreased"]))
                       and trace_complete
+                      and bool(proof_evidence["passed"])
                       and (not case.requires_fed_no_relocation or fed_no_relocation))
             result = {"case": case.name, "expected": "success", "passed": passed,
                       "cpReturncode": cp_rc, "fedReturncode": fed_rc,
@@ -1003,7 +1099,9 @@ def evaluate(run: Path, container_returncode: int,
                       "jfrProfilePassed": jfr_passed,
                       "plannerCheckpoints": checkpoints,
                       "plannerCheckpointSummary": checkpoint_summary,
+                      "plannerTraceRequired": trace_required,
                       "plannerTraceComplete": trace_complete,
+                      "canonicalProof": proof_evidence,
                       "lossProgress": loss_progress,
                       "cpStatistics": runtime_statistics(cp_text),
                       "fedStatistics": runtime_statistics(text),
@@ -1053,6 +1151,10 @@ def evaluate(run: Path, container_returncode: int,
               and not runtime_conversions and action_gate)
     return {"schema": "systemds-joint-boundary-e2e-v1",
             "status": "PASSED" if passed else "FAILED",
+            "planner": planner,
+            "configuredPlanner": PLANNERS[planner]["config"],
+            "expectedNormalizedPlanner": PLANNERS[planner]["normalized"],
+            "canonicalProofRequired": proof_required,
             "containerReturncode": container_returncode,
             "classPreflightPassed": preflight_passed,
             "classPreflight": preflight,
@@ -1072,7 +1174,8 @@ def evaluate(run: Path, container_returncode: int,
 
 def validate_artifacts(classes: Path, test_classes: Path, dependencies: Path,
                        main_sources: Path, test_sources: Path,
-                       model_proof_class: str, dry_run: bool) -> None:
+                       model_proof_class: str, dry_run: bool,
+                       canonical_proof: bool = False) -> None:
     required = (classes, test_classes, dependencies, main_sources, test_sources)
     missing = [str(path) for path in required if not path.is_dir()]
     if missing:
@@ -1082,6 +1185,9 @@ def validate_artifacts(classes: Path, test_classes: Path, dependencies: Path,
     proof = test_classes / Path(*model_proof_class.split(".")).with_suffix(".class")
     if not proof.is_file() and not dry_run:
         raise ValueError(f"joint physical model proof is not compiled: {proof}")
+    canonical_probe = test_classes / Path(*CANONICAL_PROBE_CLASS.split(".")).with_suffix(".class")
+    if canonical_proof and not canonical_probe.is_file() and not dry_run:
+        raise ValueError(f"canonical proof probe is not compiled: {canonical_probe}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1098,6 +1204,7 @@ def main(argv: list[str] | None = None) -> int:
     if len(requested) != len(set(requested)):
         raise ValueError("duplicate --case values are not allowed")
     selected = tuple(available[name] for name in requested)
+    proof_required = canonical_proof_required(args.planner, args.canonical_proof)
     output_root = assert_grid_root(args.output_root)
     stage_root = args.stage_root.resolve()
     classes = args.classes.resolve()
@@ -1106,7 +1213,7 @@ def main(argv: list[str] | None = None) -> int:
     main_sources = args.main_sources.resolve()
     test_sources = args.test_sources.resolve()
     validate_artifacts(classes, test_classes, dependencies, main_sources, test_sources,
-                       args.model_proof_class, args.dry_run)
+                       args.model_proof_class, args.dry_run, proof_required)
     run = allocate_run(output_root, args.run_id)
     stage = allocate_stage(stage_root, run)
     frozen = stage / "frozen-inputs"
@@ -1124,13 +1231,14 @@ def main(argv: list[str] | None = None) -> int:
         "dependencies": freeze_tree(dependencies, frozen_dependencies),
     }
     preflight = (class_preflight_expectations(
-        frozen_classes, frozen_test_classes, args.model_proof_class)
+        frozen_classes, frozen_test_classes, args.model_proof_class, proof_required)
         if not args.dry_run else {})
     input_hashes = write_inputs(stage, selected)
-    fixture_hashes = write_fixtures(stage, selected)
+    fixture_hashes = write_fixtures(stage, selected, args.planner)
     script = write_container_script(
         stage, args.model_proof_class, args.case_timeout_seconds, selected,
-        args.debug_fedreq, args.profile_jfr, preflight)
+        args.debug_fedreq, args.profile_jfr, preflight, args.planner,
+        args.canonical_proof)
     container, command = docker_command(
         stage, frozen_classes, frozen_test_classes, frozen_dependencies)
     runner_source = Path(__file__).resolve()
@@ -1167,7 +1275,12 @@ def main(argv: list[str] | None = None) -> int:
         "inputSha256": input_hashes, "fixtureSha256": fixture_hashes,
         "container": container, "dockerArgv": command, "containerScriptSha256": sha256(script),
         "network": "none (worker and coordinator use container loopback)",
-        "planner": "COMPILE_COST_BASED", "noFedRuntimeConversion": True,
+        "planner": args.planner,
+        "configuredPlanner": PLANNERS[args.planner]["config"],
+        "expectedNormalizedPlanner": PLANNERS[args.planner]["normalized"],
+        "canonicalProofRequested": args.canonical_proof,
+        "canonicalProofRequired": proof_required,
+        "noFedRuntimeConversion": True,
         "caseTimeoutSeconds": args.case_timeout_seconds,
         "classPreflightExpected": preflight,
         "debugFedreq": args.debug_fedreq,
@@ -1183,6 +1296,11 @@ def main(argv: list[str] | None = None) -> int:
         shutil.rmtree(stage)
         write_json(run / "result.json", {"schema": "systemds-joint-boundary-e2e-v1",
                                           "status": "DRY_RUN", "buildReady": True,
+                                          "planner": args.planner,
+                                          "configuredPlanner": PLANNERS[args.planner]["config"],
+                                          "expectedNormalizedPlanner": PLANNERS[args.planner]["normalized"],
+                                          "canonicalProofRequested": args.canonical_proof,
+                                          "canonicalProofRequired": proof_required,
                                           "recordProfile": args.profile_jfr,
                                           "requestedCases": [case.name for case in selected]})
         print(json.dumps({"status": "DRY_RUN", "run": str(run),
@@ -1201,7 +1319,9 @@ def main(argv: list[str] | None = None) -> int:
         selected, args.profile_jfr, args.case_timeout_seconds, run)
     write_json(run / "manifest.json", manifest)
     result = evaluate(run, completed.returncode, selected, args.profile_jfr,
-                      args.case_timeout_seconds, manifest["jfrProfile"])
+                      args.case_timeout_seconds, manifest["jfrProfile"],
+                      args.planner, args.canonical_proof)
+    result["canonicalProofRequested"] = args.canonical_proof
     result["run"] = str(run)
     result["image"] = inspected
     write_json(run / "result.json", result)

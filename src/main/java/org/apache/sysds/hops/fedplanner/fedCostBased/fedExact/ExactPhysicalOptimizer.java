@@ -140,11 +140,8 @@ final class ExactPhysicalOptimizer {
 			var orderPolicy = ExactEliminationOrderPolicy.globalConfigured();
 			// Only this exact encoding of the already validated surface can supply the
 			// private preparation below. No caller-supplied replacement factor list is accepted.
-			var prepared = compact ? ExactPhysicalReducedSolver.prepareCompacted(
-				encoding.decisionPrefixCount(), encoding.variables(), encoding.factors(), limits,
-				orderPolicy, "global-shared-compact") : ExactPhysicalReducedSolver.prepare(
-				encoding.decisionPrefixCount(), encoding.variables(), encoding.factors(), limits,
-				orderPolicy, "global-shared");
+			var prepared = ExactPhysicalReducedSolver.prepareSharedSource(encoding, certificate,
+				limits, orderPolicy, compact ? "global-shared-compact" : "global-shared", compact);
 			if(FederatedPlannerTrace.isEnabled())
 				FederatedPlannerTrace.logGlobal("Exact-SharedSourcePreparation", "compact=" + compact
 					+ " numericQ=" + certificate.q() + " numericMaxBits=" + certificate.maximumSumBits()
@@ -156,6 +153,7 @@ final class ExactPhysicalOptimizer {
 					+ " headerValues=" + encoding.statistics().headerValues()
 					+ " encodedVariables=" + encoding.variables().size()
 					+ " compiledVariables=" + prepared.compiledVariableCount()
+					+ " storedCellBudget=true"
 					+ " factorLimit=" + limits.maximumFactorCells()
 					+ " totalCellLimit=" + limits.maximumMaterializedCells()
 					+ orderTrace(orderPolicy, prepared)

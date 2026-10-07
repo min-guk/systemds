@@ -43,7 +43,6 @@ import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
-import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
@@ -530,7 +529,7 @@ public final class ExactPhysicalCostModel {
 				frequencies, factors, factorKinds, preparedCosts.get(domain.node().key()),
 				nativeSupply.domain(domain.node().key()));
 		}
-		addJointPhysicalExecutionFactors(analysis, sparseAssignments, domains, frequencies,
+		addJointPhysicalExecutionFactors(analysis, sparseAssignments, model.domains(), domains, frequencies,
 			preparedCosts, factors, factorKinds);
 		addPhysicalFusedKernelFactors(analysis, model.domains(), domains, workers,
 			physicalWorkerCounts, frequencies, preparedCosts, factors, factorKinds);
@@ -1045,12 +1044,15 @@ public final class ExactPhysicalCostModel {
 
 	private static void addJointPhysicalExecutionFactors(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments,
+		List<ExactPhysicalModel.DecisionDomain> orderedDomains,
 		Map<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains,
 		OccurrenceExecutionFrequencyFacts frequencies, Map<CompiledHopKey,PreparedExecutionCost> preparedCosts,
 		List<ExactCategoricalSolver.Factor> factors,
 		IdentityHashMap<ExactCategoricalSolver.Factor,String> kinds) {
 		JointPhysicalCostRows projections = null;
-		for(var domain : domains.values()) {
+		// Factor ordinals are part of the cost certificate and solver input order.
+		// Keep identity-based domain lookup separate from canonical factor emission.
+		for(var domain : orderedDomains) {
 			Hop hop = analysis.hop(domain.node().key()).orElseThrow();
 			if(hop instanceof DataOp || analysis.isDmlFunctionCallBoundary(domain.node().key())
 				|| org.apache.sysds.hops.fedplanner.placement.BranchPlacementNormalization.isPlacementAlias(hop)
@@ -1360,7 +1362,10 @@ public final class ExactPhysicalCostModel {
 
 	private static boolean occurrenceRangesFit(PlacementAnalysis analysis, CompiledHopKey key,
 		Hop operand, InputLayout input) {
-		long rows = operand.getDim1(), cols = operand.getDim2();
+		var estimate = key != null && analysis.hop(key).orElse(null) == operand
+			? analysis.physicalCostEstimateFact(key) : null;
+		long rows = estimate == null ? operand.getDim1() : estimate.rows();
+		long cols = estimate == null ? operand.getDim2() : estimate.cols();
 		var shape = key == null ? null : analysis.abstractShapeFact(key).orElse(null);
 		if(shape != null) {
 			if(rows <= 0 && shape.rows().knowledge()
@@ -2839,7 +2844,8 @@ public final class ExactPhysicalCostModel {
 		else if(boundedElementwise != null)
 			cost = boundedElementwise.uploadPayloadCostUpperBound();
 		else
-			cost = nativeLocalInputUploadCost(consumerHop, producerHop, bytes,
+			cost = nativeLocalInputUploadCost(analysis, edge.consumer(), consumerHop,
+				edge.producer(), bytes,
 				executionFType, targetWorkers);
 		return new NativeLocalTargetCost(true, cost);
 	}
@@ -3081,15 +3087,18 @@ public final class ExactPhysicalCostModel {
 		return new PhysicalWorkerCountCacheProbe(counts, cache.byAnchor.size());
 	}
 
-	private static double nativeLocalInputUploadCost(Hop consumer, Hop input, double bytes,
-		FType executionFType, int workers) {
+	private static double nativeLocalInputUploadCost(PlacementAnalysis analysis,
+		CompiledHopKey consumerKey, Hop consumer, CompiledHopKey inputKey,
+		double bytes, FType executionFType, int workers) {
 		if(executionFType == null)
 			throw new IllegalArgumentException("EXACT_NATIVE_LOCAL_EXECUTION_LAYOUT_UNPROVEN");
-		FType transferType = nativeLocalInputTransferType(consumer, input, executionFType);
+		FType transferType = nativeLocalInputTransferType(analysis, consumerKey, consumer,
+			inputKey, executionFType);
 		return FederatedCostModel.computeInBandUploadPayloadCost(bytes, transferType, workers);
 	}
 
-	private static FType nativeLocalInputTransferType(Hop consumer, Hop input,
+	private static FType nativeLocalInputTransferType(PlacementAnalysis analysis,
+		CompiledHopKey consumerKey, Hop consumer, CompiledHopKey inputKey,
 		FType executionFType) {
 		// Covariance's scalar result shape does not describe the rows sent as local
 		// counterparts/weights. ROW execution slices these matrix inputs by worker.
@@ -3102,8 +3111,11 @@ public final class ExactPhysicalCostModel {
 		// ROW/COL runtime instructions can sliced-broadcast an equally shaped matrix, so
 		// total payload is one logical input. Shape-broadcast operands and FULL/PART worker
 		// branches use a replicated broadcast to every participating worker.
-		boolean sameShape = input.getDim1() > 0 && input.getDim2() > 0
-			&& input.getDim1() == consumer.getDim1() && input.getDim2() == consumer.getDim2();
+		var consumerEstimate = analysis.physicalCostEstimateFact(consumerKey);
+		var inputEstimate = analysis.physicalCostEstimateFact(inputKey);
+		boolean sameShape = inputEstimate.rows() > 0 && inputEstimate.cols() > 0
+			&& inputEstimate.rows() == consumerEstimate.rows()
+			&& inputEstimate.cols() == consumerEstimate.cols();
 		return sameShape && (executionFType == FType.ROW || executionFType == FType.COL)
 			? executionFType : FType.BROADCAST;
 	}
@@ -3142,25 +3154,26 @@ public final class ExactPhysicalCostModel {
 	private static double physicalLogicalFunctionInputBytes(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments, EffectiveLogicalFunctionInput input,
 		ExactPhysicalModel.DecisionDomain source, ExactPhysicalModel.DecisionDomain formal) {
-		Hop sourceHop = analysis.hop(source.node().key()).orElseThrow();
+		var sourceEstimate = analysis.physicalCostEstimateFact(source.node().key());
 		double bytes = sparseAssignments.serializedEstimate(source.node().key());
-		boolean unresolvedMatrixShape = sourceHop.getDataType() != null
-			&& sourceHop.getDataType().isMatrix()
-			&& (!sourceHop.dimsKnown() || sourceHop.getDim1() <= 0 || sourceHop.getDim2() <= 0);
+		boolean unresolvedMatrixShape = sourceEstimate.dataType() != null
+			&& sourceEstimate.dataType().isMatrix()
+			&& (!sourceEstimate.dimensionsKnown() || sourceEstimate.rows() <= 0
+				|| sourceEstimate.cols() <= 0);
 		if((!Double.isFinite(bytes) || bytes <= 0.0) && unresolvedMatrixShape) {
 			bytes = PlacementCostSemantics.analysisAwareDenseOutputBytes(
 				analysis, source.node().key());
-			if(Double.isFinite(bytes) && bytes > 0.0 && sourceHop.getNnz() >= 0) {
+			if(Double.isFinite(bytes) && bytes > 0.0 && sourceEstimate.nnz() >= 0) {
 				var shape = analysis.abstractShapeFact(source.node().key()).orElseThrow();
 				bytes = MatrixBlock.estimateSizeOnDisk(
-					shape.rows().value(), shape.cols().value(), sourceHop.getNnz());
+					shape.rows().value(), shape.cols().value(), sourceEstimate.nnz());
 			}
 		}
 		if(!Double.isFinite(bytes) || bytes <= 0.0)
 			bytes = PlacementCostSemantics.boundedDenseOutputBytes(analysis, source.node().key());
 		if(!Double.isFinite(bytes) || bytes <= 0.0)
-			bytes = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
-				analysis.hop(formal.node().key()).orElseThrow(), sourceHop);
+			bytes = analysis.physicalFunctionInputEstimate(
+				source.node().key(), formal.node().key());
 		return bytes;
 	}
 
@@ -3352,9 +3365,10 @@ public final class ExactPhysicalCostModel {
 		double semantic = sparseAssignments.memEstimate(key);
 		if(Double.isFinite(semantic) && semantic > 0.0)
 			return semantic;
-		boolean unresolvedMatrixShape = hop.getDataType() != null && hop.getDataType().isMatrix()
-			&& (!hop.dimsKnown() || hop.getDim1() <= 0 || hop.getDim2() <= 0);
-		double bytes = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
+		var estimate = analysis.physicalCostEstimateFact(key);
+		boolean unresolvedMatrixShape = estimate.dataType() != null && estimate.dataType().isMatrix()
+			&& (!estimate.dimensionsKnown() || estimate.rows() <= 0 || estimate.cols() <= 0);
+		double bytes = estimate.effectiveOutputMemEstimate();
 		return !unresolvedMatrixShape && Double.isFinite(bytes) && bytes > 0.0 ? bytes
 			: estimatedBytes(analysis, sparseAssignments, key, hop);
 	}
@@ -3364,9 +3378,10 @@ public final class ExactPhysicalCostModel {
 		double semantic = sparseAssignments.serializedEstimate(key);
 		if(Double.isFinite(semantic) && semantic > 0.0)
 			return semantic;
-		boolean unresolvedMatrixShape = hop.getDataType() != null && hop.getDataType().isMatrix()
-			&& (!hop.dimsKnown() || hop.getDim1() <= 0 || hop.getDim2() <= 0);
-		double bytes = FederatedCostModel.getEffectiveUploadMemEstimate(hop);
+		var estimate = analysis.physicalCostEstimateFact(key);
+		boolean unresolvedMatrixShape = estimate.dataType() != null && estimate.dataType().isMatrix()
+			&& (!estimate.dimensionsKnown() || estimate.rows() <= 0 || estimate.cols() <= 0);
+		double bytes = estimate.effectiveUploadMemEstimate();
 		return !unresolvedMatrixShape && Double.isFinite(bytes) && bytes > 0.0 ? bytes
 			: estimatedBytes(analysis, sparseAssignments, key, hop);
 	}
@@ -3514,20 +3529,18 @@ public final class ExactPhysicalCostModel {
 
 	private static double estimatedBytes(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments, CompiledHopKey key, Hop hop) {
-		if(hop.getDataType() != null && hop.getDataType().isScalar())
+		var estimateFact = analysis.physicalCostEstimateFact(key);
+		if(estimateFact.dataType() != null && estimateFact.dataType().isScalar())
 			return 8.0;
 		double semantic = sparseAssignments.serializedEstimate(key);
 		if(Double.isFinite(semantic) && semantic > 0.0)
 			return semantic;
-		FunctionOp multiReturnParent = exactMultiReturnBuiltinParent(hop);
-		if(multiReturnParent != null) {
-			double multiReturnEstimate = multiReturnParent.getMultiReturnBuiltinOutputMemEstimate(hop);
-			if(Double.isFinite(multiReturnEstimate) && multiReturnEstimate > 0.0)
-				return multiReturnEstimate;
-		}
-		double estimate = hop.getOutputMemEstimate();
-		boolean unresolvedMatrixShape = hop.getDataType() != null && hop.getDataType().isMatrix()
-			&& (!hop.dimsKnown() || hop.getDim1() <= 0 || hop.getDim2() <= 0);
+		double multiReturnEstimate = estimateFact.multiReturnOutputMemEstimate();
+		if(Double.isFinite(multiReturnEstimate) && multiReturnEstimate > 0.0)
+			return multiReturnEstimate;
+		double estimate = estimateFact.outputMemEstimate();
+		boolean unresolvedMatrixShape = estimateFact.dataType() != null && estimateFact.dataType().isMatrix()
+			&& (!estimateFact.dimensionsKnown() || estimateFact.rows() <= 0 || estimateFact.cols() <= 0);
 		// A positive raw estimate is not necessarily concrete: unknown-dimension HOPs carry
 		// a large sentinel-sized envelope.  Returning it here bypassed the shared effective
 		// estimate and made Exact price small recompiled inputs (for example PCA Components)
@@ -3544,8 +3557,7 @@ public final class ExactPhysicalCostModel {
 			&& (data.getOp() == OpOpData.TRANSIENTWRITE || data.getOp() == OpOpData.PERSISTENTWRITE)) {
 			CompiledHopKey input = exactCompiledInput(analysis, key, 0);
 			if(input != null) {
-				Hop inputHop = analysis.hop(input).orElse(null);
-				double inputEstimate = inputHop == null ? Double.NaN : inputHop.getOutputMemEstimate();
+				double inputEstimate = analysis.physicalCostEstimateFact(input).outputMemEstimate();
 				if(Double.isFinite(inputEstimate) && inputEstimate > 0.0)
 					derived = inputEstimate;
 				else {
@@ -3557,7 +3569,7 @@ public final class ExactPhysicalCostModel {
 			}
 		}
 		if(!Double.isFinite(derived) || derived <= 0.0)
-			derived = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
+			derived = estimateFact.effectiveOutputMemEstimate();
 		if(!Double.isFinite(derived) || derived <= 0.0)
 			derived = estimate;
 		if(!Double.isFinite(derived) || derived <= 0.0)
@@ -3628,12 +3640,9 @@ public final class ExactPhysicalCostModel {
 				return cfgDefinitionShape;
 
 			Hop hop = analysis.hop(key).orElse(null);
-			FunctionOp multiReturnParent = exactMultiReturnBuiltinParent(hop);
-			if(multiReturnParent != null) {
-				long[] dims = multiReturnParent.getMultiReturnBuiltinOutputDims(hop);
-				if(dims[0] > 0L && dims[1] > 0L)
-					return new ExactMatrixShape(dims[0], dims[1]);
-			}
+			var estimate = hop == null ? null : analysis.physicalCostEstimateFact(key);
+			if(estimate != null && estimate.multiReturnRows() > 0L && estimate.multiReturnCols() > 0L)
+				return new ExactMatrixShape(estimate.multiReturnRows(), estimate.multiReturnCols());
 			CompiledHopKey input = exactCompiledInput(analysis, key, 0);
 			ExactMatrixShape inputShape = input == null ? null
 				: exactMatrixShape(analysis, input, visiting);
@@ -3654,24 +3663,6 @@ public final class ExactPhysicalCostModel {
 		finally {
 			visiting.remove(key);
 		}
-	}
-
-	private static FunctionOp exactMultiReturnBuiltinParent(Hop hop) {
-		if(!(hop instanceof DataOp data) || data.getOp() != OpOpData.FUNCTIONOUTPUT
-			|| hop.getInput() == null || hop.getInput().isEmpty() || hop.getInput().get(0) == null)
-			return null;
-		FunctionOp resolved = null;
-		for(Hop parent : hop.getInput().get(0).getParent()) {
-			if(!(parent instanceof FunctionOp functionOp)
-				|| functionOp.getFunctionType() != FunctionOp.FunctionType.MULTIRETURN_BUILTIN
-				|| functionOp.getOutputs() == null
-				|| functionOp.getOutputs().stream().noneMatch(output -> output == hop))
-				continue;
-			if(resolved != null && resolved != functionOp)
-				return null;
-			resolved = functionOp;
-		}
-		return resolved;
 	}
 
 	private static CompiledHopKey exactCompiledInput(PlacementAnalysis analysis,

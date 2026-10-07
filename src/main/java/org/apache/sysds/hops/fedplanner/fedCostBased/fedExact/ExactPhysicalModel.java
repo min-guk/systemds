@@ -657,10 +657,26 @@ final class ExactPhysicalModel {
 		return domain.alternatives().get(value);
 	}
 	ExactCategoricalSolver.Statistics analyze(ExactCategoricalSolver.Limits limits) {
-		return ExactCategoricalSolver.analyze(variables(), hardFactors, limits);
+		return prepareLegalityOnly(limits).statistics();
 	}
 	ExactCategoricalSolver.Result solveLegalityOnly(ExactCategoricalSolver.Limits limits) {
-		return ExactCategoricalSolver.solve(variables(), hardFactors, limits);
+		ExactCategoricalSolver.Result encoded = ExactPhysicalReducedSolver.solve(
+			prepareLegalityOnly(limits));
+		ExactCategoricalSolver.Result decisions = new ExactCategoricalSolver.Result(
+			encoded.objective(), encoded.assignmentInVariableOrder().subList(0, domains.size()),
+			encoded.statistics());
+		if(!Double.isFinite(RegionalSearchProblem.evaluateFactors(
+			variables(), hardFactors, decisions.assignmentInVariableOrder())))
+			throw new IllegalArgumentException("EXACT_PHYSICAL_SOLVER_CANONICAL_HARD_MISMATCH");
+		return decisions;
+	}
+	private ExactPhysicalReducedSolver.Prepared prepareLegalityOnly(
+		ExactCategoricalSolver.Limits limits) {
+		List<ExactCategoricalSolver.Variable> encodedVariables = new ArrayList<>(variables());
+		encodedVariables.addAll(exactSolverAuxiliaryVariables);
+		return ExactPhysicalReducedSolver.prepareCompacted(domains.size(), encodedVariables,
+			exactSolverHardFactors, limits, ExactEliminationOrderPolicy.globalConfigured(),
+			"physical-legality-only");
 	}
 	PhysicalSelection physicalSelection(ExactCategoricalSolver.Result result) {
 		Objects.requireNonNull(result, "result");

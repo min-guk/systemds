@@ -59,18 +59,37 @@ final class ExactEliminationOrderPolicy {
 		List<ExactCategoricalSolver.Factor> factors,
 		ExactCategoricalSolver.Limits limits, Configuration configuration,
 		String caller) {
+		return compile(variables, factors, limits, configuration, caller, false);
+	}
+
+	static ExactCategoricalSolver.OrderCompilation compileDyadic(
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Limits limits, Configuration configuration,
+		String caller) {
+		return compile(variables, factors, limits, configuration, caller, true);
+	}
+
+	private static ExactCategoricalSolver.OrderCompilation compile(
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Limits limits, Configuration configuration,
+		String caller, boolean dyadicStorage) {
 		if(configuration == null)
 			throw new IllegalArgumentException("EXACT_FAST_ORDER_CONFIGURATION_MISSING");
 		if(caller == null || !caller.matches("[a-z0-9-]+"))
 			throw new IllegalArgumentException("EXACT_FAST_ORDER_CALLER_INVALID|value=" + caller);
 		long started = System.nanoTime();
 		ExactCategoricalSolver.OrderCompilation compilation =
-			ExactCategoricalSolver.compileWithFastOrder(variables, factors, limits,
-				configuration.fastOrder(), configuration.maximumAssignments());
+			dyadicStorage ? ExactCategoricalSolver.compileDyadicWithFastOrder(
+				variables, factors, limits, configuration.fastOrder(), configuration.maximumAssignments())
+				: ExactCategoricalSolver.compileWithFastOrder(variables, factors, limits,
+					configuration.fastOrder(), configuration.maximumAssignments());
 		long compileNanos = System.nanoTime() - started;
 		if(FederatedPlannerTrace.isEnabled())
 			FederatedPlannerTrace.logGlobal("Exact-OrderSelection",
 				"caller=" + caller
+					+ " storedCellBudget=" + dyadicStorage
 					+ " fastOrderSource=" + configuration.source()
 					+ " fastOrderConfigured=" + configuration.fastOrder()
 					+ " fastOrderAssignmentsLimit=" + configuration.maximumAssignments()
