@@ -889,16 +889,24 @@ final class ExactPhysicalModel {
 		DerivedFoutMaterializationAction outputAction,
 		List<InputAuthority> bindings, AlternativeSignatureContext context) {
 		if(context == null) {
-			String signature = "CAPTURED|" + state.normalizedSignature() + "|rule="
-				+ rule.key().normalizedSignature() + "|emission=" + emission.selectionSignature()
-				+ "|realization=" + realization.key().normalizedSignature() + "|clause="
-				+ supportClause.normalizedSignature() + "|foutMaterializationAction="
-				+ (outputAction == null ? "-" : outputAction.normalizedSignature())
-				+ "|inputs=" + bindings.stream().map(InputAuthority::signature).toList();
+			String signature = candidateSignature(state, rule, emission, realization,
+				supportClause, outputAction, bindings, new AlternativeSignatureContext()).materialize();
 			return new Alternative(node.key(), state, AuthorityKind.CAPTURED_RULE, rule, emission,
 				null, null, null, null, outputAction, rule.key().orderedInputs(), bindings,
 				realization, supportClause, signature);
 		}
+		NormalizedText signature = candidateSignature(state, rule, emission, realization,
+			supportClause, outputAction, bindings, context);
+		return new Alternative(node.key(), state, AuthorityKind.CAPTURED_RULE, rule, emission,
+			null, null, null, null, outputAction, rule.key().orderedInputs(), bindings, realization,
+			supportClause, signature);
+	}
+
+	private static NormalizedText candidateSignature(PlacementState state, CandidateRuleFact rule,
+		CandidateEmissionFact emission, CandidateEmissionRealization realization,
+		PlacementAnalysis.CandidateRealizationSupportClause supportClause,
+		DerivedFoutMaterializationAction outputAction, List<InputAuthority> bindings,
+		AlternativeSignatureContext context) {
 		NormalizedTextBuilder signature = new NormalizedTextBuilder().append("CAPTURED|")
 			.append(context.literal(state, state::normalizedSignature)).append("|rule=")
 			.append(context.canonical.candidateRule(rule.key())).append("|emission=")
@@ -918,9 +926,7 @@ final class ExactPhysicalModel {
 			signature.append(context.inputAuthority(authority));
 		}
 		signature.append("]");
-		return new Alternative(node.key(), state, AuthorityKind.CAPTURED_RULE, rule, emission,
-			null, null, null, null, outputAction, rule.key().orderedInputs(), bindings, realization,
-			supportClause, signature.build());
+		return signature.build();
 	}
 
 	private static Alternative nonCandidate(Node node, PlacementState state, AuthorityKind kind,
@@ -935,18 +941,25 @@ final class ExactPhysicalModel {
 		PlacementAnalysis.CandidateRealizationSupportClause supportClause,
 		List<InputAuthority> bindings, AlternativeSignatureContext context) {
 		if(context == null) {
-			String signature = kind + "|" + state.normalizedSignature()
-				+ "|anchor=" + (anchor == null ? "-" : anchor.normalizedSignature())
-				+ "|action=" + (action == null ? "-" : action.normalizedSignature())
-				+ "|executionRule=" + (executionRule == null ? "-" : executionRule.key().normalizedSignature())
-				+ "|executionEmission=" + (executionEmission == null ? "-" : executionEmission.selectionSignature())
-				+ "|realization=" + (realization == null ? "-" : realization.key().normalizedSignature())
-				+ "|clause=" + (supportClause == null ? "-" : supportClause.normalizedSignature())
-				+ "|inputs=" + bindings.stream().map(InputAuthority::signature).toList();
+			String signature = nonCandidateSignature(state, kind, anchor, action, executionRule,
+				executionEmission, realization, supportClause, bindings,
+				new AlternativeSignatureContext()).materialize();
 			return new Alternative(node.key(), state, kind, null, null, executionRule, executionEmission,
 				anchor, action, null, executionRule == null ? List.of() : executionRule.key().orderedInputs(),
 				bindings, realization, supportClause, signature);
 		}
+		NormalizedText signature = nonCandidateSignature(state, kind, anchor, action,
+			executionRule, executionEmission, realization, supportClause, bindings, context);
+		return new Alternative(node.key(), state, kind, null, null, executionRule, executionEmission,
+			anchor, action, null, executionRule == null ? List.of() : executionRule.key().orderedInputs(), bindings,
+			realization, supportClause, signature);
+	}
+
+	private static NormalizedText nonCandidateSignature(PlacementState state, AuthorityKind kind,
+		DurableAnchorKey anchor, RelocationAction action, CandidateRuleFact executionRule,
+		CandidateEmissionFact executionEmission, CandidateEmissionRealization realization,
+		PlacementAnalysis.CandidateRealizationSupportClause supportClause,
+		List<InputAuthority> bindings, AlternativeSignatureContext context) {
 		NormalizedTextBuilder signature = new NormalizedTextBuilder().append(kind.toString())
 			.append("|").append(context.literal(state, state::normalizedSignature)).append("|anchor=");
 		appendLiteral(signature, context, anchor,
@@ -979,9 +992,33 @@ final class ExactPhysicalModel {
 			signature.append(context.inputAuthority(bindings.get(index)));
 		}
 		signature.append("]");
-		return new Alternative(node.key(), state, kind, null, null, executionRule, executionEmission,
-			anchor, action, null, executionRule == null ? List.of() : executionRule.key().orderedInputs(), bindings,
-			realization, supportClause, signature.build());
+		return signature.build();
+	}
+
+	/** Reconstructs the private-factory signature recipe for an arbitrary value, when shaped like one. */
+	static NormalizedText canonicalAlternativeSignature(Alternative alternative) {
+		Objects.requireNonNull(alternative, "alternative");
+		AlternativeSignatureContext context = new AlternativeSignatureContext();
+		if(alternative.authorityKind() == AuthorityKind.CAPTURED_RULE) {
+			if(alternative.candidateRule() == null || alternative.candidateEmission() == null
+				|| alternative.executionRule() != null || alternative.executionEmission() != null
+				|| alternative.durableAnchor() != null || alternative.relocationAction() != null
+				|| alternative.realization() == null || alternative.supportClause() == null
+				|| !alternative.orderedInputs().equals(alternative.candidateRule().key().orderedInputs()))
+				return null;
+			return candidateSignature(alternative.state(), alternative.candidateRule(),
+				alternative.candidateEmission(), alternative.realization(), alternative.supportClause(),
+				alternative.derivedFoutAction(), alternative.inputAuthorities(), context);
+		}
+		if(alternative.candidateRule() != null || alternative.candidateEmission() != null
+			|| alternative.derivedFoutAction() != null
+			|| !alternative.orderedInputs().equals(alternative.executionRule() == null ? List.of()
+				: alternative.executionRule().key().orderedInputs()))
+			return null;
+		return nonCandidateSignature(alternative.state(), alternative.authorityKind(),
+			alternative.durableAnchor(), alternative.relocationAction(), alternative.executionRule(),
+			alternative.executionEmission(), alternative.realization(), alternative.supportClause(),
+			alternative.inputAuthorities(), context);
 	}
 
 	private static void appendLiteral(NormalizedTextBuilder signature,

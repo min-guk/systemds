@@ -44,11 +44,13 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRea
 
 /** Invocation-local, identity-memoized semantic DAG hashes for physical authority subgraphs. */
 final class PhysicalSemanticDagFingerprint {
-	static final String SCHEMA = "physical-semantic-dag-v1";
+	static final String SCHEMA = "physical-semantic-dag-v2";
 	private static final byte[] ABSENT = {(byte)0};
 	private static final int TEXT_BUFFER_BYTES = 1024;
 	private static final long LITERAL_BYTE_MEMO_MAX_ESTIMATED_BYTES = 64L * 1024 * 1024;
 	private final IdentityHashMap<Object,byte[]> memo = new IdentityHashMap<>();
+	private final IdentityHashMap<Alternative,byte[]> canonicalAlternativeMemo =
+		new IdentityHashMap<>();
 	private final IdentityHashMap<RelocationAction,String> relocationActionSignatures =
 		new IdentityHashMap<>();
 	private final byte[] textBuffer = new byte[TEXT_BUFFER_BYTES];
@@ -90,6 +92,19 @@ final class PhysicalSemanticDagFingerprint {
 		target.append("|alternative-dag=").append(HexFormat.of().formatHex(alternative(alternative)));
 	}
 
+	void appendModelAlternativeOccurrences(ExactPhysicalCostModel.FingerprintWriter target,
+		ExactPhysicalModel model) {
+		// Only the private-factory immutable model may bypass signature classification. Every
+		// recipe input must remain present in the typed fields below; changing a recipe requires
+		// a new recipe id and semantic DAG schema.
+		for(ExactPhysicalModel.DecisionDomain domain : model.domains()) {
+			target.append("|domain:").append(domain.node().key().normalizedSignature());
+			for(Alternative alternative : domain.alternatives())
+				target.append("|alternative-dag=")
+					.append(HexFormat.of().formatHex(canonicalAlternative(alternative)));
+		}
+	}
+
 	String candidateFactsForTest(List<CandidateRuleFact> facts) {
 		Node root = node("candidate-facts-root");
 		root.integer("count", facts.size());
@@ -102,6 +117,12 @@ final class PhysicalSemanticDagFingerprint {
 		Node root = node("alternative-root");
 		root.child("alternative", alternative(value));
 		return SCHEMA + ':' + root.finishHex();
+	}
+
+	String modelAlternativesForTest(ExactPhysicalModel model) {
+		ExactPhysicalCostModel.FingerprintWriter root = new ExactPhysicalCostModel.FingerprintWriter();
+		appendModelAlternativeOccurrences(root, model);
+		return SCHEMA + ':' + root.finish();
 	}
 
 	String normalizedTextsForTest(List<NormalizedText> values) {
@@ -239,7 +260,23 @@ final class PhysicalSemanticDagFingerprint {
 	}
 
 	private byte[] alternative(Alternative alternative) {
-		return memoized(alternative, () -> digest("physical-alternative", node -> {
+		NormalizedText recipe = ExactPhysicalModel.canonicalAlternativeSignature(alternative);
+		boolean canonical = recipe != null && recipe.equals(alternative.normalizedSignature());
+		return canonical ? canonicalAlternative(alternative)
+			: memoized(alternative, () -> encodeAlternative(alternative, false));
+	}
+
+	private byte[] canonicalAlternative(Alternative alternative) {
+		byte[] retained = canonicalAlternativeMemo.get(alternative);
+		if(retained != null)
+			return retained;
+		byte[] encoded = encodeAlternative(alternative, true);
+		canonicalAlternativeMemo.put(alternative, encoded);
+		return encoded;
+	}
+
+	private byte[] encodeAlternative(Alternative alternative, boolean canonical) {
+		return digest("physical-alternative", node -> {
 			node.text("decision", alternative.decision().normalizedSignature());
 			node.text("state", alternative.state().normalizedSignature());
 			node.text("authorityKind", alternative.authorityKind().name());
@@ -269,8 +306,12 @@ final class PhysicalSemanticDagFingerprint {
 				: realization(alternative.realization()));
 			node.nullableChild("supportClause", alternative.supportClause() == null ? null
 				: clause(alternative.supportClause()));
-			node.normalizedText("normalizedSignature", alternative.normalizedSignature());
-		}));
+			node.text("signatureEncoding", canonical ? "CANONICAL_RECIPE" : "RAW_UTF16");
+			if(canonical)
+				node.text("signatureRecipe", alternative.captured() ? "CAPTURED_V1" : "NONCAPTURED_V1");
+			else
+				node.normalizedText("normalizedSignature", alternative.normalizedSignature());
+		});
 	}
 
 	private void inputAuthority(Node node, InputAuthority authority) {

@@ -41,7 +41,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRea
 
 /** Test-only schema traversal intentionally independent of production memoization and encoding. */
 final class IndependentPhysicalSemanticDagOracle {
-	static final String SCHEMA = "physical-semantic-dag-v1";
+	static final String SCHEMA = "physical-semantic-dag-v2";
 	private static final byte[] ABSENT = {(byte)0};
 	static String candidates(List<CandidateRuleFact> facts) {
 		IndependentPhysicalSemanticDagOracle oracle = new IndependentPhysicalSemanticDagOracle();
@@ -212,8 +212,64 @@ final class IndependentPhysicalSemanticDagOracle {
 				: realization(alternative.realization()));
 			node.nullableChild("supportClause", alternative.supportClause() == null ? null
 				: clause(alternative.supportClause()));
-			node.normalizedText("normalizedSignature", alternative.normalizedSignature());
+			String recipe = canonicalRecipe(alternative);
+			boolean canonical = recipe != null
+				&& NormalizedText.literal(recipe).equals(alternative.normalizedSignature());
+			node.text("signatureEncoding", canonical ? "CANONICAL_RECIPE" : "RAW_UTF16");
+			if(canonical)
+				node.text("signatureRecipe", alternative.captured() ? "CAPTURED_V1" : "NONCAPTURED_V1");
+			else
+				node.normalizedText("normalizedSignature", alternative.normalizedSignature());
 		});
+	}
+
+	private static String canonicalRecipe(Alternative alternative) {
+		if(alternative.authorityKind() == ExactPhysicalModel.AuthorityKind.CAPTURED_RULE) {
+			if(alternative.candidateRule() == null || alternative.candidateEmission() == null
+				|| alternative.executionRule() != null || alternative.executionEmission() != null
+				|| alternative.durableAnchor() != null || alternative.relocationAction() != null
+				|| alternative.realization() == null || alternative.supportClause() == null
+				|| !alternative.orderedInputs().equals(alternative.candidateRule().key().orderedInputs()))
+				return null;
+			return "CAPTURED|" + alternative.state().normalizedSignature() + "|rule="
+				+ alternative.candidateRule().key().normalizedSignature() + "|emission="
+				+ alternative.candidateEmission().selectionSignature() + "|realization="
+				+ alternative.realization().key().normalizedSignature() + "|clause="
+				+ alternative.supportClause().normalizedSignature() + "|foutMaterializationAction="
+				+ (alternative.derivedFoutAction() == null ? "-"
+					: alternative.derivedFoutAction().normalizedSignature())
+				+ "|inputs=" + alternative.inputAuthorities().stream()
+					.map(IndependentPhysicalSemanticDagOracle::authoritySignature).toList();
+		}
+		if(alternative.candidateRule() != null || alternative.candidateEmission() != null
+			|| alternative.derivedFoutAction() != null
+			|| !alternative.orderedInputs().equals(alternative.executionRule() == null ? List.of()
+				: alternative.executionRule().key().orderedInputs()))
+			return null;
+		return alternative.authorityKind() + "|" + alternative.state().normalizedSignature()
+			+ "|anchor=" + (alternative.durableAnchor() == null ? "-"
+				: alternative.durableAnchor().normalizedSignature())
+			+ "|action=" + (alternative.relocationAction() == null ? "-"
+				: alternative.relocationAction().normalizedSignature())
+			+ "|executionRule=" + (alternative.executionRule() == null ? "-"
+				: alternative.executionRule().key().normalizedSignature())
+			+ "|executionEmission=" + (alternative.executionEmission() == null ? "-"
+				: alternative.executionEmission().selectionSignature())
+			+ "|realization=" + (alternative.realization() == null ? "-"
+				: alternative.realization().key().normalizedSignature())
+			+ "|clause=" + (alternative.supportClause() == null ? "-"
+				: alternative.supportClause().normalizedSignature())
+			+ "|inputs=" + alternative.inputAuthorities().stream()
+				.map(IndependentPhysicalSemanticDagOracle::authoritySignature).toList();
+	}
+
+	private static String authoritySignature(InputAuthority authority) {
+		return authority.inputPosition() + ":" + authority.kind() + ':'
+			+ (authority.expectedFType() == null ? "-" : authority.expectedFType()) + ':'
+			+ (authority.sourceDecision() == null ? "-"
+				: authority.sourceDecision().normalizedSignature()) + ':'
+			+ (authority.relocationAction() == null ? "-"
+				: authority.relocationAction().normalizedSignature());
 	}
 
 	private static void inputAuthority(Node node, InputAuthority authority) {

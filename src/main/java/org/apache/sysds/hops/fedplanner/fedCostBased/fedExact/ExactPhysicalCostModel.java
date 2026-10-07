@@ -598,11 +598,7 @@ public final class ExactPhysicalCostModel {
 			// even when a reconstructed analysis reuses the old structural fingerprint.
 			for(CandidateRuleFact fact : analysis.candidateRuleFacts().orderedFacts())
 				semanticDag.appendCandidateOccurrence(normalized, fact);
-			for(ExactPhysicalModel.DecisionDomain domain : model.domains()) {
-				normalized.append("|domain:").append(domain.node().key().normalizedSignature());
-				for(ExactPhysicalModel.Alternative alternative : domain.alternatives())
-					semanticDag.appendAlternativeOccurrence(normalized, alternative);
-			}
+			semanticDag.appendModelAlternativeOccurrences(normalized, model);
 		}
 		finally {
 			try {
@@ -798,6 +794,10 @@ public final class ExactPhysicalCostModel {
 	static String physicalAlternativeDagFingerprintForTest(
 		ExactPhysicalModel.Alternative alternative) {
 		return new PhysicalSemanticDagFingerprint().alternativeForTest(alternative);
+	}
+
+	static String physicalModelAlternativeDagFingerprintForTest(ExactPhysicalModel model) {
+		return new PhysicalSemanticDagFingerprint().modelAlternativesForTest(model);
 	}
 
 	private static void appendPhysicalFactorValues(FingerprintWriter normalized,

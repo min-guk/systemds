@@ -44,7 +44,7 @@ public class ExactNativeLocalAnchorFanoutCostTest {
 	// ExactAliasGetCoalescingTest. Prior R55 digests and change evidence are recorded
 	// in docs/COST_EXPLICIT_ALIAS_CALIBRATION_2026-10-05_KO.md.
 	private static final String PROTECTED_NATIVE_LOCAL_FINGERPRINT =
-		"physical-semantic-dag-v1:f299ad63b5d73b9f1f6fab0386b9ecd998e069a378daa49e561cc4f55664ac1c";
+		"physical-semantic-dag-v2:830d58fd87625efb92e5254d7c993a511a82d73b9d3b72ceef829832720a7629";
 	private static final String PROTECTED_NATIVE_LOCAL_STRUCTURE_SHA256 =
 		"be38b2b3443c56373846f157adaffaca113f1952673f64550beb7e295d7d2507";
 	private static final String PROTECTED_NATIVE_LOCAL_BITS_SHA256 =

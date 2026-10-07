@@ -68,7 +68,7 @@ public class ExactPhysicalSemanticDagFingerprintTest {
 			List.of(first, first));
 		String recomputedNoMemo = ExactPhysicalCostModel.physicalCandidateFactsDagFingerprintForTest(
 			List.of(first, equalCopy));
-		Assert.assertTrue(shared, shared.startsWith("physical-semantic-dag-v1:"));
+		Assert.assertTrue(shared, shared.startsWith("physical-semantic-dag-v2:"));
 		Assert.assertEquals("identity memo must not enter semantic bytes", shared, recomputedNoMemo);
 		Assert.assertEquals("independent traversal must define the same schema bytes", shared,
 			IndependentPhysicalSemanticDagOracle.candidates(List.of(first, equalCopy)));
