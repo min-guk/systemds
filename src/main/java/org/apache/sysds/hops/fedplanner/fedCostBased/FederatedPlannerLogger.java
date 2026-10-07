@@ -82,6 +82,10 @@ public class FederatedPlannerLogger {
             LOG.debug(message);
     }
 
+    public static boolean isInfoLoggingEnabled() {
+        return LOG.isDebugEnabled();
+    }
+
     public static void logWarnMessage(String message) {
         LOG.warn(message);
     }

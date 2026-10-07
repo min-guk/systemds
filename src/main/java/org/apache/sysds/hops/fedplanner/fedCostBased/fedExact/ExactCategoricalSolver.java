@@ -7,7 +7,6 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -986,17 +985,24 @@ public final class ExactCategoricalSolver {
 		Arrays.fill(choices, -1);
 		int[] assignment = new int[first.variables.size()];
 		int[] outputLocal = new int[outputScope.length];
-		int[] internalLocal = new int[internalScope.length];
+		InternalChildStrides internalChildStrides = internalCells == 1L ? null
+			: internalChildStrides(inputMessages, internalScope, first.variables.size());
+		int[] childCells = new int[inputMessages.size()];
 		PreciseCost messageMinimum = PreciseCost.POSITIVE_INFINITY;
 		double messageLowerBound = Double.POSITIVE_INFINITY;
 		for(int outputCell = 0; outputCell < cells; outputCell++) {
 			decode(outputCell, outputScope, first.domains, outputLocal, assignment);
+			for(int variable : internalScope)
+				assignment[variable] = 0;
+			for(int message = 0; message < inputMessages.size(); message++)
+				childCells[message] = inputMessages.get(message).boundaryCellUnchecked(assignment);
 			PreciseCost best = PreciseCost.POSITIVE_INFINITY;
 			double bestLower = Double.POSITIVE_INFINITY;
 			int bestUnionCell = -1;
-			for(int internalCell = 0; internalCell < (int)internalCells; internalCell++) {
-				decode(internalCell, internalScope, first.domains, internalLocal, assignment);
-				int childCell = first.boundaryCellUnchecked(assignment);
+			for(int internalCell = 0; internalCell < (int)internalCells; internalCell++,
+				advanceInternalAssignment(internalScope, first.domains, assignment,
+					internalChildStrides, childCells)) {
+				int childCell = childCells[0];
 				PreciseCost candidate = first.valueAt(childCell);
 				double candidateLower = first.lowerValues[childCell];
 				if(counters != null)
@@ -1018,7 +1024,7 @@ public final class ExactCategoricalSolver {
 				}
 				for(int messageIndex = 1; messageIndex < inputMessages.size(); messageIndex++) {
 					BoundaryMessage message = inputMessages.get(messageIndex);
-					childCell = message.boundaryCellUnchecked(assignment);
+					childCell = childCells[messageIndex];
 					candidate = candidate.plus(message.valueAt(childCell));
 					candidateLower = addBoundaryLower(candidateLower,
 						message.lowerValues[childCell]);
@@ -1060,6 +1066,64 @@ public final class ExactCategoricalSolver {
 		return new BoundaryMessage(first.variables, first.domains, outputBoundary, outputScope,
 			values, lowValues, lowerValues, inputMessages, unionScope, choices,
 			retained, unionCells, messageMinimum, messageLowerBound);
+	}
+
+	private record InternalChildStrides(int[][] messages, int[][] strides) { }
+
+	private static InternalChildStrides internalChildStrides(List<BoundaryMessage> messages,
+		int[] internalScope, int variableCount) {
+		int[] internalPosition = new int[variableCount];
+		Arrays.fill(internalPosition, -1);
+		for(int position = 0; position < internalScope.length; position++)
+			internalPosition[internalScope[position]] = position;
+		int[] counts = new int[internalScope.length];
+		for(BoundaryMessage message : messages)
+			for(int variable : message.scopeIndices) {
+				int internal = internalPosition[variable];
+				if(internal >= 0)
+					counts[internal]++;
+			}
+		int[][] affectedMessages = new int[internalScope.length][];
+		int[][] affectedStrides = new int[internalScope.length][];
+		for(int internal = 0; internal < internalScope.length; internal++) {
+			affectedMessages[internal] = new int[counts[internal]];
+			affectedStrides[internal] = new int[counts[internal]];
+		}
+		Arrays.fill(counts, 0);
+		for(int messageIndex = 0; messageIndex < messages.size(); messageIndex++) {
+			BoundaryMessage message = messages.get(messageIndex);
+			for(int position = 0; position < message.scopeIndices.length; position++) {
+				int internal = internalPosition[message.scopeIndices[position]];
+				if(internal >= 0) {
+					int offset = counts[internal]++;
+					affectedMessages[internal][offset] = messageIndex;
+					affectedStrides[internal][offset] = message.strides[position];
+				}
+			}
+		}
+		return new InternalChildStrides(affectedMessages, affectedStrides);
+	}
+
+	private static void advanceInternalAssignment(int[] internalScope, int[] domains,
+		int[] assignment, InternalChildStrides childStrides, int[] childCells) {
+		if(childStrides == null)
+			return;
+		for(int position = internalScope.length - 1; position >= 0; position--) {
+			int variable = internalScope[position];
+			int next = assignment[variable] + 1;
+			if(next < domains[variable]) {
+				assignment[variable] = next;
+				for(int offset = 0; offset < childStrides.messages[position].length; offset++)
+					childCells[childStrides.messages[position][offset]] +=
+						childStrides.strides[position][offset];
+				return;
+			}
+			assignment[variable] = 0;
+			int reset = domains[variable] - 1;
+			for(int offset = 0; offset < childStrides.messages[position].length; offset++)
+				childCells[childStrides.messages[position][offset]] -=
+					reset * childStrides.strides[position][offset];
+		}
 	}
 
 	private static boolean exactNonnegativeBoundarySum(List<BoundaryMessage> inputMessages) {
@@ -1973,40 +2037,141 @@ public final class ExactCategoricalSolver {
 		Set<Integer> remaining = new HashSet<>();
 		for(int i = 0; i < variables.size(); i++)
 			remaining.add(i);
+		EliminationMetrics[] metrics = new EliminationMetrics[variables.size()];
+		for(int variable = 0; variable < variables.size(); variable++)
+			metrics[variable] = new EliminationMetrics(
+				variable, variables, domains, graph, remaining, ordering);
 		List<Step> steps = new ArrayList<>(variables.size());
 		int width = 0;
 		while(!remaining.isEmpty()) {
-			Comparator<Integer> comparator = switch(ordering) {
-				case MIN_FILL -> Comparator
-					.comparingLong((Integer variable) -> fillEdges(variable, graph, remaining))
-					.thenComparingLong(variable -> neighborCells(variable, graph, remaining, domains));
-				case MIN_SEPARATOR_CELLS -> Comparator
-					.comparingLong((Integer variable) -> neighborCells(variable, graph, remaining, domains))
-					.thenComparingLong(variable -> fillEdges(variable, graph, remaining));
-				case MIN_ELIMINATION_ASSIGNMENTS -> Comparator
-					.comparingLong((Integer variable) -> eliminationAssignments(
-						variable, graph, remaining, domains))
-					.thenComparingLong(variable -> neighborCells(variable, graph, remaining, domains))
-					.thenComparingLong(variable -> fillEdges(variable, graph, remaining));
-				case MIN_DEGREE -> Comparator
-					.comparingLong((Integer variable) -> remainingDegree(variable, graph, remaining))
-					.thenComparingLong(variable -> neighborCells(variable, graph, remaining, domains))
-					.thenComparingLong(variable -> fillEdges(variable, graph, remaining));
-			};
-			int selected = remaining.stream().min(comparator
-				.thenComparing(variable -> variables.get(variable).key())).orElseThrow();
+			int selected = selectEliminationVariable(metrics, remaining);
 			int[] separator = graph.get(selected).stream().filter(remaining::contains)
 				.sorted().mapToInt(Integer::intValue).toArray();
 			width = Math.max(width, separator.length);
 			for(int i = 0; i < separator.length; i++)
 				for(int j = i + 1; j < separator.length; j++) {
-					graph.get(separator[i]).add(separator[j]);
-					graph.get(separator[j]).add(separator[i]);
+					int left = separator[i];
+					int right = separator[j];
+					if(graph.get(left).contains(right))
+						continue;
+					invalidateCommonNeighborFill(metrics, graph, remaining, selected, left, right);
+					graph.get(left).add(right);
+					graph.get(right).add(left);
 				}
 			remaining.remove(selected);
+			for(int neighbor : separator)
+				metrics[neighbor].invalidateAll();
 			steps.add(new Step(selected, separator));
 		}
 		return new Plan(List.copyOf(steps), width);
+	}
+
+	/** Computes each current graph metric once per candidate instead of once per comparator call. */
+	private static int selectEliminationVariable(EliminationMetrics[] metrics,
+		Set<Integer> remaining) {
+		EliminationMetrics selected = null;
+		for(int variable : remaining) {
+			EliminationMetrics candidate = metrics[variable];
+			if(selected == null || candidate.compareTo(selected) < 0)
+				selected = candidate;
+		}
+		if(selected == null)
+			throw new IllegalStateException("EXACT_VE_ELIMINATION_SELECTION_EMPTY");
+		return selected.variable;
+	}
+
+	private static void invalidateCommonNeighborFill(EliminationMetrics[] metrics,
+		List<Set<Integer>> graph, Set<Integer> remaining, int selected, int left, int right) {
+		Set<Integer> leftNeighbors = graph.get(left);
+		Set<Integer> rightNeighbors = graph.get(right);
+		Set<Integer> smaller = leftNeighbors.size() <= rightNeighbors.size()
+			? leftNeighbors : rightNeighbors;
+		Set<Integer> larger = smaller == leftNeighbors ? rightNeighbors : leftNeighbors;
+		for(int common : smaller)
+			if(common != selected && remaining.contains(common) && larger.contains(common))
+				metrics[common].invalidateFill();
+	}
+
+	private static final class EliminationMetrics {
+		private final int variable;
+		private final List<Variable> variables;
+		private final int[] domains;
+		private final List<Set<Integer>> graph;
+		private final Set<Integer> remaining;
+		private final PlanOrdering ordering;
+		private long cells = -1L;
+		private long fill = -1L;
+		private long degree = -1L;
+
+		private EliminationMetrics(int variable, List<Variable> variables, int[] domains,
+			List<Set<Integer>> graph, Set<Integer> remaining, PlanOrdering ordering) {
+			this.variable = variable;
+			this.variables = variables;
+			this.domains = domains;
+			this.graph = graph;
+			this.remaining = remaining;
+			this.ordering = ordering;
+		}
+
+		private void invalidateAll() {
+			cells = -1L;
+			fill = -1L;
+			degree = -1L;
+		}
+
+		private void invalidateFill() {
+			fill = -1L;
+		}
+
+		private int compareTo(EliminationMetrics other) {
+			int comparison = Long.compare(primary(), other.primary());
+			if(comparison == 0)
+				comparison = Long.compare(secondary(), other.secondary());
+			if(comparison == 0)
+				comparison = Long.compare(tertiary(), other.tertiary());
+			return comparison != 0 ? comparison
+				: variables.get(variable).key().compareTo(variables.get(other.variable).key());
+		}
+
+		private long primary() {
+			return switch(ordering) {
+				case MIN_FILL -> fill();
+				case MIN_SEPARATOR_CELLS -> cells();
+				case MIN_ELIMINATION_ASSIGNMENTS -> saturatedMultiply(cells(), domains[variable]);
+				case MIN_DEGREE -> degree();
+			};
+		}
+
+		private long secondary() {
+			return switch(ordering) {
+				case MIN_FILL -> cells();
+				case MIN_SEPARATOR_CELLS -> fill();
+				case MIN_ELIMINATION_ASSIGNMENTS, MIN_DEGREE -> cells();
+			};
+		}
+
+		private long tertiary() {
+			return ordering == PlanOrdering.MIN_ELIMINATION_ASSIGNMENTS
+				|| ordering == PlanOrdering.MIN_DEGREE ? fill() : 0L;
+		}
+
+		private long cells() {
+			if(cells < 0L)
+				cells = neighborCells(variable, graph, remaining, domains);
+			return cells;
+		}
+
+		private long fill() {
+			if(fill < 0L)
+				fill = fillEdges(variable, graph, remaining);
+			return fill;
+		}
+
+		private long degree() {
+			if(degree < 0L)
+				degree = remainingDegree(variable, graph, remaining);
+			return degree;
+		}
 	}
 
 	private static Plan eliminationPlan(List<Variable> variables,
@@ -2049,24 +2214,21 @@ public final class ExactCategoricalSolver {
 		return graph;
 	}
 
-	private static long eliminationAssignments(int variable, List<Set<Integer>> graph,
-		Set<Integer> remaining, int[] domains) {
-		return saturatedMultiply(neighborCells(variable, graph, remaining, domains), domains[variable]);
-	}
-
 	private static long remainingDegree(int variable, List<Set<Integer>> graph,
 		Set<Integer> remaining) {
 		return graph.get(variable).stream().filter(remaining::contains).count();
 	}
 
 	private static long fillEdges(int variable, List<Set<Integer>> graph, Set<Integer> remaining) {
-		int[] neighbors = graph.get(variable).stream().filter(remaining::contains)
-			.sorted().mapToInt(Integer::intValue).toArray();
 		long missing = 0;
-		for(int i = 0; i < neighbors.length; i++)
-			for(int j = i + 1; j < neighbors.length; j++)
-				if(!graph.get(neighbors[i]).contains(neighbors[j]))
+		for(int left : graph.get(variable)) {
+			if(!remaining.contains(left))
+				continue;
+			for(int right : graph.get(variable))
+				if(left < right && remaining.contains(right)
+					&& !graph.get(left).contains(right))
 					missing++;
+		}
 		return missing;
 	}
 

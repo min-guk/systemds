@@ -3,8 +3,11 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Assert;
@@ -353,6 +356,39 @@ public class ExactCategoricalSolverTest {
 	}
 
 	@Test
+	public void cachedSelectionMetricsPreserveLegacyPortfolioOrders() throws Exception {
+		Random random = new Random(0xE11A1L);
+		for(int trial = 0; trial < 400; trial++) {
+			int count = 1 + random.nextInt(20);
+			List<ExactCategoricalSolver.Variable> variables = new ArrayList<>();
+			int[] domains = new int[count];
+			for(int variable = 0; variable < count; variable++) {
+				domains[variable] = random.nextInt(8) == 0
+					? 1_000_000_000 + random.nextInt(1_000_000_000)
+					: 2 + random.nextInt(5);
+				variables.add(variable("metric-" + trial + '-' + variable, domains[variable]));
+			}
+			List<int[]> scopes = new ArrayList<>();
+			for(int factor = 0; factor < 1 + random.nextInt(3 * count); factor++) {
+				int[] shuffled = java.util.stream.IntStream.range(0, count).toArray();
+				for(int index = shuffled.length - 1; index > 0; index--) {
+					int swap = random.nextInt(index + 1);
+					int value = shuffled[index];
+					shuffled[index] = shuffled[swap];
+					shuffled[swap] = value;
+				}
+				int arity = 1 + random.nextInt(Math.min(6, count));
+				scopes.add(Arrays.copyOf(shuffled, arity));
+			}
+			for(String ordering : List.of("MIN_FILL", "MIN_SEPARATOR_CELLS",
+				"MIN_ELIMINATION_ASSIGNMENTS", "MIN_DEGREE"))
+				Assert.assertEquals("trial=" + trial + "|ordering=" + ordering,
+					legacyEliminationOrder(variables, domains, scopes, ordering),
+					optimizedEliminationOrder(variables, domains, scopes, ordering));
+		}
+	}
+
+	@Test
 	public void finiteObjectiveOverflowFailsClosed() {
 		var a = variable("a", 1);
 		IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
@@ -380,6 +416,118 @@ public class ExactCategoricalSolverTest {
 
 	private static ExactCategoricalSolver.Variable variable(String key, int domain) {
 		return new ExactCategoricalSolver.Variable(key, domain);
+	}
+
+	@SuppressWarnings({"rawtypes", "unchecked"})
+	private static List<Integer> optimizedEliminationOrder(
+		List<ExactCategoricalSolver.Variable> variables, int[] domains,
+		List<int[]> scopes, String ordering) throws Exception {
+		Class<? extends Enum> orderingType = (Class<? extends Enum>)Class.forName(
+			ExactCategoricalSolver.class.getName() + "$PlanOrdering");
+		Object selectedOrdering = Enum.valueOf(orderingType, ordering);
+		var method = ExactCategoricalSolver.class.getDeclaredMethod("eliminationPlan",
+			List.class, int[].class, List.class, orderingType);
+		method.setAccessible(true);
+		Object plan = method.invoke(null, variables, domains, scopes, selectedOrdering);
+		var stepsMethod = plan.getClass().getDeclaredMethod("steps");
+		stepsMethod.setAccessible(true);
+		List<?> steps = (List<?>)stepsMethod.invoke(plan);
+		List<Integer> result = new ArrayList<>(steps.size());
+		for(Object step : steps) {
+			var variableMethod = step.getClass().getDeclaredMethod("variable");
+			variableMethod.setAccessible(true);
+			result.add((Integer)variableMethod.invoke(step));
+		}
+		return result;
+	}
+
+	private static List<Integer> legacyEliminationOrder(
+		List<ExactCategoricalSolver.Variable> variables, int[] domains,
+		List<int[]> scopes, String ordering) {
+		List<Set<Integer>> graph = interactionGraph(variables.size(), scopes);
+		Set<Integer> remaining = new HashSet<>();
+		for(int variable = 0; variable < variables.size(); variable++)
+			remaining.add(variable);
+		List<Integer> result = new ArrayList<>(variables.size());
+		while(!remaining.isEmpty()) {
+			Comparator<Integer> comparator = switch(ordering) {
+				case "MIN_FILL" -> Comparator
+					.comparingLong((Integer variable) -> legacyFillEdges(variable, graph, remaining))
+					.thenComparingLong(variable -> legacyNeighborCells(
+						variable, graph, remaining, domains));
+				case "MIN_SEPARATOR_CELLS" -> Comparator
+					.comparingLong((Integer variable) -> legacyNeighborCells(
+						variable, graph, remaining, domains))
+					.thenComparingLong(variable -> legacyFillEdges(variable, graph, remaining));
+				case "MIN_ELIMINATION_ASSIGNMENTS" -> Comparator
+					.comparingLong((Integer variable) -> saturatedMultiply(
+						legacyNeighborCells(variable, graph, remaining, domains), domains[variable]))
+					.thenComparingLong(variable -> legacyNeighborCells(
+						variable, graph, remaining, domains))
+					.thenComparingLong(variable -> legacyFillEdges(variable, graph, remaining));
+				case "MIN_DEGREE" -> Comparator
+					.comparingLong((Integer variable) -> graph.get(variable).stream()
+						.filter(remaining::contains).count())
+					.thenComparingLong(variable -> legacyNeighborCells(
+						variable, graph, remaining, domains))
+					.thenComparingLong(variable -> legacyFillEdges(variable, graph, remaining));
+				default -> throw new IllegalArgumentException(ordering);
+			};
+			int selected = remaining.stream().min(comparator.thenComparing(
+				variable -> variables.get(variable).key())).orElseThrow();
+			int[] separator = graph.get(selected).stream().filter(remaining::contains)
+				.sorted().mapToInt(Integer::intValue).toArray();
+			for(int left = 0; left < separator.length; left++)
+				for(int right = left + 1; right < separator.length; right++) {
+					graph.get(separator[left]).add(separator[right]);
+					graph.get(separator[right]).add(separator[left]);
+				}
+			remaining.remove(selected);
+			result.add(selected);
+		}
+		return result;
+	}
+
+	private static List<Set<Integer>> interactionGraph(int count, List<int[]> scopes) {
+		List<Set<Integer>> graph = new ArrayList<>(count);
+		for(int variable = 0; variable < count; variable++)
+			graph.add(new HashSet<>());
+		for(int[] scope : scopes)
+			for(int left = 0; left < scope.length; left++)
+				for(int right = left + 1; right < scope.length; right++) {
+					graph.get(scope[left]).add(scope[right]);
+					graph.get(scope[right]).add(scope[left]);
+				}
+		return graph;
+	}
+
+	private static long legacyFillEdges(int variable, List<Set<Integer>> graph,
+		Set<Integer> remaining) {
+		int[] neighbors = graph.get(variable).stream().filter(remaining::contains)
+			.sorted().mapToInt(Integer::intValue).toArray();
+		long missing = 0L;
+		for(int left = 0; left < neighbors.length; left++)
+			for(int right = left + 1; right < neighbors.length; right++)
+				if(!graph.get(neighbors[left]).contains(neighbors[right]))
+					missing++;
+		return missing;
+	}
+
+	private static long legacyNeighborCells(int variable, List<Set<Integer>> graph,
+		Set<Integer> remaining, int[] domains) {
+		long cells = 1L;
+		for(int neighbor : graph.get(variable)) {
+			if(!remaining.contains(neighbor))
+				continue;
+			if(cells > Long.MAX_VALUE / domains[neighbor])
+				return Long.MAX_VALUE;
+			cells *= domains[neighbor];
+		}
+		return cells;
+	}
+
+	private static long saturatedMultiply(long left, long right) {
+		return left > Long.MAX_VALUE / right ? Long.MAX_VALUE : left * right;
 	}
 
 	private static ExactCategoricalSolver.Factor randomFactor(Random random,

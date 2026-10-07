@@ -1,0 +1,1506 @@
+{
+  "status": "TARGET_NOT_MET",
+  "targetSeconds": 10,
+  "targetMetric": "compilationSeconds",
+  "targetMet": false,
+  "baseRevision": "d26bb596102557d4e9d8c76fd5530892688155ad",
+  "currentSourceMatchesFrozenBuild": true,
+  "baselineMainSourceFilesMatchedToGit": 1644,
+  "finalInventoriesRehashed": true,
+  "javaFiles": 3598,
+  "build": {
+    "returncode": 0,
+    "sourceUnchanged": true,
+    "seconds": 202.15639305114746,
+    "head": "d26bb596102557d4e9d8c76fd5530892688155ad"
+  },
+  "postReviewBuild": {
+    "returncode": 0,
+    "sourceUnchanged": true,
+    "mainMatchesCentralBuild": true,
+    "seconds": 43.89668798446655,
+    "changedTests": [
+      "src/test/java/org/apache/sysds/hops/fedplanner/placement/CfgNativeLineageNormalizationTest.java",
+      "src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementIdentityCollectionHashTest.java"
+    ]
+  },
+  "regression": {
+    "tests": 821,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 6,
+    "classes": 97,
+    "suites": [
+      {
+        "class": "JointPartialTruthTest",
+        "tests": 5,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactSharedSourceLinearPreparationTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CostBasedPruningTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactCategoricalSolverTest",
+        "tests": 22,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalRegionalConfigurationTest",
+        "tests": 8,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalCostFingerprintPreflightTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointPhysicalCostTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "SharedRegionalCompactionParityTest",
+        "tests": 7,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalRegionalSeedTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "SharedReductionRepairTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "BoundaryPruningTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactFiniteSupportJoinTest",
+        "tests": 11,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalUnaryPreparationTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalReducedSolverTest",
+        "tests": 35,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlannerResourceGuardTest",
+        "tests": 7,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactCompiledSupplySharingTest",
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LocalPhysicalOptimizerIncrementalTraceTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "SharedRegionalPreparationTest",
+        "tests": 11,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "FederatedPlanLocalCostIntegrationTest",
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactCategoricalSolverArithmeticParityTest",
+        "tests": 9,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalNativeSupplyRepresentationTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointBoundaryPhysicalModelProofTest",
+        "tests": 10,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointPhysicalCostRowsPrefixTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactNativeLocalAnchorFanoutCostTest",
+        "tests": 10,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalDyadicCertificateTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactDerivedSupplySharingTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalSharedSourceEncodingTest",
+        "tests": 27,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalBoundaryMessageTest",
+        "tests": 18,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CampaignBG014AlsPartitionedComputeCostRedTest",
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactFactorFreezeOrderTest",
+        "tests": 5,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPartialHardFactorTest",
+        "tests": 8,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalWitnessEncodingTest",
+        "tests": 5,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalBoundarySeedTest",
+        "tests": 11,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalRegionalOptimizerTest",
+        "tests": 19,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactHardFactorObservationDecompositionTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointBoundaryMixedInputTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactFiniteRowIndexTest",
+        "tests": 7,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LocalCategoricalOptimizerTest",
+        "tests": 21,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "DynamicNativeLayoutCompositionTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "HeuristicProtectedNestedDemotionTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointValueMapRelationsTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "RelocationBindingPrefixPruningTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ReferenceProductPrefixPruningTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LogicalBoundaryRealizationsTest",
+        "tests": 16,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PolicyGreedyGroundingTest",
+        "tests": 7,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PolicyGreedyPlacementSelectorTest",
+        "tests": 14,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LogregProtectedLoopSliceTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointAliasProjectionTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "EarlyPrivacyPruningLegalSpaceParityTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PhysicalSinglePartitionProofFixedPointTest",
+        "tests": 9,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementJointInputEnvironmentTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointInputReachingDefinitionsTest",
+        "tests": 9,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "RuntimeReadLegalityParityTest",
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointValueMapSelectionLegalityTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PublicationSupportClosureTest",
+        "tests": 10,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalSinglePartitionProofTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CfgReplayCompatibilityIndexTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactRootWorkerCountMemoTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PhysicalCandidateRefinementTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "TransientPlacementAlternativesTest",
+        "tests": 7,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 5
+      },
+      {
+        "class": "CfgNativeLineageNormalizationTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CandidateRealizationCanonicalizationTest",
+        "tests": 50,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LoopIdentityBackedgeClosureTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactDurableOutputSupportTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactLoopPhiSupplySharingTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalRealizationSupportFactorCacheTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "RefedReuseAuditTest",
+        "tests": 7,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "NativePlacementContinuityTest",
+        "tests": 85,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 1
+      },
+      {
+        "class": "CfgReplayMemoTest",
+        "tests": 10,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "MaterializationProofInventoryTest",
+        "tests": 15,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PhysicalGenerationEnvelopeTest",
+        "tests": 10,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactEmissionBindingIdentityTest",
+        "tests": 10,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "DirectedDirectClosureDirtyConeTest",
+        "tests": 24,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "DirectSupportUnionScheduleTest",
+        "tests": 11,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "WorkerPoolAnchorResolverCycleTest",
+        "tests": 12,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "WorkerPoolAnchorResolverFunctionReturnTest",
+        "tests": 12,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "WorkerPoolRealizationTraversalTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "DirectComponentScheduleCacheTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointAliasReachabilityTest",
+        "tests": 8,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementDependencyComponentsTest",
+        "tests": 11,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementCanonicalFingerprintTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalCostFingerprintDeterminismTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalCostSurfaceEstimateSnapshotTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactSparseStorageBudgetTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalLegalityEncodingTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "AutomaticSupplySharingDockerProbeArgumentsTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactFactorValueClassesTest",
+        "tests": 9,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementIdentityCollectionHashTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementIdentityAnalysisScopeTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "NativeProofSignatureCacheTest",
+        "tests": 5,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementRealizationLookupIndexTest",
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ValueMapReferenceIndexTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlannerSpaceAuditTest",
+        "tests": 17,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "OracleFacadeTest",
+        "tests": 28,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "DerivedFoutNormalizationTest",
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "RelocationProductMemoTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "OracleFacadeInnerFailurePropagationTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "summary": {
+    "baseline-comparison": {
+      "commonSeconds": {
+        "mean": 19.381872002666668,
+        "median": 17.825083474,
+        "min": 17.684449129,
+        "max": 22.636083405
+      },
+      "compilationSeconds": {
+        "mean": 28.877490333333334,
+        "median": 27.652432,
+        "min": 27.200498,
+        "max": 31.779541
+      },
+      "executionSeconds": {
+        "mean": 3.0826666666666664,
+        "median": 3.062,
+        "min": 2.939,
+        "max": 3.247
+      }
+    },
+    "final": {
+      "commonSeconds": {
+        "mean": 16.330564650333333,
+        "median": 17.230071122,
+        "min": 13.967900019,
+        "max": 17.79372281
+      },
+      "compilationSeconds": {
+        "mean": 23.05257333333333,
+        "median": 24.195362,
+        "min": 20.396642,
+        "max": 24.565716
+      },
+      "executionSeconds": {
+        "mean": 3.2993333333333332,
+        "median": 3.197,
+        "min": 3.156,
+        "max": 3.545
+      }
+    },
+    "without-exact": {
+      "commonSeconds": {
+        "mean": 16.079620747,
+        "median": 16.079620747,
+        "min": 16.079620747,
+        "max": 16.079620747
+      },
+      "compilationSeconds": {
+        "mean": 23.58255,
+        "median": 23.58255,
+        "min": 23.58255,
+        "max": 23.58255
+      },
+      "executionSeconds": {
+        "mean": 3.328,
+        "median": 3.328,
+        "min": 3.328,
+        "max": 3.328
+      }
+    },
+    "without-common": {
+      "commonSeconds": {
+        "mean": 18.403087137,
+        "median": 18.403087137,
+        "min": 18.403087137,
+        "max": 18.403087137
+      },
+      "compilationSeconds": {
+        "mean": 29.494158,
+        "median": 29.494158,
+        "min": 29.494158,
+        "max": 29.494158
+      },
+      "executionSeconds": {
+        "mean": 3.162,
+        "median": 3.162,
+        "min": 3.162,
+        "max": 3.162
+      }
+    }
+  },
+  "runs": [
+    {
+      "variant": "baseline-comparison",
+      "run": "logreg-r2-base-final-01",
+      "sameConditionsAsBaseline": true,
+      "inputHashesMatched": 34,
+      "artifactDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "72d560360c02d287c75c6a472e2ad9a4a63698390464d9cb6fe298c708116194",
+        "mainSources": "3c837fdae51aa238df9786354844cd956bca0278c68d10cb93674f50fe6ec84c",
+        "testClasses": "5e83f02d94c569f41b17f674ca4d0efe83fe60368e456088e2025ab0debbb195",
+        "testSources": "30b7167a34fcb9f2dcab3b6b3524f6c736043f9407351d1ae4b2dae869674407"
+      },
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 17.825083474,
+          "commonPreparationSeconds": 17.84102622,
+          "compilationSeconds": 27.200498,
+          "executionSeconds": 3.062,
+          "phases": {
+            "MODEL_SETUP": 2.865793455,
+            "OPTIMIZATION": 4.068444144,
+            "SELECTION": 0.387654525,
+            "POST_SEARCH_TRACE": 0.004710133,
+            "PLAN_CONVERSION": 0.743508566,
+            "EMISSION": 0.253315209,
+            "FINAL_BOUNDARY_VERIFY": 0.007746748
+          },
+          "timingTargetMet": false,
+          "checkpointCount": 1224,
+          "checkpointParity": true,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 16,
+            "actualShape": [
+              8,
+              2
+            ],
+            "entries": 16,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 2.220446049250313e-16,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              2
+            ],
+            "shapeMatched": true
+          }
+        },
+        {
+          "case": "ml_l2svm",
+          "commonSeconds": 6.011962134,
+          "commonPreparationSeconds": 6.0279737,
+          "compilationSeconds": 9.029375,
+          "executionSeconds": 0.74,
+          "phases": {
+            "MODEL_SETUP": 0.66715309,
+            "OPTIMIZATION": 1.128152986,
+            "SELECTION": 0.089395237,
+            "POST_SEARCH_TRACE": 0.003929134,
+            "PLAN_CONVERSION": 0.143049416,
+            "EMISSION": 0.074747231,
+            "FINAL_BOUNDARY_VERIFY": 0.002747856
+          },
+          "timingTargetMet": true,
+          "checkpointCount": 4,
+          "checkpointParity": true,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 8,
+            "actualShape": [
+              8,
+              1
+            ],
+            "entries": 8,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 8.413408858487514e-17,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              1
+            ],
+            "shapeMatched": true
+          }
+        }
+      ]
+    },
+    {
+      "variant": "final",
+      "run": "logreg-r2-final-01",
+      "sameConditionsAsBaseline": true,
+      "inputHashesMatched": 34,
+      "artifactDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "508647ef88f426c7e95481fe14b9d79a333e7099c637d9d464c2d05fa6fb0f31",
+        "mainSources": "3145ff22b721deaa6748447388100e4cff0f1931ecbbb3d1991261ad3d5c4e76",
+        "testClasses": "5e83f02d94c569f41b17f674ca4d0efe83fe60368e456088e2025ab0debbb195",
+        "testSources": "30b7167a34fcb9f2dcab3b6b3524f6c736043f9407351d1ae4b2dae869674407"
+      },
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 17.79372281,
+          "commonPreparationSeconds": 17.808879676,
+          "compilationSeconds": 24.565716,
+          "executionSeconds": 3.545,
+          "phases": {
+            "MODEL_SETUP": 1.857542815,
+            "OPTIMIZATION": 3.159324687,
+            "SELECTION": 0.215177703,
+            "POST_SEARCH_TRACE": 0.004711806,
+            "PLAN_CONVERSION": 0.479512044,
+            "EMISSION": 0.128328541,
+            "FINAL_BOUNDARY_VERIFY": 0.004769854
+          },
+          "timingTargetMet": false,
+          "checkpointCount": 1224,
+          "checkpointParity": true,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 16,
+            "actualShape": [
+              8,
+              2
+            ],
+            "entries": 16,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 2.220446049250313e-16,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              2
+            ],
+            "shapeMatched": true
+          }
+        },
+        {
+          "case": "ml_l2svm",
+          "commonSeconds": 5.912192218,
+          "commonPreparationSeconds": 5.930644483,
+          "compilationSeconds": 8.959974,
+          "executionSeconds": 0.94,
+          "phases": {
+            "MODEL_SETUP": 0.663291988,
+            "OPTIMIZATION": 0.784860227,
+            "SELECTION": 0.090531714,
+            "POST_SEARCH_TRACE": 0.004276783,
+            "PLAN_CONVERSION": 0.23449764,
+            "EMISSION": 0.120105073,
+            "FINAL_BOUNDARY_VERIFY": 0.004613432
+          },
+          "timingTargetMet": true,
+          "checkpointCount": 4,
+          "checkpointParity": true,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 8,
+            "actualShape": [
+              8,
+              1
+            ],
+            "entries": 8,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 8.413408858487514e-17,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              1
+            ],
+            "shapeMatched": true
+          }
+        }
+      ]
+    },
+    {
+      "variant": "baseline-comparison",
+      "run": "logreg-r2-base-final-02",
+      "sameConditionsAsBaseline": true,
+      "inputHashesMatched": 34,
+      "artifactDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "72d560360c02d287c75c6a472e2ad9a4a63698390464d9cb6fe298c708116194",
+        "mainSources": "3c837fdae51aa238df9786354844cd956bca0278c68d10cb93674f50fe6ec84c",
+        "testClasses": "5e83f02d94c569f41b17f674ca4d0efe83fe60368e456088e2025ab0debbb195",
+        "testSources": "30b7167a34fcb9f2dcab3b6b3524f6c736043f9407351d1ae4b2dae869674407"
+      },
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 22.636083405,
+          "commonPreparationSeconds": 22.652788174,
+          "compilationSeconds": 31.779541,
+          "executionSeconds": 3.247,
+          "phases": {
+            "MODEL_SETUP": 2.80908857,
+            "OPTIMIZATION": 4.259806225,
+            "SELECTION": 0.248054849,
+            "POST_SEARCH_TRACE": 0.004006819,
+            "PLAN_CONVERSION": 0.453295473,
+            "EMISSION": 0.136693857,
+            "FINAL_BOUNDARY_VERIFY": 0.005879188
+          },
+          "timingTargetMet": false,
+          "checkpointCount": 1224,
+          "checkpointParity": true,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 16,
+            "actualShape": [
+              8,
+              2
+            ],
+            "entries": 16,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 2.220446049250313e-16,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              2
+            ],
+            "shapeMatched": true
+          }
+        }
+      ]
+    },
+    {
+      "variant": "final",
+      "run": "logreg-r2-final-02",
+      "sameConditionsAsBaseline": true,
+      "inputHashesMatched": 34,
+      "artifactDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "508647ef88f426c7e95481fe14b9d79a333e7099c637d9d464c2d05fa6fb0f31",
+        "mainSources": "3145ff22b721deaa6748447388100e4cff0f1931ecbbb3d1991261ad3d5c4e76",
+        "testClasses": "5e83f02d94c569f41b17f674ca4d0efe83fe60368e456088e2025ab0debbb195",
+        "testSources": "30b7167a34fcb9f2dcab3b6b3524f6c736043f9407351d1ae4b2dae869674407"
+      },
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 17.230071122,
+          "commonPreparationSeconds": 17.245550813,
+          "compilationSeconds": 24.195362,
+          "executionSeconds": 3.156,
+          "phases": {
+            "MODEL_SETUP": 1.520450239,
+            "OPTIMIZATION": 3.458954272,
+            "SELECTION": 0.225801412,
+            "POST_SEARCH_TRACE": 0.008460031,
+            "PLAN_CONVERSION": 0.50353,
+            "EMISSION": 0.130405986,
+            "FINAL_BOUNDARY_VERIFY": 0.003598405
+          },
+          "timingTargetMet": false,
+          "checkpointCount": 1224,
+          "checkpointParity": true,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 16,
+            "actualShape": [
+              8,
+              2
+            ],
+            "entries": 16,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 2.220446049250313e-16,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              2
+            ],
+            "shapeMatched": true
+          }
+        }
+      ]
+    },
+    {
+      "variant": "baseline-comparison",
+      "run": "logreg-r2-base-final-03",
+      "sameConditionsAsBaseline": true,
+      "inputHashesMatched": 34,
+      "artifactDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "72d560360c02d287c75c6a472e2ad9a4a63698390464d9cb6fe298c708116194",
+        "mainSources": "3c837fdae51aa238df9786354844cd956bca0278c68d10cb93674f50fe6ec84c",
+        "testClasses": "5e83f02d94c569f41b17f674ca4d0efe83fe60368e456088e2025ab0debbb195",
+        "testSources": "30b7167a34fcb9f2dcab3b6b3524f6c736043f9407351d1ae4b2dae869674407"
+      },
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 17.684449129,
+          "commonPreparationSeconds": 17.701439933,
+          "compilationSeconds": 27.652432,
+          "executionSeconds": 2.939,
+          "phases": {
+            "MODEL_SETUP": 3.39604885,
+            "OPTIMIZATION": 4.624590299,
+            "SELECTION": 0.305714815,
+            "POST_SEARCH_TRACE": 0.00339206,
+            "PLAN_CONVERSION": 0.413470451,
+            "EMISSION": 0.153887513,
+            "FINAL_BOUNDARY_VERIFY": 0.007604853
+          },
+          "timingTargetMet": false,
+          "checkpointCount": 1224,
+          "checkpointParity": true,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 16,
+            "actualShape": [
+              8,
+              2
+            ],
+            "entries": 16,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 2.220446049250313e-16,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              2
+            ],
+            "shapeMatched": true
+          }
+        }
+      ]
+    },
+    {
+      "variant": "final",
+      "run": "logreg-r2-final-03",
+      "sameConditionsAsBaseline": true,
+      "inputHashesMatched": 34,
+      "artifactDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "508647ef88f426c7e95481fe14b9d79a333e7099c637d9d464c2d05fa6fb0f31",
+        "mainSources": "3145ff22b721deaa6748447388100e4cff0f1931ecbbb3d1991261ad3d5c4e76",
+        "testClasses": "5e83f02d94c569f41b17f674ca4d0efe83fe60368e456088e2025ab0debbb195",
+        "testSources": "30b7167a34fcb9f2dcab3b6b3524f6c736043f9407351d1ae4b2dae869674407"
+      },
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 13.967900019,
+          "commonPreparationSeconds": 13.986976571,
+          "compilationSeconds": 20.396642,
+          "executionSeconds": 3.197,
+          "phases": {
+            "MODEL_SETUP": 1.453896013,
+            "OPTIMIZATION": 3.092618814,
+            "SELECTION": 0.20534368,
+            "POST_SEARCH_TRACE": 0.004030903,
+            "PLAN_CONVERSION": 0.500016841,
+            "EMISSION": 0.12586947,
+            "FINAL_BOUNDARY_VERIFY": 0.002754949
+          },
+          "timingTargetMet": false,
+          "checkpointCount": 1224,
+          "checkpointParity": true,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 16,
+            "actualShape": [
+              8,
+              2
+            ],
+            "entries": 16,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 2.220446049250313e-16,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              2
+            ],
+            "shapeMatched": true
+          }
+        }
+      ]
+    },
+    {
+      "variant": "without-exact",
+      "run": "logreg-r2-without-exact-01",
+      "sameConditionsAsBaseline": true,
+      "inputHashesMatched": 34,
+      "artifactDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "a79636aee58ab6af20c60cf695a6ecaf06861d99f41e8948e0c60efb4296f27e",
+        "mainSources": "f08839c755ce1e0f12ec7336a650d9481be18bddead76c250227d6fb30c60462",
+        "testClasses": "5e83f02d94c569f41b17f674ca4d0efe83fe60368e456088e2025ab0debbb195",
+        "testSources": "30b7167a34fcb9f2dcab3b6b3524f6c736043f9407351d1ae4b2dae869674407"
+      },
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 16.079620747,
+          "commonPreparationSeconds": 16.093615423,
+          "compilationSeconds": 23.58255,
+          "executionSeconds": 3.328,
+          "phases": {
+            "MODEL_SETUP": 1.613772889,
+            "OPTIMIZATION": 3.66037331,
+            "SELECTION": 0.280380731,
+            "POST_SEARCH_TRACE": 0.007331372,
+            "PLAN_CONVERSION": 0.571382892,
+            "EMISSION": 0.235232582,
+            "FINAL_BOUNDARY_VERIFY": 0.020033571
+          },
+          "timingTargetMet": false,
+          "checkpointCount": 1224,
+          "checkpointParity": true,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 16,
+            "actualShape": [
+              8,
+              2
+            ],
+            "entries": 16,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 2.220446049250313e-16,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              2
+            ],
+            "shapeMatched": true
+          }
+        }
+      ]
+    },
+    {
+      "variant": "without-common",
+      "run": "logreg-r2-without-common-01",
+      "sameConditionsAsBaseline": true,
+      "inputHashesMatched": 34,
+      "artifactDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "1df768a0fb1d43550d92dc42afa982947224257762123d24da87453ce2e30b3f",
+        "mainSources": "8bd998c5a89a6f8eef774f484874458803c0114bd4c91635665e99e0d146549d",
+        "testClasses": "5e83f02d94c569f41b17f674ca4d0efe83fe60368e456088e2025ab0debbb195",
+        "testSources": "30b7167a34fcb9f2dcab3b6b3524f6c736043f9407351d1ae4b2dae869674407"
+      },
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 18.403087137,
+          "commonPreparationSeconds": 18.424808934,
+          "compilationSeconds": 29.494158,
+          "executionSeconds": 3.162,
+          "phases": {
+            "MODEL_SETUP": 4.201329617,
+            "OPTIMIZATION": 4.43334585,
+            "SELECTION": 0.302867909,
+            "POST_SEARCH_TRACE": 0.005763652,
+            "PLAN_CONVERSION": 0.653550159,
+            "EMISSION": 0.259594945,
+            "FINAL_BOUNDARY_VERIFY": 0.009579213
+          },
+          "timingTargetMet": false,
+          "checkpointCount": 1224,
+          "checkpointParity": true,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 16,
+            "actualShape": [
+              8,
+              2
+            ],
+            "entries": 16,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 2.220446049250313e-16,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              2
+            ],
+            "shapeMatched": true
+          }
+        }
+      ]
+    }
+  ],
+  "correctnessValidation": "PASSED",
+  "environmentAndProvenanceValidation": "PASSED",
+  "artifactRoot": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007",
+  "evidenceArtifacts": [
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/final-regression-command.json",
+      "sha256": "690d8f55dbc2426c4cfdcc70105bd6e4b29caeadd6e8db6db7544bb8ede80312"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/final-regression-summary.json",
+      "sha256": "20f5852823c6d078d51d6c616845656d22146a54a53dce7b086f5edfd6dac5ed"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/final-build-status.json",
+      "sha256": "bf196288edb6b879de28f81e172141223dbf350e17cddd399838c8a39d074ac8"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/final-postreview-command.json",
+      "sha256": "9fc841b373e15470722f278bc0e85ee72f841ff28add493d4d40feeb9cab075c"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/final-postreview-summary.json",
+      "sha256": "2b76360102c0137b7e42be6c4e0b35fbf536a4a9aee92f1d0ceec9008fcab2dc"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/final-postreview-status.json",
+      "sha256": "c0b04d5c8904571098644035b6f23ffcbfbc81b6f9c090e462e0a09aee6969ff"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/final/manifest.json",
+      "sha256": "b49cc09d5fa7c18ec2ee8b8f5111bf91728c90b3b92381b0fbc8e5a121e59d5c"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/final-benchmark-plan.json",
+      "sha256": "af63b6233cfadea479c8e13de0fd521edc97854cdd3358e8e4f00981f6f95117"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/verify-final.py",
+      "sha256": "a2342a354d5c1c9eb929406a5e4fa34855501d1c91c37eda8a75fd07edb12a04"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/evaluate.py",
+      "sha256": "6b0d8199eb67b32b833416bb54a38fabac0ffa5ddada4311014dc4c40eeb1123"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/bench-final.py",
+      "sha256": "c6ff1f1d8a9995c68dd01f86b95688556fbdd734cf6c28c092e63ab74bbcadcc"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/prepare-final-experiments.py",
+      "sha256": "2a06e5bd4e6185d786249d84a7774414524605cdab9d5dc86259860fab260f63"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-base-final-01/manifest.json",
+      "sha256": "ea8eb5a9dd49ebaa0c5f3b1f9518c126bd98e2331fadcbc5ad5b7daf723fa1af"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-base-final-01/result.json",
+      "sha256": "0c524c647612cf88a3197108f0b09bd52a6f23e52bf9549951802ba4773cb2cd"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-base-final-01-command.json",
+      "sha256": "96c182b834c1b9d3a6cd82515aea140727e4cc8e853f72d42c8907d3b39e6643"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-base-final-01-validation.json",
+      "sha256": "c27245305bb4870ce4d4c875a2e0471fe212c3b2da3da7a22d4e7d785af160ca"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-final-01/manifest.json",
+      "sha256": "fccadce791ce08670c5c2d9e6200f9e43d98685b16ace83696ac5c77b2b286f0"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-final-01/result.json",
+      "sha256": "4a60163a0e47e481b222c8ad49681df8e5d53fadb0ead672cf91ffa4029273cc"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-final-01-command.json",
+      "sha256": "c993bab42e47386da04d2ac09a79b21cad300b32bd6b24a22abb046c5ef322f0"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-final-01-validation.json",
+      "sha256": "b3c6c39131212c1a079a1000572d293247355373916bd727bed280d5f9a96df9"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-base-final-02/manifest.json",
+      "sha256": "f09ee79bfc8284ce9b076d80356f201670a69376b7f4124a6c0356720eac0429"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-base-final-02/result.json",
+      "sha256": "2e7a35af6e5c56dbe117a27d8cb2b4cd19dc28d71ce96539c1982399684b9bf0"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-base-final-02-command.json",
+      "sha256": "d61b7c4af911e2c5c4ec940087f49777d2f8586feab4b88d59540322504a1e2b"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-base-final-02-validation.json",
+      "sha256": "1e9e5c0d94cb1a6a7ec974d654e23472ada0b26f1017b8ac5477c76639955c1f"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-final-02/manifest.json",
+      "sha256": "47e1dc4774c560b501a73a7da92cee34c11b22338ec1ab57521d577e06e53d73"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-final-02/result.json",
+      "sha256": "8f352b82e6fc24106b56aef6f363a9c33c7a2fd3b4bdc8dfde48622443af3e65"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-final-02-command.json",
+      "sha256": "2abfe412b91dbe1673ef0454385550db9aa923c3188e90cd75803e0e787373b0"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-final-02-validation.json",
+      "sha256": "403833ff5c869bfafa2ef185f4dfd0e9414315159fbf3f3e4eed9b5e73ab4e11"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-base-final-03/manifest.json",
+      "sha256": "efeedcec5ec84215ce146e325c738d2b12c47502659b6fc9c37d1397af3eb12c"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-base-final-03/result.json",
+      "sha256": "7aa22f6050afa0b795f83fcf07c3aef816b70c349a4c86087ad92eeea3905983"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-base-final-03-command.json",
+      "sha256": "2ebc6883da5aa8bcf875fdbba8b6196488d4d30d5f58428822fb19bfaa43af34"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-base-final-03-validation.json",
+      "sha256": "18a20a9cd274620025f9abccf0286a67a31de7362d9e7d5571b6255fc48350e9"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-final-03/manifest.json",
+      "sha256": "86531bf62dbc0729daa5c0a7bca6d89d10d8ecaaf120ab6a9fd2a613aba4eb32"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-final-03/result.json",
+      "sha256": "b704b66454d4a915147e2753f4c7d338d8e0a1e9805946da6ae1186ed8f6e0f3"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-final-03-command.json",
+      "sha256": "e8a783a0fa2fddd2e1041acf4b63845c0402fcf115786b97ceeee2a4206f7878"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-final-03-validation.json",
+      "sha256": "c13fdf52ba00da91b3a470cc316f370bcba31c76aab634bde69ea80bba688826"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-without-exact-01/manifest.json",
+      "sha256": "17f08e18a0313aeb1d1f365149b85be5e12967a3856078a6514bc93fabc92c83"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-without-exact-01/result.json",
+      "sha256": "8a87703e16a7d661d31a222bd30f339c12f8b341d8dfb78ff3c9cc6c2519cdb9"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-without-exact-01-command.json",
+      "sha256": "292bf276186d17186fe29068f8822dd62515e272b1af876c304c2b1f14842def"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-without-exact-01-validation.json",
+      "sha256": "997a9273b4da4f1b8d28989325a66535a46638f1e0dd7eff5ac07608ed40011e"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-without-common-01/manifest.json",
+      "sha256": "d79370c26ba1ea06a9f8cf1325e43d9999adb624804896ac5362670e90450bec"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-without-common-01/result.json",
+      "sha256": "db22811c510ae0a5c4d3110c102602f5d98e070a02186659ae6ea16eed547499"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-without-common-01-command.json",
+      "sha256": "0c298b5cd97e449b90bd87bd0e3b9170bd2b962f4f26611e02f2abadc8bb2ab7"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round2-20261007/logreg-r2-without-common-01-validation.json",
+      "sha256": "59a2046141b331bbf5dbbfe05f03c48af4c489e8fe8dfa462a0f16f5c63f3d46"
+    }
+  ],
+  "postReviewTests": [
+    {
+      "class": "CfgNativeLineageNormalizationTest",
+      "tests": 4,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    {
+      "class": "PlacementIdentityCollectionHashTest",
+      "tests": 3,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    }
+  ]
+}

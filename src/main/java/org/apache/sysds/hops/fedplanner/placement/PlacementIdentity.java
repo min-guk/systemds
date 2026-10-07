@@ -21,6 +21,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
+import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -29,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.RandomAccess;
 import java.util.WeakHashMap;
 
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -59,6 +61,9 @@ public final class PlacementIdentity {
 		REQUIRED_INPUT_SUPPORT_BY_CLAUSE_IDENTITY = ThreadLocal.withInitial(WeakIdentityCache::new);
 	private static final long NORMALIZED_SIGNATURE_CACHE_MAX_CHARS = Math.max(0,
 		Long.getLong("sysds.fedplanner.signatureCache.maxChars", 64L * 1024 * 1024));
+	// Equal aliases share text but otherwise could grow the identity front cache
+	// without consuming any character budget. Structural lookup remains exact at saturation.
+	private static final int NORMALIZED_SIGNATURE_CACHE_MAX_IDENTITIES = 65_536;
 	private static final ThreadLocal<long[]> NORMALIZED_SIGNATURE_CHARS =
 		ThreadLocal.withInitial(() -> new long[1]);
 	private static final ThreadLocal<Long> NORMALIZED_SIGNATURE_TEST_MAX_CHARS = new ThreadLocal<>();
@@ -339,6 +344,21 @@ public final class PlacementIdentity {
 		public String cfgReferenceSignature() {
 			return lexicalVariable + '#' + definitionOrdinal + '@'
 				+ definingControlRegion.callSitePath() + ':' + versionKind;
+		}
+
+		@Override
+		public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			if(!(other instanceof ValueVersionKey that))
+				return false;
+			// Alias probes usually differ on these scalar fields. The generated record
+			// comparator starts with the potentially long predecessor list instead.
+			return definitionOrdinal == that.definitionOrdinal && versionKind == that.versionKind
+				&& lexicalVariable.equals(that.lexicalVariable)
+				&& programFingerprint.equals(that.programFingerprint)
+				&& definingControlRegion.equals(that.definingControlRegion)
+				&& predecessorVersions.equals(that.predecessorVersions);
 		}
 
 		@Override
@@ -1108,7 +1128,7 @@ public final class PlacementIdentity {
 		if(signature != null) {
 			if(activeIdentity == null)
 				NORMALIZED_SIGNATURES_BY_IDENTITY.get().put(identity, signature);
-			else
+			else if(activeIdentity.size() < NORMALIZED_SIGNATURE_CACHE_MAX_IDENTITIES)
 				activeIdentity.put(identity, signature);
 			if(metrics != null)
 				metrics.recordSignatureStructuralCacheHit();
@@ -1135,7 +1155,8 @@ public final class PlacementIdentity {
 			}
 			else {
 				activeStructural.put(identity, signature);
-				activeIdentity.put(identity, signature);
+				if(activeIdentity.size() < NORMALIZED_SIGNATURE_CACHE_MAX_IDENTITIES)
+					activeIdentity.put(identity, signature);
 			}
 			retained[0] += signature.length();
 		}
@@ -1202,8 +1223,16 @@ public final class PlacementIdentity {
 	}
 
 	private static void endActiveSignatureCache() {
+		boolean hadActiveCache = ACTIVE_STRUCTURAL_SIGNATURES.get() != null;
 		ACTIVE_STRUCTURAL_SIGNATURES.remove();
 		ACTIVE_IDENTITY_SIGNATURES.remove();
+		if(hadActiveCache) {
+			// The released strings no longer consume the shared retention budget. Clear
+			// any pre-scope weak entries too, so the next phase starts with exact accounting.
+			NORMALIZED_SIGNATURES.remove();
+			NORMALIZED_SIGNATURES_BY_IDENTITY.remove();
+			NORMALIZED_SIGNATURE_CHARS.remove();
+		}
 	}
 
 	/** Analysis-local structural ID; null outside the explicitly bounded build scope. */
@@ -1234,41 +1263,101 @@ public final class PlacementIdentity {
 
 	private static List<String> sortedStrings(Collection<String> values, String name) {
 		Objects.requireNonNull(values, name);
+		if(values instanceof IdentityList<String> list && list.validation == ListValidation.SORTED_STRINGS)
+			return list;
 		List<String> copy = new ArrayList<>(values.size());
 		for(String value : values)
 			copy.add(requireText(value, name + " entry"));
 		Collections.sort(copy);
 		if(hasDuplicates(copy))
 			throw new IllegalArgumentException(name + " contains duplicates");
-		return List.copyOf(copy);
+		return immutableIdentityList(copy, ListValidation.SORTED_STRINGS);
 	}
 
 	private static List<String> immutableStrings(Collection<String> values, String name) {
 		Objects.requireNonNull(values, name);
+		if(values instanceof IdentityList<String> list && (list.validation == ListValidation.STRINGS
+			|| list.validation == ListValidation.SORTED_STRINGS))
+			return list;
 		List<String> copy = new ArrayList<>(values.size());
 		for(String value : values)
 			copy.add(requireText(value, name + " entry"));
-		return List.copyOf(copy);
+		return immutableIdentityList(copy, ListValidation.STRINGS);
 	}
 
 	private static List<Long> immutableLongs(Collection<Long> values, String name) {
 		Objects.requireNonNull(values, name);
+		if(values instanceof IdentityList<Long> list && list.validation == ListValidation.LONGS)
+			return list;
 		List<Long> copy = new ArrayList<>(values.size());
 		for(Long value : values)
 			copy.add(Objects.requireNonNull(value, name + " entry"));
-		return List.copyOf(copy);
+		return immutableIdentityList(copy, ListValidation.LONGS);
 	}
 
 	private static <T extends Comparable<? super T>> List<T> sorted(Collection<T> values,
 		String name) {
 		Objects.requireNonNull(values, name);
+		if(values instanceof IdentityList<T> list && list.validation == ListValidation.SORTED_IDENTITIES)
+			return list;
 		List<T> copy = new ArrayList<>(values.size());
 		for(T value : values)
 			copy.add(Objects.requireNonNull(value, name + " entry"));
 		copy.sort(Comparator.naturalOrder());
 		if(hasDuplicates(copy))
 			throw new IllegalArgumentException(name + " contains duplicates");
-		return List.copyOf(copy);
+		return immutableIdentityList(copy, ListValidation.SORTED_IDENTITIES);
+	}
+
+	private enum ListValidation { STRINGS, LONGS, SORTED_STRINGS, SORTED_IDENTITIES }
+
+	/** All callers have validated immutable identity components; their list hash never changes. */
+	private static <T> List<T> immutableIdentityList(List<T> values, ListValidation validation) {
+		List<T> snapshot = List.copyOf(values);
+		return snapshot.isEmpty() ? snapshot : new IdentityList<>(snapshot, validation);
+	}
+
+	/** Preserve ordinary List equality and the public record contracts, avoiding nested hash walks. */
+	private static final class IdentityList<T> extends AbstractList<T> implements RandomAccess {
+		private final List<T> values;
+		private final int hash;
+		private final ListValidation validation;
+
+		private IdentityList(List<T> values, ListValidation validation) {
+			this.values = values;
+			this.validation = validation;
+			hash = values.hashCode();
+		}
+
+		@Override public T get(int index) { return values.get(index); }
+		@Override public int size() { return values.size(); }
+		@Override public int hashCode() { return hash; }
+		@Override public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			return other instanceof IdentityList<?> that
+				? hash == that.hash && values.equals(that.values) : values.equals(other);
+		}
+		@Override public boolean contains(Object value) { return values.contains(value); }
+		@Override public int indexOf(Object value) { return values.indexOf(value); }
+		@Override public int lastIndexOf(Object value) { return values.lastIndexOf(value); }
+		@Override public List<T> subList(int from, int to) { return values.subList(from, to); }
+		@Override public java.util.Iterator<T> iterator() { return values.iterator(); }
+		@Override public java.util.ListIterator<T> listIterator(int index) { return values.listIterator(index); }
+		@Override public java.util.Spliterator<T> spliterator() { return values.spliterator(); }
+		@Override public T set(int index, T value) { throw new UnsupportedOperationException(); }
+		@Override public boolean add(T value) { throw new UnsupportedOperationException(); }
+		@Override public void add(int index, T value) { throw new UnsupportedOperationException(); }
+		@Override public boolean addAll(Collection<? extends T> values) { throw new UnsupportedOperationException(); }
+		@Override public boolean addAll(int index, Collection<? extends T> values) { throw new UnsupportedOperationException(); }
+		@Override public T remove(int index) { throw new UnsupportedOperationException(); }
+		@Override public boolean remove(Object value) { throw new UnsupportedOperationException(); }
+		@Override public boolean removeAll(Collection<?> values) { throw new UnsupportedOperationException(); }
+		@Override public boolean retainAll(Collection<?> values) { throw new UnsupportedOperationException(); }
+		@Override public void clear() { throw new UnsupportedOperationException(); }
+		@Override public boolean removeIf(java.util.function.Predicate<? super T> filter) { throw new UnsupportedOperationException(); }
+		@Override public void replaceAll(java.util.function.UnaryOperator<T> operator) { throw new UnsupportedOperationException(); }
+		@Override public void sort(Comparator<? super T> comparator) { throw new UnsupportedOperationException(); }
 	}
 
 	private static boolean hasDuplicates(List<?> values) {

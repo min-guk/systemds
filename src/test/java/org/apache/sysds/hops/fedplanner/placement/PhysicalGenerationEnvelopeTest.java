@@ -230,6 +230,46 @@ public class PhysicalGenerationEnvelopeTest {
 	}
 
 	@Test
+	public void exactDerivedAuthorityReusesFactButEqualForeignValueAuthorityRebinds() throws Exception {
+		Fixture fixture = new Fixture("derived-authority-identity");
+		DurableAnchorKey ownerAnchor = fixture.outputPool("owner-output", "owner-worker");
+		Node owner = new Node(fixture.rawNode.key(), fixture.rawNode.kind(), fixture.ownerVersion, true,
+			List.of(FED_FULL_LOCAL, FED_BROADCAST), fixture.rawNode.exclusions(), List.of(ownerAnchor));
+		DerivedFoutMaterializationActionKey action = new DerivedFoutMaterializationActionKey(
+			fixture.owner, fixture.ownerVersion, fixture.ownerRule, FED_FULL_LOCAL, FED_BROADCAST,
+			ownerAnchor, fixture.owner, FType.BROADCAST, FType.BROADCAST,
+			fixture.owner.controlRegion().normalizedSignature());
+		CandidateRuleFact exact = fact(fixture.ownerRule, new CandidateEmissionFact(
+			new PlacementEmissionState(FED_BROADCAST, true), FType.FULL, action));
+		List<Node> nodes = new ArrayList<>(fixture.proofNodes(
+			fixture.pool("source-pool", "source-worker")));
+		nodes.set(1, owner);
+		CandidateRuleFact stable = bindDerivedAuthorities(List.of(exact),
+			Map.of(fixture.owner, 1L), nodes, fixture.origins).get(0);
+		Assert.assertSame("an already exact immutable action row is a true no-op", exact, stable);
+
+		ValueVersionKey version = fixture.ownerVersion;
+		ValueVersionKey equalForeignVersion = new ValueVersionKey(version.programFingerprint(),
+			version.lexicalVariable(), version.definingControlRegion(), version.definitionOrdinal(),
+			version.versionKind(), version.predecessorVersions());
+		Assert.assertEquals(version, equalForeignVersion);
+		Assert.assertNotSame(version, equalForeignVersion);
+		DerivedFoutMaterializationActionKey foreignAction = new DerivedFoutMaterializationActionKey(
+			fixture.owner, equalForeignVersion, fixture.ownerRule, FED_FULL_LOCAL, FED_BROADCAST,
+			ownerAnchor, fixture.owner, FType.BROADCAST, FType.BROADCAST,
+			fixture.owner.controlRegion().normalizedSignature());
+		CandidateRuleFact foreign = fact(fixture.ownerRule, new CandidateEmissionFact(
+			exact.allowedEmissionFacts().get(0).emissionState(), FType.FULL, foreignAction));
+		CandidateRuleFact rebound = bindDerivedAuthorities(List.of(foreign),
+			Map.of(fixture.owner, 1L), nodes, fixture.origins).get(0);
+		Assert.assertNotSame("value-equal foreign authority must follow the cold replacement path",
+			foreign, rebound);
+		Assert.assertSame(version,
+			rebound.allowedEmissionFacts().get(0).derivedFoutAction().producerValueVersion());
+		Assert.assertEquals("identity reuse must preserve the cold normalized content", stable, rebound);
+	}
+
+	@Test
 	public void stableSiblingPhysicalOwnersScanOneCommittedInventory() throws Exception {
 		PhysicalClosureFixture fixture = new PhysicalClosureFixture(false);
 		ReplayState settled = fixture.settle(fixture.initial(fixture.pool("pool-a", "worker-a")));

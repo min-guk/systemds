@@ -25,6 +25,36 @@ import org.junit.Test;
 
 public class NativeProofSignatureCacheTest {
 	@Test
+	public void completedScopeReleasesItsBudgetAndRepeatedEndPreservesLaterCache() {
+		PlacementIdentity.setNormalizedSignatureCacheMaxCharsForTest(4_096L);
+		try {
+			PlacementIdentity.rememberSignature(new String("before"), "old-weak-entry");
+			PlacementIdentity.beginAnalysisScope(null);
+			String full = "x".repeat((int) (4_096L
+				- PlacementIdentity.normalizedSignatureCacheRetainedChars()));
+			PlacementIdentity.rememberSignature(new String("inside"), full);
+			Assert.assertEquals(4_096L, PlacementIdentity.normalizedSignatureCacheRetainedChars());
+			PlacementIdentity.endAnalysisScope();
+			Assert.assertEquals("released active entries must release their retention budget",
+				0L, PlacementIdentity.normalizedSignatureCacheRetainedChars());
+			Assert.assertNull(PlacementIdentity.cachedSignature(new String("before")));
+			Assert.assertNull(PlacementIdentity.cachedSignature(new String("inside")));
+
+			String signature = new String("outside-signature");
+			PlacementIdentity.rememberSignature(new String("outside"), signature);
+			Assert.assertSame(signature, PlacementIdentity.cachedSignature(new String("outside")));
+			PlacementIdentity.endAnalysisScope();
+			Assert.assertSame("an idempotent end must preserve the following planner cache",
+				signature, PlacementIdentity.cachedSignature(new String("outside")));
+			Assert.assertEquals(signature.length(), PlacementIdentity.normalizedSignatureCacheRetainedChars());
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+			PlacementIdentity.setNormalizedSignatureCacheMaxCharsForTest(null);
+		}
+	}
+
+	@Test
 	public void equalProofsShareOnlyTextWithoutReplacingBindingAuthority() {
 		PlacementIdentity.setNormalizedSignatureCacheMaxCharsForTest(1_000_000L);
 		PlacementIdentity.beginAnalysisScope(null);

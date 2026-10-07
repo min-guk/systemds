@@ -49,6 +49,9 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFac
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.core.JsonGenerator;
 
 /**
  * Off-by-default, selector-independent capture of the placement candidate domain.
@@ -66,6 +69,8 @@ public final class PlannerCandidateSpaceAudit {
 		"sysds.fedplanner.space.audit.invocation";
 	private static final String DEFAULT_DIRECTORY = "target/fedplanner-space-audit";
 	private static final ObjectMapper MAPPER = new ObjectMapper();
+	private static final ObjectWriter ROW_WRITER = MAPPER.writer()
+		.without(SerializationFeature.FLUSH_AFTER_WRITE_VALUE);
 	private static final Object WRITE_LOCK = new Object();
 
 	private PlannerCandidateSpaceAudit() {
@@ -481,10 +486,12 @@ public final class PlannerCandidateSpaceAudit {
 			synchronized(WRITE_LOCK) {
 				Files.createDirectories(directory);
 				try(BufferedWriter writer = Files.newBufferedWriter(output, StandardCharsets.UTF_8,
-					StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+					StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+					JsonGenerator json = MAPPER.getFactory().createGenerator(writer)) {
+					json.setRootValueSeparator(null);
 					for(Map<String,Object> row : rows) {
-						writer.write(MAPPER.writeValueAsString(row));
-						writer.newLine();
+						ROW_WRITER.writeValue(json, row);
+						json.writeRaw(System.lineSeparator());
 					}
 				}
 			}

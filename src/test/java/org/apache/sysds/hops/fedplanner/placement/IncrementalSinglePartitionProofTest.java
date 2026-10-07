@@ -19,6 +19,7 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -55,6 +56,37 @@ public class IncrementalSinglePartitionProofTest {
 	private static final PlacementEmissionState FULL = new PlacementEmissionState(
 		new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.FULL, false), false);
 	private static final long RANDOM_SEED = 0x1AC3E5EEDL;
+
+	@Test
+	public void physicalStateBuildsSinglePartitionIndexOnlyForExecutableFullLookup() throws Exception {
+		CandidateRuleKey fullRule = rule("lazy-full");
+		CandidateRuleFact fullFact = fact(fullRule, nativePool("lazy-full", false));
+		List<List<CandidateRuleFact>> inventory = mutableInventory(List.of(fullFact));
+		Class<?> stateType = Class.forName(
+			PlacementRelationClosure.class.getName() + "$PhysicalCandidateState");
+		Constructor<?> constructor = stateType.getDeclaredConstructor(List.class, List.class, List.class);
+		constructor.setAccessible(true);
+		Object state = constructor.newInstance(List.of(), List.of(), inventory);
+		Field index = stateType.getDeclaredField("singlePartitionProofs");
+		index.setAccessible(true);
+		Method exact = PlacementRelationClosure.class.getDeclaredMethod(
+			"exactCandidateInputSinglePartition", List.class, stateType);
+		exact.setAccessible(true);
+
+		PlacementEmissionState rowState = new PlacementEmissionState(
+			new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false), false);
+		CandidateRuleKey rowRule = rule("lazy-row");
+		CandidateEmissionRealization row = CandidateEmissionRealization.durable(rowState,
+			new DurableAnchorKey("lazy-row", FType.ROW, List.of(partition("worker-a", 0, 8))),
+			List.of(), List.of());
+		CandidateRuleFact rowFact = fact(rowRule, rowState, FType.ROW, row);
+		Assert.assertEquals(java.util.Optional.empty(), exact.invoke(null, List.of(rowFact), state));
+		Assert.assertNull("non-FULL rows must not build the global proof index", index.get(state));
+
+		Assert.assertEquals(java.util.Optional.of(true), exact.invoke(null, List.of(fullFact), state));
+		Assert.assertNotNull("the first executable FULL realization must build the current index",
+			index.get(state));
+	}
 
 	@Test
 	public void removingAndRestoringGroundedCycleRootRetractsAndRestoresProofs() throws Exception {
@@ -326,12 +358,17 @@ public class IncrementalSinglePartitionProofTest {
 
 	private static CandidateRuleFact fact(CandidateRuleKey key,
 		CandidateEmissionRealization... realizations) {
+		return fact(key, FULL, FType.FULL, realizations);
+	}
+
+	private static CandidateRuleFact fact(CandidateRuleKey key, PlacementEmissionState state,
+		FType fType, CandidateEmissionRealization... realizations) {
 		CandidateEmissionFact emission = new CandidateEmissionFact(
-			FULL, FType.FULL, null, List.of(realizations));
+			state, fType, null, List.of(realizations));
 		return new CandidateRuleFact(key, CandidateEvaluationStatus.AVAILABLE,
 			new CandidateCapabilityFact(OpCategory.OTHER, "fixture", ExecType.FED,
-				FederatedOutput.FOUT, FType.FULL, ReasonCode.OK, "fixture", List.of()),
+				FederatedOutput.FOUT, fType, ReasonCode.OK, "fixture", List.of()),
 			new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
-			new CandidateProfileFact(List.of(FType.FULL), ""), List.of(emission), "");
+			new CandidateProfileFact(List.of(fType), ""), List.of(emission), "");
 	}
 }

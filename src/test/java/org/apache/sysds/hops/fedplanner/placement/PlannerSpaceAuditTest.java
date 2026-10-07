@@ -82,6 +82,25 @@ public class PlannerSpaceAuditTest {
 	}
 
 	@Test
+	public void candidateJsonLinesMatchStringSerializationAcrossAppends() throws Exception {
+		Map<String,Object> first = new LinkedHashMap<>();
+		first.put("text", "한글\n\t\"\\".repeat(4000));
+		first.put("nested", List.of(Map.of("count", 4L), List.of(1, 2, 3)));
+		Map<String,Object> second = new LinkedHashMap<>();
+		second.put("empty", List.of());
+		second.put("missing", null);
+		List<Map<String,Object>> rows = List.of(first, second);
+		var append = PlannerCandidateSpaceAudit.class.getDeclaredMethod("append", List.class, String.class);
+		append.setAccessible(true);
+		append.invoke(null, rows, "serialization-");
+		append.invoke(null, rows, "serialization-");
+		String expected = MAPPER.writeValueAsString(first) + System.lineSeparator()
+			+ MAPPER.writeValueAsString(second) + System.lineSeparator();
+		Path output = directory.resolve("serialization-" + ProcessHandle.current().pid() + ".jsonl");
+		assertEquals(expected.repeat(2), Files.readString(output));
+	}
+
+	@Test
 	public void candidateAuditCapturesPrePrivacyAndPublishedDomains() throws Exception {
 		System.setProperty(PlannerCandidateSpaceAudit.PROPERTY, Boolean.TRUE.toString());
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(

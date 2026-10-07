@@ -37,9 +37,14 @@ final class ExactFactorValueClasses {
 
 		int[] classes = new int[domain];
 		int tableCapacity = tableCapacity(domain);
-		if(tableCapacity < 0 || !hasTableStorage(tableCapacity))
+		if(tableCapacity < 0 || !hasTableStorage(tableCapacity, 1))
 			return identity(classes);
+		// Keep the original storage threshold for exact partitioning. If there is
+		// additional headroom, retain representative hashes rather than rescanning
+		// their profiles on every collision probe.
+		boolean retainHashes = hasTableStorage(tableCapacity, 2);
 		int[] representativeBySlot = new int[tableCapacity];
+		int[] hashesBySlot = retainHashes ? new int[tableCapacity] : null;
 		int mask = tableCapacity - 1;
 		int classCount = 0;
 		for(int value = 0; value < domain; value++) {
@@ -48,7 +53,9 @@ final class ExactFactorValueClasses {
 			int matching = -1;
 			while(representativeBySlot[slot] != 0) {
 				int representative = representativeBySlot[slot] - 1;
-				if(profileHash(high, low, domain, stride, representative) == hash
+				int representativeHash = hashesBySlot == null
+					? profileHash(high, low, domain, stride, representative) : hashesBySlot[slot];
+				if(representativeHash == hash
 					&& sameProfile(high, low, domain, stride, value, representative)) {
 					matching = classes[representative];
 					break;
@@ -58,6 +65,8 @@ final class ExactFactorValueClasses {
 			if(matching < 0) {
 				matching = classCount++;
 				representativeBySlot[slot] = value + 1;
+				if(hashesBySlot != null)
+					hashesBySlot[slot] = hash;
 			}
 			classes[value] = matching;
 		}
@@ -71,7 +80,7 @@ final class ExactFactorValueClasses {
 			throw new IllegalArgumentException("Partitions have different domains");
 		int[] refined = new int[currentClasses.length];
 		int tableCapacity = tableCapacity(refined.length);
-		if(tableCapacity < 0 || !hasTableStorage(tableCapacity))
+		if(tableCapacity < 0 || !hasTableStorage(tableCapacity, 1))
 			return identity(refined);
 		int[] representativeBySlot = new int[tableCapacity];
 		int mask = tableCapacity - 1;
@@ -134,11 +143,11 @@ final class ExactFactorValueClasses {
 	}
 
 	/** Keep the memo below half of current heap headroom; identity is an exact conservative partition. */
-	private static boolean hasTableStorage(int capacity) {
+	private static boolean hasTableStorage(int capacity, int arrays) {
 		Runtime runtime = Runtime.getRuntime();
 		long used = runtime.totalMemory() - runtime.freeMemory();
 		long headroom = Math.max(0L, runtime.maxMemory() - used);
-		long tableBytes = 16L + (long)Integer.BYTES * capacity;
+		long tableBytes = arrays * (16L + (long)Integer.BYTES * capacity);
 		return tableBytes <= headroom / 2L;
 	}
 

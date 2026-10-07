@@ -284,9 +284,11 @@ final class NativePlacementContinuity {
 	/** Immutable identity-indexed candidate authority shared by cold query states. */
 	private static final class CandidateFactsSnapshot {
 		private final Map<CompiledHopKey,List<CandidateRuleFact>> factsByKey;
+		private final int factCount;
 
 		private CandidateFactsSnapshot(Map<CompiledHopKey,List<CandidateRuleFact>> factsByKey) {
 			this.factsByKey = Collections.unmodifiableMap(factsByKey);
+			factCount = factsByKey.values().stream().mapToInt(List::size).sum();
 		}
 
 		private static CandidateFactsSnapshot index(List<CandidateRuleFact> candidateFacts) {
@@ -310,6 +312,36 @@ final class NativePlacementContinuity {
 				revised.put(owner, replacementFacts);
 			return new CandidateFactsSnapshot(revised);
 		}
+
+		private boolean hasSameFactObjects(List<CandidateRuleFact> candidateFacts) {
+			List<CandidateRuleFact> facts = List.copyOf(
+				Objects.requireNonNull(candidateFacts, "candidateFacts"));
+			if(facts.size() != factCount)
+				return false;
+			Map<CompiledHopKey,Integer> nextByOwner = new IdentityHashMap<>();
+			for(CandidateRuleFact fact : facts) {
+				CompiledHopKey owner = Objects.requireNonNull(fact.key().parentOccurrence(),
+					"candidateFacts owner");
+				List<CandidateRuleFact> expected = factsByKey.get(owner);
+				if(expected == null)
+					return false;
+				int index = nextByOwner.getOrDefault(owner, 0);
+				if(index >= expected.size() || expected.get(index) != fact)
+					return false;
+				nextByOwner.put(owner, index + 1);
+			}
+			return true;
+		}
+	}
+
+	/**
+	 * Returns whether the supplied inventory has the same exact fact authority, preserving order
+	 * within each owner. Global inter-owner order is irrelevant to continuity queries. Production
+	 * revisions use this predicate inside {@link #nextRevisionInternal}; this seam exists for exact
+	 * boundary regression tests.
+	 */
+	boolean hasSameCandidateFactObjects(List<CandidateRuleFact> candidateFacts) {
+		return candidateFactsSnapshot.hasSameFactObjects(candidateFacts);
 	}
 
 	/** Returns an exact resolver with no query-local history. */
@@ -392,9 +424,14 @@ final class NativePlacementContinuity {
 
 	private NativePlacementContinuity nextRevisionInternal(List<CandidateRuleFact> candidateFacts,
 		Set<CompiledHopKey> completeChangedOccurrences) {
-		NativePlacementContinuity next = new NativePlacementContinuity(structuralContext,
-			candidateFacts, metrics, memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
-		return reuseRevisionCaches(next, completeChangedOccurrences);
+		boolean exactFacts = (completeChangedOccurrences == null || completeChangedOccurrences.isEmpty())
+			&& candidateFactsSnapshot.hasSameFactObjects(candidateFacts);
+		NativePlacementContinuity next = exactFacts
+			? new NativePlacementContinuity(structuralContext, candidateFactsSnapshot, metrics,
+				memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes)
+			: new NativePlacementContinuity(structuralContext, candidateFacts, metrics,
+				memoMaxEntries, memoMaxProofs, memoMaxEstimatedBytes);
+		return reuseRevisionCaches(next, exactFacts ? Set.of() : completeChangedOccurrences);
 	}
 
 	private NativePlacementContinuity reuseRevisionCaches(NativePlacementContinuity next,
@@ -402,6 +439,8 @@ final class NativePlacementContinuity {
 		final Set<CompiledHopKey> changedOccurrences;
 		if(completeChangedOccurrences == null)
 			changedOccurrences = null;
+		else if(completeChangedOccurrences.isEmpty())
+			changedOccurrences = Set.of();
 		else {
 			Set<CompiledHopKey> knownOwners = Collections.newSetFromMap(new IdentityHashMap<>());
 			knownOwners.addAll(candidateFactsByKey.keySet());
@@ -421,13 +460,18 @@ final class NativePlacementContinuity {
 		Map<CompiledHopKey,Boolean> unchangedRows = new IdentityHashMap<>();
 		Map<CompiledHopKey,Boolean> unchangedGeneratedRoots = new IdentityHashMap<>();
 		RevisionComparisonWork comparisonWork = new RevisionComparisonWork();
+		boolean sharedExactAuthority = structuralContext == next.structuralContext
+			&& candidateFactsSnapshot == next.candidateFactsSnapshot;
 		long reused = 0;
 		for(var entry : candidateTopologies.entrySet()) {
 			CompiledHopKey occurrence = entry.getKey().occurrence;
 			if(!unchangedRows.computeIfAbsent(occurrence, key -> unchangedContinuityFacts(
 				next, key, changedOccurrences, comparisonWork)))
 				continue;
-			if(next.cacheTopology(entry.getKey(), next.reindexTopology(entry.getValue())))
+			CandidateTopology topology = entry.getValue();
+			CandidateTopology migrated = sharedExactAuthority && topology.hasStableStructuralHandles()
+				? topology : next.reindexTopology(topology);
+			if(next.cacheTopology(entry.getKey(), migrated))
 				reused++;
 		}
 		long supportReused = 0;
@@ -606,6 +650,7 @@ final class NativePlacementContinuity {
 		private final Map<CompiledHopKey,Privacy> privacyByKey;
 		private final LazyOccurrenceComponents occurrenceComponents;
 		private final ComponentReadSet componentReadSet;
+		private volatile Set<CompiledHopKey> broadcastAliasSources;
 
 		private StructuralContext(StructuralContext source, Map<CompiledHopKey,Node> nodesByKey) {
 			this.nodesByKey = Collections.unmodifiableMap(nodesByKey);
@@ -626,6 +671,30 @@ final class NativePlacementContinuity {
 			Map<CompiledHopKey,Node> revised = new IdentityHashMap<>(nodesByKey);
 			revised.put(owner, replacement);
 			return new StructuralContext(this, revised);
+		}
+
+		private Set<CompiledHopKey> broadcastAliasSources() {
+			Set<CompiledHopKey> current = broadcastAliasSources;
+			if(current != null)
+				return current;
+			synchronized(this) {
+				if(broadcastAliasSources == null) {
+					Set<PlacementIdentity.ValueVersionKey> broadcastValues = new java.util.HashSet<>();
+					for(Node node : nodesByKey.values())
+						for(PlacementState state : node.legalAlternatives())
+							if(state.output() == FederatedOutput.FOUT
+								&& state.fType() == FType.BROADCAST) {
+								broadcastValues.add(node.valueVersion());
+								break;
+							}
+					Set<CompiledHopKey> owners = Collections.newSetFromMap(new IdentityHashMap<>());
+					for(Node node : nodesByKey.values())
+						if(broadcastValues.contains(node.valueVersion()))
+							owners.add(node.key());
+					broadcastAliasSources = Collections.unmodifiableSet(owners);
+				}
+				return broadcastAliasSources;
+			}
 		}
 
 		private StructuralContext(Map<CompiledHopKey,Node> nodesByKey,
@@ -2577,6 +2646,29 @@ final class NativePlacementContinuity {
 					return true;
 			return false;
 		}
+
+		private boolean hasStableStructuralHandles() {
+			for(CandidateTopologyRow row : rows) {
+				Integer rowHandle = PlacementIdentity.structuralHandle(row.reference);
+				if(rowHandle == null || rowsByHandle.getOrDefault(rowHandle, List.of()).stream()
+					.noneMatch(indexed -> indexed == row))
+					return false;
+				for(CandidateDependencySkeleton dependency : row.dependencies) {
+					if(dependency.clausePinned == null) {
+						if(dependency.clausePinnedHandle != 0)
+							return false;
+					}
+					else {
+						Integer dependencyHandle =
+							PlacementIdentity.structuralHandle(dependency.clausePinned);
+						if(dependencyHandle == null
+							|| dependencyHandle != dependency.clausePinnedHandle)
+							return false;
+					}
+				}
+			}
+			return true;
+		}
 	}
 
 	private record RootTopologyRowKey(List<ContinuityDependencyKey> dependencies,
@@ -2899,10 +2991,7 @@ final class NativePlacementContinuity {
 			Node source = edge == null ? null : nodesByKey.get(edge.producer());
 			if(source == null)
 				return false;
-			boolean direct = nodesByKey.values().stream()
-				.filter(alias -> alias.valueVersion().equals(source.valueVersion()))
-				.anyMatch(alias -> alias.legalAlternatives().stream().anyMatch(state ->
-					state.output() == FederatedOutput.FOUT && state.fType() == FType.BROADCAST));
+			boolean direct = structuralContext.broadcastAliasSources().contains(source.key());
 			Privacy privacy = privacyByKey.get(source.key());
 			if(!direct && privacy != null && ExecPlacementPolicy.requiresOriginResidency(privacy))
 				return true;

@@ -17,6 +17,37 @@ import org.junit.Test;
 
 public class PlacementIdentityAnalysisScopeTest {
 	@Test
+	public void aliasSaturationKeepsStructuralReuseWithoutRetainingEveryCopy() throws Exception {
+		PlacementIdentity.resetNormalizedSignatureCache();
+		PlacementIdentity.beginAnalysisScope(null);
+		try {
+			String text = anchor("first").normalizedSignature();
+			long retained = PlacementIdentity.normalizedSignatureCacheRetainedChars();
+			for(int index = 0; index < 70_000; index++)
+				Assert.assertSame(text, anchor("first").normalizedSignature());
+			Assert.assertTrue("equal aliases must have bounded identity retention",
+				activeMap("ACTIVE_IDENTITY_SIGNATURES").size() <= 65_536);
+			Assert.assertEquals(retained, PlacementIdentity.normalizedSignatureCacheRetainedChars());
+			String firstCollision = anchor("Aa").normalizedSignature();
+			String secondCollision = anchor("BB").normalizedSignature();
+			Assert.assertNotEquals(firstCollision, secondCollision);
+			Assert.assertSame("new distinct signatures still enter the structural cache after saturation",
+				firstCollision, anchor("Aa").normalizedSignature());
+			Assert.assertSame(secondCollision, anchor("BB").normalizedSignature());
+			Assert.assertTrue(activeMap("ACTIVE_IDENTITY_SIGNATURES").size() <= 65_536);
+			PlacementIdentity.endAnalysisScope();
+			PlacementIdentity.beginAnalysisScope(null);
+			DurableAnchorKey fresh = anchor("fresh");
+			fresh.normalizedSignature();
+			Assert.assertTrue(activeMap("ACTIVE_IDENTITY_SIGNATURES").containsKey(fresh));
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+			PlacementIdentity.resetNormalizedSignatureCache();
+		}
+	}
+
+	@Test
 	public void metricsOffUsesTheSameAnalysisLocalSignatureCachesAndCleansThemUp() throws Exception {
 		PlacementIdentity.resetNormalizedSignatureCache();
 		PlacementIdentity.beginAnalysisScope(null);

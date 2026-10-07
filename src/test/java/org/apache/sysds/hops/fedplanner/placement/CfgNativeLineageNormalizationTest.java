@@ -7,6 +7,7 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.InvocationTargetException;
 import java.util.List;
 
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -14,10 +15,59 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartit
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class CfgNativeLineageNormalizationTest {
+	@Test
+	public void compatibilityLayoutMemoMatchesColdLegacySerialization() throws Exception {
+		PlacementIdentity.beginAnalysisScope(null);
+		try {
+			List<DurableAnchorKey> witnesses = List.of(
+				anchor("canonical", FType.ROW, "worker1:8001", 0, 4),
+				anchor("path", FType.ROW, "worker1:8001/X", 0, 4),
+				anchor("rendered", FType.ROW, "worker1/10.0.0.1:8001", 0, 4),
+				anchor("invalid", FType.ROW, "worker1:not-a-port", 0, 4),
+				anchor("col", FType.COL, "worker1:8001", 0, 4),
+				anchor("range", FType.ROW, "worker1:8001", 4, 9));
+			for(DurableAnchorKey witness : witnesses) {
+				String first = compatibilityLayout(witness);
+				Assert.assertEquals("memoized layout must retain the legacy bytes for " + witness.placementId(),
+					coldCompatibilityLayout(witness), first);
+				Assert.assertSame("the immutable wrapper must reuse the cached String", first,
+					compatibilityLayout(witness));
+			}
+			DurableAnchorKey renamed = anchor("renamed", FType.ROW, "worker1:8001", 0, 4);
+			Assert.assertEquals("placement ids are outside compatibility layout identity",
+				compatibilityLayout(witnesses.get(0)), compatibilityLayout(renamed));
+			Assert.assertNotEquals(compatibilityLayout(witnesses.get(0)), compatibilityLayout(witnesses.get(4)));
+			Assert.assertNotEquals(compatibilityLayout(witnesses.get(0)), compatibilityLayout(witnesses.get(5)));
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+		}
+
+	}
+
+	@Test
+	public void normalizedLayoutReusesCanonicalPartitionsAndStillRejectsDuplicates() throws Exception {
+		AnchorPartition canonical = new AnchorPartition(
+			"worker1:8001", List.of(0L, 0L), List.of(4L, 8L));
+		DurableAnchorKey normalized = normalizedLayout("normalized",
+			new DurableAnchorKey("source", FType.ROW, List.of(canonical)));
+		Assert.assertSame("an unchanged endpoint must retain its immutable partition", canonical,
+			normalized.partitions().get(0));
+
+		DurableAnchorKey aliases = new DurableAnchorKey("aliases", FType.ROW, List.of(
+			new AnchorPartition("worker1:8001/X", List.of(0L, 0L), List.of(4L, 8L)),
+			new AnchorPartition("worker1:8001", List.of(0L, 0L), List.of(4L, 8L))));
+		InvocationTargetException error = Assert.assertThrows(InvocationTargetException.class,
+			() -> normalizedLayout("duplicates", aliases));
+		Assert.assertTrue("normalization must retain DurableAnchorKey duplicate validation",
+			error.getCause() instanceof IllegalArgumentException);
+	}
+
 	@Test
 	public void readerLineageUsesOwnerLayoutAndPrecisionButNotCarrierId() throws Exception {
 		CompiledHopKey owner = owner("reader-a");
@@ -108,6 +158,37 @@ public class CfgNativeLineageNormalizationTest {
 			List.of("main"), "main", "compiled");
 		return new CompiledHopKey("cfg-native-lineage", "main", "main",
 			"compiled", region, occurrence, occurrence);
+	}
+
+	private static DurableAnchorKey anchor(String id, FType type, String worker,
+		long begin, long end) {
+		return new DurableAnchorKey(id, type, List.of(new AnchorPartition(
+			worker, List.of(begin, 0L), List.of(end, 8L))));
+	}
+
+	private static String compatibilityLayout(DurableAnchorKey witness) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"nativeCompatibilityLayout", DurableAnchorKey.class);
+		method.setAccessible(true);
+		return (String)method.invoke(null, witness);
+	}
+
+	private static String coldCompatibilityLayout(DurableAnchorKey witness) {
+		List<AnchorPartition> partitions = witness.partitions().stream().map(partition -> {
+			String endpoint = FederationUtils.canonicalFederatedWorkerAddress(partition.workerId());
+			return new AnchorPartition(endpoint == null ? partition.workerId() : endpoint,
+				partition.begin(), partition.end());
+		}).toList();
+		return new DurableAnchorKey("transient-native-layout", witness.fType(), partitions)
+			.normalizedSignature();
+	}
+
+	private static DurableAnchorKey normalizedLayout(String id, DurableAnchorKey witness)
+		throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"normalizedNativeLayout", String.class, DurableAnchorKey.class);
+		method.setAccessible(true);
+		return (DurableAnchorKey)method.invoke(null, id, witness);
 	}
 
 	private static String lineage(CompiledHopKey owner, DurableAnchorKey seed,
