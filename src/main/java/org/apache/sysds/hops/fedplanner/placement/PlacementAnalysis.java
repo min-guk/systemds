@@ -1234,6 +1234,21 @@ public final class PlacementAnalysis {
 				Objects.requireNonNull(orderedInputs.get(i), "orderedInputs[" + i + "]");
 			orderedInputs = List.copyOf(orderedInputs);
 		}
+		@Override
+		public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			if(!(other instanceof CandidateRuleKey that)
+				|| !parentOccurrence.equals(that.parentOccurrence)
+				|| orderedInputs.size() != that.orderedInputs.size())
+				return false;
+			// The constructor snapshots a random-access list. Keep structural record
+			// equality without allocating a List iterator for every candidate lookup.
+			for(int index = 0; index < orderedInputs.size(); index++)
+				if(!orderedInputs.get(index).equals(that.orderedInputs.get(index)))
+					return false;
+			return true;
+		}
 		public String normalizedSignature() {
 			String cached = PlacementIdentity.cachedSignature(this);
 			return cached != null ? cached : PlacementIdentity.rememberSignature(this,

@@ -168,7 +168,7 @@ public final class PlacementDependencyComponents {
 
 		List<List<CompiledHopKey>> rawComponents = stronglyConnectedComponents(
 			orderedOwners, consumers, producers, ownerOrder);
-		IdentityHashMap<CompiledHopKey,Integer> rawComponentByOwner = new IdentityHashMap<>();
+		IdentityHashMap<CompiledHopKey,Integer> rawComponentByOwner = new IdentityHashMap<>(orderedOwners.size());
 		for(int i = 0; i < rawComponents.size(); i++)
 			for(CompiledHopKey owner : rawComponents.get(i))
 				rawComponentByOwner.put(owner, i);
@@ -204,7 +204,7 @@ public final class PlacementDependencyComponents {
 		if(scheduled.size() != rawComponents.size())
 			throw new IllegalStateException("component condensation graph must be acyclic");
 
-		IdentityHashMap<CompiledHopKey,Component> indexed = new IdentityHashMap<>();
+		IdentityHashMap<CompiledHopKey,Component> indexed = new IdentityHashMap<>(orderedOwners.size());
 		List<Component> schedule = new ArrayList<>(scheduled.size());
 		Component[] componentByRawIndex = new Component[rawComponents.size()];
 		for(int i = 0; i < scheduled.size(); i++) {
@@ -217,7 +217,7 @@ public final class PlacementDependencyComponents {
 			for(CompiledHopKey member : members)
 				indexed.put(member, component);
 		}
-		IdentityHashMap<Component,List<Component>> successors = new IdentityHashMap<>();
+		IdentityHashMap<Component,List<Component>> successors = new IdentityHashMap<>(rawComponents.size());
 		for(int rawIndex = 0; rawIndex < rawComponents.size(); rawIndex++) {
 			List<Component> ordered = new ArrayList<>();
 			for(int consumer : componentConsumers.get(rawIndex))
@@ -387,7 +387,7 @@ public final class PlacementDependencyComponents {
 
 	private static IdentityHashMap<CompiledHopKey,Set<CompiledHopKey>> emptyAdjacencySets(
 		List<CompiledHopKey> owners) {
-		IdentityHashMap<CompiledHopKey,Set<CompiledHopKey>> result = new IdentityHashMap<>();
+		IdentityHashMap<CompiledHopKey,Set<CompiledHopKey>> result = new IdentityHashMap<>(owners.size());
 		for(CompiledHopKey owner : owners)
 			result.put(owner, identitySet());
 		return result;
@@ -396,7 +396,7 @@ public final class PlacementDependencyComponents {
 	private static IdentityHashMap<CompiledHopKey,List<CompiledHopKey>> sortedAdjacency(
 		IdentityHashMap<CompiledHopKey,Set<CompiledHopKey>> adjacency,
 		Comparator<CompiledHopKey> order) {
-		IdentityHashMap<CompiledHopKey,List<CompiledHopKey>> result = new IdentityHashMap<>();
+		IdentityHashMap<CompiledHopKey,List<CompiledHopKey>> result = new IdentityHashMap<>(adjacency.size());
 		for(Map.Entry<CompiledHopKey,Set<CompiledHopKey>> entry : adjacency.entrySet()) {
 			List<CompiledHopKey> connected = new ArrayList<>(entry.getValue());
 			connected.sort(order);
@@ -407,7 +407,7 @@ public final class PlacementDependencyComponents {
 
 	private static IdentityHashMap<CompiledHopKey,List<CompiledHopKey>> immutableIdentityMap(
 		IdentityHashMap<CompiledHopKey,List<CompiledHopKey>> mutable) {
-		IdentityHashMap<CompiledHopKey,List<CompiledHopKey>> result = new IdentityHashMap<>();
+		IdentityHashMap<CompiledHopKey,List<CompiledHopKey>> result = new IdentityHashMap<>(mutable.size());
 		for(Map.Entry<CompiledHopKey,List<CompiledHopKey>> entry : mutable.entrySet())
 			result.put(entry.getKey(), List.copyOf(entry.getValue()));
 		return result;

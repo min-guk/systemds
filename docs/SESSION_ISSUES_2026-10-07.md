@@ -959,3 +959,28 @@
 - **첫 병합본 Java 확인**: 172개 클래스 1,130개 테스트를 실행했다(sourceChanges=0). 4개 클래스에서 reflection 인자 변경 2건, context hit+miss를 rebuild로 세던 counter 계약 1건, formal-input VALUE_MAP의 동일-pool 수렴을 withdrawal로 오인한 fixture 1건을 확인했다. production 변경 없이 테스트를 정정했으며 각각 3/3, 32/32, 1/1, 19/19 scratch PASS 및 독립 CLEAR다. counter는 실제 structural misses=3과 full-recompute parity를 검사하고 reuse 제거 mutant는 실패한다. withdrawal fixture는 두 source를 실제 unavailable로 바꿔 VALUE_MAP 존재→제거, 정확한 source 집합, topology 2→3 및 cold/static parity를 검사한다. 나머지 168개 클래스 1,075개 테스트는 첫 실행에서 통과했으며 최종 Maven 재검증은 이어서 진행한다.
 - **Docker 비교 경로 정정**: 병렬 검증용 `v55-publication` 이름이 DML path literal을 12자 늘려 LiteralOp 비용을 미세하게 바꾸었다. 해당 비교는 제외하고 실행 중인 두 compile-only 컨테이너만 소유를 검증해 중단했다. 같은 길이 `v56`으로 재실행한 P1 LocalW1 37.513초/LocalW3 25.178초/GlobalW3 26.635초는 모두 v54 objective raw bits 및 전체 assignment가 정확히 같다. Native는 100 PASS + 기존 PUBLIC ignore 1이다. 원래 로그와 중단 사유는 보존했고, 이는 planner 시간 budget이 아니다.
 - **추가 원격 변경**: 검증 중 origin/main이 `88d77d641c`로 전진했으며 `4736b23e01`의 lookup/support projection 최적화와 후속 검증 문서가 추가됐다. 첫 병합을 로컬에 기록한 뒤 이 변경까지 통합한다. 최종 게시 전 변경 영향 회귀와 source/class/JAR provenance 및 공식 Docker 결과를 확인한다.
+
+## StepLM 중간 게시 후 시간 변동과 workload 분리 — 진행중
+
+- **문제/조건**: f298378925를 origin/main에 게시했으나 원래 lm workload의 fresh JVM 3회가 20.870906/19.681566/19.244135초여서 20초 목표는 실패다. 전체 compile을 측정하며 Docker/리소스/입력은 유지한다.
+- **원인/해결**: 새 upstream의 lmCG builtin은 별도 workload다. 원래 lm 비교를 보존하고 origin0b6의 검증된 Java/classes와 정확한 새 builtin으로 실제 CG baseline을 실행했다(91.989792초, 비용65701.88346157457, 정확성 PASS). 평가기는 builtin 전체 fingerprint와 각 실행의 class inventory 재hash를 검증하며 비용 상한을 실제 baseline에서만 가져온다.
+- **추가 수정**: CandidateRuleKey의 동일 ordered structural 비교에서 iterator를 제거하고 DP boundary RHS 임시 PreciseCost 객체 및 audit hex formatter를 제거했다. 후보/authority/연산순서/비용·tie 규칙은 변경하지 않았다.
+- **수정 파일**: PlacementAnalysis.java, ExactCategoricalSolver.java, PlannerRuntimePlacementAudit.java, 대응 회귀 및 scripts/fedplanner/evaluate_steplm_planning.py.
+- **검증**: 중앙 Java105/105 PASS, Python evaluator16/16 PASS, package/독립review CLEAR. run_LAN_docker.sh의 legacy-screen28은20.989561초로 정확성만 PASS. 증거는 target/planning-evidence/step18-* 및 steplm-planning-20s-validation-20261007 아래에 보존한다.
+- **잔여/위험**: 양 workload 각각 fresh JVM3회≤20초 조건은 아직 미달이다. raw double/signedzero/overflow, record equality/hash충돌, 잘못된 UTF-16/locale 회귀로 미세 변경의 의미 차이를 감지한다. 큰 모델/CSV는 제외하고 resource 정책·합법 후보·runtime 규칙을 완화하지 않는다.
+
+- **후속 검증/변경**: support count/fill의 동일 좌표 decode를 O(scope rank) cursor로 바꾸고 기존 strict-majority 기준이 확정되면 count만 종료한다. factor/후보를 제거하는 조건이 아니다. entry 수가 알려진 identity map9곳은 정확한 크기로 초기화한다. source/key/value authority·정렬·산술·tie·resource cap은 유지한다. 독립review CLEAR, isolated51PASS, 중앙171건 중170PASS/기존ignore1/실패·오류0다. package 이후 원래lm/현재lmCG 각각 동결fresh JVM3회를 진행한다.
+
+- **최신 동결 실패**: step19 원래lm3회22.836013/21.851988/18.783427초, 현재CG3회21.698392/19.212769/19.255013초로 둘 다 시간 조건만 FAIL. 비용·모델·선택·artifact/builtin/resource 검증은 모두 PASS다.
+- **signature front 포화**: 작은 StepLM compile-only telemetry에서65536 identity front가6,668,400회 포화 상태였고1,714,667 admission이 거절됐다. private identity front만 다음 admission에서 교체하여 structural fallback1773560→255426회(-85.6%), rotation3회, canonical miss6643회 동일을 확인했다. structural String cache/64M character 예산/weak cache/authority arena는 유지한다. PlacementIdentity.java와 AnalysisScope 회귀를 수정했다. 양쪽 compile-only 테스트 및 신규 scope6회귀 PASS/독립review CLEAR; 중앙/Docker 검증은 진행중이다. 이전 hotalias 재조회 비용은 실제 반복측정으로 확인한다.
+
+- **후속 중간 게시 근거**: `4736b23e01`의 중앙 step20은116PASS/기존ignore1/실패·오류0, package PASS다. 동결 Docker 원래lm3회20.507247/21.926934/21.471499초, 현재CG3회19.225814/21.122758/18.991695초로 시간 목표만 FAIL이다. 6회 모두 비용·전체5계수·선택·audit·artifact/source 검증 PASS. 실행시간 변동과 모든 실패를 보고서·JSON에 보존하며 중간 개선분을 게시한다. 목표는 계속 진행중이고 resource/후보/비용 규칙 완화는 없다.
+
+
+### origin/main 88d77d641c 최종 게시 검증 — 계획 검증 완료
+
+- **통합**: 첫 병합을 `f94f6474fa`에 로컬 커밋한 뒤 최신 `88d77d641c`까지 통합했다. 숫자 비용표는 기존 packed-hard-safe accessor/primitive accumulator를 유지하고 upstream support stored-cell odometer 및 정확한 majority-finite 생략을 합성했다. 문자열 캐시는 identity shortcut만 순환 초기화하며 기존 structural strings, 문자 수 admission, 진단 callback/finally cleanup을 유지한다. 최종 source SHA `f5eb32bf`/`42794184`는 독립 CLEAR다. 후보·비용·Global exact 범위와 privacy/배치 제약은 바꾸지 않았다.
+- **최종 빌드**: 변경 영향 17개 클래스 148/148 PASS, 실패·오류·skip 0, sourceChanges 0이며 Maven test+jar는 73.277초다. 앞서 수정한 4개 테스트 클래스도 이 실행에 포함된다. 새 StepLM evaluator Python 16/16 PASS, frozen Native 100 PASS + 기존 PUBLIC ignore 1이다. `H/engine-merged-v57`의 source/classes/JAR 일치를 확인했다. 첫 전체 실행과 최종 변경 영향 실행을 구분한 근거는 `docs/experiments/glm-planning-publication-20261007/validation.json`에 기록한다.
+- **최종 P1**: 공식 Docker에서 LocalW1 32.331초/LocalW3 20.402초/GlobalW3 21.044초로 모두 전체 planning PASS이며 v56 및 v54 objective raw bits/전체 assignment와 정확히 같다. compile-only이므로 실제 runtime 검증으로 간주하지 않는다.
+- **최종 GLM**: v57 W1 577.605초/W3 409.472초로 모두 전체 planning PASS이며 v56 및 v54 objective raw bits와 전체 assignment가 정확히 같다. 동일 Docker CPU4/16GiB/JVM10GiB, liveMetrics/JFR 비활성 조건이다. source/classes/JAR 및 raw result/command SHA를 validation.json에 기록했다. 단일 실행의 시간 차이로 속도 개선을 단정하지 않는다.
+- **잔여 목표**: GLM 전체 planning 20초 목표는 아직 미달이고 qualifying run은 0개다. workload는 compile-only이며 최종 실제 runtime 검증도 남아 있다. 이번 게시 검증은 성능 목표 달성과 구분한다.

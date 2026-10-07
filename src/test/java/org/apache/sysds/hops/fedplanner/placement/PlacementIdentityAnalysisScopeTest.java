@@ -26,16 +26,56 @@ import org.junit.Test;
 
 public class PlacementIdentityAnalysisScopeTest {
 	@Test
+	@SuppressWarnings("unchecked")
+	public void admissibleSerializationRotatesOnlyTheSaturatedIdentityFront() throws Exception {
+		PlacementIdentity.resetNormalizedSignatureCache();
+		PlacementIdentity.beginAnalysisScope(null);
+		try {
+			Map<Object,String> identity = (Map<Object,String>)(Map<?,?>)
+				activeMap("ACTIVE_IDENTITY_SIGNATURES");
+			Map<Object,String> structural = (Map<Object,String>)(Map<?,?>)
+				activeMap("ACTIVE_STRUCTURAL_SIGNATURES");
+			Object retainedStructure = new Object();
+			structural.put(retainedStructure, "retained");
+			for(int index = 0; index < 65_536; index++)
+				identity.put(new Object(), "old");
+
+			Object fresh = new Object();
+			String signature = PlacementIdentity.rememberSignature(fresh, "fresh-signature");
+
+			Assert.assertEquals(1, identity.size());
+			Assert.assertSame(signature, identity.get(fresh));
+			Assert.assertSame("structural entries survive identity-front rotation",
+				"retained", structural.get(retainedStructure));
+			Assert.assertSame(signature, PlacementIdentity.cachedSignature(fresh));
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+			PlacementIdentity.resetNormalizedSignatureCache();
+		}
+	}
+
+	@Test
 	public void aliasSaturationKeepsStructuralReuseWithoutRetainingEveryCopy() throws Exception {
 		PlacementIdentity.resetNormalizedSignatureCache();
 		PlacementIdentity.beginAnalysisScope(null);
 		try {
 			String text = anchor("first").normalizedSignature();
 			long retained = PlacementIdentity.normalizedSignatureCacheRetainedChars();
-			for(int index = 0; index < 70_000; index++)
-				Assert.assertSame(text, anchor("first").normalizedSignature());
+			int structuralEntries = activeMap("ACTIVE_STRUCTURAL_SIGNATURES").size();
+			DurableAnchorKey latest = null;
+			for(int index = 0; index < 70_000; index++) {
+				latest = anchor("first");
+				Assert.assertSame(text, latest.normalizedSignature());
+			}
 			Assert.assertTrue("equal aliases must have bounded identity retention",
 				activeMap("ACTIVE_IDENTITY_SIGNATURES").size() <= 65_536);
+			Assert.assertTrue("the rotating front must admit aliases created after saturation",
+				activeMap("ACTIVE_IDENTITY_SIGNATURES").containsKey(latest));
+			Assert.assertSame("a newly admitted alias resumes exact identity lookup",
+				text, latest.normalizedSignature());
+			Assert.assertEquals("rotation must preserve the structural serialization",
+				structuralEntries, activeMap("ACTIVE_STRUCTURAL_SIGNATURES").size());
 			Assert.assertEquals(retained, PlacementIdentity.normalizedSignatureCacheRetainedChars());
 			String firstCollision = anchor("Aa").normalizedSignature();
 			String secondCollision = anchor("BB").normalizedSignature();

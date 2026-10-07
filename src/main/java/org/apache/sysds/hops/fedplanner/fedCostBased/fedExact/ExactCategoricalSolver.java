@@ -1712,17 +1712,55 @@ public final class ExactCategoricalSolver {
 			identity = unchanged;
 		}
 
-		int storedCell(int cell, BoundaryMessage input) {
-			if(identity && input.storageClasses == null)
-				return cell;
-			int stored = 0;
-			for(int axis = input.scopeIndices.length - 1; axis >= 0; axis--) {
-				int variable = input.scopeIndices[axis];
-				int original = representatives[variable][cell % domains[variable]];
-				stored += input.storedValue(axis, original) * input.strides[axis];
-				cell /= domains[variable];
+		StoredCellOdometer storedCells(BoundaryMessage input) {
+			return new StoredCellOdometer(input);
+		}
+
+		private final class StoredCellOdometer {
+			private final BoundaryMessage input;
+			private final int[] quotientValues;
+			private final boolean direct;
+			private int stored;
+
+			private StoredCellOdometer(BoundaryMessage input) {
+				this.input = input;
+				quotientValues = new int[input.scopeIndices.length];
+				direct = identity && input.storageClasses == null;
+				reset();
 			}
-			return stored;
+
+			private void reset() {
+				Arrays.fill(quotientValues, 0);
+				stored = 0;
+				if(!direct)
+					for(int axis = 0; axis < input.scopeIndices.length; axis++) {
+						int variable = input.scopeIndices[axis];
+						int original = representatives[variable][0];
+						stored += input.storedValue(axis, original) * input.strides[axis];
+					}
+			}
+
+			private int next() {
+				int result = stored;
+				if(direct) {
+					stored++;
+					return result;
+				}
+				for(int axis = input.scopeIndices.length - 1; axis >= 0; axis--) {
+					int variable = input.scopeIndices[axis];
+					int previousOriginal = representatives[variable][quotientValues[axis]];
+					int next = quotientValues[axis] + 1;
+					if(next == domains[variable])
+						next = 0;
+					quotientValues[axis] = next;
+					int nextOriginal = representatives[variable][next];
+					stored += (input.storedValue(axis, nextOriginal)
+						- input.storedValue(axis, previousOriginal)) * input.strides[axis];
+					if(next != 0)
+						break;
+				}
+				return result;
+			}
 		}
 
 		int[][] storageClasses(int[] scope) {
@@ -1777,19 +1815,22 @@ public final class ExactCategoricalSolver {
 		List<ExactFiniteSupportJoin.Relation> relations = new ArrayList<>();
 		for(BoundaryMessage input : inputs) {
 			int cells = (int)boundaryCells(input.scopeIndices, projection.domains, "merge", "support-cells");
+			BoundaryProjection.StoredCellOdometer storedCells = projection.storedCells(input);
 			int size = 0;
 			for(int cell = 0; cell < cells; cell++) {
-				int stored = projection.storedCell(cell, input);
-				if(!absorbingBoundaryInfinity(input.values[stored], input.lowerValues[stored]))
-					size++;
+				int stored = storedCells.next();
+				if(!absorbingBoundaryInfinity(input.values[stored], input.lowerValues[stored])
+					&& ++size > cells / 2)
+					break;
 			}
 			if((long)size * 2 > cells)
 				continue;
 			int[] support = PlannerResourceGuard.allocateInts(size,
 				"regional-support-cells");
 			int position = 0;
+			storedCells.reset();
 			for(int cell = 0; cell < cells; cell++) {
-				int stored = projection.storedCell(cell, input);
+				int stored = storedCells.next();
 				if(!absorbingBoundaryInfinity(input.values[stored], input.lowerValues[stored]))
 					support[position++] = cell;
 			}
@@ -1819,7 +1860,8 @@ public final class ExactCategoricalSolver {
 			for(int index = 1; index < inputs.size(); index++) {
 				BoundaryMessage input = inputs.get(index);
 				childCell = input.boundaryCellUnchecked(assignment);
-				candidate = candidate.plus(input.valueAt(childCell));
+				candidate = candidate.plus(input.values[childCell],
+					input.lowValues == null ? 0d : input.lowValues[childCell], 0L);
 				lower = addBoundaryLower(lower, input.lowerValues[childCell]);
 				if(counters != null)
 					counters.childEvaluations++;
@@ -3742,21 +3784,28 @@ public final class ExactCategoricalSolver {
 			new PreciseCost(Double.POSITIVE_INFINITY, 0d, 0L);
 
 		private PreciseCost plus(PreciseCost that) {
-			if(high == Double.POSITIVE_INFINITY || that.high == Double.POSITIVE_INFINITY)
+			// Preserve the legacy absorbing-left short circuit before dereferencing RHS.
+			if(high == Double.POSITIVE_INFINITY)
 				return POSITIVE_INFINITY;
-			double sum = high + that.high;
+			return plus(that.high, that.low, that.tieCost);
+		}
+
+		private PreciseCost plus(double thatHigh, double thatLow, long thatTieCost) {
+			if(high == Double.POSITIVE_INFINITY || thatHigh == Double.POSITIVE_INFINITY)
+				return POSITIVE_INFINITY;
+			double sum = high + thatHigh;
 			if(!Double.isFinite(sum))
 				throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
 			double virtual = sum - high;
-			double error = (high - (sum - virtual)) + (that.high - virtual);
-			error += low + that.low;
+			double error = (high - (sum - virtual)) + (thatHigh - virtual);
+			error += low + thatLow;
 			if(!Double.isFinite(error))
 				throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
 			double normalizedHigh = sum + error;
 			if(!Double.isFinite(normalizedHigh))
 				throw new IllegalArgumentException("EXACT_VE_OBJECTIVE_OVERFLOW");
 			double normalizedLow = error - (normalizedHigh - sum);
-			long combinedTie = addTieCost(tieCost, that.tieCost);
+			long combinedTie = addTieCost(tieCost, thatTieCost);
 			return new PreciseCost(normalizedHigh, normalizedLow, combinedTie);
 		}
 

@@ -1194,8 +1194,12 @@ public final class PlacementIdentity {
 		if(signature != null) {
 			if(activeIdentity == null)
 				NORMALIZED_SIGNATURES_BY_IDENTITY.get().put(identity, signature);
-			else if(activeIdentity.size() < NORMALIZED_SIGNATURE_CACHE_MAX_IDENTITIES)
+			else {
+				// Rotate only the identity shortcut; structural strings and their character budget remain shared.
+				if(activeIdentity.size() >= NORMALIZED_SIGNATURE_CACHE_MAX_IDENTITIES)
+					activeIdentity.clear();
 				activeIdentity.put(identity, signature);
+			}
 			if(metrics != null) {
 				metrics.recordSignatureStructuralCacheHit();
 				recordSignatureCacheState(metrics, activeStructural, activeIdentity);
@@ -1224,8 +1228,9 @@ public final class PlacementIdentity {
 			}
 			else {
 				activeStructural.put(identity, signature);
-				if(activeIdentity.size() < NORMALIZED_SIGNATURE_CACHE_MAX_IDENTITIES)
-					activeIdentity.put(identity, signature);
+				if(activeIdentity.size() >= NORMALIZED_SIGNATURE_CACHE_MAX_IDENTITIES)
+					activeIdentity.clear();
+				activeIdentity.put(identity, signature);
 			}
 			retained[0] += signature.length();
 		}

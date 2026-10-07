@@ -25,13 +25,26 @@ class StepLMPlanningEvaluatorTest(unittest.TestCase):
             "noFedRuntimeConversion": True, "caseTimeoutSeconds": 600,
             "jfrEnabled": False,
         }
-        self.workload = {
-            "inputManifestPresent": True,
-            "selectedInputSha256": None,
-            "caseFixtureSha256": {"cp": "cp-fixture", "fed": "fed-fixture"},
-            "configFixtureSha256": {"sha256": "config-fixture"},
-            "dependenciesSha256": "d" * 64,
+        self.builtin_sources = {
+            "steplm.dml": "legacy steplm builtin\n",
+            "lmCG.dml": "legacy lmCG builtin\n",
+            "shared.dml": "shared builtin\n",
         }
+        canonical_frozen = self.root / "canonical-frozen"
+        self.write_builtins(canonical_frozen, self.builtin_sources)
+        workload_manifest = {
+            "frozenClasses": str(canonical_frozen),
+            "inputSha256": {},
+            "fixtureSha256": {
+                runner.CASE: {"cp": "cp-fixture", "fed": "fed-fixture"},
+                "config": {"sha256": "config-fixture"},
+            },
+            "artifactInventoryDigests": {
+                "dependencies": "d" * 64,
+                "mainClasses": runner.tree_inventory_digest(canonical_frozen)[1],
+            },
+        }
+        self.workload = runner.workload_fingerprint(workload_manifest)
         self.jvm_resources = {
             "workers": [{"heap": "-Xmx1g", "port": str(port)}
                         for port in (13000, 13001, 13002)],
@@ -40,26 +53,40 @@ class StepLMPlanningEvaluatorTest(unittest.TestCase):
                 for mode in ("cp", "fed")],
         }
         self.contract = {"environment": self.environment, "workload": self.workload,
-                         "jvmResources": self.jvm_resources}
+                         "jvmResources": self.jvm_resources,
+                         "maximumObjective": runner.MAX_OBJECTIVE,
+                         "provenance": {"result": "synthetic-reference"}}
 
     def tearDown(self):
         self.temp.cleanup()
 
+    @staticmethod
+    def write_builtins(frozen, sources):
+        builtin = frozen / "scripts/builtin"
+        builtin.mkdir(parents=True)
+        for name, content in sources.items():
+            (builtin / name).write_text(content, encoding="utf-8")
+
     def fixture(self, name="run", seconds=19.5, objective=37040.115993804146,
-                selection=None):
+                selection=None, builtin_sources=None, requested_cases=None):
         run = self.root / name
         run.mkdir()
+        frozen = run / "frozen-inputs/main-classes"
+        self.write_builtins(frozen, builtin_sources or self.builtin_sources)
+        requested = requested_cases or [runner.CASE]
         docker = ["docker", "run", "--pull", "never", "--network", "none",
                   "--cpus", "4", "--memory", "8g", "--entrypoint", "bash",
                   "sha256:image"]
         digests = {key: key[0] * 64 for key in
                    ("mainClasses", "testClasses", "mainSources", "testSources", "dependencies")}
+        digests["mainClasses"] = runner.tree_inventory_digest(frozen)[1]
         manifest = {
             "dockerArgv": docker, "image": "sha256:image",
             "network": "none (worker and coordinator use container loopback)",
             "planner": "local", "configuredPlanner": "compile_cost_based",
             "noFedRuntimeConversion": True, "caseTimeoutSeconds": 600,
-            "jfrProfile": {"enabled": False}, "requestedCases": [runner.CASE],
+            "jfrProfile": {"enabled": False}, "requestedCases": requested,
+            "frozenClasses": str(frozen),
             "artifactInventoryDigests": digests,
             "sourceSha256": {"runner": "a" * 64, "dispatch": "b" * 64},
             "inputSha256": {},
@@ -88,7 +115,7 @@ class StepLMPlanningEvaluatorTest(unittest.TestCase):
         }
         result = {
             "status": "PASSED", "containerReturncode": 0,
-            "requestedCases": [runner.CASE], "classPreflightPassed": True,
+            "requestedCases": requested, "classPreflightPassed": True,
             "overlayPreflightPassed": True, "modelProofPassed": True,
             "runtimeConversionViolations": [],
             "overlayPreflight": {"status": "PASSED", "actual": overlay},
@@ -214,6 +241,91 @@ class StepLMPlanningEvaluatorTest(unittest.TestCase):
         self.assertFalse(evaluated["passed"])
         self.assertTrue(any("workload fingerprint" in error for error in evaluated["errors"]))
         self.assertTrue(any("JVM resource" in error for error in evaluated["errors"]))
+
+    def test_rejects_builtin_resource_byte_change(self):
+        for resource in ("lmCG.dml", "shared.dml"):
+            with self.subTest(resource=resource):
+                path = self.fixture(f"changed-{resource}")
+                manifest = json.loads(
+                    path.with_name("manifest.json").read_text(encoding="utf-8"))
+                frozen = Path(manifest["frozenClasses"])
+                (frozen / "scripts/builtin" / resource).write_text(
+                    "different builtin bytes\n", encoding="utf-8")
+                manifest["artifactInventoryDigests"]["mainClasses"] = (
+                    runner.tree_inventory_digest(frozen)[1])
+                path.with_name("manifest.json").write_text(
+                    json.dumps(manifest), encoding="utf-8")
+                evaluated = runner.evaluate_result(path, self.contract)
+                self.assertFalse(evaluated["passed"])
+                self.assertTrue(any("workload fingerprint" in error
+                                    for error in evaluated["errors"]))
+
+    def test_accepts_different_valid_java_classes_with_identical_workload(self):
+        path = self.fixture("different-valid-classes")
+        manifest_path = path.with_name("manifest.json")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        frozen = Path(manifest["frozenClasses"])
+        (frozen / "org/example/NewBuild.class").parent.mkdir(parents=True)
+        (frozen / "org/example/NewBuild.class").write_bytes(b"different production build")
+        manifest["artifactInventoryDigests"]["mainClasses"] = (
+            runner.tree_inventory_digest(frozen)[1])
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        evaluated = runner.evaluate_result(path, self.contract)
+        self.assertTrue(evaluated["passed"], evaluated["errors"])
+        self.assertTrue(evaluated["frozenMainClassesEvidence"]["matched"])
+
+    def test_rejects_missing_or_tampered_frozen_main_classes(self):
+        tampered = self.fixture("tampered-classes")
+        manifest = json.loads(
+            tampered.with_name("manifest.json").read_text(encoding="utf-8"))
+        frozen = Path(manifest["frozenClasses"])
+        (frozen / "unexpected.class").write_bytes(b"tampered")
+        evaluated = runner.evaluate_result(tampered, self.contract)
+        self.assertFalse(evaluated["passed"])
+        self.assertTrue(any("inventory" in error for error in evaluated["errors"]))
+
+        missing = self.fixture("missing-classes")
+        manifest = json.loads(missing.with_name("manifest.json").read_text(encoding="utf-8"))
+        frozen = Path(manifest["frozenClasses"])
+        frozen.rename(frozen.with_name("removed-main-classes"))
+        evaluated = runner.evaluate_result(missing, self.contract)
+        self.assertFalse(evaluated["passed"])
+        self.assertTrue(any("inventory" in error for error in evaluated["errors"]))
+
+    def test_validated_legacy_and_cg_references_define_their_objective(self):
+        legacy = self.fixture(
+            "legacy-reference", seconds=104.0, objective=runner.MAX_OBJECTIVE,
+            requested_cases=["other", runner.CASE])
+        legacy_contract = runner.reference_contract(legacy)
+        self.assertEqual(runner.MAX_OBJECTIVE, legacy_contract["maximumObjective"])
+        self.assertEqual(str(legacy.resolve()), legacy_contract["provenance"]["result"])
+
+        cg_sources = dict(self.builtin_sources)
+        cg_sources["steplm.dml"] = "steplm calls lmCG\n"
+        cg_sources["lmCG.dml"] = "current lmCG builtin\n"
+        cg_objective = 65701.883
+        cg = self.fixture(
+            "cg-reference", seconds=17.91, objective=cg_objective,
+            builtin_sources=cg_sources)
+        cg_contract = runner.reference_contract(cg)
+        candidate = self.fixture(
+            "cg-candidate", objective=cg_objective, builtin_sources=cg_sources)
+        evaluated = runner.evaluate_result(candidate, cg_contract)
+        self.assertTrue(evaluated["passed"], evaluated["errors"])
+        self.assertEqual(cg_objective, cg_contract["maximumObjective"])
+        self.assertNotEqual(legacy_contract["workload"], cg_contract["workload"])
+
+    def test_rejects_nonfinite_or_failed_reference(self):
+        nonfinite = self.fixture("nonfinite-reference", objective=float("inf"))
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            runner.reference_contract(nonfinite)
+
+        failed = self.fixture("failed-reference")
+        receipt = json.loads(failed.read_text(encoding="utf-8"))
+        receipt["status"] = "FAILED"
+        failed.write_text(json.dumps(receipt), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "valid PASSED baseline"):
+            runner.reference_contract(failed)
 
     def test_duplicate_receipts_nonzero_harness_and_provenance_change_fail(self):
         path = self.fixture("duplicate")

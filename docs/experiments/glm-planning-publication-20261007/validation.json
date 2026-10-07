@@ -1,0 +1,252 @@
+{
+  "status": "planning-publication-verified",
+  "implementationCommit": "44b7e8d826",
+  "firstMergeCommit": "f94f6474fa",
+  "upstreamMergeTarget": "88d77d641c4f5f9177b82724bca3ea70ce4edb63",
+  "frozenEngine": "/home/mchoi/fedplanner-boundary-correctness-20261006/engine-merged-v57",
+  "freezeReceiptSha256": "fd79f5be98b982091550ac8e208b28504839e81f7672058ecf9f95ffa13a3e25",
+  "finalJava": {
+    "exitCode": 0,
+    "wallSeconds": 73.27676010131836,
+    "sourceChanges": [],
+    "selectedClasses": 17,
+    "reportedClasses": 17,
+    "counts": {
+      "tests": 148,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "javaReports": {
+    "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.BoundaryProjectionOdometerTest.xml": "f6aef4b126586373fd30479ddca39fb14e326bdc15de24ea53fb7088befc516c",
+    "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.BoundarySupportMergeTest.xml": "2c3d17299d6601b2eecbf516259598a9a64a70b05e4b68ee3e59393d546a40fd",
+    "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolverArithmeticParityTest.xml": "51ad45478916e1ec5e1090e742400a86b3de12e8be45a484f487e3041ed7e870",
+    "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactEliminationScoreReuseTest.xml": "7833ed6118c982bfbabfed56edaeb777f7b2bf73b78bb1e0afe20716cf14cf4d",
+    "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactHardTableRepresentationTest.xml": "101a4cec623b6ecd7454271bba452d7855ebc8e67be11e7ba3032f4c6efeca1d",
+    "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.RegionalHardSupportMergeTest.xml": "2fe931ee9a263f1f6be61e4d8be188b146e798f6240f6b15d7ccfe5b74cd83e7",
+    "TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.SparseKnownZeroMaskTest.xml": "7957553767dae157a9b99147adc528ee9c695a4a9809a7824eacc9dfebc120ad",
+    "TEST-org.apache.sysds.hops.fedplanner.placement.CandidateRuleKeyEqualityTest.xml": "0b598e9fa1cf445c3a611339c923e8e7fc18e2bf0489482acba0816c67f4a765",
+    "TEST-org.apache.sysds.hops.fedplanner.placement.ContinuityRefreshReuseTest.xml": "4a3a9a2f9c4f0700105c090362a9ba734576f481fa6254cdf7309cbcf0fde4b2",
+    "TEST-org.apache.sysds.hops.fedplanner.placement.DirectExecutableReferenceMembershipTest.xml": "a631f8954d6776a3f34189983eaf1b6eab50de7cc00a5e283acc27e585c02cf8",
+    "TEST-org.apache.sysds.hops.fedplanner.placement.DirectSourceSeedProjectionTest.xml": "f6eec723d60fe50d804e49bc39f0dc23bd90c4a03ad4c0587899c19a03036622",
+    "TEST-org.apache.sysds.hops.fedplanner.placement.DirectedDirectClosureDirtyConeTest.xml": "a2e986e3d93f903bbe1eb6435943a5559e10ce0c89145a8690d527341ad3cb55",
+    "TEST-org.apache.sysds.hops.fedplanner.placement.LogicalBoundaryRealizationsTest.xml": "556345ffc3a9f67e3f2bea845ec197cb43ee8c94aa3de211c0a38dfb79ef07fa",
+    "TEST-org.apache.sysds.hops.fedplanner.placement.PlacementDependencyComponentsTest.xml": "2453e19e2931f974ed4e4a984ef3b74b7e0ca835c389c69cff6f6a1ea3c606fb",
+    "TEST-org.apache.sysds.hops.fedplanner.placement.PlacementIdentityAnalysisScopeTest.xml": "02e28acb178713ca7900d977fa4e4445086928736007b697eca21b4fab7a0e54",
+    "TEST-org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAuditShortHashTest.xml": "e1159509f5e5a61e1256b97143820971514a30fc5a5a70732aed760792d7a3cb",
+    "TEST-org.apache.sysds.hops.fedplanner.placement.SignatureAdmissionDiagnosticTest.xml": "c7dcca6a5b6a87310400b388b2f4df434d63e0dcfa935ee6bed38485b7171bb5"
+  },
+  "priorBroadRegression": {
+    "selectedClasses": 172,
+    "tests": 1130,
+    "passingClasses": 168,
+    "passingTestsOutsideCorrectedClasses": 1075,
+    "testOnlyCorrections": [
+      "ExactEliminationScoreReuseTest",
+      "DirectedDirectClosureDirtyConeTest",
+      "ContinuityRefreshReuseTest",
+      "LogicalBoundaryRealizationsTest"
+    ],
+    "originalResult": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v55-integration-summary.json",
+    "note": "All four corrected classes pass in final targeted run. Latest upstream source delta was tested through the final 17-class selection; prior broad result is not represented as a fresh complete suite on the final source."
+  },
+  "jar": [
+    {
+      "path": "/home/mchoi/w1357-cost-model-main-20261006/target/systemds-3.4.0-SNAPSHOT.jar",
+      "sha256": "65ca488490ddbc92a3646cecebbb3de81c915616f5f04d9cb9c18c7b15d5aada",
+      "classes": 3916
+    }
+  ],
+  "native": {
+    "passed": 100,
+    "existingPublicIgnore": 1,
+    "log": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v57-native.log",
+    "logSha256": "f2b55fe05e5c84b84aa0a7bf56ef6ff5e87029f90557342d4b4ef0d4a1f66577"
+  },
+  "python": {
+    "passed": 16,
+    "suite": "test_evaluate_steplm_planning.py",
+    "logSha256": "bad69d1ad939abfe105f3d75a1255ed1a68c714ff5e96bd0561d28ec70b00cec"
+  },
+  "p1": [
+    {
+      "status": "passed",
+      "planningSucceeded": true,
+      "executeScriptReturned": true,
+      "runtimeExecuted": false,
+      "wallSeconds": 32.330818898,
+      "planner": "DP-LocalConflict",
+      "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v57-local",
+      "case": "P1_FULL_w1",
+      "complete": true,
+      "baseline": "v56",
+      "objectiveBits": "local-conflict-objective=4728318273290936294",
+      "objectiveBitsEqualBaseline": true,
+      "assignmentEqualBaseline": true,
+      "resultSha256": "2b07c4e66caef71e920b780a3277eaff7e17742f81a73d419c0e91e2f9891de2",
+      "commandSha256": "bc624b00eaf75e39ab93791ac91113e521a9c624fa5209ef285202a105a020cc"
+    },
+    {
+      "status": "passed",
+      "planningSucceeded": true,
+      "executeScriptReturned": true,
+      "runtimeExecuted": false,
+      "wallSeconds": 20.4022023,
+      "planner": "DP-LocalConflict",
+      "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v57-local",
+      "case": "P1_FULL_w3",
+      "complete": true,
+      "baseline": "v56",
+      "objectiveBits": "local-conflict-objective=4734494558711388671",
+      "objectiveBitsEqualBaseline": true,
+      "assignmentEqualBaseline": true,
+      "resultSha256": "d144b29f67094a00986d35eb56cabf0fa5f3e15b445ef940b271c442b85be0c1",
+      "commandSha256": "40e85fe33671dab10e848e1a0db4ea6ef2f984ae7ed4fef2652637868e6a6154"
+    },
+    {
+      "status": "passed",
+      "planningSucceeded": true,
+      "executeScriptReturned": true,
+      "runtimeExecuted": false,
+      "wallSeconds": 21.043899434,
+      "planner": "Exact",
+      "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v57-global",
+      "case": "P1_FULL_w3",
+      "complete": true,
+      "baseline": "v56",
+      "objectiveBits": "physical-ve-objective=4734494558711388677",
+      "objectiveBitsEqualBaseline": true,
+      "assignmentEqualBaseline": true,
+      "resultSha256": "351f0e029dc1518dbd0797eccc821964f90d70aea875d702788c92c82a52b525",
+      "commandSha256": "fd3d4450caa0b79f279d8565d59868a6ce56f5db5eea45eb2b3ea1fe45592cbe"
+    }
+  ],
+  "glm": [
+    {
+      "executeScriptReturned": true,
+      "planner": "DP-LocalConflict",
+      "graphNodes": 1256,
+      "decisionNodes": 1240,
+      "coarseAlternatives": 1710,
+      "selectedStateCount": 1240,
+      "selectedLocalMaterializations": 2,
+      "selectedRelocations": 0,
+      "planningSucceeded": true,
+      "status": "passed",
+      "wallSeconds": 577.604771804,
+      "runtimeExecuted": false,
+      "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/glm-merged-v57-w1",
+      "complete": true,
+      "objectiveBits": "local-conflict-objective=4671489731595367111",
+      "baseline": "v56",
+      "objectiveBitsEqualBaseline": true,
+      "assignmentEqualBaseline": true,
+      "phases": [
+        "Compile Phase FedPlanner CandidateE2E CommonPreparation:\t0.031427 sec.",
+        "Compile Phase FedPlanner CandidateE2E Analysis:\t344.051411 sec.",
+        "Compile Phase FedPlanner CandidateE2E PlannerSetup:\t0.002315 sec.",
+        "Compile Phase FedPlanner CandidateE2E Model:\t23.252950 sec.",
+        "Compile Phase FedPlanner CandidateE2E CostSurface:\t77.171824 sec.",
+        "Compile Phase FedPlanner CandidateE2E Optimizer:\t126.201503 sec.",
+        "Compile Phase FedPlanner CandidateE2E Selection:\t1.801187 sec.",
+        "Compile Phase FedPlanner CandidateE2E OtherPlanning:\t0.001664 sec.",
+        "Compile Phase FedPlanner CandidateE2E Diagnostics:\t0.010630 sec.",
+        "Compile Phase FedPlanner CandidateE2E Conversion:\t2.163594 sec.",
+        "Compile Phase FedPlanner CandidateE2E Application:\t0.273604 sec.",
+        "Compile Phase FedPlanner CandidateE2E FinalVerification:\t0.011289 sec.",
+        "Compile Phase FedPlanner CandidateE2E Registration:\t0.005900 sec.",
+        "Compile Phase FedPlanner CandidateE2E ReceiptHandoff:\t0.000210 sec.",
+        "Compile Phase FedPlanner CandidateE2E Total:\t574.979508 sec."
+      ],
+      "resultSha256": "d2ad3bfc73d177120ad55daa87c244f1b5a190a4c143b4800a5c9b600d22b295",
+      "commandSha256": "566599a46e4f5904fd018a3ec7a2470d2c936d32ac77f6fcf9735e6b74e8f00c"
+    },
+    {
+      "executeScriptReturned": true,
+      "planner": "DP-LocalConflict",
+      "graphNodes": 1268,
+      "decisionNodes": 1252,
+      "coarseAlternatives": 1644,
+      "selectedStateCount": 1252,
+      "selectedLocalMaterializations": 2,
+      "selectedRelocations": 0,
+      "planningSucceeded": true,
+      "status": "passed",
+      "wallSeconds": 409.471665788,
+      "runtimeExecuted": false,
+      "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/glm-merged-v57-w3",
+      "complete": true,
+      "objectiveBits": "local-conflict-objective=4671453370371391968",
+      "baseline": "v56",
+      "objectiveBitsEqualBaseline": true,
+      "assignmentEqualBaseline": true,
+      "phases": [
+        "Compile Phase FedPlanner CandidateE2E CommonPreparation:\t0.026041 sec.",
+        "Compile Phase FedPlanner CandidateE2E Analysis:\t245.375846 sec.",
+        "Compile Phase FedPlanner CandidateE2E PlannerSetup:\t0.002933 sec.",
+        "Compile Phase FedPlanner CandidateE2E Model:\t14.584657 sec.",
+        "Compile Phase FedPlanner CandidateE2E CostSurface:\t77.031403 sec.",
+        "Compile Phase FedPlanner CandidateE2E Optimizer:\t66.740982 sec.",
+        "Compile Phase FedPlanner CandidateE2E Selection:\t1.357037 sec.",
+        "Compile Phase FedPlanner CandidateE2E OtherPlanning:\t0.001760 sec.",
+        "Compile Phase FedPlanner CandidateE2E Diagnostics:\t0.008013 sec.",
+        "Compile Phase FedPlanner CandidateE2E Conversion:\t1.401284 sec.",
+        "Compile Phase FedPlanner CandidateE2E Application:\t0.257397 sec.",
+        "Compile Phase FedPlanner CandidateE2E FinalVerification:\t0.006060 sec.",
+        "Compile Phase FedPlanner CandidateE2E Registration:\t0.004016 sec.",
+        "Compile Phase FedPlanner CandidateE2E ReceiptHandoff:\t0.000153 sec.",
+        "Compile Phase FedPlanner CandidateE2E Total:\t406.797582 sec."
+      ],
+      "resultSha256": "bcaf8809762bbc21a272d09dcf0f22f7b90ea2f9ca553d3a60db546275fc35a5",
+      "commandSha256": "8143e58f209f8d1fe73d915ad48cc2b6f6711c7121fcb81f00debf6d07aa07dc"
+    }
+  ],
+  "workloadExecution": "compile-only via scripts/fedplanner/run_LAN_docker.sh; runtimeExecuted=false",
+  "performanceGoal": {
+    "targetSeconds": 20,
+    "achieved": false,
+    "qualifyingRuns": 0,
+    "latestSeconds": {
+      "W1": 577.604771804,
+      "W3": 409.471665788
+    }
+  },
+  "review": "Independent CLEAR on numeric packed-hard handling, metadata dependency subscriptions, identity/authority and cache lifetime, plus four test-only compatibility corrections.",
+  "verifiedUtc": "2026-10-07T09:48:08.992993+00:00",
+  "conditions": [
+    {
+      "worker": 1,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "cpus": 4,
+      "containerMemory": "16g",
+      "jvmHeap": "10g",
+      "liveMetrics": false,
+      "jfr": false,
+      "trace": true,
+      "traceDetails": false,
+      "compileOnlyValidated": true,
+      "scriptSha256": "e30c77d01cb708a5e758188509131bbc9baae01fb7f1b2524890f6c9bf9fca55",
+      "configSha256": "84c9d47b6ceb431e3acde6a295eceb216e93de13c756525ce7c0d2dc12fcf85b"
+    },
+    {
+      "worker": 3,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "cpus": 4,
+      "containerMemory": "16g",
+      "jvmHeap": "10g",
+      "liveMetrics": false,
+      "jfr": false,
+      "trace": true,
+      "traceDetails": false,
+      "compileOnlyValidated": true,
+      "scriptSha256": "1a055bdc6e1b817f6c209ce5dca1c0168be586793645c418c9c100ab3c2f6dba",
+      "configSha256": "a431d5dab8d05baaea395e9ddecabc7d11601fc971f63d7f2646be3ece86afde"
+    }
+  ],
+  "limitations": [
+    "GLM 20-second objective is not achieved; no qualifying run.",
+    "All workload checks here compile complete plans; actual runtime correctness remains a separate pending goal gate.",
+    "Final Java run covers changed areas; prior full suite evidence and the four test-only corrections are recorded separately."
+  ]
+}
