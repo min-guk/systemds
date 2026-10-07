@@ -18,6 +18,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HexFormat;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
@@ -204,12 +205,30 @@ public final class PlacementGraphFingerprint {
 			+ h.getClass().getName() + ':' + h.getOpString() + ':' + h.getName();
 	}
 
+	/** Equivalent to replacing every non-overlapping lowercase 64-hex digest with &lt;program&gt;. */
+	static String stableSignature(String signature) {
+		StringBuilder normalized = null;
+		int hexRun = 0;
+		int copiedThrough = 0;
+		for(int i = 0; i < signature.length(); i++) {
+			char c = signature.charAt(i);
+			hexRun = c >= '0' && c <= '9' || c >= 'a' && c <= 'f' ? hexRun + 1 : 0;
+			if(hexRun == 64) {
+				if(normalized == null)
+					normalized = new StringBuilder(signature.length());
+				normalized.append(signature, copiedThrough, i + 1 - 64).append("<program>");
+				copiedThrough = i + 1;
+				hexRun = 0;
+			}
+		}
+		return normalized == null ? signature
+			: normalized.append(signature, copiedThrough, signature.length()).toString();
+	}
+
 	static String sha256(String text) {
 		try {
 			byte[] digest = MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
-			StringBuilder sb = new StringBuilder();
-			for(byte b : digest) sb.append(String.format("%02x", b));
-			return sb.toString();
+			return HexFormat.of().formatHex(digest);
 		}
 		catch(NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
 	}

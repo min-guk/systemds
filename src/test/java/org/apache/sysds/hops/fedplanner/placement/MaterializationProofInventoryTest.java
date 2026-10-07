@@ -67,7 +67,7 @@ public class MaterializationProofInventoryTest {
 		Fixture f = new Fixture();
 		for(List<Integer> order : List.of(List.of(1, 2), List.of(2, 1))) {
 			Object inventory = f.inventory(f.nodes, f.edges);
-			Object previousResolver = null, previousNative = null, context = null;
+			Object previousResolver = null;
 			for(int index : order) {
 				Object expected = f.cold(f.nodes.get(index), f.facts.get(index), f.nodes, f.edges);
 				Object actual = shared(f.nodes.get(index), f.facts.get(index), inventory);
@@ -79,16 +79,13 @@ public class MaterializationProofInventoryTest {
 				Assert.assertSame(f.nodes.get(0).key(), derived.derivedFoutAction().durableAnchorOwner());
 				Object resolver = field(inventory, "resolver");
 				Object nativeQuery = field(resolver, "nativeContinuity");
+				Assert.assertNull("ordinary materialization proof must not build native continuity",
+					nativeQuery);
 				Assert.assertTrue(((Map<?,?>)field(resolver, "active")).isEmpty());
 				Assert.assertFalse(((Map<?,?>)field(resolver, "memo")).isEmpty());
-				if(previousResolver != null) {
+				if(previousResolver != null)
 					Assert.assertSame(previousResolver, resolver);
-					Assert.assertNotSame(previousNative, nativeQuery);
-					Assert.assertSame(context, field(nativeQuery, "structuralContext"));
-				}
 				previousResolver = resolver;
-				previousNative = nativeQuery;
-				context = field(nativeQuery, "structuralContext");
 			}
 		}
 	}
@@ -236,6 +233,20 @@ public class MaterializationProofInventoryTest {
 		Assert.assertSame("validated invariant edge index is revision-shared", originalEdges,
 			field(revised, "matrixEdgesByConsumer"));
 		Assert.assertNotSame("query state is revision-local", originalResolver, field(revised, "resolver"));
+		Assert.assertNull(field(originalResolver, "nativeContinuity"));
+		Object revisedResolver = field(revised, "resolver");
+		Assert.assertNull(field(revisedResolver, "nativeContinuity"));
+		Object originalNative = invoke(originalResolver, "nativeContinuity");
+		Object revisedNative = invoke(revisedResolver, "nativeContinuity");
+		@SuppressWarnings("unchecked")
+		Map<CompiledHopKey,List<CandidateRuleFact>> originalNativeFacts =
+			(Map<CompiledHopKey,List<CandidateRuleFact>>)field(originalNative, "candidateFactsByKey");
+		@SuppressWarnings("unchecked")
+		Map<CompiledHopKey,List<CandidateRuleFact>> revisedNativeFacts =
+			(Map<CompiledHopKey,List<CandidateRuleFact>>)field(revisedNative, "candidateFactsByKey");
+		Assert.assertSame(available, originalNativeFacts.get(available.key().parentOccurrence()).get(0));
+		Assert.assertSame("first fallback must observe the current withdrawn owner slice",
+			withdrawn, revisedNativeFacts.get(withdrawn.key().parentOccurrence()).get(0));
 		Object work = field(revised, "revisionWork");
 		Assert.assertEquals(0L, accessor(work, "unchangedOwnerFactsScanned"));
 		Assert.assertEquals(1L, accessor(work, "changedOwnerFactsScanned"));
@@ -272,9 +283,137 @@ public class MaterializationProofInventoryTest {
 		Assert.assertEquals(oldResult, shared(f.nodes.get(1), f.facts.get(1), original));
 		Assert.assertSame(field(field(original, "resolver"), "matrixEdgesByConsumer"),
 			field(field(revised, "resolver"), "matrixEdgesByConsumer"));
-		Assert.assertNotSame("changed node authority owns a fresh native structural context",
-			field(field(original, "resolver"), "nativeContinuity"),
+		Assert.assertNull("pre-fallback old revision remains lazy",
+			field(field(original, "resolver"), "nativeContinuity"));
+		Assert.assertNull("pre-fallback new revision remains lazy",
 			field(field(revised, "resolver"), "nativeContinuity"));
+		Object oldNative = invoke(field(original, "resolver"), "nativeContinuity");
+		Object revisedNative = invoke(field(revised, "resolver"), "nativeContinuity");
+		Assert.assertNotSame("changed node authority owns a fresh native structural context",
+			oldNative, revisedNative);
+		@SuppressWarnings("unchecked")
+		Map<CompiledHopKey,Node> oldNativeNodes =
+			(Map<CompiledHopKey,Node>)field(oldNative, "nodesByKey");
+		@SuppressWarnings("unchecked")
+		Map<CompiledHopKey,Node> revisedNativeNodes =
+			(Map<CompiledHopKey,Node>)field(revisedNative, "nodesByKey");
+		Assert.assertSame(source, oldNativeNodes.get(source.key()));
+		Assert.assertSame("first fallback must observe the current node authority",
+			replacement, revisedNativeNodes.get(source.key()));
+		Assert.assertSame(oldNative, field(field(original, "resolver"), "nativeContinuity"));
+		Assert.assertSame(revisedNative, field(field(revised, "resolver"), "nativeContinuity"));
+	}
+
+	@Test
+	public void ownedInventoryUpdatesResolverInPlaceAcrossFactAndAnchorRevisions() throws Exception {
+		Fixture f = new Fixture();
+		Object inventory = f.ownedInventory(f.nodes, f.facts, f.edges);
+		Assert.assertEquals(f.cold(f.nodes.get(2), f.facts.get(2), f.nodes, f.edges),
+			shared(f.nodes.get(2), f.facts.get(2), inventory));
+		Object resolver = field(inventory, "resolver");
+		Object nodeIndex = field(inventory, "nodesByKey");
+
+		CandidateRuleFact available = f.facts.get(1);
+		CandidateRuleFact withdrawn = new CandidateRuleFact(available.key(),
+			CandidateEvaluationStatus.PRIVACY_EXCLUDED, available.capability(), available.shapeProof(),
+			available.profile(), List.of(), "PRIVATE_AGGREGATE");
+		Assert.assertSame(inventory, replaceOwnerOwned(inventory, 1, f.nodes.get(1).key(),
+			f.nodes.get(1), List.of(withdrawn)));
+		Assert.assertSame("the method-local resolver is updated instead of copied", resolver,
+			field(inventory, "resolver"));
+		List<CandidateRuleFact> withdrawnFacts = new ArrayList<>(f.facts);
+		withdrawnFacts.set(1, withdrawn);
+		Assert.assertEquals(f.cold(f.nodes.get(2), f.facts.get(2), f.nodes, withdrawnFacts, f.edges),
+			shared(f.nodes.get(2), f.facts.get(2), inventory));
+
+		replaceOwnerOwned(inventory, 1, f.nodes.get(1).key(), f.nodes.get(1), List.of(available));
+		Assert.assertSame(resolver, field(inventory, "resolver"));
+		Assert.assertEquals("restoring the owner restores exact cold behavior",
+			f.cold(f.nodes.get(2), f.facts.get(2), f.nodes, f.edges),
+			shared(f.nodes.get(2), f.facts.get(2), inventory));
+
+		Node source = f.nodes.get(0);
+		DurableAnchorKey changedAnchor = new DurableAnchorKey("owned-changed-anchor", FType.FULL,
+			List.of(new AnchorPartition("worker-b", List.of(0L, 0L), List.of(4L, 2L))));
+		Node replacement = new Node(source.key(), source.kind(), source.valueVersion(), source.emittedWork(),
+			source.legalAlternatives(), source.exclusions(), List.of(changedAnchor));
+		replaceOwnerOwned(inventory, 0, source.key(), replacement, List.of(f.facts.get(0)));
+		List<Node> changedNodes = new ArrayList<>(f.nodes);
+		changedNodes.set(0, replacement);
+		Assert.assertSame("the exclusively owned node index is updated in place", nodeIndex,
+			field(inventory, "nodesByKey"));
+		Assert.assertSame(replacement, ((Map<?,?>)nodeIndex).get(source.key()));
+		Assert.assertSame(resolver, field(inventory, "resolver"));
+		Assert.assertEquals(f.cold(f.nodes.get(1), f.facts.get(1), changedNodes, f.edges),
+			shared(f.nodes.get(1), f.facts.get(1), inventory));
+		Assert.assertNull("owner and node revisions before fallback keep native continuity lazy",
+			field(resolver, "nativeContinuity"));
+		Object materialized = invoke(resolver, "nativeContinuity");
+		replaceOwnerOwned(inventory, 1, f.nodes.get(1).key(), f.nodes.get(1), List.of(available));
+		Assert.assertNotSame("after first fallback, owner revisions keep the exact revision path",
+			materialized, field(resolver, "nativeContinuity"));
+	}
+
+	@Test
+	public void ownedInventoryMaintainsLastSlotCollisionWinnerAcrossRevisions() throws Exception {
+		Fixture f = new Fixture();
+		CandidateRuleFact base = f.facts.get(0);
+		CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization first = emission.realizations().get(0);
+		CandidateEmissionRealization second = new CandidateEmissionRealization(first.key(),
+			List.of(new CandidateRealizationSupportClause(List.of(), List.of())));
+		CandidateRuleFact firstFact = withRealization(base, first);
+		CandidateRuleFact secondFact = withRealization(base, second);
+		List<CandidateRuleFact> initialFacts = List.of(firstFact, secondFact,
+			f.facts.get(1), f.facts.get(2));
+		Object inventory = f.ownedInventory(f.nodes, initialFacts, f.edges);
+		Object resolver = invoke(inventory, "resolverForQuery");
+		Assert.assertSame(second, collisionWinner(resolver, first));
+
+		replaceOwnerOwned(inventory, 0, f.nodes.get(0).key(), f.nodes.get(0), List.of(firstFact));
+		Assert.assertSame(resolver, field(inventory, "resolver"));
+		Assert.assertSame("withdrawing the final slot reveals the previous realization", first,
+			collisionWinner(resolver, first));
+		List<CandidateRuleFact> withdrawnFacts = List.of(firstFact, f.facts.get(1), f.facts.get(2));
+		Assert.assertEquals(f.cold(f.nodes.get(2), f.facts.get(2), f.nodes, withdrawnFacts, f.edges),
+			shared(f.nodes.get(2), f.facts.get(2), inventory));
+
+		replaceOwnerOwned(inventory, 0, f.nodes.get(0).key(), f.nodes.get(0),
+			List.of(firstFact, secondFact));
+		Assert.assertSame(second, collisionWinner(resolver, first));
+		Assert.assertEquals(f.cold(f.nodes.get(2), f.facts.get(2), f.nodes, initialFacts, f.edges),
+			shared(f.nodes.get(2), f.facts.get(2), inventory));
+	}
+
+	@Test
+	public void retainedInventoryCannotEnterOwnedMutationPath() throws Exception {
+		Fixture f = new Fixture();
+		Object retained = f.ownerInventory(f.nodes, f.facts, f.edges);
+		InvocationTargetException error = Assert.assertThrows(InvocationTargetException.class,
+			() -> replaceOwnerOwned(retained, 1, f.nodes.get(1).key(), f.nodes.get(1),
+				List.of(f.facts.get(1))));
+		Assert.assertTrue(error.getCause() instanceof IllegalStateException);
+		Assert.assertEquals("Proof inventory is not exclusively owned", error.getCause().getMessage());
+	}
+
+	@Test
+	public void ownedInventoryCannotPublishAnImmutableAlias() throws Exception {
+		Fixture f = new Fixture();
+		Object owned = f.ownedInventory(f.nodes, f.facts, f.edges);
+		Object resolver = invoke(owned, "resolverForQuery");
+		Object nodes = field(owned, "nodes");
+		Object facts = field(owned, "factsByOrdinal");
+		Object nodeIndex = field(owned, "nodesByKey");
+		InvocationTargetException error = Assert.assertThrows(InvocationTargetException.class,
+			() -> replaceOwner(owned, 1, f.nodes.get(1).key(), f.nodes.get(1),
+				List.of(f.facts.get(1))));
+		Assert.assertTrue(error.getCause() instanceof IllegalStateException);
+		Assert.assertEquals("Exclusively owned proof inventory requires owned replacement",
+			error.getCause().getMessage());
+		Assert.assertSame(nodes, field(owned, "nodes"));
+		Assert.assertSame(facts, field(owned, "factsByOrdinal"));
+		Assert.assertSame(nodeIndex, field(owned, "nodesByKey"));
+		Assert.assertSame(resolver, field(owned, "resolver"));
 	}
 
 	@Test
@@ -308,14 +447,15 @@ public class MaterializationProofInventoryTest {
 		CandidateRuleFact secondFact = withRealization(base, second);
 		Object inventory = f.ownerInventory(f.nodes, List.of(firstFact, secondFact), f.edges);
 		Object resolver = invoke(inventory, "resolverForQuery");
-		Assert.assertSame("cold global traversal remains last-wins", second, collisionWinner(resolver));
+		Assert.assertSame("cold global traversal remains last-wins", second,
+			collisionWinner(resolver, first));
 		Object withdrawn = replaceOwner(inventory, 0, f.nodes.get(0).key(), f.nodes.get(0),
 			List.of(firstFact));
 		Assert.assertSame("withdrawing the later collision reveals the prior slot", first,
-			collisionWinner(field(withdrawn, "resolver")));
+			collisionWinner(field(withdrawn, "resolver"), first));
 		Object restored = replaceOwner(withdrawn, 0, f.nodes.get(0).key(), f.nodes.get(0),
 			List.of(firstFact, secondFact));
-		Assert.assertSame(second, collisionWinner(field(restored, "resolver")));
+		Assert.assertSame(second, collisionWinner(field(restored, "resolver"), first));
 	}
 
 	@Test
@@ -341,12 +481,12 @@ public class MaterializationProofInventoryTest {
 			List.of(firstFact, middleFact, lastFact), List.of());
 		Object resolver = invoke(inventory, "resolverForQuery");
 		Assert.assertSame("interleaved cold traversal must keep the final A2 global winner", last,
-			collisionWinner(resolver));
+			collisionWinner(resolver, first));
 		InvocationTargetException error = Assert.assertThrows(InvocationTargetException.class,
 			() -> replaceOwner(inventory, 1, freshEqualKey, equalOwner, List.of(middleFact)));
 		Assert.assertTrue(error.getCause() instanceof IllegalStateException);
 		Assert.assertSame("failed cold revision must leave the exact cold winner immutable", last,
-			collisionWinner(field(inventory, "resolver")));
+			collisionWinner(field(inventory, "resolver"), first));
 	}
 
 	@Test
@@ -387,10 +527,18 @@ public class MaterializationProofInventoryTest {
 			replaced.allowedEmissionFacts(), replaced.failureCode());
 	}
 
-	private static CandidateEmissionRealization collisionWinner(Object resolver) throws Exception {
+	private static CandidateEmissionRealization collisionWinner(Object resolver,
+		CandidateEmissionRealization member) throws Exception {
 		@SuppressWarnings("unchecked")
 		Map<String,List<?>> buckets = (Map<String,List<?>>)field(resolver, "realizationSlotsByReference");
-		List<?> slots = buckets.values().iterator().next();
+		List<?> slots = buckets.values().stream().filter(bucket -> bucket.stream().anyMatch(slot -> {
+			try {
+				return invoke(slot, "realization") == member;
+			}
+			catch(Exception exception) {
+				throw new IllegalStateException(exception);
+			}
+		})).findFirst().orElseThrow();
 		return (CandidateEmissionRealization)invoke(slots.get(slots.size() - 1), "realization");
 	}
 
@@ -465,6 +613,23 @@ public class MaterializationProofInventoryTest {
 				origins, shapes, true);
 		}
 
+		private Object ownedInventory(List<Node> proofNodes, List<CandidateRuleFact> proofFacts,
+			List<CompiledInputEdgeFact> proofEdges) throws Exception {
+			Map<CompiledHopKey,Integer> ordinalByOwner = new IdentityHashMap<>();
+			List<List<CandidateRuleFact>> factsByOrdinal = new ArrayList<>();
+			for(int ordinal = 0; ordinal < proofNodes.size(); ordinal++) {
+				ordinalByOwner.put(proofNodes.get(ordinal).key(), ordinal);
+				factsByOrdinal.add(new ArrayList<>());
+			}
+			for(CandidateRuleFact fact : proofFacts)
+				factsByOrdinal.get(ordinalByOwner.get(fact.key().parentOccurrence())).add(fact);
+			Method method = inventoryType().getDeclaredMethod("owned", List.class, List.class,
+				List.class, List.class, Collection.class, Map.class, Map.class);
+			method.setAccessible(true);
+			return method.invoke(null, proofNodes, factsByOrdinal, proofEdges, List.of(), List.of(),
+				origins, shapes);
+		}
+
 		private Object cold(Node raw, CandidateRuleFact fact, List<Node> proofNodes,
 			List<CompiledInputEdgeFact> proofEdges) throws Exception {
 			return cold(raw, fact, proofNodes, facts, proofEdges);
@@ -476,7 +641,7 @@ public class MaterializationProofInventoryTest {
 				"closeDerivedWorkerPoolMaterializationCandidates", List.class, List.class, List.class,
 				List.class, List.class, List.class, Collection.class, Map.class, Map.class);
 			method.setAccessible(true);
-			return method.invoke(null, List.of(raw), List.of(fact), proofNodes, proofFacts,
+			return method.invoke(closure(origins, shapes), List.of(raw), List.of(fact), proofNodes, proofFacts,
 				proofEdges, List.of(), List.of(), origins, shapes);
 		}
 	}
@@ -485,12 +650,36 @@ public class MaterializationProofInventoryTest {
 		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"closeDerivedWorkerPoolMaterializationCandidates", List.class, List.class, inventoryType());
 		method.setAccessible(true);
-		return method.invoke(null, List.of(raw), List.of(fact), inventory);
+		@SuppressWarnings("unchecked")
+		Map<CompiledHopKey,Hop> origins = (Map<CompiledHopKey,Hop>)field(inventory, "origins");
+		@SuppressWarnings("unchecked")
+		Map<Hop,NodeShapeFact> shapes = (Map<Hop,NodeShapeFact>)field(inventory, "shapeFactsByHop");
+		return method.invoke(closure(origins, shapes), List.of(raw), List.of(fact), inventory);
+	}
+
+	private static PlacementRelationClosure closure(Map<CompiledHopKey,Hop> origins,
+		Map<Hop,NodeShapeFact> shapes) throws Exception {
+		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, null, false, null, false);
+		Field originsField = PlacementRelationClosure.class.getDeclaredField("origins");
+		originsField.setAccessible(true);
+		originsField.set(closure, origins);
+		Field shapesField = PlacementRelationClosure.class.getDeclaredField("shapeFactsByHop");
+		shapesField.setAccessible(true);
+		shapesField.set(closure, shapes);
+		return closure;
 	}
 
 	private static Object replaceOwner(Object inventory, int ordinal, CompiledHopKey owner,
 		Node replacement, List<CandidateRuleFact> facts) throws Exception {
 		Method method = inventoryType().getDeclaredMethod("replaceOwner", int.class,
+			CompiledHopKey.class, Node.class, List.class);
+		method.setAccessible(true);
+		return method.invoke(inventory, ordinal, owner, replacement, facts);
+	}
+
+	private static Object replaceOwnerOwned(Object inventory, int ordinal, CompiledHopKey owner,
+		Node replacement, List<CandidateRuleFact> facts) throws Exception {
+		Method method = inventoryType().getDeclaredMethod("replaceOwnerOwned", int.class,
 			CompiledHopKey.class, Node.class, List.class);
 		method.setAccessible(true);
 		return method.invoke(inventory, ordinal, owner, replacement, facts);

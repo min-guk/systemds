@@ -197,6 +197,9 @@ final class PlacementRelationClosure {
 		privacyInputPruning.clear();
 		physicalGenerationContext = null;
 		allDefinitionContinuity = null;
+		cfgReplayMemo.clear();
+		directComponentSchedules.clear();
+		directNativePublicationMemo.clear();
 		relocationProducts = Map.of();
 		nodes = null;
 		values = null;
@@ -258,6 +261,17 @@ final class PlacementRelationClosure {
 	private final Map<CompiledHopKey,CandidatePrivacyInputPruning> privacyInputPruning = new IdentityHashMap<>();
 	private PhysicalGenerationContext physicalGenerationContext;
 	private NativePlacementContinuity allDefinitionContinuity;
+	private final Map<CompiledHopKey,CfgReplayMemoEntry> cfgReplayMemo = new IdentityHashMap<>();
+	private final DirectComponentScheduleCache directComponentSchedules = new DirectComponentScheduleCache();
+	private static final int DIRECT_NATIVE_PUBLICATION_MEMO_LIMIT = 32768;
+	private final Map<DirectNativePublicationKey,CandidateEmissionRealization>
+		directNativePublicationMemo = new LinkedHashMap<>(256, 0.75f, true) {
+			@Override
+			protected boolean removeEldestEntry(
+				Map.Entry<DirectNativePublicationKey,CandidateEmissionRealization> eldest) {
+				return size() > DIRECT_NATIVE_PUBLICATION_MEMO_LIMIT;
+			}
+		};
 	private Map<RelocationProductKey,List<CandidateEmissionRealization>> relocationProducts = Map.of();
 	private long relocationProductHits;
 	private long relocationProductMisses;
@@ -274,6 +288,30 @@ final class PlacementRelationClosure {
 		private CandidateBase {
 			keys = List.copyOf(keys);
 			facts = List.copyOf(facts);
+		}
+	}
+	private record DirectNativePublicationKey(
+		NativePlacementContinuity.NativeContinuityProof proof, CompiledHopKey owner,
+		PlacementEmissionState emissionState, DurableAnchorKey outputAnchor,
+		String nativeLineage, boolean directInputsExact, boolean exactPartitionRanges) {
+		@Override
+		public boolean equals(Object other) {
+			return this == other || other instanceof DirectNativePublicationKey that
+				&& proof == that.proof && owner == that.owner
+				&& emissionState.equals(that.emissionState)
+				&& Objects.equals(outputAnchor, that.outputAnchor)
+				&& nativeLineage.equals(that.nativeLineage)
+				&& directInputsExact == that.directInputsExact
+				&& exactPartitionRanges == that.exactPartitionRanges;
+		}
+		@Override
+		public int hashCode() {
+			int hash = 31 * System.identityHashCode(proof) + System.identityHashCode(owner);
+			hash = 31 * hash + emissionState.hashCode();
+			hash = 31 * hash + Objects.hashCode(outputAnchor);
+			hash = 31 * hash + nativeLineage.hashCode();
+			hash = 31 * hash + Boolean.hashCode(directInputsExact);
+			return 31 * hash + Boolean.hashCode(exactPartitionRanges);
 		}
 	}
 	private record StaticPrivacyProjection(Map<CompiledHopKey,Privacy> effective,
@@ -1593,14 +1631,13 @@ final class PlacementRelationClosure {
 			PlacementAbstractShapeAnalysis.closeCompiledOccurrences(graph, projections, fcallSizes, factsByKey);
 		PlacementShapeFacts shapeFacts = new PlacementShapeFacts(factsByKey, sourceCompiledFactsByKey,
 			abstractFacts.shapes(), abstractFacts.scalarLiterals(), expectedKeys);
-		String analysisFingerprint = analysisFingerprint(graph, projections, shapeFacts);
 		HeuristicPolicyFacts heuristicPolicyFacts = heuristicPolicyFacts(graph, projections, shapeFacts,
 			compiledInputEdges, ruleFacts, occurrences, cfg);
 		ProgramStructureGuard programStructureGuard =
 			new ProgramStructureGuard(program,
 				PlacementGraphFingerprint.captureProgramAuthority(program));
 		analysis = new PlacementAnalysis(graph, projections, topLevelStatementBlocks, program, shapeFacts,
-			analysisFingerprint, heuristicPolicyFacts, ruleKeys, ruleFacts,
+			heuristicPolicyFacts, ruleKeys, ruleFacts,
 			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
 			compiledInputEdges, transientBindings, privacyFacts,
 			privacyEvidenceMode == PrivacyEvidenceMode.CAPTURE
@@ -2927,20 +2964,6 @@ final class PlacementRelationClosure {
 				|| "recompile".equals(node.key().recompileContext()));
 	}
 
-	static String analysisFingerprint(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
-		PlacementShapeFacts shapeFacts) {
-		String graphSignature = graph.normalizedSignature();
-		List<String> projectionSignatures = occurrences.stream()
-			.map(occurrence -> stableFingerprintSignature(occurrence.normalizedSignature())).sorted().toList();
-		return PlacementGraphFingerprint.sha256(stableFingerprintSignature(graphSignature) + '\n'
-			+ String.join("\n", projectionSignatures) + '\n'
-			+ stableFingerprintSignature(shapeFacts.normalizedSignature()));
-	}
-
-	private static String stableFingerprintSignature(String signature) {
-		return signature.replaceAll("[0-9a-f]{64}", "<program>");
-	}
-
 	private record FunctionOutputBoundaryKey(int callOrdinal, int outputPosition)
 		implements Comparable<FunctionOutputBoundaryKey> {
 		@Override public int compareTo(FunctionOutputBoundaryKey that) {
@@ -3901,7 +3924,8 @@ final class PlacementRelationClosure {
 						aliasEdges.add(new PlacementDependencyComponents.InvalidationAdjacency(entry.getKey(), peer));
 		DirectSupportIndex supportIndex = new DirectSupportIndex(slots, initialFacts, potential);
 		Map<CompiledHopKey,Set<CompiledHopKey>> support = supportIndex.consumersBySource;
-		PlacementDependencyComponents components = directComponentSchedule(owners, potential, support, aliasEdges);
+		PlacementDependencyComponents components = directComponentSchedule(
+			owners, potential, support, aliasEdges, directComponentSchedules);
 		LogicalBoundaryRealizations.Session boundarySession = null;
 		Set<CompiledHopKey> pending = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(var component : components.initialDirtyComponents(
@@ -3928,11 +3952,17 @@ final class PlacementRelationClosure {
 			List<CandidateRuleFact> merged = new ArrayList<>(facts);
 			for(int offset = 0; offset < selectedSlots.size(); offset++)
 				merged.set(selectedSlots.get(offset), rebound.get(offset));
-			Set<CompiledHopKey> directChanged = changedCandidateOccurrences(facts, merged);
+			Set<CompiledHopKey> directChanged = changedCandidateOwnersInSlots(facts, merged, slots, selected);
 			if(boundarySession == null)
 				boundarySession = new LogicalBoundaryRealizations.Session(nodes, constraints, origins, facts);
-			merged = boundarySession.close(merged, directChanged).facts();
-			Set<CompiledHopKey> changed = changedCandidateOccurrences(facts, merged);
+			LogicalBoundaryRealizations.Session.ClosureResult boundary = boundarySession.close(merged, directChanged);
+			merged = boundary.facts();
+			Set<CompiledHopKey> touched = Collections.newSetFromMap(new IdentityHashMap<>());
+			touched.addAll(directChanged);
+			touched.addAll(boundary.changedOwners());
+			// Direct binding writes only selected slots; the boundary session reports
+			// its complete delta. Compare their union to detect net cancellations too.
+			Set<CompiledHopKey> changed = changedCandidateOwnersInSlots(facts, merged, slots, touched);
 			if(complexityMetrics != null) {
 				complexityMetrics.recordDirectClosurePass(changed.isEmpty(), wave == 0 && initialDirty == null);
 				for(int slot = selectedSlots.size(); slot < facts.size(); slot++)
@@ -3961,7 +3991,8 @@ final class PlacementRelationClosure {
 					if(component.owners().stream().anyMatch(pending::contains))
 						pending.addAll(component.owners());
 				if(supportUpdate.dependencyUnionChanged())
-					components = directComponentSchedule(owners, potential, support, aliasEdges);
+					components = directComponentSchedule(
+						owners, potential, support, aliasEdges, directComponentSchedules);
 			}
 			facts = List.copyOf(merged);
 			index.sources().nextRevision(facts, changed);
@@ -3994,12 +4025,20 @@ final class PlacementRelationClosure {
 		Map<CompiledHopKey,Set<CompiledHopKey>> potential,
 		Map<CompiledHopKey,Set<CompiledHopKey>> support,
 		List<PlacementDependencyComponents.InvalidationAdjacency> aliases) {
+		return directComponentSchedule(owners, potential, support, aliases, null);
+	}
+
+	private static PlacementDependencyComponents directComponentSchedule(List<CompiledHopKey> owners,
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential,
+		Map<CompiledHopKey,Set<CompiledHopKey>> support,
+		List<PlacementDependencyComponents.InvalidationAdjacency> aliases, DirectComponentScheduleCache cache) {
 		List<PlacementDependencyComponents.SemanticDependency> edges = new ArrayList<>();
 		for(var graph : List.of(potential, support))
 			for(var entry : graph.entrySet())
 				for(CompiledHopKey consumer : entry.getValue())
 					edges.add(new PlacementDependencyComponents.SemanticDependency(entry.getKey(), consumer));
-		return new PlacementDependencyComponents(owners, edges, aliases);
+		return cache == null ? new PlacementDependencyComponents(owners, edges, aliases)
+			: cache.get(owners, edges, aliases);
 	}
 
 	private record DirectBindingIndex(Map<CompiledHopKey,Node> nodesByKey,
@@ -4252,7 +4291,6 @@ final class PlacementRelationClosure {
 					emissions.add(emission);
 					continue;
 				}
-				unchangedEmissions = false;
 				List<CandidateEmissionRealization> templatesForEmission = recomputeNative
 					? List.of(CandidateEmissionRealization.nativeLineage(emission.emissionState(),
 						"direct-template:" + emission.emissionState().normalizedSignature(), List.of(), List.of()))
@@ -4429,9 +4467,6 @@ final class PlacementRelationClosure {
 								}
 							}
 							if(complete) {
-								PlacementProofKey continuityProof = new PlacementProofKey(
-									PlacementProofKind.NATIVE_CONTINUITY, fact.key().parentOccurrence(),
-									proof.normalizedSignature());
 								boolean directInputsExact = bindings.stream().allMatch(binding -> {
 									if(binding.kind() != CandidateInputBindingKind.DIRECT)
 										return true;
@@ -4440,6 +4475,15 @@ final class PlacementRelationClosure {
 										&& exactSourceLayouts.computeIfAbsent(source,
 											CandidateEmissionRealization::allOwnedSupportClausesHaveExactNativeLayout);
 								});
+								if(recomputeNative) {
+									bound.add(directNativePublication(proof, fact.key().parentOccurrence(),
+										emission.emissionState(), outputAnchor, nativeLineage,
+										directInputsExact));
+									continue;
+								}
+								PlacementProofKey continuityProof = new PlacementProofKey(
+									PlacementProofKind.NATIVE_CONTINUITY, fact.key().parentOccurrence(),
+									proof.normalizedSignature());
 								if(outputAnchor != null && proof.exactPartitionRanges() && directInputsExact)
 									for(CandidateRealizationSupportClause clause : realization.supportClauses())
 										bound.add(CandidateEmissionRealization.durable(emission.emissionState(), outputAnchor,
@@ -4478,13 +4522,54 @@ final class PlacementRelationClosure {
 					else
 						realizations.addAll(bound);
 				}
-				emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(),
-					emission.derivedFoutAction(), realizations));
+				if(recomputeNative && containsExactGroundedNativeSupport(emission, realizations)) {
+					emissions.add(emission);
+					continue;
+				}
+				CandidateEmissionFact reboundEmission = new CandidateEmissionFact(
+					emission.emissionState(), emission.executionFType(),
+					emission.derivedFoutAction(), realizations);
+				emissions.add(reboundEmission);
+				unchangedEmissions = false;
 			}
 			rebound.add(unchangedEmissions ? fact : new CandidateRuleFact(fact.key(), fact.status(),
 				fact.capability(), fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
 		}
 		return List.copyOf(rebound);
+	}
+
+	private CandidateEmissionRealization directNativePublication(
+		NativePlacementContinuity.NativeContinuityProof proof, CompiledHopKey owner,
+		PlacementEmissionState emissionState, DurableAnchorKey outputAnchor,
+		String nativeLineage, boolean directInputsExact) {
+		DirectNativePublicationKey key = new DirectNativePublicationKey(proof, owner, emissionState,
+			outputAnchor, nativeLineage, directInputsExact, proof.exactPartitionRanges());
+		CandidateEmissionRealization cached = directNativePublicationMemo.get(key);
+		if(cached != null)
+			return cached.key().emissionState() == emissionState ? cached
+				: PlacementSupportRelations.rebindRealization(cached, emissionState);
+		PlacementProofKey continuityProof = new PlacementProofKey(
+			PlacementProofKind.NATIVE_CONTINUITY, owner, proof.normalizedSignature());
+		List<CandidateRealizationInputBinding> bindings = proof.immediateBindings();
+		CandidateEmissionRealization publication;
+		if(outputAnchor != null && proof.exactPartitionRanges() && directInputsExact)
+			publication = CandidateEmissionRealization.durable(
+				emissionState, outputAnchor, List.of(continuityProof), bindings);
+		else {
+			DurableAnchorKey outputPool = proof.outputWorkerPoolWitness();
+			if(proof.exactPartitionRanges() && outputAnchor != null)
+				outputPool = normalizedNativeLayout(outputPool.placementId(), outputAnchor);
+			String publicationLineage = nativeLineage
+				+ "|output-layout=" + nativeCompatibilityLayout(outputPool)
+				+ "|exact=" + proof.exactPartitionRanges();
+			publication = proof.exactPartitionRanges()
+				? CandidateEmissionRealization.nativeLineage(emissionState,
+					publicationLineage, outputPool, List.of(continuityProof), bindings)
+				: CandidateEmissionRealization.nativeLineageDynamicLayout(emissionState,
+					publicationLineage, outputPool, List.of(continuityProof), bindings);
+		}
+		directNativePublicationMemo.put(key, publication);
+		return publication;
 	}
 
 	/**
@@ -4502,10 +4587,76 @@ final class PlacementRelationClosure {
 			List<CandidateRealizationSupportClause> grounded = candidate.supportClauses().stream()
 				.filter(clause -> !clause.inputBindings().isEmpty()).toList();
 			if(!grounded.isEmpty())
-				retained.add(CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
-					candidate.key(), grounded));
+				retained.add(grounded.size() == candidate.supportClauses().size() ? candidate
+					: CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(candidate.key(), grounded));
 		}
 		return List.copyOf(retained);
+	}
+
+	/** Exact membership only: comparator ties never authorize reuse of prior support. */
+	private static boolean containsExactGroundedNativeSupport(CandidateEmissionFact emission,
+		List<CandidateEmissionRealization> realizations) {
+		Map<PlacementIdentity.PlacementRealizationKey,
+			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause>> prior =
+			new java.util.HashMap<>();
+		for(CandidateEmissionRealization realization : emission.realizations()) {
+			if(realization.supportClauses().stream().anyMatch(clause -> clause.inputBindings().isEmpty()))
+				return false;
+			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> clauses =
+				prior.computeIfAbsent(realization.key(), ignored -> new java.util.HashMap<>());
+			for(CandidateRealizationSupportClause clause : realization.supportClauses())
+				clauses.put(clause, clause);
+		}
+		for(CandidateEmissionRealization realization : realizations) {
+			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> clauses =
+				prior.get(realization.key());
+			if(clauses == null || realization.supportClauses().stream().anyMatch(candidate -> {
+				CandidateRealizationSupportClause retained = clauses.get(candidate);
+				return retained == null || !sameDirectSupportAuthority(retained, candidate);
+			}))
+				return false;
+		}
+		return true;
+	}
+
+	private static boolean sameDirectSupportAuthority(CandidateRealizationSupportClause left,
+		CandidateRealizationSupportClause right) {
+		if(left == right)
+			return true;
+		if(!left.equals(right))
+			return false;
+		for(int index = 0; index < left.proofDependencies().size(); index++)
+			if(left.proofDependencies().get(index).owner()
+				!= right.proofDependencies().get(index).owner())
+				return false;
+		for(int index = 0; index < left.inputBindings().size(); index++) {
+			CandidateRealizationInputBinding a = left.inputBindings().get(index);
+			CandidateRealizationInputBinding b = right.inputBindings().get(index);
+			if(a.source().rule().parentOccurrence() != b.source().rule().parentOccurrence())
+				return false;
+			if(a.relocationAction() != null)
+				for(int owner = 0; owner < a.relocationAction().compatibleConsumers().size(); owner++)
+					if(a.relocationAction().compatibleConsumers().get(owner)
+						!= b.relocationAction().compatibleConsumers().get(owner))
+						return false;
+		}
+		return true;
+	}
+
+	private static Set<CompiledHopKey> changedCandidateOwnersInSlots(List<CandidateRuleFact> before,
+		List<CandidateRuleFact> after, Map<CompiledHopKey,List<Integer>> slots, Set<CompiledHopKey> touched) {
+		if(before.size() != after.size())
+			throw new IllegalStateException("Direct closure changed candidate fact count");
+		Set<CompiledHopKey> changed = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(CompiledHopKey owner : touched)
+			for(int slot : slots.getOrDefault(owner, List.of())) {
+				CandidateRuleFact prior = before.get(slot), next = after.get(slot);
+				if(prior.key().parentOccurrence() != owner || next.key().parentOccurrence() != owner)
+					throw new IllegalStateException("Direct closure changed candidate owner identity");
+				if(!prior.equals(next))
+					changed.add(owner);
+			}
+		return changed;
 	}
 
 	private static Set<CompiledHopKey> changedCandidateOccurrences(List<CandidateRuleFact> before,
@@ -5118,7 +5269,9 @@ final class PlacementRelationClosure {
 				throw new IllegalStateException("Candidate rule fact/domain order differs before CFG replay");
 			candidateSlots.computeIfAbsent(key.parentOccurrence(), ignored -> new ArrayList<>()).add(i);
 		}
-		Set<CandidateRealizationReference> baselineReferences = candidateRealizationReferences(facts);
+		CandidateReplayInventory replayInventory = new CandidateReplayInventory(facts);
+		Map<Node,Integer> firstEqualNodeOrdinals = firstEqualNodeOrdinals(nodes);
+		Set<CandidateRealizationReference> baselineReferences = replayInventory.realizations.keySet();
 		List<Node> replayedNodes = new ArrayList<>(nodes.size());
 		List<CandidateRuleKey> replayedKeys = new ArrayList<>();
 		List<CandidateRuleFact> replayedFacts = new ArrayList<>();
@@ -5139,8 +5292,9 @@ final class PlacementRelationClosure {
 				.filter(input -> input.targetRead() == node.key()).sorted().toList();
 			List<LogicalTransientInputFact> replacementInputs = new ArrayList<>();
 			int replacementStart = replayedKeys.size();
-			Node replayed = replayUniqueCfgTransientForward(ordinal, occurrence, node, occurrences, nodes, cfg,
-				shapeFactsByHop, facts, replayedKeys, replayedFacts, replacementInputs,
+			Node replayed = replayUniqueCfgTransientForward(ordinal,
+				firstEqualNodeOrdinals.getOrDefault(node, -1), occurrence, node, occurrences, nodes, cfg,
+				shapeFactsByHop, replayInventory, replayedKeys, replayedFacts, replacementInputs,
 				// Prior replay may have seen only the local source. A later function-boundary
 				// widening can expose the native source, so seed once per read in this
 				// closure invocation and then publish the all-definition replay below.
@@ -5184,7 +5338,8 @@ final class PlacementRelationClosure {
 					monotoneInputs.add(new LogicalTransientInputFact(replacement.sourceWrite(),
 						replacement.targetRead(), replacement.logicalPosition(),
 						replacement.sourceValueVersion(), replacement.readValueVersion(),
-						List.copyOf(compatibility)));
+						PlacementAnalysis.sharedAlreadyCanonicalComparableList(
+							List.copyOf(compatibility), "transient placement compatibility")));
 				}
 				replacementInputs = monotoneInputs;
 				logicalInputs.removeIf(input -> input.targetRead() == node.key());
@@ -5226,10 +5381,10 @@ final class PlacementRelationClosure {
 			List.copyOf(replayedFacts), logicalInputs.stream().sorted().toList(), List.copyOf(changedOrdinals));
 	}
 
-	private Node replayUniqueCfgTransientForward(int ordinal,
+	private Node replayUniqueCfgTransientForward(int ordinal, int firstEqualReadOrdinal,
 		PlacementGraphFingerprint.HopOccurrence readOccurrence, Node read,
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
-		Map<Hop,NodeShapeFact> shapeFactsByHop, List<CandidateRuleFact> currentFacts,
+		Map<Hop,NodeShapeFact> shapeFactsByHop, CandidateReplayInventory currentFacts,
 		List<CandidateRuleKey> replayedKeys, List<CandidateRuleFact> replayedFacts,
 		List<LogicalTransientInputFact> logicalInputs,
 		boolean allowLoopPlacementSeed, NativePlacementContinuity nativePools,
@@ -5262,17 +5417,43 @@ final class PlacementRelationClosure {
 		boolean allowValueMap = isValueMapDependency(ordinal, occurrences, cfg);
 		boolean mayRetainExactGeometry = activeSeed == null ? loopPlacementSeed == null
 			: activeSeed.retainExactGeometry();
-		ExactTransientReplayResult result = exactTransientReplay(readOccurrence, read, exactDefinitions,
-			occurrences, nodes, shapeFactsByHop, currentFacts, nativePools, mayRetainExactGeometry,
-			allowValueMap);
-		if(result.replay() == null) {
-			traceTransientReplay(readOccurrence, result.rejection() + "|allowValueMap=" + allowValueMap
-				+ "|definitions=" + exactDefinitions
-				+ "|details=" + describeTransientDefinitions(readOccurrence, definitions, occurrences, nodes));
-			return read;
+		CfgReplayContext context = CfgReplayContext.capture(readOccurrence, read, firstEqualReadOrdinal, exactDefinitions,
+			occurrences, nodes, shapeFactsByHop, mayRetainExactGeometry, allowValueMap);
+		CfgReplayMemoEntry cached = cfgReplayMemo.get(read.key());
+		Node replayed;
+		if(context != null && cached != null && cached.context().matches(context)
+			&& cached.evidence().matches(currentFacts, nativePools)) {
+			replayedKeys.addAll(cached.keys());
+			replayedFacts.addAll(cached.facts());
+			logicalInputs.addAll(cached.logicalInputs());
+			replayed = cached.node();
+			// The caller uses object identity as the accepted-replay sentinel. An
+			// unchanged cached result may already be the current committed node.
+			if(replayed == read)
+				replayed = new Node(read.key(), read.kind(), read.valueVersion(), read.emittedWork(),
+					read.legalAlternatives(), read.exclusions(), read.anchors());
 		}
-		Node replayed = buildExactLogicalTransientRead(readOccurrence.hop(), read, result.replay(),
-			replayedKeys, replayedFacts, logicalInputs);
+		else {
+			ReplayDependencies dependencies = new ReplayDependencies(currentFacts, nativePools);
+			ExactTransientReplayResult result = exactTransientReplay(readOccurrence, read, exactDefinitions,
+				occurrences, nodes, shapeFactsByHop, dependencies, mayRetainExactGeometry, allowValueMap);
+			if(result.replay() == null) {
+				cfgReplayMemo.remove(read.key());
+				traceTransientReplay(readOccurrence, result.rejection() + "|allowValueMap=" + allowValueMap
+					+ "|definitions=" + exactDefinitions
+					+ "|details=" + describeTransientDefinitions(readOccurrence, definitions, occurrences, nodes));
+				return read;
+			}
+			int keyStart = replayedKeys.size();
+			int inputStart = logicalInputs.size();
+			replayed = buildExactLogicalTransientRead(readOccurrence.hop(), read, result.replay(),
+				replayedKeys, replayedFacts, logicalInputs);
+			if(context != null)
+				cfgReplayMemo.put(read.key(), new CfgReplayMemoEntry(context, dependencies.evidence,
+					replayed, List.copyOf(replayedKeys.subList(keyStart, replayedKeys.size())),
+					List.copyOf(replayedFacts.subList(keyStart, replayedFacts.size())),
+					List.copyOf(logicalInputs.subList(inputStart, logicalInputs.size()))));
+		}
 		// Seed authority is provisional until the composed transient/physical cone
 		// is stable. The caller must then replay every reaching definition before
 		// recording completion, so no backedge can be omitted from publication.
@@ -5286,6 +5467,234 @@ final class PlacementRelationClosure {
 		}
 		return replayed;
 	}
+
+	private static Map<Node,Integer> firstEqualNodeOrdinals(List<Node> nodes) {
+		Map<Node,Integer> ordinals = new HashMap<>();
+		for(int ordinal = 0; ordinal < nodes.size(); ordinal++)
+			ordinals.putIfAbsent(nodes.get(ordinal), ordinal);
+		return ordinals;
+	}
+
+	/** A replay pass reads one fixed inventory; newly built readers are output-only. */
+	private static final class CandidateReplayInventory {
+		private final Map<CompiledHopKey,List<CandidateRuleFact>> owners = new IdentityHashMap<>();
+		private final Map<CandidateRealizationReference,CandidateEmissionRealization> realizations = new HashMap<>();
+		private final Map<CompiledHopKey,Map<PlacementState,List<CandidateRealizationReference>>> sourceStates =
+			new IdentityHashMap<>();
+		private final Map<CompiledHopKey,List<CandidateRealizationReference>> federatedSources = new IdentityHashMap<>();
+
+		private CandidateReplayInventory(List<CandidateRuleFact> facts) {
+			for(CandidateRuleFact fact : facts) {
+				owners.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
+				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+					for(CandidateEmissionRealization realization : emission.realizations())
+						// The former whole-inventory lookup used structural equality and
+						// findFirst, including unavailable facts and non-executable receipts.
+						realizations.putIfAbsent(CandidateRealizationReference.of(fact.key(), realization), realization);
+			}
+			owners.replaceAll((owner, slice) -> List.copyOf(slice));
+		}
+
+		private List<CandidateRuleFact> ownerFacts(CompiledHopKey owner) {
+			return owners.getOrDefault(owner, List.of());
+		}
+
+		private Optional<CandidateEmissionRealization> realization(CandidateRealizationReference reference) {
+			return Optional.ofNullable(realizations.get(reference));
+		}
+
+		private List<CandidateRealizationReference> sourceRealizations(CompiledHopKey owner, PlacementState state) {
+			return sourceStates.computeIfAbsent(owner, ignored -> new HashMap<>()).computeIfAbsent(state,
+				ignored -> PlacementRelationClosure.sourceRealizations(owner, state, ownerFacts(owner)));
+		}
+
+		private List<CandidateRealizationReference> sourceFederatedRealizations(CompiledHopKey owner) {
+			return federatedSources.computeIfAbsent(owner,
+				ignored -> PlacementRelationClosure.sourceFederatedRealizations(owner, ownerFacts(owner)));
+		}
+	}
+
+	private record NativeReplayQuery(CandidateRealizationReference reference, DurableAnchorKey seed) {
+		@Override public boolean equals(Object other) {
+			return other instanceof NativeReplayQuery that
+				&& reference.rule().parentOccurrence() == that.reference.rule().parentOccurrence()
+				&& reference.equals(that.reference) && seed.equals(that.seed);
+		}
+		@Override public int hashCode() {
+			return 31 * (31 * System.identityHashCode(reference.rule().parentOccurrence()) + reference.hashCode())
+				+ seed.hashCode();
+		}
+	}
+	private record NativeReplayOutput(DurableAnchorKey witness, boolean exactPartitionRanges) { }
+
+	private static List<NativeReplayOutput> nativeReplayOutputs(
+		List<NativePlacementContinuity.NativeContinuityProof> proofs) {
+		// transientCompatibilityProofs consumes only these output fields. Keep
+		// their stable order, but do not retain old internal binding proof graphs.
+		return proofs.stream().map(proof -> new NativeReplayOutput(
+			proof.outputWorkerPoolWitness(), proof.exactPartitionRanges())).distinct().toList();
+	}
+
+	/** Retains the exact read set, not the previous inventory or native resolver. */
+	private static final class ReplayEvidence {
+		private final Map<CompiledHopKey,List<CandidateRuleFact>> owners = new IdentityHashMap<>();
+		private final Map<CandidateRealizationReference,Optional<CandidateEmissionRealization>> references = new HashMap<>();
+		private final Map<NativeReplayQuery,List<NativeReplayOutput>> nativeProofs =
+			new LinkedHashMap<>();
+
+		private boolean matches(CandidateReplayInventory inventory, NativePlacementContinuity nativePools) {
+			for(var entry : owners.entrySet())
+				if(!sameReplayFacts(entry.getValue(), inventory.ownerFacts(entry.getKey())))
+					return false;
+			for(var entry : references.entrySet())
+				if(!sameReplayRealization(entry.getValue().orElse(null),
+					inventory.realization(entry.getKey()).orElse(null)))
+					return false;
+			// Re-prove against the current complete graph, including empty results.
+			// NativePlacementContinuity owns revision/footprint invalidation; the
+			// replay cache never infers legality from an unchanged source key alone.
+			for(var entry : nativeProofs.entrySet())
+				if(!entry.getValue().equals(nativeReplayOutputs(nativePools.proveCandidateAlternatives(
+					entry.getKey().reference(), entry.getKey().seed()))))
+					return false;
+			return true;
+		}
+
+		private static boolean sameReplayFacts(List<CandidateRuleFact> previous, List<CandidateRuleFact> current) {
+			if(previous == current)
+				return true;
+			if(!previous.equals(current))
+				return false;
+			for(int i = 0; i < previous.size(); i++) {
+				CandidateRuleFact left = previous.get(i), right = current.get(i);
+				if(left == right)
+					continue;
+				if(left.key().parentOccurrence() != right.key().parentOccurrence())
+					return false;
+				for(int e = 0; e < left.allowedEmissionFacts().size(); e++) {
+					List<CandidateEmissionRealization> a = left.allowedEmissionFacts().get(e).realizations();
+					List<CandidateEmissionRealization> b = right.allowedEmissionFacts().get(e).realizations();
+					for(int r = 0; r < a.size(); r++)
+						if(!sameReplayRealization(a.get(r), b.get(r)))
+							return false;
+				}
+			}
+			return true;
+		}
+
+		private static boolean sameReplayRealization(CandidateEmissionRealization left,
+			CandidateEmissionRealization right) {
+			if(left == right)
+				return true;
+			if(left == null || !left.equals(right))
+				return false;
+			// Recursive VALUE_MAP grounding uses owner identity. Structural receipt
+			// equality alone cannot certify an equal-but-foreign dependency owner.
+			for(int c = 0; c < left.supportClauses().size(); c++) {
+				CandidateRealizationSupportClause a = left.supportClauses().get(c), b = right.supportClauses().get(c);
+				for(int i = 0; i < a.inputBindings().size(); i++)
+					if(a.inputBindings().get(i).source().rule().parentOccurrence()
+						!= b.inputBindings().get(i).source().rule().parentOccurrence())
+						return false;
+				for(int i = 0; i < a.proofDependencies().size(); i++)
+					if(a.proofDependencies().get(i).owner() != b.proofDependencies().get(i).owner())
+						return false;
+			}
+			return true;
+		}
+	}
+
+	private static final class ReplayDependencies {
+		private final CandidateReplayInventory inventory;
+		private final NativePlacementContinuity nativePools;
+		private final ReplayEvidence evidence = new ReplayEvidence();
+
+		private ReplayDependencies(CandidateReplayInventory inventory, NativePlacementContinuity nativePools) {
+			this.inventory = inventory;
+			this.nativePools = nativePools;
+		}
+
+		private List<CandidateRealizationReference> sourceRealizations(CompiledHopKey owner, PlacementState state) {
+			evidence.owners.put(owner, inventory.ownerFacts(owner));
+			return inventory.sourceRealizations(owner, state);
+		}
+
+		private List<CandidateRealizationReference> sourceFederatedRealizations(CompiledHopKey owner) {
+			evidence.owners.put(owner, inventory.ownerFacts(owner));
+			return inventory.sourceFederatedRealizations(owner);
+		}
+
+		private Optional<CandidateEmissionRealization> realization(CandidateRealizationReference reference) {
+			Optional<CandidateEmissionRealization> result = inventory.realization(reference);
+			evidence.references.put(reference, result);
+			return result;
+		}
+
+		private List<TransientCompatibilityProof> nativeProofs(CompiledHopKey source,
+			CandidateRealizationReference reference, DurableAnchorKey seed, List<PlacementProofKey> commonProofs) {
+			List<NativePlacementContinuity.NativeContinuityProof> proofs =
+				nativePools.proveCandidateAlternatives(reference, seed);
+			evidence.nativeProofs.put(new NativeReplayQuery(reference, seed), nativeReplayOutputs(proofs));
+			return transientCompatibilityProofs(source, reference, seed, proofs, commonProofs);
+		}
+	}
+
+	private record CfgReplayContext(Node reader, Hop readerHop, String readerOpcode, int readOrdinal,
+		List<Integer> definitions, List<Node> sources, List<Hop> sourceHops,
+		NodeShapeFact readerShape, List<NodeShapeFact> sourceShapes,
+		boolean retainExactGeometry, boolean allowValueMap) {
+		private static CfgReplayContext capture(PlacementGraphFingerprint.HopOccurrence occurrence,
+			Node reader, List<Integer> definitions, List<PlacementGraphFingerprint.HopOccurrence> occurrences,
+			List<Node> nodes, Map<Hop,NodeShapeFact> shapes, boolean retainExactGeometry, boolean allowValueMap) {
+			return capture(occurrence, reader, nodes.indexOf(reader), definitions, occurrences, nodes,
+				shapes, retainExactGeometry, allowValueMap);
+		}
+
+		private static CfgReplayContext capture(PlacementGraphFingerprint.HopOccurrence occurrence,
+			Node reader, int readOrdinal, List<Integer> definitions,
+			List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
+			Map<Hop,NodeShapeFact> shapes, boolean retainExactGeometry, boolean allowValueMap) {
+			List<Node> sources = new ArrayList<>(definitions.size());
+			List<Hop> sourceHops = new ArrayList<>(definitions.size());
+			List<NodeShapeFact> sourceShapes = new ArrayList<>(definitions.size());
+			for(int definition : definitions) {
+				if(definition < 0 || definition >= occurrences.size())
+					return null;
+				Hop sourceHop = occurrences.get(definition).hop();
+				Node source = nodes.get(definition);
+				if(!isCompiledTransientWrite(sourceHop, source) || shapes.get(sourceHop) == null)
+					return null;
+				sources.add(source);
+				sourceHops.add(sourceHop);
+				sourceShapes.add(shapes.get(sourceHop));
+			}
+			return new CfgReplayContext(reader, occurrence.hop(), occurrence.hop().getOpString(), readOrdinal,
+				List.copyOf(definitions), List.copyOf(sources), List.copyOf(sourceHops), shapes.get(occurrence.hop()),
+				List.copyOf(sourceShapes), retainExactGeometry, allowValueMap);
+		}
+
+		private boolean matches(CfgReplayContext that) {
+			if(reader.key() != that.reader.key() || readerHop != that.readerHop
+				|| !readerOpcode.equals(that.readerOpcode) || readOrdinal != that.readOrdinal
+				|| retainExactGeometry != that.retainExactGeometry || allowValueMap != that.allowValueMap
+				|| !definitions.equals(that.definitions) || reader.kind() != that.reader.kind()
+				|| !reader.valueVersion().equals(that.reader.valueVersion())
+				|| reader.emittedWork() != that.reader.emittedWork()
+				|| !reader.exclusions().equals(that.reader.exclusions())
+				|| !Objects.equals(readerShape, that.readerShape) || !sourceShapes.equals(that.sourceShapes))
+				return false;
+			// Reader legal states and anchors are outputs of replay, not inputs.
+			// Source legal states/anchors are proof authority and remain exact below.
+			for(int i = 0; i < sources.size(); i++)
+				if(sourceHops.get(i) != that.sourceHops.get(i) || sources.get(i).key() != that.sources.get(i).key()
+					|| !sources.get(i).equals(that.sources.get(i)))
+					return false;
+			return true;
+		}
+	}
+
+	private record CfgReplayMemoEntry(CfgReplayContext context, ReplayEvidence evidence, Node node,
+		List<CandidateRuleKey> keys, List<CandidateRuleFact> facts, List<LogicalTransientInputFact> logicalInputs) { }
 
 	private record ExactTransientReplayResult(ExactTransientReplay replay, String rejection) {
 		private static ExactTransientReplayResult accepted(ExactTransientReplay replay) {
@@ -5364,8 +5773,8 @@ final class PlacementRelationClosure {
 	private static ExactTransientReplayResult exactTransientReplay(
 		PlacementGraphFingerprint.HopOccurrence readOccurrence, Node read, List<Integer> definitions,
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
-		Map<Hop,NodeShapeFact> shapeFactsByHop, List<CandidateRuleFact> candidateFacts,
-		NativePlacementContinuity nativePools, boolean mayRetainExactGeometry,
+		Map<Hop,NodeShapeFact> shapeFactsByHop, ReplayDependencies candidateFacts,
+		boolean mayRetainExactGeometry,
 		boolean allowValueMap) {
 		if(definitions.isEmpty())
 			return ExactTransientReplayResult.rejected("missing-reaching-definitions");
@@ -5394,7 +5803,7 @@ final class PlacementRelationClosure {
 		PlacementState localState = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
 		Map<CompiledHopKey,List<ReplayCompatibilityOption>> localOptions = new IdentityHashMap<>();
 		for(Node source : sources) {
-			List<ReplayCompatibilityOption> options = sourceRealizations(source.key(), localState, candidateFacts)
+			List<ReplayCompatibilityOption> options = candidateFacts.sourceRealizations(source.key(), localState)
 				.stream().filter(reference -> reference.realization().layoutKind() == PlacementLayoutKind.LOCAL)
 				.map(reference -> new ReplayCompatibilityOption(source, reference,
 					new TransientCompatibilityProof(null, null,
@@ -5408,8 +5817,8 @@ final class PlacementRelationClosure {
 				true, localOptions, commonProofs));
 
 		List<DurableAnchorKey> seedCandidates = sources.stream().flatMap(source -> java.util.stream.Stream.concat(
-			source.anchors().stream(), sourceFederatedRealizations(source.key(), candidateFacts).stream()
-				.flatMap(reference -> candidateRealization(candidateFacts, reference).stream()
+			source.anchors().stream(), candidateFacts.sourceFederatedRealizations(source.key()).stream()
+				.flatMap(reference -> candidateFacts.realization(reference).stream()
 					.flatMap(realization -> realization.supportClauses().stream()
 						.map(realization::nativeWorkerPoolResidencyWitness).filter(Objects::nonNull)))))
 			.sorted().toList();
@@ -5431,7 +5840,7 @@ final class PlacementRelationClosure {
 			if(mayRetainExactGeometry) {
 				Map<CompiledHopKey,List<ReplayCompatibilityOption>> durableOptions = new IdentityHashMap<>();
 				for(Node source : sources) {
-					List<ReplayCompatibilityOption> options = sourceRealizations(source.key(), fedState, candidateFacts)
+					List<ReplayCompatibilityOption> options = candidateFacts.sourceRealizations(source.key(), fedState)
 						.stream().filter(reference -> reference.realization().layoutKind()
 							== PlacementLayoutKind.DURABLE_MAP)
 						.filter(reference -> PlacementIdentity.samePhysicalLayout(
@@ -5453,24 +5862,24 @@ final class PlacementRelationClosure {
 			Map<CompiledHopKey,List<ReplayCompatibilityOption>> nativeOptions = new IdentityHashMap<>();
 			for(Node source : sources) {
 				List<ReplayCompatibilityOption> options = new ArrayList<>();
-				for(CandidateRealizationReference reference : sourceRealizations(
-					source.key(), fedState, candidateFacts)) {
-					List<TransientCompatibilityProof> proofs = nativeTransientCompatibilityProofs(
-						source.key(), reference, seed, nativePools,
+				for(CandidateRealizationReference reference : candidateFacts.sourceRealizations(
+					source.key(), fedState)) {
+					List<TransientCompatibilityProof> proofs = candidateFacts.nativeProofs(
+						source.key(), reference, seed,
 							edgeProofs(commonProofs, source, read));
 					if(proofs.isEmpty() && FederatedPlannerTrace.shouldTrace(readOccurrence.hop()))
 						FederatedPlannerTrace.log(readOccurrence.hop(), "Neutral-TransientMissingProof",
 							"source=" + source.key().callSitePath() + ':' + source.key().emittedHopInstance()
 								+ "|referenceHash=" + reference.hashCode() + "|seed=" + seed.fType()
 								+ ':' + seed.partitions() + "|bindings="
-								+ candidateRealization(candidateFacts, reference).stream()
+								+ candidateFacts.realization(reference).stream()
 									.flatMap(realization -> realization.supportClauses().stream()).limit(3)
 									.flatMap(clause -> clause.inputBindings().stream()).limit(6)
 									.map(binding -> binding.kind() + ":"
 										+ binding.source().rule().parentOccurrence().callSitePath() + ':'
 										+ binding.source().rule().parentOccurrence().emittedHopInstance()
 										+ ":hash=" + binding.source().hashCode() + ":present="
-										+ candidateRealization(candidateFacts, binding.source()).isPresent()).toList());
+										+ candidateFacts.realization(binding.source()).isPresent()).toList());
 					for(TransientCompatibilityProof proof : proofs)
 						options.add(new ReplayCompatibilityOption(source, reference, proof));
 				}
@@ -5596,15 +6005,15 @@ final class PlacementRelationClosure {
 	 * bootstrap their own proof.
 	 */
 	private static ReplayPlacementAlternative buildValueMapReplayAlternative(Node read,
-		List<Node> sources, FType type, List<CandidateRuleFact> candidateFacts,
+		List<Node> sources, FType type, ReplayDependencies candidateFacts,
 		List<PlacementProofKey> commonProofs, Set<CompiledHopKey> recursiveSources) {
 		PlacementState state = new PlacementState(ExecType.FED, FederatedOutput.FOUT, type, false);
 		List<List<GroundedReplayOption>> options = new ArrayList<>(sources.size());
 		for(Node source : sources) {
 			List<GroundedReplayOption> sourceOptions = new ArrayList<>();
-			for(CandidateRealizationReference reference : sourceRealizations(
-				source.key(), state, candidateFacts)) {
-				CandidateEmissionRealization realization = candidateRealization(candidateFacts, reference)
+			for(CandidateRealizationReference reference : candidateFacts.sourceRealizations(
+				source.key(), state)) {
+				CandidateEmissionRealization realization = candidateFacts.realization(reference)
 					.orElseThrow(() -> new IllegalStateException("Transient source realization disappeared"));
 				if(realization.key().layoutKind() == PlacementLayoutKind.VALUE_MAP) {
 					boolean anchored = !recursiveSources.contains(source.key())
@@ -5661,16 +6070,16 @@ final class PlacementRelationClosure {
 	private record RecursiveMapGrounding(boolean complete, boolean anchored) { }
 
 	private static boolean anchoredRecursiveValueMap(CandidateRealizationReference reference,
-		List<CandidateRuleFact> candidateFacts, Set<CompiledHopKey> recursiveSources) {
+		ReplayDependencies candidateFacts, Set<CompiledHopKey> recursiveSources) {
 		RecursiveMapGrounding grounding = recursiveMapGrounding(reference, candidateFacts,
 			recursiveSources, new java.util.TreeSet<>());
 		return grounding.complete() && grounding.anchored();
 	}
 
 	private static RecursiveMapGrounding recursiveMapGrounding(
-		CandidateRealizationReference reference, List<CandidateRuleFact> candidateFacts,
+		CandidateRealizationReference reference, ReplayDependencies candidateFacts,
 		Set<CompiledHopKey> recursiveSources, Set<CandidateRealizationReference> visiting) {
-		CandidateEmissionRealization realization = candidateRealization(candidateFacts, reference)
+		CandidateEmissionRealization realization = candidateFacts.realization(reference)
 			.orElse(null);
 		if(realization == null)
 			return new RecursiveMapGrounding(false, false);
@@ -5732,8 +6141,13 @@ final class PlacementRelationClosure {
 	static List<TransientCompatibilityProof> nativeTransientCompatibilityProofs(
 		CompiledHopKey source, CandidateRealizationReference reference, DurableAnchorKey seed,
 		NativePlacementContinuity nativePools, List<PlacementProofKey> commonProofs) {
-		List<NativePlacementContinuity.NativeContinuityProof> complete =
-			nativePools.proveCandidateAlternatives(reference, seed);
+		return transientCompatibilityProofs(source, reference, seed,
+			nativePools.proveCandidateAlternatives(reference, seed), commonProofs);
+	}
+
+	private static List<TransientCompatibilityProof> transientCompatibilityProofs(
+		CompiledHopKey source, CandidateRealizationReference reference, DurableAnchorKey seed,
+		List<NativePlacementContinuity.NativeContinuityProof> complete, List<PlacementProofKey> commonProofs) {
 		String query = "transient-native-exists:v1:" + reference.normalizedSignature()
 			+ "|seed-layout=" + nativeCompatibilityLayout(seed);
 		// The source's support clauses own execution choices. This edge certifies
@@ -5853,8 +6267,8 @@ final class PlacementRelationClosure {
 			"same-logical-value-shape"));
 		proofs.add(new PlacementProofKey(PlacementProofKind.CONTROL_FLOW, read.key(),
 			"reaching-definitions=" + sources.stream().map(source -> source.key().normalizedSignature()).sorted().toList()));
-		return proofs.stream().distinct()
-			.sorted(PlacementAnalysis.<PlacementProofKey>canonicalComparator()).toList();
+		return PlacementAnalysis.sharedAlreadyCanonicalComparableList(proofs.stream().distinct()
+			.sorted(PlacementAnalysis.<PlacementProofKey>canonicalComparator()).toList(), "transient common proof");
 	}
 
 	private static List<PlacementProofKey> edgeProofs(List<PlacementProofKey> common,
@@ -5873,11 +6287,15 @@ final class PlacementRelationClosure {
 				return proofs;
 			// The canonical comparator is also the legacy sort order; when it ties,
 			// preserve the input-before-appended stable-sort ordering.
-			return PlacementAnalysis.<PlacementProofKey>canonicalComparator()
-				.compare(prior, addition) <= 0 ? List.of(prior, addition) : List.of(addition, prior);
+			return PlacementAnalysis.sharedAlreadyCanonicalComparableList(
+				PlacementAnalysis.<PlacementProofKey>canonicalComparator()
+					.compare(prior, addition) <= 0 ? List.of(prior, addition) : List.of(addition, prior),
+				"transient appended proof");
 		}
-		return java.util.stream.Stream.concat(proofs.stream(), java.util.stream.Stream.of(addition))
-			.distinct().sorted(PlacementAnalysis.<PlacementProofKey>canonicalComparator()).toList();
+		return PlacementAnalysis.sharedAlreadyCanonicalComparableList(
+			java.util.stream.Stream.concat(proofs.stream(), java.util.stream.Stream.of(addition))
+				.distinct().sorted(PlacementAnalysis.<PlacementProofKey>canonicalComparator()).toList(),
+			"transient appended proof");
 	}
 
 	private static Integer exactLoopPassThroughSource(int readOrdinal,
@@ -6042,7 +6460,8 @@ final class PlacementRelationClosure {
 					.sorted(PlacementAnalysis.<TransientPlacementCompatibility>canonicalComparator()).toList();
 			if(!compatibility.isEmpty())
 				logicalInputs.add(new LogicalTransientInputFact(source.key(), read.key(), 0,
-					source.valueVersion(), read.valueVersion(), compatibility));
+					source.valueVersion(), read.valueVersion(), PlacementAnalysis.sharedAlreadyCanonicalComparableList(
+						compatibility, "transient placement compatibility")));
 		}
 		if(states.isEmpty() && read.emittedWork())
 			throw new DMLRuntimeException("No privacy-safe physical placement for transient replay "
@@ -6140,7 +6559,7 @@ final class PlacementRelationClosure {
 		private void commit(int ordinal, Hop hop, Node replacement, List<CandidateRuleKey> keys,
 			List<CandidateRuleFact> facts, Map<Hop,Node> exactBlockNodes) {
 			if(proofInventory != null)
-				proofInventory = proofInventory.replaceOwner(ordinal, nodes.get(ordinal).key(),
+				proofInventory = proofInventory.replaceOwnerOwned(ordinal, nodes.get(ordinal).key(),
 					replacement, facts);
 			nodes.set(ordinal, replacement);
 			exactBlockNodes.put(hop, replacement);
@@ -6257,9 +6676,9 @@ final class PlacementRelationClosure {
 					&& compiledInputEdges != null) {
 					// One lazy index belongs to this committed authority revision. The local-input
 					// boundary and materialization closure must query the same inventory.
-					physicalState.proofInventory = new CommittedProofInventory(nodes, factsByOrdinal,
+					physicalState.proofInventory = CommittedProofInventory.owned(nodes, factsByOrdinal,
 						compiledInputEdges, replay.logicalInputs(), physicalGenerationContext.constraints(),
-						origins, shapeFactsByHop, true);
+						origins, shapeFactsByHop);
 				}
 				List<List<FType>> exactInputDomains = inputDomains(hop, exactBlockNodes, occurrence, occurrences,
 					cfg.reachingFunctionInputs().get(consumerOrdinal), cfg);
@@ -6448,19 +6867,13 @@ final class PlacementRelationClosure {
 		CandidateMaterializationClosure materialized = closeDerivedWorkerPoolMaterializationCandidates(
 			List.of(raw.node()), raw.facts(), inventory);
 		Node owner = materialized.nodes().get(0);
-		List<Node> identityNodes = new ArrayList<>(inventory.nodes);
-		boolean replaced = false;
-		for(int index = 0; index < identityNodes.size(); index++)
-			if(identityNodes.get(index).key() == owner.key()) {
-				identityNodes.set(index, owner);
-				replaced = true;
-				break;
-			}
-		if(!replaced)
+		Map<CompiledHopKey,Node> committedNodes = inventory.nodesByKey();
+		if(!committedNodes.containsKey(owner.key()))
 			throw new IllegalStateException("Physical generation owner has no complete proof-context node");
 		List<CandidateRuleFact> facts = bindExactCandidateEmissionRealizations(
-			materialized.ruleFacts(), identityNodes, origins, shapes);
-		facts = bindExactDerivedFoutAuthorities(facts, physicalGenerationContext.scopes(), identityNodes, origins);
+			materialized.ruleFacts(), List.of(owner), origins, shapes);
+		facts = bindExactDerivedFoutAuthorities(facts, physicalGenerationContext.scopes(),
+			inventory.nodes, committedNodes, owner, origins);
 		facts = bindDerivedFoutRealizations(facts, origins, shapes);
 		// Newly generated uploads must obey the same settled static policy as the
 		// raw Oracle rows. The full composed privacy/action/source closure remains.
@@ -8415,10 +8828,22 @@ final class PlacementRelationClosure {
 		for(Node node : nodes)
 			if(nodesByKey.put(node.key(), node) != null)
 				throw new IllegalStateException("Duplicate final node identity while binding derived FOUT authority");
+		return bindExactDerivedFoutAuthorities(facts, scopes, nodes, nodesByKey, null, origins);
+	}
+
+	private static List<CandidateRuleFact> bindExactDerivedFoutAuthorities(List<CandidateRuleFact> facts,
+		Map<CompiledHopKey,Long> scopes, List<Node> nodes, Map<CompiledHopKey,Node> nodesByKey,
+		Node ownerOverlay, Map<CompiledHopKey,Hop> origins) {
 		List<CandidateRuleFact> bound = new ArrayList<>(facts.size());
 		for(CandidateRuleFact fact : facts) {
-			Node factNode = nodesByKey.get(fact.key().parentOccurrence());
+			Node factNode = exactOwnerNode(nodesByKey, ownerOverlay, fact.key().parentOccurrence());
 			if(factNode != null && factNode.kind() == NodeKind.FUNCTION_BODY_NON_EMITTED) {
+				bound.add(fact);
+				continue;
+			}
+			// CandidateRuleFact already guarantees unique emission selections. Without a
+			// derived action there is no authority to rebind or selection to coalesce.
+			if(fact.allowedEmissionFacts().stream().noneMatch(emission -> emission.derivedFoutAction() != null)) {
 				bound.add(fact);
 				continue;
 			}
@@ -8431,13 +8856,14 @@ final class PlacementRelationClosure {
 				}
 				if(!scopes.containsKey(fact.key().parentOccurrence()))
 					throw new IllegalStateException("Derived FOUT candidate has no exact statement-block scope");
-				Node producer = nodesByKey.get(fact.key().parentOccurrence());
+				Node producer = exactOwnerNode(nodesByKey, ownerOverlay,
+					fact.key().parentOccurrence());
 				if(producer == null || provisional.producer() != producer.key()
 					|| !provisional.producerValueVersion().equals(producer.valueVersion()))
 					throw new IllegalStateException(
 						"Derived FOUT candidate has no structurally matching final producer authority");
 				MaterializationAnchor anchorOwner = canonicalFederatedAnchorOwner(
-					provisional, nodes, nodesByKey, origins);
+					provisional, nodes, nodesByKey, ownerOverlay, origins);
 				String exactScope = producer.key().controlRegion().normalizedSignature();
 				DerivedFoutMaterializationActionKey exact = new DerivedFoutMaterializationActionKey(
 					producer.key(), producer.valueVersion(), fact.key(),
@@ -8464,11 +8890,20 @@ final class PlacementRelationClosure {
 		return List.copyOf(bound);
 	}
 
+	private static Node exactOwnerNode(Map<CompiledHopKey,Node> nodesByKey, Node ownerOverlay,
+		CompiledHopKey owner) {
+		return ownerOverlay != null && ownerOverlay.key() == owner ? ownerOverlay : nodesByKey.get(owner);
+	}
+
 	/** Gives every explicit output materialization an exact current-value layout. */
 	private static List<CandidateRuleFact> bindDerivedFoutRealizations(List<CandidateRuleFact> facts,
 		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes) {
 		List<CandidateRuleFact> result = new ArrayList<>(facts.size());
 		for(CandidateRuleFact fact : facts) {
+			if(fact.allowedEmissionFacts().stream().noneMatch(emission -> emission.derivedFoutAction() != null)) {
+				result.add(fact);
+				continue;
+			}
 			List<CandidateEmissionFact> emissions = new ArrayList<>(fact.allowedEmissionFacts().size());
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
 				DerivedFoutMaterializationActionKey action = emission.derivedFoutAction();
@@ -9063,7 +9498,14 @@ final class PlacementRelationClosure {
 	private static MaterializationAnchor canonicalFederatedAnchorOwner(
 		DerivedFoutMaterializationActionKey action, List<Node> nodes,
 		Map<CompiledHopKey,Node> nodesByKey, Map<CompiledHopKey,Hop> origins) {
+		return canonicalFederatedAnchorOwner(action, nodes, nodesByKey, null, origins);
+	}
+
+	private static MaterializationAnchor canonicalFederatedAnchorOwner(
+		DerivedFoutMaterializationActionKey action, List<Node> nodes,
+		Map<CompiledHopKey,Node> nodesByKey, Node ownerOverlay, Map<CompiledHopKey,Hop> origins) {
 		List<Node> nativeOwners = nodes.stream()
+			.map(node -> ownerOverlay != null && node.key() == ownerOverlay.key() ? ownerOverlay : node)
 			.filter(node -> {
 				Hop origin = origins.get(node.key());
 				return origin instanceof DataOp && ((DataOp) origin).getOp() == OpOpData.FEDERATED;
@@ -9085,7 +9527,7 @@ final class PlacementRelationClosure {
 				.sorted().findFirst().orElseThrow();
 			return new MaterializationAnchor(action.durableAnchor(), owner.key(), ownerAnchor.fType());
 		}
-		Node provisional = nodesByKey.get(action.durableAnchorOwner());
+		Node provisional = exactOwnerNode(nodesByKey, ownerOverlay, action.durableAnchorOwner());
 		if(provisional == null || !isSelectableFoutAnchorOwner(provisional, action))
 			throw new IllegalStateException(
 				"Output materialization has no exact graph-owned FOUT anchor owner");
@@ -10222,14 +10664,14 @@ final class PlacementRelationClosure {
 		return true;
 	}
 
-	/** One immutable committed inventory with copy-on-write owner revisions. */
+	/** One committed inventory with immutable snapshots and one method-local owned revision path. */
 	private static final class CommittedProofInventory {
-		private final List<Node> nodes;
+		private List<Node> nodes;
 		// Retained only for cold-constructor compatibility; owner revisions never flatten facts.
 		private final List<CandidateRuleFact> facts;
 		private final List<CompiledHopKey> ownerByOrdinal;
 		private final Map<CompiledHopKey,Integer> ordinalByOwner;
-		private final List<List<CandidateRuleFact>> factsByOrdinal;
+		private List<List<CandidateRuleFact>> factsByOrdinal;
 		private final List<CompiledInputEdgeFact> compiledInputEdges;
 		private final List<LogicalTransientInputFact> logicalInputs;
 		private final java.util.Collection<Constraint> constraints;
@@ -10238,11 +10680,27 @@ final class PlacementRelationClosure {
 		private Map<CompiledHopKey,Node> nodesByKey;
 		private Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer;
 		private WorkerPoolAnchorResolver resolver;
-		private final RevisionWork revisionWork;
+		private RevisionWork revisionWork;
 		private final boolean ownerDeltaSupported;
+		private boolean exclusivelyOwned;
 
 		private record RevisionWork(long changedOwnerFactsScanned,
 			long unchangedOwnerFactsScanned, long staticIndexesBuilt) { }
+		private record OwnerDelta(List<CandidateRuleFact> replacement,
+			boolean candidateOnly, boolean boundedNodeAuthority) { }
+
+		private static CommittedProofInventory owned(List<Node> nodes,
+			List<List<CandidateRuleFact>> factsByOrdinal,
+			List<CompiledInputEdgeFact> compiledInputEdges, List<LogicalTransientInputFact> logicalInputs,
+			java.util.Collection<Constraint> constraints, Map<CompiledHopKey,Hop> origins,
+			Map<Hop,NodeShapeFact> shapeFactsByHop) {
+			CommittedProofInventory inventory = new CommittedProofInventory(nodes, factsByOrdinal,
+				compiledInputEdges, logicalInputs, constraints, origins, shapeFactsByHop, true);
+			inventory.nodes = new ArrayList<>(inventory.nodes);
+			inventory.factsByOrdinal = new ArrayList<>(inventory.factsByOrdinal);
+			inventory.exclusivelyOwned = true;
+			return inventory;
+		}
 
 		private CommittedProofInventory(List<Node> nodes, List<CandidateRuleFact> facts,
 			List<CompiledInputEdgeFact> compiledInputEdges, List<LogicalTransientInputFact> logicalInputs,
@@ -10331,6 +10789,60 @@ final class PlacementRelationClosure {
 
 		private CommittedProofInventory replaceOwner(int ordinal, CompiledHopKey expectedOwner,
 			Node replacementNode, List<CandidateRuleFact> replacementFacts) {
+			if(exclusivelyOwned)
+				throw new IllegalStateException(
+					"Exclusively owned proof inventory requires owned replacement");
+			OwnerDelta delta = validateOwnerDelta(ordinal, expectedOwner, replacementNode,
+				replacementFacts);
+			List<Node> revisedNodes = new ArrayList<>(nodes);
+			revisedNodes.set(ordinal, replacementNode);
+			List<List<CandidateRuleFact>> revisedFacts = new ArrayList<>(factsByOrdinal);
+			revisedFacts.set(ordinal, delta.replacement());
+			if(!delta.candidateOnly() && !delta.boundedNodeAuthority())
+				return new CommittedProofInventory(revisedNodes, revisedFacts, compiledInputEdges,
+					logicalInputs, constraints, origins, shapeFactsByHop, true);
+			Map<CompiledHopKey,Node> revisedNodeIndex = nodesByKey;
+			if(nodesByKey != null && !delta.candidateOnly()) {
+				revisedNodeIndex = new IdentityHashMap<>(nodesByKey);
+				revisedNodeIndex.put(expectedOwner, replacementNode);
+			}
+			WorkerPoolAnchorResolver revisedResolver = resolver == null ? null
+				: resolver.replaceOwner(ordinal, expectedOwner, replacementNode, delta.replacement(),
+					delta.boundedNodeAuthority());
+			return new CommittedProofInventory(this, revisedNodes, revisedFacts, revisedResolver,
+				revisedNodeIndex, new RevisionWork(delta.replacement().size(), 0, 0));
+		}
+
+		/** Consumes the method-local physical authority; no retained snapshot may call this path. */
+		private CommittedProofInventory replaceOwnerOwned(int ordinal, CompiledHopKey expectedOwner,
+			Node replacementNode, List<CandidateRuleFact> replacementFacts) {
+			if(!exclusivelyOwned)
+				throw new IllegalStateException("Proof inventory is not exclusively owned");
+			OwnerDelta delta = validateOwnerDelta(ordinal, expectedOwner, replacementNode,
+				replacementFacts);
+			if(resolver != null)
+				resolver.requireInactive();
+			nodes.set(ordinal, replacementNode);
+			factsByOrdinal.set(ordinal, delta.replacement());
+			if(!delta.candidateOnly() && !delta.boundedNodeAuthority()) {
+				nodesByKey = null;
+				matrixEdgesByConsumer = null;
+				resolver = null;
+				long scanned = factsByOrdinal.stream().mapToLong(List::size).sum();
+				revisionWork = new RevisionWork(scanned, 0, 0);
+				return this;
+			}
+			if(nodesByKey != null && !delta.candidateOnly())
+				nodesByKey.put(expectedOwner, replacementNode);
+			if(resolver != null)
+				resolver.replaceOwnerOwned(ordinal, expectedOwner, replacementNode,
+					delta.replacement(), delta.boundedNodeAuthority());
+			revisionWork = new RevisionWork(delta.replacement().size(), 0, 0);
+			return this;
+		}
+
+		private OwnerDelta validateOwnerDelta(int ordinal, CompiledHopKey expectedOwner,
+			Node replacementNode, List<CandidateRuleFact> replacementFacts) {
 			Objects.requireNonNull(expectedOwner, "expectedOwner");
 			Objects.requireNonNull(replacementNode, "replacementNode");
 			if(!ownerDeltaSupported)
@@ -10351,23 +10863,7 @@ final class PlacementRelationClosure {
 				&& previousNode.key() == replacementNode.key()
 				&& previousNode.kind() == replacementNode.kind()
 				&& previousNode.valueVersion().equals(replacementNode.valueVersion());
-			List<Node> revisedNodes = new ArrayList<>(nodes);
-			revisedNodes.set(ordinal, replacementNode);
-			List<List<CandidateRuleFact>> revisedFacts = new ArrayList<>(factsByOrdinal);
-			revisedFacts.set(ordinal, replacement);
-			if(!candidateOnly && !boundedNodeAuthority)
-				return new CommittedProofInventory(revisedNodes, revisedFacts, compiledInputEdges,
-					logicalInputs, constraints, origins, shapeFactsByHop, true);
-			Map<CompiledHopKey,Node> revisedNodeIndex = nodesByKey;
-			if(nodesByKey != null && !candidateOnly) {
-				revisedNodeIndex = new IdentityHashMap<>(nodesByKey);
-				revisedNodeIndex.put(expectedOwner, replacementNode);
-			}
-			WorkerPoolAnchorResolver revisedResolver = resolver == null ? null
-				: resolver.replaceOwner(ordinal, expectedOwner, replacementNode, replacement,
-					boundedNodeAuthority);
-			return new CommittedProofInventory(this, revisedNodes, revisedFacts, revisedResolver,
-				revisedNodeIndex, new RevisionWork(replacement.size(), 0, 0));
+			return new OwnerDelta(replacement, candidateOnly, boundedNodeAuthority);
 		}
 
 		private WorkerPoolAnchorResolver resolverForQuery() {
@@ -10430,6 +10926,8 @@ final class PlacementRelationClosure {
 		private final Map<CompiledHopKey,Set<String>> referenceSignaturesByOwner;
 		private final Map<CompiledHopKey,Integer> slotOrdinalByOwner;
 		private final boolean ownerDeltaSupported;
+		private final List<CompiledHopKey> nativeFactOwners;
+		private final List<CandidateRuleFact> coldNativeFacts;
 		private final Map<CompiledHopKey,Map<FType,List<LogicalTransientInputFact>>> logicalTransientInputsByRead;
 		private final Map<CompiledHopKey,List<CompiledHopKey>> functionInputsByRead;
 		private final Set<CompiledHopKey> declaredFunctionInputs;
@@ -10437,6 +10935,8 @@ final class PlacementRelationClosure {
 		private final Map<String,List<CompiledHopKey>> cfgDefinitionSourcesByReference;
 		private NativePlacementContinuity nativeContinuity;
 		private final Map<CompiledHopKey,Hop> origins;
+		private final Map<CompiledHopKey,Hop> nativeOrigins;
+		private final Map<CompiledHopKey,Privacy> nativePrivacyByKey;
 		private final Map<Hop,NodeShapeFact> shapeFactsByHop;
 		private final Map<CompiledHopKey,Map<FType,Set<DurableAnchorKey>>> memo = new IdentityHashMap<>();
 		private final Map<CompiledHopKey,Set<FType>> active = new IdentityHashMap<>();
@@ -10505,13 +11005,17 @@ final class PlacementRelationClosure {
 			this.nodesByKey = nodesByKey;
 			this.matrixEdgesByConsumer = matrixEdgesByConsumer;
 			this.origins = origins;
+			nativeOrigins = immutableIdentitySnapshot(origins, "origins");
+			nativePrivacyByKey = immutableIdentitySnapshot(privacyByKey, "privacyByKey");
 			this.shapeFactsByHop = shapeFactsByHop;
 			candidateFactsByProducer = new IdentityHashMap<>();
-			realizationSlotsByReference = new java.util.TreeMap<>();
-			realizationsByReference = new java.util.TreeMap<>();
+			realizationSlotsByReference = new HashMap<>();
+			realizationsByReference = new HashMap<>();
 			referenceSignaturesByOwner = new IdentityHashMap<>();
 			slotOrdinalByOwner = new IdentityHashMap<>();
 			ownerDeltaSupported = globalRuleFacts == null;
+			nativeFactOwners = globalRuleFacts == null ? List.copyOf(ownerByOrdinal) : List.of();
+			coldNativeFacts = globalRuleFacts == null ? null : globalRuleFacts;
 			logicalTransientInputsByRead = new IdentityHashMap<>();
 			functionInputsByRead = new IdentityHashMap<>();
 			declaredFunctionInputs = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -10527,7 +11031,7 @@ final class PlacementRelationClosure {
 					slotOrdinalByOwner.put(owner, ownerOrdinal);
 					List<CandidateRuleFact> ownerFacts = factsByOrdinal.get(ownerOrdinal);
 					candidateFactsByProducer.put(owner, ownerFacts);
-					Set<String> signatures = new java.util.TreeSet<>();
+					Set<String> signatures = new HashSet<>();
 					indexRealizations(realizationSlotsByReference, signatures, ownerOrdinal, owner, ownerFacts);
 					referenceSignaturesByOwner.put(owner, Collections.unmodifiableSet(signatures));
 				}
@@ -10537,7 +11041,7 @@ final class PlacementRelationClosure {
 					CandidateRuleFact fact = globalRuleFacts.get(factOrdinal);
 					CompiledHopKey owner = fact.key().parentOccurrence();
 					candidateFactsByProducer.computeIfAbsent(owner, ignored -> new ArrayList<>()).add(fact);
-					Set<String> signatures = new java.util.TreeSet<>(
+					Set<String> signatures = new HashSet<>(
 						referenceSignaturesByOwner.getOrDefault(owner, Set.of()));
 					indexRealizations(realizationSlotsByReference, signatures, 0, owner,
 						List.of(fact), factOrdinal);
@@ -10608,41 +11112,6 @@ final class PlacementRelationClosure {
 					if(keys.get(index).equals(keys.get(index - 1)))
 						keys.remove(index);
 			});
-			Map<CompiledHopKey,List<CompiledHopKey>> continuitySources = new IdentityHashMap<>();
-			Set<CompiledHopKey> incompleteContinuitySources =
-				Collections.newSetFromMap(new IdentityHashMap<>());
-			for(Node node : nodesByKey.values()) {
-				List<CompiledHopKey> sources = new ArrayList<>();
-				List<String> cfgReferences = node.valueVersion().predecessorVersions().stream()
-					.filter(value -> value.startsWith("cfg-definition:"))
-					.map(value -> value.substring("cfg-definition:".length()))
-					.distinct().sorted().toList();
-				for(String reference : cfgReferences) {
-					List<CompiledHopKey> definitions = cfgDefinitionSourcesByReference
-						.getOrDefault(reference, List.of());
-					if(definitions.isEmpty())
-						incompleteContinuitySources.add(node.key());
-					else
-						sources.addAll(definitions);
-				}
-				List<CompiledHopKey> functionInputs = functionInputsByRead
-					.getOrDefault(node.key(), List.of());
-				if((hasCfgFunctionInputPredecessor(node) || declaredFunctionInputs.contains(node.key()))
-					&& functionInputs.isEmpty())
-					incompleteContinuitySources.add(node.key());
-				sources.addAll(functionInputs);
-				sources.addAll(functionOutputSourcesByAlias.getOrDefault(node.key(), List.of()));
-				List<CompiledHopKey> canonicalSources = sources.stream().distinct().sorted().toList();
-				if(!canonicalSources.isEmpty())
-					continuitySources.put(node.key(), canonicalSources);
-			}
-			List<CompiledInputEdgeFact> compiledEdges = matrixEdgesByConsumer.values().stream()
-				.flatMap(edges -> edges.values().stream()).toList();
-			List<CandidateRuleFact> nativeFacts = globalRuleFacts == null
-				? factsByOrdinal.stream().flatMap(List::stream).toList() : globalRuleFacts;
-			nativeContinuity = new NativePlacementContinuity(nodesByKey, origins,
-				nativeFacts, compiledEdges,
-				continuitySources, incompleteContinuitySources, privacyByKey);
 		}
 
 		private WorkerPoolAnchorResolver(WorkerPoolAnchorResolver previous, int ownerOrdinal,
@@ -10656,6 +11125,8 @@ final class PlacementRelationClosure {
 			nodesByKey = revisedNodes;
 			matrixEdgesByConsumer = previous.matrixEdgesByConsumer;
 			origins = previous.origins;
+			nativeOrigins = previous.nativeOrigins;
+			nativePrivacyByKey = previous.nativePrivacyByKey;
 			shapeFactsByHop = previous.shapeFactsByHop;
 			logicalTransientInputsByRead = previous.logicalTransientInputsByRead;
 			functionInputsByRead = previous.functionInputsByRead;
@@ -10664,11 +11135,63 @@ final class PlacementRelationClosure {
 			cfgDefinitionSourcesByReference = previous.cfgDefinitionSourcesByReference;
 			slotOrdinalByOwner = previous.slotOrdinalByOwner;
 			ownerDeltaSupported = true;
+			nativeFactOwners = previous.nativeFactOwners;
+			coldNativeFacts = null;
 			candidateFactsByProducer = new IdentityHashMap<>(previous.candidateFactsByProducer);
+			realizationSlotsByReference = new HashMap<>(previous.realizationSlotsByReference);
+			realizationsByReference = new HashMap<>(previous.realizationsByReference);
+			referenceSignaturesByOwner = new IdentityHashMap<>(previous.referenceSignaturesByOwner);
+			replaceOwnerIndexes(previous, candidateFactsByProducer, realizationSlotsByReference,
+				realizationsByReference, referenceSignaturesByOwner, ownerOrdinal, owner, replacementFacts);
+			previous.validateNativeRevision(owner, replacementNode, replacementFacts, nodeAuthority);
+			nativeContinuity = previous.nativeContinuity == null ? null : nodeAuthority
+				? previous.nativeContinuity.nextNodeAuthorityRevision(replacementNode, replacementFacts)
+				: previous.nativeContinuity.nextOwnerRevision(owner, replacementFacts);
+		}
+
+		private WorkerPoolAnchorResolver replaceOwner(int ownerOrdinal, CompiledHopKey owner,
+			Node replacementNode, List<CandidateRuleFact> replacementFacts, boolean nodeAuthority) {
+			requireInactive();
+			if(!ownerDeltaSupported)
+				throw new IllegalStateException(
+					"Cold flat resolver cannot enter the owner-delta revision path");
+			return new WorkerPoolAnchorResolver(this, ownerOrdinal, owner, replacementNode,
+				replacementFacts, nodeAuthority);
+		}
+
+		/** Updates only the resolver exclusively retained by a method-local physical inventory. */
+		private void replaceOwnerOwned(int ownerOrdinal, CompiledHopKey owner,
+			Node replacementNode, List<CandidateRuleFact> replacementFacts, boolean nodeAuthority) {
+			requireInactive();
+			if(!ownerDeltaSupported)
+				throw new IllegalStateException(
+					"Cold flat resolver cannot enter the owner-delta revision path");
+			validateNativeRevision(owner, replacementNode, replacementFacts, nodeAuthority);
+			NativePlacementContinuity revisedNativeContinuity = nativeContinuity == null ? null : nodeAuthority
+				? nativeContinuity.nextNodeAuthorityRevision(replacementNode, replacementFacts)
+				: nativeContinuity.nextOwnerRevision(owner, replacementFacts);
+			if(nodeAuthority)
+				nodesByKey.put(owner, replacementNode);
+			replaceOwnerIndexes(this, candidateFactsByProducer, realizationSlotsByReference,
+				realizationsByReference, referenceSignaturesByOwner, ownerOrdinal, owner, replacementFacts);
+			nativeContinuity = revisedNativeContinuity;
+			memo.clear();
+			queried = false;
+		}
+
+		private static void replaceOwnerIndexes(WorkerPoolAnchorResolver previous,
+			Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByProducer,
+			Map<String,List<RealizationSlot>> realizationSlotsByReference,
+			Map<String,CandidateEmissionRealization> realizationsByReference,
+			Map<CompiledHopKey,Set<String>> referenceSignaturesByOwner,
+			int ownerOrdinal, CompiledHopKey owner, List<CandidateRuleFact> replacementFacts) {
+			Integer stableOwnerOrdinal = previous.slotOrdinalByOwner.get(owner);
+			if(stableOwnerOrdinal == null || stableOwnerOrdinal != ownerOrdinal)
+				throw new IllegalArgumentException("Resolver owner delta has a foreign owner identity");
 			candidateFactsByProducer.put(owner, replacementFacts);
-			realizationSlotsByReference = new java.util.TreeMap<>(previous.realizationSlotsByReference);
-			realizationsByReference = new java.util.TreeMap<>(previous.realizationsByReference);
-			for(String signature : previous.referenceSignaturesByOwner.getOrDefault(owner, Set.of())) {
+			Set<String> previousSignatures = Set.copyOf(
+				previous.referenceSignaturesByOwner.getOrDefault(owner, Set.of()));
+			for(String signature : previousSignatures) {
 				List<RealizationSlot> retained = previous.realizationSlotsByReference
 					.getOrDefault(signature, List.of()).stream()
 					.filter(slot -> slot.owner() != owner).toList();
@@ -10682,12 +11205,9 @@ final class PlacementRelationClosure {
 						retained.get(retained.size() - 1).realization());
 				}
 			}
-			Set<String> revisedSignatures = new java.util.TreeSet<>();
-			Integer stableOwnerOrdinal = slotOrdinalByOwner.get(owner);
-			if(stableOwnerOrdinal == null)
-				throw new IllegalArgumentException("Resolver owner delta has a foreign owner identity");
-			indexRealizations(realizationSlotsByReference, revisedSignatures, stableOwnerOrdinal, owner,
-				replacementFacts);
+			Set<String> revisedSignatures = new HashSet<>();
+			indexRealizations(realizationSlotsByReference, revisedSignatures, stableOwnerOrdinal,
+				owner, replacementFacts);
 			for(String signature : revisedSignatures) {
 				List<RealizationSlot> sorted = new ArrayList<>(realizationSlotsByReference.get(signature));
 				sorted.sort(null);
@@ -10695,21 +11215,7 @@ final class PlacementRelationClosure {
 				realizationsByReference.put(signature,
 					sorted.get(sorted.size() - 1).realization());
 			}
-			referenceSignaturesByOwner = new IdentityHashMap<>(previous.referenceSignaturesByOwner);
 			referenceSignaturesByOwner.put(owner, Collections.unmodifiableSet(revisedSignatures));
-			nativeContinuity = nodeAuthority
-				? previous.nativeContinuity.nextNodeAuthorityRevision(replacementNode, replacementFacts)
-				: previous.nativeContinuity.nextOwnerRevision(owner, replacementFacts);
-		}
-
-		private WorkerPoolAnchorResolver replaceOwner(int ownerOrdinal, CompiledHopKey owner,
-			Node replacementNode, List<CandidateRuleFact> replacementFacts, boolean nodeAuthority) {
-			requireInactive();
-			if(!ownerDeltaSupported)
-				throw new IllegalStateException(
-					"Cold flat resolver cannot enter the owner-delta revision path");
-			return new WorkerPoolAnchorResolver(this, ownerOrdinal, owner, replacementNode,
-				replacementFacts, nodeAuthority);
 		}
 
 		private static void indexRealizations(Map<String,List<RealizationSlot>> index,
@@ -10749,7 +11255,72 @@ final class PlacementRelationClosure {
 		private void resetQueryState() {
 			requireInactive();
 			memo.clear();
-			nativeContinuity = nativeContinuity.freshQueryState();
+			if(nativeContinuity != null)
+				nativeContinuity = nativeContinuity.freshQueryState();
+		}
+
+		private void validateNativeRevision(CompiledHopKey owner, Node replacementNode,
+			List<CandidateRuleFact> replacementFacts, boolean nodeAuthority) {
+			Node previous = nodesByKey.get(owner);
+			if(previous == null || previous.key() != owner)
+				throw new IllegalArgumentException("Candidate owner delta has a foreign owner identity");
+			for(CandidateRuleFact fact : replacementFacts)
+				if(fact.key().parentOccurrence() != owner)
+					throw new IllegalArgumentException("Candidate owner delta contains a foreign fact");
+			if(nodeAuthority && (replacementNode.key() != owner
+				|| previous.kind() != replacementNode.kind()
+				|| !previous.valueVersion().equals(replacementNode.valueVersion())))
+				throw new IllegalArgumentException("Node-authority delta changed key, kind, or value version");
+		}
+
+		private NativePlacementContinuity nativeContinuity() {
+			if(nativeContinuity != null)
+				return nativeContinuity;
+			Map<CompiledHopKey,List<CompiledHopKey>> continuitySources = new IdentityHashMap<>();
+			Set<CompiledHopKey> incompleteContinuitySources =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			for(Node node : nodesByKey.values()) {
+				List<CompiledHopKey> sources = new ArrayList<>();
+				List<String> cfgReferences = node.valueVersion().predecessorVersions().stream()
+					.filter(value -> value.startsWith("cfg-definition:"))
+					.map(value -> value.substring("cfg-definition:".length()))
+					.distinct().sorted().toList();
+				for(String reference : cfgReferences) {
+					List<CompiledHopKey> definitions = cfgDefinitionSourcesByReference
+						.getOrDefault(reference, List.of());
+					if(definitions.isEmpty())
+						incompleteContinuitySources.add(node.key());
+					else
+						sources.addAll(definitions);
+				}
+				List<CompiledHopKey> functionInputs = functionInputsByRead
+					.getOrDefault(node.key(), List.of());
+				if((hasCfgFunctionInputPredecessor(node) || declaredFunctionInputs.contains(node.key()))
+					&& functionInputs.isEmpty())
+					incompleteContinuitySources.add(node.key());
+				sources.addAll(functionInputs);
+				sources.addAll(functionOutputSourcesByAlias.getOrDefault(node.key(), List.of()));
+				List<CompiledHopKey> canonicalSources = sources.stream().distinct().sorted().toList();
+				if(!canonicalSources.isEmpty())
+					continuitySources.put(node.key(), canonicalSources);
+			}
+			List<CompiledInputEdgeFact> compiledEdges = matrixEdgesByConsumer.values().stream()
+				.flatMap(edges -> edges.values().stream()).toList();
+			List<CandidateRuleFact> nativeFacts = coldNativeFacts != null ? coldNativeFacts
+				: nativeFactOwners.stream().flatMap(owner -> candidateFactsByProducer
+					.getOrDefault(owner, List.of()).stream()).toList();
+			nativeContinuity = new NativePlacementContinuity(nodesByKey, nativeOrigins,
+				nativeFacts, compiledEdges, continuitySources, incompleteContinuitySources,
+				nativePrivacyByKey);
+			return nativeContinuity;
+		}
+
+		private static <K,V> Map<K,V> immutableIdentitySnapshot(Map<K,V> source, String label) {
+			Map<K,V> snapshot = new IdentityHashMap<>();
+			for(var entry : Objects.requireNonNull(source, label).entrySet())
+				snapshot.put(Objects.requireNonNull(entry.getKey(), label + " key"),
+					Objects.requireNonNull(entry.getValue(), label + " value"));
+			return Collections.unmodifiableMap(snapshot);
 		}
 
 		private void beginQuery() {
@@ -11113,7 +11684,7 @@ final class PlacementRelationClosure {
 				Set<DurableAnchorKey> seeds = common == null ? directSeedAnchors(fType) : common;
 				Set<DurableAnchorKey> proven = new java.util.TreeSet<>();
 				for(DurableAnchorKey seed : seeds)
-					if(nativeContinuity.proves(List.of(producer), seed))
+					if(nativeContinuity().proves(List.of(producer), seed))
 						proven.add(seed);
 				common = canonicalWorkerPools(proven);
 			}

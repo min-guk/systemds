@@ -1,0 +1,767 @@
+{
+  "status": "PASSED",
+  "baseRevision": "56d2ac628e4fde3cc1a3c3ddfc705931bab4c0f9",
+  "artifactRoot": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007",
+  "scope": {
+    "workload": "actual builtin multiLogReg",
+    "rows": 192,
+    "columns": 8,
+    "classes": 3,
+    "maxi": 10,
+    "maxii": 5,
+    "privacy": "PRIVATE_AGGREGATE X; local public labels",
+    "federation": "3 ROW workers",
+    "dockerCpus": 4,
+    "dockerMemory": "8g"
+  },
+  "acceptance": {
+    "commonAndPreparationBelow20SecondsOnEachFinalRun": true,
+    "cpFedCoefficientParity": true,
+    "nonTimingCheckpointAndAnalysisFingerprintParity": true,
+    "runtimeAuditAndConversionViolations": 0,
+    "l2svmSmokePassed": true
+  },
+  "aggregate": {
+    "finalCommonSeconds": [
+      16.714035889,
+      18.748647441,
+      17.715959262
+    ],
+    "meanCommonSeconds": 17.726214197333334,
+    "medianCommonSeconds": 17.715959262,
+    "baselineCommonSeconds": 23.185915736,
+    "meanReductionPercent": 23.547491506619973
+  },
+  "buildStatus": {
+    "returncode": 0,
+    "sourceUnchanged": true,
+    "seconds": 173.4106011390686,
+    "head": "56d2ac628e4fde3cc1a3c3ddfc705931bab4c0f9"
+  },
+  "regressionSummary": {
+    "tests": 731,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 6,
+    "classes": 86
+  },
+  "protocolVerification": {
+    "status": "PASSED",
+    "baseRevision": "56d2ac628e4fde3cc1a3c3ddfc705931bab4c0f9",
+    "currentSourceMatchesFrozenBuild": true,
+    "javaFiles": 3595,
+    "checks": [
+      {
+        "run": "logreg-opt-final-v4-01",
+        "sameConditionsAsBaseline": true,
+        "fixtureHashesMatched": true,
+        "inputHashCount": 34,
+        "profilingDisabled": true,
+        "artifactPreflightPassed": true,
+        "sameFinalArtifacts": true
+      },
+      {
+        "run": "logreg-opt-v4-without-publication-schedule-01",
+        "sameConditionsAsBaseline": true,
+        "fixtureHashesMatched": true,
+        "inputHashCount": 34,
+        "profilingDisabled": true,
+        "artifactPreflightPassed": true,
+        "sameFinalArtifacts": false
+      },
+      {
+        "run": "logreg-opt-final-v4-02",
+        "sameConditionsAsBaseline": true,
+        "fixtureHashesMatched": true,
+        "inputHashCount": 34,
+        "profilingDisabled": true,
+        "artifactPreflightPassed": true,
+        "sameFinalArtifacts": true
+      },
+      {
+        "run": "logreg-opt-final-v4-03",
+        "sameConditionsAsBaseline": true,
+        "fixtureHashesMatched": true,
+        "inputHashCount": 34,
+        "profilingDisabled": true,
+        "artifactPreflightPassed": true,
+        "sameFinalArtifacts": true
+      }
+    ]
+  },
+  "runs": {
+    "logreg-opt-baseline-56d-01": {
+      "baselineRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/logreg-opt-baseline-56d-01",
+      "harnessReturnCode": 0,
+      "status": "PASSED",
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "noRuntimeConversion": true,
+      "modelProofPassed": true,
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "passed": true,
+          "checkpointParity": true,
+          "checkpointCount": 1224,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 16,
+            "actualShape": [
+              8,
+              2
+            ],
+            "entries": 16,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 2.220446049250313e-16,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              2
+            ],
+            "shapeMatched": true
+          },
+          "runtimeAuditViolations": [],
+          "statistics": {
+            "compilationSeconds": 33.046519,
+            "executionSeconds": 3.501
+          },
+          "commonSeconds": 23.185915736,
+          "commonPreparationSeconds": 23.204631245,
+          "timingTargetMet": false
+        },
+        {
+          "case": "ml_l2svm",
+          "passed": true,
+          "checkpointParity": true,
+          "checkpointCount": 4,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 8,
+            "actualShape": [
+              8,
+              1
+            ],
+            "entries": 8,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 8.413408858487514e-17,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              1
+            ],
+            "shapeMatched": true
+          },
+          "runtimeAuditViolations": [],
+          "statistics": {
+            "compilationSeconds": 9.544089,
+            "executionSeconds": 0.842
+          },
+          "commonSeconds": 6.851880933,
+          "commonPreparationSeconds": 6.870076128,
+          "timingTargetMet": true
+        }
+      ]
+    },
+    "logreg-opt-v4-without-publication-schedule-01": {
+      "baselineRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/logreg-opt-baseline-56d-01",
+      "harnessReturnCode": 0,
+      "status": "PASSED",
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "noRuntimeConversion": true,
+      "modelProofPassed": true,
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "passed": true,
+          "checkpointParity": true,
+          "checkpointCount": 1224,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 16,
+            "actualShape": [
+              8,
+              2
+            ],
+            "entries": 16,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 2.220446049250313e-16,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              2
+            ],
+            "shapeMatched": true
+          },
+          "runtimeAuditViolations": [],
+          "statistics": {
+            "compilationSeconds": 27.86977,
+            "executionSeconds": 3.152
+          },
+          "commonSeconds": 18.64661614,
+          "commonPreparationSeconds": 18.664387514,
+          "timingTargetMet": true
+        }
+      ]
+    },
+    "logreg-opt-final-v4-01": {
+      "baselineRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/logreg-opt-baseline-56d-01",
+      "harnessReturnCode": 0,
+      "status": "PASSED",
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "noRuntimeConversion": true,
+      "modelProofPassed": true,
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "passed": true,
+          "checkpointParity": true,
+          "checkpointCount": 1224,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 16,
+            "actualShape": [
+              8,
+              2
+            ],
+            "entries": 16,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 2.220446049250313e-16,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              2
+            ],
+            "shapeMatched": true
+          },
+          "runtimeAuditViolations": [],
+          "statistics": {
+            "compilationSeconds": 25.22411,
+            "executionSeconds": 3.327
+          },
+          "commonSeconds": 16.714035889,
+          "commonPreparationSeconds": 16.735154048,
+          "timingTargetMet": true
+        }
+      ]
+    },
+    "logreg-opt-final-v4-02": {
+      "baselineRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/logreg-opt-baseline-56d-01",
+      "harnessReturnCode": 0,
+      "status": "PASSED",
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "noRuntimeConversion": true,
+      "modelProofPassed": true,
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "passed": true,
+          "checkpointParity": true,
+          "checkpointCount": 1224,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 16,
+            "actualShape": [
+              8,
+              2
+            ],
+            "entries": 16,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 2.220446049250313e-16,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              2
+            ],
+            "shapeMatched": true
+          },
+          "runtimeAuditViolations": [],
+          "statistics": {
+            "compilationSeconds": 28.084049,
+            "executionSeconds": 3.619
+          },
+          "commonSeconds": 18.748647441,
+          "commonPreparationSeconds": 18.765251744,
+          "timingTargetMet": true
+        }
+      ]
+    },
+    "logreg-opt-final-v4-03": {
+      "baselineRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/logreg-opt-baseline-56d-01",
+      "harnessReturnCode": 0,
+      "status": "PASSED",
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "noRuntimeConversion": true,
+      "modelProofPassed": true,
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "passed": true,
+          "checkpointParity": true,
+          "checkpointCount": 1224,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 16,
+            "actualShape": [
+              8,
+              2
+            ],
+            "entries": 16,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 2.220446049250313e-16,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              2
+            ],
+            "shapeMatched": true
+          },
+          "runtimeAuditViolations": [],
+          "statistics": {
+            "compilationSeconds": 26.385006,
+            "executionSeconds": 3.249
+          },
+          "commonSeconds": 17.715959262,
+          "commonPreparationSeconds": 17.735620508,
+          "timingTargetMet": true
+        },
+        {
+          "case": "ml_l2svm",
+          "passed": true,
+          "checkpointParity": true,
+          "checkpointCount": 4,
+          "fingerprintParity": true,
+          "modelComparison": {
+            "actualEntries": 8,
+            "actualShape": [
+              8,
+              1
+            ],
+            "entries": 8,
+            "errors": [],
+            "expectedShape": null,
+            "finite": true,
+            "matched": true,
+            "maxAbsDifference": 8.413408858487514e-17,
+            "nonzero": true,
+            "referenceShape": [
+              8,
+              1
+            ],
+            "shapeMatched": true
+          },
+          "runtimeAuditViolations": [],
+          "statistics": {
+            "compilationSeconds": 10.251045,
+            "executionSeconds": 0.86
+          },
+          "commonSeconds": 7.046832176,
+          "commonPreparationSeconds": 7.075964534,
+          "timingTargetMet": true
+        }
+      ]
+    }
+  },
+  "commands": {
+    "logreg-opt-baseline-56d-01": [
+      "/home/mchoi/w1357-structural-grounding-20261006/scripts/fedplanner/run_LAN_docker.sh",
+      "--joint-boundary-e2e",
+      "--run-id",
+      "logreg-opt-baseline-56d-01",
+      "--output-root",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007",
+      "--case",
+      "ml_logreg",
+      "--timeout-seconds",
+      "1200",
+      "--case-timeout-seconds",
+      "600",
+      "--classes",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/baseline-56d/main-classes",
+      "--main-sources",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/baseline-56d/main-sources",
+      "--test-classes",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/baseline-56d/test-classes",
+      "--test-sources",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/baseline-56d/test-sources",
+      "--case",
+      "ml_l2svm"
+    ],
+    "logreg-opt-v4-without-publication-schedule-01": [
+      "/home/mchoi/w1357-structural-grounding-20261006/scripts/fedplanner/run_LAN_docker.sh",
+      "--joint-boundary-e2e",
+      "--run-id",
+      "logreg-opt-v4-without-publication-schedule-01",
+      "--output-root",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007",
+      "--case",
+      "ml_logreg",
+      "--timeout-seconds",
+      "1200",
+      "--case-timeout-seconds",
+      "600",
+      "--classes",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/v4-without-publication-schedule/main-classes",
+      "--main-sources",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/v4-without-publication-schedule/main-sources"
+    ],
+    "logreg-opt-final-v4-01": [
+      "/home/mchoi/w1357-structural-grounding-20261006/scripts/fedplanner/run_LAN_docker.sh",
+      "--joint-boundary-e2e",
+      "--run-id",
+      "logreg-opt-final-v4-01",
+      "--output-root",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007",
+      "--case",
+      "ml_logreg",
+      "--timeout-seconds",
+      "1200",
+      "--case-timeout-seconds",
+      "600",
+      "--classes",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/final-v4/main-classes",
+      "--main-sources",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/final-v4/main-sources",
+      "--test-classes",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/final-v4/test-classes",
+      "--test-sources",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/final-v4/test-sources"
+    ],
+    "logreg-opt-final-v4-02": [
+      "/home/mchoi/w1357-structural-grounding-20261006/scripts/fedplanner/run_LAN_docker.sh",
+      "--joint-boundary-e2e",
+      "--run-id",
+      "logreg-opt-final-v4-02",
+      "--output-root",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007",
+      "--case",
+      "ml_logreg",
+      "--timeout-seconds",
+      "1200",
+      "--case-timeout-seconds",
+      "600",
+      "--classes",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/final-v4/main-classes",
+      "--main-sources",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/final-v4/main-sources",
+      "--test-classes",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/final-v4/test-classes",
+      "--test-sources",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/final-v4/test-sources"
+    ],
+    "logreg-opt-final-v4-03": [
+      "/home/mchoi/w1357-structural-grounding-20261006/scripts/fedplanner/run_LAN_docker.sh",
+      "--joint-boundary-e2e",
+      "--run-id",
+      "logreg-opt-final-v4-03",
+      "--output-root",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007",
+      "--case",
+      "ml_logreg",
+      "--timeout-seconds",
+      "1200",
+      "--case-timeout-seconds",
+      "600",
+      "--classes",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/final-v4/main-classes",
+      "--main-sources",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/final-v4/main-sources",
+      "--test-classes",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/final-v4/test-classes",
+      "--test-sources",
+      "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-opt-20261007/final-v4/test-sources",
+      "--case",
+      "ml_l2svm"
+    ]
+  },
+  "evidenceSha256": {
+    "final-v4-regression-command.json": "c2e7adebd18bcf19fd68e88b9b5e43e35caf72bd361c3c69573fb588a3c38ed1",
+    "final-v4-regression-summary.json": "50aea7ab442f0ec6526b8db49071904d3875b62882a5b52782e0c6bedfe73023",
+    "final-v4-build-status.json": "d9dd0a5e5798341bc84fde002879996989cfbf036fda633db708dc187f12720b",
+    "final-v4/manifest.json": "c21fdc2ab7a40ee030a8e1744f8f652c8619fc71004247e6e663997a088f8e0d",
+    "final-v4-protocol-verification.json": "131095f1224ec4eb883b2a56bd62e554957dde2da560b7566f7861a732bb003c",
+    "baseline-56d-vs-2faff-checkpoints.json": "00a932c3785ddbadd14554bc3e49383aa6702f6e7c70c56506b43465c9828fdd",
+    "evaluate-latest.py": "30213402f1e7de95a72da39a1fa347170b571ad866e5f5f1b516dea7fb4c8307",
+    "verify-final-v4.py": "82a2ec52c9d08cdf39d3b7824e329ec3f3b005ee9ce1be9da581f250f955e17d",
+    "freeze-baseline-56d.py": "80155e12537ab624363fd80d5f2484ce0718683a267af84f261f601d0892e115"
+  },
+  "screenHistory": [
+    {
+      "run": "logreg-opt-baseline-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 25.329438206,
+          "commonPreparationSeconds": 25.346853825,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-baseline-56d-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 23.185915736,
+          "commonPreparationSeconds": 23.204631245,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        },
+        {
+          "case": "ml_l2svm",
+          "commonSeconds": 6.851880933,
+          "commonPreparationSeconds": 6.870076128,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-direct-envelope-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 19.753645848,
+          "commonPreparationSeconds": 19.770028275,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-direct-subset-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 21.401724074,
+          "commonPreparationSeconds": 21.417358439,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-environment-query-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 26.251150845,
+          "commonPreparationSeconds": 26.270141738,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-final-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 22.241751108,
+          "commonPreparationSeconds": 22.259548789,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-final-v2-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 20.388634904,
+          "commonPreparationSeconds": 20.409177228,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-final-v3-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 20.911392052,
+          "commonPreparationSeconds": 20.926755906,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-final-v4-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 16.714035889,
+          "commonPreparationSeconds": 16.735154048,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-final-v4-02",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 18.748647441,
+          "commonPreparationSeconds": 18.765251744,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-final-v4-03",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 17.715959262,
+          "commonPreparationSeconds": 17.735620508,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        },
+        {
+          "case": "ml_l2svm",
+          "commonSeconds": 7.046832176,
+          "commonPreparationSeconds": 7.075964534,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-lazy-scc-fingerprint-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 19.952325196,
+          "commonPreparationSeconds": 19.970545109,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-lazy-worker-hash-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 18.518880104,
+          "commonPreparationSeconds": 18.538382734,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-publication-schedule-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 18.104156727,
+          "commonPreparationSeconds": 18.12111876,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-replay-owned-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 23.359389942,
+          "commonPreparationSeconds": 23.380707673,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-v4-without-publication-schedule-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 18.64661614,
+          "commonPreparationSeconds": 18.664387514,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    },
+    {
+      "run": "logreg-opt-without-env-query-01",
+      "status": "PASSED",
+      "cases": [
+        {
+          "case": "ml_logreg",
+          "commonSeconds": 23.036234905,
+          "commonPreparationSeconds": 23.054972233,
+          "passed": true,
+          "checkpointParity": true,
+          "fingerprintParity": true
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Same existing 192x8 training fixture; not a guarantee for large W1 or arbitrary input shapes.",
+    "Shared host; baseline and ablation each have one final run, so per-feature causal speedups are not established.",
+    "Latest baseline is a same-classpath HEAD overlay with changed production source families rebuilt, not an independent clean Maven rebuild.",
+    "L2SVM timing is a functional regression smoke: common6.852s baseline and7.047s final; no L2SVM speedup claimed."
+  ]
+}

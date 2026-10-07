@@ -242,6 +242,25 @@ public class LogicalBoundaryRealizationsTest {
 	}
 
 	@Test
+	public void settledSessionWithCompleteEmptyDeltaDoesNotRescanFacts() {
+		Fixture f = new Fixture();
+		LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
+			f.nodes, f.edges, f.origins, f.facts);
+		// Empty incoming delta still has to perform the first boundary closure.
+		var first = session.close(f.facts, Set.of());
+		Assert.assertEquals(LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, f.facts), first.facts());
+		List<CandidateRuleFact> unchanged = new java.util.AbstractList<>() {
+			@Override public int size() { return first.facts().size(); }
+			@Override public CandidateRuleFact get(int index) {
+				throw new AssertionError("A complete empty owner delta must not rescan settled facts");
+			}
+		};
+		var stable = session.close(unchanged, Set.of());
+		Assert.assertSame(unchanged, stable.facts());
+		Assert.assertTrue(stable.changedOwners().isEmpty());
+	}
+
+	@Test
 	public void sessionReprojectsOnlyChangedOwnerSlotsAndAffectedBoundaryTargets() {
 		Fixture f = new Fixture();
 		CompiledHopKey unrelated = key("session-unrelated");

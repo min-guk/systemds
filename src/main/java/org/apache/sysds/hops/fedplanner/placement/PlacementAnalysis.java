@@ -13,9 +13,6 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -3276,6 +3273,49 @@ public final class PlacementAnalysis {
 		List<LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputs,
 		Runnable programMutationGuard, List<CandidatePrivacyInputPruning> privacyPrunedInputs,
 		PlacementJointInputAnalysis jointInputAnalysis) {
+		this(graph, occurrences, topLevelStatementBlocks, programOwner, shapeFacts, analysisFingerprint,
+			heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts, candidateConsumerDomainKeys,
+			candidateConsumerProfileFacts, detachedConsumerProfileFacts, compiledInputEdges, logicalTransientInputs,
+			privacyFacts, candidatePrivacyClosureEvidence, logicalInlinedFunctionInputs, programMutationGuard,
+			privacyPrunedInputs, jointInputAnalysis, false);
+	}
+
+	/** Publish the canonical fingerprint directly, without a discarded preliminary digest. */
+	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		List<StatementBlock> topLevelStatementBlocks, DMLProgram programOwner,
+		PlacementShapeFacts shapeFacts,
+		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
+		List<CandidateRuleFact> candidateRuleFacts,
+		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts,
+		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts,
+		List<CompiledInputEdgeFact> compiledInputEdges,
+		List<LogicalTransientInputFact> logicalTransientInputs, PlacementPrivacyFacts privacyFacts,
+		CandidatePrivacyClosureEvidence candidatePrivacyClosureEvidence,
+		List<LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputs,
+		Runnable programMutationGuard, List<CandidatePrivacyInputPruning> privacyPrunedInputs,
+		PlacementJointInputAnalysis jointInputAnalysis) {
+		this(graph, occurrences, topLevelStatementBlocks, programOwner, shapeFacts, null,
+			heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts, candidateConsumerDomainKeys,
+			candidateConsumerProfileFacts, detachedConsumerProfileFacts, compiledInputEdges, logicalTransientInputs,
+			privacyFacts, candidatePrivacyClosureEvidence, logicalInlinedFunctionInputs, programMutationGuard,
+			privacyPrunedInputs, jointInputAnalysis, true);
+	}
+
+	private PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		List<StatementBlock> topLevelStatementBlocks, DMLProgram programOwner,
+		PlacementShapeFacts shapeFacts, String analysisFingerprint,
+		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
+		List<CandidateRuleFact> candidateRuleFacts,
+		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts,
+		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts,
+		List<CompiledInputEdgeFact> compiledInputEdges,
+		List<LogicalTransientInputFact> logicalTransientInputs, PlacementPrivacyFacts privacyFacts,
+		CandidatePrivacyClosureEvidence candidatePrivacyClosureEvidence,
+		List<LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputs,
+		Runnable programMutationGuard, List<CandidatePrivacyInputPruning> privacyPrunedInputs,
+		PlacementJointInputAnalysis jointInputAnalysis, boolean canonicalFingerprint) {
 		this.graph = Objects.requireNonNull(graph, "graph");
 		this.privacyFacts = Objects.requireNonNull(privacyFacts, "privacyFacts");
 		this.candidatePrivacyClosureEvidence = Optional.ofNullable(candidatePrivacyClosureEvidence);
@@ -3325,9 +3365,10 @@ public final class PlacementAnalysis {
 				occurrence.hop(), PlacementAnalysis::capturePhysicalCostEstimate));
 		this.physicalCostEstimateFactsByIdentity = Collections.unmodifiableMap(costEstimates);
 		hopsByKey = Map.copyOf(indexed);
-		if(analysisFingerprint == null || analysisFingerprint.isBlank())
+		if(!canonicalFingerprint && (analysisFingerprint == null || analysisFingerprint.isBlank()))
 			throw new IllegalArgumentException("analysisFingerprint must not be blank");
-		this.analysisFingerprint = canonicalizeSuppliedAnalysisFingerprint(analysisFingerprint);
+		this.analysisFingerprint = canonicalFingerprint ? canonicalAnalysisFingerprint()
+			: canonicalizeSuppliedAnalysisFingerprint(analysisFingerprint);
 		this.heuristicPolicyFacts = Objects.requireNonNull(heuristicPolicyFacts, "heuristicPolicyFacts");
 		this.candidateRuleDomain = new CandidateRuleDomain(this.analysisFingerprint, candidateRuleDomainKeys,
 			candidateConsumerDomainKeys, privacyPrunedInputs);
@@ -4081,10 +4122,14 @@ public final class PlacementAnalysis {
 	private String canonicalizeSuppliedAnalysisFingerprint(String supplied) {
 		if(!supplied.matches("[0-9a-f]{64}"))
 			return supplied;
+		return canonicalAnalysisFingerprint();
+	}
+
+	private String canonicalAnalysisFingerprint() {
 		String graphSignature = graph.normalizedSignature();
 		List<String> projectionSignatures = occurrences.stream()
 			.map(occurrence -> stableSignature(occurrence.normalizedSignature())).sorted().toList();
-		return sha256(stableSignature(graphSignature) + '\n'
+		return PlacementGraphFingerprint.sha256(stableSignature(graphSignature) + '\n'
 			+ String.join("\n", projectionSignatures) + '\n'
 			+ stableSignature(privacyFacts.normalizedSignature()));
 	}
@@ -4098,21 +4143,7 @@ public final class PlacementAnalysis {
 	}
 
 	private static String stableSignature(String signature) {
-		return signature.replaceAll("[0-9a-f]{64}", "<program>");
-	}
-
-	private static String sha256(String value) {
-		try {
-			MessageDigest digest = MessageDigest.getInstance("SHA-256");
-			byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
-			StringBuilder builder = new StringBuilder(hash.length * 2);
-			for(byte b : hash)
-				builder.append(String.format("%02x", b));
-			return builder.toString();
-		}
-		catch(NoSuchAlgorithmException ex) {
-			throw new IllegalStateException("SHA-256 unavailable", ex);
-		}
+		return PlacementGraphFingerprint.stableSignature(signature);
 	}
 
 	private List<CompiledInputEdgeFact> validateCompiledInputEdges(List<CompiledInputEdgeFact> facts) {

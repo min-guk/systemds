@@ -681,7 +681,7 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
-	public void freshQueryStateRetainsExactInputsButNoQueryHistory() throws Exception {
+	public void freshQueryStateSharesImmutableSnapshotButNoQueryHistory() throws Exception {
 		Fixture full = new Fixture(FType.FULL);
 		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
 		Ref source = full.unary("source", OpOp1.LOG, seed, false);
@@ -747,9 +747,25 @@ public class NativePlacementContinuityTest {
 			Assert.assertThrows(UnsupportedOperationException.class,
 				() -> retained.add(entry.getValue().get(0)));
 		}
-		Assert.assertNotSame(accessibleField(NativePlacementContinuity.class,
+		Assert.assertSame("cold query states share the immutable candidate snapshot",
+			accessibleField(NativePlacementContinuity.class,
 			"candidateFactsByKey").get(populated), accessibleField(NativePlacementContinuity.class,
 			"candidateFactsByKey").get(fresh));
+		Assert.assertThrows(UnsupportedOperationException.class,
+			() -> retainedFacts.remove(source.key));
+
+		NativePlacementContinuity revised = populated.nextOwnerRevision(source.key, List.of());
+		@SuppressWarnings("unchecked")
+		Map<CompiledHopKey,List<CandidateRuleFact>> revisedFacts =
+			(Map<CompiledHopKey,List<CandidateRuleFact>>)accessibleField(
+				NativePlacementContinuity.class, "candidateFactsByKey").get(revised);
+		Assert.assertNotSame("a candidate revision must fork immutable authority",
+			retainedFacts, revisedFacts);
+		Assert.assertTrue(retainedFacts.containsKey(source.key));
+		Assert.assertFalse(revisedFacts.containsKey(source.key));
+		Assert.assertSame("the rebased snapshot is reusable by its own cold queries",
+			revisedFacts, accessibleField(NativePlacementContinuity.class,
+				"candidateFactsByKey").get(revised.freshQueryState()));
 
 		for(String fieldName : List.of("memoMaxEntries", "memoMaxProofs", "memoMaxEstimatedBytes",
 			"supportMemoMaxEntries", "supportMemoMaxTemplates", "supportMemoMaxEstimatedBytes",
@@ -1212,6 +1228,72 @@ public class NativePlacementContinuityTest {
 			Field field = accessibleField(NativePlacementContinuity.class, fieldName);
 			Assert.assertSame(fieldName + " must be shared rather than rebuilt for a fact revision",
 				field.get(first), field.get(next));
+		}
+	}
+
+	@Test
+	public void occurrenceComponentsStayLazyAndShareOneRealizedIndexAcrossRevisions() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref source = full.unary("source", OpOp1.LOG, seed, false);
+		NativePlacementContinuity first = full.resolver();
+		Object holder = accessibleField(NativePlacementContinuity.class, "occurrenceComponents").get(first);
+		Field realized = accessibleField(holder.getClass(), "components");
+		Assert.assertNull("construction must not build the SCC index", realized.get(holder));
+
+		Assert.assertTrue("legacy physical continuity does not consume occurrence SCCs",
+			first.proves(List.of(source.key), seed.anchor));
+		Assert.assertNull("legacy proves must keep the SCC index lazy", realized.get(holder));
+
+		CandidateRealizationReference reference = full.reference(
+			source, List.of(CandidateInputState.present(FType.FULL)));
+		NativePlacementContinuity.NativeContinuityProof actual =
+			first.proveCandidate(reference, seed.anchor);
+		Object built = realized.get(holder);
+		Assert.assertNotNull("the first SCC-aware candidate query must realize the index", built);
+		Assert.assertEquals("lazy construction must preserve cold proof semantics",
+			full.resolver().proveCandidate(reference, seed.anchor), actual);
+
+		NativePlacementContinuity fresh = first.freshQueryState();
+		Assert.assertSame(holder,
+			accessibleField(NativePlacementContinuity.class, "occurrenceComponents").get(fresh));
+		Node prior = full.nodes.get(source.key);
+		Node replacement = new Node(prior.key(), prior.kind(), prior.valueVersion(), prior.emittedWork(),
+			prior.legalAlternatives(), prior.exclusions(), prior.anchors());
+		List<CandidateRuleFact> sourceFacts = full.candidates.stream()
+			.filter(fact -> fact.key().parentOccurrence() == source.key).toList();
+		NativePlacementContinuity nodeRevision = first.nextNodeAuthorityRevision(replacement, sourceFacts);
+		Object revisedHolder = accessibleField(
+			NativePlacementContinuity.class, "occurrenceComponents").get(nodeRevision);
+		Assert.assertSame("node-only revisions must share the exact SCC holder", holder, revisedHolder);
+		Assert.assertSame("all shared revisions must observe the same realized index",
+			built, realized.get(revisedHolder));
+	}
+
+	@Test
+	public void occurrenceComponentsRealizeOnceUnderConcurrentFirstUse() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		full.unary("source", OpOp1.LOG, seed, false);
+		NativePlacementContinuity continuity = full.resolver();
+		Object holder = accessibleField(
+			NativePlacementContinuity.class, "occurrenceComponents").get(continuity);
+		Method componentsMethod = holder.getClass().getDeclaredMethod("components");
+		componentsMethod.setAccessible(true);
+		java.util.concurrent.ExecutorService workers =
+			java.util.concurrent.Executors.newFixedThreadPool(4);
+		try {
+			List<java.util.concurrent.Callable<Object>> tasks = java.util.stream.IntStream.range(0, 16)
+				.mapToObj(ignored -> (java.util.concurrent.Callable<Object>)() ->
+					componentsMethod.invoke(holder)).toList();
+			List<java.util.concurrent.Future<Object>> results = workers.invokeAll(tasks);
+			Object first = results.get(0).get();
+			for(java.util.concurrent.Future<Object> result : results)
+				Assert.assertSame("concurrent first use must publish one immutable SCC index",
+					first, result.get());
+		}
+		finally {
+			workers.shutdownNow();
 		}
 	}
 
@@ -2178,8 +2260,12 @@ public class NativePlacementContinuityTest {
 				CandidateRealizationReference proposed = CandidateRealizationReference.of(base.key(), publication);
 				SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 				NativePlacementContinuity first = full.resolver(metrics, budget, budget * 16L);
-				PlacementDependencyComponents components = (PlacementDependencyComponents)
-					accessibleField(NativePlacementContinuity.class, "occurrenceComponents").get(first);
+				Object holder = accessibleField(
+					NativePlacementContinuity.class, "occurrenceComponents").get(first);
+				Method componentsMethod = holder.getClass().getDeclaredMethod("components");
+				componentsMethod.setAccessible(true);
+				PlacementDependencyComponents components =
+					(PlacementDependencyComponents)componentsMethod.invoke(holder);
 				Assert.assertEquals(cyclic, components.componentOf(root.key).cyclic());
 				first.proveGeneratedCandidateAlternatives(base, emission, proposed, seed.anchor);
 				long built = metrics.snapshot().proofGraphsBuilt();

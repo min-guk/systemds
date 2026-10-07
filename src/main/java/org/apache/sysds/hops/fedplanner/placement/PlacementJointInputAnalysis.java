@@ -58,23 +58,76 @@ public final class PlacementJointInputAnalysis {
 	public enum SourceKind { OCCURRENCE, FUNCTION_INPUT, FUNCTION_RETURN }
 
 	/** A static source, retaining the exact compiled occurrence whenever one exists. */
-	public record Definition(SourceKind kind, CompiledHopKey occurrence, int occurrenceOrdinal,
-		int boundaryPosition, String callContext, String provenance,
-		CompiledHopKey valueOccurrence) implements Comparable<Definition> {
-		public Definition {
-			Objects.requireNonNull(kind, "kind");
-			callContext = callContext == null ? "main" : callContext;
-			provenance = provenance == null ? "" : provenance;
-		}
+	public static final class Definition implements Comparable<Definition> {
+		private final SourceKind kind;
+		private final CompiledHopKey occurrence;
+		private final int occurrenceOrdinal;
+		private final int boundaryPosition;
+		private final String callContext;
+		private final String provenance;
+		private final CompiledHopKey valueOccurrence;
+		private final String stableKey;
+		private final int hashCode;
 
-		@Override public int compareTo(Definition that) {
-			return stableKey().compareTo(that.stableKey());
-		}
-
-		public String stableKey() {
-			return kind + "|" + occurrenceOrdinal + '|' + boundaryPosition + '|' + callContext + '|'
+		public Definition(SourceKind kind, CompiledHopKey occurrence, int occurrenceOrdinal,
+			int boundaryPosition, String callContext, String provenance,
+			CompiledHopKey valueOccurrence) {
+			this.kind = Objects.requireNonNull(kind, "kind");
+			this.occurrence = occurrence;
+			this.occurrenceOrdinal = occurrenceOrdinal;
+			this.boundaryPosition = boundaryPosition;
+			this.callContext = callContext == null ? "main" : callContext;
+			this.provenance = provenance == null ? "" : provenance;
+			this.valueOccurrence = valueOccurrence;
+			stableKey = kind + "|" + occurrenceOrdinal + '|' + boundaryPosition + '|' + this.callContext + '|'
 				+ (occurrence == null ? "" : occurrence.normalizedSignature()) + '|'
 				+ (valueOccurrence == null ? "" : valueOccurrence.normalizedSignature());
+			int definitionHash = kind.hashCode();
+			definitionHash = 31 * definitionHash + Objects.hashCode(occurrence);
+			definitionHash = 31 * definitionHash + Integer.hashCode(occurrenceOrdinal);
+			definitionHash = 31 * definitionHash + Integer.hashCode(boundaryPosition);
+			definitionHash = 31 * definitionHash + this.callContext.hashCode();
+			definitionHash = 31 * definitionHash + this.provenance.hashCode();
+			hashCode = 31 * definitionHash + Objects.hashCode(valueOccurrence);
+		}
+
+		public SourceKind kind() { return kind; }
+		public CompiledHopKey occurrence() { return occurrence; }
+		public int occurrenceOrdinal() { return occurrenceOrdinal; }
+		public int boundaryPosition() { return boundaryPosition; }
+		public String callContext() { return callContext; }
+		public String provenance() { return provenance; }
+		public CompiledHopKey valueOccurrence() { return valueOccurrence; }
+
+		@Override public int compareTo(Definition that) {
+			return stableKey.compareTo(that.stableKey);
+		}
+
+		public String stableKey() { return stableKey; }
+
+		@Override public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			if(!(other instanceof Definition that))
+				return false;
+			return occurrenceOrdinal == that.occurrenceOrdinal
+				&& boundaryPosition == that.boundaryPosition
+				&& kind == that.kind
+				&& Objects.equals(occurrence, that.occurrence)
+				&& callContext.equals(that.callContext)
+				&& provenance.equals(that.provenance)
+				&& Objects.equals(valueOccurrence, that.valueOccurrence);
+		}
+
+		@Override public int hashCode() {
+			return hashCode;
+		}
+
+		@Override public String toString() {
+			return "Definition[kind=" + kind + ", occurrence=" + occurrence
+				+ ", occurrenceOrdinal=" + occurrenceOrdinal + ", boundaryPosition=" + boundaryPosition
+				+ ", callContext=" + callContext + ", provenance=" + provenance
+				+ ", valueOccurrence=" + valueOccurrence + ']';
 		}
 	}
 
@@ -105,26 +158,44 @@ public final class PlacementJointInputAnalysis {
 	private static final class Environment implements Comparable<Environment> {
 		private final Map<String,Definition> values;
 		private final Map<Integer,Definition> readSources;
+		private final String valuesKey;
+		private final String readSourcesKey;
 		private final String stableKey;
+		private final int hashCode;
 
 		Environment(Map<String,Definition> values, Map<Integer,Definition> readSources) {
-			this.values = Collections.unmodifiableMap(new TreeMap<>(values));
-			this.readSources = Collections.unmodifiableMap(new TreeMap<>(readSources));
-			stableKey = stableKey(this.values, this.readSources);
+			this(immutableSorted(values), immutableSorted(readSources), null, null);
+		}
+		private Environment(Map<String,Definition> values, Map<Integer,Definition> readSources,
+			String valuesKey, String readSourcesKey) {
+			this.values = values;
+			this.readSources = readSources;
+			this.valuesKey = valuesKey == null ? valuesKey(values) : valuesKey;
+			this.readSourcesKey = readSourcesKey == null ? readSourcesKey(readSources) : readSourcesKey;
+			stableKey = this.valuesKey + "|reads=" + this.readSourcesKey;
+			hashCode = 31 * values.hashCode() + readSources.hashCode();
 		}
 		Map<String,Definition> values() { return values; }
 		Map<Integer,Definition> readSources() { return readSources; }
 		Environment with(String variable, Definition definition) {
+			if(values.containsKey(variable) && Objects.equals(values.get(variable), definition))
+				return this;
 			Map<String,Definition> copy = new TreeMap<>(values);
 			copy.put(variable, definition);
-			return new Environment(copy, readSources);
+			Map<String,Definition> immutable = Collections.unmodifiableMap(copy);
+			return new Environment(immutable, readSources, valuesKey(immutable), readSourcesKey);
 		}
 		Environment observe(int readOrdinal, Definition definition) {
+			if(readSources.containsKey(readOrdinal) && Objects.equals(readSources.get(readOrdinal), definition))
+				return this;
 			Map<Integer,Definition> copy = new TreeMap<>(readSources);
 			copy.put(readOrdinal, definition);
-			return new Environment(values, copy);
+			Map<Integer,Definition> immutable = Collections.unmodifiableMap(copy);
+			return new Environment(values, immutable, valuesKey, readSourcesKey(immutable));
 		}
-		Environment nextBlock() { return readSources.isEmpty() ? this : new Environment(values, Map.of()); }
+		Environment nextBlock() {
+			return readSources.isEmpty() ? this : new Environment(values, Map.of(), valuesKey, "");
+		}
 		@Override public int compareTo(Environment that) { return stableKey.compareTo(that.stableKey); }
 		String stableKey() { return stableKey; }
 
@@ -134,18 +205,21 @@ public final class PlacementJointInputAnalysis {
 		}
 
 		@Override public int hashCode() {
-			return 31 * values.hashCode() + readSources.hashCode();
+			return hashCode;
 		}
 
-		private static String stableKey(Map<String,Definition> values,
-			Map<Integer,Definition> readSources) {
+		private static String valuesKey(Map<String,Definition> values) {
 			StringBuilder key = new StringBuilder();
 			for(Map.Entry<String,Definition> entry : values.entrySet()) {
 				if(key.length() > 0)
 					key.append(';');
 				key.append(entry.getKey()).append('=').append(entry.getValue().stableKey());
 			}
-			key.append("|reads=");
+			return key.toString();
+		}
+
+		private static String readSourcesKey(Map<Integer,Definition> readSources) {
+			StringBuilder key = new StringBuilder();
 			boolean firstRead = true;
 			for(Map.Entry<Integer,Definition> entry : readSources.entrySet()) {
 				if(!firstRead)
@@ -154,6 +228,10 @@ public final class PlacementJointInputAnalysis {
 				firstRead = false;
 			}
 			return key.toString();
+		}
+
+		private static <K extends Comparable<? super K>,V> Map<K,V> immutableSorted(Map<K,V> source) {
+			return Collections.unmodifiableMap(new TreeMap<>(source));
 		}
 	}
 
@@ -170,6 +248,7 @@ public final class PlacementJointInputAnalysis {
 	private final Map<Integer,Set<Observation>> observationsByRead = new TreeMap<>();
 	private final Set<String> activeFunctions = new LinkedHashSet<>();
 	private final Map<List<Integer>,List<JointTuple>> tupleCache = new java.util.HashMap<>();
+	private final Map<String,Definition[]> occurrenceDefinitionCache = new java.util.HashMap<>();
 	private Set<String> trackedVariables = Set.of();
 
 	private PlacementJointInputAnalysis(DMLProgram program,
@@ -480,8 +559,15 @@ public final class PlacementJointInputAnalysis {
 	}
 
 	private Definition occurrenceDefinition(int ordinal, String context) {
-		return new Definition(SourceKind.OCCURRENCE, occurrenceKeys.get(ordinal), ordinal, -1, context, "",
-			occurrenceKeys.get(ordinal));
+		Definition[] definitions = occurrenceDefinitionCache.computeIfAbsent(context,
+			ignored -> new Definition[occurrences.size()]);
+		Definition definition = definitions[ordinal];
+		if(definition == null) {
+			definition = new Definition(SourceKind.OCCURRENCE, occurrenceKeys.get(ordinal), ordinal, -1,
+				context, "", occurrenceKeys.get(ordinal));
+			definitions[ordinal] = definition;
+		}
+		return definition;
 	}
 
 	private Definition writeDefinition(int ordinal, Environment state, String context) {

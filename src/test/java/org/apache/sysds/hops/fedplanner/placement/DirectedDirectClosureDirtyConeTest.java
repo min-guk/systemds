@@ -381,6 +381,38 @@ public class DirectedDirectClosureDirtyConeTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	public void completeTouchedOwnerDeltaMatchesColdAndSkipsUnrelatedSlots() throws Exception {
+		Node restored = node("delta-restored"), changed = node("delta-changed"), unrelated = node("delta-unrelated");
+		List<CandidateRuleFact> before = List.of(localFact(restored), localFact(changed), localFact(unrelated));
+		List<CandidateRuleFact> after = List.of(before.get(0), excludedFact(changed), before.get(2));
+		Map<CompiledHopKey,List<Integer>> slots = new IdentityHashMap<>();
+		slots.put(restored.key(), List.of(0));
+		slots.put(changed.key(), List.of(1));
+		slots.put(unrelated.key(), List.of(2));
+		List<CandidateRuleFact> guarded = new AbstractList<>() {
+			@Override public int size() { return after.size(); }
+			@Override public CandidateRuleFact get(int index) {
+				if(index == 2)
+					throw new AssertionError("An unchanged owner outside the complete delta must not be visited");
+				return after.get(index);
+			}
+		};
+		Method method = PlacementRelationClosure.class.getDeclaredMethod("changedCandidateOwnersInSlots",
+			List.class, List.class, Map.class, Set.class);
+		method.setAccessible(true);
+		Set<CompiledHopKey> actual = (Set<CompiledHopKey>)method.invoke(null, before, guarded, slots,
+			keys(restored, changed));
+		Assert.assertEquals(changedCandidateOccurrences(before, after), actual);
+		Assert.assertEquals("a boundary change that restores an original row cancels the direct delta",
+			keys(changed), actual);
+		List<CandidateRuleFact> foreign = List.of(before.get(0), localFact(node("delta-changed")), before.get(2));
+		InvocationTargetException error = Assert.assertThrows(InvocationTargetException.class,
+			() -> method.invoke(null, before, foreign, slots, keys(changed)));
+		Assert.assertTrue(error.getCause() instanceof IllegalStateException);
+	}
+
+	@Test
 	public void supportAdditionsAndDeletionsRebuildCycleSchedule() throws Exception {
 		Node a = node("cycle-index-a"), b = node("cycle-index-b"), c = node("cycle-index-c");
 		List<CandidateRuleFact> before = List.of(excludedFact(a), supportFact(a, b), supportFact(b, c));

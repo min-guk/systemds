@@ -184,6 +184,52 @@ public class PhysicalGenerationEnvelopeTest {
 	}
 
 	@Test
+	public void absentDerivedActionsPreserveFactsWithoutConsultingLayout() throws Exception {
+		Fixture fixture = new Fixture("compiled");
+		CandidateRuleFact nativeFact = fixture.rawFact;
+		Assert.assertSame("native emissions need no derived authority rebinding", nativeFact,
+			bindDerivedAuthorities(List.of(nativeFact), Map.of(), List.of(fixture.rawNode), Map.of()).get(0));
+		Method method = PlacementRelationClosure.class.getDeclaredMethod("bindDerivedFoutRealizations",
+			List.class, Map.class, Map.class);
+		method.setAccessible(true);
+		List<?> rebound = (List<?>) method.invoke(null, List.of(nativeFact), Map.of(), Map.of());
+		Assert.assertSame("native emissions need no derived layout reconstruction", nativeFact, rebound.get(0));
+	}
+
+	@Test
+	public void ownerOverlayMatchesColdAuthorityWithoutMutatingCommittedInventory() throws Exception {
+		Fixture fixture = new Fixture("compiled");
+		DurableAnchorKey ownerAnchor = fixture.outputPool("owner-output", "owner-worker");
+		Node overlay = new Node(fixture.rawNode.key(), fixture.rawNode.kind(),
+			fixture.rawNode.valueVersion(), fixture.rawNode.emittedWork(),
+			List.of(FED_FULL_LOCAL, FED_BROADCAST), fixture.rawNode.exclusions(), List.of(ownerAnchor));
+		DerivedFoutMaterializationActionKey action = new DerivedFoutMaterializationActionKey(
+			fixture.owner, fixture.ownerVersion, fixture.ownerRule, FED_FULL_LOCAL, FED_BROADCAST,
+			ownerAnchor, fixture.owner, FType.BROADCAST, FType.BROADCAST,
+			fixture.owner.controlRegion().normalizedSignature());
+		CandidateRuleFact derived = fact(fixture.ownerRule, new CandidateEmissionFact(
+			new PlacementEmissionState(FED_BROADCAST, true), FType.FULL, action));
+		List<Node> committed = fixture.proofNodes(fixture.pool("source-pool", "source-worker"));
+		Map<CompiledHopKey,Node> committedIndex = new IdentityHashMap<>();
+		committed.forEach(node -> committedIndex.put(node.key(), node));
+		List<Node> coldNodes = new ArrayList<>(committed);
+		coldNodes.set(1, overlay);
+
+		List<CandidateRuleFact> cold = bindDerivedAuthorities(List.of(derived),
+			Map.of(fixture.owner, 1L), coldNodes, fixture.origins);
+		List<CandidateRuleFact> optimized = bindDerivedAuthoritiesOverlay(List.of(derived),
+			Map.of(fixture.owner, 1L), committed, committedIndex, overlay, fixture.origins);
+		Assert.assertEquals("the owner overlay must match a complete cold node replacement", cold, optimized);
+		DerivedFoutMaterializationActionKey rebound = optimized.get(0).allowedEmissionFacts().get(0)
+			.derivedFoutAction();
+		Assert.assertSame("the exact overlaid owner identity remains durable authority",
+			fixture.owner, rebound.durableAnchorOwner());
+		Assert.assertSame("the committed index remains an immutable input to the overlay path",
+			fixture.rawNode, committedIndex.get(fixture.owner));
+		Assert.assertSame(fixture.rawNode, committed.get(1));
+	}
+
+	@Test
 	public void stableSiblingPhysicalOwnersScanOneCommittedInventory() throws Exception {
 		PhysicalClosureFixture fixture = new PhysicalClosureFixture(false);
 		ReplayState settled = fixture.settle(fixture.initial(fixture.pool("pool-a", "worker-a")));
@@ -296,6 +342,7 @@ public class PhysicalGenerationEnvelopeTest {
 			shapes = Map.of(sourceHop, new NodeShapeFact(DataType.MATRIX, 4, 2),
 				ownerHop, new NodeShapeFact(DataType.MATRIX, 4, 4));
 			installContext(builder, Map.of(owner, 1L, source, 1L));
+			installAuthority(builder, origins, shapes);
 		}
 
 		private DurableAnchorKey pool(String id, String endpoint) {
@@ -314,7 +361,7 @@ public class PhysicalGenerationEnvelopeTest {
 		}
 
 		private Envelope materialize(DurableAnchorKey... pools) throws Exception {
-			return invokeMaterializer(List.of(rawNode), List.of(rawFact), proofNodes(pools),
+			return invokeMaterializer(builder, List.of(rawNode), List.of(rawFact), proofNodes(pools),
 				proofFacts(), edges, origins, shapes);
 		}
 
@@ -416,6 +463,7 @@ public class PhysicalGenerationEnvelopeTest {
 			cfg = cfg(occurrences.size());
 			installContext(builder, Map.of(sourceKey, 1L, firstKey, 1L, secondKey, 1L));
 			installPrivacy(builder, sourceKey, firstKey, secondKey, chain);
+			installAuthority(builder, origins, shapes);
 		}
 
 		private ReplayState initial(DurableAnchorKey pool) {
@@ -569,6 +617,17 @@ public class PhysicalGenerationEnvelopeTest {
 			constructor.newInstance(effective, protectedInputs));
 	}
 
+	private static void installAuthority(NeutralPlacementGraphBuilder builder,
+		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes) throws Exception {
+		PlacementRelationClosure closure = PlacementBuilderTestAccess.relationClosure(builder);
+		Field originsField = PlacementRelationClosure.class.getDeclaredField("origins");
+		originsField.setAccessible(true);
+		originsField.set(closure, origins);
+		Field shapesField = PlacementRelationClosure.class.getDeclaredField("shapeFactsByHop");
+		shapesField.setAccessible(true);
+		shapesField.set(closure, shapes);
+	}
+
 	private static Object cfg(int size) throws Exception {
 		Class<?> type = nested("CfgAnalysis");
 		Constructor<?> constructor = type.getDeclaredConstructor(
@@ -600,16 +659,39 @@ public class PhysicalGenerationEnvelopeTest {
 		return envelope(result);
 	}
 
-	private static Envelope invokeMaterializer(List<Node> nodes, List<CandidateRuleFact> facts,
+	private static Envelope invokeMaterializer(NeutralPlacementGraphBuilder builder,
+		List<Node> nodes, List<CandidateRuleFact> facts,
 		List<Node> proofNodes, List<CandidateRuleFact> proofFacts, List<CompiledInputEdgeFact> edges,
 		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes) throws Exception {
 		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"closeDerivedWorkerPoolMaterializationCandidates", List.class, List.class, List.class, List.class,
 			List.class, List.class, Collection.class, Map.class, Map.class);
 		method.setAccessible(true);
-		Object result = method.invoke(null, nodes, facts, proofNodes, proofFacts, edges,
+		Object result = method.invoke(PlacementBuilderTestAccess.relationClosure(builder),
+			nodes, facts, proofNodes, proofFacts, edges,
 			List.<LogicalTransientInputFact>of(), List.<Constraint>of(), origins, shapes);
 		return envelope(result);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<CandidateRuleFact> bindDerivedAuthorities(List<CandidateRuleFact> facts,
+		Map<CompiledHopKey,Long> scopes, List<Node> nodes, Map<CompiledHopKey,Hop> origins)
+		throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod("bindExactDerivedFoutAuthorities",
+			List.class, Map.class, List.class, Map.class);
+		method.setAccessible(true);
+		return (List<CandidateRuleFact>)method.invoke(null, facts, scopes, nodes, origins);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<CandidateRuleFact> bindDerivedAuthoritiesOverlay(List<CandidateRuleFact> facts,
+		Map<CompiledHopKey,Long> scopes, List<Node> nodes, Map<CompiledHopKey,Node> nodesByKey,
+		Node overlay, Map<CompiledHopKey,Hop> origins) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod("bindExactDerivedFoutAuthorities",
+			List.class, Map.class, List.class, Map.class, Node.class, Map.class);
+		method.setAccessible(true);
+		return (List<CandidateRuleFact>)method.invoke(null, facts, scopes, nodes, nodesByKey,
+			overlay, origins);
 	}
 
 	@SuppressWarnings("unchecked")
