@@ -26,6 +26,7 @@ import time
 import traceback
 import uuid
 import xml.etree.ElementTree as ET
+import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import matrix_runtime_compare as runtime_compare
@@ -67,6 +68,7 @@ DIAGNOSTIC_DETAIL_TRACE_OPTIONS = ('-Dsysds.fedplanner.trace=true',
                                    '-Dsysds.fedplanner.trace.details=true')
 DIAGNOSTIC_COMPACT_OPTIONS = ('-Dsysds.fedplanner.regional.compact=true',)
 CP = '/candidate/probe/classes:/candidate/SystemDS.jar:/opt/systemds/target/lib/*'
+BUILTIN_SCRIPTS = ('steplm.dml', 'lmCG.dml')
 
 
 def sha(path):
@@ -75,6 +77,41 @@ def sha(path):
         for block in iter(lambda: stream.read(1024 * 1024), b''):
             digest.update(block)
     return digest.hexdigest()
+
+
+def verify_builtin_sync(jar):
+    """Require engine, evaluation, and packaged STEP-LM builtins to be identical."""
+    sources = {}
+    for name in BUILTIN_SCRIPTS:
+        source = REPO / 'scripts/builtin' / name
+        canonical = EVALUATION / 'campaign/engine_workflow/scripts/builtin' / name
+        if not source.is_file():
+            raise RuntimeError(f'source builtin missing: {source}; sync the engine source first')
+        if not canonical.is_file():
+            raise RuntimeError(f'canonical evaluation builtin missing: {canonical}; '
+                               'restore the evaluation snapshot before campaign initialization')
+        source_bytes = source.read_bytes()
+        if source_bytes != canonical.read_bytes():
+            raise RuntimeError(f'source builtin {source} differs from canonical evaluation '
+                               f'snapshot {canonical}; sync the engine source before rebuilding')
+        sources[name] = source_bytes
+    if not Path(jar).is_file():
+        raise RuntimeError(f'production JAR missing: {jar}; rebuild the exact synchronized source')
+    try:
+        with zipfile.ZipFile(jar) as archive:
+            for name, source_bytes in sources.items():
+                entry = f'scripts/builtin/{name}'
+                try:
+                    packaged = archive.read(entry)
+                except KeyError as error:
+                    raise RuntimeError(f'JAR builtin missing: {entry}; rebuild the production JAR '
+                                       'from the synchronized source') from error
+                if packaged != source_bytes:
+                    raise RuntimeError(f'JAR builtin {entry} differs from source bytes; rebuild the '
+                                       'production JAR from the synchronized source')
+    except zipfile.BadZipFile as error:
+        raise RuntimeError(f'malformed production JAR {jar}; rebuild the exact synchronized source') \
+            from error
 
 
 def dump(path, value):
@@ -174,7 +211,10 @@ def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False, dire
         selection_raw, _ = read_runtime_selection(runtime_selection)
     manifest_path = root / 'manifest.json'
     jar = REPO / 'target/systemds-3.4.0-SNAPSHOT.jar'
-    files = sorted(p for p in (REPO / 'src/main').rglob('*') if p.is_file()) + [REPO / 'pom.xml']
+    verify_builtin_sync(jar)
+    builtin_sources = [REPO / 'scripts/builtin' / name for name in BUILTIN_SCRIPTS]
+    files = (sorted(p for p in (REPO / 'src/main').rglob('*') if p.is_file())
+             + [REPO / 'pom.xml', *builtin_sources])
     if not jar.is_file() or jar.stat().st_mtime_ns < max(p.stat().st_mtime_ns for p in files):
         raise RuntimeError('production JAR is missing/stale; build the exact source first')
     if not PROBE_SOURCE.is_file():
