@@ -204,8 +204,7 @@ final class ExactActivationClassFactorDecomposition {
 			.append(source.domainSize()).append("|sourceActive=")
 			.appendBooleanArray(activeSource).append("|sourcePrices=");
 		for(double price : prices)
-			descriptor.append(Long.toUnsignedString(Double.doubleToRawLongBits(price), 16))
-				.append(',');
+			descriptor.appendUnsignedHexWithComma(Double.doubleToRawLongBits(price));
 		for(int index = 0; index < demands.size(); index++) {
 			Demand demand = demands.get(index);
 			descriptor.append("|demand=").append(index).append(':')

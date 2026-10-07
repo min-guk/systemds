@@ -71,6 +71,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartit
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
@@ -926,7 +927,7 @@ public final class ExactPhysicalCostModel {
 			digestBuffer[buffered++] = '?';
 		}
 
-		private FingerprintWriter appendUnsignedHexWithComma(long value) {
+		FingerprintWriter appendUnsignedHexWithComma(long value) {
 			flushPendingHighSurrogate();
 			if(hexOffset == unsignedHexBuffer.length || lastBits != value) {
 				lastBits = value;
@@ -1568,6 +1569,9 @@ public final class ExactPhysicalCostModel {
 			// Keep its full identity once for this producer, including after the
 			// analysis-wide serialization cache has reached its retention limit.
 			Map<ExactPhysicalModel.Alternative,String> outputLayouts = new IdentityHashMap<>();
+			// Keep immutable action text and its cached String hash for this producer.
+			// Sharing groups still compare the full physical emission value below.
+			Map<RelocationActionKey,String> relocationEmissions = new IdentityHashMap<>();
 			int[] outputWorkerCounts = new int[producer.alternatives().size()];
 			// Group ownership and activation remain distinct. Only their unit prices
 			// share this producer-local observation of immutable alternatives and maps.
@@ -1613,7 +1617,8 @@ public final class ExactPhysicalCostModel {
 						if(relocation && runtimeCollect) {
 							var action = (RelocationAction)relocationSupply.action();
 							var key = new Key(Direction.DOWNLOAD, action.key().materializationFType(),
-								BoundaryMode.RUNTIME_RELOCATED_INPUT, RelocationSelections.physicalEmissionIdentity(action.key()),
+								BoundaryMode.RUNTIME_RELOCATED_INPUT,
+								relocationEmissions.computeIfAbsent(action.key(), RelocationSelections::physicalEmissionIdentity),
 								physicalWorkerCounts.count(action.key().durableAnchor()), bytes);
 							boolean[] active = new boolean[consumer.alternatives().size()];
 							active[value] = true;
@@ -1637,7 +1642,8 @@ public final class ExactPhysicalCostModel {
 						.equals(producer.node().valueVersion())) {
 						var action = (RelocationAction)relocationSupply.action();
 						var key = new Key(Direction.UPLOAD, action.key().materializationFType(),
-							uploadBoundaryMode(analysis, edge), RelocationSelections.physicalEmissionIdentity(action.key()),
+								uploadBoundaryMode(analysis, edge),
+								relocationEmissions.computeIfAbsent(action.key(), RelocationSelections::physicalEmissionIdentity),
 							physicalWorkerCounts.count(action.key().durableAnchor()), bytes);
 						List<Demand> demands = grouped.computeIfAbsent(key, ignored -> new ArrayList<>());
 						Demand demand = demands.stream().filter(d -> d.edge().equals(endpoint)).findFirst().orElse(null);

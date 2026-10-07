@@ -78,7 +78,11 @@ public class ExactQuotientLogicalCellTraversalTest {
 			int[][] actual = optimizedClasses(frozen, variable, active, incident, ties[variable], constantHash);
 			Assert.assertArrayEquals("classes variable=" + variable + " constant=" + constantHash,
 				box(expected), box(actual));
-			if(!constantHash)
+			// Closed hard tables may use a sparse private bucket key. Their exact class
+			// partition above, followed by full equality, remains authoritative.
+			boolean rawHashStable = incident.stream()
+				.noneMatch(factor -> frozen.factor(factor).isHardTable());
+			if(!constantHash && rawHashStable)
 				for(int value = 0; value < active[variable].length; value++)
 					if(active[variable][value])
 						Assert.assertArrayEquals("hash variable=" + variable + " value=" + value,

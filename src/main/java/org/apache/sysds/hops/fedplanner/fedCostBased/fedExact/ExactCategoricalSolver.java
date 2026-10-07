@@ -150,6 +150,7 @@ public final class ExactCategoricalSolver {
 
 		List<Variable> scope() { return scope; }
 		boolean isHardTable() { return hardValues != null; }
+		HardTable hardTable() { return hardValues; }
 		Factor rebindOwned(List<Variable> reboundScope) {
 			if(denseValues != null)
 				return denseOwned(reboundScope, denseValues);
@@ -284,6 +285,19 @@ public final class ExactCategoricalSolver {
 		}
 		int cells() { return cells; }
 		int finiteCount() { return cells - forbiddenCount; }
+		boolean packed() { return functional == null; }
+		boolean sparseExceptionsForbidden() { return forbiddenCount <= cells - forbiddenCount; }
+		int sparseExceptionCount() { return Math.min(forbiddenCount,cells - forbiddenCount); }
+		int packedWordCount() { return (int)(((long)cells + 63L) >>> 6); }
+		long sparseExceptionWord(int word, boolean exceptionsForbidden) {
+			if(functional != null || word < 0 || word >= packedWordCount())
+				throw new IllegalArgumentException("EXACT_VE_HARD_EXCEPTION_WORD_INVALID");
+			long stored = forbidden.length == 0 ? 0L : forbidden[word];
+			long exceptions = exceptionsForbidden ? stored : ~stored;
+			if(word == packedWordCount() - 1 && (cells & 63) != 0)
+				exceptions &= (1L << (cells & 63)) - 1L;
+			return exceptions;
+		}
 		HardTable compactAllFeasible() {
 			return forbiddenCount == 0 ? new HardTable(cells,new long[0]) : this;
 		}

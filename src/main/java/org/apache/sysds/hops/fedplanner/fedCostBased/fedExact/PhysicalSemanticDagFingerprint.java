@@ -545,7 +545,9 @@ final class PhysicalSemanticDagFingerprint {
 				digest.update(ABSENT);
 			else {
 				digest.update((byte)1);
-				writeText(value);
+				writeInt(value.length());
+				// Typed authority strings recur across many physical alternatives.
+				literalBytes.write(value, digest, textBuffer);
 			}
 		}
 

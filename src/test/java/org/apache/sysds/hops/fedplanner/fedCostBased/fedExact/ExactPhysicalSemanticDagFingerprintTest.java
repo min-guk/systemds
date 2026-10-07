@@ -177,6 +177,28 @@ public class ExactPhysicalSemanticDagFingerprintTest {
 	}
 
 	@Test
+	public void sharedNullableTypedTextUsesLosslessByteMemo() {
+		String value = new String("typed-\ud800-" + "x".repeat(4096));
+		Map<String,String> firstFields = new LinkedHashMap<>();
+		firstFields.put("shared", value);
+		firstFields.put("absent", null);
+		List<CandidateRuleFact> facts = List.of(
+			fact("first", emissions(), firstFields),
+			fact("second", emissions(), firstFields));
+		PhysicalSemanticDagFingerprint cached = new PhysicalSemanticDagFingerprint(null, 1L << 20);
+		PhysicalSemanticDagFingerprint uncached = new PhysicalSemanticDagFingerprint(null, 0L);
+		String expected = IndependentPhysicalSemanticDagOracle.candidates(facts);
+		Assert.assertEquals(expected, cached.candidateFactsForTest(facts));
+		Assert.assertEquals(expected, uncached.candidateFactsForTest(facts));
+		Assert.assertTrue("nullable typed payload should reuse its exact UTF-16 bytes",
+			cached.literalByteMemoSnapshotForTest().convertedUtf16Units()
+				< uncached.literalByteMemoSnapshotForTest().convertedUtf16Units());
+		Assert.assertTrue(cached.literalByteMemoSnapshotForTest().hits() > 0);
+		cached.clearLiteralByteMemo();
+		Assert.assertEquals(0, cached.literalByteMemoSnapshotForTest().retainedEstimatedBytes());
+	}
+
+	@Test
 	public void repeatedCandidateIdentityDoesNotReplayLargeSemanticText() {
 		java.lang.management.ThreadMXBean base = ManagementFactory.getThreadMXBean();
 		Assume.assumeTrue(base instanceof com.sun.management.ThreadMXBean);

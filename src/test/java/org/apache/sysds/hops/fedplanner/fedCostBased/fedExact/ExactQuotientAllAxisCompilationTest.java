@@ -151,7 +151,11 @@ public class ExactQuotientAllAxisCompilationTest {
 			int[][] actual = optimizedClasses(frozen, variable, active, incident, ties[variable], constantHash);
 			Assert.assertArrayEquals("classes variable=" + variable + " constant=" + constantHash,
 				box(expected), box(actual));
-			if(!constantHash)
+			// Numeric tables retain their byte-for-byte hash stream. Closed hard tables may
+			// use a private sparse key; their exact classes above remain the public contract.
+			boolean rawHashStable = incident.stream()
+				.noneMatch(factor -> frozen.factor(factor).isHardTable());
+			if(!constantHash && rawHashStable)
 				for(int value = 0; value < active[variable].length; value++)
 					if(active[variable][value])
 						Assert.assertArrayEquals("hash variable=" + variable + " value=" + value,

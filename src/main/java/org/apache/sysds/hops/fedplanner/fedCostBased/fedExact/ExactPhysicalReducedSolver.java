@@ -1330,15 +1330,50 @@ final class ExactPhysicalReducedSolver {
 						}
 				}
 			if(relevant) {
-				ExactCategoricalSolver.FunctionalMap mapping = frozen.factor(factor).functionalMapping();
-				if(mapping != null && scope[0] < quotientVariableCount && scope[1] >= quotientVariableCount)
-					compileFunctionalObservations(mapping, scope, active, hashes);
+				ExactCategoricalSolver.Factor frozenFactor = frozen.factor(factor);
+				ExactCategoricalSolver.FunctionalMap mapping = frozenFactor.functionalMapping();
+				if(mapping != null)
+					compileFunctionalObservations(mapping,scope,active,quotientVariableCount,hashes);
+				else if(frozenFactor.isHardTable()
+					&& preferSparseHardObservations(frozenFactor.hardTable(),scope,active))
+					compileHardObservations(frozenFactor.hardTable(),scope,active,
+						quotientVariableCount,hashes);
 				else
 					compileFactorObservations(frozen,factor,scope,active,quotientVariableCount,
 						hashes,0,0);
 			}
 		}
 		return hashes;
+	}
+
+	/** Choose one representation for the complete factor occurrence, without changing its domain. */
+	private static boolean preferSparseHardObservations(ExactCategoricalSolver.HardTable table,
+		int[] scope, boolean[][] active) {
+		if(!table.packed())
+			return false;
+		long activeCartesian = 1L;
+		for(int variable : scope) {
+			int activeValues = 0;
+			for(boolean value : active[variable])
+				if(value)
+					activeValues++;
+			if(activeValues == 0)
+				return false;
+			activeCartesian = saturatedMultiply(activeCartesian,activeValues);
+		}
+		long sparseWork = table.sparseExceptionCount() == 0 ? 0L
+			: saturatedAdd(table.packedWordCount(),
+				saturatedMultiply(scope.length,table.sparseExceptionCount()));
+		return sparseWork < activeCartesian;
+	}
+
+	private static long saturatedMultiply(long left, long right) {
+		return left == 0L || right == 0L ? 0L
+			: left > Long.MAX_VALUE / right ? Long.MAX_VALUE : left * right;
+	}
+
+	private static long saturatedAdd(long left, long right) {
+		return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
 	}
 
 	private static int activeFunctionalTarget(ExactCategoricalSolver.FunctionalMap mapping,
@@ -1353,14 +1388,81 @@ final class ExactPhysicalReducedSolver {
 	 * equality check remains authoritative, and canonical representative order is unchanged.
 	 */
 	private static void compileFunctionalObservations(ExactCategoricalSolver.FunctionalMap mapping,
-		int[] scope, boolean[][] active, ObservationHashes hashes) {
+		int[] scope, boolean[][] active, int quotientVariableCount, ObservationHashes hashes) {
 		int source = scope[0];
-		for(int row = 0; row < active[source].length; row++)
+		int target = scope[1];
+		boolean[] reached = target < quotientVariableCount
+			? new boolean[active[target].length] : null;
+		for(int row = 0; row < active[source].length; row++) {
 			if(active[source][row]) {
-				long profile = activeFunctionalTarget(mapping, row, active[scope[1]]) + 1L;
-				hashes.first[source][row] = mix(hashes.first[source][row], profile);
-				hashes.second[source][row] = mix(hashes.second[source][row], Long.rotateLeft(profile, 23));
+				hashes.functionalRows++;
+				int mapped = mapping.target(row);
+				if(reached != null && mapped >= 0)
+					reached[mapped] = true;
+				if(source < quotientVariableCount) {
+					long profile = activeFunctionalTarget(mapping, row, active[scope[1]]) + 1L;
+					hashes.first[source][row] = mix(hashes.first[source][row], profile);
+					hashes.second[source][row] = mix(hashes.second[source][row],
+						Long.rotateLeft(profile, 23));
+				}
 			}
+		}
+		if(reached != null)
+			for(int column = 0; column < reached.length; column++)
+				if(active[target][column]) {
+					long profile = reached[column] ? column + 1L : 0L;
+					hashes.first[target][column] = mix(hashes.first[target][column],profile);
+					hashes.second[target][column] = mix(hashes.second[target][column],
+						Long.rotateLeft(profile,23));
+				}
+	}
+
+	/**
+	 * Compile an exact hard profile from the smaller global polarity. Each token is
+	 * the row-major exception coordinate with the observed axis removed. The full
+	 * equality check remains authoritative for collisions.
+	 */
+	private static void compileHardObservations(ExactCategoricalSolver.HardTable table,
+		int[] scope, boolean[][] active, int quotientVariableCount, ObservationHashes hashes) {
+		if(!table.packed())
+			throw new IllegalArgumentException("EXACT_VE_HARD_PROFILE_REPRESENTATION_INVALID");
+		if(table.sparseExceptionCount() == 0)
+			return;
+		boolean exceptionsForbidden = table.sparseExceptionsForbidden();
+		for(int word = 0; word < table.packedWordCount(); word++) {
+			long exceptions = table.sparseExceptionWord(word,exceptionsForbidden);
+			hashes.hardWords++;
+			while(exceptions != 0L) {
+				int bit = Long.numberOfTrailingZeros(exceptions);
+				int cell = (word << 6) + bit;
+				exceptions &= exceptions - 1L;
+				hashes.hardExceptions++;
+				int remaining = cell;
+				boolean activeCell = true;
+				for(int position = scope.length - 1; position >= 0; position--) {
+					int domain = active[scope[position]].length;
+					int value = remaining % domain;
+					remaining /= domain;
+					hashes.coordinates[position] = value;
+					activeCell &= active[scope[position]][value];
+				}
+				if(!activeCell)
+					continue;
+				for(int axis = 0, stride = table.cells(); axis < scope.length; axis++) {
+					int domain = active[scope[axis]].length;
+					stride /= domain;
+					int variable = scope[axis];
+					if(variable < quotientVariableCount) {
+						long coordinate = (long)(cell / (domain * stride)) * stride + cell % stride;
+						long token = (coordinate << 1) | (exceptionsForbidden ? 1L : 0L);
+						int value = hashes.coordinates[axis];
+						hashes.first[variable][value] = mix(hashes.first[variable][value],token);
+						hashes.second[variable][value] = mix(hashes.second[variable][value],
+							Long.rotateLeft(token,23));
+					}
+				}
+			}
+		}
 	}
 
 	private static void compileFactorObservations(ExactCategoricalSolver.FrozenInputs frozen,
@@ -1451,6 +1553,9 @@ final class ExactPhysicalReducedSolver {
 		private final long[][] second;
 		private final int[] coordinates;
 		private long cellReads;
+		private long hardWords;
+		private long hardExceptions;
+		private long functionalRows;
 
 		private ObservationHashes(long[][] first, long[][] second, int[] coordinates) {
 			this.first = first;
