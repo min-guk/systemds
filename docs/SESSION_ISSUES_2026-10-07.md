@@ -87,3 +87,19 @@
 - 최신 통합 Java55클래스401건, Python27건, package PASS. baseline/candidate 독립 fixed-point9건씩 PASS. build 중 source변경0, candidate frozen main source1651개/class-resource4361개가 Maven 결과와 hash 일치. production 및 harness 최종 독립 검토 blocker0.
 - JFR evidence 검사에서 nonempty 손상 파일이 통과할 수 있다는 리뷰를 반영해 bounded jfr summary parser 성공도 필수로 했다. 실제 기록 성공과 잘린11바이트 파일 거부 smoke를 확인했다. 비프로파일 학습 경로에는 parser 호출을 추가하지 않는다.
 - 상세: [LogReg 보고서](LOGREG_PARTITION_WORKLIST_2026-10-07.md), [검증 JSON](experiments/logreg-partition-worklist-20261007/validation.json). StepLM/GLM 추가 변경은 인계 패치로 보존했으며 현재 production에 포함하지 않았다.
+
+## LogReg 후속 — 전체 컴파일 수십 초 해소를 위한 구조 수정 (진행 중)
+
+- **새 증상/목표**: 사용자는 다른 workload의 planning이1초대인데 LogReg가 여전히40초인 점을 지적했다. 기존 채택은 부분 개선이며 충분한 해결이 아니다. 이전동일run의 lmCG/L2SVM checkpoint1.005/1.847초와 비교하면 최신LogReg checkpoint7.716초도 느리다. 전체컴파일38.768초 중commonanalysis28.999초(74.8%)가 우선병목이다. 타이밍구간을혼동하지않는다.
+- **근거/가설**: 기존worklist는 한fixedpoint내fullsweep만줄였다. PhysicalCandidateState가 owner하나commit할때마다 singlePartitionProofs를폐기해 전체realization/역의존graph를새로만든다. WorkerPoolAnchorResolver는이미owner-delta색인을쓰므로이를새개선으로주장하지않으며, 전체mapcopy·querymemo초기화비용은별도로측정한다.
+- **수정전계획**: 먼저actualLogReg진단overlay에서기존SearchSpaceMetrics를켜analysisphase/작업량을기록한다(계측시간을성능근거로사용하지않음). single-partition은owner별동등reference마지막slot의미를보존하는revision-localindex를만들고, old/new dependency그래프의변경cone을bottom으로되돌려재계산한다. missingref의reverseedge도유지해나중source추가를전파한다. 물리closureinstance밖cache는없다.
+- **검증/위험**: source삭제로cycleground가사라지는경우, reference동일support변경, multipart/unknown뒤늦은추가, missingref추가·제거, 다중commit, owner간동등reference충돌을freshfullrecompute와비교한다. 기존250개독립synchronousoracle도유지한다. 모든legal선택·cost·학습16계수·runtimeaudit를보존하고계측없는Docker반복으로채택한다. 삭제시이전truebit를그대로재사용하는cache는금지한다.
+
+- **CFG 추가 수정 전 근거/계획**: 새 실제 LogReg 진단에서 CFG_REPLAY exclusive 10.253초, 누적 할당 18.406GB를 확인했다. JFR CFG CPU 178샘플 중 candidateRealization 전체 검색 69개, compatibility 문자열 생성 44개다. replay 내부 자연 TreeSet을 기존 canonicalComparator로 바꿔 동일 정렬 키를 재사용하고, 기존 facts와 해당 reader replacementFacts의 정확한 reference 합집합 membership으로 edge 생존을 판정한다. AVAILABLE/executable 필터를 추가하지 않으며 같은 owner의 기존 후보도 유지한다. 두 개선은 각각 동결하여 실제 학습 ablation으로 평가한다.
+- **선행 회귀 공백**: 기존 PhysicalGenerationEnvelopeTest 7건 중 4건은 baseline과 새 proof index 양쪽에서 동일 실패했다(3건 origins=null, 1건 null reflection receiver). 기존401건의 구성원이 아니며 이번 변경의 회귀 성공으로 집계하지 않는다. 기존 proof/refinement와 신규 incremental 회귀17건은 통과했다.
+- **진단 실행 환경**: metrics-01은 stage 도중 exit120, 원인은 미확정이다. metrics-02는 /grid stage가 Docker daemon에서 보이지 않아 container-run.sh missing으로 실행 전 실패했다. home stage를 사용한 metrics-03은 CP/FED 전체 학습 PASS. 실패 두 건을 성능 자료로 사용하지 않는다.
+
+- **Ablation 중간 판단**: sort-only 및 CFG index 단독 실행은 각각39.49/38.54초로 기준39.79초 대비 아직 효과가 작다. 기존 canonicalComparator가 transient compatibility/proof에 대해서는 긴 normalizedSignature 전체를 literal로 감싸므로, 다른 지원 타입처럼 source/reader/proof 하위 구조를 공유하는 segmented ordering으로 확장해 별도 평가한다. 기존 UTF-16 정렬과 구분자/길이/중복 제거 의미를 완전히 유지하며 서로 다른 anchor/native exactness/Unicode 입력을 legacy 문자열 oracle와 대조한다. 기존 결합 후보와 구분해 측정한다.
+
+- **비용 계산 추가 수정**: JFR에서 최종 planner 9.183초 중 비용 표면 2.931초, optimizer 3.996초를 확인했다. 동일 Alternative의 worker count를 새 visiting set으로 반복 계산하는 경로를 개선한다. PhysicalWorkerCounts 호출 범위에 완료된 root exact 결과만 identity memo로 저장하고, recursive 내부 결과와 caller별 fallback은 저장하지 않는다. 기존 durable anchor early return도 유지한다. 순환 A↔B, fallback 3/7, 공유 support, 동일/동등-but-distinct root와 호출 간 격리를 회귀로 검증했다. 실제 비용/탐색 parity와 성능 채택은 별도 최종 실행에서 확인한다.
+- **큰 factor 해석 정정**: metrics-03의 최대 1,470,976 logical-cell factor는 partial proof 9회·leaf 0회·약3.95ms로 전체 zero를 인증했다. 현재 wall-time 병목으로 지목하지 않는다. shared preparation 0.382초, seed boundary 40회가 약2.370초다. assignments 총수와 실제 시간 병목을 구분한다.

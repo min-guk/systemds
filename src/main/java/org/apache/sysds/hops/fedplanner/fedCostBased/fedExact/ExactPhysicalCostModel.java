@@ -2838,13 +2838,17 @@ public final class ExactPhysicalCostModel {
 		PhysicalWorkerCounts physicalWorkerCounts) {
 		if(alternative.durableAnchor() != null)
 			return physicalWorkerCounts.count(alternative.durableAnchor());
-		if(alternative.realization() != null) {
-			int exact = realizationWorkerCount(analysis, alternative.realization(),
-				alternative.supportClause(), new LinkedHashSet<>(), physicalWorkerCounts);
-			if(exact > 0)
-				return exact;
+		Integer cached = physicalWorkerCounts.rootExact(alternative);
+		int exact;
+		if(cached != null)
+			exact = cached;
+		else {
+			exact = alternative.realization() == null ? 0
+					: realizationWorkerCount(analysis, alternative.realization(),
+						alternative.supportClause(), new LinkedHashSet<>(), physicalWorkerCounts);
+			physicalWorkerCounts.rememberRootExact(alternative, exact);
 		}
-		return Math.max(1, fallbackWorkers);
+		return exact > 0 ? exact : Math.max(1, fallbackWorkers);
 	}
 
 	private static int realizationWorkerCount(PlacementAnalysis analysis,
@@ -2913,6 +2917,18 @@ public final class ExactPhysicalCostModel {
 
 	private static final class PhysicalWorkerCounts {
 		private final IdentityHashMap<DurableAnchorKey,Integer> byAnchor = new IdentityHashMap<>();
+		// Only completed root proofs are reusable: recursive states depend on the
+		// visiting set, while fallback is applied after this exact-result cache.
+		private final IdentityHashMap<ExactPhysicalModel.Alternative,Integer> exactByRoot =
+			new IdentityHashMap<>();
+
+		private Integer rootExact(ExactPhysicalModel.Alternative alternative) {
+			return exactByRoot.get(Objects.requireNonNull(alternative, "alternative"));
+		}
+
+		private void rememberRootExact(ExactPhysicalModel.Alternative alternative, int exact) {
+			exactByRoot.put(Objects.requireNonNull(alternative, "alternative"), exact);
+		}
 
 		private int count(DurableAnchorKey anchor) {
 			Integer cached = byAnchor.get(Objects.requireNonNull(anchor, "anchor"));
