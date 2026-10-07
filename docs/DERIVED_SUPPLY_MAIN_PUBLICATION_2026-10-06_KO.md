@@ -42,7 +42,7 @@ Candidate/witness relation, legality/privacy, TW/TR 또는 function boundary 제
 |---|---|
 | 관련 Java 회귀 79 classes | **708 cases: 703 PASS, 기존 skip 5, 실패/오류 0** |
 | Global/Local canonical 비용 및 sharing | production surface의 canonical recost, 선택 lifetime, receipt 검증 PASS |
-| retirement/eviction | 최종 `OwnedRefedReuseTest` 30/30 PASS. 같은 owner/version/layout도 삭제된 copy는 재생성 |
+| retirement/eviction | 최종 `OwnedRefedReuseTest` 30/30 PASS. 일반 cache의 퇴출 후 재생성과 planned copy의 LRU 제외·source 정리를 각각 검증 |
 | Maven `test-compile`, shell syntax, diff whitespace | PASS |
 | 변경 없는 Python joint-boundary harness | 20/20 PASS |
 | Docker model/runtime sharing proof | **12/12 PASS**, worker 횟수·수치 결과·alias cleanup 검증 |
@@ -86,7 +86,10 @@ all-green이라고 주장하지 않는다. 앞선 실패/귀속 증거도 게시
 Docker root는 `/grid/3/cofee-lm-sweep-mchoi-20260914/invariant-fout-sharing-20261006/`이다.
 모든 runtime 검증은 `scripts/fedplanner/run_LAN_docker.sh --joint-boundary-e2e`로 실행했다.
 
-공유 copy의 해제는 원본 value invalidation/removal 또는 기존 cache retirement/eviction에
-따른다. Exact last-consumer 해제, residency/memory budget을 포함한 비용 최적화, 외부 코드의
-같은 remote-ID 덮어쓰기 감지는 추가하지 않았다. 별도로 기록된 large-factor/메모리/함수
-authority 문제 전체가 해결됐다는 의미도 아니다.
+Planner가 공유하도록 정한 copy는 일반 REFED cache의 LRU/용량 퇴출에서 제외되고,
+원본 value invalidation/removal 또는 명시적인 cache 정리로 해제된다. 기존 opportunistic
+cache의 퇴출·재생성과 구분해야 한다. Exact last-consumer 해제, residency/memory budget을
+포함한 비용 최적화, 외부 코드의 같은 remote-ID 덮어쓰기 감지는 추가하지 않았다.
+자동 DML 선택부터 실행까지의 추가 검증과 copy 유지의 메모리 측정 범위는
+[후속 검증 설명](DERIVED_SUPPLY_E2E_AND_MEMORY_VALIDATION_2026-10-06_KO.md)에 정리했다.
+별도로 기록된 large-factor/메모리/함수 authority 문제 전체가 해결됐다는 의미도 아니다.

@@ -38,6 +38,7 @@ import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysds.runtime.controlprogram.caching.TensorObject;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
+import org.apache.sysds.runtime.controlprogram.federated.RefedReuseAudit;
 import org.apache.sysds.runtime.controlprogram.federated.MatrixLineagePair;
 import org.apache.sysds.runtime.controlprogram.paramserv.homomorphicEncryption.SEALClient;
 import org.apache.sysds.runtime.data.TensorBlock;
@@ -940,7 +941,7 @@ public class ExecutionContext {
 			Statistics.removeCPMemObject(System.identityHashCode(mo));
 		boolean hasReferences = getVariables().hasReferences(mo);
 		if (mo instanceof MatrixObject && mo.isCleanupEnabled() && !hasReferences)
-			FederationUtils.retireOwnedRefedReuseMaps((MatrixObject) mo);
+			FederationUtils.retireOwnedRefedReuseMaps((MatrixObject) mo, RefedReuseAudit.SOURCE_REMOVAL);
 		//early abort w/o scan of symbol table if no cleanup required
 		boolean fileExists = (mo.isHDFSFileExists() && mo.getFileName() != null);
 		boolean isFederated = (mo instanceof MatrixObject) && ((MatrixObject)mo).isFederated();

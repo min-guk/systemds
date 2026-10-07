@@ -1,0 +1,860 @@
+{
+  "schema": "derived-supply-publication-v1",
+  "sourceCommit": "3fe367b213",
+  "mainParent": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+  "workspace": "/home/mchoi/w1357-derived-supply-main-20261007",
+  "evidenceRoot": "/grid/3/cofee-lm-sweep-mchoi-20260914/derived-supply-main-20261007",
+  "publicationStatus": "validated before final merge commit/push",
+  "java": {
+    "totals": {
+      "tests": 134,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "classes": [
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDerivedSupplySharingTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "0.113",
+        "sha256": "8d53b008cef40fd242fd83f7e0b166d8e47d191574dd7b382e2f4295b32c094b"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactDurableOutputSupportTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "0.075",
+        "sha256": "bedbe2b83b9c8b1e72f19a80a9a7a76d8fd4006610a9b026fa5cc10ac9f222e6"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactLoopPhiSupplySharingTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "55.647",
+        "sha256": "c01a91f96708a8cd666168a1e7a4c68189e9d519ea86d951a7cb25feaee46bc5"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPartialHardFactorTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "0.13",
+        "sha256": "0ae797994f195db880ecd0ba05bcb1c60247cbd842042d1dac444aa6bd63359a"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalRealizationSupportFactorCacheTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "6.203",
+        "sha256": "ad52df5cf90563387df3ad377a1b3b808591c4420c3b25343215a65059b50d5d"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactSharedSourceOrdinalLifecycleTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "0.074",
+        "sha256": "fac41114ef38eecd264f05e3f1886684a3295b591a05432b2737ed5ff68224ba"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactSharedSourceOrdinalReuseTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "0.135",
+        "sha256": "334061e71d65f9511199a8a74aa5c0957c9d9dba95e288867fb25c6c52c6348f"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactStagedSupplyCanonicalCostTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "7.748",
+        "sha256": "3f29b076b8f497049364b8ee049d7e70fe3bb7dc942fd0de3b237e771d01ae6f"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointAliasProjectionTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "10.91",
+        "sha256": "82f574d7956a467a7a8130a479a87e3ea314966ad9d9d0e66f074bc813fdfd87"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointPartialTruthTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "7.567",
+        "sha256": "20d41e6755220b067fcb3465dfb9368dfcb968a0b8ab38851a86fae4ec5ab886"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointPhysicalCostRowsPrefixTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "0.078",
+        "sha256": "f554a8ceec1d79371293190cf05171fad93f20ad464b6b8e6dde13013ef2b997"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.RuntimeReadLegalityParityTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "2.507",
+        "sha256": "9881842fe1bd9de864a74076e1afc847faff1848cd3f6d8edff88deb339fc816"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.CandidateReceiptAssignmentCompletenessTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "1.852",
+        "sha256": "12a0749e70d240c9026866c5f07aa4ec23f975069a4911fe479b91fa94885a66"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.JointValueMapSelectionLegalityTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "7.922",
+        "sha256": "35d38ad320d8be1fa12b5374613208277bbbc23b87f0df92e9ef29320692c3c7"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.LoopIdentityBackedgeClosureTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "57.737",
+        "sha256": "2c7892598924d481576ffda58e908011db57bcacc9f41e6acd5145608849fbdd"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.PhysicalSinglePartitionProofFixedPointTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "0.447",
+        "sha256": "088ba70e23943f6b83e45d4d5588d6834b8705060849343c76e73ebbba33ebbb"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.PolicyGreedyGroundingTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "0.457",
+        "sha256": "80d6df733d73ee1634c8bbd526547c4961da2160545ba9aaba7eec2b9064899d"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.ProductionDecodedPlanSpaceCompletenessTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "2.896",
+        "sha256": "5b9b0f527edb3840f3670b8f6e6c1fe78896bd0479481486edc1512b3ee32fd7"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.PublicationSupportClosureTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "0.15",
+        "sha256": "09c9196eae028ec6d0ec582990a23bdaa47a4a001017af2eeeb63025fa2cc5e6"
+      },
+      {
+        "class": "org.apache.sysds.hops.fedplanner.placement.selector.PolicyGreedyPlacementSelectorTest",
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "3.904",
+        "sha256": "62c2cd4e9aae8a76dcccbb442b91d710ae4b6f4cfba0d2d3231b50fd85705d0b"
+      },
+      {
+        "class": "org.apache.sysds.runtime.controlprogram.federated.OwnedRefedReuseTest",
+        "tests": 30,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "0.504",
+        "sha256": "471b9002b111932da098d143e74730f42f76a52412267149375ba27b1cfd5311"
+      },
+      {
+        "class": "org.apache.sysds.runtime.controlprogram.federated.RefedReuseAuditTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "0.361",
+        "sha256": "a5cb44170bcff85ddb9c93a448cf053b887851ce0600574e5f8e642543c14235"
+      },
+      {
+        "class": "org.apache.sysds.test.component.federated.FederationUtilsRefedReuseLayoutTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "timeSeconds": "0.337",
+        "sha256": "9571a6aede108a2a010f8fdf90ea66d85bb2c2ff52672df8b29dd33426e7878f"
+      }
+    ]
+  },
+  "python": {
+    "passed": 52,
+    "tests": 52
+  },
+  "mavenPackage": "PASS",
+  "automaticDml": [
+    {
+      "run": "publication-automatic-final-r1",
+      "kind": "invariant",
+      "planner": "local",
+      "passed": true,
+      "numericMatch": true,
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "22aeb9e65f6cfde1",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          }
+        ],
+        "passed": true
+      },
+      "canonical": {
+        "certificateObjectiveBits": "4631730949725761302",
+        "canonicalObjectiveBits": "4631730949725761302",
+        "canonicalObjectiveMillis": 46.42780322869491,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "86f8d77d1879c76b4c0374d163791e00a5233252d6b6e9948ff9968776dfc09b",
+        "modelCounts": {
+          "exactSolverVariableCount": 187,
+          "hardFactorCount": 151,
+          "totalAlternativeCount": 403,
+          "exactSolverFactorCount": 377,
+          "canonicalCostFactorCount": 269,
+          "exactSolverAuxiliaryVariableCount": 126,
+          "decisionCount": 61
+        }
+      },
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0
+    },
+    {
+      "run": "publication-automatic-final-r1",
+      "kind": "invariant",
+      "planner": "global",
+      "passed": true,
+      "numericMatch": true,
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "997215af42bf05bc",
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 1,
+            "staged": true,
+            "targetMatrixPuts": 1
+          }
+        ],
+        "passed": true
+      },
+      "canonical": {
+        "certificateObjectiveBits": "4631730949725761302",
+        "canonicalObjectiveBits": "4631730949725761302",
+        "canonicalObjectiveMillis": 46.42780322869491,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "6a46fe38220eab8e294b1189f248c9e7e6db6c4f9bdd3682cf8de4e2a039c18a",
+        "modelCounts": {
+          "exactSolverAuxiliaryVariableCount": 126,
+          "decisionCount": 61,
+          "exactSolverVariableCount": 187,
+          "hardFactorCount": 151,
+          "totalAlternativeCount": 403,
+          "exactSolverFactorCount": 377,
+          "canonicalCostFactorCount": 269
+        }
+      },
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0
+    },
+    {
+      "run": "publication-automatic-final-r1",
+      "kind": "updated",
+      "planner": "local",
+      "passed": true,
+      "numericMatch": true,
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "55ab2f4a0505dc2b",
+            "instructionExecutions": 9,
+            "observedCreations": 3,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 3,
+            "staged": true,
+            "targetMatrixPuts": 3
+          }
+        ],
+        "passed": true
+      },
+      "canonical": {
+        "certificateObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveMillis": 142.38353164836383,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "4ac642d7ff51c235f1588417efe73b4df86b5fcecbbffe00e31f145417fed8c2",
+        "modelCounts": {
+          "totalAlternativeCount": 593,
+          "hardFactorCount": 171,
+          "exactSolverVariableCount": 254,
+          "decisionCount": 71,
+          "exactSolverAuxiliaryVariableCount": 183,
+          "canonicalCostFactorCount": 319,
+          "exactSolverFactorCount": 478
+        }
+      },
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0
+    },
+    {
+      "run": "publication-automatic-final-r1",
+      "kind": "updated",
+      "planner": "global",
+      "passed": true,
+      "numericMatch": true,
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "df8be7bbc236f4f8",
+            "instructionExecutions": 9,
+            "observedCreations": 3,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 3,
+            "staged": true,
+            "targetMatrixPuts": 3
+          }
+        ],
+        "passed": true
+      },
+      "canonical": {
+        "certificateObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveMillis": 142.38353164836383,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "6801b57813ea0cda009cb87b4461da18fd86b4314894f78be0ab88f43552af2c",
+        "modelCounts": {
+          "canonicalCostFactorCount": 319,
+          "exactSolverAuxiliaryVariableCount": 183,
+          "decisionCount": 71,
+          "exactSolverVariableCount": 254,
+          "hardFactorCount": 171,
+          "totalAlternativeCount": 593,
+          "exactSolverFactorCount": 478
+        }
+      },
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0
+    },
+    {
+      "run": "publication-automatic-final-r1",
+      "kind": "phi",
+      "planner": "local",
+      "passed": true,
+      "numericMatch": true,
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "89cf48bd945e2b01",
+            "instructionExecutions": 9,
+            "observedCreations": 3,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 3,
+            "staged": true,
+            "targetMatrixPuts": 3
+          }
+        ],
+        "passed": true
+      },
+      "canonical": {
+        "certificateObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveMillis": 142.38353164836383,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "5f8192c4642f8fd00429a0e3949c70a78dba592bfc674bbdcfdb7495a5a3eab8",
+        "modelCounts": {
+          "exactSolverAuxiliaryVariableCount": 178,
+          "canonicalCostFactorCount": 333,
+          "exactSolverFactorCount": 487,
+          "totalAlternativeCount": 484,
+          "hardFactorCount": 190,
+          "exactSolverVariableCount": 251,
+          "decisionCount": 73
+        }
+      },
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0
+    },
+    {
+      "run": "publication-automatic-final-r1",
+      "kind": "phi",
+      "planner": "global",
+      "passed": true,
+      "numericMatch": true,
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "7c9e57eb0513a51f",
+            "instructionExecutions": 9,
+            "observedCreations": 3,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 3,
+            "staged": true,
+            "targetMatrixPuts": 3
+          }
+        ],
+        "passed": true
+      },
+      "canonical": {
+        "certificateObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveBits": "4639213691721078404",
+        "canonicalObjectiveMillis": 142.38353164836383,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "b72f4a116a2616041596f962fe852082cca8ee0ddabd7a417dccc7cf7596a6cb",
+        "modelCounts": {
+          "exactSolverVariableCount": 251,
+          "hardFactorCount": 190,
+          "totalAlternativeCount": 484,
+          "exactSolverFactorCount": 487,
+          "canonicalCostFactorCount": 333,
+          "exactSolverAuxiliaryVariableCount": 178,
+          "decisionCount": 73
+        }
+      },
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0
+    },
+    {
+      "run": "publication-flat-final-r1",
+      "kind": "flat",
+      "planner": "local",
+      "passed": true,
+      "numericMatch": true,
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "6eb29d1b70ece188",
+            "instructionExecutions": 3,
+            "observedCreations": 3,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 0,
+            "staged": false,
+            "targetMatrixPuts": 3
+          }
+        ],
+        "passed": true
+      },
+      "canonical": {
+        "certificateObjectiveBits": "4633721685558102589",
+        "canonicalObjectiveBits": "4633721685558102589",
+        "canonicalObjectiveMillis": 60.572832073569295,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "fd5981c88466866278db98067c802db976b85ff2b2732dfd3907d98f35d808e8",
+        "modelCounts": {
+          "exactSolverVariableCount": 172,
+          "hardFactorCount": 149,
+          "totalAlternativeCount": 333,
+          "exactSolverFactorCount": 335,
+          "canonicalCostFactorCount": 262,
+          "exactSolverAuxiliaryVariableCount": 113,
+          "decisionCount": 59
+        }
+      },
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0
+    },
+    {
+      "run": "publication-flat-final-r1",
+      "kind": "flat",
+      "planner": "global",
+      "passed": true,
+      "numericMatch": true,
+      "transport": {
+        "actions": [
+          {
+            "actionKeyDigest": "0d3973bc5f67a1c4",
+            "instructionExecutions": 3,
+            "observedCreations": 3,
+            "passed": true,
+            "source": "S0",
+            "sourceGets": 0,
+            "staged": false,
+            "targetMatrixPuts": 3
+          }
+        ],
+        "passed": true
+      },
+      "canonical": {
+        "certificateObjectiveBits": "4633721685558102589",
+        "canonicalObjectiveBits": "4633721685558102589",
+        "canonicalObjectiveMillis": 60.572832073569295,
+        "objectiveMatches": true,
+        "costSurfaceMatches": true,
+        "selectedStatesMatch": true,
+        "sharedLifetimesMatch": true,
+        "reconstructedCostSurfaceFingerprint": "a30e568d9bb1cc3db34ffaa8e8159b015e811d01a7b28deb846c39d444d7d261",
+        "modelCounts": {
+          "exactSolverFactorCount": 335,
+          "canonicalCostFactorCount": 262,
+          "exactSolverAuxiliaryVariableCount": 113,
+          "decisionCount": 59,
+          "exactSolverVariableCount": 172,
+          "hardFactorCount": 149,
+          "totalAlternativeCount": 333
+        }
+      },
+      "runtimeFallbackCount": 0,
+      "runtimeRepairCount": 0
+    }
+  ],
+  "heuristic": {
+    "status": "passed",
+    "containerExitCode": 0,
+    "checks": [
+      {
+        "workload": "function-loop",
+        "expected": [
+          17.5,
+          20.0,
+          22.5,
+          30.0
+        ],
+        "actual": [
+          "17.5",
+          "20.0",
+          "22.5",
+          "30.0"
+        ],
+        "runtimeFallbackAndRepairZero": true,
+        "runtimeAudits": [
+          {
+            "authorityGenerations": 1,
+            "plannedHops": 92,
+            "plannedPhysicalHops": 37,
+            "loweredPhysicalHops": 37,
+            "missingPhysicalHops": 0,
+            "plannedSynthetic": 4,
+            "missingSynthetic": 0,
+            "loweringRecords": 138,
+            "runtimeInstructionKinds": 76,
+            "federatedDispatchKinds": 18,
+            "workerFragmentKinds": 0,
+            "mismatches": 0
+          },
+          {
+            "authorityGenerations": 1,
+            "plannedHops": 92,
+            "plannedPhysicalHops": 37,
+            "loweredPhysicalHops": 37,
+            "missingPhysicalHops": 0,
+            "plannedSynthetic": 4,
+            "missingSynthetic": 0,
+            "loweringRecords": 138,
+            "runtimeInstructionKinds": 76,
+            "federatedDispatchKinds": 18,
+            "workerFragmentKinds": 0,
+            "mismatches": 0
+          }
+        ],
+        "runtimeAuditsPassed": true,
+        "passed": true
+      },
+      {
+        "workload": "mixed-branch",
+        "expected": [
+          -17.5,
+          -20.0,
+          -22.5,
+          30.0
+        ],
+        "actual": [
+          "-17.5",
+          "-20.0",
+          "-22.5",
+          "30.0"
+        ],
+        "runtimeFallbackAndRepairZero": true,
+        "runtimeAudits": [
+          {
+            "authorityGenerations": 1,
+            "plannedHops": 92,
+            "plannedPhysicalHops": 37,
+            "loweredPhysicalHops": 37,
+            "missingPhysicalHops": 0,
+            "plannedSynthetic": 4,
+            "missingSynthetic": 0,
+            "loweringRecords": 138,
+            "runtimeInstructionKinds": 76,
+            "federatedDispatchKinds": 18,
+            "workerFragmentKinds": 0,
+            "mismatches": 0
+          },
+          {
+            "authorityGenerations": 1,
+            "plannedHops": 92,
+            "plannedPhysicalHops": 37,
+            "loweredPhysicalHops": 37,
+            "missingPhysicalHops": 0,
+            "plannedSynthetic": 4,
+            "missingSynthetic": 0,
+            "loweringRecords": 138,
+            "runtimeInstructionKinds": 76,
+            "federatedDispatchKinds": 18,
+            "workerFragmentKinds": 0,
+            "mismatches": 0
+          }
+        ],
+        "runtimeAuditsPassed": true,
+        "passed": true
+      },
+      {
+        "workload": "joint-correlated-x",
+        "expected": [
+          272,
+          5984,
+          8,
+          2
+        ],
+        "actual": [
+          "272.0",
+          "5984.0",
+          "8",
+          "2"
+        ],
+        "runtimeFallbackAndRepairZero": true,
+        "runtimeAudits": [
+          {
+            "authorityGenerations": 1,
+            "plannedHops": 57,
+            "plannedPhysicalHops": 24,
+            "loweredPhysicalHops": 24,
+            "missingPhysicalHops": 0,
+            "plannedSynthetic": 0,
+            "missingSynthetic": 0,
+            "loweringRecords": 65,
+            "runtimeInstructionKinds": 35,
+            "federatedDispatchKinds": 9,
+            "workerFragmentKinds": 0,
+            "mismatches": 0
+          },
+          {
+            "authorityGenerations": 1,
+            "plannedHops": 57,
+            "plannedPhysicalHops": 24,
+            "loweredPhysicalHops": 24,
+            "missingPhysicalHops": 0,
+            "plannedSynthetic": 0,
+            "missingSynthetic": 0,
+            "loweringRecords": 65,
+            "runtimeInstructionKinds": 35,
+            "federatedDispatchKinds": 9,
+            "workerFragmentKinds": 0,
+            "mismatches": 0
+          }
+        ],
+        "runtimeAuditsPassed": true,
+        "passed": true
+      },
+      {
+        "workload": "joint-correlated-y",
+        "expected": [
+          -272,
+          5984,
+          8,
+          2
+        ],
+        "actual": [
+          "-272.0",
+          "5984.0",
+          "8",
+          "2"
+        ],
+        "runtimeFallbackAndRepairZero": true,
+        "runtimeAudits": [
+          {
+            "authorityGenerations": 1,
+            "plannedHops": 57,
+            "plannedPhysicalHops": 24,
+            "loweredPhysicalHops": 24,
+            "missingPhysicalHops": 0,
+            "plannedSynthetic": 0,
+            "missingSynthetic": 0,
+            "loweringRecords": 65,
+            "runtimeInstructionKinds": 35,
+            "federatedDispatchKinds": 9,
+            "workerFragmentKinds": 0,
+            "mismatches": 0
+          },
+          {
+            "authorityGenerations": 1,
+            "plannedHops": 57,
+            "plannedPhysicalHops": 24,
+            "loweredPhysicalHops": 24,
+            "missingPhysicalHops": 0,
+            "plannedSynthetic": 0,
+            "missingSynthetic": 0,
+            "loweringRecords": 65,
+            "runtimeInstructionKinds": 35,
+            "federatedDispatchKinds": 9,
+            "workerFragmentKinds": 0,
+            "mismatches": 0
+          }
+        ],
+        "runtimeAuditsPassed": true,
+        "passed": true
+      },
+      {
+        "workload": "joint-independent-rejected",
+        "expected": "joint-legality rejection before DML runtime program",
+        "passed": true
+      },
+      {
+        "workload": "joint-independent-public-movement",
+        "expected": [
+          168,
+          2104,
+          8,
+          2
+        ],
+        "actual": [
+          "168.0",
+          "2104.0",
+          "8",
+          "2"
+        ],
+        "runtimeFallbackAndRepairZero": true,
+        "runtimeAudits": [
+          {
+            "authorityGenerations": 1,
+            "plannedHops": 74,
+            "plannedPhysicalHops": 30,
+            "loweredPhysicalHops": 30,
+            "missingPhysicalHops": 0,
+            "plannedSynthetic": 1,
+            "missingSynthetic": 0,
+            "loweringRecords": 86,
+            "runtimeInstructionKinds": 48,
+            "federatedDispatchKinds": 15,
+            "workerFragmentKinds": 0,
+            "mismatches": 0
+          },
+          {
+            "authorityGenerations": 1,
+            "plannedHops": 74,
+            "plannedPhysicalHops": 30,
+            "loweredPhysicalHops": 30,
+            "missingPhysicalHops": 0,
+            "plannedSynthetic": 1,
+            "missingSynthetic": 0,
+            "loweringRecords": 86,
+            "runtimeInstructionKinds": 48,
+            "federatedDispatchKinds": 15,
+            "workerFragmentKinds": 0,
+            "mismatches": 0
+          }
+        ],
+        "runtimeAuditsPassed": true,
+        "passed": true
+      }
+    ],
+    "runtimeArtifactsMatch": true,
+    "manifestSha256": "3f4eefd64e63566b6dd278ad76ecc809710c00c65ee6338a8138f5445cc54d13",
+    "commandSha256": "2cd149045d66e50cdb4a4b0affcfcc53d682b0acd00378ec027aaea86239004b",
+    "logSha256": {
+      "container.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worker-13000.log": "627ac7ce6dc5e233fa4d48a877fe950633aa259367c5e9511a4475406bbc50f7",
+      "worker-13001.log": "627ac7ce6dc5e233fa4d48a877fe950633aa259367c5e9511a4475406bbc50f7",
+      "worker-13002.log": "627ac7ce6dc5e233fa4d48a877fe950633aa259367c5e9511a4475406bbc50f7",
+      "worker-13003.log": "627ac7ce6dc5e233fa4d48a877fe950633aa259367c5e9511a4475406bbc50f7",
+      "function-loop.log": "1891bd536ba75a093e00cc945ce9b64296b6a5c85cadb540d0ff09d24314875c",
+      "mixed-branch.log": "cede6dcdb8008aff81834b86ca2d013f444227e8f8194e01bad51adcf381cd5e",
+      "joint-correlated-x.log": "4e375b745b2f4aec7b0e8eaea8eaaeaca2581a92679efb43d2aadce33040dde3",
+      "joint-correlated-y.log": "3924e6e81b90d9289dc997cd3bea23ac7ae756193aba85793bfe79a2bd95a7f9",
+      "joint-independent-rejected.log": "db39cfd6d713d796f4f5b09cf6d954e4f5b314d91b0b2f75b8ada6aaf80e8969",
+      "joint-independent-public-movement.log": "f766b74a567920585c9ae3d00f6248d006c19854ba2886dc086959432bc7c4a1"
+    }
+  },
+  "allAutomaticFrozenProductionSourcesMatchWorkspace": true,
+  "staticChecks": "PASS",
+  "knownL2SvmCertificateCampaign": "not included in publication suite; follow-up after push",
+  "sourceSha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java": "04eb7d7bd9d461c45d3e174ccc877602e1363d928ad80953c03fa3e2a6d33a6f",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.java": "c54e1175053c928328b49d9aa354d9f028af23487106d39a2ddb9314422fce88",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/CandidateSelections.java": "432603426b1ef40b1e4c42ee79d37eed00b1ef244b2cfd93219eaf12d7153a74",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementIdentity.java": "aabdb6e6917221587c5f24ab3b99b20184404741f05f28e17bf113ef1b0f739f",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/PolicyGreedyPlacementSelector.java": "ad77f208391aded3947f931ac636714dd10fb5d8784076cf2d7764b0ec3be53d",
+    "src/main/java/org/apache/sysds/runtime/controlprogram/caching/CacheableData.java": "752da3ffba4d2f2ebf4329d196f82972a232cc595c98c1fd836eff818d931dea",
+    "src/main/java/org/apache/sysds/runtime/controlprogram/context/ExecutionContext.java": "a88d5c76fbf93a5face116febd870803e93f9cc22578d9e9b8cff80b1c74f049",
+    "src/main/java/org/apache/sysds/runtime/controlprogram/context/MatrixObjectFuture.java": "970f52a36c0a162078dceb1291d258b19bd9a8f9b5a1cf71d536cdf3d582555c",
+    "src/main/java/org/apache/sysds/runtime/controlprogram/federated/FederatedData.java": "d80e964356e9a1dda1d09b0310bc0b7056aa3ba10d9a1c72568e453a20cd34a4",
+    "src/main/java/org/apache/sysds/runtime/controlprogram/federated/FederationUtils.java": "791ab656f2b82e6b104dd9dee218303a96aeb7d7c05fa229da3694439636a435",
+    "src/main/java/org/apache/sysds/runtime/controlprogram/federated/RefedReuseAudit.java": "271d7f044f026b77e95c80a60efb645c62cf99fbd942a559eeb9f5c0617d6723",
+    "src/main/java/org/apache/sysds/runtime/instructions/fed/FEDRefedInstruction.java": "469e0edbd0b3dd0c3877df3ca859b1e3a7ff16fc817601350ce99aa97ce001d0"
+  }
+}

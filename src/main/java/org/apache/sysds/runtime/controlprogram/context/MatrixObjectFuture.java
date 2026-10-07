@@ -27,6 +27,7 @@ import org.apache.sysds.runtime.controlprogram.caching.CacheStatistics;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.caching.UnifiedMemoryManager;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
+import org.apache.sysds.runtime.controlprogram.federated.RefedReuseAudit;
 import org.apache.sysds.runtime.lineage.LineageCache;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.utils.stats.SparkStatistics;
@@ -95,7 +96,7 @@ public class MatrixObjectFuture extends MatrixObject
 	}
 
 	public synchronized void clearData(long tid) {
-		FederationUtils.retireOwnedRefedReuseMaps(this);
+		FederationUtils.retireOwnedRefedReuseMaps(this, RefedReuseAudit.SOURCE_CLEAR);
 		_data = null;
 		_futureData = null;
 		clearCache();

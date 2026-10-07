@@ -1454,12 +1454,15 @@ public final class CandidateSelections {
 			// every row; do not re-sort the same support list at each DFS prefix.
 			for(CandidateRealizationReference support : requiredSupports == null
 				? receipt.supportClause().requiredInputSupport() : requiredSupports.get(receipt))
-				if(!realizationReferencePossible(analysis, support, assignment, selected, remaining))
+				if(!realizationReferencePossible(
+					analysis, support, assignment, selected, remaining, true))
 					return false;
 		for(var fact : analysis.logicalTransientInputsInCanonicalOrder()) {
 			boolean supported = fact.compatibility().stream().anyMatch(edge ->
-				realizationReferencePossible(analysis, edge.sourceRealization(), assignment, selected, remaining)
-					&& realizationReferencePossible(analysis, edge.readerRealization(), assignment, selected, remaining));
+				realizationReferencePossible(analysis, edge.sourceRealization(), assignment,
+					selected, remaining, false)
+					&& realizationReferencePossible(analysis, edge.readerRealization(), assignment,
+						selected, remaining, false));
 			if(!supported)
 				return false;
 		}
@@ -1472,14 +1475,35 @@ public final class CandidateSelections {
 			CandidateRealizationReference.of(receipt.rule(), receipt.realization()));
 	}
 
+	/** Match a downstream required-output proof without weakening exact input bindings. */
+	public static boolean matchesRequiredInputSupport(CandidateRealizationReference required,
+		CandidateSelectionReceipt selected) {
+		return selected != null && requiredInputSupportIdentity(required).equals(
+			requiredInputSupportIdentity(
+				CandidateRealizationReference.of(selected.rule(), selected.realization())));
+	}
+
+	/** Canonical identity shared by exact factor construction and final receipt validation. */
+	public static PlacementIdentity.CandidateRealizationSupportKey requiredInputSupportIdentity(
+		CandidateRealizationReference reference) {
+		Objects.requireNonNull(reference, "reference");
+		boolean durable = reference.realization().layoutKind()
+			== PlacementIdentity.PlacementLayoutKind.DURABLE_MAP;
+		return new PlacementIdentity.CandidateRealizationSupportKey(
+			reference.rule().parentOccurrence(), durable ? null : reference.rule(),
+			reference.realization());
+	}
+
 	private static boolean realizationReferencePossible(PlacementAnalysis analysis,
 		CandidateRealizationReference reference, Map<CompiledHopKey,PlacementState> assignment,
 		Map<CompiledHopKey,CandidateSelectionReceipt> selected,
-		Map<CompiledHopKey,List<PlacementState>> remaining) {
+		Map<CompiledHopKey,List<PlacementState>> remaining, boolean requiredOutputSupport) {
 		CompiledHopKey owner = reference.rule().parentOccurrence();
 		CandidateSelectionReceipt receipt = selected.get(owner);
 		if(receipt != null)
-			return matchesRealization(reference, receipt);
+			return requiredOutputSupport
+				? matchesRequiredInputSupport(reference, receipt)
+				: matchesRealization(reference, receipt);
 		PlacementState state = reference.realization().emissionState().placementState();
 		PlacementState assigned = assignment.get(owner);
 		if(assigned != null && !assigned.equals(state))
@@ -1488,10 +1512,16 @@ public final class CandidateSelections {
 		if(assigned == null && domain != null && !domain.contains(state))
 			return false;
 		for(CandidateRuleFact fact : analysis.candidateRuleFacts().orderedFactsForParent(owner))
-			if(fact.status() == CandidateEvaluationStatus.AVAILABLE && fact.key().equals(reference.rule()))
+			if(fact.status() == CandidateEvaluationStatus.AVAILABLE
+				&& (requiredOutputSupport && reference.realization().layoutKind()
+					== PlacementIdentity.PlacementLayoutKind.DURABLE_MAP
+					|| fact.key().equals(reference.rule())))
 				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
 					for(var realization : emission.realizations())
-						if(reference.equals(CandidateRealizationReference.of(fact.key(), realization)))
+						if(requiredOutputSupport
+							? requiredInputSupportIdentity(reference).equals(requiredInputSupportIdentity(
+								CandidateRealizationReference.of(fact.key(), realization)))
+							: reference.equals(CandidateRealizationReference.of(fact.key(), realization)))
 							return true;
 		return false;
 	}
@@ -2462,11 +2492,12 @@ public final class CandidateSelections {
 			for(CandidateRealizationReference support : requiredSupports.get(row)) {
 				CompiledHopKey owner = support.rule().parentOccurrence();
 				CandidateSelectionReceipt selected = selectedByConsumer.get(owner);
-				if(selected != null && !matchesRealization(support, selected))
+				if(selected != null && !matchesRequiredInputSupport(support, selected))
 					return false;
 				List<CandidateSelectionReceipt> domain = variants.get(owner);
 				if(selected == null && domain != null
-					&& domain.stream().noneMatch(candidate -> matchesRealization(support, candidate)))
+					&& domain.stream().noneMatch(candidate ->
+						matchesRequiredInputSupport(support, candidate)))
 					return false;
 			}
 			return true;
@@ -2789,13 +2820,13 @@ public final class CandidateSelections {
 					CompiledHopKey owner = support.rule().parentOccurrence();
 					CandidateSelectionReceipt selected = selectedByConsumer.get(owner);
 					if(selected != null) {
-						if(!matchesRealization(support, selected))
+						if(!matchesRequiredInputSupport(support, selected))
 							return false;
 						continue;
 					}
 					List<CandidateSelectionReceipt> domain = variants.get(owner);
 					if(domain != null && domain.stream().noneMatch(candidate ->
-						matchesRealization(support, candidate)))
+						matchesRequiredInputSupport(support, candidate)))
 						return false;
 				}
 				return true;
@@ -2833,7 +2864,8 @@ public final class CandidateSelections {
 										+ ":" + ref.realization().hashCode()).toList()).toList()).toList()
 							+ "|fixedInvalid=" + selectedByConsumer.values().stream()
 								.flatMap(receipt -> receipt.supportClause().requiredInputSupport().stream())
-								.filter(ref -> !realizationReferencePossible(analysis, ref, assignment, selectedByConsumer, Map.of()))
+								.filter(ref -> !realizationReferencePossible(
+									analysis, ref, assignment, selectedByConsumer, Map.of(), true))
 								.map(ref -> ref.normalizedSignature()).toList());
 				return bestRows;
 			}

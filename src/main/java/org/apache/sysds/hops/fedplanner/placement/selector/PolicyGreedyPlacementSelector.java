@@ -35,6 +35,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicNat
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateInputBindingKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationSupportKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
@@ -175,27 +176,32 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 		Requirement(Group dependent) { this.dependent = dependent; }
 	}
 	private record InputPair(Domain source, Domain consumer) { }
-	private record InputSupportKey(CandidateRealizationReference own,
-		CandidateRealizationReference required) { }
+	private record InputSupportKey(CandidateRealizationSupportKey own,
+		CandidateRealizationSupportKey required) { }
 	private static final class InputSupports {
 		final Map<InputSupportKey,Group> exact = new HashMap<>();
-		final Map<CandidateRealizationReference,Group> byRequirement = new HashMap<>();
+		final Map<CandidateRealizationSupportKey,Group> byRequirement = new HashMap<>();
 		InputSupports(Domain source, Domain other) {
 			for(Row row : source.rows) {
-				var required = row.inputs.get(other.node.key());
-				exact.computeIfAbsent(new InputSupportKey(row.reference, required), ignored -> new Group()).add(row);
+				var required = outputSupport(row.inputs.get(other.node.key()));
+				exact.computeIfAbsent(new InputSupportKey(outputSupport(row.reference), required),
+					ignored -> new Group()).add(row);
 				byRequirement.computeIfAbsent(required, ignored -> new Group()).add(row);
 			}
 		}
 		List<Group> compatible(Row row, Domain source) {
-			var required = row.inputs.get(source.node.key());
+			var required = outputSupport(row.inputs.get(source.node.key()));
+			var own = outputSupport(row.reference);
 			// Both directions must hold for the same row pair. A missing dependency
 			// is a wildcard, not a missing realization; OR clauses remain separate rows.
 			return required == null
-				? java.util.Arrays.asList(byRequirement.get(null), byRequirement.get(row.reference))
+				? java.util.Arrays.asList(byRequirement.get(null), byRequirement.get(own))
 				: java.util.Arrays.asList(exact.get(new InputSupportKey(required, null)),
-					exact.get(new InputSupportKey(required, row.reference)));
+					exact.get(new InputSupportKey(required, own)));
 		}
+	}
+	private static CandidateRealizationSupportKey outputSupport(CandidateRealizationReference reference) {
+		return reference == null ? null : CandidateSelections.requiredInputSupportIdentity(reference);
 	}
 	private static final class Pools {
 		final Group nonNative = new Group();
@@ -562,13 +568,13 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 					for(var ref : row.receipt.supportClause().requiredInputSupport()) {
 						Domain source = byKey.get(ref.rule().parentOccurrence());
 						var prior = row.inputs.put(ref.rule().parentOccurrence(), ref);
-						if(prior != null && !prior.equals(ref)) deletions.add(row);
+						if(prior != null && !outputSupport(prior).equals(outputSupport(ref))) deletions.add(row);
 						if(source == null) {
 							// Non-decision constants are checked by the final common authority validator.
 							continue;
 						}
 						if(source == consumer) {
-							if(!ref.equals(row.reference)) deletions.add(row);
+							if(!outputSupport(ref).equals(outputSupport(row.reference))) deletions.add(row);
 							continue;
 						}
 						dependency(source, consumer);

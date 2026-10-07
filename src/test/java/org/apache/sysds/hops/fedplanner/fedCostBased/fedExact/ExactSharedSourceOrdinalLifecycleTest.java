@@ -25,6 +25,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRul
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -83,8 +84,7 @@ public class ExactSharedSourceOrdinalLifecycleTest {
 
 	private static Object domain(List<CompiledHopKey> owners,
 		List<IdentityHashMap<CompiledHopKey,CandidateRealizationReference>> rows) throws Exception {
-		Object header = construct(nested("AlternativeHeader"), null, null, null, null, null, null,
-			null, null, null, null, List.of(), List.of(), null, List.of());
+		Object header = sourceIndependentHeader(owners.get(0));
 		int[] headers = new int[rows.size()];
 		return construct(nested("DomainView"), 0, null, List.of(header), headers, owners, rows);
 	}
@@ -123,6 +123,22 @@ public class ExactSharedSourceOrdinalLifecycleTest {
 
 	private static Class<?> nested(String name) throws ClassNotFoundException {
 		return Class.forName(ExactPhysicalSharedSourceEncoding.class.getName() + '$' + name);
+	}
+
+	private static Object sourceIndependentHeader(CompiledHopKey decision) throws Exception {
+		// These tests isolate ordinal publication after the a_v/b_e header projection.
+		// A valid local a_v with no b_e or binding distinction keeps that axis constant.
+		PlacementState local = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
+		ExactPhysicalNativeSupplyRepresentation.NativeCandidate nativeCandidate =
+			new ExactPhysicalNativeSupplyRepresentation.NativeCandidate(decision,
+				ExactPhysicalNativeSupplyRepresentation.NativeExecutionKind.LEGAL_SINGLETON,
+				null, ExecType.CP, null, List.of(), local,
+				new ExactPhysicalNativeSupplyRepresentation.NativeLayout(
+					PlacementLayoutKind.LOCAL, null, null, false));
+		Constructor<?> constructor = nested("AlternativeHeader").getDeclaredConstructor(
+			ExactPhysicalNativeSupplyRepresentation.NativeCandidate.class, List.class, List.class);
+		constructor.setAccessible(true);
+		return constructor.newInstance(nativeCandidate, List.of(), List.of());
 	}
 
 	private static Object construct(Class<?> type, Object... arguments) throws Exception {

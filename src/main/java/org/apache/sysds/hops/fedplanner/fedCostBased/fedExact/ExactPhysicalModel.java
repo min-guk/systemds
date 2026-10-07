@@ -45,6 +45,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedTe
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedTextBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedTextContext;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationSupportKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
@@ -1407,7 +1408,7 @@ final class ExactPhysicalModel {
 		Map<CandidateRealizationSupportClause,List<CandidateRealizationReference>> supportsByClause =
 			new IdentityHashMap<>();
 		Map<Alternative,Integer> referenceHandleByAlternative = new IdentityHashMap<>();
-		Map<CandidateRealizationReference,Integer> referenceHandles = new java.util.HashMap<>();
+		Map<CandidateRealizationSupportKey,Integer> referenceHandles = new java.util.HashMap<>();
 		Map<DecisionDomain,int[]> sourceHandlesByDomain = new IdentityHashMap<>();
 		for(DecisionDomain consumer : domains.values().stream()
 			.sorted(Comparator.comparing(domain -> domain.node().key().normalizedSignature())).toList()) {
@@ -1501,7 +1502,7 @@ final class ExactPhysicalModel {
 
 	private static int candidateReferenceHandle(PlacementAnalysis analysis, Alternative alternative,
 		Map<Alternative,Integer> referenceHandleByAlternative,
-		Map<CandidateRealizationReference,Integer> referenceHandles) {
+		Map<CandidateRealizationSupportKey,Integer> referenceHandles) {
 		Integer cached = referenceHandleByAlternative.get(alternative);
 		if(cached != null)
 			return cached;
@@ -1513,8 +1514,16 @@ final class ExactPhysicalModel {
 	}
 
 	private static int referenceHandle(CandidateRealizationReference reference,
-		Map<CandidateRealizationReference,Integer> referenceHandles) {
-		return referenceHandles.computeIfAbsent(reference, ignored -> referenceHandles.size());
+		Map<CandidateRealizationSupportKey,Integer> referenceHandles) {
+		CandidateRealizationSupportKey support =
+			CandidateSelections.requiredInputSupportIdentity(reference);
+		return referenceHandles.computeIfAbsent(support, ignored -> referenceHandles.size());
+	}
+
+	static boolean sameRealizationSupport(CandidateRealizationReference required,
+		CandidateRealizationReference selected) {
+		return CandidateSelections.requiredInputSupportIdentity(required).equals(
+			CandidateSelections.requiredInputSupportIdentity(selected));
 	}
 
 	private static CandidateSelectionReceipt candidateReceipt(PlacementAnalysis analysis, Alternative alternative) {

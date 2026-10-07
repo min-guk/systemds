@@ -26,6 +26,11 @@ if [[ "${1:-}" == "--joint-boundary-e2e" ]]; then
     exec python3 "$(dirname "$0")/run_joint_boundary_e2e.py" "$@"
 fi
 
+if [[ "${1:-}" == "--supply-sharing-e2e" ]]; then
+    shift
+    exec python3 "$(dirname "$0")/run_supply_sharing_e2e.py" "$@"
+fi
+
 if [[ "${1:-}" == "--campaign" ]]; then
     shift
     exec python3 "$(dirname "$0")/run_matrix_campaign.py" "$@"
