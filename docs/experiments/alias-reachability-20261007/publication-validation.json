@@ -1,0 +1,55 @@
+{
+  "upstreamMain": "2faff2a2a53ed1f608f2e1f6b2a13ca427d71f52",
+  "workloadExperimentBaseline": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+  "scope": "Fresh build and focused integration regressions; prior Docker measurements remain pinned to their original baseline.",
+  "cwd": "/home/mchoi/w1357-main-revalidation-r4-20261007",
+  "build": {
+    "argv": [
+      "mvn",
+      "-q",
+      "-DskipTests",
+      "-Dcheckstyle.skip=true",
+      "-Drat.skip=true",
+      "-Dmaven.javadoc.skip=true",
+      "test-compile"
+    ],
+    "exitCode": 0,
+    "log": "/home/mchoi/w1357-main-revalidation-r4-20261007/target/alias-reachability-evidence/main-integration-build.log",
+    "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "tests": {
+    "argv": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+      "--add-modules",
+      "jdk.incubator.vector",
+      "--add-opens=java.base/java.nio=ALL-UNNAMED",
+      "--add-opens=java.base/java.io=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+      "-Xmx4g",
+      "-XX:ActiveProcessorCount=4",
+      "-cp",
+      "target/classes:target/test-classes:target/lib/*",
+      "org.junit.runner.JUnitCore",
+      "org.apache.sysds.hops.fedplanner.placement.JointAliasReachabilityTest",
+      "org.apache.sysds.hops.fedplanner.placement.JointValueMapRelationsTest",
+      "org.apache.sysds.hops.fedplanner.placement.JointValueMapSelectionLegalityTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointAliasProjectionTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointPartialTruthTest"
+    ],
+    "exitCode": 0,
+    "count": 22,
+    "failures": 0,
+    "junitSeconds": 12.056,
+    "log": "/home/mchoi/w1357-main-revalidation-r4-20261007/target/alias-reachability-evidence/main-integration-tests.log",
+    "logSha256": "3b1d06642403e3da87fb8b217df972460f855f3bc1c1fcf40ac1e4c61c2d4784"
+  },
+  "sourceSha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.java": "bdb85d9ae644bf4ff7e07d8dac0e25ef49f26337f42b9e9b99ae009ffb59649e",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/JointAliasReachabilityTest.java": "b0a0c172b13ffacd82a06cb2f04012407578a8b1dc21da793b6416476d76295e"
+  },
+  "snapshotIsolationReceipt": "/home/mchoi/alias-reachability-validation-20261007/publication-snapshot-isolation.json"
+}

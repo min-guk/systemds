@@ -1,0 +1,86 @@
+{
+  "schema": "logreg-w1-alias-candidate-verdict-v1",
+  "status": "TIME_LIMIT_BEFORE_ALIAS",
+  "candidate_result": null,
+  "base_commit": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+  "candidate_overlay": "JointValueMapRelations alias-reachability classes",
+  "candidate_class_count": 11,
+  "candidate_classpath_precedence_verified": true,
+  "candidate_classes_reached": false,
+  "workload": {
+    "builtin": "multiLogReg",
+    "n": 50000,
+    "d": 2100,
+    "classes": 2,
+    "maxi": 30,
+    "maxii": 5,
+    "w1_partitioning": "ROW",
+    "x_privacy": "PRIVATE_AGGREGATE",
+    "y_privacy": "PRIVATE_AGGREGATE",
+    "compile_only": true
+  },
+  "limits": {
+    "cpus": 4,
+    "container_memory": "16g",
+    "java_heap": "10g",
+    "deadline_seconds": 1200
+  },
+  "elapsed_seconds": 1204.8761935606599,
+  "deadline_stop_sent": true,
+  "container_stop_returncode": 0,
+  "container_cleaned": true,
+  "runtime_executed": false,
+  "result_output_present": false,
+  "analysis_begin": true,
+  "analysis_end": false,
+  "planner_begin": false,
+  "exception_observed": false,
+  "oom_observed": false,
+  "factor_cell_overflow_observed": false,
+  "selected_plan_available": false,
+  "selected_cost_available": false,
+  "legality_result_available": false,
+  "checkpoints": [
+    {
+      "seconds": 120,
+      "phase": "common analysis",
+      "top_frame": "PlacementAnalysis.TransientCompatibilityProof.normalizedSignature",
+      "memory": "4.264GiB"
+    },
+    {
+      "seconds": 300,
+      "phase": "common analysis",
+      "top_frame": "NativePlacementContinuity.pruneDeadAlternatives",
+      "memory": "6.77GiB"
+    },
+    {
+      "seconds": 600,
+      "phase": "common analysis",
+      "top_frame": "PlacementAnalysis.CanonicalTextBuilder.appendFields",
+      "memory": "9.722GiB"
+    },
+    {
+      "seconds": 900,
+      "phase": "common analysis",
+      "top_frame": "NativePlacementContinuity.computeCandidateSupportAlternatives",
+      "memory": "9.72GiB"
+    },
+    {
+      "seconds": 1180,
+      "phase": "common analysis",
+      "top_frame": "PlacementAnalysis.CanonicalTextCursor.advanceText",
+      "memory": "10.84GiB"
+    }
+  ],
+  "interpretation": "The exact W1 run exhausted the bounded validation window in common placement analysis before JointValueMapRelations or the alias candidate was reached. It neither validates nor refutes candidate correctness or performance on W1. No performance claim is supported by this run.",
+  "rerun_performed": false,
+  "artifacts": {
+    "candidate_provenance_sha256": "ba3a1186fdbee21b2172f84902b22a0bc46c0a21aec6a53fed101893453b12d5",
+    "command_sha256": "1c4bb9dc4aa44df80274af0f168e05e449083805d93efc8ad4d92fd9966e0ba2",
+    "config_sha256": "8137e271f62c52db3dfa03819f999846ab494d66a9b33c5457f9aad37c950601",
+    "log_sha256": "4a62473d5434c4078079b5e758ac0d5eed184d0de5a3ed4094beca5879c5cc4c",
+    "runs_sha256": "67b6de5568905774150b302c8d6bfcbdf69631ade73af5052d01725c4e665097",
+    "script_sha256": "ed17c6e48dba5a91730a83d1c2aea8b874d2dc59126f977bf17915c5c21c40ec",
+    "watchdog_sha256": "f13a1c9f92c7e1ace57d9d1529734509e80abdb522ea4bb793e65150da6ec234"
+  }
+}

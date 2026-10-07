@@ -1,0 +1,422 @@
+{
+  "schema": "systemds-main-remaining-revalidation-v1",
+  "status": "COMPLETE_AT_PINNED_HEAD_NEWER_MAIN_REQUIRES_RECHECK",
+  "head": "93706bbaa9e054e8db4c014ce2dd529498fc0e2b",
+  "worktree": "/home/mchoi/w1357-main-revalidation-20261007",
+  "artifactRoot": "/home/mchoi/main-revalidation-20261007",
+  "build": {
+    "exitCode": 0,
+    "seconds": 59.985584765672684,
+    "sourceCount": 3771,
+    "sourceUnchanged": true,
+    "command": {
+      "argv": [
+        "/home/hadoop/apache-maven-3.9.7/bin/mvn",
+        "-B",
+        "-DskipTests",
+        "-Djacoco.skip=true",
+        "package"
+      ],
+      "cwd": "/home/mchoi/w1357-main-revalidation-20261007",
+      "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-amd64",
+      "MAVEN_OPTS": "-Xmx6g -XX:ActiveProcessorCount=4",
+      "head": "93706bbaa9e054e8db4c014ce2dd529498fc0e2b"
+    },
+    "sourceManifestSha256": "57a81ebb485799a140bdff505e9be90a58114a99e00acea45aee01c494c00b3d"
+  },
+  "smallStepLmClosure": {
+    "status": "REPRODUCED_EXISTING_FAILURE",
+    "test": "FederatedPlannerFallbackIntegrationTest#testDpPlansSteplmWithSameNamedFormalTransientBinding",
+    "fixture": {
+      "rows": 20,
+      "columns": 5,
+      "maxi": 20,
+      "compileOnly": true
+    },
+    "exitCode": 1,
+    "timeoutSeconds": 300,
+    "elapsedSeconds": 229.971,
+    "signature": "IllegalStateException: CFG transient candidate closure did not converge; f=626/632 oscillation, changed=[281,423], terminal iteration 1244",
+    "log": {
+      "path": "/home/mchoi/heuristic-main-publication-20261007/target/main-publication-evidence/steplm-small.log",
+      "sha256": "590b7705bacd0fbc3bf2ddf4374c557eeb0d43fb51988a7e1329072d48d2d14c"
+    },
+    "threadDump": {
+      "path": "/home/mchoi/heuristic-main-publication-20261007/target/main-publication-evidence/steplm-small-thread.txt",
+      "sha256": "dc07ea04fea48ace1e4bd45956c67759b5aea0484435d2903554a5010881a8c4"
+    },
+    "priorMatchingEvidence": "docs/experiments/shared-repair-reuse-20261006/main-publication.json",
+    "priorVerifiedOrigin": "0146f043e07ca445d9084257759aa78fe14ddf55",
+    "runner": {
+      "path": "/home/mchoi/heuristic-main-publication-20261007/target/main-publication-evidence/BoundedMethodRunner.java",
+      "sha256": "c447f89afa953758eb63b7c70012f1626f2cfe64de2d2cf4dde531ef2976bd32"
+    },
+    "reusedInsteadOfRerun": true,
+    "sourceManifest": {
+      "path": "/home/mchoi/heuristic-main-publication-20261007/target/main-publication-evidence/final-source-manifest.json",
+      "sha256": "7d343eebceae76279607a9361498e964f709ffb9b43d14b63a4d5bfe8cb61b72"
+    },
+    "allCurrentManifestEntriesMatch": true,
+    "matchedFiles": 4119,
+    "jar": {
+      "path": "/home/mchoi/heuristic-main-publication-20261007/target/systemds-3.4.0-SNAPSHOT.jar",
+      "sha256": "a26b3fe7d40509548911a6172899fb88a3093600969ca01090b49ab67c2cfe77"
+    }
+  },
+  "freshMethodResults": {
+    "als-canonical": {
+      "exitCode": 1,
+      "timedOut": false,
+      "seconds": 15.002410925924778,
+      "stdoutSha256": "9c8100fba2cb4520f8ad4901b7c59ca5fe0053073e2d085fb30ebd15ac226eef",
+      "stderrSha256": "edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0",
+      "command": {
+        "argv": [
+          "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+          "--add-modules",
+          "jdk.incubator.vector",
+          "--add-opens=java.base/java.nio=ALL-UNNAMED",
+          "--add-opens=java.base/java.io=ALL-UNNAMED",
+          "--add-opens=java.base/java.util=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+          "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+          "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+          "-Xmx8g",
+          "-XX:ActiveProcessorCount=4",
+          "-cp",
+          "/home/mchoi/main-revalidation-20261007/runner-classes:/home/mchoi/w1357-main-revalidation-20261007/target/classes:/home/mchoi/w1357-main-revalidation-20261007/target/test-classes:/home/mchoi/w1357-main-revalidation-20261007/target/lib/*",
+          "SingleMethodRunner",
+          "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+          "singleWorkerAlsPricesOneReusableCpRuntimeWeightMaterialization"
+        ],
+        "cwd": "/home/mchoi/w1357-main-revalidation-20261007",
+        "head": "93706bbaa9e054e8db4c014ce2dd529498fc0e2b",
+        "timeoutSeconds": 600,
+        "parallelismNote": "Separate JVMs; compile-only verification on shared host, not a latency experiment."
+      },
+      "artifactDirectory": "/home/mchoi/main-revalidation-20261007/als-canonical",
+      "junit": {
+        "run": 1,
+        "failures": 1,
+        "ignored": 0,
+        "runtimeMillis": 13114
+      },
+      "signature": "IllegalArgumentException: EXACT_VE_FACTOR_CELL_OVERFLOW",
+      "phase": "ExactPhysicalCostModel.freezeOrdinaryFactorsAfterPreflight -> ExactCategoricalSolver.validateInputStructure/validateInputs -> checkedCells, before optimizer selection."
+    },
+    "steplm-canonical": {
+      "exitCode": 1,
+      "timedOut": false,
+      "seconds": 22.002855204045773,
+      "stdoutSha256": "daec56f7466277dd999cb886a1996647eac856432c43cfc66ceb90a14bbb0bff",
+      "stderrSha256": "5b6d10e63e48a2643fa32d80747e9601cb045d33230b60b66c0146c152b17748",
+      "command": {
+        "argv": [
+          "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+          "--add-modules",
+          "jdk.incubator.vector",
+          "--add-opens=java.base/java.nio=ALL-UNNAMED",
+          "--add-opens=java.base/java.io=ALL-UNNAMED",
+          "--add-opens=java.base/java.util=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+          "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+          "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+          "-Xmx8g",
+          "-XX:ActiveProcessorCount=4",
+          "-cp",
+          "/home/mchoi/main-revalidation-20261007/runner-classes:/home/mchoi/w1357-main-revalidation-20261007/target/classes:/home/mchoi/w1357-main-revalidation-20261007/target/test-classes:/home/mchoi/w1357-main-revalidation-20261007/target/lib/*",
+          "SingleMethodRunner",
+          "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014StepLmLargeGetVarCostRedTest",
+          "costBasedSelectorsDoNotCollectTheFullFeatureMatrix"
+        ],
+        "cwd": "/home/mchoi/w1357-main-revalidation-20261007",
+        "head": "93706bbaa9e054e8db4c014ce2dd529498fc0e2b",
+        "timeoutSeconds": 600,
+        "parallelismNote": "Separate JVMs; compile-only verification on shared host, not a latency experiment."
+      },
+      "artifactDirectory": "/home/mchoi/main-revalidation-20261007/steplm-canonical",
+      "junit": {
+        "run": 1,
+        "failures": 1,
+        "ignored": 0,
+        "runtimeMillis": 20556
+      },
+      "signature": "IllegalArgumentException: EXACT_VE_FACTOR_CELL_OVERFLOW",
+      "phase": "ExactPhysicalCostModel.freezeOrdinaryFactorsAfterPreflight -> ExactCategoricalSolver.validateInputStructure/validateInputs -> checkedCells, before optimizer selection."
+    }
+  },
+  "logregW1": {
+    "schema": "logreg-w1-current-main-bounded-verdict-v1",
+    "status": "BOUNDED_LIMIT",
+    "repoHead": "93706bbaa9e054e8db4c014ce2dd529498fc0e2b",
+    "originMainAtLaunch": "93706bbaa9e054e8db4c014ce2dd529498fc0e2b",
+    "originMainAfterRun": "73d1eb024f",
+    "compileOnly": true,
+    "runtimeExecuted": false,
+    "planner": "COMPILE_COST_BASED / FederatedPlanLocalCost",
+    "workload": {
+      "builtin": "multiLogReg",
+      "rows": 50000,
+      "features": 2100,
+      "classes": 2,
+      "maxi": 30,
+      "maxii": 5,
+      "workers": 1,
+      "partition": "ROW",
+      "privacyX": "PRIVATE_AGGREGATE",
+      "privacyY": "PRIVATE_AGGREGATE"
+    },
+    "execution": {
+      "deadlineSeconds": 1200,
+      "runnerWallSeconds": 1203.4967176616192,
+      "runnerReturnCode": 143,
+      "outputPresent": false,
+      "wholePlanCompleted": false,
+      "plannerExceptionObserved": false,
+      "privacyExceptionObserved": false,
+      "outOfMemoryObserved": false,
+      "ownedContainerRemoved": true,
+      "analysisCompleted": true,
+      "analysisElapsedNanos": 808045993978,
+      "analysisFingerprint": "a0739dba1fcb32070070697a7ba8feebc785d74da968a1c17995e851dc5dde82",
+      "plannerStarted": true,
+      "loweringCompleted": false,
+      "selectedP1kStatesAvailable": false
+    },
+    "progress": [
+      {
+        "elapsedSeconds": 121.1,
+        "phase": "closeFunctionBoundaryRelations",
+        "topPlannerFrame": "CandidateEmissionFact.mergeCanonicalClauseRuns"
+      },
+      {
+        "elapsedSeconds": 301.6,
+        "phase": "first closePrePrivacyValueMaps before closePrivacyDomains",
+        "topPlannerFrame": "DirectSupportIndex.update"
+      },
+      {
+        "elapsedSeconds": 601.16,
+        "phase": "closePlacementAndFeasibility after privacy closure",
+        "topPlannerFrame": "NativePlacementContinuity.instantiateSupportTemplates"
+      },
+      {
+        "elapsedSeconds": 912.18,
+        "phase": "optimizer ExactPhysicalModel.addJointFactors",
+        "topPlannerFrame": "JointValueMapRelations.aliasesOrigin"
+      },
+      {
+        "elapsedSeconds": 1182.33,
+        "phase": "optimizer ExactPhysicalModel.addJointFactors",
+        "topPlannerFrame": "JointValueMapRelations.aliasesOrigin"
+      }
+    ],
+    "provenance": {
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "buildExitCode": 0,
+      "buildSourceCount": 3771,
+      "buildSourceUnchanged": true,
+      "placementRelationClosureSourceSha256": "ffe07bb942fb06b1941632c9aebb7b2d2206261bfc74f370c060375297c59b2a",
+      "placementRelationClosureClassSha256": "af76bb15545a30b89ef76105cf25ceed23167155060edaea48ac3a3cb47bbafd",
+      "nativePlacementContinuitySourceSha256": "90c04bfb459ad6331c65e8a0ebb4fd730c600e0daec54eee7cd063e778cf56a7",
+      "nativePlacementContinuityClassSha256": "27e5a5b572ad31229827b88ff8ac7dd01131793f2500e6dcf38188f615ba51f9",
+      "probeSourceSha256": "d6537c9d31e83eec0d08eb1b43e16b33a72776b288b867a2623d396133ee27b2",
+      "probeClassSha256": "c9a1799369e4eab7751e3e024ad8e4ae6a45c3c6c1f06e3bf403ab085e3260a3",
+      "normalizedScriptSha256": "1e10df76fae40c4a2824066e293771a3850a1e922f5c6d54a5f6d3a8856d138b",
+      "normalizedConfigSha256": "677ea2e45db4a90fc7dc9bed29b9ee0cf3ffaaffb91bcdcda7f2816ce2d54b2b",
+      "costEnvironmentSha256": "5d1eca12c17581ef734fd357257895d47798ef1ac380d78cfa2409ab7bf6c29c",
+      "xMetadataSha256": "6957e2d4e4bdbe1543979f9d2b61c91c0eaa8d4d26523f16f9114cc0c6473d12",
+      "yMetadataSha256": "2e6d30b0fc3e12a2a55d02aa3d8c9b5f61ec72331a215543365a54eef99a9d27",
+      "fixtureParityWithPriorRun": true,
+      "onlyFixturePathChanged": true
+    },
+    "limits": [
+      "The shared host ran unrelated containers during part of this validation, so elapsed time is not a performance comparison.",
+      "origin/main advanced to 73d1eb024f during this run with a production change in PlacementRelationClosure; a fresh bounded rerun is required for literal latest-main status."
+    ],
+    "artifacts": {
+      "command": "results/B/logreg_w1.command.json",
+      "log": "results/B/logreg_w1.log",
+      "runnerReceipt": "results/B/runs.json",
+      "watchdog": "metadata/watchdog.json"
+    }
+  },
+  "limitations": [
+    "Compile/placement verification, not distributed training or a latency A/B.",
+    "Small StepLM same-code reproduction is reused after source/log/runner/JAR hash verification.",
+    "Production source, tests and expected values remain unchanged."
+  ],
+  "factorScopeDiagnostics": {
+    "method": "External class overlay prints raw hard/cost factor scope cardinalities immediately before original preflight. It does not skip checks or evaluate/alter factor values; both original failure signatures remain. Repository and shared target unchanged.",
+    "compile": {
+      "argv": [
+        "/usr/lib/jvm/java-17-openjdk-amd64/bin/javac",
+        "--release",
+        "17",
+        "-cp",
+        "/home/mchoi/w1357-main-revalidation-20261007/target/classes:/home/mchoi/w1357-main-revalidation-20261007/target/test-classes:/home/mchoi/w1357-main-revalidation-20261007/target/lib/*",
+        "-d",
+        "/home/mchoi/main-revalidation-20261007/factor-diagnostic/classes",
+        "/home/mchoi/main-revalidation-20261007/factor-diagnostic/ExactPhysicalCostModel.java"
+      ],
+      "sourceSha256": "20d1dfc439664d502008772de60a8812ef1b642a9746ac1ee0650c2db1254272",
+      "diagnosticSourceSha256": "8f29f30aada89123811e861786e2b452dfeda448f08af7cb763b39baa604b320",
+      "semantics": "Read-only factor scope counting inserted immediately before original preflight; all original checks and evaluators unchanged."
+    },
+    "runs": {
+      "als-factor-diagnostic": {
+        "exitCode": 1,
+        "timedOut": false,
+        "seconds": 21.026720635592937,
+        "stdoutSha256": "591bd104dffa5a992254ceaf011ad967fa1bb5a55e9ac8301584a96a377456f0",
+        "stderrSha256": "4aa559ed07e941bd45326c6fa0a771d48fa9cbbbc857336aac01238e2132ca9a",
+        "command": {
+          "argv": [
+            "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+            "--add-modules",
+            "jdk.incubator.vector",
+            "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            "--add-opens=java.base/java.io=ALL-UNNAMED",
+            "--add-opens=java.base/java.util=ALL-UNNAMED",
+            "--add-opens=java.base/java.lang=ALL-UNNAMED",
+            "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+            "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+            "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+            "-Xmx8g",
+            "-XX:ActiveProcessorCount=4",
+            "-cp",
+            "/home/mchoi/main-revalidation-20261007/factor-diagnostic/classes:/home/mchoi/main-revalidation-20261007/runner-classes:/home/mchoi/w1357-main-revalidation-20261007/target/classes:/home/mchoi/w1357-main-revalidation-20261007/target/test-classes:/home/mchoi/w1357-main-revalidation-20261007/target/lib/*",
+            "SingleMethodRunner",
+            "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+            "singleWorkerAlsPricesOneReusableCpRuntimeWeightMaterialization"
+          ],
+          "cwd": "/home/mchoi/w1357-main-revalidation-20261007",
+          "head": "93706bbaa9e054e8db4c014ce2dd529498fc0e2b",
+          "timeoutSeconds": 600,
+          "parallelismNote": "Separate JVMs; compile-only verification on shared host, not a latency experiment."
+        },
+        "factorsAboveJavaArrayLimit": [
+          {
+            "group": "hard",
+            "ordinal": 251,
+            "rawCells": "667285920000",
+            "domains": [
+              10,
+              1,
+              7,
+              193,
+              20,
+              7,
+              315,
+              20,
+              7,
+              8
+            ],
+            "firstConsumerLocation": "scripts/builtin/alsCG.dml:135:22:org.apache.sysds.hops.BinaryOp:b(*):compiler-temp"
+          }
+        ],
+        "artifactDirectory": "/home/mchoi/main-revalidation-20261007/als-factor-diagnostic"
+      },
+      "steplm-factor-diagnostic": {
+        "exitCode": 1,
+        "timedOut": false,
+        "seconds": 30.01069312542677,
+        "stdoutSha256": "849809b1bded2dc6d92fb5f234e31d7849d45f7aa80d2e4179323335df61292d",
+        "stderrSha256": "67798335ac2f3f79c9abecdf61e15f69eceaa2b2eb70e93fbac8617a4be02ab4",
+        "command": {
+          "argv": [
+            "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+            "--add-modules",
+            "jdk.incubator.vector",
+            "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            "--add-opens=java.base/java.io=ALL-UNNAMED",
+            "--add-opens=java.base/java.util=ALL-UNNAMED",
+            "--add-opens=java.base/java.lang=ALL-UNNAMED",
+            "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+            "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+            "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+            "-Xmx8g",
+            "-XX:ActiveProcessorCount=4",
+            "-cp",
+            "/home/mchoi/main-revalidation-20261007/factor-diagnostic/classes:/home/mchoi/main-revalidation-20261007/runner-classes:/home/mchoi/w1357-main-revalidation-20261007/target/classes:/home/mchoi/w1357-main-revalidation-20261007/target/test-classes:/home/mchoi/w1357-main-revalidation-20261007/target/lib/*",
+            "SingleMethodRunner",
+            "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014StepLmLargeGetVarCostRedTest",
+            "costBasedSelectorsDoNotCollectTheFullFeatureMatrix"
+          ],
+          "cwd": "/home/mchoi/w1357-main-revalidation-20261007",
+          "head": "93706bbaa9e054e8db4c014ce2dd529498fc0e2b",
+          "timeoutSeconds": 600,
+          "parallelismNote": "Separate JVMs; compile-only verification on shared host, not a latency experiment."
+        },
+        "factorsAboveJavaArrayLimit": [
+          {
+            "group": "hard",
+            "ordinal": 473,
+            "rawCells": "8380255403520",
+            "domains": [
+              14,
+              77,
+              121,
+              4,
+              39,
+              44,
+              13,
+              4,
+              180,
+              1
+            ],
+            "firstConsumerLocation": "scripts/builtin/lmCG.dml:135:18:org.apache.sysds.hops.BinaryOp:b(*):q"
+          },
+          {
+            "group": "hard",
+            "ordinal": 491,
+            "rawCells": "16942865164620595200",
+            "domains": [
+              8,
+              2,
+              77,
+              121,
+              4,
+              39,
+              44,
+              13,
+              4,
+              180,
+              13,
+              10,
+              2,
+              18,
+              7,
+              18,
+              3
+            ],
+            "firstConsumerLocation": "scripts/builtin/lmCG.dml:129:24:org.apache.sysds.hops.AggBinaryOp:ba(+*):compiler-temp"
+          }
+        ],
+        "artifactDirectory": "/home/mchoi/main-revalidation-20261007/steplm-factor-diagnostic"
+      }
+    }
+  },
+  "incidentalLatestMainCorrection": {
+    "subject": "Previously reported two Heuristic unbound relocation errors",
+    "status": "RESOLVED_IN_FETCHED_MAIN",
+    "verifiedExistingReceipt": {
+      "name": "org.apache.sysds.hops.fedplanner.placement.HeuristicLocalContinuationTest",
+      "tests": "9",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "49.178"
+    },
+    "evidence": "docs/experiments/heuristic-main-publication-20261007/validation.json",
+    "sameSourceManifestVerifiedAbove": true,
+    "notANewExecution": true
+  },
+  "newerMainDuringRun": {
+    "head": "73d1eb024f6f70a7d869f363d895d72313bcbff6",
+    "productionChange": "PlacementRelationClosure.exactSinglePartitionRealizationProofs worklist optimization",
+    "followupWorktree": "/home/mchoi/w1357-main-revalidation-r2-20261007",
+    "reason": "A changed common-analysis implementation can affect completion time; pinned-head timeout is not used as latest-main proof."
+  }
+}

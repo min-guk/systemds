@@ -12,6 +12,7 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -188,6 +189,8 @@ public final class JointValueMapRelations {
 		private final boolean requireSameGeometry;
 		private final Map<PoolQuery,CompiledHopKey> projectedAliasOwners;
 		private final Map<PoolQuery,java.util.Optional<DurableAnchorKey>> invariantPools = new java.util.HashMap<>();
+		private final Map<CompiledHopKey,Map<CandidateRealizationReference,Boolean>> aliasOrigins =
+			new IdentityHashMap<>();
 
 		public Grounding(PlacementAnalysis analysis, Relation relation) {
 			this(analysis, relation, false);
@@ -258,6 +261,8 @@ public final class JointValueMapRelations {
 			}
 			Grounding projected = new Grounding(analysis, relation, requireSameGeometry, certified);
 			projected.invariantPools.putAll(invariantPools);
+			aliasOrigins.forEach((origin, queries) ->
+				projected.aliasOrigins.put(origin, new java.util.HashMap<>(queries)));
 			return java.util.Optional.of(new AliasProjection(projected, owner, candidates.size()));
 		}
 
@@ -514,8 +519,18 @@ public final class JointValueMapRelations {
 			if(candidates.isEmpty() && clause.requiredInputSupport().size() == 1)
 				candidates = clause.requiredInputSupport();
 			if(candidates.isEmpty()) candidates = clause.requiredInputSupport().stream().filter(reference ->
-				aliasesOrigin(analysis, reference, query.origin(), new java.util.HashSet<>())).toList();
+				aliasesOrigin(reference, query.origin())).toList();
 			return candidates;
+		}
+
+		private boolean aliasesOrigin(CandidateRealizationReference reference, CompiledHopKey origin) {
+			// Origin matching is identity-based; references retain realization equality.
+			Map<CandidateRealizationReference,Boolean> queries = aliasOrigins.computeIfAbsent(origin,
+				ignored -> new java.util.HashMap<>());
+			// Only completed root queries are reusable. A recursive cycle cut is not
+			// a proof that the corresponding intermediate node cannot reach origin.
+			return queries.computeIfAbsent(reference, ignored -> JointValueMapRelations.aliasesOrigin(
+				analysis, reference, origin, new java.util.HashSet<>()));
 		}
 
 		/** Scope contains only decisions whose chosen clause can change a queried physical map. */
@@ -552,21 +567,28 @@ public final class JointValueMapRelations {
 	/** Follow value aliases only: an operand of a computation is not its result value. */
 	private static boolean aliasesOrigin(PlacementAnalysis analysis,
 		CandidateRealizationReference reference, CompiledHopKey origin,
-		Set<CandidateRealizationReference> active) {
-		CompiledHopKey owner = reference.rule().parentOccurrence();
-		if(owner == origin) return true;
-		if(!active.add(reference)) return false;
-		try {
+		Set<CandidateRealizationReference> visited) {
+		ArrayDeque<CandidateRealizationReference> pending = new ArrayDeque<>();
+		pending.push(reference);
+		while(!pending.isEmpty()) {
+			CandidateRealizationReference current = pending.pop();
+			CompiledHopKey owner = current.rule().parentOccurrence();
+			if(owner == origin) return true;
+			// Retain visits for the entire query, including across reconvergent paths.
+			if(!visited.add(current)) continue;
 			Hop hop = analysis.hop(owner).orElse(null);
 			if(hop != null && !PlacementProgramFacts.isTransientRead(hop)
 				&& !PlacementProgramFacts.isTransientWrite(hop)
-				&& !(hop instanceof UnaryOp unary && unary.getOp() == OpOp1._PLACEMENT)) return false;
-			for(var clause : analysis.requireExactCandidateRealization(reference).supportClauses())
-				for(var support : clause.requiredInputSupport())
-					if(aliasesOrigin(analysis, support, origin, active)) return true;
-			return false;
+				&& !(hop instanceof UnaryOp unary && unary.getOp() == OpOp1._PLACEMENT)) continue;
+			var clauses = analysis.requireExactCandidateRealization(current).supportClauses();
+			// Reverse pushes preserve the previous depth-first support order.
+			for(int clause = clauses.size() - 1; clause >= 0; clause--) {
+				var support = clauses.get(clause).requiredInputSupport();
+				for(int position = support.size() - 1; position >= 0; position--)
+					pending.push(support.get(position));
+			}
 		}
-		finally { active.remove(reference); }
+		return false;
 	}
 
 	public static List<CompiledHopKey> supportOwners(PlacementAnalysis analysis, Relation relation) {

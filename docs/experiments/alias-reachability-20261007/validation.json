@@ -1,0 +1,100 @@
+{
+  "status": "FOCUSED_FIX_VALIDATED",
+  "baselineHead": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+  "worktree": "/home/mchoi/w1357-main-revalidation-r4-20261007",
+  "productionScope": [
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.java"
+  ],
+  "commands": {
+    "compileProduction": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/javac",
+      "--add-modules",
+      "jdk.incubator.vector",
+      "-Xlint:unchecked",
+      "-cp",
+      "target/classes:target/lib/*",
+      "-d",
+      "target/alias-reachability-evidence/main-classes",
+      "src/main/java/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.java"
+    ],
+    "compileTest": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/javac",
+      "--add-modules",
+      "jdk.incubator.vector",
+      "-Xlint:unchecked",
+      "-cp",
+      "target/alias-reachability-evidence/main-classes:target/classes:target/test-classes:target/lib/*",
+      "-d",
+      "target/alias-reachability-evidence/test-classes",
+      "src/test/java/org/apache/sysds/hops/fedplanner/placement/JointAliasReachabilityTest.java"
+    ],
+    "regressions": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+      "--add-modules",
+      "jdk.incubator.vector",
+      "--add-opens=java.base/java.nio=ALL-UNNAMED",
+      "--add-opens=java.base/java.io=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+      "-Xmx4g",
+      "-XX:ActiveProcessorCount=4",
+      "-cp",
+      "target/alias-reachability-evidence/main-classes:target/alias-reachability-evidence/test-classes:target/classes:target/test-classes:target/lib/*",
+      "org.junit.runner.JUnitCore",
+      "org.apache.sysds.hops.fedplanner.placement.JointAliasReachabilityTest",
+      "org.apache.sysds.hops.fedplanner.placement.JointValueMapRelationsTest",
+      "org.apache.sysds.hops.fedplanner.placement.JointValueMapSelectionLegalityTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointAliasProjectionTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointPartialTruthTest"
+    ],
+    "baselineDiamond": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+      "--add-modules",
+      "jdk.incubator.vector",
+      "-Xmx2g",
+      "-XX:ActiveProcessorCount=4",
+      "-cp",
+      "/home/mchoi/main-revalidation-r4-20261007/runner-classes:target/alias-reachability-evidence/test-classes:target/classes:target/test-classes:target/lib/*",
+      "SingleMethodRunner",
+      "org.apache.sysds.hops.fedplanner.placement.JointAliasReachabilityTest",
+      "diamondExpandsEachRealizationOnce"
+    ]
+  },
+  "evidence": {
+    "baselineDiamondExpectedFailure": true,
+    "uniqueReachableRealizations": 22,
+    "baselineRealizationLookups": 3071,
+    "candidateRealizationLookups": 22,
+    "repeatedPositiveNegativeFallbackAdditionalLookups": 0,
+    "randomGraphs": 40,
+    "oraclePairs": 2560,
+    "longChainEdges": 5000,
+    "tests": 22,
+    "failures": 0,
+    "junitSeconds": 26.598,
+    "independentCodeReviewBlockers": 0,
+    "diffWhitespaceCheck": "PASS"
+  },
+  "limitations": [
+    "Deterministic structural work-count tests, not a workload latency benchmark.",
+    "Large W1 was not rerun; its full compilation/runtime completion remains unverified.",
+    "Existing verified baseline classes/dependencies were reused; only changed classes were freshly compiled into an overlay."
+  ],
+  "sha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.java": "bdb85d9ae644bf4ff7e07d8dac0e25ef49f26337f42b9e9b99ae009ffb59649e",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/JointAliasReachabilityTest.java": "b0a0c172b13ffacd82a06cb2f04012407578a8b1dc21da793b6416476d76295e"
+  },
+  "logSha256": {
+    "baseline-diamond.log": "8328bd1f86bfb2891b89580f44621860462868230a16d0060ed35df919bada65",
+    "regressions.log": "255c72044c8801e3c785e8736dbf32da98f3f7cf71c4a7031181dc306155ef96"
+  },
+  "rawLogSha256": {
+    "baseline-diamond.log": "8328bd1f86bfb2891b89580f44621860462868230a16d0060ed35df919bada65",
+    "regressions.log": "494d7e89da2f9613acaf11afa7f5a2e88b3581e654d5682c008ce777260c59f6"
+  },
+  "rawLogRoot": "target/alias-reachability-evidence",
+  "committedLogFormatting": "Only surplus trailing blank lines are removed from committed log copies; original logs remain at rawLogRoot."
+}

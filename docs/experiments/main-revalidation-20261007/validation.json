@@ -1,0 +1,185 @@
+{
+  "schema": "systemds-main-remaining-revalidation-v3",
+  "status": "STOPPED_FOR_DIAGNOSIS",
+  "head": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+  "worktree": "/home/mchoi/w1357-main-revalidation-r4-20261007",
+  "artifactRoot": "/home/mchoi/main-revalidation-r4-20261007",
+  "priorRuns": [
+    "round1-93706.json",
+    "round2-73d1.json"
+  ],
+  "reusedVerifiedBuild": {
+    "head": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+    "publishedBuildWorktree": "/home/mchoi/steplm-cfg-closure-20261007",
+    "publishedJar": "/home/mchoi/steplm-cfg-closure-20261007/target/systemds-3.4.0-SNAPSHOT.jar",
+    "publishedJarSha256": "3d9d7a35cd269351979125eb001267b840c90d8c8b26ed62e3d332d47cd3681c",
+    "packageLog": "/home/mchoi/steplm-cfg-closure-20261007/target/steplm-publication-evidence/package.log",
+    "packageLogSha256": "e44dda57eda107ed3b26d97257bf1ac780774c895bcd6deb5fc319dba972e908",
+    "copiedArtifacts": 7178,
+    "allSourceCopyDestinationHashesMatch": true,
+    "copiedArtifactManifestSha256": "b22ab5d794e906b3aae4f7c069c20316bb2742faeb319002d8041d105e658b9f",
+    "sourceFiles": 3783,
+    "sourceManifestSha256": "99524737f1881bfb0ba13de2e10c7b2dd2227e227f8dd114e87e1ff8429a09ec",
+    "dependencyPath": "/home/mchoi/w1357-main-revalidation-r2-20261007/target/lib",
+    "reuseJustification": "Independent review verified all3578 published frozen source hashes against fbfd Git blobs and all3790 main classes against the published JAR; fresh package log records main and test compilation. Current source/test/resources copies are inventoried and verified before/after copying.",
+    "dependencyFiles": 301,
+    "allDependencyHashesMatchPublishedBuild": true
+  },
+  "freshMethodResults": {
+    "als-canonical": {
+      "exitCode": 1,
+      "timedOut": false,
+      "seconds": 26.012461118400097,
+      "stdoutSha256": "7db57991578677d455b80eb9712fcecf0adc29732155e524d1599da06f2021db",
+      "stderrSha256": "edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0",
+      "command": {
+        "argv": [
+          "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+          "--add-modules",
+          "jdk.incubator.vector",
+          "--add-opens=java.base/java.nio=ALL-UNNAMED",
+          "--add-opens=java.base/java.io=ALL-UNNAMED",
+          "--add-opens=java.base/java.util=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+          "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+          "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+          "-Xmx8g",
+          "-XX:ActiveProcessorCount=4",
+          "-cp",
+          "/home/mchoi/main-revalidation-r4-20261007/runner-classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/test-classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib/*",
+          "SingleMethodRunner",
+          "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+          "singleWorkerAlsPricesOneReusableCpRuntimeWeightMaterialization"
+        ],
+        "cwd": "/home/mchoi/w1357-main-revalidation-r4-20261007",
+        "head": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+        "timeoutSeconds": 600,
+        "parallelismNote": "Separate JVMs; compile-only verification on shared host, not a latency experiment."
+      },
+      "artifactDirectory": "/home/mchoi/main-revalidation-r4-20261007/als-canonical",
+      "junit": {
+        "run": 1,
+        "failures": 1,
+        "ignored": 0,
+        "runtimeMillis": 24390
+      },
+      "signature": "IllegalArgumentException: EXACT_VE_FACTOR_CELL_OVERFLOW",
+      "phase": "ExactPhysicalCostModel.freezeOrdinaryFactorsAfterPreflight -> ExactCategoricalSolver.validateInputStructure -> checkedCells; before solver selection"
+    },
+    "steplm-canonical": {
+      "exitCode": 1,
+      "timedOut": false,
+      "seconds": 39.01494091749191,
+      "stdoutSha256": "de6f190addffc188871a59fdb64aa00791f589197533d1a8d76f30234e963a27",
+      "stderrSha256": "90631759dd85a5588645087fa264a956bb1d2a6c1a741ff106fdbba8d9610b7d",
+      "command": {
+        "argv": [
+          "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+          "--add-modules",
+          "jdk.incubator.vector",
+          "--add-opens=java.base/java.nio=ALL-UNNAMED",
+          "--add-opens=java.base/java.io=ALL-UNNAMED",
+          "--add-opens=java.base/java.util=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+          "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+          "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+          "-Xmx8g",
+          "-XX:ActiveProcessorCount=4",
+          "-cp",
+          "/home/mchoi/main-revalidation-r4-20261007/runner-classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/test-classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib/*",
+          "SingleMethodRunner",
+          "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014StepLmLargeGetVarCostRedTest",
+          "costBasedSelectorsDoNotCollectTheFullFeatureMatrix"
+        ],
+        "cwd": "/home/mchoi/w1357-main-revalidation-r4-20261007",
+        "head": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+        "timeoutSeconds": 600,
+        "parallelismNote": "Separate JVMs; compile-only verification on shared host, not a latency experiment."
+      },
+      "artifactDirectory": "/home/mchoi/main-revalidation-r4-20261007/steplm-canonical",
+      "junit": {
+        "run": 1,
+        "failures": 1,
+        "ignored": 0,
+        "runtimeMillis": 37924
+      },
+      "signature": "IllegalArgumentException: EXACT_VE_FACTOR_CELL_OVERFLOW",
+      "phase": "ExactPhysicalCostModel.freezeOrdinaryFactorsAfterPreflight -> ExactCategoricalSolver.validateInputStructure -> checkedCells; before solver selection"
+    },
+    "steplm-small": {
+      "exitCode": 1,
+      "timedOut": false,
+      "seconds": 57.022202141582966,
+      "stdoutSha256": "4ccbb45c29972066d674c4caa7f62e6b2dc6b6a5b997a1f3bcec566080d42add",
+      "stderrSha256": "edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0",
+      "command": {
+        "argv": [
+          "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+          "--add-modules",
+          "jdk.incubator.vector",
+          "--add-opens=java.base/java.nio=ALL-UNNAMED",
+          "--add-opens=java.base/java.io=ALL-UNNAMED",
+          "--add-opens=java.base/java.util=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang=ALL-UNNAMED",
+          "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+          "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+          "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+          "-Xmx8g",
+          "-XX:ActiveProcessorCount=4",
+          "-cp",
+          "/home/mchoi/main-revalidation-r4-20261007/runner-classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/test-classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib/*",
+          "SingleMethodRunner",
+          "org.apache.sysds.test.component.federated.FederatedPlannerFallbackIntegrationTest",
+          "testDpPlansSteplmWithSameNamedFormalTransientBinding"
+        ],
+        "cwd": "/home/mchoi/w1357-main-revalidation-r4-20261007",
+        "head": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+        "timeoutSeconds": 600,
+        "parallelismNote": "Separate JVMs; compile-only verification on shared host, not a latency experiment."
+      },
+      "artifactDirectory": "/home/mchoi/main-revalidation-r4-20261007/steplm-small",
+      "junit": {
+        "run": 1,
+        "failures": 1,
+        "ignored": 0,
+        "runtimeMillis": 55313
+      },
+      "signature": "IllegalArgumentException: EXACT_VE_FACTOR_CELL_OVERFLOW",
+      "phase": "ExactPhysicalCostModel.freezeOrdinaryFactorsAfterPreflight -> ExactCategoricalSolver.validateInputStructure -> checkedCells; before solver selection",
+      "previousCfgNonconvergenceResolved": true,
+      "fullCompilationPassed": false
+    }
+  },
+  "logregW1": {
+    "status": "STOPPED_FOR_DIAGNOSIS",
+    "artifactRoot": "/home/mchoi/main-revalidation-r4-20261007/logreg-w1",
+    "timeoutSeconds": 1200,
+    "logPreallocation": {
+      "reservedBytes": 8388608,
+      "keepLogicalSize": true,
+      "purpose": "Preserve space for append-only diagnostic log on shared near-capacity filesystem",
+      "affectsPlannerSourceOrInput": false
+    },
+    "receipt": "../../../../main-revalidation-r4-20261007/logreg-w1/verdict.json",
+    "receiptSha256": "7d0ffaf87b84d1775cb93f5f717b00928bd2b9b748c4f172a8607259b879b2a8",
+    "wallSeconds": 694.8113940581679,
+    "plannerFailureObserved": false,
+    "analysisCompleted": false,
+    "ownedExecutionCleanedUp": true
+  },
+  "limitations": [
+    "Compile/placement verification; no distributed training or latency A/B claim.",
+    "Shared host and concurrent separate test JVMs during W1 startup.",
+    "Production, tests and expected values were unchanged during these recorded baseline runs; subsequent alias traversal edits and tests are recorded separately.",
+    "Prior main revisions and infrastructure-invalid attempts are preserved separately."
+  ],
+  "completedMethodEvidenceVerification": {
+    "sourceFiles": 3783,
+    "sourceUnchanged": true,
+    "logHashesVerified": 6,
+    "testsChanged": false,
+    "expectationsChanged": false
+  }
+}
