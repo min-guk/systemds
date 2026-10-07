@@ -1,0 +1,1901 @@
+{
+  "schema": "l2svm-exact-capacity-validation-v1",
+  "status": "verified-with-separate-public-logreg-capacity-failure",
+  "workspace": "/home/mchoi/w1357-derived-supply-main-20261007",
+  "previousPublication": "8ae75aff00cf790d1afa3820b3b7ce9a2492d04d",
+  "integratedOriginMain": "241b9c491a56e46e41c197b461801ec4b9b0948a",
+  "implementationCommit": "7945e2aab1",
+  "mergedTestCommit": "7f35faa05d2cf89068eaced423589f3f079f4c97",
+  "evidenceRoot": "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007",
+  "productionMetadataFixture": {
+    "xShape": [
+      50000,
+      2100
+    ],
+    "yShape": [
+      50000,
+      1
+    ],
+    "privacy": "PUBLIC",
+    "federatedWorkers": 2,
+    "maxIterations": 30,
+    "numericalRuntimeExecuted": false,
+    "decisions": 241,
+    "alternatives": 59429,
+    "canonicalHardFactors": 676,
+    "encodedHardFactors": 794,
+    "encodedHardAuxiliaries": 118,
+    "costContributions": 1218,
+    "headers": 5292,
+    "sourceVariables": 44,
+    "sharedEncodedFactors": 3450,
+    "sharedEncodedInputCells": 4911013,
+    "compactedInputCells": 1447984,
+    "maximumStoredFactorCells": 9028800,
+    "cumulativeStoredFactorCells": 19349167,
+    "limits": {
+      "maximumFactorCells": 10000000,
+      "maximumMaterializedCells": 60000000
+    },
+    "objectiveMillis": 1014.5096925175934,
+    "objectiveBits": "4652134937446297763",
+    "jvmHeap": "3g"
+  },
+  "java": {
+    "receipt": {
+      "head": "7f35faa05d2cf89068eaced423589f3f079f4c97",
+      "command": [
+        "mvn",
+        "-q",
+        "-o",
+        "-Djacoco.skip=true",
+        "-Dtest-forkCount=1",
+        "-Dtest-perCoreThreadCount=false",
+        "-Dtest-threadCount=1",
+        "-Dtest=ExactSparseStorageBudgetTest,ExactFiniteSupportJoinTest,ExactDyadicSolverTest,ExactSparseMessageParityTest,ExactDyadicSeparatorMajorParityTest,ExactPhysicalDyadicCertificateTest,ExactPhysicalSharedSourceEncodingTest,ExactSharedSourceOrdinalLifecycleTest,ExactSharedSourceOrdinalReuseTest,ExactCertifiedSharedSourceOptimizerTest,ExactPhysicalLegalityEncodingTest,ExactL2SvmSharedSourceProductionTest,ExactPhysicalModelCertificateTest,ExactCategoricalSolverTest,ExactCategoricalSolverArithmeticParityTest,ExactDyadicCostsTest,ExactDyadicOrderedResidualTest,ExactDyadicOrderedResidualBoundaryTest,ExactDyadicZeroElisionTest,ExactPhysicalReducedSolverTest,SharedRegionalCompactionParityTest,ExactDerivedSupplySharingTest,ExactStagedSupplyCanonicalCostTest,ExactLoopPhiSupplySharingTest,ExactNativeLocalAnchorFanoutCostTest,ExactDurableOutputSupportTest,ExactTransientRealizationTest,ExactPhysicalNativeSupplyRepresentationTest,ExactSharedSourceDefaultRoutingTest,JointBoundaryPhysicalModelProofTest,AutomaticSupplySharingDockerProbeArgumentsTest,ExactRootWorkerCountMemoTest,CfgReplayCompatibilityIndexTest,IncrementalSinglePartitionProofTest,JointAliasReachabilityTest",
+        "test"
+      ],
+      "exitCode": 1,
+      "changedSources": [],
+      "elapsedSeconds": 545.4772403240204,
+      "log": "/home/mchoi/w1357-derived-supply-main-20261007/target/l2svm-merged-final.log"
+    },
+    "classCount": 35,
+    "tests": 253,
+    "errors": 1,
+    "failures": 0,
+    "skipped": 0,
+    "classes": [
+      {
+        "class": "ExactSparseStorageBudgetTest",
+        "tests": "6",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.143"
+      },
+      {
+        "class": "ExactFiniteSupportJoinTest",
+        "tests": "11",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.371"
+      },
+      {
+        "class": "ExactDyadicSolverTest",
+        "tests": "8",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.22"
+      },
+      {
+        "class": "ExactSparseMessageParityTest",
+        "tests": "12",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.757"
+      },
+      {
+        "class": "ExactDyadicSeparatorMajorParityTest",
+        "tests": "5",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.094"
+      },
+      {
+        "class": "ExactPhysicalDyadicCertificateTest",
+        "tests": "6",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.62"
+      },
+      {
+        "class": "ExactPhysicalSharedSourceEncodingTest",
+        "tests": "27",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.408"
+      },
+      {
+        "class": "ExactSharedSourceOrdinalLifecycleTest",
+        "tests": "3",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.064"
+      },
+      {
+        "class": "ExactSharedSourceOrdinalReuseTest",
+        "tests": "5",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.119"
+      },
+      {
+        "class": "ExactCertifiedSharedSourceOptimizerTest",
+        "tests": "5",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.799"
+      },
+      {
+        "class": "ExactPhysicalLegalityEncodingTest",
+        "tests": "2",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "37.1"
+      },
+      {
+        "class": "ExactL2SvmSharedSourceProductionTest",
+        "tests": "1",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "139.788"
+      },
+      {
+        "class": "ExactPhysicalModelCertificateTest",
+        "tests": "8",
+        "errors": "1",
+        "failures": "0",
+        "skipped": "0",
+        "time": "233.866"
+      },
+      {
+        "class": "ExactCategoricalSolverTest",
+        "tests": "21",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.281"
+      },
+      {
+        "class": "ExactCategoricalSolverArithmeticParityTest",
+        "tests": "9",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.195"
+      },
+      {
+        "class": "ExactDyadicCostsTest",
+        "tests": "8",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.063"
+      },
+      {
+        "class": "ExactDyadicOrderedResidualTest",
+        "tests": "5",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.158"
+      },
+      {
+        "class": "ExactDyadicOrderedResidualBoundaryTest",
+        "tests": "4",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.03"
+      },
+      {
+        "class": "ExactDyadicZeroElisionTest",
+        "tests": "5",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.027"
+      },
+      {
+        "class": "ExactPhysicalReducedSolverTest",
+        "tests": "35",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.356"
+      },
+      {
+        "class": "SharedRegionalCompactionParityTest",
+        "tests": "7",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.25"
+      },
+      {
+        "class": "ExactDerivedSupplySharingTest",
+        "tests": "3",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.083"
+      },
+      {
+        "class": "ExactStagedSupplyCanonicalCostTest",
+        "tests": "1",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "5.426"
+      },
+      {
+        "class": "ExactLoopPhiSupplySharingTest",
+        "tests": "2",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "31.359"
+      },
+      {
+        "class": "ExactNativeLocalAnchorFanoutCostTest",
+        "tests": "10",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.549"
+      },
+      {
+        "class": "ExactDurableOutputSupportTest",
+        "tests": "3",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.05"
+      },
+      {
+        "class": "ExactTransientRealizationTest",
+        "tests": "1",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.628"
+      },
+      {
+        "class": "ExactPhysicalNativeSupplyRepresentationTest",
+        "tests": "4",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "2.072"
+      },
+      {
+        "class": "ExactSharedSourceDefaultRoutingTest",
+        "tests": "3",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.66"
+      },
+      {
+        "class": "JointBoundaryPhysicalModelProofTest",
+        "tests": "10",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "12.951"
+      },
+      {
+        "class": "AutomaticSupplySharingDockerProbeArgumentsTest",
+        "tests": "4",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.01"
+      },
+      {
+        "class": "ExactRootWorkerCountMemoTest",
+        "tests": "2",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.271"
+      },
+      {
+        "class": "CfgReplayCompatibilityIndexTest",
+        "tests": "4",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.202"
+      },
+      {
+        "class": "IncrementalSinglePartitionProofTest",
+        "tests": "5",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.242"
+      },
+      {
+        "class": "JointAliasReachabilityTest",
+        "tests": "8",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.941"
+      }
+    ],
+    "remainingFailure": {
+      "class": "ExactPhysicalModelCertificateTest",
+      "method": "sevenWorkloadsBuildBaselineFreePhysicalDomainsAndFactors",
+      "workload": "PUBLIC LOGREG",
+      "reason": "EXACT_VE_FACTOR_LIMIT_EXCEEDED",
+      "stage": "separator",
+      "cells": 423588286,
+      "baselineAttribution": "origin/main ExactPhysicalModel.java overlay on merged dependencies; same LogReg fixture fails at raw input 436840500 cells; not a full clean baseline build",
+      "evidence": "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007/logreg-baseline-attribution"
+    }
+  },
+  "python": {
+    "tests": 56,
+    "errors": 0,
+    "failures": 0,
+    "command": "python3 -m unittest discover -s scripts/fedplanner/tests -p 'test_run_*e2e.py' -v",
+    "log": "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007/merged-regression-final/l2svm-sparse-harness-tests.log"
+  },
+  "package": {
+    "exitCode": 0,
+    "log": "/home/mchoi/w1357-derived-supply-main-20261007/target/l2svm-merged-package.log"
+  },
+  "sourceVerification": {
+    "files": 3589,
+    "changed": [],
+    "inventory": "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007/merged-regression-final/l2svm-merged-final-source-sha.json",
+    "inventorySha256": "4fc859c10ea02257f45b5743a5bae2bdd4cc86b1009a67391b777612b35ba673"
+  },
+  "runtimeR2": {
+    "orchestration": [
+      {
+        "label": "local",
+        "command": [
+          "bash",
+          "scripts/fedplanner/run_LAN_docker.sh",
+          "--joint-boundary-e2e",
+          "--output-root",
+          "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007",
+          "--run-id",
+          "l2svm-local-final-r2",
+          "--case",
+          "l2svm_true_01",
+          "--case",
+          "l2svm_false_m11",
+          "--case",
+          "ml_l2svm",
+          "--planner",
+          "local",
+          "--canonical-proof",
+          "--timeout-seconds",
+          "3600",
+          "--case-timeout-seconds",
+          "900"
+        ],
+        "exitCode": 1,
+        "elapsedSeconds": 592.572705745697,
+        "log": "/home/mchoi/w1357-derived-supply-main-20261007/target/l2svm-local-final-r2.log"
+      },
+      {
+        "label": "global",
+        "command": [
+          "bash",
+          "scripts/fedplanner/run_LAN_docker.sh",
+          "--joint-boundary-e2e",
+          "--output-root",
+          "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007",
+          "--run-id",
+          "l2svm-global-final-r2",
+          "--case",
+          "l2svm_true_01",
+          "--case",
+          "l2svm_false_m11",
+          "--case",
+          "ml_l2svm",
+          "--planner",
+          "global",
+          "--canonical-proof",
+          "--timeout-seconds",
+          "3600",
+          "--case-timeout-seconds",
+          "900"
+        ],
+        "exitCode": 1,
+        "elapsedSeconds": 267.80597281455994,
+        "log": "/home/mchoi/w1357-derived-supply-main-20261007/target/l2svm-global-final-r2.log"
+      },
+      {
+        "label": "sharing",
+        "command": [
+          "bash",
+          "scripts/fedplanner/run_LAN_docker.sh",
+          "--supply-sharing-e2e",
+          "--output-root",
+          "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007",
+          "--run-id",
+          "sharing-final-r2",
+          "--kind",
+          "invariant",
+          "--kind",
+          "updated",
+          "--kind",
+          "phi",
+          "--kind",
+          "flat",
+          "--planner",
+          "local",
+          "--planner",
+          "global"
+        ],
+        "exitCode": 0,
+        "elapsedSeconds": 149.36883163452148,
+        "log": "/home/mchoi/w1357-derived-supply-main-20261007/target/l2svm-sharing-final-r2.log"
+      }
+    ],
+    "sharing": {
+      "status": "PASSED",
+      "cases": [
+        {
+          "kind": "invariant",
+          "planner": "local",
+          "passed": true,
+          "numericMatch": true,
+          "sharing": [
+            {
+              "source": "S0",
+              "creations": 1,
+              "executions": 3,
+              "distinctRuntimeVersions": 1,
+              "shared": true,
+              "staged": true,
+              "passed": true,
+              "lifecycleCounts": {
+                "ALIAS": 3,
+                "CLEANUP": 1,
+                "CREATION_ATTEMPT": 1,
+                "CREATION_SUCCESS": 1,
+                "HIT": 2,
+                "RETAINED": 1,
+                "RETIREMENT": 1
+              }
+            }
+          ],
+          "transport": [
+            {
+              "source": "S0",
+              "sourceGets": 1,
+              "targetMatrixPuts": 1,
+              "instructionExecutions": 3,
+              "observedCreations": 1,
+              "passed": true
+            }
+          ],
+          "canonicalProof": {
+            "canonicalObjectiveMillis": 46.42780322869491,
+            "canonicalObjectiveBits": "4631730949725761302",
+            "objectiveMatches": true,
+            "costSurfaceMatches": true,
+            "selectedStatesMatch": true,
+            "sharedLifetimesMatch": true
+          },
+          "runtimeFallbackCount": 0,
+          "runtimeRepairCount": 0
+        },
+        {
+          "kind": "invariant",
+          "planner": "global",
+          "passed": true,
+          "numericMatch": true,
+          "sharing": [
+            {
+              "source": "S0",
+              "creations": 1,
+              "executions": 3,
+              "distinctRuntimeVersions": 1,
+              "shared": true,
+              "staged": true,
+              "passed": true,
+              "lifecycleCounts": {
+                "ALIAS": 3,
+                "CLEANUP": 1,
+                "CREATION_ATTEMPT": 1,
+                "CREATION_SUCCESS": 1,
+                "HIT": 2,
+                "RETAINED": 1,
+                "RETIREMENT": 1
+              }
+            }
+          ],
+          "transport": [
+            {
+              "source": "S0",
+              "sourceGets": 1,
+              "targetMatrixPuts": 1,
+              "instructionExecutions": 3,
+              "observedCreations": 1,
+              "passed": true
+            }
+          ],
+          "canonicalProof": {
+            "canonicalObjectiveMillis": 46.42780322869491,
+            "canonicalObjectiveBits": "4631730949725761302",
+            "objectiveMatches": true,
+            "costSurfaceMatches": true,
+            "selectedStatesMatch": true,
+            "sharedLifetimesMatch": true
+          },
+          "runtimeFallbackCount": 0,
+          "runtimeRepairCount": 0
+        },
+        {
+          "kind": "updated",
+          "planner": "local",
+          "passed": true,
+          "numericMatch": true,
+          "sharing": [
+            {
+              "source": "S0",
+              "creations": 3,
+              "executions": 9,
+              "distinctRuntimeVersions": 3,
+              "shared": true,
+              "staged": true,
+              "passed": true,
+              "lifecycleCounts": {
+                "ALIAS": 9,
+                "CLEANUP": 3,
+                "CREATION_ATTEMPT": 3,
+                "CREATION_SUCCESS": 3,
+                "HIT": 6,
+                "RETAINED": 3,
+                "RETIREMENT": 3
+              }
+            }
+          ],
+          "transport": [
+            {
+              "source": "S0",
+              "sourceGets": 3,
+              "targetMatrixPuts": 3,
+              "instructionExecutions": 9,
+              "observedCreations": 3,
+              "passed": true
+            }
+          ],
+          "canonicalProof": {
+            "canonicalObjectiveMillis": 142.38353164836383,
+            "canonicalObjectiveBits": "4639213691721078404",
+            "objectiveMatches": true,
+            "costSurfaceMatches": true,
+            "selectedStatesMatch": true,
+            "sharedLifetimesMatch": true
+          },
+          "runtimeFallbackCount": 0,
+          "runtimeRepairCount": 0
+        },
+        {
+          "kind": "updated",
+          "planner": "global",
+          "passed": true,
+          "numericMatch": true,
+          "sharing": [
+            {
+              "source": "S0",
+              "creations": 3,
+              "executions": 9,
+              "distinctRuntimeVersions": 3,
+              "shared": true,
+              "staged": true,
+              "passed": true,
+              "lifecycleCounts": {
+                "ALIAS": 9,
+                "CLEANUP": 3,
+                "CREATION_ATTEMPT": 3,
+                "CREATION_SUCCESS": 3,
+                "HIT": 6,
+                "RETAINED": 3,
+                "RETIREMENT": 3
+              }
+            }
+          ],
+          "transport": [
+            {
+              "source": "S0",
+              "sourceGets": 3,
+              "targetMatrixPuts": 3,
+              "instructionExecutions": 9,
+              "observedCreations": 3,
+              "passed": true
+            }
+          ],
+          "canonicalProof": {
+            "canonicalObjectiveMillis": 142.38353164836383,
+            "canonicalObjectiveBits": "4639213691721078404",
+            "objectiveMatches": true,
+            "costSurfaceMatches": true,
+            "selectedStatesMatch": true,
+            "sharedLifetimesMatch": true
+          },
+          "runtimeFallbackCount": 0,
+          "runtimeRepairCount": 0
+        },
+        {
+          "kind": "phi",
+          "planner": "local",
+          "passed": true,
+          "numericMatch": true,
+          "sharing": [
+            {
+              "source": "S0",
+              "creations": 3,
+              "executions": 9,
+              "distinctRuntimeVersions": 3,
+              "shared": true,
+              "staged": true,
+              "passed": true,
+              "lifecycleCounts": {
+                "ALIAS": 9,
+                "CLEANUP": 3,
+                "CREATION_ATTEMPT": 3,
+                "CREATION_SUCCESS": 3,
+                "HIT": 6,
+                "RETAINED": 3,
+                "RETIREMENT": 3
+              }
+            }
+          ],
+          "transport": [
+            {
+              "source": "S0",
+              "sourceGets": 3,
+              "targetMatrixPuts": 3,
+              "instructionExecutions": 9,
+              "observedCreations": 3,
+              "passed": true
+            }
+          ],
+          "canonicalProof": {
+            "canonicalObjectiveMillis": 142.38353164836383,
+            "canonicalObjectiveBits": "4639213691721078404",
+            "objectiveMatches": true,
+            "costSurfaceMatches": true,
+            "selectedStatesMatch": true,
+            "sharedLifetimesMatch": true
+          },
+          "runtimeFallbackCount": 0,
+          "runtimeRepairCount": 0
+        },
+        {
+          "kind": "phi",
+          "planner": "global",
+          "passed": true,
+          "numericMatch": true,
+          "sharing": [
+            {
+              "source": "S0",
+              "creations": 3,
+              "executions": 9,
+              "distinctRuntimeVersions": 3,
+              "shared": true,
+              "staged": true,
+              "passed": true,
+              "lifecycleCounts": {
+                "ALIAS": 9,
+                "CLEANUP": 3,
+                "CREATION_ATTEMPT": 3,
+                "CREATION_SUCCESS": 3,
+                "HIT": 6,
+                "RETAINED": 3,
+                "RETIREMENT": 3
+              }
+            }
+          ],
+          "transport": [
+            {
+              "source": "S0",
+              "sourceGets": 3,
+              "targetMatrixPuts": 3,
+              "instructionExecutions": 9,
+              "observedCreations": 3,
+              "passed": true
+            }
+          ],
+          "canonicalProof": {
+            "canonicalObjectiveMillis": 142.38353164836383,
+            "canonicalObjectiveBits": "4639213691721078404",
+            "objectiveMatches": true,
+            "costSurfaceMatches": true,
+            "selectedStatesMatch": true,
+            "sharedLifetimesMatch": true
+          },
+          "runtimeFallbackCount": 0,
+          "runtimeRepairCount": 0
+        },
+        {
+          "kind": "flat",
+          "planner": "local",
+          "passed": true,
+          "numericMatch": true,
+          "sharing": [
+            {
+              "source": "S0",
+              "creations": 3,
+              "executions": 3,
+              "distinctRuntimeVersions": 3,
+              "shared": false,
+              "staged": true,
+              "passed": true,
+              "lifecycleCounts": {
+                "ALIAS": 0,
+                "CLEANUP": 0,
+                "CREATION_ATTEMPT": 3,
+                "CREATION_SUCCESS": 3,
+                "HIT": 0,
+                "RETAINED": 0,
+                "RETIREMENT": 0
+              }
+            }
+          ],
+          "transport": [
+            {
+              "source": "S0",
+              "sourceGets": 3,
+              "targetMatrixPuts": 3,
+              "instructionExecutions": 3,
+              "observedCreations": 3,
+              "passed": true
+            }
+          ],
+          "canonicalProof": {
+            "canonicalObjectiveMillis": 90.1380469173193,
+            "canonicalObjectiveBits": "4636043318101069005",
+            "objectiveMatches": true,
+            "costSurfaceMatches": true,
+            "selectedStatesMatch": true,
+            "sharedLifetimesMatch": true
+          },
+          "runtimeFallbackCount": 0,
+          "runtimeRepairCount": 0
+        },
+        {
+          "kind": "flat",
+          "planner": "global",
+          "passed": true,
+          "numericMatch": true,
+          "sharing": [
+            {
+              "source": "S0",
+              "creations": 3,
+              "executions": 3,
+              "distinctRuntimeVersions": 3,
+              "shared": false,
+              "staged": true,
+              "passed": true,
+              "lifecycleCounts": {
+                "ALIAS": 0,
+                "CLEANUP": 0,
+                "CREATION_ATTEMPT": 3,
+                "CREATION_SUCCESS": 3,
+                "HIT": 0,
+                "RETAINED": 0,
+                "RETIREMENT": 0
+              }
+            }
+          ],
+          "transport": [
+            {
+              "source": "S0",
+              "sourceGets": 3,
+              "targetMatrixPuts": 3,
+              "instructionExecutions": 3,
+              "observedCreations": 3,
+              "passed": true
+            }
+          ],
+          "canonicalProof": {
+            "canonicalObjectiveMillis": 90.1380469173193,
+            "canonicalObjectiveBits": "4636043318101069005",
+            "objectiveMatches": true,
+            "costSurfaceMatches": true,
+            "selectedStatesMatch": true,
+            "sharedLifetimesMatch": true
+          },
+          "runtimeFallbackCount": 0,
+          "runtimeRepairCount": 0
+        }
+      ]
+    }
+  },
+  "fingerprintDiagnosis": {
+    "cause": "Post-runtime mutable Hop output memory estimates changed compiled transfer prices and grouping; repeated rebuilds without runtime were stable",
+    "withoutRuntime": {
+      "rebuilds": 3,
+      "sameFingerprint": true,
+      "fingerprint": "828c150ed7eb99fcf4ae8a0fd84fc02c971e8afce9de446c46fac857eccdddf9",
+      "canonicalContributions": 1218,
+      "transferKeys": 247,
+      "sharingGroups": 21
+    },
+    "runtime": {
+      "firstDifferentFactor": 975,
+      "identicalSections": [
+        "analysis",
+        "candidate facts",
+        "domains",
+        "hard encodings",
+        "cost factors 0..974"
+      ],
+      "contributionsBefore": 1360,
+      "contributionsAfter": 1358,
+      "firstDifferentTransfer": "builtin l2svm line75 placement Y -> TWrite Y",
+      "trace": "/grid/3/cofee-lm-sweep-mchoi-20260914/joint-boundary-e2e-20261006/l2svm-cost-fingerprint-diagnostic-global-r3/cases/l2svm_true_01/fed.log"
+    },
+    "focusedRegression": {
+      "baselineTests": 2,
+      "baselineFailures": 2,
+      "fixedTests": 2,
+      "fixedFailures": 0,
+      "evidence": "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007/fingerprint-diagnostics"
+    },
+    "change": "Immutable per-analysis transfer estimates, dimensions/nnz, multi-return and function source/read fallbacks; original estimator precedence and strict proof preserved",
+    "independentReview": "No remaining concrete blocker; candidate/legality ownership unchanged"
+  },
+  "finalJava": {
+    "classCount": 19,
+    "tests": 84,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "classes": [
+      {
+        "class": "ExactPhysicalCostSurfaceEstimateSnapshotTest",
+        "tests": "2",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "4.997"
+      },
+      {
+        "class": "ExactPhysicalCostFingerprintPreflightTest",
+        "tests": "3",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.482"
+      },
+      {
+        "class": "ExactPhysicalCostFingerprintStreamingTest",
+        "tests": "7",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.384"
+      },
+      {
+        "class": "CampaignBG014ExactCandidateRuleFactAuthorityFingerprintRedTest",
+        "tests": "2",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.889"
+      },
+      {
+        "class": "PlacementCostSemanticsAnalysisMemoryCostTest",
+        "tests": "10",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.51"
+      },
+      {
+        "class": "PlacementCostSemanticsNativeInputSourceShapeTest",
+        "tests": "5",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "6.75"
+      },
+      {
+        "class": "PlacementCostSemanticsSparseAssignmentTest",
+        "tests": "5",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.226"
+      },
+      {
+        "class": "PlacementCostSizeBoundsTest",
+        "tests": "6",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "3.248"
+      },
+      {
+        "class": "ExactSparseFunctionBoundaryCostTest",
+        "tests": "2",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "3.098"
+      },
+      {
+        "class": "ExactExplicitWdivmmTransferTest",
+        "tests": "2",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.934"
+      },
+      {
+        "class": "ExactDerivedSupplySharingTest",
+        "tests": "3",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "0.1"
+      },
+      {
+        "class": "ExactStagedSupplyCanonicalCostTest",
+        "tests": "1",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "5.048"
+      },
+      {
+        "class": "ExactLoopPhiSupplySharingTest",
+        "tests": "2",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "32.055"
+      },
+      {
+        "class": "ExactNativeLocalAnchorFanoutCostTest",
+        "tests": "10",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.727"
+      },
+      {
+        "class": "ExactPhysicalDyadicCertificateTest",
+        "tests": "6",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.869"
+      },
+      {
+        "class": "ExactCertifiedSharedSourceOptimizerTest",
+        "tests": "5",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.966"
+      },
+      {
+        "class": "ExactL2SvmSharedSourceProductionTest",
+        "tests": "1",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "125.684"
+      },
+      {
+        "class": "JointBoundaryPhysicalModelProofTest",
+        "tests": "10",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "13.093"
+      },
+      {
+        "class": "ExactRootWorkerCountMemoTest",
+        "tests": "2",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "time": "1.572"
+      }
+    ],
+    "receipt": {
+      "label": "regression",
+      "command": [
+        "mvn",
+        "-q",
+        "-o",
+        "-Djacoco.skip=true",
+        "-Dtest-forkCount=1",
+        "-Dtest-perCoreThreadCount=false",
+        "-Dtest-threadCount=1",
+        "-Dtest=ExactPhysicalCostSurfaceEstimateSnapshotTest,ExactPhysicalCostFingerprintPreflightTest,ExactPhysicalCostFingerprintStreamingTest,CampaignBG014ExactCandidateRuleFactAuthorityFingerprintRedTest,PlacementCostSemanticsAnalysisMemoryCostTest,PlacementCostSemanticsNativeInputSourceShapeTest,PlacementCostSemanticsSparseAssignmentTest,PlacementCostSizeBoundsTest,ExactSparseFunctionBoundaryCostTest,ExactExplicitWdivmmTransferTest,ExactDerivedSupplySharingTest,ExactStagedSupplyCanonicalCostTest,ExactLoopPhiSupplySharingTest,ExactNativeLocalAnchorFanoutCostTest,ExactPhysicalDyadicCertificateTest,ExactCertifiedSharedSourceOptimizerTest,ExactL2SvmSharedSourceProductionTest,JointBoundaryPhysicalModelProofTest,ExactRootWorkerCountMemoTest",
+        "test"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 274.37963032722473,
+      "log": "/home/mchoi/w1357-derived-supply-main-20261007/target/l2svm-fingerprint-regression.log",
+      "changedSources": []
+    },
+    "evidence": "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007/fingerprint-regression-final"
+  },
+  "finalPackage": {
+    "label": "package",
+    "command": [
+      "mvn",
+      "-q",
+      "-o",
+      "-Djacoco.skip=true",
+      "-Dmaven.test.skip=true",
+      "package"
+    ],
+    "exitCode": 0,
+    "elapsedSeconds": 19.35367488861084,
+    "log": "/home/mchoi/w1357-derived-supply-main-20261007/target/l2svm-fingerprint-package.log"
+  },
+  "snapshotCommit": "f0f919f023d3b3784ddc4e7a09fbdee86dbe03fd",
+  "sourceVerificationAfterSnapshot": {
+    "files": 3590,
+    "changed": [],
+    "inventory": "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007/fingerprint-regression-final/l2svm-fingerprint-source-sha.json",
+    "inventorySha256": "99da17f10012122fc410333198c74611e9f18e89eeaae946aaff42128bf2e4c6"
+  },
+  "finalRuntime": {
+    "runs": [
+      {
+        "planner": "local",
+        "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007/l2svm-local-final-r3",
+        "status": "PASSED",
+        "inventoryVerification": {
+          "mainSources": {
+            "files": 1652,
+            "mismatches": []
+          },
+          "testSources": {
+            "files": 1949,
+            "mismatches": []
+          },
+          "mainClasses": {
+            "files": 4369,
+            "mismatches": []
+          },
+          "testClasses": {
+            "files": 2851,
+            "mismatches": []
+          },
+          "dependencies": {
+            "files": 316,
+            "mismatches": []
+          }
+        },
+        "resultSha256": "cf457803808160a53e8e669656f1a1ec3946c973183ad43e635efefd63c347c1",
+        "cases": [
+          {
+            "case": "l2svm_true_01",
+            "passed": true,
+            "cpReturncode": 0,
+            "fedReturncode": 0,
+            "auditRows": 414,
+            "modelComparison": null,
+            "canonicalProof": {
+              "canonicalObjectiveMillis": 8.027077571079134,
+              "canonicalObjectiveBits": "4620708460999506657",
+              "objectiveMatches": true,
+              "costSurfaceMatches": true,
+              "selectedStatesMatch": true,
+              "sharedLifetimesMatch": true,
+              "modelCounts": {
+                "exactSolverAuxiliaryVariableCount": 2328,
+                "decisionCount": 240,
+                "exactSolverVariableCount": 2568,
+                "hardFactorCount": 736,
+                "totalAlternativeCount": 53596,
+                "exactSolverFactorCount": 3449,
+                "canonicalCostFactorCount": 1360
+              }
+            },
+            "compileSeconds": 296.888779293,
+            "executionSeconds": 0.661870709,
+            "runtimeFallbackCount": 0,
+            "runtimeRepairCount": 0
+          },
+          {
+            "case": "l2svm_false_m11",
+            "passed": true,
+            "cpReturncode": 0,
+            "fedReturncode": 0,
+            "auditRows": 414,
+            "modelComparison": null,
+            "canonicalProof": {
+              "canonicalObjectiveMillis": 8.027077723667025,
+              "canonicalObjectiveBits": "4620708461085406003",
+              "objectiveMatches": true,
+              "costSurfaceMatches": true,
+              "selectedStatesMatch": true,
+              "sharedLifetimesMatch": true,
+              "modelCounts": {
+                "totalAlternativeCount": 53597,
+                "exactSolverFactorCount": 3449,
+                "canonicalCostFactorCount": 1360,
+                "exactSolverAuxiliaryVariableCount": 2328,
+                "decisionCount": 240,
+                "exactSolverVariableCount": 2568,
+                "hardFactorCount": 736
+              }
+            },
+            "compileSeconds": 275.314782474,
+            "executionSeconds": 0.329394784,
+            "runtimeFallbackCount": 0,
+            "runtimeRepairCount": 0
+          },
+          {
+            "case": "ml_l2svm",
+            "passed": true,
+            "cpReturncode": 0,
+            "fedReturncode": 0,
+            "auditRows": 316,
+            "modelComparison": {
+              "actualEntries": 8,
+              "actualShape": [
+                8,
+                1
+              ],
+              "entries": 8,
+              "errors": [],
+              "expectedShape": null,
+              "finite": true,
+              "matched": true,
+              "maxAbsDifference": 8.413408858487514e-17,
+              "nonzero": true,
+              "referenceShape": [
+                8,
+                1
+              ],
+              "shapeMatched": true
+            },
+            "canonicalProof": {
+              "canonicalObjectiveMillis": 21.385960545366007,
+              "canonicalObjectiveBits": "4626712830428570801",
+              "objectiveMatches": true,
+              "costSurfaceMatches": true,
+              "selectedStatesMatch": true,
+              "sharedLifetimesMatch": true,
+              "modelCounts": {
+                "exactSolverAuxiliaryVariableCount": 502,
+                "canonicalCostFactorCount": 1158,
+                "exactSolverFactorCount": 1594,
+                "totalAlternativeCount": 1885,
+                "hardFactorCount": 647,
+                "exactSolverVariableCount": 764,
+                "decisionCount": 262
+              }
+            },
+            "compileSeconds": 10.61701495,
+            "executionSeconds": 1.616886567,
+            "runtimeFallbackCount": 0,
+            "runtimeRepairCount": 0
+          }
+        ]
+      },
+      {
+        "planner": "global",
+        "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007/l2svm-global-final-r3",
+        "status": "PASSED",
+        "inventoryVerification": {
+          "mainSources": {
+            "files": 1652,
+            "mismatches": []
+          },
+          "testSources": {
+            "files": 1949,
+            "mismatches": []
+          },
+          "mainClasses": {
+            "files": 4369,
+            "mismatches": []
+          },
+          "testClasses": {
+            "files": 2851,
+            "mismatches": []
+          },
+          "dependencies": {
+            "files": 316,
+            "mismatches": []
+          }
+        },
+        "resultSha256": "fc863a2e58af9ce4f8d873f7ebe78a33e78d2aeb9858565594834d548db3bc78",
+        "cases": [
+          {
+            "case": "l2svm_true_01",
+            "passed": true,
+            "cpReturncode": 0,
+            "fedReturncode": 0,
+            "auditRows": 414,
+            "modelComparison": null,
+            "canonicalProof": {
+              "canonicalObjectiveMillis": 8.027077571079134,
+              "canonicalObjectiveBits": "4620708460999506657",
+              "objectiveMatches": true,
+              "costSurfaceMatches": true,
+              "selectedStatesMatch": true,
+              "sharedLifetimesMatch": true,
+              "modelCounts": {
+                "decisionCount": 240,
+                "exactSolverAuxiliaryVariableCount": 2328,
+                "canonicalCostFactorCount": 1360,
+                "exactSolverFactorCount": 3449,
+                "totalAlternativeCount": 53596,
+                "hardFactorCount": 736,
+                "exactSolverVariableCount": 2568
+              }
+            },
+            "compileSeconds": 88.746744535,
+            "executionSeconds": 0.571571415,
+            "runtimeFallbackCount": 0,
+            "runtimeRepairCount": 0
+          },
+          {
+            "case": "l2svm_false_m11",
+            "passed": true,
+            "cpReturncode": 0,
+            "fedReturncode": 0,
+            "auditRows": 414,
+            "modelComparison": null,
+            "canonicalProof": {
+              "canonicalObjectiveMillis": 8.027077723667025,
+              "canonicalObjectiveBits": "4620708461085406003",
+              "objectiveMatches": true,
+              "costSurfaceMatches": true,
+              "selectedStatesMatch": true,
+              "sharedLifetimesMatch": true,
+              "modelCounts": {
+                "exactSolverFactorCount": 3449,
+                "canonicalCostFactorCount": 1360,
+                "exactSolverAuxiliaryVariableCount": 2328,
+                "decisionCount": 240,
+                "exactSolverVariableCount": 2568,
+                "hardFactorCount": 736,
+                "totalAlternativeCount": 53597
+              }
+            },
+            "compileSeconds": 90.602889286,
+            "executionSeconds": 0.328115981,
+            "runtimeFallbackCount": 0,
+            "runtimeRepairCount": 0
+          },
+          {
+            "case": "ml_l2svm",
+            "passed": true,
+            "cpReturncode": 0,
+            "fedReturncode": 0,
+            "auditRows": 316,
+            "modelComparison": {
+              "actualEntries": 8,
+              "actualShape": [
+                8,
+                1
+              ],
+              "entries": 8,
+              "errors": [],
+              "expectedShape": null,
+              "finite": true,
+              "matched": true,
+              "maxAbsDifference": 8.413408858487514e-17,
+              "nonzero": true,
+              "referenceShape": [
+                8,
+                1
+              ],
+              "shapeMatched": true
+            },
+            "canonicalProof": {
+              "canonicalObjectiveMillis": 21.385960545366007,
+              "canonicalObjectiveBits": "4626712830428570801",
+              "objectiveMatches": true,
+              "costSurfaceMatches": true,
+              "selectedStatesMatch": true,
+              "sharedLifetimesMatch": true,
+              "modelCounts": {
+                "exactSolverFactorCount": 1594,
+                "canonicalCostFactorCount": 1158,
+                "exactSolverAuxiliaryVariableCount": 502,
+                "decisionCount": 262,
+                "exactSolverVariableCount": 764,
+                "hardFactorCount": 647,
+                "totalAlternativeCount": 1885
+              }
+            },
+            "compileSeconds": 14.292462614,
+            "executionSeconds": 1.93379741,
+            "runtimeFallbackCount": 0,
+            "runtimeRepairCount": 0
+          }
+        ]
+      }
+    ],
+    "sharing": [
+      {
+        "kind": "invariant",
+        "planner": "local",
+        "passed": true,
+        "numericMatch": true,
+        "sharing": [
+          {
+            "source": "S0",
+            "creations": 1,
+            "executions": 3,
+            "distinctRuntimeVersions": 1,
+            "shared": true,
+            "staged": true,
+            "passed": true,
+            "lifecycleCounts": {
+              "ALIAS": 3,
+              "CLEANUP": 1,
+              "CREATION_ATTEMPT": 1,
+              "CREATION_SUCCESS": 1,
+              "HIT": 2,
+              "RETAINED": 1,
+              "RETIREMENT": 1
+            }
+          }
+        ],
+        "transport": [
+          {
+            "source": "S0",
+            "sourceGets": 1,
+            "targetMatrixPuts": 1,
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true
+          }
+        ],
+        "canonicalProof": {
+          "canonicalObjectiveMillis": 46.42780322869491,
+          "canonicalObjectiveBits": "4631730949725761302",
+          "objectiveMatches": true,
+          "costSurfaceMatches": true,
+          "selectedStatesMatch": true,
+          "sharedLifetimesMatch": true,
+          "modelCounts": {
+            "hardFactorCount": 151,
+            "exactSolverVariableCount": 187,
+            "decisionCount": 61,
+            "exactSolverAuxiliaryVariableCount": 126,
+            "canonicalCostFactorCount": 269,
+            "exactSolverFactorCount": 377,
+            "totalAlternativeCount": 403
+          }
+        },
+        "runtimeFallbackCount": 0,
+        "runtimeRepairCount": 0
+      },
+      {
+        "kind": "invariant",
+        "planner": "global",
+        "passed": true,
+        "numericMatch": true,
+        "sharing": [
+          {
+            "source": "S0",
+            "creations": 1,
+            "executions": 3,
+            "distinctRuntimeVersions": 1,
+            "shared": true,
+            "staged": true,
+            "passed": true,
+            "lifecycleCounts": {
+              "ALIAS": 3,
+              "CLEANUP": 1,
+              "CREATION_ATTEMPT": 1,
+              "CREATION_SUCCESS": 1,
+              "HIT": 2,
+              "RETAINED": 1,
+              "RETIREMENT": 1
+            }
+          }
+        ],
+        "transport": [
+          {
+            "source": "S0",
+            "sourceGets": 1,
+            "targetMatrixPuts": 1,
+            "instructionExecutions": 3,
+            "observedCreations": 1,
+            "passed": true
+          }
+        ],
+        "canonicalProof": {
+          "canonicalObjectiveMillis": 46.42780322869491,
+          "canonicalObjectiveBits": "4631730949725761302",
+          "objectiveMatches": true,
+          "costSurfaceMatches": true,
+          "selectedStatesMatch": true,
+          "sharedLifetimesMatch": true,
+          "modelCounts": {
+            "exactSolverAuxiliaryVariableCount": 126,
+            "canonicalCostFactorCount": 269,
+            "exactSolverFactorCount": 377,
+            "totalAlternativeCount": 403,
+            "hardFactorCount": 151,
+            "exactSolverVariableCount": 187,
+            "decisionCount": 61
+          }
+        },
+        "runtimeFallbackCount": 0,
+        "runtimeRepairCount": 0
+      },
+      {
+        "kind": "updated",
+        "planner": "local",
+        "passed": true,
+        "numericMatch": true,
+        "sharing": [
+          {
+            "source": "S0",
+            "creations": 3,
+            "executions": 9,
+            "distinctRuntimeVersions": 3,
+            "shared": true,
+            "staged": true,
+            "passed": true,
+            "lifecycleCounts": {
+              "ALIAS": 9,
+              "CLEANUP": 3,
+              "CREATION_ATTEMPT": 3,
+              "CREATION_SUCCESS": 3,
+              "HIT": 6,
+              "RETAINED": 3,
+              "RETIREMENT": 3
+            }
+          }
+        ],
+        "transport": [
+          {
+            "source": "S0",
+            "sourceGets": 3,
+            "targetMatrixPuts": 3,
+            "instructionExecutions": 9,
+            "observedCreations": 3,
+            "passed": true
+          }
+        ],
+        "canonicalProof": {
+          "canonicalObjectiveMillis": 142.38353164836383,
+          "canonicalObjectiveBits": "4639213691721078404",
+          "objectiveMatches": true,
+          "costSurfaceMatches": true,
+          "selectedStatesMatch": true,
+          "sharedLifetimesMatch": true,
+          "modelCounts": {
+            "hardFactorCount": 171,
+            "exactSolverVariableCount": 254,
+            "decisionCount": 71,
+            "exactSolverAuxiliaryVariableCount": 183,
+            "canonicalCostFactorCount": 319,
+            "exactSolverFactorCount": 478,
+            "totalAlternativeCount": 593
+          }
+        },
+        "runtimeFallbackCount": 0,
+        "runtimeRepairCount": 0
+      },
+      {
+        "kind": "updated",
+        "planner": "global",
+        "passed": true,
+        "numericMatch": true,
+        "sharing": [
+          {
+            "source": "S0",
+            "creations": 3,
+            "executions": 9,
+            "distinctRuntimeVersions": 3,
+            "shared": true,
+            "staged": true,
+            "passed": true,
+            "lifecycleCounts": {
+              "ALIAS": 9,
+              "CLEANUP": 3,
+              "CREATION_ATTEMPT": 3,
+              "CREATION_SUCCESS": 3,
+              "HIT": 6,
+              "RETAINED": 3,
+              "RETIREMENT": 3
+            }
+          }
+        ],
+        "transport": [
+          {
+            "source": "S0",
+            "sourceGets": 3,
+            "targetMatrixPuts": 3,
+            "instructionExecutions": 9,
+            "observedCreations": 3,
+            "passed": true
+          }
+        ],
+        "canonicalProof": {
+          "canonicalObjectiveMillis": 142.38353164836383,
+          "canonicalObjectiveBits": "4639213691721078404",
+          "objectiveMatches": true,
+          "costSurfaceMatches": true,
+          "selectedStatesMatch": true,
+          "sharedLifetimesMatch": true,
+          "modelCounts": {
+            "canonicalCostFactorCount": 319,
+            "exactSolverFactorCount": 478,
+            "totalAlternativeCount": 593,
+            "hardFactorCount": 171,
+            "exactSolverVariableCount": 254,
+            "decisionCount": 71,
+            "exactSolverAuxiliaryVariableCount": 183
+          }
+        },
+        "runtimeFallbackCount": 0,
+        "runtimeRepairCount": 0
+      },
+      {
+        "kind": "phi",
+        "planner": "local",
+        "passed": true,
+        "numericMatch": true,
+        "sharing": [
+          {
+            "source": "S0",
+            "creations": 3,
+            "executions": 9,
+            "distinctRuntimeVersions": 3,
+            "shared": true,
+            "staged": true,
+            "passed": true,
+            "lifecycleCounts": {
+              "ALIAS": 9,
+              "CLEANUP": 3,
+              "CREATION_ATTEMPT": 3,
+              "CREATION_SUCCESS": 3,
+              "HIT": 6,
+              "RETAINED": 3,
+              "RETIREMENT": 3
+            }
+          }
+        ],
+        "transport": [
+          {
+            "source": "S0",
+            "sourceGets": 3,
+            "targetMatrixPuts": 3,
+            "instructionExecutions": 9,
+            "observedCreations": 3,
+            "passed": true
+          }
+        ],
+        "canonicalProof": {
+          "canonicalObjectiveMillis": 142.38353164836383,
+          "canonicalObjectiveBits": "4639213691721078404",
+          "objectiveMatches": true,
+          "costSurfaceMatches": true,
+          "selectedStatesMatch": true,
+          "sharedLifetimesMatch": true,
+          "modelCounts": {
+            "totalAlternativeCount": 484,
+            "exactSolverFactorCount": 487,
+            "canonicalCostFactorCount": 333,
+            "exactSolverAuxiliaryVariableCount": 178,
+            "decisionCount": 73,
+            "exactSolverVariableCount": 251,
+            "hardFactorCount": 190
+          }
+        },
+        "runtimeFallbackCount": 0,
+        "runtimeRepairCount": 0
+      },
+      {
+        "kind": "phi",
+        "planner": "global",
+        "passed": true,
+        "numericMatch": true,
+        "sharing": [
+          {
+            "source": "S0",
+            "creations": 3,
+            "executions": 9,
+            "distinctRuntimeVersions": 3,
+            "shared": true,
+            "staged": true,
+            "passed": true,
+            "lifecycleCounts": {
+              "ALIAS": 9,
+              "CLEANUP": 3,
+              "CREATION_ATTEMPT": 3,
+              "CREATION_SUCCESS": 3,
+              "HIT": 6,
+              "RETAINED": 3,
+              "RETIREMENT": 3
+            }
+          }
+        ],
+        "transport": [
+          {
+            "source": "S0",
+            "sourceGets": 3,
+            "targetMatrixPuts": 3,
+            "instructionExecutions": 9,
+            "observedCreations": 3,
+            "passed": true
+          }
+        ],
+        "canonicalProof": {
+          "canonicalObjectiveMillis": 142.38353164836383,
+          "canonicalObjectiveBits": "4639213691721078404",
+          "objectiveMatches": true,
+          "costSurfaceMatches": true,
+          "selectedStatesMatch": true,
+          "sharedLifetimesMatch": true,
+          "modelCounts": {
+            "totalAlternativeCount": 484,
+            "hardFactorCount": 190,
+            "exactSolverVariableCount": 251,
+            "decisionCount": 73,
+            "exactSolverAuxiliaryVariableCount": 178,
+            "canonicalCostFactorCount": 333,
+            "exactSolverFactorCount": 487
+          }
+        },
+        "runtimeFallbackCount": 0,
+        "runtimeRepairCount": 0
+      },
+      {
+        "kind": "flat",
+        "planner": "local",
+        "passed": true,
+        "numericMatch": true,
+        "sharing": [
+          {
+            "source": "S0",
+            "creations": 3,
+            "executions": 3,
+            "distinctRuntimeVersions": 3,
+            "shared": false,
+            "staged": true,
+            "passed": true,
+            "lifecycleCounts": {
+              "ALIAS": 0,
+              "CLEANUP": 0,
+              "CREATION_ATTEMPT": 3,
+              "CREATION_SUCCESS": 3,
+              "HIT": 0,
+              "RETAINED": 0,
+              "RETIREMENT": 0
+            }
+          }
+        ],
+        "transport": [
+          {
+            "source": "S0",
+            "sourceGets": 3,
+            "targetMatrixPuts": 3,
+            "instructionExecutions": 3,
+            "observedCreations": 3,
+            "passed": true
+          }
+        ],
+        "canonicalProof": {
+          "canonicalObjectiveMillis": 90.1380469173193,
+          "canonicalObjectiveBits": "4636043318101069005",
+          "objectiveMatches": true,
+          "costSurfaceMatches": true,
+          "selectedStatesMatch": true,
+          "sharedLifetimesMatch": true,
+          "modelCounts": {
+            "hardFactorCount": 149,
+            "exactSolverVariableCount": 172,
+            "decisionCount": 59,
+            "exactSolverAuxiliaryVariableCount": 113,
+            "canonicalCostFactorCount": 262,
+            "exactSolverFactorCount": 335,
+            "totalAlternativeCount": 333
+          }
+        },
+        "runtimeFallbackCount": 0,
+        "runtimeRepairCount": 0
+      },
+      {
+        "kind": "flat",
+        "planner": "global",
+        "passed": true,
+        "numericMatch": true,
+        "sharing": [
+          {
+            "source": "S0",
+            "creations": 3,
+            "executions": 3,
+            "distinctRuntimeVersions": 3,
+            "shared": false,
+            "staged": true,
+            "passed": true,
+            "lifecycleCounts": {
+              "ALIAS": 0,
+              "CLEANUP": 0,
+              "CREATION_ATTEMPT": 3,
+              "CREATION_SUCCESS": 3,
+              "HIT": 0,
+              "RETAINED": 0,
+              "RETIREMENT": 0
+            }
+          }
+        ],
+        "transport": [
+          {
+            "source": "S0",
+            "sourceGets": 3,
+            "targetMatrixPuts": 3,
+            "instructionExecutions": 3,
+            "observedCreations": 3,
+            "passed": true
+          }
+        ],
+        "canonicalProof": {
+          "canonicalObjectiveMillis": 90.1380469173193,
+          "canonicalObjectiveBits": "4636043318101069005",
+          "objectiveMatches": true,
+          "costSurfaceMatches": true,
+          "selectedStatesMatch": true,
+          "sharedLifetimesMatch": true,
+          "modelCounts": {
+            "hardFactorCount": 149,
+            "totalAlternativeCount": 333,
+            "exactSolverFactorCount": 335,
+            "canonicalCostFactorCount": 262,
+            "exactSolverAuxiliaryVariableCount": 113,
+            "decisionCount": 59,
+            "exactSolverVariableCount": 172
+          }
+        },
+        "runtimeFallbackCount": 0,
+        "runtimeRepairCount": 0
+      }
+    ],
+    "orchestration": [
+      {
+        "label": "global",
+        "command": [
+          "bash",
+          "scripts/fedplanner/run_LAN_docker.sh",
+          "--joint-boundary-e2e",
+          "--output-root",
+          "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007",
+          "--run-id",
+          "l2svm-global-final-r3",
+          "--planner",
+          "global",
+          "--canonical-proof",
+          "--case",
+          "l2svm_true_01",
+          "--case",
+          "l2svm_false_m11",
+          "--case",
+          "ml_l2svm",
+          "--timeout-seconds",
+          "3600",
+          "--case-timeout-seconds",
+          "900"
+        ],
+        "exitCode": 0,
+        "elapsedSeconds": 272.8663058280945,
+        "log": "/home/mchoi/w1357-derived-supply-main-20261007/target/l2svm-fingerprint-global.log"
+      },
+      {
+        "label": "sharing",
+        "command": [
+          "bash",
+          "scripts/fedplanner/run_LAN_docker.sh",
+          "--supply-sharing-e2e",
+          "--output-root",
+          "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007",
+          "--run-id",
+          "sharing-final-r3",
+          "--kind",
+          "invariant",
+          "--kind",
+          "updated",
+          "--kind",
+          "phi",
+          "--kind",
+          "flat",
+          "--planner",
+          "local",
+          "--planner",
+          "global"
+        ],
+        "exitCode": 0,
+        "elapsedSeconds": 153.7423882484436,
+        "log": "/home/mchoi/w1357-derived-supply-main-20261007/target/l2svm-fingerprint-sharing.log"
+      },
+      {
+        "label": "local",
+        "command": [
+          "bash",
+          "scripts/fedplanner/run_LAN_docker.sh",
+          "--joint-boundary-e2e",
+          "--output-root",
+          "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007",
+          "--run-id",
+          "l2svm-local-final-r3",
+          "--planner",
+          "local",
+          "--canonical-proof",
+          "--case",
+          "l2svm_true_01",
+          "--case",
+          "l2svm_false_m11",
+          "--case",
+          "ml_l2svm",
+          "--timeout-seconds",
+          "3600",
+          "--case-timeout-seconds",
+          "900"
+        ],
+        "exitCode": 0,
+        "elapsedSeconds": 655.3043856620789,
+        "log": "/home/mchoi/w1357-derived-supply-main-20261007/target/l2svm-fingerprint-local.log"
+      }
+    ],
+    "sharingRun": {
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007/sharing-final-r3",
+      "status": "PASSED",
+      "inventoryVerification": {
+        "mainSources": {
+          "files": 1652,
+          "mismatches": []
+        },
+        "testSources": {
+          "files": 1949,
+          "mismatches": []
+        },
+        "mainClasses": {
+          "files": 4369,
+          "mismatches": []
+        },
+        "testClasses": {
+          "files": 2851,
+          "mismatches": []
+        },
+        "dependencies": {
+          "files": 316,
+          "mismatches": []
+        }
+      },
+      "resultSha256": "33868005ab82f28e3c25e9d7b9cdd6f9d0b565b5b32609f9dc4e850a52dce514"
+    }
+  }
+}

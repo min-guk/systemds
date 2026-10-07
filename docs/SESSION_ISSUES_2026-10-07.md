@@ -1,6 +1,22 @@
 # 세션 이슈 — 2026-10-07
 
-## L2SVM canonical 진단의 encoding 우회 — 재현·수정 진행 중
+## L2SVM 최신 main 통합 및 runtime 비용 fingerprint — 해결·검증 완료
+
+- **통합 기준**: L2SVM 수정 `7945e2aab1`과 origin/main `241b9c491a`를 `7f35faa05d`로 병합했다. 기존 후보·privacy·TW/TR·함수 경계와 10m/60m solver 한도는 유지한다.
+- **통합 회귀**: Java 35클래스253건 중252 PASS/1 ERROR/skip0, Python56/56 PASS, Maven package PASS. 대형 PUBLIC L2SVM production optimizer가 기본3GB JVM에서 canonical objective bits4652134937446297763, 실제 최대9,028,800/누적19,349,167 cells로 통과했다. 테스트 중 Java source 변경0이다.
+- **별도 기존 오류**: campaign은 L2SVM 다음 PUBLIC LOGREG에서423,588,286-cell separator 한도 오류를 낸다. `241b9c491a`의 `ExactPhysicalModel.java`만 현재 dependencies 위에 올린 별도 baseline overlay도 동일 LogReg fixture에서436,840,500-cell raw input 한도 오류를 낸다. 전체 clean baseline 빌드의 증거는 아니지만 기존 helper에서도 실패함을 확인했다. input과 separator 크기는 서로 다른 단계이므로 숫자 차이를 성능 변화로 해석하지 않는다. campaign의 뒤 ALS/StepLM은 도달하지 않았다.
+- **새 runtime 증상**: `run_LAN_docker.sh --joint-boundary-e2e --planner local --canonical-proof --case l2svm_true_01`에서 실제 학습 완료 후 probe가 `costSurfaceMatches=false`로 실패했다. Objective bits4620708460999506657, selected states, sharing lifetime은 재구성과 일치한다. 전체 surface fingerprint 비교는 완화하지 않고 원인을 조사한다.
+- **원인 확정**: 같은 immutable analysis에서 runtime 없이 surface를3번 만들면 fingerprint와1,218 contributions/247 transfer keys/21 groups가 같다. 실제 Docker의 단계별 해시에서 analysis/candidates/domains/hard는 같고 factor0~974도 동일하지만, l2svm75의 placement Y→TW Y compiled-transfer부터 수치가 달라진다. 이 단계의 factor 수는1,330→1,328, 전체1,360→1,358이다. `estimatedBytes()`가 runtime/recompile 후 변경된 `Hop.getOutputMemEstimate()`를 다시 읽고, bytes가 group key에도 포함되므로 비용과 그룹 수가 변한다. 단순 해시 순서 문제가 아니다.
+- **최소 수정 계획**: 분석 생성 시 occurrence별 memory/payload 추정 입력을 immutable fact로 고정하고 exact transfer helpers가 해당 값을 사용한다. 기존 initial estimate·unknown-shape/multi-return fallback·후보·비용 ownership을 보존한다. 먼저 live Hop 추정치를 변경했을 때 surface가 바뀌는 회귀를 만들고, 수정 후 fingerprint/factor count/canonical objective 불변 및 다른 초기 추정치의 구분을 확인한다. Runtime evidence는 같은 strict proof로 다시 실행한다.
+- **수정 범위/위험**: 현재 진단은 비용 표의 변경과 fingerprint 순서 불안정을 구분하는 것이다. 선택한 한 계획의 objective 일치만으로 모든 후보의 비용 surface가 같다고 주장하면 안 된다. Frozen 실행과 실패 원본을 보존하고 원인별 회귀 및 동일 Docker 재실행으로 감지한다.
+- **최종 수정**: `f0f919f023`에서 analysis별 immutable memory/shape/nnz·multi-return 및 function source/read fallback을 고정했다. 기존 numeric precedence, nullable synthetic key fallback, foreign key/pair 거부를 유지한다. `PlacementAnalysis.java`, `ExactPhysicalCostModel.java`, `ExactPhysicalCostSurfaceEstimateSnapshotTest.java`, Docker class preflight가 수정 파일이다. 후보/합법성 authority는 바꾸지 않는다.
+- **회귀**: frozen baseline의 새2건이 모두 실패하고 수정 후 통과했다. 서로 다른 초기 estimate는 같은 structural fingerprint 아래에서도 다른 transfer cost를 만들고, 동일 analysis의 이후 transfer estimate 갱신은 surface를 바꾸지 않는다. 독립 검토 blocker0. 최종 중앙19클래스84/84·Python56/56·package PASS, Java source변경0이다. 대형 L2SVM 후보59,429, 비용 bits4652134937446297763, 실제 저장9,028,800/19,349,167도 그대로다.
+- **최종 Docker**: `l2svm-local-final-r3`, `l2svm-global-final-r3`의 true/false/일반 학습6건 및 `sharing-final-r3`의8건이 모두 PASS다. 각 selected plan의 objective·전체cost fingerprint·states·lifetimes가 재구성과 같고 fallback/repair 및 audit 위반0이다. 일반 학습8계수 CP최대오차8.4134e-17. Invariant는 GET/creation/PUT 각1회, updated·PHI·flat은 서로 다른3개 버전에 각3회다. Local/Global 결과가 같고 snapshot 수정 전 초기 objective도 유지한다.
+- **빌드 증거**: 3개 final run의 main/test source(1,652/1,949파일), main/test class/resource(4,369/2,851파일), dependencies316파일 전수 SHA가 현재 빌드와 같다. 실제 source변경0 검사는 Java3,590개다. 단일 Docker 기능 실행의 compile 시간은 latency A/B로 해석하지 않는다.
+- **잔여/위험**: PUBLIC LogReg의 별도 capacity 실패는 미해결이다. 이번 수정이 모든 workload의 메모리 제한 내 완료 또는 임의의 operator-cost mutation 불변을 보장하지 않는다. 분석 간 estimate 오염은 immutable identity map과 다른 초기 추정치 회귀로, synthetic/function 경계 누락은 기존 함수·multi-return 관련 회귀로 감지한다.
+- **증거/보고서**: [L2SVM 보고서](L2SVM_EXACT_CAPACITY_2026-10-07_KO.md), [검증 JSON](experiments/l2svm-exact-capacity-20261007/validation.json), `/grid/3/cofee-lm-sweep-mchoi-20260914/l2svm-exact-capacity-20261007/`. 아래 항목은 이전 조사 단계의 기록으로 보존한다.
+
+## L2SVM canonical 진단의 encoding 우회 — 초기 조사 기록, 위 최종 결과로 대체
 
 - **게시 완료**: main HEAD `8ae75aff00cf790d1afa3820b3b7ce9a2492d04d`의 원격 일치를 확인했다. 이후 `fix/l2svm-exact-factor-20261007`에서 작업한다.
 - **증상/원인**: fresh certificate8건 중7 PASS/1 ERROR. `ExactPhysicalModel.analyze()`가 기존 hard observation encoding을 사용하지 않아 realization-support/input-authority의9613×2010=19,322,130-cell 원본 factor를 입력 한도에서 거부했다. Production optimizer와 다른 경로다.
@@ -9,11 +25,11 @@
 - **위험/감지**: auxiliary assignment를 physical selection으로 잘못 반환하거나 분해 동치 오류를 놓치는 위험. 작은 raw/encoded oracle, 반환 길이, canonical 재검사 및 실제 optimizer recost로 확인한다.
 - **추가 원인/진행**: shared-source에서 canonical required-output support보다 강한 exact rule 일치를 요구하고, 출력 reference가 header만의 함수라고 가정했다. 공통 support identity에 맞추고 output별 header를 분할했다. Factor4.9m까지 압축해도 separator15.26b로 실패한다. 조건부 output relation overlay는 factor를 늘려 되돌렸고, weighted-fill·불필요 축 제거·GAC의 단독 효과도 부족해 채택하지 않았다. 현재 native/supply header 및 반복 predicate 중복을 조사한다. 후보·canonical cost·제한은 유지한다.
 - **새 검증**: Java14클래스77/77, Python56/56 PASS. Docker 실제 builtin L2SVM Local·Global 모두 자동 선택/실행/CP계수/canonical proof PASS. 8계수 최대오차8.4134e-17, objective21.385960545366007ms, fallback/repair0. PRIVATE_AGGREGATE192×8 fixture의 성공이며 별도 대형 PUBLIC metadata production capacity는 여전히 미해결이다. 증거: `l2svm-exact-capacity-20261007/{correctness-r1,ml-l2svm-local-canonical-r1,ml-l2svm-global-exact-r1}`.
-- **대형 capacity 후속 설계**: 기존 sparse kernel의 projection 이전에 dense logical separator를 int로 계산하는 사전 검사가 실제 저장량을 과대 요구한다. Overlay에서 projection-first 실행을 사용하자 대형 optimizer의 canonical hard/objective 검증이 통과했다(objective1014.5096925175934ms). Dense 예측 최대15.258b/누적34.434b와 달리 실제 최대3,905,024/누적8,347,373 cells다. 따라서 새 solver나 header 분해 대신 인증된 dyadic 경로에 실제 저장량 budget을 적용한다. Map 삽입·배열 할당 전에10m/60m를 검사하고, 한도를 넘는 dense 전환은 금지한다. 일반 solver 계약·후보·canonical cost는 유지한다. Production 코드와 부정 회귀는 구현·검증 중이다.
+- **대형 capacity 후속 설계**: 기존 sparse kernel의 projection 이전에 dense logical separator를 int로 계산하는 사전 검사가 실제 저장량을 과대 요구한다. Overlay에서 projection-first 실행을 사용하자 대형 optimizer의 canonical hard/objective 검증이 통과했다(objective1014.5096925175934ms). Dense 예측 최대15.258b/누적34.434b와 달리 실제 최대9,028,800/누적19,349,167 cells다. 초기 trace의 finite-entry 수를 저장 배열 길이로 혼동한3,905,024/8,347,373 집계는 dense 전환을 반영해 바로잡았다. 따라서 새 solver나 header 분해 대신 인증된 dyadic 경로에 실제 저장량 budget을 적용한다. Map 삽입·배열 할당 전에10m/60m를 검사하고, 한도를 넘는 dense 전환은 금지한다. 일반 solver 계약·후보·canonical cost는 유지한다. Production 코드와 부정 회귀는 구현·검증 중이다.
 - **Production 첫 검증 완료**: 기본3GB JVM에서 Java12클래스91/91 PASS, Python56/56 PASS. 최종 구현의 L2SVM 실제 최대9,028,800/누적19,349,167 cells와 canonical objective bits4652134937446297763을 확인했다. Overlay의 저장량과 혼용하지 않는다. 원래 후보59,429개를 유지했다. 인증·scope/assignment parity·한도 초과·dense 전환 거부 및 join 회귀를 포함한다. Java source변경0. 최신 main과 통합한 검증은 다음 단계다.
 - **기록**: [L2SVM 보고서](L2SVM_EXACT_CAPACITY_2026-10-07_KO.md). 아래 대형 solver 미해결 기록은 이전 검증 시점의 결과로 보존한다.
 
-## Derived supply main 게시 후 L2SVM 해결 — 진행 중
+## Derived supply main 게시 후 L2SVM 해결 — 초기 게시 기록, 위 최종 결과로 대체
 
 - **요청/순서**: 검증한 sharing 변경을 main에 먼저 commit/push한 뒤 대형 L2SVM Exact 한계를 해결한다. 원본 변경 commit `3fe367b213`, 새 통합 worktree `/home/mchoi/w1357-derived-supply-main-20261007`.
 - **병합**: main `73d1eb…`와 병합할 때 세션 문서 두 파일만 충돌했다. 양쪽 모든 줄을 보존해 해결했다. Java 소스는 자동 병합됐고 최초 17클래스91건, Python49건, flat Local/Global Docker2건이 통과했다. 이후 main `fbfd4d790f`의 StepLM closure도 포함해 최종 검증한다.
