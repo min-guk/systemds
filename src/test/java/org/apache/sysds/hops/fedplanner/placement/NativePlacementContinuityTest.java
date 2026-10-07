@@ -356,6 +356,23 @@ public class NativePlacementContinuityTest {
 	}
 
 	@SuppressWarnings("unchecked")
+	private static Set<ValueVersionKey> broadcastCapableValueVersions(
+		NativePlacementContinuity continuity) throws ReflectiveOperationException {
+		return (Set<ValueVersionKey>)accessibleField(
+			NativePlacementContinuity.class, "broadcastCapableValueVersions").get(continuity);
+	}
+
+	private static Set<ValueVersionKey> coldBroadcastCapableValueVersions(
+		Map<CompiledHopKey,Node> nodes) {
+		Set<ValueVersionKey> result = new java.util.HashSet<>();
+		for(Node node : nodes.values())
+			if(node.legalAlternatives().stream().anyMatch(state ->
+				state.output() == FederatedOutput.FOUT && state.fType() == FType.BROADCAST))
+				result.add(node.valueVersion());
+		return Set.copyOf(result);
+	}
+
+	@SuppressWarnings("unchecked")
 	private static Object referenceResidency(Constructor<?> constructor, Field fTypeField,
 		Field endpointsField, Field intervalsField, Field exactField, Object source, FType target)
 		throws ReflectiveOperationException {
@@ -861,6 +878,110 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void exactCandidateFactIdentityDetectsOnlyOwnerLocalAuthorityChanges() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref left = full.source("left", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref right = full.source("right", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref product = full.binary("product", OpOp2.PLUS, left, right, false);
+		List<CandidateInputState> alternateInputs = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.absentLocal());
+		full.additionalCandidate(product, alternateInputs);
+		List<CandidateRuleFact> facts = List.copyOf(full.candidates);
+		NativePlacementContinuity continuity = full.resolver();
+
+		Assert.assertTrue(continuity.hasSameCandidateFactObjects(facts));
+		Assert.assertTrue("a copied inventory retains exact fact identity",
+			continuity.hasSameCandidateFactObjects(List.copyOf(facts)));
+
+		List<CandidateRuleFact> productFacts = facts.stream()
+			.filter(fact -> fact.key().parentOccurrence() == product.key).toList();
+		Assert.assertTrue(productFacts.size() >= 2);
+		List<CandidateRuleFact> ownerGroupReordered = new ArrayList<>(productFacts);
+		for(CandidateRuleFact fact : facts)
+			if(fact.key().parentOccurrence() != product.key)
+				ownerGroupReordered.add(fact);
+		Assert.assertTrue("global owner order is outside continuity semantics",
+			continuity.hasSameCandidateFactObjects(ownerGroupReordered));
+
+		List<CandidateRuleFact> withinOwnerReordered = new ArrayList<>(facts);
+		int first = withinOwnerReordered.indexOf(productFacts.get(0));
+		int second = withinOwnerReordered.indexOf(productFacts.get(1));
+		withinOwnerReordered.set(first, productFacts.get(1));
+		withinOwnerReordered.set(second, productFacts.get(0));
+		Assert.assertFalse("owner-local order is canonical authority",
+			continuity.hasSameCandidateFactObjects(withinOwnerReordered));
+
+		CandidateRuleFact original = facts.get(0);
+		CandidateRuleFact equalForeignFact = new CandidateRuleFact(original.key(), original.status(),
+			original.capability(), original.shapeProof(), original.profile(),
+			original.allowedEmissionFacts(), original.failureCode());
+		Assert.assertEquals(original, equalForeignFact);
+		Assert.assertNotSame(original, equalForeignFact);
+		List<CandidateRuleFact> factReplaced = new ArrayList<>(facts);
+		factReplaced.set(0, equalForeignFact);
+		Assert.assertFalse("structural equality cannot replace exact fact authority",
+			continuity.hasSameCandidateFactObjects(factReplaced));
+
+		CompiledHopKey owner = original.key().parentOccurrence();
+		CompiledHopKey foreignOwner = new CompiledHopKey(owner.programFingerprint(),
+			owner.functionNamespace(), owner.callSitePath(), owner.recompileContext(),
+			owner.controlRegion(), owner.emittedHopInstance(), owner.canonicalSourceOrigin());
+		Assert.assertEquals(owner, foreignOwner);
+		Assert.assertNotSame(owner, foreignOwner);
+		CandidateRuleFact foreignOwnerFact = new CandidateRuleFact(new CandidateRuleKey(
+			foreignOwner, original.key().orderedInputs()), original.status(), original.capability(),
+			original.shapeProof(), original.profile(), original.allowedEmissionFacts(),
+			original.failureCode());
+		List<CandidateRuleFact> ownerReplaced = new ArrayList<>(facts);
+		ownerReplaced.set(0, foreignOwnerFact);
+		Assert.assertFalse("an equal foreign owner has no authority",
+			continuity.hasSameCandidateFactObjects(ownerReplaced));
+
+		Assert.assertFalse(continuity.hasSameCandidateFactObjects(facts.subList(1, facts.size())));
+		List<CandidateRuleFact> added = new ArrayList<>(facts);
+		added.add(original);
+		Assert.assertFalse(continuity.hasSameCandidateFactObjects(added));
+
+		CandidateRealizationReference reference = full.reference(product,
+			List.of(CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL)));
+		continuity.proveCandidateAlternatives(reference, left.anchor);
+		((BinaryOp)product.hop).setOp(OpOp2.MINUS);
+		product.hop.setDim1(17);
+		product.hop.setDim2(23);
+		Assert.assertTrue("mutable Hop operation and shape do not change exact fact authority",
+			continuity.hasSameCandidateFactObjects(facts));
+		NativePlacementContinuity fresh = continuity.freshQueryState();
+		NativePlacementContinuity revision = continuity.nextRevision(facts);
+		List<CandidateRuleFact> equalCopies = facts.stream().map(fact -> new CandidateRuleFact(
+			fact.key(), fact.status(), fact.capability(), fact.shapeProof(), fact.profile(),
+			fact.allowedEmissionFacts(), fact.failureCode())).toList();
+		NativePlacementContinuity copiedRevision = continuity.nextRevision(equalCopies);
+		Field snapshot = accessibleField(NativePlacementContinuity.class, "candidateFactsSnapshot");
+		Assert.assertSame("an exact inventory must retain its immutable candidate index",
+			snapshot.get(continuity), snapshot.get(revision));
+		Assert.assertNotSame("new fact authority must receive a new immutable candidate index",
+			snapshot.get(continuity), snapshot.get(copiedRevision));
+		Assert.assertEquals(0, revision.revisionComparisonSnapshot().ownersCompared());
+		Assert.assertTrue("exact identity must bypass every populated owner comparison",
+			revision.revisionComparisonSnapshot().hintedOwnersBypassed() > 0);
+		List<NativePlacementContinuity.NativeContinuityProof> cold = full.resolver()
+			.proveCandidateAlternatives(reference, left.anchor);
+		Assert.assertEquals("snapshot reuse must still start a cold query after Hop mutation", cold,
+			fresh.proveCandidateAlternatives(reference, left.anchor));
+		List<NativePlacementContinuity.NativeContinuityProof> revisedProofs =
+			revision.proveCandidateAlternatives(reference, left.anchor);
+		Assert.assertEquals(cold, revisedProofs);
+		Assert.assertEquals("snapshot reuse must preserve ordinary revision memo migration",
+			copiedRevision.proveCandidateAlternatives(reference, left.anchor), revisedProofs);
+		for(String fieldName : List.of("candidateTopologies", "completedProofMemo",
+			"completedSupportMemo", "acyclicRootSupportMemo", "acyclicComponentMemo"))
+			Assert.assertEquals(fieldName, ((Map<?,?>)accessibleField(
+				NativePlacementContinuity.class, fieldName).get(copiedRevision)).size(),
+				((Map<?,?>)accessibleField(
+					NativePlacementContinuity.class, fieldName).get(revision)).size());
+	}
+
+	@Test
 	public void templateSupportMemoRebindsFallbackRootsWithoutChangingProofs() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
@@ -1069,10 +1190,12 @@ public class NativePlacementContinuityTest {
 		long graphBuilds = metrics.snapshot().proofGraphsBuilt();
 		long topologyBuilds = metrics.snapshot().topologyExpansionBuilds();
 
-		List<CandidateRuleFact> equalNewFacts = List.copyOf(full.candidates);
+		List<CandidateRuleFact> equalNewFacts = full.candidates.stream().map(fact ->
+			new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+				fact.profile(), fact.allowedEmissionFacts(), fact.failureCode())).toList();
 		NativePlacementContinuity conservativeRevision = firstRevision.nextRevision(equalNewFacts);
 		NativePlacementContinuity nextRevision = firstRevision
-			.nextRevisionWithCompleteCandidateDelta(equalNewFacts, Set.of());
+			.nextRevisionWithCompleteCandidateDelta(List.copyOf(full.candidates), Set.of());
 		Assert.assertSame("unchanged semantic and seed authority reuse the published proof",
 			expected, nextRevision.proveCandidateAlternatives(reference, seed.anchor));
 		Assert.assertEquals("hinted and conservative revisions must publish identical ordered proofs",
@@ -1161,6 +1284,44 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void exactRevisionSharesTopologyWithStableStructuralHandles() throws Exception {
+		PlacementIdentity.beginAnalysisScope(null);
+		try {
+			Fixture full = new Fixture(FType.FULL);
+			Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+			Ref source = full.unary("source", OpOp1.LOG, seed, false);
+			CandidateRealizationReference reference = full.reference(source,
+				List.of(CandidateInputState.present(FType.FULL)));
+			NativePlacementContinuity first = full.resolver();
+			Assert.assertFalse(first.proveCandidateAlternatives(reference, seed.anchor).isEmpty());
+			Method candidateHandle = NativePlacementContinuity.class.getDeclaredMethod(
+				"candidateHandle", CandidateRealizationReference.class);
+			candidateHandle.setAccessible(true);
+			Assert.assertTrue("fixture must use an analysis-scope structural handle",
+				(int)candidateHandle.invoke(first, reference) > 0);
+			@SuppressWarnings("unchecked")
+			Map<Object,Object> before = (Map<Object,Object>)accessibleField(
+				NativePlacementContinuity.class, "candidateTopologies").get(first);
+			Assert.assertFalse(before.isEmpty());
+
+			NativePlacementContinuity revised = first.nextRevision(List.copyOf(full.candidates));
+			@SuppressWarnings("unchecked")
+			Map<Object,Object> after = (Map<Object,Object>)accessibleField(
+				NativePlacementContinuity.class, "candidateTopologies").get(revised);
+
+			Assert.assertEquals(before.size(), after.size());
+			for(var entry : before.entrySet())
+				Assert.assertSame("stable structural handles retain the immutable topology",
+					entry.getValue(), after.get(entry.getKey()));
+			Assert.assertEquals(first.proveCandidateAlternatives(reference, seed.anchor),
+				revised.proveCandidateAlternatives(reference, seed.anchor));
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+		}
+	}
+
+	@Test
 	public void revisionReindexesClausePinnedFallbackHandlesWithTopologyRows() throws Exception {
 		Fixture full = new Fixture(FType.FULL);
 		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
@@ -1234,6 +1395,16 @@ public class NativePlacementContinuityTest {
 				throw new AssertionError(exception);
 			}
 		}).map(Map.Entry::getValue).findFirst().orElseThrow();
+		Object priorRootTopology = topologies.entrySet().stream().filter(entry -> {
+			try {
+				return topologyOccurrence.get(entry.getKey()) == root.key;
+			}
+			catch(IllegalAccessException exception) {
+				throw new AssertionError(exception);
+			}
+		}).map(Map.Entry::getValue).findFirst().orElseThrow();
+		Assert.assertNotSame("query-local fallback handles require immutable topology rebinding",
+			priorRootTopology, rootTopology);
 		@SuppressWarnings("unchecked")
 		List<Object> rootRows = (List<Object>)accessibleField(
 			rootTopology.getClass(), "rows").get(rootTopology);
@@ -1283,6 +1454,81 @@ public class NativePlacementContinuityTest {
 			Assert.assertSame(fieldName + " must be shared rather than rebuilt for a fact revision",
 				field.get(first), field.get(next));
 		}
+	}
+
+	@Test
+	public void broadcastAliasIndexMatchesColdScanAndSharesOnlyImmutableStructure() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref alias = full.broadcastAlias("seed-alias", seed);
+		Node aliasNode = full.nodes.get(alias.key);
+		ValueVersionKey value = aliasNode.valueVersion();
+		ValueVersionKey equalValue = new ValueVersionKey(value.programFingerprint(),
+			value.lexicalVariable(), value.definingControlRegion(), value.definitionOrdinal(),
+			value.versionKind(), value.predecessorVersions());
+		Assert.assertNotSame(value, equalValue);
+		Assert.assertEquals(value, equalValue);
+		full.nodes.put(alias.key, new Node(aliasNode.key(), aliasNode.kind(), equalValue,
+			aliasNode.emittedWork(), aliasNode.legalAlternatives(), aliasNode.exclusions(),
+			aliasNode.anchors()));
+
+		NativePlacementContinuity continuity = full.resolver();
+		Set<ValueVersionKey> indexed = broadcastCapableValueVersions(continuity);
+		Set<ValueVersionKey> expected = coldBroadcastCapableValueVersions(full.nodes);
+		Assert.assertEquals("indexed value membership must match the independent scan",
+			expected, indexed);
+		Assert.assertTrue("structurally equal value versions must join the alias class",
+			indexed.contains(value));
+
+		ValueVersionKey different = new ValueVersionKey(value.programFingerprint(),
+			value.lexicalVariable() + "-other", value.definingControlRegion(), value.definitionOrdinal(),
+			value.versionKind(), value.predecessorVersions());
+		Assert.assertFalse("a different value version must not gain BROADCAST capability",
+			indexed.contains(different));
+
+		NativePlacementContinuity factRevision = continuity.nextRevision(List.copyOf(full.candidates));
+		NativePlacementContinuity fresh = continuity.freshQueryState();
+		Assert.assertSame(indexed, broadcastCapableValueVersions(factRevision));
+		Assert.assertSame(indexed, broadcastCapableValueVersions(fresh));
+		seed.hop.setName("renamed-after-index");
+		Assert.assertSame("mutable Hop metadata is outside the immutable node index",
+			indexed, broadcastCapableValueVersions(continuity.freshQueryState()));
+	}
+
+	@Test
+	public void broadcastAliasIndexInvalidatesOnNodeAuthorityToggle() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		full.privacy(seed, Privacy.PRIVATE_AGGREGATE);
+		Ref alias = full.broadcastAlias("seed-alias", seed);
+		Ref append = full.binary("append", OpOp2.CBIND, seed, seed, false);
+		full.additionalCandidate(append, List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.present(FType.BROADCAST)));
+		NativePlacementContinuity initial = full.resolver();
+		ValueVersionKey seedValue = full.nodes.get(seed.key).valueVersion();
+		Set<ValueVersionKey> initialIndex = broadcastCapableValueVersions(initial);
+		Assert.assertTrue(initialIndex.contains(seedValue));
+		Assert.assertFalse("the selectable alias keeps the protected relocation row active",
+			initial.proves(List.of(append.key), seed.anchor));
+
+		Node prior = full.nodes.get(alias.key);
+		Node unavailable = new Node(prior.key(), prior.kind(), prior.valueVersion(), prior.emittedWork(),
+			List.of(state(FType.FULL)), prior.exclusions(), prior.anchors());
+		NativePlacementContinuity removed = initial.nextNodeAuthorityRevision(unavailable, List.of());
+		Assert.assertNotSame("node authority changes must rebuild the structural index",
+			initialIndex, broadcastCapableValueVersions(removed));
+		Assert.assertFalse(broadcastCapableValueVersions(removed).contains(seedValue));
+		Assert.assertTrue("without a selectable alias the protected relocation row is inactive",
+			removed.proves(List.of(append.key), seed.anchor));
+
+		Node restored = new Node(prior.key(), prior.kind(), prior.valueVersion(), prior.emittedWork(),
+			prior.legalAlternatives(), prior.exclusions(), prior.anchors());
+		NativePlacementContinuity restoredContinuity =
+			removed.nextNodeAuthorityRevision(restored, List.of());
+		Assert.assertTrue(broadcastCapableValueVersions(restoredContinuity).contains(seedValue));
+		Assert.assertFalse(restoredContinuity.proves(List.of(append.key), seed.anchor));
+		Assert.assertSame("the prior immutable context remains valid after a later authority revision",
+			initialIndex, broadcastCapableValueVersions(initial));
 	}
 
 	@Test

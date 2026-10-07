@@ -166,3 +166,22 @@ canonical field 길이의 99.9%가 4096 미만인 진단 결과에 따라 길이
 사용자 요청에 따라 검증된 현재 개선분을 중간 게시한다. screen23은 22.990939초이며,
 전체 20초 목표는 미달성이다. 중앙 step17은 183/183 PASS, 이후 조건부 quotient/singleton 복원
 테스트를 포함한 별도 집중 검증은 90/90 PASS다. 최신 main 통합 검증을 이어서 기록한다.
+
+## 최신 main 통합 중간 게시 검증
+
+성능 구현은 `09588f7f4d`로 보존한 뒤 `0b6dc23522186bf8d67bfbcfb1bb82c905abf4e2`를 통합했다.
+압축된 DP child의 내부 좌표 증가에 저장 좌표 차이를 적용해 upstream의 dense 순회 최적화와
+결합했다. 두 개의 동일 realization/broadcast 인덱스는 하나로 합치고 양쪽 authority 회귀를 유지했다.
+Native 테스트 2개의 제거된 내부 메서드 reflection 오류는 retained index의 cold-scan/갱신 검증으로
+옮겼다. 압축된 비연속 내부 좌표와 두 번째 축의 rollover도 독립 dense oracle로 추가 확인했다.
+
+통합 Java 71개 클래스 657건 중 **656 PASS / 기존 제외 1 / 실패·오류 0**, Python78 PASS,
+package/diff check PASS, 독립 병합 검토 CLEAR다. Docker11개 소형 케이스가 모두 통과했다.
+StepLM의5계수·선택[3,1,5]가 CP/FED에서 정확히 같고 audit/conversion 위반은 없다.
+
+이번 StepLM compile은 **17.911837초**, 학습은1.096초였다. 다만 upstream0b6dc23522는
+StepLM 내부의 `lm` 호출을 `lmCG`로 바꾼다. 이 실행의 비용65701.88346157457을 이전
+lm 기준37040.115993804146과 직접 비교하지 않는다. 이전 실패 기록도 그대로 보존한다.
+같은 builtin과 환경을 고정한 fresh JVM3회 검증이 남아 있으므로20초 목표 완료를 선언하지 않는다.
+자세한 SHA·source/class inventory·검증 결과는
+[`publication-validation.json`](experiments/steplm-planning-20s-20261007/publication-validation.json)에 있다.

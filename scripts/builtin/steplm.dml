@@ -48,6 +48,8 @@
 # tol      Tolerance threshold to train until achieved
 # maxi     Maximum iterations 0 means until tolerance is reached
 # verbose  Indicator for verbose debug output
+# max_features Maximum number of selected features, excluding the intercept;
+#          0 preserves the unrestricted forward selection
 # ------------------------------------------------------------------------------------------
 #
 # OUTPUT:
@@ -57,11 +59,14 @@
 # -----------------------------------------------------------------------------------------------
 
 m_steplm = function(Matrix[Double] X, Matrix[Double] y, Integer icpt = 0,
-  Double reg = 1e-7, Double tol = 1e-7, Integer maxi = 0, Boolean verbose = TRUE)
+  Double reg = 1e-7, Double tol = 1e-7, Integer maxi = 0, Boolean verbose = TRUE,
+  Integer max_features = 0)
   return(Matrix[Double] B, Matrix[Double] S)
 {
   if( icpt!=0 & icpt!=1 & icpt!=2 )
     stop("Invalid steplm invocation with icpt="+icpt+" (valid values: 0,1,2).");
+  if( max_features < 0 )
+    stop("Invalid steplm invocation: max_features must be nonnegative.");
 
   # NOTE: currently only the forward selection strategy in supported:
   # start from one feature and iteratively add features until AIC improves
@@ -122,7 +127,8 @@ m_steplm = function(Matrix[Double] X, Matrix[Double] y, Integer icpt = 0,
     X_global = X_orig[, column_best];
 
     continue = TRUE
-    while (continue) {
+    # Keep all candidate columns, but stop before fitting models beyond the budget.
+    while (continue & (max_features == 0 | ncol(columns_fixed_ordered) < max_features)) {
       # Subsequent passes over the features
       beta_out_all_2 = matrix(0, boa_ncol, m_orig * 1);
       AICs_2 = matrix(0, 1, m_orig); # full overwrite
@@ -182,8 +188,8 @@ linear_regression = function(Matrix[Double] X, Matrix[Double] y, Integer icpt,
   Double reg, Double tol, Integer maxi, Boolean verbose)
   return(Double AIC, Matrix[Double] beta)
 {
-  # BEGIN THE DIRECT SOLVE ALGORITHM (EXTERNAL CALL)
-  beta = lm(X = X, y = y, icpt = icpt, reg=reg, tol=tol, maxi=maxi, verbose=FALSE);
+  # Use CG for the STEP-LM experiment, independent of lm's dimension threshold.
+  beta = lmCG(X = X, y = y, icpt = icpt, reg=reg, tol=tol, maxi=maxi, verbose=FALSE);
 
   # PREPARE X for SCORING
   if( icpt != 0 )
@@ -224,4 +230,3 @@ reorder_matrix = function(
 checkAIC = function(Double AIC_cur, Double AIC_best, Double thr) return (Boolean R) {
   R = (AIC_cur < AIC_best) & (AIC_best-AIC_cur > abs(thr * AIC_best))
 }
-

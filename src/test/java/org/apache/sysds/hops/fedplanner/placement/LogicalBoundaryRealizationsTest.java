@@ -102,6 +102,21 @@ public class LogicalBoundaryRealizationsTest {
 	}
 
 	@Test
+	public void sessionBackedClosureMatchesIndependentColdReconstruction() {
+		Fixture fixture = new Fixture();
+		Assert.assertEquals(closeCold(
+			fixture.nodes, fixture.edges, fixture.origins, fixture.facts),
+			LogicalBoundaryRealizations.close(
+				fixture.nodes, fixture.edges, fixture.origins, fixture.facts));
+
+		ChainedFixture chained = new ChainedFixture();
+		Assert.assertEquals(closeCold(
+			chained.nodes, chained.edges, chained.origins, chained.facts),
+			LogicalBoundaryRealizations.close(
+				chained.nodes, chained.edges, chained.origins, chained.facts));
+	}
+
+	@Test
 	public void chosenWriterCannotBorrowAnotherAlternativePool() {
 		Fixture f = new Fixture();
 		List<CandidateRuleFact> closed = LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, f.facts);
@@ -209,7 +224,7 @@ public class LogicalBoundaryRealizationsTest {
 		LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
 			f.nodes, f.edges, f.origins, f.facts);
 		var first = session.close(f.facts, owners(f.facts));
-		Assert.assertEquals(coldClose(f.nodes, f.edges, f.origins, f.facts),
+		Assert.assertEquals(closeCold(f.nodes, f.edges, f.origins, f.facts),
 			first.facts());
 		Assert.assertEquals(Set.of(f.reader), first.changedOwners());
 
@@ -222,21 +237,21 @@ public class LogicalBoundaryRealizationsTest {
 		List<CandidateRuleFact> withdrawn = replaceOwner(first.facts(), f.writer,
 			unavailable(fact(first.facts(), f.writer)));
 		var missing = session.close(withdrawn, Set.of(f.writer));
-		Assert.assertEquals(coldClose(f.nodes, f.edges, f.origins, withdrawn),
+		Assert.assertEquals(closeCold(f.nodes, f.edges, f.origins, withdrawn),
 			missing.facts());
 		Assert.assertEquals(Set.of(f.reader), missing.changedOwners());
 
 		List<CandidateRuleFact> restored = replaceOwner(missing.facts(), f.writer,
 			fact(first.facts(), f.writer));
 		var restoredResult = session.close(restored, Set.of(f.writer));
-		Assert.assertEquals(coldClose(f.nodes, f.edges, f.origins, restored),
+		Assert.assertEquals(closeCold(f.nodes, f.edges, f.origins, restored),
 			restoredResult.facts());
 		Assert.assertEquals(Set.of(f.reader), restoredResult.changedOwners());
 
 		List<CandidateRuleFact> targetUnavailable = replaceOwner(restoredResult.facts(), f.reader,
 			unavailable(fact(restoredResult.facts(), f.reader)));
 		var targetResult = session.close(targetUnavailable, Set.of(f.reader));
-		Assert.assertEquals(coldClose(f.nodes, f.edges, f.origins, targetUnavailable),
+		Assert.assertEquals(closeCold(f.nodes, f.edges, f.origins, targetUnavailable),
 			targetResult.facts());
 		Assert.assertTrue(targetResult.changedOwners().isEmpty());
 	}
@@ -248,7 +263,7 @@ public class LogicalBoundaryRealizationsTest {
 			f.nodes, f.edges, f.origins, f.facts);
 		// Empty incoming delta still has to perform the first boundary closure.
 		var first = session.close(f.facts, Set.of());
-		Assert.assertEquals(coldClose(f.nodes, f.edges, f.origins, f.facts), first.facts());
+		Assert.assertEquals(closeCold(f.nodes, f.edges, f.origins, f.facts), first.facts());
 		List<CandidateRuleFact> unchanged = new java.util.AbstractList<>() {
 			@Override public int size() { return first.facts().size(); }
 			@Override public CandidateRuleFact get(int index) {
@@ -292,7 +307,7 @@ public class LogicalBoundaryRealizationsTest {
 		LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
 			f.nodes, f.edges, f.origins, f.facts);
 		var result = session.close(f.facts, owners(f.facts));
-		List<CandidateRuleFact> cold = coldClose(f.nodes, f.edges, f.origins, f.facts);
+		List<CandidateRuleFact> cold = closeCold(f.nodes, f.edges, f.origins, f.facts);
 		Assert.assertEquals(cold, result.facts());
 		Assert.assertEquals(Set.of(f.reader, f.downstreamReader), result.changedOwners());
 		var downstream = fact(result.facts(), f.downstreamReader).allowedEmissionFacts().get(0).realizations();
@@ -317,7 +332,7 @@ public class LogicalBoundaryRealizationsTest {
 			writer.shapeProof(), writer.profile(), List.of(dynamicEmission), writer.failureCode());
 		List<CandidateRuleFact> revision = replaceOwner(closed.facts(), f.writer, dynamicWriter);
 		var result = session.close(revision, Set.of(f.writer));
-		Assert.assertEquals(coldClose(f.nodes, f.edges, f.origins, revision),
+		Assert.assertEquals(closeCold(f.nodes, f.edges, f.origins, revision),
 			result.facts());
 		CandidateEmissionRealization poolA = fact(result.facts(), f.reader).allowedEmissionFacts().get(0)
 			.realizations().stream().filter(realization -> {
@@ -337,7 +352,7 @@ public class LogicalBoundaryRealizationsTest {
 		LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
 			f.nodes, f.edges, f.origins, f.facts);
 		var result = session.close(f.facts, owners(f.facts));
-		Assert.assertEquals(coldClose(f.nodes, f.edges, f.origins, f.facts),
+		Assert.assertEquals(closeCold(f.nodes, f.edges, f.origins, f.facts),
 			result.facts());
 		Assert.assertFalse(new LogicalBoundaryRealizations(f.nodes, f.edges, f.origins, result.facts())
 			.hasCompleteBoundary(f.reader));
@@ -441,6 +456,20 @@ public class LogicalBoundaryRealizationsTest {
 		for(CandidateRuleFact fact : facts)
 			result.add(fact.key().parentOccurrence());
 		return result;
+	}
+
+	private static List<CandidateRuleFact> closeCold(List<Node> nodes,
+		List<Constraint> constraints, Map<CompiledHopKey,Hop> origins,
+		List<CandidateRuleFact> facts) {
+		List<CandidateRuleFact> current = facts;
+		for(int pass = 0; pass <= nodes.size(); pass++) {
+			List<CandidateRuleFact> next =
+				new LogicalBoundaryRealizations(nodes, constraints, origins, current).bind(current);
+			if(next.equals(current))
+				return next;
+			current = next;
+		}
+		throw new IllegalStateException("Cold logical boundary oracle did not converge");
 	}
 
 	private static CandidateRuleFact fact(List<CandidateRuleFact> facts, CompiledHopKey owner) {

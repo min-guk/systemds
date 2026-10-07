@@ -11,10 +11,12 @@ import importlib.util
 import io
 import fcntl
 import json
+import os
 import tempfile
 import threading
 import time
 import unittest
+import zipfile
 from contextlib import redirect_stderr
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +28,28 @@ SPEC = importlib.util.spec_from_file_location("run_matrix_campaign", RUNNER)
 CAMPAIGN = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(CAMPAIGN)
+
+
+BUILTINS = {
+	"steplm.dml": b"canonical steplm\n",
+	"lmCG.dml": b"canonical lmcg\n",
+}
+
+
+def write_builtin_contract(repo, evaluation, *, jar_values=None, omitted=()):
+	for root in (repo, evaluation / "campaign/engine_workflow"):
+		builtins = root / "scripts/builtin"
+		builtins.mkdir(parents=True, exist_ok=True)
+		for name, value in BUILTINS.items():
+			(builtins / name).write_bytes(value)
+	jar = repo / "target/systemds-3.4.0-SNAPSHOT.jar"
+	jar.parent.mkdir(parents=True, exist_ok=True)
+	values = BUILTINS if jar_values is None else jar_values
+	with zipfile.ZipFile(jar, "w") as archive:
+		for name, value in values.items():
+			if name not in omitted:
+				archive.writestr(f"scripts/builtin/{name}", value)
+	return jar
 
 
 def candidate_phases(**overrides):
@@ -125,6 +149,113 @@ class MatrixContractTest(unittest.TestCase):
 				(row["suite"], row["workload"]) for row in block})
 
 
+class StepLmBuiltinSyncContractTest(unittest.TestCase):
+	def test_valid_source_evaluation_and_jar_contract(self):
+		with tempfile.TemporaryDirectory() as directory:
+			base = Path(directory)
+			repo, evaluation = base / "repo", base / "evaluation"
+			jar = write_builtin_contract(repo, evaluation)
+			with mock.patch.object(CAMPAIGN, "REPO", repo), \
+					mock.patch.object(CAMPAIGN, "EVALUATION", evaluation):
+				CAMPAIGN.verify_builtin_sync(jar)
+
+	def test_latest_mtime_cannot_hide_stale_jar_resource(self):
+		with tempfile.TemporaryDirectory() as directory:
+			base = Path(directory)
+			repo, evaluation = base / "repo", base / "evaluation"
+			stale = dict(BUILTINS, **{"steplm.dml": b"stale jar copy\n"})
+			jar = write_builtin_contract(repo, evaluation, jar_values=stale)
+			newest = max(path.stat().st_mtime_ns
+				for path in (repo / "scripts/builtin").iterdir()) + 1_000_000_000
+			os.utime(jar, ns=(newest, newest))
+			with mock.patch.object(CAMPAIGN, "REPO", repo), \
+					mock.patch.object(CAMPAIGN, "EVALUATION", evaluation), \
+					self.assertRaisesRegex(RuntimeError, "JAR builtin.*steplm.dml.*rebuild"):
+				CAMPAIGN.verify_builtin_sync(jar)
+
+	def test_divergent_engine_and_evaluation_source_fails_closed(self):
+		with tempfile.TemporaryDirectory() as directory:
+			base = Path(directory)
+			repo, evaluation = base / "repo", base / "evaluation"
+			jar = write_builtin_contract(repo, evaluation)
+			(repo / "scripts/builtin/steplm.dml").write_bytes(b"divergent source\n")
+			with mock.patch.object(CAMPAIGN, "REPO", repo), \
+					mock.patch.object(CAMPAIGN, "EVALUATION", evaluation), \
+					self.assertRaisesRegex(RuntimeError, "source builtin.*steplm.dml.*evaluation.*sync"):
+				CAMPAIGN.verify_builtin_sync(jar)
+
+	def test_missing_jar_resource_and_malformed_jar_fail_closed(self):
+		with tempfile.TemporaryDirectory() as directory:
+			base = Path(directory)
+			repo, evaluation = base / "repo", base / "evaluation"
+			jar = write_builtin_contract(repo, evaluation, omitted={"lmCG.dml"})
+			with mock.patch.object(CAMPAIGN, "REPO", repo), \
+					mock.patch.object(CAMPAIGN, "EVALUATION", evaluation), \
+					self.assertRaisesRegex(RuntimeError, "JAR builtin missing.*lmCG.dml.*rebuild"):
+				CAMPAIGN.verify_builtin_sync(jar)
+			jar.write_bytes(b"not a zip")
+			with mock.patch.object(CAMPAIGN, "REPO", repo), \
+					mock.patch.object(CAMPAIGN, "EVALUATION", evaluation), \
+					self.assertRaisesRegex(RuntimeError, "malformed.*JAR.*rebuild"):
+				CAMPAIGN.verify_builtin_sync(jar)
+
+	def test_missing_source_fails_closed(self):
+		with tempfile.TemporaryDirectory() as directory:
+			base = Path(directory)
+			repo, evaluation = base / "repo", base / "evaluation"
+			jar = write_builtin_contract(repo, evaluation)
+			(repo / "scripts/builtin/lmCG.dml").unlink()
+			with mock.patch.object(CAMPAIGN, "REPO", repo), \
+					mock.patch.object(CAMPAIGN, "EVALUATION", evaluation), \
+					self.assertRaisesRegex(RuntimeError, "source builtin missing.*lmCG.dml.*sync"):
+				CAMPAIGN.verify_builtin_sync(jar)
+
+	def test_missing_canonical_source_fails_closed(self):
+		with tempfile.TemporaryDirectory() as directory:
+			base = Path(directory)
+			repo, evaluation = base / "repo", base / "evaluation"
+			jar = write_builtin_contract(repo, evaluation)
+			(evaluation / "campaign/engine_workflow/scripts/builtin/steplm.dml").unlink()
+			with mock.patch.object(CAMPAIGN, "REPO", repo), \
+					mock.patch.object(CAMPAIGN, "EVALUATION", evaluation), \
+					self.assertRaisesRegex(RuntimeError,
+						"canonical evaluation builtin missing.*steplm.dml.*restore"):
+				CAMPAIGN.verify_builtin_sync(jar)
+
+	def test_missing_production_jar_fails_closed(self):
+		with tempfile.TemporaryDirectory() as directory:
+			base = Path(directory)
+			repo, evaluation = base / "repo", base / "evaluation"
+			jar = write_builtin_contract(repo, evaluation)
+			jar.unlink()
+			with mock.patch.object(CAMPAIGN, "REPO", repo), \
+					mock.patch.object(CAMPAIGN, "EVALUATION", evaluation), \
+					self.assertRaisesRegex(RuntimeError, "production JAR missing.*rebuild"):
+				CAMPAIGN.verify_builtin_sync(jar)
+
+	def test_initialize_invokes_sync_preflight_and_freezes_builtin_sources(self):
+		with tempfile.TemporaryDirectory() as directory:
+			base = Path(directory)
+			repo, evaluation = base / "repo", base / "evaluation"
+			(repo / "src/main").mkdir(parents=True)
+			(repo / "pom.xml").write_text("pom")
+			probe = repo / "Probe.java"
+			probe.write_text("probe")
+			jar = write_builtin_contract(repo, evaluation)
+			root, stage = repo / "campaign", repo / "stage"
+			with mock.patch.object(CAMPAIGN, "REPO", repo), \
+					mock.patch.object(CAMPAIGN, "EVALUATION", evaluation), \
+					mock.patch.object(CAMPAIGN, "PROBE_SOURCE", probe), \
+					mock.patch.object(CAMPAIGN, "verify_builtin_sync") as preflight, \
+					mock.patch.object(CAMPAIGN, "sha", return_value="a" * 64), \
+					mock.patch.object(CAMPAIGN, "run", return_value="mocked"):
+				manifest = CAMPAIGN.initialize(root, stage)
+			preflight.assert_called_once_with(jar)
+			self.assertEqual({"scripts/builtin/steplm.dml", "scripts/builtin/lmCG.dml"},
+				set(manifest["identity"]["source_sha256"]) & {
+					"scripts/builtin/steplm.dml", "scripts/builtin/lmCG.dml"})
+
+
 class UnlimitedWorkloadContractTest(unittest.TestCase):
 	def test_cli_has_no_compile_or_runtime_deadline_options(self):
 		parse_args = CAMPAIGN.argparse.ArgumentParser.parse_args
@@ -160,11 +291,11 @@ class UnlimitedWorkloadContractTest(unittest.TestCase):
 			(repo / "pom.xml").write_text("pom")
 			probe = repo / "Probe.java"
 			probe.write_text("probe")
-			jar = repo / "target/systemds-3.4.0-SNAPSHOT.jar"
-			jar.parent.mkdir()
-			jar.write_text("jar")
+			evaluation = repo / "evaluation"
+			jar = write_builtin_contract(repo, evaluation)
 			root, stage = repo / "campaign", repo / "stage"
 			with mock.patch.object(CAMPAIGN, "REPO", repo), \
+					mock.patch.object(CAMPAIGN, "EVALUATION", evaluation), \
 					mock.patch.object(CAMPAIGN, "PROBE_SOURCE", probe), \
 					mock.patch.object(CAMPAIGN, "sha", return_value="a" * 64), \
 					mock.patch.object(CAMPAIGN, "run", return_value="mocked") as commands:

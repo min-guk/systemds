@@ -96,7 +96,8 @@ public final class LogicalBoundaryRealizations {
 				if(node.kind() == NodeKind.FUNCTION_INPUT || node.kind() == NodeKind.FUNCTION_OUTPUT)
 					carrierOwners.add(node.key());
 			valueMapCarriers = valueMapCarriers(nodes, facts);
-			boundary = new LogicalBoundaryRealizations(nodes, constraints, origins, facts);
+			boundary = new LogicalBoundaryRealizations(
+				nodes, constraints, origins, facts, valueMapCarriers);
 			factCount = facts.size();
 			maxPasses = nodes.size();
 			for(int slot = 0; slot < facts.size(); slot++)
@@ -152,7 +153,8 @@ public final class LogicalBoundaryRealizations {
 			Set<CompiledHopKey> revisedCarriers = valueMapCarriers(nodes, facts);
 			if(revisedCarriers.equals(valueMapCarriers))
 				return false;
-			boundary = new LogicalBoundaryRealizations(nodes, constraints, origins, facts);
+			boundary = new LogicalBoundaryRealizations(
+				nodes, constraints, origins, facts, revisedCarriers);
 			valueMapCarriers = revisedCarriers;
 			topologyBuilds++;
 			optionFactSlotsVisited += facts.size();
@@ -220,7 +222,12 @@ public final class LogicalBoundaryRealizations {
 
 	LogicalBoundaryRealizations(List<Node> nodes, Collection<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins, List<CandidateRuleFact> facts) {
-		Set<CompiledHopKey> valueMapCarriers = valueMapCarriers(nodes, facts);
+		this(nodes, constraints, origins, facts, valueMapCarriers(nodes, facts));
+	}
+
+	private LogicalBoundaryRealizations(List<Node> nodes, Collection<Constraint> constraints,
+		Map<CompiledHopKey,Hop> origins, List<CandidateRuleFact> facts,
+		Set<CompiledHopKey> valueMapCarriers) {
 		Map<CompiledHopKey,Node> byKey = new IdentityHashMap<>();
 		nodes.forEach(node -> byKey.put(node.key(), node));
 		Map<CompiledHopKey,List<CompiledHopKey>> incoming = new IdentityHashMap<>();
@@ -398,7 +405,17 @@ public final class LogicalBoundaryRealizations {
 	/** Close consecutive formal/result carriers before the physical pass rebuilds their templates. */
 	static List<CandidateRuleFact> close(List<Node> nodes, Collection<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins, List<CandidateRuleFact> facts) {
-		return new Session(nodes, constraints, origins, facts).close(facts, Set.of()).facts();
+		Session session = new Session(nodes, constraints, origins, facts);
+		List<CandidateRuleFact> current = facts;
+		Set<CompiledHopKey> changed = Set.of();
+		for(int pass = 0; pass <= nodes.size(); pass++) {
+			Session.ClosureResult result = session.close(current, changed);
+			if(result.facts().equals(current))
+				return result.facts();
+			current = result.facts();
+			changed = result.changedOwners();
+		}
+		throw new IllegalStateException("Logical boundary realization closure did not converge");
 	}
 
 	List<CandidateRuleFact> bind(List<CandidateRuleFact> facts) {

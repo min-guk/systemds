@@ -1,0 +1,96 @@
+{
+  "baseCommit": "9668cb432f051d0313c5668719b9adadb0c60314",
+  "measurements": 1,
+  "phaseNanoseconds": {
+    "fixture_parse_rewrite": 1109375249,
+    "common_analysis": 9425871820,
+    "physical_model": 617200129,
+    "cost_surface": 1134054435,
+    "exact_solver": 2995787712,
+    "exact_selection_validation": 94371890,
+    "local_dp_solver": 53427916447,
+    "local_dp_selection_validation": 29338623
+  },
+  "phaseSeconds": {
+    "fixture_parse_rewrite": 1.109375249,
+    "common_analysis": 9.42587182,
+    "physical_model": 0.617200129,
+    "cost_surface": 1.134054435,
+    "exact_solver": 2.995787712,
+    "exact_selection_validation": 0.09437189,
+    "local_dp_solver": 53.427916447,
+    "local_dp_selection_validation": 0.029338623
+  },
+  "sumOfCommonAndLocalDpPhasesSeconds": 64.634381454,
+  "sumOfCommonAndExactPhasesSeconds": 14.267285986,
+  "sumIncludesSelectionValidation": true,
+  "fixtureParseRewriteExcludedFromPlannerSums": true,
+  "originalSolverOrder": "Exact, then Local DP, in one fresh JVM",
+  "timingMethod": "System.nanoTime around existing phase calls in an external test-class copy; no production classes overlaid. All assertions remain. Recorded original method is recovered exactly by reversing instrumentation.",
+  "scope": "Metadata-only regression timing, not an independent cold end-to-end DP/Exact compile measurement. No plan projection, LOP generation, or training; no Docker latency or performance improvement claim. Shared host and JIT/cache order can affect timings.",
+  "instrumentation": {
+    "baseCommit": "9668cb432f051d0313c5668719b9adadb0c60314",
+    "source": "/home/mchoi/w1357-main-revalidation-r4-20261007/src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/CampaignBG014AlsPartitionedComputeCostRedTest.java",
+    "sourceSha256": "f241d50dbeebb24938b6eb678055aa57050b8f807a6b9247f9cd35d799e2446c",
+    "timedSourceSha256": "58b34c6b5847539d30d7400b03af3434217cdf69545e645788f31dba0d2083c2",
+    "originalRestoresExactly": true,
+    "compileCommand": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/javac",
+      "--release",
+      "17",
+      "-cp",
+      "/home/mchoi/w1357-main-revalidation-r4-20261007/target/classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/test-classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib/*",
+      "-d",
+      "/home/mchoi/als-main-verification-20261007/timing-probe/classes",
+      "/home/mchoi/als-main-verification-20261007/timing-probe/CampaignBG014AlsPartitionedComputeCostRedTest.java"
+    ],
+    "compileExitCode": 0,
+    "timingScope": "Single instrumented regression; original Exact-then-Local order, all assertions preserved; no production code modifications; metadata only; no end-to-end Docker latency claim."
+  },
+  "command": {
+    "argv": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+      "--add-modules",
+      "jdk.incubator.vector",
+      "--add-opens=java.base/java.nio=ALL-UNNAMED",
+      "--add-opens=java.base/java.io=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+      "-Xmx8g",
+      "-XX:ActiveProcessorCount=4",
+      "-cp",
+      "/home/mchoi/als-main-verification-20261007/timing-probe/classes:/home/mchoi/als-main-verification-20261007/runner-classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/test-classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib/*",
+      "SingleMethodRunner",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+      "singleWorkerAlsPricesOneReusableCpRuntimeWeightMaterialization"
+    ],
+    "cwd": "/home/mchoi/w1357-main-revalidation-r4-20261007",
+    "head": "9668cb432f051d0313c5668719b9adadb0c60314",
+    "timeoutSeconds": 600,
+    "parallelismNote": "One fresh JVM, Exact then Local DP in original regression order. Single host phase timing; no latency A/B or Docker claim."
+  },
+  "processResult": {
+    "exitCode": 0,
+    "timedOut": false,
+    "seconds": 70.00786370038986,
+    "stdoutSha256": "5e80dc3cc730bb454d18e9efd6929f23d85dde0fba617a8d12e7e127f5b8ad88",
+    "stderrSha256": "edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0"
+  },
+  "junit": {
+    "run": 1,
+    "failures": 0,
+    "ignored": 0,
+    "runtimeMillis": 68856
+  },
+  "sourceManifestCount": 3808,
+  "sourcesUnchanged": true,
+  "storedArtifactsSha256": {
+    "timing.stdout.log": "5e80dc3cc730bb454d18e9efd6929f23d85dde0fba617a8d12e7e127f5b8ad88",
+    "timing.stderr.log": "edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0",
+    "timing-only.patch": "7d5d846e20180a75714b32179a20b246903ae6da53b3a247cd9be341c45aa3d2"
+  },
+  "storedPatchFormat": "Zero-context unified diff with repository-relative paths; apply with git apply --unidiff-zero. The original contextual patch remains in the raw timing-probe directory."
+}

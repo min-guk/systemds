@@ -103,7 +103,9 @@ m_lmCG = function(Matrix[Double] X, Matrix[Double] y, Integer icpt = 0,
   # BEGIN THE CONJUGATE GRADIENT ALGORITHM
   if(verbose) print("Running the CG algorithm...")
 
-  r = - t(X) %*% y
+  # X is invariant throughout CG; retain its transpose across iterations.
+  Xt = t(X)
+  r = -(Xt %*% y)
 
   if(intercept_status == 2){
     r = scale_X * r + shift_X %*% r [m_ext, ]
@@ -126,7 +128,7 @@ m_lmCG = function(Matrix[Double] X, Matrix[Double] y, Integer icpt = 0,
       ssX_p = p
     }
 
-    q = t(X) %*% (X %*% ssX_p)
+    q = Xt %*% (X %*% ssX_p)
 
     if(intercept_status == 2) {
       q = scale_X * q + shift_X %*% q [m_ext, ]

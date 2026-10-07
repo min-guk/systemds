@@ -419,6 +419,29 @@ public class IncrementalBoundaryMessageTest {
 	}
 
 	@Test
+	public void manySingletonChildrenDoNotRequireDenseMessageAxisScratch() {
+		int count = 2_048;
+		List<ExactCategoricalSolver.Variable> variables = new java.util.ArrayList<>(count);
+		List<ExactCategoricalSolver.Factor> factors = new java.util.ArrayList<>(count);
+		for(int index = 0; index < count; index++) {
+			ExactCategoricalSolver.Variable variable = variable("singleton-wide-" + index, 1);
+			variables.add(variable);
+			factors.add(ExactCategoricalSolver.Factor.dense(List.of(variable), 1d));
+		}
+		List<ExactCategoricalSolver.BoundaryMessage> leaves =
+			ExactCategoricalSolver.boundaryLeaves(variables, factors, GENEROUS);
+
+		ExactCategoricalSolver.BoundaryMessage root = ExactCategoricalSolver.mergeBoundary(
+			leaves, List.of(), GENEROUS, 1L);
+
+		Assert.assertEquals(count, root.minimum(), 0d);
+		int[] assignment = new int[count];
+		java.util.Arrays.fill(assignment, -1);
+		root.decodeInto(assignment, variables);
+		Assert.assertArrayEquals(new int[count], assignment);
+	}
+
+	@Test
 	public void singletonProjectionAliasesNumericStateAndRestoresRemovedAxes() {
 		var firstSingleton = variable("singleton-first", 1);
 		var a = variable("singleton-a", 2);

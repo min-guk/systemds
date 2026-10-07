@@ -49,6 +49,30 @@ public class CandidateRealizationCanonicalizationTest {
 		List.of(CandidateInputState.present(FType.ROW), CandidateInputState.present(FType.ROW)));
 
 	@Test
+	public void workerPoolQueriesKeepExactClauseOwnershipForLargeAlternatives() {
+		DurableAnchorKey anchor = pool("indexed", 1234);
+		List<CandidateRealizationSupportClause> clauses = new ArrayList<>();
+		for(int index = 0; index < 40; index++)
+			clauses.add(new CandidateRealizationSupportClause(
+				List.of(proof("indexed-" + index)), List.of()));
+		CandidateEmissionRealization realization = new CandidateEmissionRealization(
+			PlacementIdentity.PlacementRealizationKey.durable(EMISSION, anchor), clauses);
+		for(int repeat = 0; repeat < 3; repeat++)
+			for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+				Assert.assertSame(anchor, realization.provenWorkerPool(clause));
+				Assert.assertSame(anchor, realization.nativeWorkerPoolResidencyWitness(clause));
+				Assert.assertTrue(realization.nativeWorkerPoolLayoutExact(clause));
+				CandidateRealizationSupportClause foreign = copy(clause);
+				Assert.assertEquals(clause, foreign);
+				Assert.assertThrows(IllegalArgumentException.class, () -> realization.provenWorkerPool(foreign));
+				Assert.assertThrows(IllegalArgumentException.class,
+					() -> realization.nativeWorkerPoolResidencyWitness(foreign));
+				Assert.assertThrows(IllegalArgumentException.class,
+					() -> realization.nativeWorkerPoolLayoutExact(foreign));
+			}
+	}
+
+	@Test
 	public void realizationSerializationReusesClauseDescriptorsAndKeepsColdPaths() throws Exception {
 		CandidateEmissionRealization template = fixture().get(0);
 		List<CandidateRealizationSupportClause> clauses = List.of(

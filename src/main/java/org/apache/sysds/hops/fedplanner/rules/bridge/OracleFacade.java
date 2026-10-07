@@ -938,7 +938,7 @@ public final class OracleFacade {
 
   private void logOracleInvocation(Hop hop, OpSig sig, List<FType> inFTypes,
       ShapeHint hint, String phase) {
-    if (!FederatedPlannerLogger.isInfoMessageEnabled() || hop == null || sig == null)
+    if (hop == null || sig == null || !FederatedPlannerLogger.isInfoLoggingEnabled())
       return;
     ShapeHint.DiagnosticSnapshot diagnostic = hint == null ? null : hint.diagnosticSnapshot();
     String message = String.format(Locale.ROOT,
@@ -951,7 +951,7 @@ public final class OracleFacade {
   }
 
   private void logOracleResult(Hop hop, RulesApi.OpCaps caps) {
-    if (!FederatedPlannerLogger.isInfoMessageEnabled() || hop == null || caps == null)
+    if (hop == null || caps == null || !FederatedPlannerLogger.isInfoLoggingEnabled())
       return;
     String message = String.format(Locale.ROOT,
         "[Oracle::end] hop=%d exec=%s placement=%s reason=%s detail=%s",

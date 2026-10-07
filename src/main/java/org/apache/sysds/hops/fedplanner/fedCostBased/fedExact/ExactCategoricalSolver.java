@@ -7,7 +7,6 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -1059,17 +1058,24 @@ public final class ExactCategoricalSolver {
 		Arrays.fill(choices, -1);
 		int[] assignment = new int[first.variables.size()];
 		int[] outputLocal = new int[outputScope.length];
-		int[] internalLocal = new int[internalScope.length];
+		InternalChildStrides internalChildStrides = internalCells == 1L ? null
+			: internalChildStrides(inputMessages, internalScope, first.variables.size());
+		int[] childCells = new int[inputMessages.size()];
 		PreciseCost messageMinimum = PreciseCost.POSITIVE_INFINITY;
 		double messageLowerBound = Double.POSITIVE_INFINITY;
 		for(int outputCell = 0; outputCell < cells; outputCell++) {
 			decode(outputCell, outputScope, first.domains, outputLocal, assignment);
+			for(int variable : internalScope)
+				assignment[variable] = 0;
+			for(int message = 0; message < inputMessages.size(); message++)
+				childCells[message] = inputMessages.get(message).boundaryCellUnchecked(assignment);
 			PreciseCost best = PreciseCost.POSITIVE_INFINITY;
 			double bestLower = Double.POSITIVE_INFINITY;
 			int bestUnionCell = -1;
-			for(int internalCell = 0; internalCell < (int)internalCells; internalCell++) {
-				decode(internalCell, internalScope, first.domains, internalLocal, assignment);
-				int childCell = first.boundaryCellUnchecked(assignment);
+			for(int internalCell = 0; internalCell < (int)internalCells; internalCell++,
+				advanceInternalAssignment(internalScope, first.domains, assignment,
+					inputMessages, internalChildStrides, childCells)) {
+				int childCell = childCells[0];
 				PreciseCost candidate = first.valueAt(childCell);
 				double candidateLower = first.lowerValues[childCell];
 				if(counters != null)
@@ -1091,7 +1097,7 @@ public final class ExactCategoricalSolver {
 				}
 				for(int messageIndex = 1; messageIndex < inputMessages.size(); messageIndex++) {
 					BoundaryMessage message = inputMessages.get(messageIndex);
-					childCell = message.boundaryCellUnchecked(assignment);
+					childCell = childCells[messageIndex];
 					candidate = candidate.plus(message.valueAt(childCell));
 					candidateLower = addBoundaryLower(candidateLower,
 						message.lowerValues[childCell]);
@@ -1133,6 +1139,73 @@ public final class ExactCategoricalSolver {
 		return new BoundaryMessage(first.variables, first.domains, outputBoundary, outputScope,
 			values, lowValues, lowerValues, inputMessages, unionScope, choices,
 			retained, unionCells, messageMinimum, messageLowerBound);
+	}
+
+	private record InternalChildStrides(int[][] messages, int[][] axes) { }
+
+	private static InternalChildStrides internalChildStrides(List<BoundaryMessage> messages,
+		int[] internalScope, int variableCount) {
+		int[] internalPosition = new int[variableCount];
+		Arrays.fill(internalPosition, -1);
+		for(int position = 0; position < internalScope.length; position++)
+			internalPosition[internalScope[position]] = position;
+		int[] counts = new int[internalScope.length];
+		for(BoundaryMessage message : messages)
+			for(int variable : message.scopeIndices) {
+				int internal = internalPosition[variable];
+				if(internal >= 0)
+					counts[internal]++;
+			}
+		int[][] affectedMessages = new int[internalScope.length][];
+		int[][] affectedAxes = new int[internalScope.length][];
+		for(int internal = 0; internal < internalScope.length; internal++) {
+			affectedMessages[internal] = new int[counts[internal]];
+			affectedAxes[internal] = new int[counts[internal]];
+		}
+		Arrays.fill(counts, 0);
+		for(int messageIndex = 0; messageIndex < messages.size(); messageIndex++) {
+			BoundaryMessage message = messages.get(messageIndex);
+			for(int position = 0; position < message.scopeIndices.length; position++) {
+				int internal = internalPosition[message.scopeIndices[position]];
+				if(internal >= 0) {
+					int offset = counts[internal]++;
+					affectedMessages[internal][offset] = messageIndex;
+					affectedAxes[internal][offset] = position;
+				}
+			}
+		}
+		return new InternalChildStrides(affectedMessages, affectedAxes);
+	}
+
+	private static void advanceInternalAssignment(int[] internalScope, int[] domains,
+		int[] assignment, List<BoundaryMessage> messages,
+		InternalChildStrides childStrides, int[] childCells) {
+		if(childStrides == null)
+			return;
+		for(int position = internalScope.length - 1; position >= 0; position--) {
+			int variable = internalScope[position];
+			int current = assignment[variable];
+			int next = current + 1;
+			if(next < domains[variable]) {
+				assignment[variable] = next;
+				for(int offset = 0; offset < childStrides.messages[position].length; offset++) {
+					int messageIndex = childStrides.messages[position][offset];
+					BoundaryMessage message = messages.get(messageIndex);
+					int axis = childStrides.axes[position][offset];
+					childCells[messageIndex] += (message.storedValue(axis, next)
+						- message.storedValue(axis, current)) * message.strides[axis];
+				}
+				return;
+			}
+			assignment[variable] = 0;
+			for(int offset = 0; offset < childStrides.messages[position].length; offset++) {
+				int messageIndex = childStrides.messages[position][offset];
+				BoundaryMessage message = messages.get(messageIndex);
+				int axis = childStrides.axes[position][offset];
+				childCells[messageIndex] += (message.storedValue(axis, 0)
+					- message.storedValue(axis, current)) * message.strides[axis];
+			}
+		}
 	}
 
 	/** Pointwise-equal (high, low, lower) response classes for this exact merge. */
@@ -2231,27 +2304,10 @@ public final class ExactCategoricalSolver {
 		for(int i = 0; i < variables.size(); i++)
 			remaining.add(i);
 		EliminationScoreCache scores = new EliminationScoreCache(graph, remaining, domains, counters);
-		Comparator<Integer> scoreOrder = switch(ordering) {
-			case MIN_FILL -> Comparator
-				.comparingLong((Integer variable) -> scores.fillEdges(variable))
-				.thenComparingLong(variable -> scores.neighborCells(variable));
-			case MIN_SEPARATOR_CELLS -> Comparator
-				.comparingLong((Integer variable) -> scores.neighborCells(variable))
-				.thenComparingLong(variable -> scores.fillEdges(variable));
-			case MIN_ELIMINATION_ASSIGNMENTS -> Comparator
-				.comparingLong((Integer variable) -> scores.eliminationAssignments(variable))
-				.thenComparingLong(variable -> scores.neighborCells(variable))
-				.thenComparingLong(variable -> scores.fillEdges(variable));
-			case MIN_DEGREE -> Comparator
-				.comparingLong((Integer variable) -> scores.remainingDegree(variable))
-				.thenComparingLong(variable -> scores.neighborCells(variable))
-				.thenComparingLong(variable -> scores.fillEdges(variable));
-		};
-		Comparator<Integer> comparator = scoreOrder.thenComparing(variable -> variables.get(variable).key());
 		List<Step> steps = new ArrayList<>(variables.size());
 		int width = 0;
 		while(!remaining.isEmpty()) {
-			int selected = remaining.stream().min(comparator).orElseThrow();
+			int selected = selectEliminationVariable(variables, remaining, ordering, scores);
 			int[] separator = graph.get(selected).stream().filter(remaining::contains)
 				.sorted().mapToInt(Integer::intValue).toArray();
 			width = Math.max(width, separator.length);
@@ -2267,6 +2323,55 @@ public final class ExactCategoricalSolver {
 			steps.add(new Step(selected, separator));
 		}
 		return new Plan(List.copyOf(steps), width);
+	}
+
+	/** Manual scan retains cached exact scores without comparator/stream dispatch per comparison. */
+	private static int selectEliminationVariable(List<Variable> variables, Set<Integer> remaining,
+		PlanOrdering ordering, EliminationScoreCache scores) {
+		int selected = -1;
+		for(int candidate : remaining)
+			if(selected < 0 || compareEliminationScores(candidate, selected, variables,
+				ordering, scores) < 0)
+				selected = candidate;
+		if(selected < 0)
+			throw new IllegalStateException("EXACT_VE_ELIMINATION_SELECTION_EMPTY");
+		return selected;
+	}
+
+	private static int compareEliminationScores(int left, int right, List<Variable> variables,
+		PlanOrdering ordering, EliminationScoreCache scores) {
+		int comparison;
+		switch(ordering) {
+			case MIN_FILL:
+				comparison = Long.compare(scores.fillEdges(left), scores.fillEdges(right));
+				if(comparison == 0)
+					comparison = Long.compare(scores.neighborCells(left), scores.neighborCells(right));
+				break;
+			case MIN_SEPARATOR_CELLS:
+				comparison = Long.compare(scores.neighborCells(left), scores.neighborCells(right));
+				if(comparison == 0)
+					comparison = Long.compare(scores.fillEdges(left), scores.fillEdges(right));
+				break;
+			case MIN_ELIMINATION_ASSIGNMENTS:
+				comparison = Long.compare(scores.eliminationAssignments(left),
+					scores.eliminationAssignments(right));
+				if(comparison == 0)
+					comparison = Long.compare(scores.neighborCells(left), scores.neighborCells(right));
+				if(comparison == 0)
+					comparison = Long.compare(scores.fillEdges(left), scores.fillEdges(right));
+				break;
+			case MIN_DEGREE:
+				comparison = Long.compare(scores.remainingDegree(left), scores.remainingDegree(right));
+				if(comparison == 0)
+					comparison = Long.compare(scores.neighborCells(left), scores.neighborCells(right));
+				if(comparison == 0)
+					comparison = Long.compare(scores.fillEdges(left), scores.fillEdges(right));
+				break;
+			default:
+				throw new IllegalStateException("Unknown elimination ordering " + ordering);
+		}
+		return comparison != 0 ? comparison
+			: variables.get(left).key().compareTo(variables.get(right).key());
 	}
 
 	static EliminationOrderScoreResult eliminationOrderScoreForTest(List<Variable> variables,

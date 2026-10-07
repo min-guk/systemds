@@ -18,6 +18,11 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
@@ -27,6 +32,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRul
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateShapeProofFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateProfileFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
@@ -64,6 +70,25 @@ public class DirectedDirectClosureDirtyConeTest {
 		Assert.assertEquals(keys(a), method.invoke(null, schedule, keys(a, b)));
 		Assert.assertEquals("settled alias must not be reintroduced without an export change",
 			keys(b), method.invoke(null, schedule, keys(b)));
+	}
+
+	@Test
+	public void directBindingEligibilityMatchesInvariantBinderSkips() throws Exception {
+		Node owner = node("eligible-owner");
+		CandidateRuleFact eligible = directFact(owner, CandidateEvaluationStatus.AVAILABLE, true);
+		CandidateRuleFact unavailable = directFact(owner, CandidateEvaluationStatus.PRIVACY_EXCLUDED, true);
+		CandidateRuleFact noPresentInput = directFact(owner, CandidateEvaluationStatus.AVAILABLE, false);
+		Map<CompiledHopKey,org.apache.sysds.hops.Hop> operation = new IdentityHashMap<>();
+		operation.put(owner.key(), new LiteralOp(1L));
+
+		Assert.assertTrue(directBindingEligible(eligible, operation));
+		Assert.assertFalse(directBindingEligible(unavailable, operation));
+		Assert.assertFalse(directBindingEligible(noPresentInput, operation));
+
+		Map<CompiledHopKey,org.apache.sysds.hops.Hop> transientRead = new IdentityHashMap<>();
+		transientRead.put(owner.key(), new DataOp("eligible-owner", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "eligible-owner", 8, 3, 24, 1000));
+		Assert.assertFalse(directBindingEligible(eligible, transientRead));
 	}
 
 	@Test
@@ -623,6 +648,25 @@ public class DirectedDirectClosureDirtyConeTest {
 		return new CandidateRuleFact(available.key(), CandidateEvaluationStatus.PRIVACY_EXCLUDED,
 			available.capability(), available.shapeProof(), available.profile(), List.of(),
 			"PRIVATE_AGGREGATE");
+	}
+
+	private static CandidateRuleFact directFact(Node owner, CandidateEvaluationStatus status,
+		boolean presentInput) {
+		CandidateRuleFact base = localFact(owner);
+		CandidateInputState input = presentInput
+			? CandidateInputState.present(FType.FULL) : CandidateInputState.absentLocal();
+		return new CandidateRuleFact(new CandidateRuleKey(owner.key(), List.of(input)), status,
+			base.capability(), base.shapeProof(), base.profile(),
+			status == CandidateEvaluationStatus.AVAILABLE ? base.allowedEmissionFacts() : List.of(),
+			status == CandidateEvaluationStatus.AVAILABLE ? "" : "PRIVATE_AGGREGATE");
+	}
+
+	private static boolean directBindingEligible(CandidateRuleFact fact,
+		Map<CompiledHopKey,org.apache.sysds.hops.Hop> origins) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"directBindingEligible", CandidateRuleFact.class, Map.class);
+		method.setAccessible(true);
+		return (boolean)method.invoke(null, fact, origins);
 	}
 
 	@SuppressWarnings("unchecked")

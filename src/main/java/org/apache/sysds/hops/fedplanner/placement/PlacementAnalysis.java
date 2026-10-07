@@ -956,11 +956,6 @@ public final class PlacementAnalysis {
 				Objects.requireNonNull(right, "right canonical value"), context));
 	}
 
-	private static int canonicalOrderingLength(Object value) {
-		return canonicalOrderingKey(Objects.requireNonNull(value, "canonical value"),
-			new CanonicalTextContext()).length;
-	}
-
 	private static CanonicalText canonicalTransientProofOrderingText(
 		TransientCompatibilityProof proof, CanonicalTextContext context) {
 		CanonicalTextBuilder text = new CanonicalTextBuilder()
@@ -2183,9 +2178,15 @@ public final class PlacementAnalysis {
 		private record ReceiptGroupOrderKey(String rule, String emission, String realization)
 			implements Comparable<ReceiptGroupOrderKey> {
 			@Override public int compareTo(ReceiptGroupOrderKey that) {
-				return compareLengthPrefixedFieldSequences(
-					List.of(rule, emission, realization),
-					List.of(that.rule, that.emission, that.realization));
+				int order = compareField(rule, that.rule);
+				if(order == 0)
+					order = compareField(emission, that.emission);
+				return order != 0 ? order : compareField(realization, that.realization);
+			}
+
+			private static int compareField(String left, String right) {
+				int order = compareLengthPrefixes(left.length(), right.length());
+				return order != 0 ? order : left.compareTo(right);
 			}
 
 			private long retainedCharacters() {
@@ -2254,9 +2255,12 @@ public final class PlacementAnalysis {
 				int[] order = new int[size];
 				int[] work = new int[size];
 				int[] lengths = new int[size];
+				List<CanonicalText> keys = retainedCanonicalOrderingKeys(clauses);
+				if(keys == null)
+					keys = canonicalOrderingKeys(clauses, new CanonicalTextContext());
 				for(int index = 0; index < size; index++) {
 					order[index] = index;
-					lengths[index] = canonicalOrderingLength(clauses.get(index));
+					lengths[index] = keys.get(index).length;
 				}
 				stableSortByLengthPrefix(order, work, lengths, 0, size);
 				boolean alreadyCanonical = true;
@@ -2353,11 +2357,12 @@ public final class PlacementAnalysis {
 
 		private static java.util.Comparator<CandidateRealizationSupportClause> receiptClauseComparator() {
 			CanonicalTextContext context = new CanonicalTextContext();
+			CanonicalTextComparison comparison = new CanonicalTextComparison();
 			return (left, right) -> {
 				CanonicalText leftText = canonicalOrderingKey(left, context);
 				CanonicalText rightText = canonicalOrderingKey(right, context);
 				int order = compareLengthPrefixes(leftText.length, rightText.length);
-				return order != 0 ? order : leftText.compareTo(rightText);
+				return order != 0 ? order : comparison.compare(leftText, rightText);
 			};
 		}
 

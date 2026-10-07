@@ -48,10 +48,10 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateSha
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 
-import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.core.JsonGenerator;
 
 /**
  * Off-by-default, selector-independent capture of the placement candidate domain.
@@ -69,6 +69,8 @@ public final class PlannerCandidateSpaceAudit {
 		"sysds.fedplanner.space.audit.invocation";
 	private static final String DEFAULT_DIRECTORY = "target/fedplanner-space-audit";
 	private static final ObjectMapper MAPPER = new ObjectMapper();
+	private static final ObjectWriter ROW_WRITER = MAPPER.writer()
+		.without(SerializationFeature.FLUSH_AFTER_WRITE_VALUE);
 	private static final Object WRITE_LOCK = new Object();
 	private static final java.util.regex.Pattern REPLAY_LOCAL_PORT = java.util.regex.Pattern.compile(
 		"(?i)(localhost|127\\.0\\.0\\.1|\\[::1\\]):[0-9]{1,5}");
@@ -497,12 +499,11 @@ public final class PlannerCandidateSpaceAudit {
 				Files.createDirectories(directory);
 				try(BufferedWriter writer = Files.newBufferedWriter(output, StandardCharsets.UTF_8,
 					StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-					JsonGenerator generator = MAPPER.getFactory().createGenerator(writer)) {
-					generator.setRootValueSeparator(null);
-					ObjectWriter rowWriter = MAPPER.writer().without(SerializationFeature.FLUSH_AFTER_WRITE_VALUE);
+					JsonGenerator json = MAPPER.getFactory().createGenerator(writer)) {
+					json.setRootValueSeparator(null);
 					for(Map<String,Object> row : rows) {
-						rowWriter.writeValue(generator, row);
-						generator.writeRaw(System.lineSeparator());
+						ROW_WRITER.writeValue(json, row);
+						json.writeRaw(System.lineSeparator());
 					}
 				}
 			}

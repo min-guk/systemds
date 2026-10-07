@@ -61,6 +61,8 @@ def steplm(X: Matrix,
     :param tol: Tolerance threshold to train until achieved
     :param maxi: Maximum iterations 0 means until tolerance is reached
     :param verbose: Indicator for verbose debug output
+    :param max_features: Maximum number of selected features, excluding the intercept;
+        0 preserves the unrestricted forward selection
     :return: Matrix of regression parameters (the betas) and its size depend on icpt input value.
     :return: Matrix of selected features ordered as computed by the algorithm.
     """

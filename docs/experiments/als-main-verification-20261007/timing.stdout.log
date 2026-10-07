@@ -1,0 +1,9 @@
+ALS_TIMING fixture_parse_rewrite nanos=1109375249
+ALS_TIMING common_analysis nanos=9425871820
+ALS_TIMING physical_model nanos=617200129
+ALS_TIMING cost_surface nanos=1134054435
+ALS_TIMING exact_solver nanos=2995787712
+ALS_TIMING exact_selection_validation nanos=94371890
+ALS_TIMING local_dp_solver nanos=53427916447
+ALS_TIMING local_dp_selection_validation nanos=29338623
+SINGLE_METHOD_RESULT run=1 failures=0 ignored=0 runtimeMillis=68856

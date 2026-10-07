@@ -249,6 +249,12 @@ public class BoundarySupportMergeTest {
 			var parent = mergeMessages(variant, List.of(compressedChild, splitting), List.of(x, z));
 			assertSnapshotEquals(snapshot(baseline, variables), snapshot(parent, variables));
 		}
+		var denseInternalBaseline = mergeMessages("baseline",
+			List.of(baselineChild, splitting), List.of(z));
+		var denseInternalCompressed = mergeMessages("baseline",
+			List.of(compressedChild, splitting), List.of(z));
+		assertSnapshotEquals(snapshot(denseInternalBaseline, variables),
+			snapshot(denseInternalCompressed, variables));
 	}
 
 	@Test
