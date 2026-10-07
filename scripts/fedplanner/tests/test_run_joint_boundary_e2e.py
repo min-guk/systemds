@@ -47,20 +47,23 @@ class JointBoundaryE2ETest(unittest.TestCase):
                           "joint_function_private_mix_negative",
                           "joint_branch_upload",
                           "l2svm_protected_y_negative", "ml_logreg", "ml_l2svm",
-                          "ml_lm", "ml_steplm", "ml_logreg_gd", "ml_l2svm_gd",
+                          "ml_lm", "ml_steplm", "ml_steplm_local_matrix",
+                          "ml_logreg_gd", "ml_l2svm_gd",
                           "ml_lm_gd"},
                          set(by_name))
         self.assertEqual("private", by_name["l2svm_protected_y_negative"].y_privacy)
         self.assertFalse(by_name["l2svm_protected_y_negative"].expected_success)
         self.assertTrue(by_name["l2svm_true_01"].requires_action_evidence)
         self.assertTrue(by_name["joint_branch_upload"].requires_branch_upload)
-        self.assertEqual({"ml_logreg", "ml_l2svm", "ml_lm", "ml_steplm"},
+        self.assertEqual({"ml_logreg", "ml_l2svm", "ml_lm", "ml_steplm",
+                          "ml_steplm_local_matrix"},
                          {case.name for case in runner.cases()
                           if case.training and not case.requires_loss_progress})
         self.assertEqual({"ml_logreg_gd", "ml_l2svm_gd", "ml_lm_gd"},
                          {case.name for case in runner.cases()
                           if case.requires_loss_progress})
         self.assertFalse({"ml_logreg", "ml_l2svm", "ml_lm", "ml_steplm",
+                          "ml_steplm_local_matrix",
                           "ml_logreg_gd", "ml_l2svm_gd", "ml_lm_gd"}
                          & {case.name for case in runner.default_cases()})
 
@@ -121,6 +124,42 @@ class JointBoundaryE2ETest(unittest.TestCase):
         self.assertEqual(5, matrix_rank(x_rows))
         self.assertGreater(len({row[0] for row in y_rows}), 1)
 
+    def test_steplm_local_matrix_uses_same_full_rank_literal_without_csv_input(self):
+        by_name = {case.name: case for case in runner.cases()}
+        case = by_name["ml_steplm_local_matrix"]
+        cp_script = runner.program(case, False)
+        fed_script = runner.program(case, True)
+        x, y = runner.steplm_dataset()
+        self.assertEqual(5, matrix_rank([list(row) for row in x]))
+        self.assertGreater(len(set(y)), 1)
+        x_literal = f"X_LOCAL={runner.dml_matrix_literal(x)};"
+        y_literal = ("Y_LOCAL=" + runner.dml_matrix_literal(
+            tuple((value,) for value in y)) + ";")
+        for script in (cp_script, fed_script):
+            self.assertIn(x_literal, script)
+            self.assertIn(y_literal, script)
+            self.assertIn('matrix("', script)
+            self.assertNotIn("matrix(c(", script)
+            self.assertNotIn("read(", script)
+            self.assertNotIn("/evidence/data/", script)
+            self.assertIn("maxi=20", script)
+            self.assertIn('write(m,$MODEL_OUTPUT,format="csv")', script)
+            self.assertIn('write(s,$SELECTION_OUTPUT,format="csv")', script)
+        self.assertIn("X=X_LOCAL;", cp_script)
+        self.assertIn("Y=Y_LOCAL;", cp_script)
+        self.assertIn("X=federated(local_matrix=X_LOCAL,", fed_script)
+        self.assertIn("Y=federated(local_matrix=Y_LOCAL,", fed_script)
+        self.assertIn('addresses=list("localhost:13000")', fed_script)
+        self.assertIn("ranges=list(list(0,0),list(20,5))", fed_script)
+        self.assertIn("ranges=list(list(0,0),list(20,1))", fed_script)
+        self.assertFalse(case.default_selected)
+        self.assertNotIn(case, runner.default_cases())
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner.write_inputs(root, (case,))
+            self.assertFalse((root / "data/X_STEPLM_PUBLIC.csv").exists())
+            self.assertFalse((root / "data/Y_STEPLM_PUBLIC.csv").exists())
+
     def test_ml_model_and_planner_evidence_parsers_are_strict(self):
         trace = ("[PlannerTrace][DP-IncrementalRegional] phase=INITIAL_BOUND merges=0 "
                  "lower=1.0 upper=9.0 dpNanos=10 plannerElapsedNanos=20\n"
@@ -167,32 +206,34 @@ class JointBoundaryE2ETest(unittest.TestCase):
             self.assertTrue(runner.compare_selections(cp_s, fed_s, 5)["matched"])
 
     def test_steplm_evaluation_rejects_wrong_b_shape_or_selection_order(self):
-        case = next(case for case in runner.cases() if case.name == "ml_steplm")
         fingerprint = ("JOINT_E2E_SUM=15\nJOINT_E2E_NORM2=55\n"
                        "JOINT_E2E_ROWS=5\nJOINT_E2E_COLS=1\n")
         trace = ("[PlannerTrace][DP-IncrementalRegional] phase=INITIAL_BOUND merges=0 "
                  "lower=1 upper=2 dpNanos=10 plannerElapsedNanos=20\n"
                  "[PlannerTrace][DP-IncrementalRegional] phase=EXACT merges=1 "
                  "lower=1 upper=1 dpNanos=30 plannerElapsedNanos=40\n")
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            case_dir = root / "cases" / case.name
-            case_dir.mkdir(parents=True)
-            for mode in ("cp", "fed"):
-                (case_dir / f"{mode}.rc").write_text("0\n")
-                (case_dir / f"{mode}.log").write_text(
-                    fingerprint + (trace if mode == "fed" else ""))
-                (case_dir / f"{mode}-model.csv").write_text("1\n2\n3\n4\n5\n")
-                (case_dir / f"{mode}-selection.csv").write_text("3,1,5\n")
-            result = runner.evaluate(root, 0, (case,))["cases"][0]
-            self.assertTrue(result["passed"])
-            self.assertEqual([5, 1], result["modelComparison"]["actualShape"])
-            self.assertEqual([3, 1, 5], result["selectionComparison"]["actual"])
-            (case_dir / "fed-selection.csv").write_text("1,3,5\n")
-            self.assertFalse(runner.evaluate(root, 0, (case,))["cases"][0]["passed"])
-            (case_dir / "fed-selection.csv").write_text("3,1,5\n")
-            (case_dir / "fed-model.csv").write_text("1,2,3,4,5\n")
-            self.assertFalse(runner.evaluate(root, 0, (case,))["cases"][0]["passed"])
+        by_name = {case.name: case for case in runner.cases()}
+        for name in ("ml_steplm", "ml_steplm_local_matrix"):
+            case = by_name[name]
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                case_dir = root / "cases" / case.name
+                case_dir.mkdir(parents=True)
+                for mode in ("cp", "fed"):
+                    (case_dir / f"{mode}.rc").write_text("0\n")
+                    (case_dir / f"{mode}.log").write_text(
+                        fingerprint + (trace if mode == "fed" else ""))
+                    (case_dir / f"{mode}-model.csv").write_text("1\n2\n3\n4\n5\n")
+                    (case_dir / f"{mode}-selection.csv").write_text("3,1,5\n")
+                result = runner.evaluate(root, 0, (case,))["cases"][0]
+                self.assertTrue(result["passed"])
+                self.assertEqual([5, 1], result["modelComparison"]["actualShape"])
+                self.assertEqual([3, 1, 5], result["selectionComparison"]["actual"])
+                (case_dir / "fed-selection.csv").write_text("1,3,5\n")
+                self.assertFalse(runner.evaluate(root, 0, (case,))["cases"][0]["passed"])
+                (case_dir / "fed-selection.csv").write_text("3,1,5\n")
+                (case_dir / "fed-model.csv").write_text("1,2,3,4,5\n")
+                self.assertFalse(runner.evaluate(root, 0, (case,))["cases"][0]["passed"])
 
     def test_gradient_training_programs_iterate_and_report_loss(self):
         by_name = {case.name: case for case in runner.cases()}
@@ -238,6 +279,7 @@ class JointBoundaryE2ETest(unittest.TestCase):
         by_name = {case.name: case for case in runner.cases()}
         training = runner.java_command(by_name["ml_lm"], "fed")
         steplm = runner.java_command(by_name["ml_steplm"], "fed")
+        local_steplm = runner.java_command(by_name["ml_steplm_local_matrix"], "fed")
         ordinary = runner.java_command(by_name["l2svm_true_01"], "fed")
         self.assertIn("-Dsysds.fedplanner.trace=true", training)
         self.assertTrue(training.endswith(
@@ -245,6 +287,10 @@ class JointBoundaryE2ETest(unittest.TestCase):
         self.assertTrue(steplm.endswith(
             "-nvargs MODEL_OUTPUT=/evidence/cases/ml_steplm/fed-model.csv "
             "SELECTION_OUTPUT=/evidence/cases/ml_steplm/fed-selection.csv"))
+        self.assertTrue(local_steplm.endswith(
+            "-nvargs MODEL_OUTPUT=/evidence/cases/ml_steplm_local_matrix/fed-model.csv "
+            "SELECTION_OUTPUT=/evidence/cases/ml_steplm_local_matrix/fed-selection.csv"))
+        self.assertIn("-Dsysds.fedplanner.trace=true", local_steplm)
         self.assertNotIn("sysds.fedplanner.trace=true", ordinary)
         self.assertNotIn("-nvargs", ordinary)
 

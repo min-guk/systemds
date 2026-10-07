@@ -450,13 +450,44 @@ final class ExactPhysicalModel {
 
 	/** The original joint predicate is retained as a whole-model legality oracle. */
 	static ExactPhysicalModel buildWithUnprojectedJointFactorsForTest(PlacementAnalysis analysis) {
-		return build(analysis, indexedCandidateRuleLookup(analysis), true, true, true, true, false);
+		return build(analysis, indexedCandidateRuleLookup(analysis), true, true, true, true,
+			false, true, false);
+	}
+
+	/** Canonical joint predicates with the original observation-star solver encoding. */
+	static ExactPhysicalModel buildWithLegacyJointEncodingForTest(PlacementAnalysis analysis) {
+		return build(analysis, indexedCandidateRuleLookup(analysis), true, true, true, true,
+			true, true, false);
+	}
+
+	/** Reference joint predicates before early elimination of vacuous alignment obligations. */
+	static ExactPhysicalModel buildWithUnprunedJointFactorsForTest(PlacementAnalysis analysis) {
+		return build(analysis, indexedCandidateRuleLookup(analysis), true, true, true, true,
+			true, false, false);
 	}
 
 	private static ExactPhysicalModel build(PlacementAnalysis analysis, CandidateRuleLookup ruleLookup,
 		boolean prunePrivacyIllegalRelocations, boolean allocationFreeInputAuthorityEvaluation,
 		boolean lazyAlternativeSignatures, boolean indexedRelocationObligations,
 		boolean projectJointAliases) {
+		return build(analysis, ruleLookup, prunePrivacyIllegalRelocations,
+			allocationFreeInputAuthorityEvaluation, lazyAlternativeSignatures,
+			indexedRelocationObligations, projectJointAliases, true);
+	}
+
+	private static ExactPhysicalModel build(PlacementAnalysis analysis, CandidateRuleLookup ruleLookup,
+		boolean prunePrivacyIllegalRelocations, boolean allocationFreeInputAuthorityEvaluation,
+		boolean lazyAlternativeSignatures, boolean indexedRelocationObligations,
+		boolean projectJointAliases, boolean pruneVacuousJointFactors) {
+		return build(analysis, ruleLookup, prunePrivacyIllegalRelocations,
+			allocationFreeInputAuthorityEvaluation, lazyAlternativeSignatures,
+			indexedRelocationObligations, projectJointAliases, pruneVacuousJointFactors, true);
+	}
+
+	private static ExactPhysicalModel build(PlacementAnalysis analysis, CandidateRuleLookup ruleLookup,
+		boolean prunePrivacyIllegalRelocations, boolean allocationFreeInputAuthorityEvaluation,
+		boolean lazyAlternativeSignatures, boolean indexedRelocationObligations,
+		boolean projectJointAliases, boolean pruneVacuousJointFactors, boolean compactJointEncoding) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(ruleLookup, "ruleLookup");
 		analysis.assertProgramStructureUnchanged();
@@ -495,7 +526,8 @@ final class ExactPhysicalModel {
 			hardFactorizations = new IdentityHashMap<>();
 		addNeutralConstraintFactors(analysis.graph(), byDecision, factors);
 		addStrictTransientFactors(analysis, byDecision, factors);
-		addJointFactors(analysis, byDecision, factors, hardFactorizations, projectJointAliases);
+		addJointFactors(analysis, byDecision, factors, hardFactorizations,
+			projectJointAliases, pruneVacuousJointFactors, compactJointEncoding);
 		addLogicalBoundaryFactors(analysis, byDecision, factors);
 		RealizationSupportPreparationStatistics realizationSupportStatistics =
 			addRealizationSupportFactors(analysis, byDecision, factors, hardFactorizations);
@@ -1183,7 +1215,7 @@ final class ExactPhysicalModel {
 	private static void addJointFactors(PlacementAnalysis analysis,
 		Map<CompiledHopKey,DecisionDomain> domains, List<ExactCategoricalSolver.Factor> factors,
 		Map<ExactCategoricalSolver.Factor,ExactHardFactorObservationDecomposition.Result> factorizations,
-		boolean projectAliases) {
+		boolean projectAliases, boolean pruneVacuous, boolean compactEncoding) {
 		for(JointValueMapRelations.Relation relation : JointValueMapRelations.from(analysis)) {
 			// Fixed-map relations are already owned by the ordinary input authorities.
 			// An always-zero high-arity factor would still create a solver clique.
@@ -1194,6 +1226,12 @@ final class ExactPhysicalModel {
 			DecisionDomain consumer = domains.get(relation.consumer());
 			if(consumer == null)
 				throw new IllegalArgumentException("Joint consumer decision domain missing");
+			// The canonical predicate is identically zero for these consumers. Decide
+			// this before traversing recursive support owners or constructing observations;
+			// a lazy evaluator's early return cannot prevent its scope from forming a clique.
+			if(pruneVacuous && consumer.alternatives().stream().noneMatch(
+				ExactPhysicalModel::jointAlignmentCanConstrain))
+				continue;
 			List<DecisionDomain> scope = new ArrayList<>();
 			scope.add(consumer);
 			var originalGrounding = new JointValueMapRelations.Grounding(analysis, relation);
@@ -1217,6 +1255,7 @@ final class ExactPhysicalModel {
 				if(!scope.contains(domain))
 					scope.add(domain);
 			}
+			boolean useCompact = compactEncoding && scope.size() > 3;
 			List<List<CandidateSelectionReceipt>> receipts = new ArrayList<>();
 			List<?>[] observations = new List<?>[scope.size()];
 			for(int position = 0; position < scope.size(); position++) {
@@ -1226,27 +1265,29 @@ final class ExactPhysicalModel {
 				for(Alternative alternative : domain.alternatives()) {
 					CandidateSelectionReceipt receipt = candidateReceipt(analysis, alternative);
 					selected.add(receipt);
-					List<Object> key = new ArrayList<>();
-					if(supportOwners.contains(domain.node().key())) {
-						key.add(receipt == null ? null : CandidateRealizationReference.of(
-							receipt.rule(), receipt.realization()));
-						key.add(receipt == null ? null : receipt.supportClause().inputBindings());
-						key.add(receipt == null ? null : receipt.provenWorkerPool());
-						key.add(receipt != null && receipt.realization()
-							.nativeWorkerPoolLayoutExact(receipt.supportClause()));
+					if(!useCompact) {
+						List<Object> key = new ArrayList<>();
+						if(supportOwners.contains(domain.node().key())) {
+							key.add(receipt == null ? null : CandidateRealizationReference.of(
+								receipt.rule(), receipt.realization()));
+							key.add(receipt == null ? null : receipt.supportClause().inputBindings());
+							key.add(receipt == null ? null : receipt.provenWorkerPool());
+							key.add(receipt != null && receipt.realization()
+								.nativeWorkerPoolLayoutExact(receipt.supportClause()));
+						}
+						if(domain == consumer) {
+							key.add(alternative.state().execType());
+							key.add(alternative.state().output());
+							key.add(alternative.orderedInputs());
+							key.add(alternative.inputAuthorities().stream().map(authority ->
+								java.util.Arrays.asList(authority.inputPosition(), authority.kind(),
+									authority.relocationAction() == null ? null
+										: authority.relocationAction().key().durableAnchor())).toList());
+							key.add(alternative.realization() == null ? null
+								: alternative.realization().key().layoutKind());
+						}
+						keys.add(key);
 					}
-					if(domain == consumer) {
-						key.add(alternative.state().execType());
-						key.add(alternative.state().output());
-						key.add(alternative.orderedInputs());
-						key.add(alternative.inputAuthorities().stream().map(authority ->
-							java.util.Arrays.asList(authority.inputPosition(), authority.kind(),
-								authority.relocationAction() == null ? null
-									: authority.relocationAction().key().durableAnchor())).toList());
-						key.add(alternative.realization() == null ? null
-							: alternative.realization().key().layoutKind());
-					}
-					keys.add(key);
 				}
 				receipts.add(selected);
 				observations[position] = keys;
@@ -1350,11 +1391,34 @@ final class ExactPhysicalModel {
 				}
 				});
 			factors.add(factor);
-			var encoded = ExactHardFactorObservationDecomposition.create(
-				"joint-value-map|consumer=" + relation.consumer().normalizedSignature(), factor, observations);
+			String encodingKey = "joint-value-map|consumer=" + relation.consumer().normalizedSignature();
+			var encoded = useCompact
+				? ExactJointAlignmentEncoding.create(encodingKey, analysis, relation, grounding,
+					consumer, domains, factor)
+				: ExactHardFactorObservationDecomposition.create(encodingKey, factor, observations);
 			if(encoded != null)
 				factorizations.put(factor, encoded);
 		}
+	}
+
+	private static boolean jointAlignmentCanConstrain(Alternative alternative) {
+		if(alternative.state().execType() == ExecType.CP
+			&& alternative.state().output() == FederatedOutput.LOUT)
+			return false;
+		// A missing realization is forbidden when VALUE_MAP is active, independently
+		// of the number of physical inputs. Preserve that canonical legality obligation.
+		if(alternative.realization() == null)
+			return true;
+		int firstPosition = -1;
+		for(InputAuthority authority : alternative.inputAuthorities()) {
+			if(authority.kind() != InputAuthorityKind.DIRECT_FOUT
+				&& authority.kind() != InputAuthorityKind.RELOCATION)
+				continue;
+			if(firstPosition >= 0 && firstPosition != authority.inputPosition())
+				return true;
+			firstPosition = authority.inputPosition();
+		}
+		return false;
 	}
 
 	/**

@@ -178,6 +178,53 @@ public final class JointValueMapRelations {
 		/** A proof about every completion of the currently assigned decision owners. */
 		public enum PartialAlignment { UNKNOWN, ALIGNED, FORBIDDEN }
 
+		/** One pool-proof context. A projected query is a virtual alias node owned by its retained target. */
+		public record ProofQuery(CandidateRealizationReference reference,
+			CompiledHopKey supplier, CompiledHopKey origin, CompiledHopKey projectedTarget) {
+			public ProofQuery {
+				Objects.requireNonNull(reference, "reference");
+				Objects.requireNonNull(supplier, "supplier");
+				Objects.requireNonNull(origin, "origin");
+			}
+			public CompiledHopKey decisionOwner() {
+				return projectedTarget == null ? reference.rule().parentOccurrence() : projectedTarget;
+			}
+			public boolean projectedAlias() { return projectedTarget != null; }
+			public String normalizedSignature() {
+				return reference.normalizedSignature() + "|supplier=" + supplier.normalizedSignature()
+					+ "|origin=" + origin.normalizedSignature() + "|projectedTarget="
+					+ (projectedTarget == null ? "-" : projectedTarget.normalizedSignature());
+			}
+		}
+
+		/** A conjunctive child demand; a non-null guard must match the selected child receipt exactly. */
+		public record ProofEdge(ProofQuery child, CandidateRealizationReference selectedReferenceGuard) {
+			public ProofEdge { Objects.requireNonNull(child, "child"); }
+			public String normalizedSignature() {
+				return child.normalizedSignature() + "|guard=" + (selectedReferenceGuard == null ? "-"
+					: selectedReferenceGuard.normalizedSignature());
+			}
+		}
+
+		/** One selected alternative's local transition in the recursive worker-pool proof. */
+		public record ProofStep(boolean invalid, DurableAnchorKey exactPool,
+			List<DurableAnchorKey> invariantPools, List<ProofEdge> edges) {
+			public ProofStep {
+				invariantPools = List.copyOf(invariantPools);
+				edges = List.copyOf(edges);
+				if(invalid && (exactPool != null || !invariantPools.isEmpty() || !edges.isEmpty())
+					|| exactPool != null && (!invariantPools.isEmpty() || !edges.isEmpty()))
+					throw new IllegalArgumentException("Joint proof step has mixed terminal states");
+			}
+			public String normalizedSignature() {
+				return invalid ? "INVALID" : exactPool != null
+					? "EXACT:" + exactPool.normalizedSignature()
+					: "CONJUNCTION|invariants=" + invariantPools.stream()
+						.map(DurableAnchorKey::normalizedSignature).toList() + "|edges="
+						+ edges.stream().map(ProofEdge::normalizedSignature).toList();
+			}
+		}
+
 		private record PartialPool(DurableAnchorKey pool, boolean forbidden) {
 			private static final PartialPool UNKNOWN = new PartialPool(null, false);
 			private static final PartialPool FORBIDDEN = new PartialPool(null, true);
@@ -203,6 +250,76 @@ public final class JointValueMapRelations {
 			this.relation = Objects.requireNonNull(relation, "relation");
 			this.requireSameGeometry = requireSameGeometry;
 			this.projectedAliasOwners = Map.copyOf(projectedAliasOwners);
+		}
+
+		/** Root proof query for one selected reader and one correlated relation-row input. */
+		public ProofQuery proofQuery(CandidateSelectionReceipt receipt, InputSource input) {
+			Objects.requireNonNull(receipt, "receipt");
+			Objects.requireNonNull(input, "input");
+			return external(new PoolQuery(CandidateRealizationReference.of(receipt.rule(), receipt.realization()),
+				input.source(), input.valueOrigin()), null);
+		}
+
+		/**
+		 * Exposes one local proof transition without evaluating a complete assignment.
+		 * This is a structural view of {@link #selectedPool}: the canonical evaluator
+		 * remains the source of truth and is intentionally unchanged.
+		 */
+		public ProofStep proofStep(ProofQuery query, CandidateSelectionReceipt selected) {
+			Objects.requireNonNull(query, "query");
+			if(query.projectedAlias())
+				return projectedProofStep(query, selected);
+			if(selected == null || !CandidateSelections.matchesRealization(query.reference(), selected))
+				return invalidProofStep();
+			DurableAnchorKey exact = exactPool(selected.realization(), selected.supportClause());
+			if(exact != null)
+				return new ProofStep(false, exact, List.of(), List.of());
+			if(selected.realization().key().layoutKind() != PlacementIdentity.PlacementLayoutKind.VALUE_MAP)
+				return invalidProofStep();
+			PoolQuery internal = internal(query);
+			List<CandidateRealizationReference> sources = sources(selected.supportClause(), internal);
+			if(sources.isEmpty())
+				return invalidProofStep();
+			List<DurableAnchorKey> constants = new ArrayList<>();
+			List<ProofEdge> edges = new ArrayList<>();
+			for(CandidateRealizationReference reference : sources) {
+				PoolQuery child = new PoolQuery(reference, internal.origin(), internal.origin());
+				DurableAnchorKey invariant = invariantPool(child, new java.util.HashSet<>());
+				if(invariant != null)
+					constants.add(invariant);
+				else {
+					CompiledHopKey projected = projectedAliasOwners.get(child);
+					ProofQuery target = external(child, projected);
+					edges.add(new ProofEdge(target, projected == null ? reference : null));
+				}
+			}
+			return new ProofStep(false, null, constants, edges);
+		}
+
+		private ProofStep projectedProofStep(ProofQuery query, CandidateSelectionReceipt selected) {
+			if(selected == null)
+				return invalidProofStep();
+			PoolQuery target = new PoolQuery(CandidateRealizationReference.of(selected.rule(), selected.realization()),
+				query.origin(), query.origin());
+			DurableAnchorKey invariant = invariantPool(target, new java.util.HashSet<>());
+			if(invariant != null)
+				return new ProofStep(false, invariant, List.of(), List.of());
+			// The virtual alias transition selects the target receipt itself, so the
+			// forwarded ordinary query needs no second selected-reference guard.
+			return new ProofStep(false, null, List.of(),
+				List.of(new ProofEdge(external(target, null), null)));
+		}
+
+		private static ProofStep invalidProofStep() {
+			return new ProofStep(true, null, List.of(), List.of());
+		}
+
+		private static PoolQuery internal(ProofQuery query) {
+			return new PoolQuery(query.reference(), query.supplier(), query.origin());
+		}
+
+		private static ProofQuery external(PoolQuery query, CompiledHopKey projectedTarget) {
+			return new ProofQuery(query.reference(), query.supplier(), query.origin(), projectedTarget);
 		}
 
 		/**

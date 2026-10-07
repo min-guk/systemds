@@ -64,6 +64,8 @@ final class ExactHardFactorObservationDecomposition {
 		public List<int[]> observations() {
 			return observations.stream().map(int[]::clone).toList();
 		}
+		/** General hard circuits have no one-to-one source/observation star. */
+		boolean isObservationStar() { return !observations.isEmpty(); }
 	}
 
 	private ExactHardFactorObservationDecomposition() { }

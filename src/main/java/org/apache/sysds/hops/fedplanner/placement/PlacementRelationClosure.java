@@ -2958,9 +2958,12 @@ final class PlacementRelationClosure {
 	/** One immutable proof-list snapshot shared by all eligible reads of one invocation. */
 	private static final class LoopSeedProofSnapshot<T> extends java.util.AbstractList<T>
 		implements java.util.RandomAccess {
+		private record EqualityMemo(LoopSeedProofSnapshot<?> other, boolean equal) { }
+
 		private final List<T> values;
 		private int cachedHash;
 		private volatile boolean hashComputed;
+		private volatile EqualityMemo equalityMemo;
 
 		private LoopSeedProofSnapshot(List<T> values) {
 			this.values = List.copyOf(values);
@@ -2969,8 +2972,16 @@ final class PlacementRelationClosure {
 		@Override public T get(int index) { return values.get(index); }
 		@Override public int size() { return values.size(); }
 		@Override public boolean equals(Object other) {
-			return this == other || values.equals(other instanceof LoopSeedProofSnapshot<?> snapshot
-				? snapshot.values : other);
+			if(this == other)
+				return true;
+			if(!(other instanceof LoopSeedProofSnapshot<?> snapshot))
+				return values.equals(other);
+			EqualityMemo memo = equalityMemo;
+			if(memo != null && memo.other() == snapshot)
+				return memo.equal();
+			boolean equal = values.equals(snapshot.values);
+			equalityMemo = new EqualityMemo(snapshot, equal);
+			return equal;
 		}
 		@Override public int hashCode() {
 			// Preserve the complete List/record hash, including zero. Unlike a size-only
@@ -3612,6 +3623,22 @@ final class PlacementRelationClosure {
 					: new NativePlacementContinuity(nodesByKey, origins, current.facts(),
 						compiledEdges, directReachingSources, complexityMetrics);
 			}
+			if(actionAuthority != null && !actionAuthority.isEmpty()) {
+				List<CandidateRuleFact> beforeActionFacts = current.facts();
+				List<CandidateRuleFact> actionBound = bindRelocationCandidateRealizations(
+					beforeActionFacts, current.nodes(), compiledEdges, actionAuthority, origins, shapeFactsByHop);
+				if(!actionBound.equals(beforeActionFacts)) {
+					java.util.TreeSet<Integer> changed = new java.util.TreeSet<>(current.changedOrdinals());
+					changed.addAll(changedCandidateOwnerOrdinals(current.nodes(), beforeActionFacts,
+						current.nodes(), actionBound));
+					current = new ClosureUpdate(current.nodes(), current.domainKeys(), actionBound,
+						current.logicalInputs(), List.copyOf(changed));
+					nativePools = activeLoopSeeds.isEmpty()
+						? continuityForAllDefinitions(nodesByKey, origins, current.facts(), compiledEdges, reachingSources)
+						: new NativePlacementContinuity(nodesByKey, origins, current.facts(),
+							compiledEdges, directReachingSources, complexityMetrics);
+				}
+			}
 			if(activeLoopSeeds.isEmpty())
 				allDefinitionContinuity = nativePools;
 			Set<CompiledHopKey> priorLoopSeeds = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -3753,12 +3780,33 @@ final class PlacementRelationClosure {
 				physicallyClosed = new ClosureUpdate(valueMaps.nodes(), physicallyClosed.domainKeys(),
 					valueMaps.facts(), physicallyClosed.logicalInputs(), List.copyOf(changed));
 			}
-			if(!provisionalSeedContext)
-				allDefinitionContinuity = physicalPools;
+			// The next pass's direct dirty comparison must start from the relation that
+			// direct/VALUE_MAP closure actually consumed. Action binding below is new
+			// pending input to that transfer, not part of its completed snapshot.
 			lastDirectNodes = physicallyClosed.nodes();
 			lastDirectFacts = physicallyClosed.facts();
 			lastDirectEdges = physicalEdges;
 			lastDirectReaching = seedReachingSources;
+			if(actionAuthority != null && !actionAuthority.isEmpty()) {
+				List<CandidateRuleFact> beforeActionFacts = physicallyClosed.facts();
+				List<CandidateRuleFact> actionBound = bindRelocationCandidateRealizations(
+					beforeActionFacts, physicallyClosed.nodes(), physicalEdges,
+					actionAuthority, origins, shapeFactsByHop);
+				if(!actionBound.equals(beforeActionFacts)) {
+					java.util.TreeSet<Integer> changed = new java.util.TreeSet<>(physicallyClosed.changedOrdinals());
+					changed.addAll(changedCandidateOwnerOrdinals(physicallyClosed.nodes(), beforeActionFacts,
+						physicallyClosed.nodes(), actionBound));
+					physicallyClosed = new ClosureUpdate(physicallyClosed.nodes(), physicallyClosed.domainKeys(),
+						actionBound, physicallyClosed.logicalInputs(), List.copyOf(changed));
+					physicalPools = provisionalSeedContext
+						? new NativePlacementContinuity(physicalNodesByKey, origins, physicallyClosed.facts(),
+							physicalEdges, seedReachingSources, complexityMetrics)
+						: continuityForAllDefinitions(physicalNodesByKey, origins,
+							physicallyClosed.facts(), physicalEdges, physicalReachingSources);
+				}
+			}
+			if(!provisionalSeedContext)
+				allDefinitionContinuity = physicalPools;
 			// Direct grounding can replace normalized realization identities. Re-run the
 			// exact CFG replay authority so transient compatibility edges name the current
 			// source/reader realizations instead of merely filtering stale signatures.
@@ -8572,6 +8620,56 @@ final class PlacementRelationClosure {
 
 	private record ExactRealizationOption(CandidateRealizationReference reference,
 		CandidateRealizationSupportClause clause, ValueVersionKey valueVersion) { }
+	private static final class ExactRelocationSourceInventory {
+		private final Map<CompiledHopKey,List<Integer>> slots = new IdentityHashMap<>();
+		private final Map<CompiledHopKey,Node> nodes;
+		private final Map<CompiledHopKey,List<ExactRealizationOption>> cached = new IdentityHashMap<>();
+		private List<CandidateRuleFact> facts;
+
+		private ExactRelocationSourceInventory(List<CandidateRuleFact> facts,
+			Map<CompiledHopKey,Node> nodes) {
+			this.facts = facts;
+			this.nodes = nodes;
+			for(int slot = 0; slot < facts.size(); slot++)
+				slots.computeIfAbsent(facts.get(slot).key().parentOccurrence(), ignored -> new ArrayList<>())
+					.add(slot);
+		}
+
+		private List<ExactRealizationOption> options(CompiledHopKey owner) {
+			List<ExactRealizationOption> existing = cached.get(owner);
+			if(existing != null)
+				return existing;
+			Node node = nodes.get(owner);
+			List<ExactRealizationOption> options = new ArrayList<>();
+			if(node != null)
+				for(int slot : slots.getOrDefault(owner, List.of())) {
+					CandidateRuleFact fact = facts.get(slot);
+					if(fact.status() != CandidateEvaluationStatus.AVAILABLE)
+						continue;
+					for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+						for(CandidateEmissionRealization realization : emission.realizations())
+							if(executableSourceRealization(fact.key(), realization))
+								for(CandidateRealizationSupportClause clause : realization.supportClauses())
+									options.add(new ExactRealizationOption(
+										CandidateRealizationReference.of(fact.key(), realization), clause,
+										node.valueVersion()));
+				}
+			List<ExactRealizationOption> canonical = distinctRelocationSourceOptions(options);
+			cached.put(owner, canonical);
+			return canonical;
+		}
+
+		private List<Integer> slots(CompiledHopKey owner) {
+			return slots.getOrDefault(owner, List.of());
+		}
+
+		private void nextRevision(List<CandidateRuleFact> revised,
+			Set<CompiledHopKey> changedOwners) {
+			facts = revised;
+			for(CompiledHopKey owner : changedOwners)
+				cached.remove(owner);
+		}
+	}
 	private record RelocationSourceOptionKey(CandidateRealizationReference reference,
 		DurableAnchorKey candidatePool, DurableAnchorKey nativeWorkerPoolWitness,
 		boolean nativeWorkerPoolLayoutExact) { }
@@ -8617,27 +8715,27 @@ final class PlacementRelationClosure {
 		for(CompiledInputEdgeFact edge : compiledEdges)
 			inputs.computeIfAbsent(edge.consumer(), ignored -> new java.util.TreeMap<>())
 				.put(edge.inputPosition(), edge.producer());
-		Map<ValueVersionKey,List<ExactRealizationOption>> optionsByValue = new LinkedHashMap<>();
-		for(CandidateRuleFact fact : facts) {
-			Node node = nodesByKey.get(fact.key().parentOccurrence());
-			if(node == null || fact.status() != CandidateEvaluationStatus.AVAILABLE)
-				continue;
-			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
-				for(CandidateEmissionRealization realization : emission.realizations())
-					if(executableSourceRealization(fact.key(), realization))
-						for(CandidateRealizationSupportClause clause : realization.supportClauses())
-							optionsByValue.computeIfAbsent(node.valueVersion(), ignored -> new ArrayList<>())
-								.add(new ExactRealizationOption(CandidateRealizationReference.of(fact.key(), realization),
-									clause, node.valueVersion()));
-		}
-		optionsByValue.replaceAll((ignored, options) -> distinctRelocationSourceOptions(options));
+		List<CompiledHopKey> owners = nodes.stream().map(Node::key).toList();
+		Set<CompiledHopKey> ownerSet = Collections.newSetFromMap(new IdentityHashMap<>());
+		ownerSet.addAll(owners);
+		List<PlacementDependencyComponents.SemanticDependency> dependencies = compiledEdges.stream()
+			.filter(edge -> ownerSet.contains(edge.producer()) && ownerSet.contains(edge.consumer()))
+			.map(edge -> new PlacementDependencyComponents.SemanticDependency(
+				edge.producer(), edge.consumer())).toList();
+		PlacementDependencyComponents components = new PlacementDependencyComponents(
+			owners, dependencies, List.of());
+		ExactRelocationSourceInventory inventory = new ExactRelocationSourceInventory(facts, nodesByKey);
 		Map<CompiledHopKey,List<NeutralPlacementGraph.RelocationAction>> actionsByConsumer = new IdentityHashMap<>();
 		for(NeutralPlacementGraph.RelocationAction action : relocations)
 			for(ObligationKey obligation : action.obligations())
 				if(!actionsByConsumer.computeIfAbsent(obligation.consumer(), ignored -> new ArrayList<>()).contains(action))
 					actionsByConsumer.get(obligation.consumer()).add(action);
-		List<CandidateRuleFact> result = new ArrayList<>(facts.size());
-		for(CandidateRuleFact fact : facts) {
+		List<CandidateRuleFact> currentFacts = new ArrayList<>(facts);
+		for(PlacementDependencyComponents.Component component : components.topologicalOrder()) {
+			Map<Integer,CandidateRuleFact> replacements = new java.util.TreeMap<>();
+			for(CompiledHopKey componentOwner : component.owners())
+			for(int slot : inventory.slots(componentOwner)) {
+			CandidateRuleFact fact = currentFacts.get(slot);
 			Hop owner = origins.get(fact.key().parentOccurrence());
 			List<CandidateEmissionFact> emissions = new ArrayList<>();
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
@@ -8682,10 +8780,9 @@ final class PlacementRelationClosure {
 							complete = false;
 							break;
 						}
-						List<ExactRealizationOption> sourceOptions = optionsByValue
-							.getOrDefault(producerNode.valueVersion(), List.of()).stream()
-								.filter(option -> option.reference().rule().parentOccurrence() == producer)
-								.toList();
+						List<ExactRealizationOption> sourceOptions = inventory.options(producer).stream()
+							.filter(option -> option.valueVersion().equals(producerNode.valueVersion()))
+							.toList();
 						int inputPosition = position;
 						List<CandidateRealizationInputBinding> bindings = new ArrayList<>();
 						bindings.addAll(sourceOptions.stream().filter(option -> {
@@ -8760,12 +8857,18 @@ final class PlacementRelationClosure {
 				else
 					emissions.add(emission);
 			}
-			result.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+			replacements.put(slot, new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
 				fact.profile(), emissions, fact.failureCode()));
+			}
+			Set<CompiledHopKey> changed = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(var replacement : replacements.entrySet()) {
+				currentFacts.set(replacement.getKey(), replacement.getValue());
+				changed.add(replacement.getValue().key().parentOccurrence());
+			}
+			inventory.nextRevision(currentFacts, changed);
 		}
-		List<CandidateRuleFact> bound = List.copyOf(result);
 		relocationProducts = currentProducts;
-		return bound;
+		return List.copyOf(currentFacts);
 	}
 
 	private record RelocationProductKey(IdentityListKey<CompiledHopKey> owner,

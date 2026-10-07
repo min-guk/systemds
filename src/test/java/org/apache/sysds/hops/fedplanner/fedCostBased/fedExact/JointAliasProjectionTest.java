@@ -369,7 +369,8 @@ public class JointAliasProjectionTest {
 	private static void assertEncodedCanonicalTruth(ExactPhysicalModel model, int ordinal) {
 		var canonical = model.hardFactors().get(ordinal);
 		var matching = model.hardFactorEncodings().stream()
-			.filter(candidate -> candidate.canonicalOrdinal() == ordinal).findFirst();
+			.filter(candidate -> candidate.canonicalOrdinal() == ordinal
+				&& candidate.decomposition().isObservationStar()).findFirst();
 		var decomposition = matching.map(ExactPhysicalModel.HardFactorEncoding::decomposition)
 			.orElseGet(() -> ExactHardFactorObservationDecomposition.create(
 				"joint-alias-test|ordinal=" + ordinal, canonical,
