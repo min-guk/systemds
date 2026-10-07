@@ -1,5 +1,18 @@
 # 세션 이슈 — 2026-10-07
 
+## L2SVM canonical 진단의 encoding 우회 — 재현·수정 진행 중
+
+- **게시 완료**: main HEAD `8ae75aff00cf790d1afa3820b3b7ce9a2492d04d`의 원격 일치를 확인했다. 이후 `fix/l2svm-exact-factor-20261007`에서 작업한다.
+- **증상/원인**: fresh certificate8건 중7 PASS/1 ERROR. `ExactPhysicalModel.analyze()`가 기존 hard observation encoding을 사용하지 않아 realization-support/input-authority의9613×2010=19,322,130-cell 원본 factor를 입력 한도에서 거부했다. Production optimizer와 다른 경로다.
+- **해결 설계**: `analyze/solveLegalityOnly`에 기존 encoded hard factors 및 exact reduction/compaction을 사용한다. 원래 decisions로 결과를 투영한 뒤 canonical hard factors를 재검사한다. Canonical factor API·후보·비용·privacy·boundary·한도는 유지한다.
+- **현재 검증**: immutable 게시 JAR의 encoded reduced legality는 기존10m/60m에서 통과하고 canonical hard=0이다. 241 decisions/59,429 alternatives는 유지된다. 그러나 비용 surface를 포함한 실제 optimizer는 별도로 `EXACT_VE_FACTOR_CELL_OVERFLOW`를 발생시킨다(`prepare:1580` separator, `optimize:87` 일반 compacted 경로). Cost encoding 및 elimination order의 추가 문제를 조사하며 첫 오류 해결만으로 전체 성공을 주장하지 않는다.
+- **위험/감지**: auxiliary assignment를 physical selection으로 잘못 반환하거나 분해 동치 오류를 놓치는 위험. 작은 raw/encoded oracle, 반환 길이, canonical 재검사 및 실제 optimizer recost로 확인한다.
+- **추가 원인/진행**: shared-source에서 canonical required-output support보다 강한 exact rule 일치를 요구하고, 출력 reference가 header만의 함수라고 가정했다. 공통 support identity에 맞추고 output별 header를 분할했다. Factor4.9m까지 압축해도 separator15.26b로 실패한다. 조건부 output relation overlay는 factor를 늘려 되돌렸고, weighted-fill·불필요 축 제거·GAC의 단독 효과도 부족해 채택하지 않았다. 현재 native/supply header 및 반복 predicate 중복을 조사한다. 후보·canonical cost·제한은 유지한다.
+- **새 검증**: Java14클래스77/77, Python56/56 PASS. Docker 실제 builtin L2SVM Local·Global 모두 자동 선택/실행/CP계수/canonical proof PASS. 8계수 최대오차8.4134e-17, objective21.385960545366007ms, fallback/repair0. PRIVATE_AGGREGATE192×8 fixture의 성공이며 별도 대형 PUBLIC metadata production capacity는 여전히 미해결이다. 증거: `l2svm-exact-capacity-20261007/{correctness-r1,ml-l2svm-local-canonical-r1,ml-l2svm-global-exact-r1}`.
+- **대형 capacity 후속 설계**: 기존 sparse kernel의 projection 이전에 dense logical separator를 int로 계산하는 사전 검사가 실제 저장량을 과대 요구한다. Overlay에서 projection-first 실행을 사용하자 대형 optimizer의 canonical hard/objective 검증이 통과했다(objective1014.5096925175934ms). Dense 예측 최대15.258b/누적34.434b와 달리 실제 최대3,905,024/누적8,347,373 cells다. 따라서 새 solver나 header 분해 대신 인증된 dyadic 경로에 실제 저장량 budget을 적용한다. Map 삽입·배열 할당 전에10m/60m를 검사하고, 한도를 넘는 dense 전환은 금지한다. 일반 solver 계약·후보·canonical cost는 유지한다. Production 코드와 부정 회귀는 구현·검증 중이다.
+- **Production 첫 검증 완료**: 기본3GB JVM에서 Java12클래스91/91 PASS, Python56/56 PASS. 최종 구현의 L2SVM 실제 최대9,028,800/누적19,349,167 cells와 canonical objective bits4652134937446297763을 확인했다. Overlay의 저장량과 혼용하지 않는다. 원래 후보59,429개를 유지했다. 인증·scope/assignment parity·한도 초과·dense 전환 거부 및 join 회귀를 포함한다. Java source변경0. 최신 main과 통합한 검증은 다음 단계다.
+- **기록**: [L2SVM 보고서](L2SVM_EXACT_CAPACITY_2026-10-07_KO.md). 아래 대형 solver 미해결 기록은 이전 검증 시점의 결과로 보존한다.
+
 ## Derived supply main 게시 후 L2SVM 해결 — 진행 중
 
 - **요청/순서**: 검증한 sharing 변경을 main에 먼저 commit/push한 뒤 대형 L2SVM Exact 한계를 해결한다. 원본 변경 commit `3fe367b213`, 새 통합 worktree `/home/mchoi/w1357-derived-supply-main-20261007`.

@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
@@ -42,10 +43,13 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRul
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateShapeProofFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationSupportKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
@@ -358,6 +362,82 @@ public class ExactPhysicalSharedSourceEncodingTest {
 	}
 
 	@Test
+	public void durableOutputAcrossRulesPreservesExhaustiveRelationAndRawCost() {
+		Node source = syntheticNode("durable-relation-source", List.of(LOCAL));
+		CandidateRuleKey routeA = candidateRule(source, List.of());
+		CandidateRuleKey routeB = candidateRule(source,
+			List.of(CandidateInputState.present(FType.ROW)));
+		PlacementState fout = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, true);
+		PlacementEmissionState emission = new PlacementEmissionState(fout, false);
+		DurableAnchorKey first = new DurableAnchorKey("first", FType.ROW,
+			List.of(new AnchorPartition("localhost:13001", List.of(0L, 0L), List.of(8L, 4L))));
+		DurableAnchorKey second = new DurableAnchorKey("second", FType.ROW,
+			List.of(new AnchorPartition("localhost:13002", List.of(0L, 0L), List.of(8L, 4L))));
+		PlacementRealizationKey firstMap = PlacementRealizationKey.durable(emission, first);
+		PlacementRealizationKey secondMap = PlacementRealizationKey.durable(emission, second);
+		PlacementRealizationKey lineage =
+			PlacementRealizationKey.sourceLineage(emission, "route-owned");
+		CandidateRealizationSupportKey durableA = support(routeA, firstMap);
+		CandidateRealizationSupportKey durableB = support(routeB, firstMap);
+		CandidateRealizationSupportKey otherMap = support(routeA, secondMap);
+		CandidateRealizationSupportKey lineageA = support(routeA, lineage);
+		CandidateRealizationSupportKey lineageB = support(routeB, lineage);
+		assertEquals("same owner and exact durable map omit the producer route", durableA, durableB);
+		assertFalse(durableA.equals(otherMap));
+		assertFalse(lineageA.equals(lineageB));
+
+		Object hA = new Object(), hB = new Object(), hC = new Object();
+		Object hD = new Object(), hE = new Object();
+		List<ExactPhysicalSharedSourceEncoding.RelationRow> rows = List.of(
+			row(0, hA, source.key(), durableA), row(1, hA, source.key(), durableB),
+			row(2, hB, source.key(), durableA), row(3, hB, source.key(), durableB),
+			row(4, hC, source.key(), otherMap),
+			row(5, hD, source.key(), lineageA), row(6, hE, source.key(), lineageB));
+		double[] raw = {1, 1, -0.0, -0.0, 3, 4, 5};
+		var encoded = ExactPhysicalSharedSourceEncoding.encodeRelationForTest(
+			"durable-cross-route", rows, List.of(source.key()), List.of(
+				new ExactPhysicalSharedSourceEncoding.RawIncidence("canonical-cost", raw)), LIMITS);
+		assertTrue(encoded.reason(), encoded.supported());
+		boolean[] recovered = new boolean[rows.size()];
+		int headers = encoded.factors().get(0).scope().get(0).domainSize();
+		int references = encoded.factors().get(0).scope().get(1).domainSize();
+		for(int header = 0; header < headers; header++)
+			for(int reference = 0; reference < references; reference++) {
+				List<Integer> fiber = encoded.fiber(header, reference);
+				if(fiber.isEmpty())
+					continue;
+				double cost = encoded.factors().get(1).cost(new int[] {header, reference});
+				for(int ordinal : fiber) {
+					recovered[ordinal] = true;
+					assertEquals(Double.doubleToRawLongBits(raw[ordinal]),
+						Double.doubleToRawLongBits(cost));
+				}
+			}
+		assertArrayEquals(new boolean[] {true, true, true, true, true, true, true}, recovered);
+	}
+
+	@Test
+	public void productionDurableOutputAllowsAlternateProducerRouteWithoutChangingCost()
+		throws Exception {
+		PlacementAnalysis analysis = durableProductionCrossRouteAnalysis();
+		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
+		var surface = ExactPhysicalCostModel.physicalCostSurface(analysis, model,
+			ExactPhysicalOptimizer.PRODUCTION_LIMITS, factor -> { });
+		var encoded = ExactPhysicalSharedSourceEncoding.prepare(model, surface, List.of(),
+			ExactPhysicalOptimizer.PRODUCTION_LIMITS);
+		assertTrue(encoded.statistics().reason(), encoded.statistics().transformed());
+		List<ExactCategoricalSolver.Factor> canonical = new ArrayList<>(model.exactSolverHardFactors());
+		canonical.addAll(surface.exactSolverFactors());
+		Map<List<Integer>,Long> expected = finiteDecisionCosts(surface.exactSolverVariables(),
+			canonical, model.variables().size(), null);
+		Map<List<Integer>,Long> actual = finiteDecisionCosts(encoded.variables(), encoded.factors(),
+			model.variables().size(), encoded);
+		assertEquals("decoded encoded relation and canonical raw cost bits", expected, actual);
+		assertEquals("consumer routeA accepts both producer supply routes for one durable map",
+			2, expected.size());
+	}
+
+	@Test
 	public void actualPrepareRejectsCrossedHeaderReferenceAndUsesProjectedLinks() throws Exception {
 		PlacementAnalysis analysis = minimalCrossTupleAnalysis();
 		ExactPhysicalModel model = ExactPhysicalModel.build(analysis);
@@ -661,6 +741,54 @@ public class ExactPhysicalSharedSourceEncodingTest {
 		return constructor.newInstance(arguments);
 	}
 
+	private static PlacementAnalysis durableProductionCrossRouteAnalysis() throws Exception {
+		PlacementState row = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, true);
+		PlacementState broadcast =
+			new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.BROADCAST, true);
+		DurableAnchorKey rowAnchor = new DurableAnchorKey("input-row", FType.ROW,
+			List.of(new AnchorPartition("localhost:13001", List.of(0L, 0L), List.of(8L, 4L))));
+		DurableAnchorKey broadcastAnchor = new DurableAnchorKey("input-broadcast", FType.BROADCAST,
+			List.of(new AnchorPartition("localhost:13002", List.of(0L, 0L), List.of(8L, 4L))));
+		Node input = syntheticNode("durable-input", List.of(row, broadcast));
+		Node source = syntheticNode("durable-producer", List.of(row));
+		Node consumer = syntheticNode("durable-reader", List.of(LOCAL));
+		var graph = new NeutralPlacementGraph(List.of(input, source, consumer), List.of(
+			new Constraint(ConstraintKind.DOMINATES, input.key(), source.key(), 0, "data-input"),
+			new Constraint(ConstraintKind.DOMINATES, source.key(), consumer.key(), 0, "data-input")),
+			List.of());
+		CandidateRuleKey routeA = candidateRule(source,
+			List.of(CandidateInputState.present(FType.ROW)));
+		CandidateRuleKey routeB = candidateRule(source,
+			List.of(CandidateInputState.present(FType.BROADCAST)));
+		PlacementEmissionState sourceEmission = new PlacementEmissionState(row, false);
+		DurableAnchorKey outputAnchor = new DurableAnchorKey("shared-output", FType.ROW,
+			List.of(new AnchorPartition("localhost:13003", List.of(0L, 0L), List.of(8L, 4L))));
+		PlacementRealizationKey output = PlacementRealizationKey.durable(sourceEmission, outputAnchor);
+		CandidateRuleKey reader = candidateRule(consumer,
+			List.of(CandidateInputState.present(FType.ROW)));
+		PlacementEmissionState rowEmission = new PlacementEmissionState(row, false);
+		PlacementEmissionState broadcastEmission = new PlacementEmissionState(broadcast, false);
+		List<CandidateRuleFact> facts = List.of(
+			candidateFact(candidateRule(input, List.of()), List.of(
+				candidateEmission(rowEmission,
+					PlacementRealizationKey.durable(rowEmission, rowAnchor), List.of(supportClause())),
+				candidateEmission(broadcastEmission,
+					PlacementRealizationKey.durable(broadcastEmission, broadcastAnchor),
+					List.of(supportClause())))),
+			candidateFact(routeA, List.of(candidateEmission(sourceEmission, output,
+				List.of(supportClause())))),
+			candidateFact(routeB, List.of(candidateEmission(sourceEmission, output,
+				List.of(supportClause())))),
+			candidateFact(reader, List.of(candidateEmission(LOCAL_EMISSION, LOCAL_LAYOUT,
+				List.of(supportClause(CandidateRealizationInputBinding.direct(0,
+					new CandidateRealizationReference(routeA, output))))))));
+		Class<?> fixtures = Class.forName(
+			"org.apache.sysds.hops.fedplanner.placement.PolicyGreedyGroundingTest");
+		Method factory = fixtures.getDeclaredMethod("analysis", NeutralPlacementGraph.class, List.class);
+		factory.setAccessible(true);
+		return (PlacementAnalysis)factory.invoke(null, graph, facts);
+	}
+
 	private static PlacementAnalysis minimalCrossTupleAnalysis() throws Exception {
 		PlacementState fout = new PlacementState(ExecType.CP, FederatedOutput.FOUT, FType.ROW, false);
 		PlacementEmissionState foutEmission = new PlacementEmissionState(fout, false);
@@ -838,6 +966,12 @@ public class ExactPhysicalSharedSourceEncodingTest {
 		return new CandidateRuleKey(node.key(), inputs);
 	}
 
+	private static CandidateRealizationSupportKey support(CandidateRuleKey rule,
+		PlacementRealizationKey realization) {
+		return CandidateSelections.requiredInputSupportIdentity(
+			new CandidateRealizationReference(rule, realization));
+	}
+
 	private static CandidateRealizationSupportClause supportClause(
 		CandidateRealizationInputBinding... bindings) {
 		return new CandidateRealizationSupportClause(List.of(), List.of(bindings));
@@ -855,7 +989,9 @@ public class ExactPhysicalSharedSourceEncodingTest {
 
 	private static CandidateEmissionFact candidateEmission(PlacementEmissionState state,
 		PlacementRealizationKey layout, List<CandidateRealizationSupportClause> clauses) {
-		return new CandidateEmissionFact(state, null, null,
+		return new CandidateEmissionFact(state,
+			state.placementState().execType() == ExecType.FED
+				? state.placementState().fType() : null, null,
 			List.of(new CandidateEmissionRealization(layout, clauses)));
 	}
 
@@ -875,13 +1011,23 @@ public class ExactPhysicalSharedSourceEncodingTest {
 	}
 
 	private static Node syntheticNode(String id, List<PlacementState> states) {
+		return syntheticNode(id, states, List.of());
+	}
+
+	private static Node syntheticNode(String id, List<PlacementState> states,
+		List<DurableAnchorKey> anchors) {
+		return syntheticNode(id, NodeKind.OPERATION, states, anchors);
+	}
+
+	private static Node syntheticNode(String id, NodeKind kind, List<PlacementState> states,
+		List<DurableAnchorKey> anchors) {
 		var region = new ControlRegionKey("shared-source-cross", "main", List.of("main"),
 			"root", "compiled");
 		var key = new CompiledHopKey("shared-source-cross", "main", "root", "compiled",
 			region, id, id);
-		return new Node(key, NodeKind.OPERATION,
+		return new Node(key, kind,
 			new ValueVersionKey("shared-source-cross", id, region, 0, VersionKind.ORDINARY, List.of()),
-			true, states, List.of(), List.of());
+			true, states, List.of(), anchors);
 	}
 
 	private static double[] costs(ExactPhysicalSharedSourceEncoding.RelationEncoding encoded,

@@ -23,6 +23,46 @@ import org.junit.Test;
 
 public class ExactPhysicalDyadicCertificateTest {
 	@Test
+	public void storedCellPreparationKeepsPhysicalAuthorityAndExactResult() throws Exception {
+		var analysis = ExactNativeLocalAnchorFanoutCostTest.analysis(false);
+		var model = ExactPhysicalModel.build(analysis);
+		var surface = ExactPhysicalCostModel.physicalCostSurface(analysis, model);
+		var certificate = ExactDyadicCosts.certify(surface);
+		var limits = new ExactCategoricalSolver.Limits(1_000_000, 10_000_000);
+		var encoding = ExactPhysicalSharedSourceEncoding.prepare(model, surface, List.of(), limits);
+		assertTrue(encoding.statistics().reason(), encoding.statistics().transformed());
+		var policy = new ExactEliminationOrderPolicy.Configuration(false, 1_000_000, "test");
+		var numericOnly = ExactDyadicCosts.certifyTables(List.of(new double[] {0}));
+		assertTrue(assertThrows(IllegalArgumentException.class,
+			() -> ExactPhysicalReducedSolver.prepareSharedSource(encoding, numericOnly, limits,
+				policy, "authority-test", true)).getMessage().contains("PHYSICAL_AUTHORITY_REQUIRED"));
+		var foreign = ExactDyadicCosts.certify(ExactPhysicalCostModel.physicalCostSurface(analysis, model));
+		assertThrows(IllegalArgumentException.class,
+			() -> ExactPhysicalReducedSolver.prepareSharedSource(encoding, foreign, limits,
+				policy, "authority-test", true));
+		for(boolean compact : List.of(false, true)) {
+			var strict = compact ? ExactPhysicalReducedSolver.prepareCompacted(
+				encoding.decisionPrefixCount(), encoding.variables(), encoding.factors(), limits, policy)
+				: ExactPhysicalReducedSolver.prepare(encoding.decisionPrefixCount(), encoding.variables(),
+					encoding.factors(), limits, policy);
+			var deferred = ExactPhysicalReducedSolver.prepareSharedSource(encoding, certificate,
+				limits, policy, "authority-test", compact);
+			assertThrows(IllegalArgumentException.class, () -> ExactPhysicalReducedSolver.solve(deferred));
+			assertThrows(IllegalArgumentException.class,
+				() -> ExactPhysicalReducedSolver.solveDyadic(deferred, certificate));
+			assertThrows(IllegalArgumentException.class, () -> ExactPhysicalReducedSolver.solveDyadic(
+				deferred, certificate.bindDerived(encoding, strict)));
+			var expected = ExactPhysicalReducedSolver.solveDyadic(strict, certificate.bindDerived(encoding, strict));
+			var actual = ExactPhysicalReducedSolver.solveDyadic(deferred, certificate.bindDerived(encoding, deferred));
+			assertEquals(expected.assignmentInVariableOrder(), actual.assignmentInVariableOrder());
+			assertEquals(Double.doubleToRawLongBits(expected.objective()),
+				Double.doubleToRawLongBits(actual.objective()));
+			assertEquals(surface.evaluateCanonical(encoding.decode(actual.assignmentInVariableOrder())),
+				Double.doubleToRawLongBits(actual.objective()));
+		}
+	}
+
+	@Test
 	public void physicalSurfaceDerivesNumericBoundAndBindsFrozenFactorOrder() throws Exception {
 		var analysis = ExactNativeLocalAnchorFanoutCostTest.analysis(false);
 		var model = ExactPhysicalModel.build(analysis);

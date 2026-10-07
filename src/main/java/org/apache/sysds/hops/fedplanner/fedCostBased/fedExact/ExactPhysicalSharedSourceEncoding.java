@@ -20,9 +20,11 @@ import java.util.Objects;
 import java.util.function.IntUnaryOperator;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostModel.PhysicalCostSurface;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationSupportKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 
@@ -201,13 +203,13 @@ final class ExactPhysicalSharedSourceEncoding {
 		private final List<AlternativeHeader> headers;
 		private final int[] headerByRow;
 		private final List<CompiledHopKey> sourceOwners;
-		private List<IdentityHashMap<CompiledHopKey,CandidateRealizationReference>> refsByRow;
+		private List<IdentityHashMap<CompiledHopKey,CandidateRealizationSupportKey>> refsByRow;
 		private List<IdentityHashMap<CompiledHopKey,Integer>> sourceOrdinalsByRow;
 
 		private DomainView(int originalIndex, ExactPhysicalModel.DecisionDomain domain,
 			List<AlternativeHeader> headers, int[] headerByRow,
 			List<CompiledHopKey> sourceOwners,
-			List<IdentityHashMap<CompiledHopKey,CandidateRealizationReference>> refsByRow) {
+			List<IdentityHashMap<CompiledHopKey,CandidateRealizationSupportKey>> refsByRow) {
 			this.originalIndex = originalIndex;
 			this.domain = domain;
 			this.headers = List.copyOf(headers);
@@ -224,9 +226,9 @@ final class ExactPhysicalSharedSourceEncoding {
 			// Resolve their structural equality once, retaining sparse owner identities;
 			// these rows are metadata, not new factors or a dense owner/row product.
 			List<IdentityHashMap<CompiledHopKey,Integer>> frozen = new ArrayList<>(refsByRow.size());
-			for(IdentityHashMap<CompiledHopKey,CandidateRealizationReference> row : refsByRow) {
+			for(IdentityHashMap<CompiledHopKey,CandidateRealizationSupportKey> row : refsByRow) {
 				IdentityHashMap<CompiledHopKey,Integer> ordinals = new IdentityHashMap<>(row.size());
-				for(Map.Entry<CompiledHopKey,CandidateRealizationReference> entry : row.entrySet()) {
+				for(Map.Entry<CompiledHopKey,CandidateRealizationSupportKey> entry : row.entrySet()) {
 					ReferenceView reference = references.get(entry.getKey());
 					Integer ordinal = reference == null ? null : reference.ordinals.get(entry.getValue());
 					if(ordinal == null)
@@ -247,12 +249,12 @@ final class ExactPhysicalSharedSourceEncoding {
 	private static final class ReferenceView {
 		private final DomainView owner;
 		private final List<Object> values;
-		private final Map<CandidateRealizationReference,Integer> ordinals;
+		private final Map<CandidateRealizationSupportKey,Integer> ordinals;
 		private final ExactCategoricalSolver.Variable variable;
 		private final int[] selectedByHeader;
 
 		private ReferenceView(DomainView owner, List<Object> values,
-			Map<CandidateRealizationReference,Integer> ordinals, int[] selectedByHeader) {
+			Map<CandidateRealizationSupportKey,Integer> ordinals, int[] selectedByHeader) {
 			this.owner = owner;
 			this.values = List.copyOf(values);
 			this.ordinals = Map.copyOf(ordinals);
@@ -622,7 +624,7 @@ final class ExactPhysicalSharedSourceEncoding {
 		LinkedHashMap<AlternativeHeader,Integer> headerOrdinals = new LinkedHashMap<>();
 		List<AlternativeHeader> headers = new ArrayList<>();
 		int[] headerByRow = new int[domain.alternatives().size()];
-		List<IdentityHashMap<CompiledHopKey,CandidateRealizationReference>> refsByRow =
+		List<IdentityHashMap<CompiledHopKey,CandidateRealizationSupportKey>> refsByRow =
 			new ArrayList<>();
 		LinkedHashSet<CompiledHopKey> owners = new LinkedHashSet<>();
 		for(int row = 0; row < domain.alternatives().size(); row++) {
@@ -635,22 +637,26 @@ final class ExactPhysicalSharedSourceEncoding {
 				headers.add(header);
 			}
 			headerByRow[row] = headerOrdinal;
-			IdentityHashMap<CompiledHopKey,CandidateRealizationReference> selected =
+			IdentityHashMap<CompiledHopKey,CandidateRealizationSupportKey> selected =
 				new IdentityHashMap<>();
 			CandidateRealizationSupportClause clause = alternative.supportClause();
 			if(clause != null)
 				for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
 					CompiledHopKey owner = binding.source().rule().parentOccurrence();
 					owners.add(owner);
-					CandidateRealizationReference previous = selected.putIfAbsent(owner,
-						binding.source());
-					if(previous != null && !previous.equals(binding.source()))
+					CandidateRealizationSupportKey support =
+						CandidateSelections.requiredInputSupportIdentity(binding.source());
+					CandidateRealizationSupportKey previous = selected.putIfAbsent(owner, support);
+					if(previous != null && !previous.equals(support))
 						throw new Unsupported("CONFLICTING_REPEATED_SOURCE|decision=" + index);
 				}
 			refsByRow.add(selected);
 		}
 		List<CompiledHopKey> orderedOwners = owners.stream().sorted(Comparator.comparingInt(owner ->
 			decisionOrder.getOrDefault(owner, Integer.MAX_VALUE))).toList();
+		// The owner header must determine its produced-output support before the
+		// final header's demanded input relation is certified as Cartesian.
+		refineHeadersBySelectedSupport(model, domain, headers, headerByRow);
 		int originalHeaderCount = headers.size();
 		for(int header = 0; header < originalHeaderCount; header++) {
 			List<Integer> rows = new ArrayList<>();
@@ -666,14 +672,14 @@ final class ExactPhysicalSharedSourceEncoding {
 				if(all)
 					required.add(owner);
 			}
-			List<HashSet<CandidateRealizationReference>> projections = new ArrayList<>();
+			List<HashSet<CandidateRealizationSupportKey>> projections = new ArrayList<>();
 			for(int ignored = 0; ignored < required.size(); ignored++)
 				projections.add(new HashSet<>());
-			HashSet<List<CandidateRealizationReference>> tuples = new HashSet<>();
+			HashSet<List<CandidateRealizationSupportKey>> tuples = new HashSet<>();
 			for(int row : rows) {
-				List<CandidateRealizationReference> tuple = new ArrayList<>();
+				List<CandidateRealizationSupportKey> tuple = new ArrayList<>();
 				for(int owner = 0; owner < required.size(); owner++) {
-					CandidateRealizationReference reference = refsByRow.get(row).get(required.get(owner));
+					CandidateRealizationSupportKey reference = refsByRow.get(row).get(required.get(owner));
 					tuple.add(reference);
 					projections.get(owner).add(reference);
 				}
@@ -688,10 +694,10 @@ final class ExactPhysicalSharedSourceEncoding {
 				// by tuple instead of abandoning shared-source encoding for every
 				// other decision. Membership factors then preserve precisely these
 				// rows, including duplicate-proof fibers and demanded-only references.
-				Map<List<CandidateRealizationReference>,Integer> refined = new LinkedHashMap<>();
+				Map<List<CandidateRealizationSupportKey>,Integer> refined = new LinkedHashMap<>();
 				AlternativeHeader original = headers.get(header);
 				for(int row : rows) {
-					List<CandidateRealizationReference> tuple = required.stream()
+					List<CandidateRealizationSupportKey> tuple = required.stream()
 						.map(owner -> refsByRow.get(row).get(owner)).toList();
 					Integer refinedHeader = refined.get(tuple);
 					if(refinedHeader == null) {
@@ -704,6 +710,31 @@ final class ExactPhysicalSharedSourceEncoding {
 			}
 		}
 		return new DomainView(index, domain, headers, headerByRow, orderedOwners, refsByRow);
+	}
+
+	/** One encoded owner header must select exactly one canonical produced-output identity. */
+	private static void refineHeadersBySelectedSupport(ExactPhysicalModel model,
+		ExactPhysicalModel.DecisionDomain domain, List<AlternativeHeader> headers,
+		int[] headerByRow) {
+		int headerCount = headers.size();
+		for(int header = 0; header < headerCount; header++) {
+			Map<CandidateRealizationSupportKey,Integer> refined = new LinkedHashMap<>();
+			AlternativeHeader original = headers.get(header);
+			for(int row = 0; row < headerByRow.length; row++) {
+				if(headerByRow[row] != header)
+					continue;
+				CandidateRealizationSupportKey selected = candidateSupportIdentity(model,
+					domain.alternatives().get(row));
+				Integer refinedHeader = refined.get(selected);
+				if(refinedHeader == null && !refined.containsKey(selected)) {
+					refinedHeader = refined.isEmpty() ? header : headers.size();
+					if(!refined.isEmpty())
+						headers.add(original);
+					refined.put(selected, refinedHeader);
+				}
+				headerByRow[row] = refinedHeader;
+			}
+		}
 	}
 
 	private static AlternativeHeader header(ExactPhysicalModel model,
@@ -741,11 +772,11 @@ final class ExactPhysicalSharedSourceEncoding {
 			DomainView ownerDomain = byDecision.get(owner);
 			if(ownerDomain == null)
 				throw new Unsupported("MISSING_SOURCE_OWNER_DOMAIN");
-			LinkedHashMap<CandidateRealizationReference,Integer> ordinals = new LinkedHashMap<>();
+			LinkedHashMap<CandidateRealizationSupportKey,Integer> ordinals = new LinkedHashMap<>();
 			List<Object> values = new ArrayList<>();
 			int noneOrdinal = -1;
 			for(ExactPhysicalModel.Alternative alternative : ownerDomain.domain.alternatives()) {
-				CandidateRealizationReference reference = candidateReference(model, alternative);
+				CandidateRealizationSupportKey reference = candidateSupportIdentity(model, alternative);
 				if(reference == null && noneOrdinal < 0) {
 					noneOrdinal = values.size();
 					values.add(NO_SELECTED_REFERENCE);
@@ -756,8 +787,8 @@ final class ExactPhysicalSharedSourceEncoding {
 				}
 			}
 			for(DomainView consumer : domains)
-				for(IdentityHashMap<CompiledHopKey,CandidateRealizationReference> row : consumer.refsByRow) {
-					CandidateRealizationReference demanded = row.get(owner);
+				for(IdentityHashMap<CompiledHopKey,CandidateRealizationSupportKey> row : consumer.refsByRow) {
+					CandidateRealizationSupportKey demanded = row.get(owner);
 					if(demanded != null && !ordinals.containsKey(demanded)) {
 						// Retain the consumer row without inventing an owner choice: the unchanged
 						// owner H->R link leaves this demanded-only value entirely infeasible.
@@ -768,7 +799,7 @@ final class ExactPhysicalSharedSourceEncoding {
 			int[] selectedByHeader = new int[ownerDomain.headers.size()];
 			Arrays.fill(selectedByHeader, -1);
 			for(int row = 0; row < ownerDomain.domain.alternatives().size(); row++) {
-				CandidateRealizationReference selected = candidateReference(model,
+				CandidateRealizationSupportKey selected = candidateSupportIdentity(model,
 					ownerDomain.domain.alternatives().get(row));
 				int selectedValue = selected == null ? noneOrdinal : ordinals.getOrDefault(selected, -1);
 				if(selectedValue < 0)
@@ -1615,5 +1646,11 @@ final class ExactPhysicalSharedSourceEncoding {
 		CandidateSelectionReceipt receipt = model.analysis().canonicalCandidateReceipt(rule.key(),
 			emission, alternative.realization(), alternative.supportClause());
 		return CandidateRealizationReference.of(receipt.rule(), receipt.realization());
+	}
+
+	private static CandidateRealizationSupportKey candidateSupportIdentity(ExactPhysicalModel model,
+		ExactPhysicalModel.Alternative alternative) {
+		CandidateRealizationReference reference = candidateReference(model, alternative);
+		return reference == null ? null : CandidateSelections.requiredInputSupportIdentity(reference);
 	}
 }

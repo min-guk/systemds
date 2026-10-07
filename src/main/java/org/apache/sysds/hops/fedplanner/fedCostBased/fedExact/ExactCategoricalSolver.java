@@ -478,6 +478,41 @@ public final class ExactCategoricalSolver {
 	}
 
 	/**
+	 * Compiles a certified-dyadic solve whose exact value-profile projection and
+	 * finite support determine the stored message sizes. Input tables retain the
+	 * ordinary strict limits; only intermediate dense estimates are deferred.
+	 */
+	static OrderCompilation compileDyadicWithFastOrder(List<Variable> variables,
+		List<Factor> factors, Limits limits, boolean fastOrder, long maximumAssignments) {
+		if(maximumAssignments <= 0)
+			throw new IllegalArgumentException("EXACT_VE_FAST_ORDER_WORK_INVALID|value="
+				+ maximumAssignments);
+		InputDefinition input = validateInputs(variables, factors, limits);
+		Plan selected;
+		boolean accepted = false;
+		boolean fallback = false;
+		long fastAssignments = 0L;
+		if(fastOrder) {
+			Plan fast = eliminationPlan(input.variables, input.domains, input.scopes,
+				PlanOrdering.MIN_SEPARATOR_CELLS);
+			PlanMetrics metrics = planMetrics(fast, input.domains);
+			fastAssignments = metrics.eliminationAssignments;
+			accepted = metrics.eliminationAssignments != Long.MAX_VALUE
+				&& metrics.eliminationAssignments <= maximumAssignments
+				&& planFitsLimits(input, metrics, limits);
+			fallback = !accepted;
+			selected = accepted ? fast : minimumMaterializationPlan(
+				input.variables, input.domains, input.scopes,
+				new ScoredPlan(fast, metrics, PlanOrdering.MIN_SEPARATOR_CELLS.ordinal()));
+		}
+		else
+			selected = minimumMaterializationPlan(input.variables, input.domains, input.scopes);
+		Prepared prepared = prepareDeferredDyadic(input, limits, selected);
+		return new OrderCompilation(new CompiledProblem(prepared, factors), fastOrder,
+			accepted, fallback, fastAssignments);
+	}
+
+	/**
 	 * Selects the ordinary exact portfolio order subject to a caller's per-step
 	 * elimination-work limit. A lower-memory order that exceeds the work limit must
 	 * not hide another exact portfolio order that fits both declared budgets.
@@ -532,8 +567,18 @@ public final class ExactCategoricalSolver {
 		return new CompiledProblem(prepare(input, limits, plan), factors);
 	}
 
+	/** Test-only fixed-order preparation for exercising deferred storage boundaries. */
+	static CompiledProblem compileDyadicPreferredForTest(List<Variable> variables,
+		List<Factor> factors, Limits limits, List<String> preferredEliminationOrder) {
+		InputDefinition input = validateInputs(variables, factors, limits);
+		return new CompiledProblem(prepareDeferredDyadic(input, limits,
+			preferredPlan(input, preferredEliminationOrder)), factors);
+	}
+
 	static Result solve(CompiledProblem compiled) {
 		Objects.requireNonNull(compiled, "compiled");
+		if(compiled.prepared.deferredDyadic)
+			throw new IllegalArgumentException("EXACT_VE_DEFERRED_DYADIC_CERTIFICATE_REQUIRED");
 		return solve(compiled.prepared, compiled.factors, null);
 	}
 
@@ -544,6 +589,8 @@ public final class ExactCategoricalSolver {
 		if(!certificate.supported())
 			throw new IllegalArgumentException("EXACT_VE_DYADIC_CERTIFICATE_REJECTED|"
 				+ certificate.reason());
+		if(compiled.prepared.deferredDyadic && !certificate.hasPhysicalAuthority())
+			throw new IllegalArgumentException("EXACT_VE_DEFERRED_PHYSICAL_AUTHORITY_REQUIRED");
 		certificate.validateCompiledProblem(compiled);
 		return solve(compiled.prepared, compiled.factors, null, null, certificate);
 	}
@@ -1081,6 +1128,9 @@ public final class ExactCategoricalSolver {
 			active = dyadicInputs(prepared.domains, active, dyadic);
 		boolean sparseEligible = tieCostFunction == null
 			&& (dyadic != null || sparseRangeSafe(prepared, active));
+		long storedCells = active.stream().mapToLong(factor -> factor.values.length).sum();
+		long maximumStoredCells = active.stream().mapToLong(factor -> factor.values.length)
+			.max().orElse(0L);
 		List<Backpointer> backpointers = new ArrayList<>(prepared.variables.size());
 		int[] global = new int[prepared.variables.size()];
 
@@ -1090,8 +1140,9 @@ public final class ExactCategoricalSolver {
 				if(factor.contains(step.variable))
 					bucket.add(factor);
 			active.removeAll(bucket);
-			int outputCells = checkedCells(step.separator, prepared.domains,
-				"EXACT_VE_FACTOR_CELL_OVERFLOW");
+			long logicalOutputCells = prepared.deferredDyadic
+				? saturatedCells(step.separator, prepared.domains)
+				: checkedCells(step.separator, prepared.domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
 			if(sparseEligible) {
 				BucketProjection projection = new BucketProjection(step, prepared.domains, bucket);
 				List<ExactFiniteSupportJoin.Relation> supports = new ArrayList<>();
@@ -1102,13 +1153,34 @@ public final class ExactCategoricalSolver {
 				}
 				if(!projection.identity || !supports.isEmpty()
 					|| bucket.stream().anyMatch(factor -> factor.valueMaps != null)) {
-					SparseStep sparse = eliminateSparse(step, bucket, supports, projection, outputCells,
-						dyadic != null);
+					StorageBudget storageBudget = prepared.deferredDyadic
+						? new StorageBudget(prepared.limits, storedCells) : null;
+					SparseStep sparse = eliminateSparse(step, bucket, supports, projection,
+						logicalOutputCells, dyadic != null, storageBudget);
+					if(prepared.deferredDyadic) {
+						storedCells = checkedAdd(storedCells, sparse.factor.values.length,
+							"EXACT_VE_MATERIALIZED_CELL_OVERFLOW");
+						maximumStoredCells = Math.max(maximumStoredCells, sparse.factor.values.length);
+					}
 					active.add(sparse.factor);
 					backpointers.add(sparse.backpointer);
-					observeStep(observer, sparse.factor, sparse.backpointer, outputCells, prepared.domains);
+					if(observer != null && logicalOutputCells > Integer.MAX_VALUE)
+						throw new IllegalArgumentException("EXACT_VE_OBSERVER_FACTOR_CELL_OVERFLOW");
+					observeStep(observer, sparse.factor, sparse.backpointer,
+						(int)logicalOutputCells, prepared.domains);
 					continue;
 				}
+			}
+			if(logicalOutputCells > Integer.MAX_VALUE)
+				throw new IllegalArgumentException("EXACT_VE_FACTOR_CELL_OVERFLOW");
+			int outputCells = (int)logicalOutputCells;
+			if(prepared.deferredDyadic) {
+				long maximumOutputCells = maximumOutputCells(prepared, storedCells);
+				if(outputCells > maximumOutputCells)
+					throw storedCellLimit(prepared, outputCells, storedCells);
+				storedCells = checkedAdd(storedCells, outputCells,
+					"EXACT_VE_MATERIALIZED_CELL_OVERFLOW");
+				maximumStoredCells = Math.max(maximumStoredCells, outputCells);
 			}
 			int[] baseCells = new int[bucket.size()];
 			int[] valueStrides = new int[bucket.size()];
@@ -1202,7 +1274,30 @@ public final class ExactCategoricalSolver {
 			global[backpointer.variable] = backpointer.choice(cell);
 		}
 		List<Integer> assignment = Arrays.stream(global).boxed().toList();
-		return new Result(objective, assignment, prepared.statistics);
+		Statistics statistics = prepared.deferredDyadic
+			? new Statistics(prepared.statistics.eliminationOrder(), prepared.statistics.inducedWidth(),
+				maximumStoredCells, storedCells, prepared.statistics.maximumEliminationAssignments(),
+				prepared.statistics.eliminationAssignments())
+			: prepared.statistics;
+		return new Result(objective, assignment, statistics);
+	}
+
+	private static long maximumOutputCells(Prepared prepared, long storedCells) {
+		long remaining = prepared.limits.maximumMaterializedCells() - storedCells;
+		if(remaining < 0)
+			throw new IllegalArgumentException("EXACT_VE_MATERIALIZED_LIMIT_EXCEEDED|cells="
+				+ storedCells + "|limit=" + prepared.limits.maximumMaterializedCells());
+		return Math.min(prepared.limits.maximumFactorCells(), remaining);
+	}
+
+	private static IllegalArgumentException storedCellLimit(Prepared prepared,
+		long outputCells, long storedCells) {
+		if(outputCells > prepared.limits.maximumFactorCells())
+			return new IllegalArgumentException("EXACT_VE_FACTOR_LIMIT_EXCEEDED|cells="
+				+ outputCells + "|limit=" + prepared.limits.maximumFactorCells() + "|stored");
+		return new IllegalArgumentException("EXACT_VE_MATERIALIZED_LIMIT_EXCEEDED|cells="
+			+ saturatedAdd(storedCells, outputCells) + "|limit="
+			+ prepared.limits.maximumMaterializedCells());
 	}
 
 	/**
@@ -1233,6 +1328,20 @@ public final class ExactCategoricalSolver {
 
 	private record SparseMinimum(PreciseCost cost, double rounded, int choice) { }
 	private record SparseStep(DenseFactor factor, Backpointer backpointer) { }
+	private record StorageBudget(Limits limits, long storedBefore) {
+		private long maximumOutputCells() {
+			return Math.min(limits.maximumFactorCells(),
+				Math.max(0L, limits.maximumMaterializedCells() - storedBefore));
+		}
+		private IllegalArgumentException exceeded(long outputCells) {
+			if(outputCells > limits.maximumFactorCells())
+				return new IllegalArgumentException("EXACT_VE_FACTOR_LIMIT_EXCEEDED|cells="
+					+ outputCells + "|limit=" + limits.maximumFactorCells() + "|stored");
+			return new IllegalArgumentException("EXACT_VE_MATERIALIZED_LIMIT_EXCEEDED|cells="
+				+ saturatedAdd(storedBefore, outputCells) + "|limit="
+				+ limits.maximumMaterializedCells());
+		}
+	}
 
 	/** Exact value-profile classes, never a change to logical scopes or bucket order. */
 	private static final class BucketProjection {
@@ -1309,9 +1418,9 @@ public final class ExactCategoricalSolver {
 				int cell = factor.sparseCells == null ? stored : factor.sparseCells[stored];
 				long multiplicity = 1L;
 				for(int axis = 0; axis < factor.scope.length; axis++)
-					multiplicity *= weights[factor.scope[axis]][
-						cell / factor.strides[axis] % factor.dimensions[axis]];
-				count += multiplicity;
+					multiplicity = saturatedMultiply(multiplicity, weights[factor.scope[axis]][
+						cell / factor.strides[axis] % factor.dimensions[axis]]);
+				count = saturatedAdd(count, multiplicity);
 			}
 			return count;
 		}
@@ -1321,15 +1430,17 @@ public final class ExactCategoricalSolver {
 	private static final class SparseAccumulator {
 		private final int outputCells;
 		private final boolean dyadic;
+		private final StorageBudget storageBudget;
 		private Map<Integer,SparseMinimum> minima = new HashMap<>();
 		private double[] high;
 		private double[] low;
 		private int[] choices;
 		private int finiteOutputs;
 
-		private SparseAccumulator(int outputCells, boolean dyadic) {
+		private SparseAccumulator(int outputCells, boolean dyadic, StorageBudget storageBudget) {
 			this.outputCells = outputCells;
 			this.dyadic = dyadic;
+			this.storageBudget = storageBudget;
 		}
 
 		private void offer(int cell, int value, PreciseCost candidate) {
@@ -1348,6 +1459,10 @@ public final class ExactCategoricalSolver {
 				return;
 			}
 			SparseMinimum prior = minima.get(cell);
+			long maximumStoredCells = storageBudget == null
+				? Long.MAX_VALUE : storageBudget.maximumOutputCells();
+			if(prior == null && minima.size() >= maximumStoredCells)
+				throw storageBudget.exceeded((long)minima.size() + 1L);
 			int comparison = prior == null ? -1 : dyadic
 				? compareWords(candidate.high, candidate.low, prior.cost.high, prior.cost.low)
 				: Double.compare(rounded, prior.rounded);
@@ -1355,7 +1470,8 @@ public final class ExactCategoricalSolver {
 				minima.put(cell, new SparseMinimum(candidate, rounded, value));
 			// This is a representation crossover, never a search/candidate limit.
 			// Boxed hash entries cost much more than a dense high/low/choice slot.
-			if(minima.size() >= Math.max(64, outputCells / 16)) {
+			if(outputCells <= maximumStoredCells
+				&& minima.size() >= Math.max(64, outputCells / 16)) {
 				PlannerResourceGuard.checkAdditionalBytes((long)outputCells * (Double.BYTES + Integer.BYTES),
 					"exact-sparse-dense-conversion");
 				high = PlannerResourceGuard.allocateDoubles(outputCells, "exact-numeric");
@@ -1384,7 +1500,11 @@ public final class ExactCategoricalSolver {
 			if(high == null) {
 				PlannerResourceGuard.checkAdditionalBytes((long)minima.size() * (Double.BYTES + 2L * Integer.BYTES),
 					"exact-sparse-output");
-				int[] cells = minima.keySet().stream().mapToInt(Integer::intValue).sorted().toArray();
+				int[] cells = PlannerResourceGuard.allocateInts(minima.size(), "exact-sparse-output-keys");
+				int output = 0;
+				for(int cell : minima.keySet())
+					cells[output++] = cell;
+				Arrays.sort(cells);
 				high = PlannerResourceGuard.allocateDoubles(cells.length, "exact-numeric");
 				choices = PlannerResourceGuard.allocateInts(cells.length, "exact-backpointer");
 				for(int index = 0; index < cells.length; index++) {
@@ -1402,8 +1522,8 @@ public final class ExactCategoricalSolver {
 	}
 
 	private static SparseStep eliminateSparse(Step step, List<DenseFactor> bucket,
-		List<ExactFiniteSupportJoin.Relation> supports, BucketProjection projection, int logicalOutputCells,
-		boolean dyadic) {
+		List<ExactFiniteSupportJoin.Relation> supports, BucketProjection projection, long logicalOutputCells,
+		boolean dyadic, StorageBudget storageBudget) {
 		int[] domains = projection.domains;
 		int outputCells = checkedCells(step.separator, domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
 		long supportRows = 0L;
@@ -1412,12 +1532,13 @@ public final class ExactCategoricalSolver {
 		long started = FederatedPlannerTrace.isEnabled() ? System.nanoTime() : 0L;
 		if(FederatedPlannerTrace.isEnabled())
 			FederatedPlannerTrace.logGlobal("Exact-SparseJoinBegin", "variableIndex=" + step.variable
-				+ " logicalAssignments=" + (long)logicalOutputCells * projection.originalDomains[step.variable]
+				+ " logicalAssignments=" + saturatedMultiply(
+					logicalOutputCells, projection.originalDomains[step.variable])
 				+ " outputCells=" + logicalOutputCells + " supportRows=" + supportRows
 				+ " quotientAssignments=" + (long)outputCells * domains[step.variable]
 				+ " quotientOutputCells=" + outputCells
 				+ " partitionNanos=" + projection.preparationNanos);
-		SparseAccumulator accumulator = new SparseAccumulator(outputCells, dyadic);
+		SparseAccumulator accumulator = new SparseAccumulator(outputCells, dyadic, storageBudget);
 		ExactFiniteSupportJoin.Work work;
 		if(dyadic && supports.isEmpty())
 			work = eliminateDyadicSeparatorMajor(step, bucket, projection, outputCells, accumulator);
@@ -1607,7 +1728,27 @@ public final class ExactCategoricalSolver {
 		Statistics statistics = new Statistics(plan.steps.stream()
 			.map(step -> canonical.get(step.variable).key()).toList(), plan.inducedWidth,
 			maximumCells, totalCells, maximumAssignments, assignments);
-		return new Prepared(canonical, domains, scopes, plan.steps, statistics);
+		return new Prepared(canonical, domains, scopes, plan.steps, statistics, limits, false);
+	}
+
+	private static Prepared prepareDeferredDyadic(InputDefinition input, Limits limits, Plan plan) {
+		long totalCells = input.inputCells;
+		long maximumCells = input.maximumInputCells;
+		long maximumAssignments = 0L;
+		long assignments = 0L;
+		for(Step step : plan.steps) {
+			long cells = saturatedCells(step.separator, input.domains);
+			maximumCells = Math.max(maximumCells, cells);
+			totalCells = saturatedAdd(totalCells, cells);
+			long stepAssignments = saturatedMultiply(cells, input.domains[step.variable]);
+			maximumAssignments = Math.max(maximumAssignments, stepAssignments);
+			assignments = saturatedAdd(assignments, stepAssignments);
+		}
+		Statistics estimates = new Statistics(plan.steps.stream()
+			.map(step -> input.variables.get(step.variable).key()).toList(), plan.inducedWidth,
+			maximumCells, totalCells, maximumAssignments, assignments);
+		return new Prepared(input.variables, input.domains, input.scopes, plan.steps,
+			estimates, limits, true);
 	}
 
 	private static Plan preferredPlan(InputDefinition input,
@@ -2197,7 +2338,7 @@ public final class ExactCategoricalSolver {
 		long maximumEliminationAssignments, long eliminationAssignments) { }
 	private record ScoredPlan(Plan plan, PlanMetrics metrics, int priority) { }
 	private record Prepared(List<Variable> variables, int[] domains, List<int[]> scopes,
-		List<Step> steps, Statistics statistics) { }
+		List<Step> steps, Statistics statistics, Limits limits, boolean deferredDyadic) { }
 	private record InputDefinition(List<Variable> variables, int[] domains, List<int[]> scopes,
 		long inputCells, long maximumInputCells) { }
 	private record Backpointer(int variable, int[] separator, int[] choices, int[] sparseCells,
@@ -2508,7 +2649,10 @@ public final class ExactCategoricalSolver {
 				if(finite * 2 > cells)
 					return null;
 			}
-			int[] result = new int[(int)finite];
+			if(finite > Integer.MAX_VALUE)
+				throw new IllegalArgumentException("EXACT_VE_FACTOR_CELL_OVERFLOW");
+			int[] result = PlannerResourceGuard.allocateInts((int)finite,
+				"exact-sparse-support-projection");
 			int output = 0;
 			int[] first = new int[scope.length];
 			int[] positions = new int[scope.length];
@@ -2568,7 +2712,7 @@ public final class ExactCategoricalSolver {
 			int count = finiteCount;
 			if((long)count * 2 > values.length)
 				return null;
-			int[] cells = new int[count];
+			int[] cells = PlannerResourceGuard.allocateInts(count, "exact-sparse-support");
 			int output = 0;
 			for(int cell = 0; cell < values.length; cell++)
 				if(values[cell] != Double.POSITIVE_INFINITY)

@@ -24,10 +24,12 @@ import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationSupportKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
@@ -159,7 +161,7 @@ public class ExactSharedSourceOrdinalReuseTest {
 		CompiledHopKey owner = owner("wide-owner-" + headers.length + '-' + values[0][0]);
 		int headerDomain = Arrays.stream(headers).max().orElseThrow() + 1;
 		Object header = sourceIndependentHeader(owner);
-		List<IdentityHashMap<CompiledHopKey,CandidateRealizationReference>> raw = new ArrayList<>();
+		List<IdentityHashMap<CompiledHopKey,CandidateRealizationSupportKey>> raw = new ArrayList<>();
 		List<IdentityHashMap<CompiledHopKey,Integer>> ordinals = new ArrayList<>();
 		for(int row = 0; row < headers.length; row++) {
 			raw.add(new IdentityHashMap<>());
@@ -193,17 +195,17 @@ public class ExactSharedSourceOrdinalReuseTest {
 		CandidateRealizationReference[][] rows = {
 			{a0, b0}, {equalA0, b1}, {a1, b0}, {a1, b1}, {a0, null}, {a1, null}, {null, null}};
 		AtomicInteger reads = new AtomicInteger();
-		List<IdentityHashMap<CompiledHopKey,CandidateRealizationReference>> rawRows = new ArrayList<>();
+		List<IdentityHashMap<CompiledHopKey,CandidateRealizationSupportKey>> rawRows = new ArrayList<>();
 		for(CandidateRealizationReference[] row : rows) {
-			IdentityHashMap<CompiledHopKey,CandidateRealizationReference> raw =
+			IdentityHashMap<CompiledHopKey,CandidateRealizationSupportKey> raw =
 				new IdentityHashMap<>() {
-					@Override public CandidateRealizationReference get(Object key) {
+					@Override public CandidateRealizationSupportKey get(Object key) {
 						reads.incrementAndGet();
 						return super.get(key);
 					}
 				};
-			if(row[0] != null) raw.put(left, row[0]);
-			if(row[1] != null) raw.put(right, row[1]);
+			if(row[0] != null) raw.put(left, support(row[0]));
+			if(row[1] != null) raw.put(right, support(row[1]));
 			rawRows.add(raw);
 		}
 		Object header = sourceIndependentHeader(left);
@@ -214,10 +216,10 @@ public class ExactSharedSourceOrdinalReuseTest {
 		IdentityHashMap<Object,Object> references = new IdentityHashMap<>();
 		references.put(left, construct(nested("ReferenceView"), view,
 			List.of(reverse ? a1 : a0, new Object(), reverse ? a0 : a1),
-			Map.of(a0, av0, a1, av1), new int[] {av0, av1, 1}));
+			Map.of(support(a0), av0, support(a1), av1), new int[] {av0, av1, 1}));
 		references.put(right, construct(nested("ReferenceView"), view,
 			List.of(reverse ? b0 : b1, reverse ? b1 : b0),
-			Map.of(b0, bv0, b1, bv1), new int[] {bv0, bv1, bv0}));
+			Map.of(support(b0), bv0, support(b1), bv1), new int[] {bv0, bv1, bv0}));
 		int[][] values = {{av0, bv0}, {av0, bv1}, {av1, bv0}, {av1, bv1},
 			{av0, -1}, {av1, -1}, {-1, -1}};
 		return new Fixture(view, List.of(left, right), references, headers, values, reads);
@@ -227,6 +229,10 @@ public class ExactSharedSourceOrdinalReuseTest {
 		PlacementRealizationKey layout) {
 		return new CandidateRealizationReference(new CandidateRuleKey(owner,
 			input ? List.of(CandidateInputState.absentLocal()) : List.of()), layout);
+	}
+
+	private static CandidateRealizationSupportKey support(CandidateRealizationReference reference) {
+		return CandidateSelections.requiredInputSupportIdentity(reference);
 	}
 
 	private static CompiledHopKey owner(String name) throws Exception {

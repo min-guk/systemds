@@ -60,6 +60,8 @@ public final class AutomaticSupplySharingDockerProbe {
 	private static final Pattern COST_SURFACE = Pattern.compile("(?:^|;)costSurface=([^;]+)");
 	private static final Pattern FED_IO = Pattern.compile(
 		"Federated I/O \\(Read, Put, Get\\):\\s*([0-9]+)/([0-9]+)/([0-9]+)\\.");
+	private static final Pattern DML_NAMED_ARGUMENT =
+		Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
 	private static final String FLAT_DIAGNOSTIC_PROPERTY =
 		"sysds.fed.supply.flat.diagnostic";
 
@@ -76,10 +78,11 @@ public final class AutomaticSupplySharingDockerProbe {
 			runCacheEnabledWorker(args[1], args[2]);
 			return;
 		}
-		if(args.length != 3)
+		if(args.length < 3)
 			throw new IllegalArgumentException(
-				"script config result-json | --observe-workers result-json | "
+				"script config result-json [-nvargs NAME=VALUE ...] | --observe-workers result-json | "
 					+ "--worker-cache config port expected");
+		List<String> dmlArguments = dmlArguments(args);
 		Path resultPath = Path.of(args[2]);
 		Map<String,Object> output = new LinkedHashMap<>();
 		output.put("schema", SCHEMA);
@@ -98,9 +101,7 @@ public final class AutomaticSupplySharingDockerProbe {
 			System.setProperty(PlannerRuntimePlacementAudit.PROPERTY, "true");
 			System.setProperty(RefedReuseAudit.PROPERTY, "true");
 			RefedReuseAudit.reset();
-			boolean success = DMLScript.executeScript(new String[] {"-f", args[0], "-config", args[1],
-				"-exec", "singlenode", "-seed", "7", "-stats", "100",
-				"-noFedRuntimeConversion", "-explain", "runtime"});
+			boolean success = DMLScript.executeScript(dmlArguments.toArray(String[]::new));
 			if(!success)
 				throw new IllegalStateException("DMLScript.executeScript returned false");
 
@@ -202,6 +203,28 @@ public final class AutomaticSupplySharingDockerProbe {
 		}
 		if(failure != null)
 			throw failure;
+	}
+
+	static List<String> dmlArguments(String[] args) {
+		if(args.length < 3)
+			throw new IllegalArgumentException("script config result-json expected");
+		List<String> result = new ArrayList<>(List.of("-f", args[0], "-config", args[1],
+			"-exec", "singlenode", "-seed", "7", "-stats", "100",
+			"-noFedRuntimeConversion", "-explain", "runtime"));
+		if(args.length == 3)
+			return result;
+		if(!"-nvargs".equals(args[3]) || args.length == 4)
+			throw new IllegalArgumentException(
+				"Only -nvargs NAME=VALUE ... may follow result-json");
+		for(int position = 4; position < args.length; position++) {
+			String argument = args[position];
+			int separator = argument.indexOf('=');
+			if(separator <= 0 || separator == argument.length() - 1
+				|| !DML_NAMED_ARGUMENT.matcher(argument.substring(0, separator)).matches())
+				throw new IllegalArgumentException("Invalid named argument: " + argument);
+		}
+		result.addAll(Arrays.asList(args).subList(3, args.length));
+		return result;
 	}
 
 	/**

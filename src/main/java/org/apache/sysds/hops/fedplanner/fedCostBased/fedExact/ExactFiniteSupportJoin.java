@@ -21,11 +21,15 @@ final class ExactFiniteSupportJoin {
 	 */
 	record Relation(int[] scope, int[] finiteCells) {
 		Relation {
-			scope = Objects.requireNonNull(scope, "scope").clone();
-			finiteCells = Objects.requireNonNull(finiteCells, "finiteCells").clone();
+			scope = guardedCopy(Objects.requireNonNull(scope, "scope"),
+				"exact-sparse-relation-scope");
+			finiteCells = guardedCopy(Objects.requireNonNull(finiteCells, "finiteCells"),
+				"exact-sparse-relation-cells");
 		}
-		@Override public int[] scope() { return scope.clone(); }
-		@Override public int[] finiteCells() { return finiteCells.clone(); }
+		@Override public int[] scope() { return guardedCopy(scope, "exact-sparse-relation-scope-copy"); }
+		@Override public int[] finiteCells() {
+			return guardedCopy(finiteCells, "exact-sparse-relation-cells-copy");
+		}
 		int size() { return finiteCells.length; }
 	}
 
@@ -44,7 +48,7 @@ final class ExactFiniteSupportJoin {
 	private static final class DenseBoundIndex implements BoundIndex {
 		private final int[] heads;
 		private DenseBoundIndex(int keySpace) {
-			heads = new int[keySpace];
+			heads = PlannerResourceGuard.allocateInts(keySpace, "exact-sparse-dense-index");
 			Arrays.fill(heads, -1);
 		}
 		@Override public int firstRow(int key) { return heads[key]; }
@@ -60,8 +64,8 @@ final class ExactFiniteSupportJoin {
 		private final int[] heads;
 		private final int mask;
 		private OpenBoundIndex(int capacity) {
-			keys = new int[capacity];
-			heads = new int[capacity];
+			keys = PlannerResourceGuard.allocateInts(capacity, "exact-sparse-open-index-keys");
+			heads = PlannerResourceGuard.allocateInts(capacity, "exact-sparse-open-index-heads");
 			Arrays.fill(keys, -1);
 			Arrays.fill(heads, -1);
 			mask = capacity - 1;
@@ -107,8 +111,8 @@ final class ExactFiniteSupportJoin {
 		Objects.requireNonNull(domains, "domains");
 		Objects.requireNonNull(relations, "relations");
 		Objects.requireNonNull(consumer, "consumer");
-		int[] bucket = variables.clone();
-		int[] domainSizes = domains.clone();
+		int[] bucket = guardedCopy(variables, "exact-sparse-bucket");
+		int[] domainSizes = guardedCopy(domains, "exact-sparse-domains");
 		boolean[] inBucket = validateBucket(bucket, domainSizes);
 		List<Relation> checked = validateRelations(relations, domainSizes, inBucket);
 		// Validate the complete input first, but do not allocate indexes for an
@@ -189,7 +193,8 @@ final class ExactFiniteSupportJoin {
 			BoundIndex index = null;
 			int[] nextRow = new int[0];
 			if(boundAxes.length > 0 && boundAxes.length < relation.scope.length) {
-				nextRow = new int[relation.finiteCells.length];
+				nextRow = PlannerResourceGuard.allocateInts(relation.finiteCells.length,
+					"exact-sparse-next-row");
 				Arrays.fill(nextRow, -1);
 				int keySpace = keySpace(relation.scope, boundAxes, domains);
 				index = boundIndex(keySpace, relation.finiteCells.length);
@@ -230,6 +235,12 @@ final class ExactFiniteSupportJoin {
 	private static int replace(BoundIndex index, int key, int row) {
 		return index instanceof DenseBoundIndex dense
 			? dense.replace(key, row) : ((OpenBoundIndex) index).replace(key, row);
+	}
+
+	private static int[] guardedCopy(int[] source, String phase) {
+		int[] copy = PlannerResourceGuard.allocateInts(source.length, phase);
+		System.arraycopy(source, 0, copy, 0, source.length);
+		return copy;
 	}
 
 	private static int[] axes(int[] scope, boolean[] bound, boolean expected) {

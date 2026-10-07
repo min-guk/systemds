@@ -248,6 +248,102 @@ class JointBoundaryE2ETest(unittest.TestCase):
         self.assertNotIn("sysds.fedplanner.trace=true", ordinary)
         self.assertNotIn("-nvargs", ordinary)
 
+    def test_planner_cli_defaults_local_and_global_requires_canonical_proof(self):
+        defaults = runner.parse_args([])
+        self.assertEqual("local", defaults.planner)
+        self.assertFalse(defaults.canonical_proof)
+        self.assertFalse(runner.canonical_proof_required(
+            defaults.planner, defaults.canonical_proof))
+        global_args = runner.parse_args(["--planner", "global"])
+        self.assertEqual("global", global_args.planner)
+        self.assertTrue(runner.canonical_proof_required(
+            global_args.planner, global_args.canonical_proof))
+        local_proof = runner.parse_args(["--canonical-proof"])
+        self.assertTrue(runner.canonical_proof_required(
+            local_proof.planner, local_proof.canonical_proof))
+
+    def test_global_fixture_and_fed_command_use_exact_canonical_probe(self):
+        case = next(case for case in runner.cases() if case.name == "ml_l2svm")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner.write_fixtures(root, (case,), planner="global")
+            config = (root / "config.xml").read_text(encoding="utf-8")
+        self.assertIn("<sysds.federated.planner>compile_exact</sysds.federated.planner>",
+                      config)
+        command = runner.java_command(case, "fed", planner="global")
+        self.assertIn(runner.CANONICAL_PROBE_CLASS, command)
+        self.assertIn("fed-canonical-proof.json", command)
+        self.assertTrue(command.endswith(
+            "-nvargs MODEL_OUTPUT=/evidence/cases/ml_l2svm/fed-model.csv"))
+        cp_command = runner.java_command(case, "cp", planner="global")
+        self.assertIn("org.apache.sysds.api.DMLScript", cp_command)
+        self.assertNotIn(runner.CANONICAL_PROBE_CLASS, cp_command)
+
+    def test_local_canonical_proof_is_opt_in_without_changing_default_command(self):
+        case = next(case for case in runner.cases() if case.name == "ml_l2svm")
+        default = runner.java_command(case, "fed")
+        canonical = runner.java_command(case, "fed", canonical_proof=True)
+        self.assertIn("org.apache.sysds.api.DMLScript", default)
+        self.assertNotIn(runner.CANONICAL_PROBE_CLASS, default)
+        self.assertIn(runner.CANONICAL_PROBE_CLASS, canonical)
+        self.assertIn("-Dsysds.fedplanner.trace=true", canonical)
+
+    def test_canonical_proof_rejects_missing_false_and_planner_mismatch(self):
+        valid = {
+            "schema": "automatic-supply-sharing-probe-v1",
+            "status": "passed",
+            "configuredPlanner": "compile_exact",
+            "expectedNormalizedPlanner": "Exact",
+            "normalizedPlanner": "Exact",
+            "canonicalProof": {
+                "objectiveMatches": True,
+                "costSurfaceMatches": True,
+                "selectedStatesMatch": True,
+                "sharedLifetimesMatch": True,
+            },
+            "runtimeFallbackCount": 0,
+            "runtimeRepairCount": 0,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            case = next(case for case in runner.cases() if case.name == "ml_l2svm")
+            case_dir = root / "cases" / case.name
+            case_dir.mkdir(parents=True)
+            missing = runner.canonical_proof_evidence(case_dir, "global", True)
+            self.assertFalse(missing["passed"])
+            receipt = case_dir / "fed-canonical-proof.json"
+            receipt.write_text(json.dumps(valid), encoding="utf-8")
+            self.assertTrue(runner.canonical_proof_evidence(
+                case_dir, "global", True)["passed"])
+            fingerprint = ("JOINT_E2E_SUM=1\nJOINT_E2E_NORM2=1\n"
+                           "JOINT_E2E_ROWS=8\nJOINT_E2E_COLS=1\n")
+            for mode in ("cp", "fed"):
+                (case_dir / f"{mode}.rc").write_text("0\n", encoding="utf-8")
+                (case_dir / f"{mode}.log").write_text(fingerprint, encoding="utf-8")
+                (case_dir / f"{mode}-model.csv").write_text(
+                    "1\n0\n0\n0\n0\n0\n0\n0\n", encoding="utf-8")
+            global_case = runner.evaluate(
+                root, 0, (case,), planner="global")["cases"][0]
+            self.assertTrue(global_case["passed"])
+            self.assertFalse(global_case["plannerTraceRequired"])
+            self.assertTrue(global_case["canonicalProof"]["passed"])
+            false_proof = dict(valid)
+            false_proof["canonicalProof"] = dict(valid["canonicalProof"],
+                                                   selectedStatesMatch=False)
+            receipt.write_text(json.dumps(false_proof), encoding="utf-8")
+            failed = runner.canonical_proof_evidence(case_dir, "global", True)
+            self.assertFalse(failed["passed"])
+            self.assertTrue(any("selectedStatesMatch" in error
+                                for error in failed["errors"]))
+            self.assertFalse(runner.evaluate(
+                root, 0, (case,), planner="global")["cases"][0]["passed"])
+            mismatch = dict(valid, normalizedPlanner="DP-LocalConflict")
+            receipt.write_text(json.dumps(mismatch), encoding="utf-8")
+            mismatched = runner.canonical_proof_evidence(case_dir, "global", True)
+            self.assertFalse(mismatched["passed"])
+            self.assertTrue(any("selected planner" in error
+                                for error in mismatched["errors"]))
+
     def test_programs_pin_branch_and_privacy_inputs(self):
         true_case = runner.cases()[0]
         false_case = runner.cases()[1]
@@ -407,9 +503,15 @@ class JointBoundaryE2ETest(unittest.TestCase):
             proof = test_classes / proof_relative
             proof.parent.mkdir(parents=True)
             proof.write_bytes(b"proof\n")
+            probe_relative = Path(*runner.CANONICAL_PROBE_CLASS.split(".")).with_suffix(".class")
+            probe = test_classes / probe_relative
+            probe.parent.mkdir(parents=True, exist_ok=True)
+            probe.write_bytes(b"canonical probe\n")
             proof_hash = runner.sha256(proof)
             expected = runner.class_preflight_expectations(
                 overlay, test_classes, runner.DEFAULT_MODEL_PROOF_CLASS)
+            canonical_expected = runner.class_preflight_expectations(
+                overlay, test_classes, runner.DEFAULT_MODEL_PROOF_CLASS, True)
             script_root = root / "script"
             script_root.mkdir()
             script = runner.write_container_script(
@@ -418,6 +520,9 @@ class JointBoundaryE2ETest(unittest.TestCase):
             receipt = json.loads(
                 (script_root / "class-preflight-expected.json").read_text(encoding="utf-8"))
         self.assertEqual(len(runner.CLASS_PREFLIGHT_MAIN) + 1, len(expected))
+        self.assertEqual(len(runner.CLASS_PREFLIGHT_MAIN) + 2, len(canonical_expected))
+        self.assertIn(str(Path("/engine/test-classes") / probe_relative),
+                      canonical_expected)
         self.assertEqual(expected, receipt)
         self.assertIn("mandatory merged-build preflight failed", script)
         self.assertIn(proof_hash, {item["sha256"] for item in expected.values()})

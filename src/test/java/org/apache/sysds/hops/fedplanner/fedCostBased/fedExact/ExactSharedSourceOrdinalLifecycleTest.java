@@ -21,10 +21,15 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationSupportKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
@@ -37,11 +42,11 @@ public class ExactSharedSourceOrdinalLifecycleTest {
 	@Test
 	public void missingOrdinalFailsBeforePublishingOrReleasingRawRows() throws Exception {
 		CompiledHopKey known = owner("known"), missing = owner("missing");
-		CandidateRealizationReference knownReference = reference(known);
-		CandidateRealizationReference missingReference = reference(missing);
-		IdentityHashMap<CompiledHopKey,CandidateRealizationReference> first = new IdentityHashMap<>();
+		CandidateRealizationSupportKey knownReference = support(reference(known));
+		CandidateRealizationSupportKey missingReference = support(reference(missing));
+		IdentityHashMap<CompiledHopKey,CandidateRealizationSupportKey> first = new IdentityHashMap<>();
 		first.put(known, knownReference);
-		IdentityHashMap<CompiledHopKey,CandidateRealizationReference> second = new IdentityHashMap<>();
+		IdentityHashMap<CompiledHopKey,CandidateRealizationSupportKey> second = new IdentityHashMap<>();
 		second.put(missing, missingReference);
 		Object view = domain(List.of(known, missing), List.of(first, second));
 		Object rawBefore = field(view, "refsByRow");
@@ -61,10 +66,9 @@ public class ExactSharedSourceOrdinalLifecycleTest {
 	public void successfulFreezePublishesEqualReferenceOrdinalAndKeepsWildcardDistinct()
 		throws Exception {
 		CompiledHopKey owner = owner("owner");
-		CandidateRealizationReference canonical = reference(owner);
-		CandidateRealizationReference equalButDistinct =
-			new CandidateRealizationReference(canonical.rule(), canonical.realization());
-		IdentityHashMap<CompiledHopKey,CandidateRealizationReference> bound = new IdentityHashMap<>();
+		CandidateRealizationSupportKey canonical = support(reference(owner));
+		CandidateRealizationSupportKey equalButDistinct = support(reference(owner));
+		IdentityHashMap<CompiledHopKey,CandidateRealizationSupportKey> bound = new IdentityHashMap<>();
 		bound.put(owner, equalButDistinct);
 		Object view = domain(List.of(owner), List.of(bound, new IdentityHashMap<>()));
 		IdentityHashMap<CompiledHopKey,Object> references = new IdentityHashMap<>();
@@ -82,14 +86,58 @@ public class ExactSharedSourceOrdinalLifecycleTest {
 			sourceOrdinal.invoke(view, 1, 0));
 	}
 
+	@Test
+	public void durableSupportOrdinalMergesOnlySameOwnerAndExactMap() throws Exception {
+		CompiledHopKey owner = owner("durable-owner");
+		CompiledHopKey otherOwner = owner("durable-other");
+		PlacementState fout = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, true);
+		PlacementEmissionState emission = new PlacementEmissionState(fout, false);
+		DurableAnchorKey first = new DurableAnchorKey("first", FType.ROW,
+			List.of(new AnchorPartition("localhost:13001", List.of(0L, 0L), List.of(8L, 4L))));
+		DurableAnchorKey second = new DurableAnchorKey("second", FType.ROW,
+			List.of(new AnchorPartition("localhost:13002", List.of(0L, 0L), List.of(8L, 4L))));
+		PlacementRealizationKey firstMap = PlacementRealizationKey.durable(emission, first);
+		PlacementRealizationKey secondMap = PlacementRealizationKey.durable(emission, second);
+		CandidateRuleKey direct = new CandidateRuleKey(owner, List.of());
+		CandidateRuleKey alternate = new CandidateRuleKey(owner,
+			List.of(org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis
+				.CandidateInputState.present(FType.ROW)));
+		CandidateRealizationSupportKey expected = support(
+			new CandidateRealizationReference(direct, firstMap));
+		CandidateRealizationSupportKey alternateRoute = support(
+			new CandidateRealizationReference(alternate, firstMap));
+
+		assertEquals(expected, alternateRoute);
+		org.junit.Assert.assertNotEquals(expected, support(new CandidateRealizationReference(
+			new CandidateRuleKey(otherOwner, List.of()), firstMap)));
+		org.junit.Assert.assertNotEquals(expected,
+			support(new CandidateRealizationReference(direct, secondMap)));
+		org.junit.Assert.assertNotEquals(support(new CandidateRealizationReference(direct,
+			PlacementRealizationKey.sourceLineage(emission, "route"))),
+			support(new CandidateRealizationReference(alternate,
+				PlacementRealizationKey.sourceLineage(emission, "route"))));
+
+		IdentityHashMap<CompiledHopKey,CandidateRealizationSupportKey> selected =
+			new IdentityHashMap<>();
+		selected.put(owner, alternateRoute);
+		Object view = domain(List.of(owner), List.of(selected));
+		IdentityHashMap<CompiledHopKey,Object> references = new IdentityHashMap<>();
+		references.put(owner, referenceView(view, expected, 2));
+		freeze().invoke(view, references);
+		Method sourceOrdinal = view.getClass().getDeclaredMethod("sourceOrdinal", int.class, int.class);
+		sourceOrdinal.setAccessible(true);
+		assertEquals("different producer rules for one durable output share one ordinal", 2,
+			sourceOrdinal.invoke(view, 0, 0));
+	}
+
 	private static Object domain(List<CompiledHopKey> owners,
-		List<IdentityHashMap<CompiledHopKey,CandidateRealizationReference>> rows) throws Exception {
+		List<IdentityHashMap<CompiledHopKey,CandidateRealizationSupportKey>> rows) throws Exception {
 		Object header = sourceIndependentHeader(owners.get(0));
 		int[] headers = new int[rows.size()];
 		return construct(nested("DomainView"), 0, null, List.of(header), headers, owners, rows);
 	}
 
-	private static Object referenceView(Object ownerView, CandidateRealizationReference reference,
+	private static Object referenceView(Object ownerView, CandidateRealizationSupportKey reference,
 		int ordinal) throws Exception {
 		Object[] values = new Object[ordinal + 1];
 		Arrays.fill(values, new Object());
@@ -103,6 +151,10 @@ public class ExactSharedSourceOrdinalLifecycleTest {
 		PlacementRealizationKey layout = PlacementRealizationKey.local(
 			new PlacementEmissionState(local, false));
 		return new CandidateRealizationReference(new CandidateRuleKey(owner, List.of()), layout);
+	}
+
+	private static CandidateRealizationSupportKey support(CandidateRealizationReference reference) {
+		return CandidateSelections.requiredInputSupportIdentity(reference);
 	}
 
 	private static CompiledHopKey owner(String name) throws Exception {

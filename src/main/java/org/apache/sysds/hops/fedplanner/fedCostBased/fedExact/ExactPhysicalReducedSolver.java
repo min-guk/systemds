@@ -277,6 +277,14 @@ final class ExactPhysicalReducedSolver {
 		List<ExactCategoricalSolver.Factor> factors,
 		ExactCategoricalSolver.Limits limits,
 		ExactEliminationOrderPolicy.Configuration orderPolicy, String caller) {
+		return prepare(originalVariableCount, variables, factors, limits, orderPolicy, caller, false);
+	}
+
+	private static Prepared prepare(int originalVariableCount,
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Limits limits,
+		ExactEliminationOrderPolicy.Configuration orderPolicy, String caller, boolean dyadicStorage) {
 		PreparationTimer timer = new PreparationTimer();
 		try {
 			Reduction reduction = reduce(originalVariableCount, variables, factors, limits,
@@ -285,8 +293,10 @@ final class ExactPhysicalReducedSolver {
 			ExactCategoricalSolver.OrderCompilation orderCompilation;
 			long compileNanos;
 			try {
-				orderCompilation = ExactEliminationOrderPolicy.compile(
-					reduction.variables(), reduction.factors(), limits, orderPolicy, caller);
+				orderCompilation = dyadicStorage ? ExactEliminationOrderPolicy.compileDyadic(
+					reduction.variables(), reduction.factors(), limits, orderPolicy, caller)
+					: ExactEliminationOrderPolicy.compile(
+						reduction.variables(), reduction.factors(), limits, orderPolicy, caller);
 			}
 			finally {
 				compileNanos = elapsedNanos(compileStarted);
@@ -332,6 +342,32 @@ final class ExactPhysicalReducedSolver {
 		List<ExactCategoricalSolver.Factor> factors,
 		ExactCategoricalSolver.Limits limits,
 		ExactEliminationOrderPolicy.Configuration orderPolicy, String caller) {
+		return prepareCompacted(originalVariableCount, variables, factors, limits, orderPolicy, caller, false);
+	}
+
+	/** Defers message-cell budgeting only for an owner-certified exact physical encoding. */
+	static Prepared prepareSharedSource(ExactPhysicalSharedSourceEncoding.Encoding encoding,
+		ExactDyadicCosts.Certificate certificate, ExactCategoricalSolver.Limits limits,
+		ExactEliminationOrderPolicy.Configuration orderPolicy, String caller, boolean compact) {
+		Objects.requireNonNull(encoding, "encoding");
+		Objects.requireNonNull(certificate, "certificate");
+		if(!certificate.supported())
+			throw new IllegalArgumentException("EXACT_SHARED_SOURCE_NUMERIC_UNSUPPORTED|" + certificate.reason());
+		certificate.validateSurface(encoding.sourceSurface());
+		certificate.validateSourceFactors(encoding.sourceSurface().exactSolverFactors());
+		if(!encoding.statistics().transformed())
+			throw new IllegalArgumentException("EXACT_DYADIC_ENCODING_NOT_TRANSFORMED");
+		return compact ? prepareCompacted(encoding.decisionPrefixCount(), encoding.variables(),
+			encoding.factors(), limits, orderPolicy, caller, true)
+			: prepare(encoding.decisionPrefixCount(), encoding.variables(), encoding.factors(),
+				limits, orderPolicy, caller, true);
+	}
+
+	private static Prepared prepareCompacted(int originalVariableCount,
+		List<ExactCategoricalSolver.Variable> variables,
+		List<ExactCategoricalSolver.Factor> factors,
+		ExactCategoricalSolver.Limits limits,
+		ExactEliminationOrderPolicy.Configuration orderPolicy, String caller, boolean dyadicStorage) {
 		PreparationTimer timer = new PreparationTimer();
 		try {
 			Reduction reduction = reduce(originalVariableCount, variables, factors, limits,
@@ -343,8 +379,10 @@ final class ExactPhysicalReducedSolver {
 			ExactCategoricalSolver.OrderCompilation orderCompilation;
 			long compileNanos;
 			try {
-				orderCompilation = ExactEliminationOrderPolicy.compile(
-					compact.variables(), compact.factors(), limits, orderPolicy, caller);
+				orderCompilation = dyadicStorage ? ExactEliminationOrderPolicy.compileDyadic(
+					compact.variables(), compact.factors(), limits, orderPolicy, caller)
+					: ExactEliminationOrderPolicy.compile(
+						compact.variables(), compact.factors(), limits, orderPolicy, caller);
 			}
 			finally {
 				compileNanos = elapsedNanos(compileStarted);
