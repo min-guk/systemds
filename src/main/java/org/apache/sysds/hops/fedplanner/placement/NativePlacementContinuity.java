@@ -633,6 +633,7 @@ final class NativePlacementContinuity {
 							SkeletonClauseMemo copied = new SkeletonClauseMemo(
 								current.ownerToken, clause,
 								inherited.clause == clause ? inherited.support : null,
+								inherited.clause == clause ? inherited.pinProjection : null,
 								new HashMap<>(inherited.templates));
 							current.remember(clause, copied);
 						}
@@ -985,24 +986,57 @@ final class NativePlacementContinuity {
 
 	private static final class SkeletonClauseMemo {
 		private static final SkeletonClauseMemo AMBIGUOUS =
-			new SkeletonClauseMemo(null, null, null, Map.of());
+			new SkeletonClauseMemo(null, null, null, null, Map.of());
 		private final Object ownerToken;
 		private final CandidateRealizationSupportClause clause;
 		private final List<CandidateRealizationReference> support;
+		private final ClausePinProjection pinProjection;
 		private final Map<NativePoolWitness,SkeletonTemplate> templates;
 
 		private SkeletonClauseMemo(Object ownerToken, CandidateRealizationSupportClause clause,
-			List<CandidateRealizationReference> support) {
-			this(ownerToken, clause, support, new HashMap<>());
+			List<CandidateRealizationReference> support, ClausePinProjection pinProjection) {
+			this(ownerToken, clause, support, pinProjection, new HashMap<>());
 		}
 
 		private SkeletonClauseMemo(Object ownerToken, CandidateRealizationSupportClause clause,
 			List<CandidateRealizationReference> support,
+			ClausePinProjection pinProjection,
 			Map<NativePoolWitness,SkeletonTemplate> templates) {
 			this.ownerToken = ownerToken;
 			this.clause = clause;
 			this.support = support;
+			this.pinProjection = pinProjection;
 			this.templates = templates;
+		}
+	}
+
+	private static final class ClausePinProjection {
+		private final Map<CompiledHopKey,Integer> firstSupportIndex;
+		private final boolean contradictory;
+
+		private ClausePinProjection(Map<CompiledHopKey,Integer> firstSupportIndex,
+			boolean contradictory) {
+			this.firstSupportIndex = firstSupportIndex;
+			this.contradictory = contradictory;
+		}
+
+		private static ClausePinProjection prepare(
+			List<CandidateRealizationReference> support) {
+			Map<CompiledHopKey,Integer> firstSupportIndex = new IdentityHashMap<>();
+			for(int index = 0; index < support.size(); index++) {
+				CandidateRealizationReference reference = support.get(index);
+				CompiledHopKey source = reference.rule().parentOccurrence();
+				Integer prior = firstSupportIndex.putIfAbsent(source, index);
+				if(prior != null && !support.get(prior).equals(reference))
+					return new ClausePinProjection(firstSupportIndex, true);
+			}
+			return new ClausePinProjection(firstSupportIndex, false);
+		}
+
+		private CandidateRealizationReference reference(
+			List<CandidateRealizationReference> support, CompiledHopKey owner) {
+			Integer index = firstSupportIndex.get(owner);
+			return index == null ? null : support.get(index);
 		}
 	}
 
@@ -3102,9 +3136,11 @@ final class NativePlacementContinuity {
 		SkeletonFactMemo factMemo = cacheable ? dependencySkeletonMemo.get(fact) : null;
 		SkeletonClauseMemo clauseMemo = factMemo == null ? null : factMemo.clauses.get(clause);
 		boolean prepared = clauseMemo != null && clauseMemo.clause == clause
-			&& clauseMemo.support != null;
+			&& clauseMemo.support != null && clauseMemo.pinProjection != null;
 		List<CandidateRealizationReference> support = prepared
 			? clauseMemo.support : requiredInputSupport(clause);
+		ClausePinProjection pinProjection = prepared
+			? clauseMemo.pinProjection : ClausePinProjection.prepare(support);
 		if(!prepared) {
 			if(cacheable && clauseMemo != null && clauseMemo.clause == clause
 				&& clauseMemo.support == null) {
@@ -3113,6 +3149,7 @@ final class NativePlacementContinuity {
 				if(clauseMemo != null && clauseMemo.clause == clause
 					&& clauseMemo.support == null) {
 					clauseMemo = new SkeletonClauseMemo(factMemo.ownerToken, clause, support,
+						pinProjection,
 						new HashMap<>(clauseMemo.templates));
 					factMemo.remember(clause, clauseMemo);
 				}
@@ -3127,29 +3164,21 @@ final class NativePlacementContinuity {
 			}
 		}
 		dependencySkeletonBuilds++;
-		Map<CompiledHopKey,CandidateRealizationReference> pinned = new IdentityHashMap<>();
-		Map<CompiledHopKey,Integer> pinnedIndices = new IdentityHashMap<>();
-		for(int supportIndex = 0; supportIndex < support.size(); supportIndex++) {
-			CandidateRealizationReference reference = support.get(supportIndex);
-			CompiledHopKey source = reference.rule().parentOccurrence();
-			CandidateRealizationReference prior = pinned.putIfAbsent(source, reference);
-			if(prior != null && !prior.equals(reference)) {
-				if(metrics != null)
-					metrics.recordContradictoryClausePin();
-				return null; // An AND clause cannot pin one decision owner to two realizations.
-			}
-			pinnedIndices.putIfAbsent(source, supportIndex);
+		if(pinProjection.contradictory) {
+			if(metrics != null)
+				metrics.recordContradictoryClausePin();
+			return null; // An AND clause cannot pin one decision owner to two realizations.
 		}
 		List<CandidateDependencySkeleton> dependencies = new ArrayList<>();
 		for(CompiledHopKey source : reachingDefinitions.getOrDefault(fact.key().parentOccurrence(), List.of())) {
-			CandidateRealizationReference reference = pinned.get(source);
+			CandidateRealizationReference reference = pinProjection.reference(support, source);
 			dependencies.add(new CandidateDependencySkeleton(source, reference,
 				candidateHandle(reference), witness, -1));
 		}
 		if(owner instanceof DataOp data && data.getOp() == OpOpData.FEDERATED)
 			return dependencies.isEmpty()
 				? rememberSkeletonTemplate(cacheable, fact, clause, owner, witness,
-					support, dependencies, pinnedIndices) : null;
+					support, pinProjection, dependencies) : null;
 		if(owner instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTREAD) {
 			boolean valid = (fact.key().orderedInputs().stream().anyMatch(input -> input.present())
 				|| fact.key().orderedInputs().isEmpty() && clause.nativeWorkerPoolWitness() != null
@@ -3158,7 +3187,7 @@ final class NativePlacementContinuity {
 				&& fact.key().orderedInputs().stream().noneMatch(input -> input.present()
 					&& input.fType() != witness.fType);
 			return valid ? rememberSkeletonTemplate(
-				cacheable, fact, clause, owner, witness, support, dependencies, pinnedIndices) : null;
+				cacheable, fact, clause, owner, witness, support, pinProjection, dependencies) : null;
 		}
 		Map<Integer,CompiledInputEdgeFact> edges = edgesByConsumer.getOrDefault(
 			fact.key().parentOccurrence(), Map.of());
@@ -3178,7 +3207,8 @@ final class NativePlacementContinuity {
 				owner, fact, witness, input.fType(), position);
 			if(dependencyWitness == null || input.fType() != dependencyWitness.fType || edge == null)
 				return null;
-			CandidateRealizationReference reference = pinned.get(edge.producer());
+			CandidateRealizationReference reference =
+				pinProjection.reference(support, edge.producer());
 			dependencies.add(new CandidateDependencySkeleton(edge.producer(), reference,
 				candidateHandle(reference), dependencyWitness, position));
 		}
@@ -3189,7 +3219,7 @@ final class NativePlacementContinuity {
 		for(CandidateDependencySkeleton dependency : dependencies)
 			distinct.putIfAbsent(ContinuityDependencyKey.of(dependency), dependency);
 		return rememberSkeletonTemplate(cacheable, fact, clause, owner, witness,
-			support, List.copyOf(distinct.values()), pinnedIndices);
+			support, pinProjection, List.copyOf(distinct.values()));
 	}
 
 	private boolean ownsCandidateClause(CandidateRuleFact fact,
@@ -3215,14 +3245,14 @@ final class NativePlacementContinuity {
 		CandidateRuleFact fact,
 		CandidateRealizationSupportClause clause, Hop owner, NativePoolWitness witness,
 		List<CandidateRealizationReference> support,
-		List<CandidateDependencySkeleton> dependencies, Map<CompiledHopKey,Integer> pinnedIndices) {
+		ClausePinProjection pinProjection, List<CandidateDependencySkeleton> dependencies) {
 		if(!cacheable)
 			return dependencies;
 		List<SkeletonTemplateDependency> template = new ArrayList<>(dependencies.size());
 		for(CandidateDependencySkeleton dependency : dependencies) {
 			int pinnedIndex = -1;
 			if(dependency.clausePinned != null) {
-				Integer index = pinnedIndices.get(dependency.key);
+				Integer index = pinProjection.firstSupportIndex.get(dependency.key);
 				if(index == null)
 					return dependencies;
 				pinnedIndex = index;
@@ -3233,11 +3263,11 @@ final class NativePlacementContinuity {
 		SkeletonFactMemo factMemo = dependencySkeletonMemo(fact);
 		SkeletonClauseMemo clauseMemo = factMemo.clauses.get(clause);
 		if(clauseMemo == null) {
-			clauseMemo = new SkeletonClauseMemo(factMemo.ownerToken, clause, support);
+			clauseMemo = new SkeletonClauseMemo(factMemo.ownerToken, clause, support, pinProjection);
 			factMemo.remember(clause, clauseMemo);
 		}
 		else if(clauseMemo.ownerToken != factMemo.ownerToken || clauseMemo.support == null) {
-			clauseMemo = new SkeletonClauseMemo(factMemo.ownerToken, clause, support,
+			clauseMemo = new SkeletonClauseMemo(factMemo.ownerToken, clause, support, pinProjection,
 				new HashMap<>(clauseMemo.templates));
 			factMemo.remember(clause, clauseMemo);
 		}

@@ -984,3 +984,16 @@
 - **최종 P1**: 공식 Docker에서 LocalW1 32.331초/LocalW3 20.402초/GlobalW3 21.044초로 모두 전체 planning PASS이며 v56 및 v54 objective raw bits/전체 assignment와 정확히 같다. compile-only이므로 실제 runtime 검증으로 간주하지 않는다.
 - **최종 GLM**: v57 W1 577.605초/W3 409.472초로 모두 전체 planning PASS이며 v56 및 v54 objective raw bits와 전체 assignment가 정확히 같다. 동일 Docker CPU4/16GiB/JVM10GiB, liveMetrics/JFR 비활성 조건이다. source/classes/JAR 및 raw result/command SHA를 validation.json에 기록했다. 단일 실행의 시간 차이로 속도 개선을 단정하지 않는다.
 - **잔여 목표**: GLM 전체 planning 20초 목표는 아직 미달이고 qualifying run은 0개다. workload는 compile-only이며 최종 실제 runtime 검증도 남아 있다. 이번 게시 검증은 성능 목표 달성과 구분한다.
+
+### v58 반복 pin 조회와 literal 인코딩 제거 — 통합 검증 중
+
+- **문제/근거**: 게시된 `515722764e`의 전체 GLM은 W1 577.605초/W3 409.472초다. 기존 profile에서 Native clause의 owner별 pin 맵을 witness마다 다시 만드는 할당과, fingerprint가 같은 literal의 UTF-16 바이트를 반복 생성하는 작업을 확인했다. 부분 profile의 비율을 전체 시간 절감치로 간주하지 않는다.
+- **변경 계획**: 정확히 소유한 immutable clause에 first-support-index를 보관하고 매 증명에서는 현재 candidate handle을 계속 확인한다. fingerprint 호출 안에서 literal String identity별 바이트를 선택적으로 보관한다. admission이 안 되면 기존 encoder로 처리하며 전체 SHA 입력 바이트, framing, callback 순서와 횟수는 유지한다. 끝날 때 strong reference를 finally에서 정리한다. 후보·비용·authority·탐색 범위 및 runtime 규칙은 변경하지 않는다.
+- **사전 검증**: Native patch `69898743`은 allocation 회귀 baseline RED/optimized GREEN, 관련 187 PASS와 기존 ignore를 별도로 기록했으며 독립 검토 CLEAR다. literal patch `f0d367eb`은 독립 legacy digest oracle, Unicode/분할/동일 내용의 다른 identity/포화 fallback/cleanup을 포함한 27 PASS, memo 제거 mutant 5개 실패 및 독립 검토 CLEAR다. 이 수치는 scratch 검증이며 통합 source의 새 결과로 대체하지 않는다.
+- **수정 파일**: `NativePlacementContinuity.java`, `PhysicalSemanticDagFingerprint.java`, `ExactPhysicalCostModel.java`, 두 전용 회귀 테스트. root만 shared source와 Maven/동결을 관리한다.
+- **통합 검증**: 관련 Maven 회귀와 source/classes/JAR 일치를 확인하고, 같은 길이의 v58 campaign으로 공식 Docker GLM W1/W3 및 P1 Local/Global을 실행한다. objective raw bits와 전체 assignment를 v57과 비교한다. v60은 v57 engine의 late-JFR 진단 별칭이며 성능 합격 측정으로 세지 않는다.
+- **보류/잔여 위험**: frozen active-index 제안은 전체 support 작업 자체가 W1 13.275초/W3 4.799초이고 실제 inactive 방문량이 미측정이므로 보류한다. 새 byte memo의 64MiB는 추정 저장량의 선택적 retention 한도이며 실제 heap의 엄밀한 상한은 아니다. 전체 시간·메모리 손익과 stale pin/withdrawal/COW 회귀를 확인한다. 전체 20초 및 최종 runtime 검증은 아직 남아 있다.
+
+- **v58 통합 검증 완료**: 같은 source 41개 클래스에서 실행한 262개 테스트 PASS, 실패·오류 0, 기존 PUBLIC 전용 ignore 2개다. helper는 skip을 발견해 자동 동결을 멈췄으며, 두 기존 ignore 이름/사유와 XML SHA 및 unchanged source를 별도 receipt로 검증한 후 같은 빌드를 동결했다. 실행하지 않은 테스트를 PASS로 세지 않았다. NativeLifecycle 별도 100 PASS + 기존 PUBLIC ignore 1. source/classes/JAR 일치를 확인했다.
+- **v58 전체 결과**: 공식 Docker liveMetrics/JFR 비활성 GLM W1 547.850550708초/W3 341.003373227초, P1 LocalW1 32.776321899초/LocalW3 20.630979057초/GlobalW3 19.933508083초로 모두 전체 planning PASS다. 모든 경우 게시본 v57과 objective raw bits 및 전체 assignment가 정확히 같다. GLM W1 common308.732/model27.002/cost74.379/optimizer131.334초, W3 common203.866/model14.798/cost47.987/optimizer68.205초다. 단일 실행의 개선폭을 안정적인 속도 향상률로 단정하지 않는다. `docs/experiments/glm-planning-publication-20261007/v58-validation.json`에 근거를 기록했다.
+- **게시/후속**: 원격 main이 여전히 `515722764e`임을 fetch로 확인했다. 검증된 두 최적화만 후속 게시하며, 별도 metadata receipt 구현 및 scalar 진단은 scratch에 둔다. 전체 20초·각 3회 및 최종 실제 runtime gate는 미달이므로 performance goal은 계속 active다.

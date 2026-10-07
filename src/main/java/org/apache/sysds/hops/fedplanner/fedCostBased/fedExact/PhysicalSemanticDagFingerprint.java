@@ -47,16 +47,33 @@ final class PhysicalSemanticDagFingerprint {
 	static final String SCHEMA = "physical-semantic-dag-v1";
 	private static final byte[] ABSENT = {(byte)0};
 	private static final int TEXT_BUFFER_BYTES = 1024;
+	private static final long LITERAL_BYTE_MEMO_MAX_ESTIMATED_BYTES = 64L * 1024 * 1024;
 	private final IdentityHashMap<Object,byte[]> memo = new IdentityHashMap<>();
 	private final IdentityHashMap<RelocationAction,String> relocationActionSignatures =
 		new IdentityHashMap<>();
 	private final byte[] textBuffer = new byte[TEXT_BUFFER_BYTES];
 	private final NormalizedTextSharingDiagnostics textDiagnostics;
+	private final LiteralByteMemo literalBytes;
 
 	PhysicalSemanticDagFingerprint() { this(null); }
 
 	PhysicalSemanticDagFingerprint(NormalizedTextSharingDiagnostics textDiagnostics) {
+		this(textDiagnostics, LITERAL_BYTE_MEMO_MAX_ESTIMATED_BYTES, false);
+	}
+
+	/** Package-visible bounded-storage and work-counter seam for differential tests. */
+	PhysicalSemanticDagFingerprint(NormalizedTextSharingDiagnostics textDiagnostics,
+		long literalByteMemoMaxEstimatedBytes) {
+		this(textDiagnostics, literalByteMemoMaxEstimatedBytes, true);
+	}
+
+	private PhysicalSemanticDagFingerprint(NormalizedTextSharingDiagnostics textDiagnostics,
+		long literalByteMemoMaxEstimatedBytes, boolean collectLiteralByteMemoStatistics) {
+		if(literalByteMemoMaxEstimatedBytes < 0)
+			throw new IllegalArgumentException("Literal byte memo limit must be nonnegative");
 		this.textDiagnostics = textDiagnostics;
+		literalBytes = new LiteralByteMemo(literalByteMemoMaxEstimatedBytes,
+			collectLiteralByteMemoStatistics);
 	}
 
 	void appendSchema(ExactPhysicalCostModel.FingerprintWriter target) {
@@ -87,7 +104,17 @@ final class PhysicalSemanticDagFingerprint {
 		return SCHEMA + ':' + root.finishHex();
 	}
 
+	String normalizedTextsForTest(List<NormalizedText> values) {
+		Node root = node("normalized-text-root");
+		root.integer("count", values.size());
+		for(NormalizedText value : values)
+			root.normalizedText("value", value);
+		return SCHEMA + ':' + root.finishHex();
+	}
+
 	int memoizedNodesForTest() { return memo.size(); }
+	LiteralByteMemoSnapshot literalByteMemoSnapshotForTest() { return literalBytes.snapshot(); }
+	void clearLiteralByteMemo() { literalBytes.clear(); }
 
 	private byte[] candidate(CandidateRuleFact fact) {
 		return memoized(fact, () -> digest("candidate-rule-fact", node -> {
@@ -282,7 +309,9 @@ final class PhysicalSemanticDagFingerprint {
 		return node.finish();
 	}
 
-	private Node node(String type) { return new Node(type, textBuffer, textDiagnostics); }
+	private Node node(String type) {
+		return new Node(type, textBuffer, textDiagnostics, literalBytes);
+	}
 
 	static final class NormalizedTextSharingDiagnostics {
 		private final IdentityHashMap<NormalizedText,Boolean> normalizedObjects =
@@ -351,15 +380,101 @@ final class PhysicalSemanticDagFingerprint {
 		long uniqueLiteralUnits, long repeatedLiteralUnits,
 		long estimatedRetainedUtf16Bytes, long estimatedAvoidedConversionBytes) { }
 
+	record LiteralByteMemoSnapshot(long lookups, long hits, long conversions,
+		long convertedUtf16Units, long admittedEntries, long rejectedEntries,
+		long retainedEstimatedBytes, int retainedEntries) { }
+
+	private static final class LiteralByteMemo {
+		private static final long ENTRY_OVERHEAD_BYTES = 64L;
+		private final IdentityHashMap<String,byte[]> bytesByLiteral = new IdentityHashMap<>();
+		private final long maximumEstimatedBytes;
+		private final boolean collectStatistics;
+		private long retainedEstimatedBytes;
+		private long lookups, hits, conversions, convertedUtf16Units;
+		private long admittedEntries, rejectedEntries;
+
+		private LiteralByteMemo(long maximumEstimatedBytes, boolean collectStatistics) {
+			this.maximumEstimatedBytes = maximumEstimatedBytes;
+			this.collectStatistics = collectStatistics;
+		}
+
+		private void write(String value, MessageDigest digest, byte[] fallbackBuffer) {
+			if(collectStatistics)
+				lookups++;
+			if(value.isEmpty())
+				return;
+			byte[] retained = bytesByLiteral.get(value);
+			if(retained != null) {
+				if(collectStatistics)
+					hits++;
+				updateDigest(digest, retained);
+				return;
+			}
+			long payloadBytes = 2L * value.length();
+			long estimatedBytes = payloadBytes > Long.MAX_VALUE - ENTRY_OVERHEAD_BYTES
+				? Long.MAX_VALUE : ENTRY_OVERHEAD_BYTES + payloadBytes;
+			if(payloadBytes <= Integer.MAX_VALUE
+				&& estimatedBytes <= maximumEstimatedBytes - retainedEstimatedBytes) {
+				byte[] converted = convert(value);
+				bytesByLiteral.put(value, converted);
+				retainedEstimatedBytes += estimatedBytes;
+				if(collectStatistics)
+					admittedEntries++;
+				updateDigest(digest, converted);
+			}
+			else {
+				if(collectStatistics)
+					rejectedEntries++;
+				recordConversion(value.length());
+				Node.writeChars(value, digest, fallbackBuffer);
+			}
+		}
+
+		private byte[] convert(String value) {
+			recordConversion(value.length());
+			byte[] converted = new byte[value.length() * 2];
+			for(int source = 0, target = 0; source < value.length(); source++) {
+				char unit = value.charAt(source);
+				converted[target++] = (byte)(unit >>> 8);
+				converted[target++] = (byte)unit;
+			}
+			return converted;
+		}
+
+		private void recordConversion(int utf16Units) {
+			if(collectStatistics) {
+				conversions++;
+				convertedUtf16Units += utf16Units;
+			}
+		}
+
+		private void updateDigest(MessageDigest digest, byte[] bytes) {
+			for(int offset = 0; offset < bytes.length; offset += TEXT_BUFFER_BYTES)
+				digest.update(bytes, offset, Math.min(TEXT_BUFFER_BYTES, bytes.length - offset));
+		}
+
+		private LiteralByteMemoSnapshot snapshot() {
+			return new LiteralByteMemoSnapshot(lookups, hits, conversions, convertedUtf16Units,
+				admittedEntries, rejectedEntries, retainedEstimatedBytes, bytesByLiteral.size());
+		}
+
+		private void clear() {
+			bytesByLiteral.clear();
+			retainedEstimatedBytes = 0L;
+		}
+	}
+
 	private static final class Node {
 		private final MessageDigest digest;
 		private final byte[] textBuffer;
 		private final NormalizedTextSharingDiagnostics textDiagnostics;
+		private final LiteralByteMemo literalBytes;
 
 		private Node(String type, byte[] textBuffer,
-			NormalizedTextSharingDiagnostics textDiagnostics) {
+			NormalizedTextSharingDiagnostics textDiagnostics, LiteralByteMemo literalBytes) {
 			this.textBuffer = textBuffer;
 			this.textDiagnostics = textDiagnostics;
+			this.literalBytes = literalBytes;
 			try {
 				digest = MessageDigest.getInstance("SHA-256");
 			}
@@ -402,14 +517,18 @@ final class PhysicalSemanticDagFingerprint {
 			name(name);
 			writeInt(value.length());
 			if(textDiagnostics == null)
-				value.appendTo(this::writeChars);
+				value.appendTo(this::writeLiteral);
 			else {
 				textDiagnostics.normalized(value);
 				value.appendTo(segment -> {
 					textDiagnostics.literal(segment);
-					writeChars(segment);
+					writeLiteral(segment);
 				});
 			}
+		}
+
+		private void writeLiteral(String value) {
+			literalBytes.write(value, digest, textBuffer);
 		}
 
 		private void nullableChild(String name, byte[] child) {
@@ -435,6 +554,10 @@ final class PhysicalSemanticDagFingerprint {
 		}
 
 		private void writeChars(String value) {
+			writeChars(value, digest, textBuffer);
+		}
+
+		private static void writeChars(String value, MessageDigest digest, byte[] textBuffer) {
 			for(int source = 0; source < value.length();) {
 				int units = Math.min(value.length() - source, textBuffer.length / 2);
 				int target = 0;

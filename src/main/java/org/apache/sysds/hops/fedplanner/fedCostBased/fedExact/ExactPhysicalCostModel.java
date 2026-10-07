@@ -588,21 +588,31 @@ public final class ExactPhysicalCostModel {
 		PhysicalSemanticDagFingerprint semanticDag = new PhysicalSemanticDagFingerprint(textDiagnostics);
 		normalized.append(analysis.analysisFingerprint());
 		semanticDag.appendSchema(normalized);
-		// The in-process optimization receipt binds published candidate facts and the
-		// physical factor universe, not merely factor scopes. Compact omission proofs
-		// are validated by the owning analysis; this is not a standalone legality proof.
-		// A changed candidate capability/emission or
-		// a changed numeric factor table must therefore produce a different certificate
-		// even when a reconstructed analysis reuses the old structural fingerprint.
-		for(CandidateRuleFact fact : analysis.candidateRuleFacts().orderedFacts())
-			semanticDag.appendCandidateOccurrence(normalized, fact);
-		for(ExactPhysicalModel.DecisionDomain domain : model.domains()) {
-			normalized.append("|domain:").append(domain.node().key().normalizedSignature());
-			for(ExactPhysicalModel.Alternative alternative : domain.alternatives()) {
-				semanticDag.appendAlternativeOccurrence(normalized, alternative);
+		PhysicalSemanticDagFingerprint.NormalizedTextSharingSnapshot textSharing = null;
+		try {
+			// The in-process optimization receipt binds published candidate facts and the
+			// physical factor universe, not merely factor scopes. Compact omission proofs
+			// are validated by the owning analysis; this is not a standalone legality proof.
+			// A changed candidate capability/emission or
+			// a changed numeric factor table must therefore produce a different certificate
+			// even when a reconstructed analysis reuses the old structural fingerprint.
+			for(CandidateRuleFact fact : analysis.candidateRuleFacts().orderedFacts())
+				semanticDag.appendCandidateOccurrence(normalized, fact);
+			for(ExactPhysicalModel.DecisionDomain domain : model.domains()) {
+				normalized.append("|domain:").append(domain.node().key().normalizedSignature());
+				for(ExactPhysicalModel.Alternative alternative : domain.alternatives())
+					semanticDag.appendAlternativeOccurrence(normalized, alternative);
 			}
 		}
-		var textSharing = textDiagnostics == null ? null : textDiagnostics.snapshotAndClear();
+		finally {
+			try {
+				if(textDiagnostics != null)
+					textSharing = textDiagnostics.snapshotAndClear();
+			}
+			finally {
+				semanticDag.clearLiteralByteMemo();
+			}
+		}
 		for(String descriptor : model.exactSolverHardFactorDescriptors())
 			normalized.append("|hard-encoding:").append(descriptor);
 		List<ExactCategoricalSolver.Factor> exactSolverFactors = new ArrayList<>();

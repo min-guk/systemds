@@ -1,0 +1,244 @@
+{
+  "version": "v58",
+  "parentCommit": "515722764e18dce76b6d38b817ca2bd16234c9ed",
+  "changes": [
+    "owned clause pin projection reuse with current authority checks",
+    "invocation-local raw UTF16 literal byte memo with existing encoder fallback"
+  ],
+  "engine": "/home/mchoi/fedplanner-boundary-correctness-20261006/engine-merged-v58",
+  "freezeReceiptSha256": "f473cfd61ee22d86402f4bc868c4275e73e70c04bad30c0dc0311aef4a55ec7c",
+  "sourceHashesMatch": true,
+  "independentReview": "CLEAR for both implementation patches and dedicated regressions",
+  "evidence": {
+    "integration-summary": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v58-integration-summary.json",
+      "sha256": "2a1ec60ccc5b7c5f9d494d618b004a535ad4799c580a61d292b065003fcd338f",
+      "data": {
+        "exitCode": 0,
+        "wallSeconds": 132.6470010280609,
+        "sourceChanges": [],
+        "selectedClasses": 41,
+        "reportedClasses": 41,
+        "counts": {
+          "tests": 264,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 2
+        }
+      }
+    },
+    "validated-compilation": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v58-validated-compilation.json",
+      "sha256": "4fd01af085c2bd374e8db453c08c28638d0f01d659fcc6e934d0141f9377278a",
+      "data": {
+        "sourceSummary": "merged-v58-integration-summary.json",
+        "sourceCommand": "merged-v58-integration-command.json",
+        "sourceHashesMatch": true,
+        "passedTests": 262,
+        "knownPublicPolicyIgnores": [
+          {
+            "suite": "org.apache.sysds.hops.fedplanner.placement.NativeLineagePlanSpaceCompletenessTest",
+            "test": "publicRecompileRemovesOnlyCpFoutCandidateStates",
+            "reason": "PUBLIC-only recompile baseline is excluded by the repository test policy",
+            "xmlSha256": "70c5087fff55c4591c31c17bc6c98efb7722b5da66bbe4dc5c279b15bbee84e8"
+          },
+          {
+            "suite": "org.apache.sysds.hops.fedplanner.placement.NativeLineagePlanSpaceCompletenessTest",
+            "test": "nativeLineageHigherArityReceiptProductMatchesIndependentOracle",
+            "reason": "PUBLIC-only privacy fixture is excluded by the repository test policy",
+            "xmlSha256": "70c5087fff55c4591c31c17bc6c98efb7722b5da66bbe4dc5c279b15bbee84e8"
+          }
+        ],
+        "reason": "Two existing PUBLIC-only fixtures excluded by repository AGENTS.md; all executed selected tests passed on unchanged source. Original skip reports preserved."
+      }
+    },
+    "freeze-summary": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v58-freeze-summary.json",
+      "sha256": "de0241ae1c0681a7b29e1be85172390e33fd93d53da095b0d986f72b6d0c9fc9",
+      "data": {
+        "engine": "/home/mchoi/fedplanner-boundary-correctness-20261006/engine-merged-v58",
+        "counts": {
+          "target/classes": 4505,
+          "target/test-classes": 3011,
+          "src/main/java": 1656,
+          "src/test/java": 2029
+        },
+        "jars": [
+          {
+            "path": "/home/mchoi/w1357-cost-model-main-20261006/target/systemds-3.4.0-SNAPSHOT.jar",
+            "sha256": "2fe3cd162093e7b9c824019d8dc72e7faf39f79b5689d620fa6668bf3500a8ac",
+            "classes": 3919
+          }
+        ]
+      }
+    },
+    "glm-summary": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v58-glm-summary.json",
+      "sha256": "45daf634954802ae442757d9c1a24ca2eb6e80d2cdac1bb80a1d65a8c0699332",
+      "data": [
+        {
+          "executeScriptReturned": true,
+          "planner": "DP-LocalConflict",
+          "graphNodes": 1256,
+          "decisionNodes": 1240,
+          "coarseAlternatives": 1710,
+          "selectedStateCount": 1240,
+          "selectedLocalMaterializations": 2,
+          "selectedRelocations": 0,
+          "planningSucceeded": true,
+          "status": "passed",
+          "wallSeconds": 547.850550708,
+          "runtimeExecuted": false,
+          "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/glm-merged-v58-w1",
+          "complete": true,
+          "objectiveBits": "local-conflict-objective=4671489731595367111",
+          "baseline": "v57",
+          "objectiveBitsEqualBaseline": true,
+          "assignmentEqualBaseline": true,
+          "phases": [
+            "Compile Phase FedPlanner CandidateE2E CommonPreparation:\t0.032482 sec.",
+            "Compile Phase FedPlanner CandidateE2E Analysis:\t308.731543 sec.",
+            "Compile Phase FedPlanner CandidateE2E PlannerSetup:\t0.002832 sec.",
+            "Compile Phase FedPlanner CandidateE2E Model:\t27.002084 sec.",
+            "Compile Phase FedPlanner CandidateE2E CostSurface:\t74.378605 sec.",
+            "Compile Phase FedPlanner CandidateE2E Optimizer:\t131.334212 sec.",
+            "Compile Phase FedPlanner CandidateE2E Selection:\t1.850748 sec.",
+            "Compile Phase FedPlanner CandidateE2E OtherPlanning:\t0.001878 sec.",
+            "Compile Phase FedPlanner CandidateE2E Diagnostics:\t0.010885 sec.",
+            "Compile Phase FedPlanner CandidateE2E Conversion:\t2.196131 sec.",
+            "Compile Phase FedPlanner CandidateE2E Application:\t0.271792 sec.",
+            "Compile Phase FedPlanner CandidateE2E FinalVerification:\t0.009990 sec.",
+            "Compile Phase FedPlanner CandidateE2E Registration:\t0.004678 sec.",
+            "Compile Phase FedPlanner CandidateE2E ReceiptHandoff:\t0.000160 sec.",
+            "Compile Phase FedPlanner CandidateE2E Total:\t545.828020 sec."
+          ]
+        },
+        {
+          "executeScriptReturned": true,
+          "planner": "DP-LocalConflict",
+          "graphNodes": 1268,
+          "decisionNodes": 1252,
+          "coarseAlternatives": 1644,
+          "selectedStateCount": 1252,
+          "selectedLocalMaterializations": 2,
+          "selectedRelocations": 0,
+          "planningSucceeded": true,
+          "status": "passed",
+          "wallSeconds": 341.003373227,
+          "runtimeExecuted": false,
+          "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/glm-merged-v58-w3",
+          "complete": true,
+          "objectiveBits": "local-conflict-objective=4671453370371391968",
+          "baseline": "v57",
+          "objectiveBitsEqualBaseline": true,
+          "assignmentEqualBaseline": true,
+          "phases": [
+            "Compile Phase FedPlanner CandidateE2E CommonPreparation:\t0.023392 sec.",
+            "Compile Phase FedPlanner CandidateE2E Analysis:\t203.865726 sec.",
+            "Compile Phase FedPlanner CandidateE2E PlannerSetup:\t0.003163 sec.",
+            "Compile Phase FedPlanner CandidateE2E Model:\t14.798073 sec.",
+            "Compile Phase FedPlanner CandidateE2E CostSurface:\t47.986999 sec.",
+            "Compile Phase FedPlanner CandidateE2E Optimizer:\t68.204952 sec.",
+            "Compile Phase FedPlanner CandidateE2E Selection:\t1.527644 sec.",
+            "Compile Phase FedPlanner CandidateE2E OtherPlanning:\t0.001760 sec.",
+            "Compile Phase FedPlanner CandidateE2E Diagnostics:\t0.007827 sec.",
+            "Compile Phase FedPlanner CandidateE2E Conversion:\t1.780168 sec.",
+            "Compile Phase FedPlanner CandidateE2E Application:\t0.274410 sec.",
+            "Compile Phase FedPlanner CandidateE2E FinalVerification:\t0.005854 sec.",
+            "Compile Phase FedPlanner CandidateE2E Registration:\t0.004402 sec.",
+            "Compile Phase FedPlanner CandidateE2E ReceiptHandoff:\t0.000158 sec.",
+            "Compile Phase FedPlanner CandidateE2E Total:\t338.484529 sec."
+          ]
+        }
+      ]
+    },
+    "p1-summary": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v58-p1-summary.json",
+      "sha256": "613b5385b3f617272c0a8f4a8b8b09f49cc8c82b1c4ba9cbb5117fb968106dd5",
+      "data": [
+        {
+          "status": "passed",
+          "planningSucceeded": true,
+          "executeScriptReturned": true,
+          "runtimeExecuted": false,
+          "wallSeconds": 32.776321899,
+          "planner": "DP-LocalConflict",
+          "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v58-local",
+          "case": "P1_FULL_w1",
+          "complete": true,
+          "baseline": "v57",
+          "objectiveBits": "local-conflict-objective=4728318273290936294",
+          "objectiveBitsEqualBaseline": true,
+          "assignmentEqualBaseline": true
+        },
+        {
+          "status": "passed",
+          "planningSucceeded": true,
+          "executeScriptReturned": true,
+          "runtimeExecuted": false,
+          "wallSeconds": 20.630979057,
+          "planner": "DP-LocalConflict",
+          "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v58-local",
+          "case": "P1_FULL_w3",
+          "complete": true,
+          "baseline": "v57",
+          "objectiveBits": "local-conflict-objective=4734494558711388671",
+          "objectiveBitsEqualBaseline": true,
+          "assignmentEqualBaseline": true
+        },
+        {
+          "status": "passed",
+          "planningSucceeded": true,
+          "executeScriptReturned": true,
+          "runtimeExecuted": false,
+          "wallSeconds": 19.933508083,
+          "planner": "Exact",
+          "campaign": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v58-global",
+          "case": "P1_FULL_w3",
+          "complete": true,
+          "baseline": "v57",
+          "objectiveBits": "physical-ve-objective=4734494558711388677",
+          "objectiveBitsEqualBaseline": true,
+          "assignmentEqualBaseline": true
+        }
+      ]
+    },
+    "native-lifecycle-summary": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v58-native-lifecycle-summary.json",
+      "sha256": "d78ac0c455cec4f69661c1b94a4eb991799ea6c96382b17a93a2792b161c25c2",
+      "data": {
+        "command": [
+          "java",
+          "--add-modules",
+          "jdk.incubator.vector",
+          "-Xmx3g",
+          "-cp",
+          "/home/mchoi/fedplanner-boundary-correctness-20261006/engine-merged-v58/target/test-classes:/home/mchoi/fedplanner-boundary-correctness-20261006/engine-merged-v58/target/classes:/home/mchoi/w1357-stage-r63b-20261005/systemds/target/lib/*",
+          "org.junit.runner.JUnitCore",
+          "org.apache.sysds.hops.fedplanner.placement.NativePlacementContinuityTest"
+        ],
+        "exitCode": 0,
+        "wallSeconds": 1.0338020324707031,
+        "log": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v58-native-lifecycle.log"
+      }
+    }
+  },
+  "nativeTests": {
+    "passed": 100,
+    "existingPublicIgnored": 1
+  },
+  "performanceGoal": {
+    "targetSeconds": 20,
+    "achieved": false,
+    "qualifyingRuns": 0,
+    "runtimeExecuted": false
+  },
+  "constraintsPreserved": [
+    "legal candidates",
+    "raw costs and full selected assignments",
+    "provenance and current authority",
+    "whole exact Global",
+    "no arbitrary search budget",
+    "no runtime fallback"
+  ]
+}
