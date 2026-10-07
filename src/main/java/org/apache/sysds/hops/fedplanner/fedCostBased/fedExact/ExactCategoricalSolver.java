@@ -1503,8 +1503,7 @@ public final class ExactCategoricalSolver {
 		if(counters != null)
 			counters.fullChildEvaluations += unionCells * inputMessages.size();
 		boolean localPrefixCuts = PruningAblation.current().local();
-		if(localPrefixCuts && unionCells > 64
-			&& inputMessages.stream().allMatch(message -> message.hardValues == null)) {
+		if(localPrefixCuts && unionCells > 64) {
 			BoundaryMessage supported = mergeBoundarySupport(inputMessages, outputBoundary,
 				unionScope, outputScope, unionCells, counters);
 			if(supported != null)
@@ -1926,6 +1925,52 @@ public final class ExactCategoricalSolver {
 				original[variable] = representatives[variable][quotient[variable]];
 			return original;
 		}
+
+		boolean inputIdentity(BoundaryMessage input) {
+			for(int variable : input.scopeIndices)
+				if(domains[variable] != originalDomains[variable])
+					return false;
+			return true;
+		}
+
+		ExactFiniteSupportJoin.Relation projectSupport(BoundaryMessage input) {
+			ExactFiniteSupportJoin.Relation support = input.hardSupport();
+			if(support == null || input.storageClasses != null)
+				return null;
+			if(inputIdentity(input))
+				return support;
+			int[] finite = support.finiteCells();
+			int[] projected = PlannerResourceGuard.allocateInts(finite.length,
+				"regional-projected-support-cells");
+			int[] originalStrides = PlannerResourceGuard.allocateInts(input.scopeIndices.length,
+				"regional-projected-support-strides");
+			int stride = 1;
+			for(int axis = input.scopeIndices.length - 1; axis >= 0; axis--) {
+				originalStrides[axis] = stride;
+				stride *= originalDomains[input.scopeIndices[axis]];
+			}
+			for(int row = 0; row < finite.length; row++) {
+				int quotientCell = 0;
+				for(int axis = 0; axis < input.scopeIndices.length; axis++) {
+					int variable = input.scopeIndices[axis];
+					int original = finite[row] / originalStrides[axis] % originalDomains[variable];
+					quotientCell = quotientCell * domains[variable] + classes[variable][original];
+				}
+				projected[row] = quotientCell;
+			}
+			Arrays.sort(projected);
+			int unique = 0;
+			for(int cell : projected)
+				if(unique == 0 || projected[unique - 1] != cell)
+					projected[unique++] = cell;
+			if(unique != projected.length) {
+				int[] compact = PlannerResourceGuard.allocateInts(unique,
+					"regional-projected-support-unique");
+				System.arraycopy(projected,0,compact,0,unique);
+				projected = compact;
+			}
+			return new ExactFiniteSupportJoin.Relation(input.scopeIndices,projected);
+		}
 	}
 
 	/**
@@ -1944,6 +1989,8 @@ public final class ExactCategoricalSolver {
 		if(inputs.size() > (1 << 20))
 			return null;
 		for(BoundaryMessage input : inputs) {
+			if(input.hardValues != null)
+				continue;
 			for(int cell = 0; cell < input.values.length; cell++) {
 				double high = input.values[cell];
 				double low = input.lowValues == null ? 0d : input.lowValues[cell];
@@ -1955,12 +2002,21 @@ public final class ExactCategoricalSolver {
 		BoundaryProjection projection = new BoundaryProjection(inputs, unionScope);
 		List<ExactFiniteSupportJoin.Relation> relations = new ArrayList<>();
 		for(BoundaryMessage input : inputs) {
+			// An uncompressed typed relation already owns its finite logical rows in
+			// ascending order. Reuse them instead of scanning its Cartesian table.
+			ExactFiniteSupportJoin.Relation projectedSupport = projection.projectSupport(input);
+			if(projectedSupport != null) {
+				relations.add(projectedSupport);
+				continue;
+			}
 			int cells = (int)boundaryCells(input.scopeIndices, projection.domains, "merge", "support-cells");
 			BoundaryProjection.StoredCellOdometer storedCells = projection.storedCells(input);
 			int size = 0;
 			for(int cell = 0; cell < cells; cell++) {
 				int stored = storedCells.next();
-				if(!absorbingBoundaryInfinity(input.values[stored], input.lowerValues[stored])
+				if(counters != null)
+					counters.supportCellsExamined++;
+				if(!absorbingBoundaryInfinity(input.highAt(stored), input.lowerAt(stored))
 					&& ++size > cells / 2)
 					break;
 			}
@@ -1972,7 +2028,9 @@ public final class ExactCategoricalSolver {
 			storedCells.reset();
 			for(int cell = 0; cell < cells; cell++) {
 				int stored = storedCells.next();
-				if(!absorbingBoundaryInfinity(input.values[stored], input.lowerValues[stored]))
+				if(counters != null)
+					counters.supportCellsExamined++;
+				if(!absorbingBoundaryInfinity(input.highAt(stored), input.lowerAt(stored)))
 					support[position++] = cell;
 			}
 			relations.add(new ExactFiniteSupportJoin.Relation(input.scopeIndices, support));
@@ -1995,15 +2053,14 @@ public final class ExactCategoricalSolver {
 			int[] assignment = projection.lift(quotient, originalAssignment);
 			int childCell = first.boundaryCellUnchecked(assignment);
 			PreciseCost candidate = first.valueAt(childCell);
-			double lower = first.lowerValues[childCell];
+			double lower = first.lowerAt(childCell);
 			if(counters != null)
 				counters.childEvaluations++;
 			for(int index = 1; index < inputs.size(); index++) {
 				BoundaryMessage input = inputs.get(index);
 				childCell = input.boundaryCellUnchecked(assignment);
-				candidate = candidate.plus(input.values[childCell],
-					input.lowValues == null ? 0d : input.lowValues[childCell], 0L);
-				lower = addBoundaryLower(lower, input.lowerValues[childCell]);
+				candidate = candidate.plus(input.highAt(childCell),input.lowAt(childCell),0L);
+				lower = addBoundaryLower(lower,input.lowerAt(childCell));
 				if(counters != null)
 					counters.childEvaluations++;
 			}
@@ -2051,11 +2108,13 @@ public final class ExactCategoricalSolver {
 		private long childEvaluations;
 		private long infeasibleCuts;
 		private long costCuts;
+		private long supportCellsExamined;
 
 		long fullChildEvaluations() { return fullChildEvaluations; }
 		long childEvaluations() { return childEvaluations; }
 		long infeasibleCuts() { return infeasibleCuts; }
 		long costCuts() { return costCuts; }
+		long supportCellsExamined() { return supportCellsExamined; }
 	}
 
 	/** Both exact cost and lower bound are absorbing; later nonnegative terms cannot change either. */
