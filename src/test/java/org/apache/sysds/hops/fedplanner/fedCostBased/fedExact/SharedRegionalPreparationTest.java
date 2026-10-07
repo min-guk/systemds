@@ -83,6 +83,86 @@ public class SharedRegionalPreparationTest {
 	}
 
 	@Test
+	public void conditionalWitnessRetainsSolvedAuxiliariesAndUnrelatedIncumbentValues() {
+		Variable block = variable("witness-block", 2);
+		Variable boundary = variable("witness-boundary", 2);
+		Variable linked = variable("witness-linked", 2);
+		Variable transitive = variable("witness-transitive", 2);
+		Variable unrelated = variable("witness-unrelated", 2);
+		List<Variable> variables = List.of(block, boundary, linked, transitive, unrelated);
+		List<Factor> factors = List.of(
+			Factor.dense(List.of(block, linked), 5d, Double.POSITIVE_INFINITY,
+				Double.POSITIVE_INFINITY, 0d),
+			Factor.dense(List.of(linked, transitive), 0d, Double.POSITIVE_INFINITY,
+				Double.POSITIVE_INFINITY, 0d),
+			Factor.dense(List.of(transitive, boundary), 0d, 1d, 0d, 1d),
+			Factor.dense(List.of(unrelated, boundary), 0d, 1d, 0d, 1d));
+		RegionalSearchProblem problem = new RegionalSearchProblem(variables, factors, 2,
+			assignment -> RegionalSearchProblem.evaluateFactors(variables, factors,
+				List.of(assignment.get(0), assignment.get(1), 0, 0, 1)));
+		ExactPhysicalReducedSolver.CompactModel root = problem.reducedRoot(GENEROUS);
+		SharedRegionalPreparation preparation = new SharedRegionalPreparation(
+			problem, GENEROUS, true);
+
+		SharedRegionalPreparation.PreparedConditionalSolver solver =
+			preparation.prepareConditional(new int[] {0, 0}, new int[] {0}, root);
+		SharedRegionalPreparation.ConditionalResult result =
+			solver.solve(new int[] {0, 0, 0, 0, 1});
+
+		Assert.assertEquals(List.of(1), result.block().assignmentInVariableOrder());
+		Assert.assertArrayEquals(new int[] {1, 0, 1, 1, 1}, result.rootWitness());
+		int[] copy = result.rootWitness();
+		copy[2] = 0;
+		Assert.assertArrayEquals("the published witness must be immutable to callers",
+			new int[] {1, 0, 1, 1, 1}, result.rootWitness());
+		Assert.assertNull("a changed fixed original boundary invalidates the mapping",
+			solver.solve(new int[] {0, 1, 0, 0, 1}).rootWitness());
+
+		RegionalSearchProblem foreignProblem = new RegionalSearchProblem(variables, factors, 2,
+			assignment -> 0d);
+		SharedRegionalPreparation.PreparedConditionalSolver foreign = preparation.prepareConditional(
+			new int[] {0, 0}, new int[] {0}, foreignProblem.reducedRoot(GENEROUS));
+		Assert.assertNull("a structurally equal foreign compact root has no mapping authority",
+			foreign.solve(new int[] {0, 0, 0, 0, 1}).rootWitness());
+	}
+
+	@Test
+	public void conditionalWitnessRestoresNestedQuotientAndSingletonValues() {
+		Variable block = variable("witness-quotient-block", 3);
+		Variable boundary = variable("witness-quotient-boundary", 2);
+		Variable auxiliary = variable("witness-singleton-auxiliary", 3);
+		List<Variable> variables = List.of(block, boundary, auxiliary);
+		List<Factor> factors = List.of(
+			Factor.dense(List.of(block, boundary),
+				0d, 0d,
+				0d, 1d,
+				Double.POSITIVE_INFINITY, 2d),
+			Factor.dense(List.of(auxiliary, boundary),
+				Double.POSITIVE_INFINITY, 0d,
+				0d, 0d,
+				Double.POSITIVE_INFINITY, 0d),
+			Factor.dense(List.of(block, auxiliary),
+				0d, 0d, 0d,
+				0d, 0d, 0d,
+				0d, Double.POSITIVE_INFINITY, 0d));
+		RegionalSearchProblem problem = new RegionalSearchProblem(variables, factors, 2,
+			assignment -> 0d);
+		ExactPhysicalReducedSolver.CompactModel root = problem.reducedRoot(GENEROUS);
+		SharedRegionalPreparation preparation = new SharedRegionalPreparation(
+			problem, GENEROUS, true);
+
+		SharedRegionalPreparation.ConditionalResult result = preparation.prepareConditional(
+			new int[] {0, 0}, new int[] {0}, root).solve(new int[] {0, 0, 1});
+
+		Assert.assertEquals("the conditional quotient must restore its root representative",
+			List.of(0), result.block().assignmentInVariableOrder());
+		Assert.assertEquals("quotient and singleton removal should leave no compiled decision",
+			0L, result.block().statistics().eliminationAssignments());
+		Assert.assertArrayEquals("the removed auxiliary singleton must be restored in root coordinates",
+			new int[] {0, 0, 1}, result.rootWitness());
+	}
+
+	@Test
 	public void removedFixedBoundaryRequestsRepairInsteadOfCanonicalFallback() {
 		Variable block = variable("fallback-block", 2);
 		Variable boundary = variable("fallback-boundary", 3);

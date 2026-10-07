@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -66,6 +67,36 @@ public final class PlacementIdentity {
 	private static final ThreadLocal<Map<Object,String>> ACTIVE_STRUCTURAL_SIGNATURES = new ThreadLocal<>();
 	private static final ThreadLocal<Map<Object,String>> ACTIVE_IDENTITY_SIGNATURES = new ThreadLocal<>();
 	private static final ThreadLocal<StructuralArena> ACTIVE_STRUCTURAL_ARENA = new ThreadLocal<>();
+	private static final int ANALYSIS_CANDIDATE_REFERENCE_MAX_ENTRIES = 131_072;
+	private static final ThreadLocal<AnalysisCandidateReferenceCache>
+		ACTIVE_CANDIDATE_REFERENCES = new ThreadLocal<>();
+
+	private static final class AnalysisCandidateReferenceCache {
+		private final IdentityHashMap<CandidateRuleKey,
+			IdentityHashMap<PlacementRealizationKey,CandidateRealizationReference>> references =
+				new IdentityHashMap<>();
+		private int size;
+
+		private CandidateRealizationReference reference(CandidateRuleKey rule,
+			PlacementRealizationKey realization) {
+			IdentityHashMap<PlacementRealizationKey,CandidateRealizationReference> byRealization =
+				references.get(rule);
+			CandidateRealizationReference retained = byRealization == null
+				? null : byRealization.get(realization);
+			if(retained != null)
+				return retained;
+			CandidateRealizationReference created = new CandidateRealizationReference(rule, realization);
+			if(size >= ANALYSIS_CANDIDATE_REFERENCE_MAX_ENTRIES)
+				return created;
+			if(byRealization == null) {
+				byRealization = new IdentityHashMap<>();
+				references.put(rule, byRealization);
+			}
+			byRealization.put(realization, created);
+			size++;
+			return created;
+		}
+	}
 
 	private static final class StructuralArena {
 		private final Map<Object,Integer> byIdentity = new java.util.IdentityHashMap<>();
@@ -517,22 +548,42 @@ public final class PlacementIdentity {
 	}
 
 	/** Stable reference to an upstream candidate realization without embedding object graphs. */
-	public record CandidateRealizationReference(CandidateRuleKey rule,
-		PlacementRealizationKey realization)
+	public static final class CandidateRealizationReference
 		implements Comparable<CandidateRealizationReference> {
-		public CandidateRealizationReference {
-			Objects.requireNonNull(rule, "rule");
-			Objects.requireNonNull(realization, "realization");
+		private final CandidateRuleKey rule;
+		private final PlacementRealizationKey realization;
+		private final int hash;
+
+		public CandidateRealizationReference(CandidateRuleKey rule,
+			PlacementRealizationKey realization) {
+			this.rule = Objects.requireNonNull(rule, "rule");
+			this.realization = Objects.requireNonNull(realization, "realization");
+			hash = 31 * rule.hashCode() + realization.hashCode();
 		}
+		public CandidateRuleKey rule() { return rule; }
+		public PlacementRealizationKey realization() { return realization; }
 		public static CandidateRealizationReference of(CandidateRuleKey rule,
 			CandidateEmissionRealization realization) {
 			Objects.requireNonNull(realization, "realization");
-			return new CandidateRealizationReference(rule, realization.key());
+			Objects.requireNonNull(rule, "rule");
+			AnalysisCandidateReferenceCache scoped = ACTIVE_CANDIDATE_REFERENCES.get();
+			if(scoped == null)
+				return new CandidateRealizationReference(rule, realization.key());
+			return scoped.reference(rule, realization.key());
 		}
 		public String normalizedSignature() {
 			String cached = cachedSignature(this);
 			return cached != null ? cached : rememberSignature(this,
 				fields(rule.normalizedSignature(), realization.normalizedSignature()));
+		}
+		@Override public boolean equals(Object other) {
+			return this == other || other instanceof CandidateRealizationReference that
+				&& rule.equals(that.rule) && realization.equals(that.realization);
+		}
+		@Override public int hashCode() { return hash; }
+		@Override public String toString() {
+			return "CandidateRealizationReference[rule=" + rule
+				+ ", realization=" + realization + ']';
 		}
 		@Override public int compareTo(CandidateRealizationReference that) {
 			return PlacementAnalysis.compareCanonicalOrdering(this, that);
@@ -1188,9 +1239,11 @@ public final class PlacementIdentity {
 			ACTIVE_METRICS.set(metrics);
 		beginActiveSignatureCache();
 		ACTIVE_STRUCTURAL_ARENA.set(new StructuralArena(metrics));
+		ACTIVE_CANDIDATE_REFERENCES.set(new AnalysisCandidateReferenceCache());
 	}
 
 	static void endAnalysisScope() {
+		ACTIVE_CANDIDATE_REFERENCES.remove();
 		ACTIVE_STRUCTURAL_ARENA.remove();
 		ACTIVE_METRICS.remove();
 		endActiveSignatureCache();

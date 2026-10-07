@@ -91,6 +91,63 @@ public class DirectedDirectClosureDirtyConeTest {
 	}
 
 	@Test
+	public void completeQueryFootprintsSkipUnobservedTransitiveDescendants() throws Exception {
+		Node a = node("subscription-a"), b = node("subscription-b");
+		Node readsA = node("subscription-reads-a"), independent = node("subscription-independent");
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential = dependencies(
+			a, b, b, readsA, readsA, independent);
+		Object subscriptions = subscriptions(Map.of(
+			b.key(), keys(b), readsA.key(), keys(a, readsA), independent.key(), keys(independent)));
+		Assert.assertEquals(keys(a, b, readsA), required(keys(a), potential,
+			Map.of(), Map.of(), Map.of(), subscriptions));
+	}
+
+	@Test
+	public void missingFootprintKeepsConservativeTransitiveFallback() throws Exception {
+		Node a = node("fallback-a"), b = node("fallback-b"), c = node("fallback-c");
+		Object subscriptions = subscriptions(Map.of(b.key(), keys(b)));
+		Assert.assertEquals(keys(a, b, c), required(keys(a), dependencies(a, b, b, c),
+			Map.of(), Map.of(), Map.of(), subscriptions));
+	}
+
+	@Test
+	public void removedSupportCyclesAndAliasesRemainImmediateInvalidations() throws Exception {
+		Node source = node("hybrid-source"), first = node("hybrid-first");
+		Node second = node("hybrid-second"), alias = node("hybrid-alias");
+		Object subscriptions = subscriptions(Map.of(
+			first.key(), keys(first), second.key(), keys(second), alias.key(), keys(alias)));
+		Map<CompiledHopKey,Set<CompiledHopKey>> support = dependencies(first, second, second, first);
+		Map<CompiledHopKey,Set<CompiledHopKey>> removed = dependencies(source, second);
+		Map<CompiledHopKey,List<CompiledHopKey>> aliases = new IdentityHashMap<>();
+		aliases.put(source.key(), List.of(source.key(), alias.key()));
+		Assert.assertEquals(keys(source, second, alias), required(keys(source), Map.of(), support,
+			removed, aliases, subscriptions));
+	}
+
+	@Test
+	public void cancelledDirectOutputMakesItsOwnerIncompleteForTheNextSccWave() throws Exception {
+		Node restored = node("cancelled-restored"), peer = node("cancelled-peer");
+		Object subscriptions = subscriptions(Map.of(
+			restored.key(), keys(restored), peer.key(), keys(peer)));
+		Method invalidate = subscriptions.getClass().getDeclaredMethod("invalidate", Set.class);
+		invalidate.setAccessible(true);
+		invalidate.invoke(subscriptions, keys(restored));
+		PlacementDependencyComponents component = new PlacementDependencyComponents(
+			List.of(restored.key(), peer.key()),
+			List.of(new PlacementDependencyComponents.SemanticDependency(restored.key(), peer.key()),
+				new PlacementDependencyComponents.SemanticDependency(peer.key(), restored.key())), List.of());
+		Method ready = PlacementRelationClosure.class.getDeclaredMethod("readyDirectOwners",
+			PlacementDependencyComponents.class, Set.class, subscriptions.getClass());
+		ready.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		Set<CompiledHopKey> selected = (Set<CompiledHopKey>)ready.invoke(
+			null, component, keys(peer), subscriptions);
+		Assert.assertEquals("a boundary-restored owner must rerun with another dirty SCC member",
+			keys(restored, peer), selected);
+	}
+
+
+	@Test
 	public void oneValueVersionExpandsAliasesWithoutReversingDependencies() throws Exception {
 		Node producer = node("producer"), alias = node("alias", producer.valueVersion());
 		Node consumer = node("consumer"), upstream = node("upstream");
@@ -134,6 +191,29 @@ public class DirectedDirectClosureDirtyConeTest {
 		assertSameKeys(Set.of(), postPhysicalDirty(nodes, facts,
 			List.of(edge(a, b), edge(b, c)), Map.of(), nodes, facts,
 			List.of(edge(a, b), edge(b, c)), Map.of(), Set.of()));
+	}
+
+	@Test
+	public void exactEmptyDirtySetPreservesDirectAuthoritiesWithoutOpeningClosure() throws Exception {
+		Node owner = node("clean-direct-owner");
+		List<CandidateRuleFact> facts = List.of(localFact(owner));
+		NativePlacementContinuity continuity = new NativePlacementContinuity(
+			Map.of(owner.key(), owner), Map.of(), facts, List.of(), Map.of());
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"unchangedDirectClosure", List.class, NativePlacementContinuity.class, Set.class);
+		method.setAccessible(true);
+		Object result = method.invoke(null, facts, continuity, Set.of());
+		Assert.assertNotNull(result);
+		Method resultFacts = result.getClass().getDeclaredMethod("facts");
+		Method resultContinuity = result.getClass().getDeclaredMethod("continuity");
+		resultFacts.setAccessible(true);
+		resultContinuity.setAccessible(true);
+		Assert.assertSame(facts, resultFacts.invoke(result));
+		Assert.assertSame(continuity, resultContinuity.invoke(result));
+		Assert.assertNull("null means the first/unpairable revision must run the full closure",
+			method.invoke(null, facts, continuity, null));
+		Assert.assertNull("a real dirty owner must run the incremental closure",
+			method.invoke(null, facts, continuity, keys(owner)));
 	}
 
 	@Test
@@ -593,6 +673,44 @@ public class DirectedDirectClosureDirtyConeTest {
 
 	private static CompiledInputEdgeFact edge(Node source, Node consumer) {
 		return new CompiledInputEdgeFact(source.key(), consumer.key(), 0);
+	}
+
+	private static Map<CompiledHopKey,Set<CompiledHopKey>> dependencies(Node... endpoints) {
+		Map<CompiledHopKey,Set<CompiledHopKey>> result = new IdentityHashMap<>();
+		for(int index = 0; index < endpoints.length; index += 2)
+			result.computeIfAbsent(endpoints[index].key(),
+				ignored -> Collections.newSetFromMap(new IdentityHashMap<>()))
+				.add(endpoints[index + 1].key());
+		return result;
+	}
+
+	private static Object subscriptions(Map<CompiledHopKey,Set<CompiledHopKey>> footprints)
+		throws Exception {
+		Class<?> type = Class.forName(
+			PlacementRelationClosure.class.getName() + "$DirectQuerySubscriptions");
+		Constructor<?> constructor = type.getDeclaredConstructor();
+		constructor.setAccessible(true);
+		Object subscriptions = constructor.newInstance();
+		Method replace = type.getDeclaredMethod("replace", Set.class, Map.class);
+		replace.setAccessible(true);
+		Set<CompiledHopKey> owners = Collections.newSetFromMap(new IdentityHashMap<>());
+		owners.addAll(footprints.keySet());
+		replace.invoke(subscriptions, owners, footprints);
+		return subscriptions;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Set<CompiledHopKey> required(Set<CompiledHopKey> changed,
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential,
+		Map<CompiledHopKey,Set<CompiledHopKey>> support,
+		Map<CompiledHopKey,Set<CompiledHopKey>> removed,
+		Map<CompiledHopKey,List<CompiledHopKey>> aliases, Object subscriptions) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"requiredDirectClosureOccurrences", Set.class, Map.class, Map.class, Map.class,
+			Map.class, subscriptions.getClass());
+		method.setAccessible(true);
+		return (Set<CompiledHopKey>)method.invoke(null,
+			changed, potential, support, removed, aliases, subscriptions);
 	}
 
 	private static Set<CompiledHopKey> keys(Node... nodes) {

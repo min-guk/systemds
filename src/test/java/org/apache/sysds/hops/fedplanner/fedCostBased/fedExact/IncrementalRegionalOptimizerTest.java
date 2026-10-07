@@ -31,6 +31,25 @@ public class IncrementalRegionalOptimizerTest {
 			lastLower = cp.lower(); lastUpper = cp.upper();
 		}
 	}
+	@Test public void conditionalNeighborhoodsShareRootPreparation() {
+		List<Variable> variables = List.of(new Variable("shared-a",3),
+			new Variable("shared-b",3),new Variable("shared-c",3));
+		List<Factor> factors = new ArrayList<>();
+		for(Variable variable : variables) {
+			factors.add(Factor.dense(List.of(variable),0,9,2));
+			factors.add(Factor.dense(List.of(variable),9,0,2));
+		}
+		var problem = RegionalSearchProblem.generic(variables,factors);
+		var result = IncrementalRegionalOptimizer.optimize(problem,problem.reducedRoot(LIMITS),
+			List.of(0,0,0),LIMITS,
+			new IncrementalRegionalOptimizer.Options(0,100000,1000000,0,16,false),ignored -> { });
+		assertEquals(List.of(2,2,2),result.assignment());
+		assertEquals(12,result.upper(),0);
+		assertTrue(result.checkpoints().stream().anyMatch(cp -> cp.conditionalAttempts() >= 3));
+		assertEquals("one caller root and one shared conditional preparation",2,
+			problem.reducedRootRequests());
+		audit(result,12);
+	}
 	@Test public void productionPathHasNoFormerMillionAssignmentOrElapsedStop() {
 		var x = new Variable("unbounded-production-x",1025);
 		var y = new Variable("unbounded-production-y",1025);

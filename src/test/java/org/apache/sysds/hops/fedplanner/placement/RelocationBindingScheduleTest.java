@@ -43,6 +43,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmi
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateProfileFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateShapeProofFact;
@@ -50,6 +51,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInpu
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateInputBindingKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
@@ -127,6 +130,150 @@ public class RelocationBindingScheduleTest {
 		settle(fixture, second, 6);
 	}
 
+	@Test
+	public void convergedBindingRetainsEveryUnchangedFactIdentity() throws Exception {
+		Fixture fixture = Fixture.acyclic();
+		List<CandidateRuleFact> settled = settle(fixture, fixture.facts, 6);
+		List<CandidateRuleFact> rebound = bind(new NeutralPlacementGraphBuilder(), settled,
+			fixture.nodes, fixture.edges, fixture.actions, fixture.origins, fixture.shapes);
+		Assert.assertEquals(settled, rebound);
+		for(int slot = 0; slot < settled.size(); slot++)
+			Assert.assertSame("an unchanged candidate row must retain its current authority object",
+				settled.get(slot), rebound.get(slot));
+	}
+
+	@Test
+	public void structurallyEqualFreshActionsReplaceOldActionAuthority() throws Exception {
+		Fixture fixture = Fixture.acyclic();
+		List<CandidateRuleFact> settled = settle(fixture, fixture.facts, 6);
+		List<RelocationAction> freshActions = fixture.actions.stream()
+			.map(RelocationBindingScheduleTest::freshEqualAction).toList();
+		List<CandidateRuleFact> rebound = bind(new NeutralPlacementGraphBuilder(), settled,
+			fixture.nodes, fixture.edges, freshActions, fixture.origins, fixture.shapes);
+		Assert.assertEquals(canonical(settled), canonical(rebound));
+		Assert.assertTrue("the fixture must contain action-backed rows",
+			relocationBindings(rebound).stream().findAny().isPresent());
+		for(CandidateRealizationInputBinding binding : relocationBindings(rebound))
+			Assert.assertTrue("equal action values must not retain stale authority identity",
+				freshActions.stream().anyMatch(action -> action.key() == binding.relocationAction()));
+	}
+
+	@Test
+	public void equalDuplicateActionsRetainFirstAuthorityAndCanonicalOrder() throws Exception {
+		Fixture fixture = Fixture.acyclic();
+		RelocationAction first = freshEqualAction(fixture.actions.get(0));
+		RelocationAction duplicate = freshEqualAction(fixture.actions.get(0));
+		List<RelocationAction> duplicated = List.of(
+			first, duplicate, freshEqualAction(fixture.actions.get(1)));
+		List<CandidateRuleFact> rebound = settleWithActions(fixture, duplicated, 6);
+		List<CandidateRuleFact> baseline = settle(fixture, fixture.facts, 6);
+		Assert.assertEquals("equal duplicate actions must not alter published support",
+			canonical(baseline), canonical(rebound));
+		List<CandidateRealizationInputBinding> matching = relocationBindings(rebound).stream()
+			.filter(binding -> binding.relocationAction().equals(first.key())).toList();
+		Assert.assertFalse("fixture must exercise the duplicated action", matching.isEmpty());
+		for(CandidateRealizationInputBinding binding : matching) {
+			Assert.assertSame("the first equal action remains the exact authority object",
+				first.key(), binding.relocationAction());
+			Assert.assertNotSame(duplicate.key(), binding.relocationAction());
+		}
+
+		List<RelocationAction> reversed = new ArrayList<>(duplicated);
+		Collections.reverse(reversed);
+		Assert.assertEquals("canonical support must not depend on distinct action visit order",
+			canonical(rebound), canonical(settleWithActions(fixture, reversed, 6)));
+	}
+
+	@Test
+	public void structurallyEqualForeignSourceOwnerIsReboundToCanonicalIdentity() throws Exception {
+		Fixture fixture = Fixture.acyclic();
+		List<CandidateRuleFact> settled = settle(fixture, fixture.facts, 6);
+		CompiledHopKey foreignSource = key("source");
+		Assert.assertEquals(fixture.source, foreignSource);
+		Assert.assertNotSame(fixture.source, foreignSource);
+		List<CandidateRuleFact> foreign = replaceRelocationSourceOwner(
+			settled, fixture.producer, fixture.source, foreignSource);
+		CandidateRuleFact foreignProducer = factForOwner(foreign, fixture.producer);
+		List<CandidateRuleFact> rebound = bind(new NeutralPlacementGraphBuilder(), foreign,
+			fixture.nodes, fixture.edges, fixture.actions, fixture.origins, fixture.shapes);
+		CandidateRuleFact canonicalProducer = factForOwner(rebound, fixture.producer);
+		Assert.assertNotSame("the binder must replace a structurally equal foreign source owner",
+			foreignProducer, canonicalProducer);
+		Assert.assertTrue(relocationBindings(List.of(canonicalProducer)).stream()
+			.anyMatch(binding -> binding.source().rule().parentOccurrence() == fixture.source));
+		Assert.assertFalse(relocationBindings(List.of(canonicalProducer)).stream()
+			.anyMatch(binding -> binding.source().rule().parentOccurrence() == foreignSource));
+	}
+
+	private static List<CandidateRealizationInputBinding> relocationBindings(
+		List<CandidateRuleFact> facts) {
+		return facts.stream().flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream())
+			.flatMap(realization -> realization.supportClauses().stream())
+			.flatMap(clause -> clause.inputBindings().stream())
+			.filter(binding -> binding.kind() == CandidateInputBindingKind.RELOCATION).toList();
+	}
+
+	private static RelocationAction freshEqualAction(RelocationAction action) {
+		RelocationActionKey old = action.key();
+		RelocationActionKey key = new RelocationActionKey(old.sourceValueVersion(), old.targetPlacement(),
+			old.materializationFType(), old.durableAnchor(), old.statementBlockScope(),
+			old.compatibleConsumers());
+		List<ObligationKey> obligations = action.obligations().stream().map(obligation ->
+			new ObligationKey(obligation.consumer(), obligation.inputPosition(),
+				obligation.sourceValueVersion(), obligation.requiredPlacement(), key,
+				obligation.callRecompileContext())).toList();
+		return new RelocationAction(key, obligations);
+	}
+
+	private static CandidateRuleFact factForOwner(List<CandidateRuleFact> facts, CompiledHopKey owner) {
+		return facts.stream().filter(fact -> fact.key().parentOccurrence() == owner)
+			.findFirst().orElseThrow();
+	}
+
+	private static List<CandidateRuleFact> replaceRelocationSourceOwner(List<CandidateRuleFact> facts,
+		CompiledHopKey factOwner, CompiledHopKey sourceOwner, CompiledHopKey replacementOwner) {
+		List<CandidateRuleFact> result = new ArrayList<>(facts.size());
+		for(CandidateRuleFact fact : facts) {
+			if(fact.key().parentOccurrence() != factOwner) {
+				result.add(fact);
+				continue;
+			}
+			List<CandidateEmissionFact> emissions = new ArrayList<>();
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				List<CandidateEmissionRealization> realizations = new ArrayList<>();
+				for(CandidateEmissionRealization realization : emission.realizations()) {
+					List<CandidateRealizationSupportClause> clauses = new ArrayList<>();
+					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+						List<CandidateRealizationInputBinding> bindings = new ArrayList<>();
+						for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
+							if(binding.kind() == CandidateInputBindingKind.RELOCATION
+								&& binding.source().rule().parentOccurrence() == sourceOwner) {
+								CandidateRuleKey rule = new CandidateRuleKey(replacementOwner,
+									binding.source().rule().orderedInputs());
+								CandidateRealizationReference source = new CandidateRealizationReference(
+									rule, binding.source().realization());
+								bindings.add(CandidateRealizationInputBinding.relocation(binding.inputPosition(),
+									source, binding.relocationAction()));
+							}
+							else
+								bindings.add(binding);
+						}
+						clauses.add(new CandidateRealizationSupportClause(clause.proofDependencies(), bindings,
+							clause.nativeWorkerPoolWitness(), clause.nativeWorkerPoolLayoutExact()));
+					}
+					realizations.add(CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
+						realization.key(), clauses));
+				}
+				emissions.add(new CandidateEmissionFact(emission.emissionState(), emission.executionFType(),
+					emission.derivedFoutAction(), realizations));
+			}
+			result.add(new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+				fact.profile(), emissions, fact.failureCode()));
+		}
+		return List.copyOf(result);
+	}
+
 	private static List<CandidateRuleFact> settleSimultaneously(Fixture fixture) throws Exception {
 		List<CompiledInputEdgeFact> oneComponent = new ArrayList<>(fixture.edges);
 		oneComponent.add(new CompiledInputEdgeFact(fixture.consumer, fixture.source, 0));
@@ -136,6 +283,20 @@ public class RelocationBindingScheduleTest {
 	private static List<CandidateRuleFact> settle(Fixture fixture,
 		List<CandidateRuleFact> initial, int maxPasses) throws Exception {
 		return settle(fixture, initial, fixture.edges, maxPasses);
+	}
+
+	private static List<CandidateRuleFact> settleWithActions(Fixture fixture,
+		List<RelocationAction> actions, int maxPasses) throws Exception {
+		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
+		List<CandidateRuleFact> current = fixture.facts;
+		for(int pass = 0; pass < maxPasses; pass++) {
+			List<CandidateRuleFact> next = bind(builder, current, fixture.nodes,
+				fixture.edges, actions, fixture.origins, fixture.shapes);
+			if(canonical(next).equals(canonical(current)))
+				return next;
+			current = next;
+		}
+		throw new AssertionError("bounded relocation fixture did not converge");
 	}
 
 	private static List<CandidateRuleFact> settle(Fixture fixture,

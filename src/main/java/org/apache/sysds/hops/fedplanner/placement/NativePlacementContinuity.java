@@ -73,6 +73,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopK
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -99,6 +100,7 @@ final class NativePlacementContinuity {
 	private final LazyOccurrenceComponents occurrenceComponents;
 	private final Set<CompiledHopKey> incompleteSources;
 	private final Map<CompiledHopKey,Privacy> privacyByKey;
+	private final Set<ValueVersionKey> broadcastCapableValueVersions;
 	private final Map<CandidateRealizationSupportClause,List<CandidateRealizationReference>>
 		requiredInputSupportByClause = new IdentityHashMap<>();
 	private final Map<DurableAnchorKey,NativePoolWitness> nativeWitnessByAnchor = new IdentityHashMap<>();
@@ -242,6 +244,7 @@ final class NativePlacementContinuity {
 		nodesByKey = structuralContext.nodesByKey;
 		originsByKey = structuralContext.originsByKey;
 		privacyByKey = structuralContext.privacyByKey;
+		broadcastCapableValueVersions = structuralContext.broadcastCapableValueVersions;
 		reachingDefinitions = structuralContext.reachingDefinitions;
 		incompleteSources = structuralContext.incompleteSources;
 		edgesByConsumer = structuralContext.edgesByConsumer;
@@ -435,14 +438,14 @@ final class NativePlacementContinuity {
 			SupportMemoEntry support = entry.getValue();
 			CompiledHopKey root = support.root.rule().parentOccurrence();
 			// A generated root reads primitive row/emission authority, not its own
-			// published support history. Acyclicity prevents that history being read
-			// again as a descendant. Keep this weaker comparison out of unchangedRows:
-			// ordinary queries and public dynamic-layout results still need full facts.
-			boolean generatedAcyclicRoot = entry.getKey().generated
-				&& nodesByKey.containsKey(root)
-				&& !occurrenceComponents.components().componentOf(root).cyclic();
+			// published support history. The exact query traversal records whether a
+			// descendant nevertheless read that history. Keep this weaker comparison
+			// out of unchangedRows: ordinary queries and public dynamic-layout results
+			// still need full facts.
+			boolean generatedHistoryIndependentRoot = entry.getKey().generated
+				&& nodesByKey.containsKey(root) && support.rootIndependent;
 			boolean unchanged = support.occurrences.stream().noneMatch(occurrence ->
-				!(generatedAcyclicRoot && occurrence == root
+				!(generatedHistoryIndependentRoot && occurrence == root
 					? unchangedGeneratedRoots.computeIfAbsent(root, key -> unchangedGeneratedRootFacts(
 						next, key, changedOccurrences, comparisonWork))
 					: unchangedRows.computeIfAbsent(occurrence, key -> unchangedContinuityFacts(
@@ -604,6 +607,7 @@ final class NativePlacementContinuity {
 		private final Map<CompiledHopKey,List<CompiledHopKey>> reachingDefinitions;
 		private final Set<CompiledHopKey> incompleteSources;
 		private final Map<CompiledHopKey,Privacy> privacyByKey;
+		private final Set<ValueVersionKey> broadcastCapableValueVersions;
 		private final LazyOccurrenceComponents occurrenceComponents;
 		private final ComponentReadSet componentReadSet;
 
@@ -614,6 +618,7 @@ final class NativePlacementContinuity {
 			reachingDefinitions = source.reachingDefinitions;
 			incompleteSources = source.incompleteSources;
 			privacyByKey = source.privacyByKey;
+			broadcastCapableValueVersions = broadcastCapableValueVersions(nodesByKey);
 			occurrenceComponents = source.occurrenceComponents;
 			componentReadSet = source.componentReadSet;
 		}
@@ -644,6 +649,7 @@ final class NativePlacementContinuity {
 			this.nodesByKey = immutableIdentityMap(nodesByKey, "nodesByKey");
 			this.originsByKey = immutableIdentityMap(originsByKey, "originsByKey");
 			this.privacyByKey = immutableIdentityMap(privacyByKey, "privacyByKey");
+			broadcastCapableValueVersions = broadcastCapableValueVersions(this.nodesByKey);
 			this.reachingDefinitions = immutableIdentityLists(
 				reachingDefinitions, "reachingDefinitions");
 			Set<CompiledHopKey> incomplete = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -722,6 +728,16 @@ final class NativePlacementContinuity {
 				if(privacyByKey.get(key) != privacyByIdentity.get(key))
 					return false;
 			return matchesEdges(edges);
+		}
+
+		private static Set<ValueVersionKey> broadcastCapableValueVersions(
+			Map<CompiledHopKey,Node> nodesByKey) {
+			Set<ValueVersionKey> versions = new java.util.HashSet<>();
+			for(Node node : nodesByKey.values())
+				if(node.legalAlternatives().stream().anyMatch(state ->
+					state.output() == FederatedOutput.FOUT && state.fType() == FType.BROADCAST))
+					versions.add(node.valueVersion());
+			return Set.copyOf(versions);
 		}
 
 		private boolean matchesEdges(List<CompiledInputEdgeFact> edges) {
@@ -866,6 +882,11 @@ final class NativePlacementContinuity {
 	 */
 	List<NativeContinuityProof> provePrimitiveCandidateAlternatives(
 		CandidateRealizationReference source, DurableAnchorKey externalSeed) {
+		return provePrimitiveCandidateSupport(source, externalSeed).proofs();
+	}
+
+	CandidateSupportResult provePrimitiveCandidateSupport(
+		CandidateRealizationReference source, DurableAnchorKey externalSeed) {
 		Objects.requireNonNull(source, "primitive proof source");
 		Objects.requireNonNull(externalSeed, "primitive proof external seed");
 		CandidateRuleFact matchedFact = null;
@@ -883,13 +904,15 @@ final class NativePlacementContinuity {
 					|| emission.derivedFoutAction() != null)
 					continue;
 				if(matchedFact != null)
-					return List.of();
+					return new CandidateSupportResult(List.of(),
+						Set.of(source.rule().parentOccurrence()));
 				matchedFact = fact;
 				matchedEmission = emission;
 			}
 		}
-		return matchedFact == null ? List.of() : proveGeneratedCandidateAlternatives(
-			matchedFact, matchedEmission, source, externalSeed);
+		return matchedFact == null
+			? new CandidateSupportResult(List.of(), Set.of(source.rule().parentOccurrence()))
+			: proveGeneratedCandidateSupport(matchedFact, matchedEmission, source, externalSeed);
 	}
 
 	/**
@@ -899,6 +922,13 @@ final class NativePlacementContinuity {
 	 * history. Recursive descendants still use the current exact candidate facts.
 	 */
 	List<NativeContinuityProof> proveGeneratedCandidateAlternatives(
+		CandidateRuleFact trustedBase, CandidateEmissionFact baseEmission,
+		CandidateRealizationReference proposedOutput, DurableAnchorKey externalSeed) {
+		return proveGeneratedCandidateSupport(
+			trustedBase, baseEmission, proposedOutput, externalSeed).proofs();
+	}
+
+	CandidateSupportResult proveGeneratedCandidateSupport(
 		CandidateRuleFact trustedBase, CandidateEmissionFact baseEmission,
 		CandidateRealizationReference proposedOutput, DurableAnchorKey externalSeed) {
 		Objects.requireNonNull(trustedBase, "trusted generator base");
@@ -918,7 +948,7 @@ final class NativePlacementContinuity {
 			|| state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT
 			|| state.fType() == null || baseEmission.executionFType() != state.fType()
 			|| baseEmission.derivedFoutAction() != null)
-			return List.of();
+			return new CandidateSupportResult(List.of(), Set.of(root));
 		GenerationRoot generation = new GenerationRoot(trustedBase, baseEmission);
 		PublicCandidateQueryKey query = new PublicCandidateQueryKey(
 			proposedOutput, externalSeed, true);
@@ -926,14 +956,14 @@ final class NativePlacementContinuity {
 		if(cached != null) {
 			if(metrics != null)
 				metrics.recordMemoHit();
-			return cached.proofs();
+			return new CandidateSupportResult(cached.proofs(), cached.occurrences());
 		}
 		if(metrics != null)
 			metrics.recordMemoMiss();
 		ComputedPublicProof computed = computeCandidateAlternatives(
 			proposedOutput, externalSeed, generation);
 		cacheCompletedProofs(query, computed);
-		return computed.proofs();
+		return new CandidateSupportResult(computed.proofs(), computed.occurrences());
 	}
 
 	/** Native-continuity result plus its complete native proof occurrence footprint. */
@@ -1356,11 +1386,13 @@ final class NativePlacementContinuity {
 		// invalidation footprint and must cross revisions only when every row matches.
 		for(AcyclicComponentSummary reused : traversal.reusedComponents.values())
 			occurrences.addAll(reused.occurrences);
-		boolean rootIndependent = graph.entrySet().stream()
-			.filter(entry -> !entry.getKey().equals(root))
-			.flatMap(entry -> entry.getValue().stream())
-			.flatMap(alternative -> alternative.dependencies.stream())
-			.noneMatch(dependency -> dependency.key == root.key());
+		boolean rootIndependent = generation != null
+			? !traversal.generatedRootDependencyObserved
+			: graph.entrySet().stream()
+				.filter(entry -> !entry.getKey().equals(root))
+				.flatMap(entry -> entry.getValue().stream())
+				.flatMap(alternative -> alternative.dependencies.stream())
+				.noneMatch(dependency -> dependency.key == root.key());
 		return new ComputedCandidateSupport(distinct, Collections.unmodifiableSet(occurrences),
 			rootIndependent);
 		}
@@ -1450,17 +1482,22 @@ final class NativePlacementContinuity {
 		Map<CandidateProofState,List<SelectedCandidateProof>> graph) {
 		boolean hasDeadSeed = false;
 		for(var entry : graph.entrySet()) {
+			List<SelectedCandidateProof> alternatives = entry.getValue();
 			if(metrics != null)
-				metrics.recordOwnerElementsScanned(entry.getValue().size());
-			hasDeadSeed |= entry.getValue().isEmpty();
+				metrics.recordOwnerElementsScanned(alternatives.size());
+			hasDeadSeed |= alternatives.isEmpty();
 			if(!hasDeadSeed) {
 				alternatives:
-				for(SelectedCandidateProof alternative : entry.getValue())
-					for(CandidateProofDependency dependency : alternative.dependencies)
+				for(int alternativeIndex = 0; alternativeIndex < alternatives.size(); alternativeIndex++) {
+					List<CandidateProofDependency> dependencies = alternatives.get(alternativeIndex).dependencies;
+					for(int dependencyIndex = 0; dependencyIndex < dependencies.size(); dependencyIndex++) {
+						CandidateProofDependency dependency = dependencies.get(dependencyIndex);
 						if(!graph.containsKey(dependency.state())) {
 							hasDeadSeed = true;
 							break alternatives;
 						}
+					}
+				}
 			}
 		}
 		if(!hasDeadSeed)
@@ -1469,49 +1506,54 @@ final class NativePlacementContinuity {
 		// structural quotient. Keep every original key (including dead states) for
 		// support extraction and revision invalidation.
 		Map<CandidateProofState,Integer> stateIds = new java.util.HashMap<>();
+		for(CandidateProofState state : graph.keySet())
+			stateIds.put(state, stateIds.size());
 		int slotCount = 0, edgeCount = 0;
-		for(var entry : graph.entrySet()) {
-			stateIds.put(entry.getKey(), stateIds.size());
-			slotCount = Math.addExact(slotCount, entry.getValue().size());
-			for(SelectedCandidateProof alternative : entry.getValue())
-				edgeCount = Math.addExact(edgeCount, alternative.dependencies.size());
+		for(List<SelectedCandidateProof> alternatives : graph.values()) {
+			slotCount = Math.addExact(slotCount, alternatives.size());
+			for(int alternativeIndex = 0; alternativeIndex < alternatives.size(); alternativeIndex++) {
+				List<CandidateProofDependency> dependencies = alternatives.get(alternativeIndex).dependencies;
+				edgeCount = Math.addExact(edgeCount, dependencies.size());
+				for(int dependencyIndex = 0; dependencyIndex < dependencies.size(); dependencyIndex++) {
+					CandidateProofState dependency = dependencies.get(dependencyIndex).state();
+					if(stateIds.get(dependency) == null)
+						stateIds.put(dependency, stateIds.size());
+				}
+			}
 		}
 		int[] slotRemovalIds = new int[slotCount];
 		int[] alternativeOwners = new int[slotCount];
-		int[] dependencyStates = new int[edgeCount];
-		int[] dependencySlots = new int[edgeCount];
+		int[] reverseHeads = new int[stateIds.size()];
+		int[] reverseNext = new int[edgeCount];
+		int[] reverseSlots = new int[edgeCount];
+		int[] lastSlot = new int[stateIds.size()];
+		java.util.Arrays.fill(reverseHeads, -1);
+		java.util.Arrays.fill(lastSlot, -1);
 		IdentityHashMap<SelectedCandidateProof,Integer> ownerAlternatives = new IdentityHashMap<>();
 		int owner = 0, slot = 0, edge = 0;
 		for(List<SelectedCandidateProof> alternatives : graph.values()) {
 			ownerAlternatives.clear();
-			for(SelectedCandidateProof alternative : alternatives) {
+			for(int alternativeIndex = 0; alternativeIndex < alternatives.size(); alternativeIndex++) {
+				SelectedCandidateProof alternative = alternatives.get(alternativeIndex);
 				Integer previousSlot = ownerAlternatives.putIfAbsent(alternative, slot);
 				int removalId = previousSlot == null ? slot : previousSlot;
 				slotRemovalIds[slot] = removalId;
 				alternativeOwners[removalId] = owner;
-				for(CandidateProofDependency dependency : alternative.dependencies) {
-					dependencyStates[edge] = stateIds.computeIfAbsent(dependency.state(),
-						ignored -> stateIds.size());
-					dependencySlots[edge++] = slot;
+				List<CandidateProofDependency> dependencies = alternative.dependencies;
+				for(int dependencyIndex = 0; dependencyIndex < dependencies.size(); dependencyIndex++) {
+					int dependency = stateIds.get(dependencies.get(dependencyIndex).state());
+					// The legacy reverse index deduplicates dependencies per original list
+					// slot, not per shared alternative object or per owner.
+					if(lastSlot[dependency] == slot)
+						continue;
+					lastSlot[dependency] = slot;
+					reverseSlots[edge] = slot;
+					reverseNext[edge] = reverseHeads[dependency];
+					reverseHeads[dependency] = edge++;
 				}
 				slot++;
 			}
 			owner++;
-		}
-		int[] reverseHeads = new int[stateIds.size()];
-		int[] reverseNext = new int[edgeCount];
-		int[] lastSlot = new int[stateIds.size()];
-		java.util.Arrays.fill(reverseHeads, -1);
-		java.util.Arrays.fill(lastSlot, -1);
-		for(edge = 0; edge < edgeCount; edge++) {
-			int dependency = dependencyStates[edge];
-			// The legacy reverse index deduplicates dependencies per original list
-			// slot, not per shared alternative object or per owner.
-			if(lastSlot[dependency] == dependencySlots[edge])
-				continue;
-			lastSlot[dependency] = dependencySlots[edge];
-			reverseNext[edge] = reverseHeads[dependency];
-			reverseHeads[dependency] = edge;
 		}
 		int[] liveCounts = new int[stateIds.size()];
 		owner = 0;
@@ -1530,7 +1572,7 @@ final class NativePlacementContinuity {
 			for(edge = reverseHeads[dead[nextDead++]]; edge >= 0; edge = reverseNext[edge]) {
 				if(metrics != null)
 					metrics.recordDependencyNotification();
-				int removalId = slotRemovalIds[dependencySlots[edge]];
+				int removalId = slotRemovalIds[reverseSlots[edge]];
 				if(removed[removalId])
 					continue;
 				removed[removalId] = true;
@@ -1685,6 +1727,19 @@ final class NativePlacementContinuity {
 			List<SelectedCandidateProof> alternatives = candidateProofAlternatives(
 				state.key(), state.realization(), state.realizationHandle(), state.witness(),
 				state.templateRoot(), fixed, fixedHandles, generatedRoot ? generation : null);
+			// Record dependency-to-root reads from the unpruned alternatives. The
+			// dependency is query-pinned to the generated realization, so its recursive
+			// state can equal the active root and return before an ordinary row is built.
+			// Recording the edge also keeps later dead-alternative pruning conservative.
+			if(generation != null && !traversal.generatedRootDependencyObserved) {
+				dependencySearch:
+				for(SelectedCandidateProof alternative : alternatives)
+					for(CandidateProofDependency dependency : alternative.dependencies)
+						if(dependency.key == root.key()) {
+							traversal.generatedRootDependencyObserved = true;
+							break dependencySearch;
+						}
+			}
 			// An empty non-source row supplies nothing. Remove it before dependency
 			// pruning so its consumers cannot survive on a fictitious leaf. This also
 			// covers generated and provisional template rows.
@@ -2785,6 +2840,7 @@ final class NativePlacementContinuity {
 		private final Map<CandidateProofState,AcyclicComponentSummary> reusedComponents =
 			new java.util.HashMap<>();
 		private boolean cycleDetected;
+		private boolean generatedRootDependencyObserved;
 	}
 
 	private static final class CandidateProofState {
@@ -2899,12 +2955,10 @@ final class NativePlacementContinuity {
 			Node source = edge == null ? null : nodesByKey.get(edge.producer());
 			if(source == null)
 				return false;
-			boolean direct = nodesByKey.values().stream()
-				.filter(alias -> alias.valueVersion().equals(source.valueVersion()))
-				.anyMatch(alias -> alias.legalAlternatives().stream().anyMatch(state ->
-					state.output() == FederatedOutput.FOUT && state.fType() == FType.BROADCAST));
 			Privacy privacy = privacyByKey.get(source.key());
-			if(!direct && privacy != null && ExecPlacementPolicy.requiresOriginResidency(privacy))
+			if(privacy == null || !ExecPlacementPolicy.requiresOriginResidency(privacy))
+				continue;
+			if(!broadcastCapableValueVersions.contains(source.valueVersion()))
 				return true;
 		}
 		return false;

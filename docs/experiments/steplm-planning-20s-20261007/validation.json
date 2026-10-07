@@ -1,0 +1,711 @@
+{
+  "status": "CORRECTNESS_PASS_PERFORMANCE_FAILED",
+  "java": {
+    "status": "PASS",
+    "classCount": 61,
+    "rows": [
+      {
+        "class": "BoundarySupportMergeTest",
+        "tests": 13,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "8ee05da5960d5e9e34f431d3357ce5cb9d7d4ac444c5acf83eb90382fe63c517"
+      },
+      {
+        "class": "CandidateRealizationCanonicalizationTest",
+        "tests": 51,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "8a7512be52f2ea7af287b44d58541c82534c8f8c3fb3966e94f7d9fec22eeb03"
+      },
+      {
+        "class": "CandidateRealizationReferenceHashTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "54fe76ee2aa3b9177d6d0a8df0b543e8d10ecaf4dd3d769e22061023816dc757"
+      },
+      {
+        "class": "CandidateRuleFactsRealizationIndexTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "fccded58776dbcbcc0a6b59ddf5993b5d8ea0aef63e871003e04b10f1215a509"
+      },
+      {
+        "class": "CanonicalTextChunkComparisonTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "88e619992838ec5f1b63ddc3d3a2c2c8f31fafa09fb7c0dccd3f691dbf4cf098"
+      },
+      {
+        "class": "CanonicalTextDagCacheTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "57e290c4244ed2335ed3c5c97927e5c1fd7fbf7625690e43e7f4786efae94082"
+      },
+      {
+        "class": "CanonicalTextScopedCacheTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "bd14c3006da99b58ba94be52dd3f7d0877ced4d3708ea53346b07a306578cba8"
+      },
+      {
+        "class": "CfgReplayMemoTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "ffb1057901b5bcaabd42aea016b28623d8a51ddcd8ea2671b9a6e44d24147c23"
+      },
+      {
+        "class": "ContinuityRefreshReuseTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "2ff8824bcda973e55e6f63fb246ff01e6139cef744f441f206d7528522b349c9"
+      },
+      {
+        "class": "DirectComponentScheduleCacheTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "27759a6aa93cca3607f06a18c816d7c218058a0cab3a9cd5b2cd650654007f7e"
+      },
+      {
+        "class": "DirectSupportUnionScheduleTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "62f7e80737b261e280bf302b6dcb74b45dba3af9b502438c0822091dd961c79f"
+      },
+      {
+        "class": "DirectedDirectClosureDirtyConeTest",
+        "tests": 28,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "f4d0714fc1521b477bc575f3488ed7ed8a647eede73708f739071843f1e950cc"
+      },
+      {
+        "class": "EliminationOrderScoreCacheTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "65fb03ea564c2ebb138aedea5d52ec5dd51d18e29ebe289b7c7bf1c62aeecddd"
+      },
+      {
+        "class": "ExactCategoricalSolverTest",
+        "tests": 21,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "5dcfa3126468cd1f32170c79f71edc831bbf9c075dfd5890655c08c9188ddf7e"
+      },
+      {
+        "class": "ExactDyadicOrderedResidualBoundaryTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "4afab0862e8ed54a8397f3d318d68334dc4c5f7c3128ba74e1cc43f13fcb5dd1"
+      },
+      {
+        "class": "ExactDyadicOrderedResidualTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "d6f156331b2042df0ea50760b8eb1c1d537f8ff3a2b059e6616634346db7ec76"
+      },
+      {
+        "class": "ExactDyadicSolverTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "7e5e1b3271b8ed122add1a1a7a6bc684c9411c86609fb4ff556f3120878adf68"
+      },
+      {
+        "class": "ExactEliminationOrderPolicyTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "7e80e90d409a8b0dbbde78a36e2108bd1ab662487408346cc9fb809c7b1cbcc7"
+      },
+      {
+        "class": "ExactPhysicalCostFingerprintDeterminismTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "c3226a1a9956232e0c300e95781a72135641d68746182565b4c3d30f3a7f5d0a"
+      },
+      {
+        "class": "ExactPhysicalCostFingerprintPreflightTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "78ad99e9e8e86b72b522dab55ef5f1f70e7af4d20f24e605c44cefca317abb16"
+      },
+      {
+        "class": "ExactPhysicalCostSurfaceEstimateSnapshotTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "96d69358db85f683824bfeb75bd402d643f11e25b68f24bcebea703d8759f334"
+      },
+      {
+        "class": "ExactPhysicalShapeDemandTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "60f2aa69f625ec248dd98eb19a53d48d05233bf2f28f2ba371bb39a83c0496bc"
+      },
+      {
+        "class": "ExactSparseMessageParityTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "a9e5f5fca7a2d9b1f7a5da5345f52bcf143f8fc6e176015593b77122d585433e"
+      },
+      {
+        "class": "ExactSparseStorageBudgetTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "2ee5ccbd9e3b5f6dc049f7f53da2ce8c6d2738ae896badd07e96da203c212aba"
+      },
+      {
+        "class": "IncrementalBoundaryMessageTest",
+        "tests": 17,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "a2766503aa60549dd3f20b384f1ea7fccb46f4b5eaf456815c4f84d3252dd88a"
+      },
+      {
+        "class": "IncrementalBoundarySeedTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "42d0491fe29b588667718235231304810301828632455322f9e9c8be28603324"
+      },
+      {
+        "class": "IncrementalConditionalReplayTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "8251037083e33c3685b8c0a7b5636dfdb2c3684b824cc032d5ed176be33e62a1"
+      },
+      {
+        "class": "IncrementalRegionalOptimizerTest",
+        "tests": 20,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "573892468803d73325a1ca74c6b7a6e4cacc40c6b0869dcc18fd6470601a08fe"
+      },
+      {
+        "class": "JointPhysicalCostRowsPrefixTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "cf5a1be4ee5208846dd1524b0e268e3c201458ce3633842cdb9e4dd4d6d5ac5c"
+      },
+      {
+        "class": "JointPhysicalCostRowsTraversalMemoTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "d8729cbc1447fa911bdea955b46dbec781fb53c139f9a4176c6bc8bf2532e158"
+      },
+      {
+        "class": "JointPhysicalCostTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "5e0a283aa949894ee7a067b74970558b1840690f3fd93a942bc554be8c4562a9"
+      },
+      {
+        "class": "LogicalBoundaryRealizationsTest",
+        "tests": 17,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "67e6f25099f284f187b55504d81f26c39030e98cae54bfb5e3b3253d892152aa"
+      },
+      {
+        "class": "LoopSeedSnapshotEqualityMemoTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "025a0967c7998b615d7fbff64cebc64e778b5c0446d715977038ffda328af45c"
+      },
+      {
+        "class": "MaterializedContinuityTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "2741dde0079514e4877cdf05c813dca825c886fba93d37e414225d42acb192ea"
+      },
+      {
+        "class": "NativePlacementContinuityTest",
+        "tests": 85,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1,
+        "reportSha256": "951f463c66dd51291a2c979be1d78fab635c77bc63b0409a1b788f94c1c6c7c7"
+      },
+      {
+        "class": "NativePlacementGroundingAndSignatureTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "13645beed69dc605a93b6383a2ff937616d05ee67e57bc2f28d9ba20d2e7df68"
+      },
+      {
+        "class": "NativePlacementPruneOwnerTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "920cc80c91a9515821a72ed56572009c803507a96beceb724c55a8eaf418b973"
+      },
+      {
+        "class": "NativeProofSignatureCacheTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "30585583d33c9170d3111c96112c91952be973bf5eb7cf722741273d33ba169a"
+      },
+      {
+        "class": "NeutralPlacementFixedPointCompositionTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "44da3923d03967ba5d57bf0c31a925ee8d4736a4902f8a3c23f11a9e0ba43cf5"
+      },
+      {
+        "class": "NormalizedTextAppendSessionTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "c4f748fdea5d01365effabd20437b53ef2b606304c5e79deb646ef265fe1a614"
+      },
+      {
+        "class": "OracleFacadeInnerFailurePropagationTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "49a90a6ce0b18c410dbfb7ade775d6e6cf832702a965d1ea883a9e456ef9ea36"
+      },
+      {
+        "class": "OracleFacadeTest",
+        "tests": 28,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "128d3ddd6693395ee7f82b8347b0c0b7ae7762cda03c6dd57404f9fb631e4659"
+      },
+      {
+        "class": "PlacementAnalysisNormalizedTextTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "ea14f1b1437f977b5ea3061e5b35daf307d8dd6305309b2284635f363d934362"
+      },
+      {
+        "class": "PlacementIdentityAnalysisScopeTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "c25e97b403a2bea4b07bf1a7bade6097b1800dbcfd3b0aa8a603545c6d22a005"
+      },
+      {
+        "class": "PlacementRealizationAuthorityTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "e6e653de72e8a50e2d42c26593280e3d30cbd9dcb36f812a75ac1294aa541af5"
+      },
+      {
+        "class": "PlannerCandidateSpaceAuditEncodingTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "92382a21444112812b3e4a6dea718bef60f763be78b91db9df6cd68a88319ebf"
+      },
+      {
+        "class": "PlannerResourceGuardTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "a897c787b86693efcbc79e1dcdab4d501a8f36f6e2d29d8d50cf9c4cf8cfc202"
+      },
+      {
+        "class": "PruningAblationTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "736e2ce2f287f05ce7c3233e8cb55017c61d3c0d5bab36220991010aa8a652e1"
+      },
+      {
+        "class": "PublicationSupportClosureTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "4f775036f0da02f32b53f68c98e59c2531d57274b770b1971e32635cfd707672"
+      },
+      {
+        "class": "RelocationBindingScheduleTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "c23ea07cd41aa7417cbab848c958566864a679ba01f7d463ea09399122306efc"
+      },
+      {
+        "class": "RelocationProductMemoTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "0a7c5ab718e63f00c6bfdcae7e49611e9ed2dc08d0a3781e1996c2023f7e2497"
+      },
+      {
+        "class": "RequiredInputSupportMemoTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "7a075d1670530cabedb9cedbd22f3b7ff4f56ab5b1335416e3088e1c608d5cf3"
+      },
+      {
+        "class": "SharedReductionRepairTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "1ab072f8872f81c3e2f74328e67fd6c7c4121315bbe5962dc9bcfe16fb70a656"
+      },
+      {
+        "class": "SharedRegionalCompactionParityTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "99ce840d711d711172003c58bac6aae354eb21b4c06f510730958b44fad6885c"
+      },
+      {
+        "class": "SharedRegionalPreparationTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "4df20e5651a77a15a2bbdbc2394bf3026abb72385e18d41c7b546b6f9441f174"
+      },
+      {
+        "class": "SparseKnownZeroMaskTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "becac877094c9433a338ba019afa6bec02651b2d4615533a5fa7c91586f3bac5"
+      },
+      {
+        "class": "StepLmPublicationReceiptClosureTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "75fba4a9d0dab7228b3f6a967ac69b0079d2c00a1c3b1fbd78f0e0e609471888"
+      },
+      {
+        "class": "WorkerPoolAnchorResolverCycleTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "c24765d12afb8c0b76aef1ca12662fa9110bc2761495d190c74f28f059718bce"
+      },
+      {
+        "class": "WorkerPoolAnchorResolverFunctionReturnTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "38041fea6e9d1ce5e28abe088580ed054da2a2ed90a7c8c3597517c4b42bbf3c"
+      },
+      {
+        "class": "WorkerPoolRealizationTraversalTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "768553beb12e5fcd1a5210a018006f8de82a3cdc159cd06d2765fa95d399b0a3"
+      },
+      {
+        "class": "LoopSeedReplayWideningTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "reportSha256": "b2190b63a8ee7088649415798e9bbdaffd8f87b4ba65b12c8bbdd87149008797"
+      }
+    ],
+    "total": {
+      "tests": 579,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1
+    }
+  },
+  "python": {
+    "evaluatorTests": 11,
+    "harnessTests": 35,
+    "failures": 0
+  },
+  "package": "PASS",
+  "diffCheck": "PASS",
+  "changedSourceSha256": {
+    "scripts/fedplanner/evaluate_steplm_planning.py": "07eae60e2ff13d696742eaeb02bc2c3e6b40d38881f59de87e06215adff0b28f",
+    "scripts/fedplanner/tests/test_evaluate_steplm_planning.py": "661bc88f10bd13f3834f437add8dd6f5a62263a085c9ee37066b231061cd6a38",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/FederatedPlannerLogger.java": "95518cd98859f37e6149e0ea5d885024107c6b1c55c204e4ad5d2e80698bb11a",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.java": "9d398389f870de7e87eb0531e2e26acc1233d146cd3bf3fc4dc11ddbb5ea8fc9",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java": "f405713f008cd3efe0c8fc7014209e64a5caefa51bc0bfd3a1d42402b9c2dd2b",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizer.java": "4239544f6d120658b2b374fd51f472fabf12c7d1a5336518f5773878736d097e",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.java": "32e5c15017d1c215db609fe1c07eaa97f8665dcf84032094bc748691c5dc0fdb",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/PlannerResourceGuard.java": "45fcd9816ace27957739a0abe2e17435959652774bbfb951616f89e3e362af0a",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedRegionalPreparation.java": "94f14cf60def60de95433478df43bdfe149582167e596adb7c379d40a44fc92b",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/LogicalBoundaryRealizations.java": "b8a4f63019ed651d2aa0bd48d18d38f50e39c987e92f2065002c35c51ce28da8",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/NativePlacementContinuity.java": "df41981d6715483de2d640c457338b2b55ad9cbbe9f5cb3edff2db027df94d61",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.java": "47686b44cb034bab595c807f01eeb89539c42dedac3bc2131d7699554cee39c2",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementIdentity.java": "9bafefd804c72d31c493f99890af5e176ae221eff6953a44ba6762f7ecbac30f",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java": "7dc89b3ec42bd68dedc63c9113079a8986b324ecb701131bc7e64533c4773509",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlannerCandidateSpaceAudit.java": "aa2d78d98839ba0c46cee2af9670dfa017c213cda841cde19ef8e0d716fe61a4",
+    "src/main/java/org/apache/sysds/hops/fedplanner/rules/bridge/OracleFacade.java": "4e4d4c2e841af7406768770f17bcd6f7f5470df9051c5954a1820f5b87da4bc4",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/BoundarySupportMergeTest.java": "17b1a3c91ec5a1132b7b6c8005505915ce7d290ee830ae6c5fb9031f6d4cc165",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/EliminationOrderScoreCacheTest.java": "1398c5cf249503fd3345292a74ed61260b4ea4af820bf76cf261bb3a8debcc25",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalShapeDemandTest.java": "1065b9129e8610782ae6f85c529cc3bc1c7d1a2a6775b74f11ca075cb2d0299c",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalConditionalReplayTest.java": "759b872048bb9341bc1b19e39a2d9941a7ac50ae55db19c553763fa20c2fed5c",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IncrementalRegionalOptimizerTest.java": "429c417e43fef7193c898edb9a6ac45685ae475f617eeac3cafcc83eebe8994a",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRowsTraversalMemoTest.java": "3811bb6d2a8c5bbe364c481a61bdd33d96ecdf889abfcf38b50af9d3dbc40bcf",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/PlannerResourceGuardTest.java": "1dfb7ea792bf7c845060823970def4abe52faaee3373dd574cb3b23671ba697b",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SharedRegionalPreparationTest.java": "84b617e7be90c29c7bd236ee1f62abf072af4ad984c23e90e65e722d7159bc02",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/SparseKnownZeroMaskTest.java": "9ac097abbd886ee12980fd8abbc206c75931768137c163865e486a6cc5cf5876",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/CandidateRealizationCanonicalizationTest.java": "3fb0b764a14f85828d2a3d273f002aafe074453e8a040db59e1fd3686ca08d4a",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/CandidateRealizationReferenceHashTest.java": "0423ea5fc8187c2860db6b1724817503f3dbf399280ae60f7650f97ce38d9e58",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/CandidateRuleFactsRealizationIndexTest.java": "5ee016e4ac818517626d687f7bc135e5a21f68802e797c828b3e5c12883bd35c",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/CanonicalTextDagCacheTest.java": "d7d4489807eba39d759cd7bd336c5f447c84b8add2ca0f5467e4225dcfd35a9b",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/ContinuityRefreshReuseTest.java": "9522488eca4d5d91e313771c52b536cd593b7cab5a92f8e4edb3f5a64c875d3b",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/DirectedDirectClosureDirtyConeTest.java": "7dc83e5e95b4c26a5f39c876007b89c25698f32437502fd5746c86c23a3b7489",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/LogicalBoundaryRealizationsTest.java": "d56dd9ce66e08151eb741007e83f47464ca7fe749783f5bd4b92e56aafec4932",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/NativePlacementContinuityTest.java": "fa5c30a040a75d3ba357e3322c262ccca4287ad966b1975131ec077b7eed476e",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/NativePlacementPruneOwnerTest.java": "a53a8eca43c15093ecfa3198d4d6b448349cbb9d3be01660c31d45e9f399b8a5",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementIdentityAnalysisScopeTest.java": "974ce0592162593880f76d2329e4348a893e2de0dfba72d4893a6e6e694b9a19",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementRealizationAuthorityTest.java": "420a8fc2d251ccfdd87793ff9dedeab9fcd4334aa1b2efc766946500921a8122",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/PlannerCandidateSpaceAuditEncodingTest.java": "3d8f7d9a13bf3d6f94756770bde5eedfb75b6fb354525f5444250aa53b58e765",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/RelocationBindingScheduleTest.java": "e36650fb8845f48e52f47fe6e3b11b2e2de45a45f9067acf770a5fdf20060ba9",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/WorkerPoolRealizationTraversalTest.java": "acac84fdb509866a84d51bfee6c39865f054532f6e15de7bac2c34b03930dd54"
+  },
+  "testEvidenceRoot": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-20261007/target/planning-evidence",
+  "performanceEvaluation": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-final-evaluation.json",
+  "additionalJava": {
+    "step17": {
+      "status": "PASS",
+      "classCount": 17,
+      "rows": [
+        {
+          "class": "CandidateRealizationCanonicalizationTest",
+          "tests": 52,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "d52dffff93ae8eb592361b8c0f2a60850d2521c6487a2b08f59b806c27f5e851"
+        },
+        {
+          "class": "CanonicalTextDagCacheTest",
+          "tests": 8,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "b95f6f6fc3fe408e075b41ce80783edb29ef1cc879af8f719dc0b80fe660ae00"
+        },
+        {
+          "class": "CanonicalTextScopedCacheTest",
+          "tests": 9,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "3d14a7b5e676031b2dd1203b3c0f66840b12a0aec749100a0d7969660577239d"
+        },
+        {
+          "class": "CanonicalTextChunkComparisonTest",
+          "tests": 2,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "037a927ddba0e5f093208098a308ba0872eb498257b2dab6bef28406684cd85f"
+        },
+        {
+          "class": "NormalizedTextAppendSessionTest",
+          "tests": 6,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "8a4bb40c16b3d70af0f52ab5cfecfbd715006f40e861c9bb828af23332ad46d6"
+        },
+        {
+          "class": "PlacementAnalysisNormalizedTextTest",
+          "tests": 6,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "78a815c5101d1bc9680994a5d7f3639bde367cc93ee7b319966aa73b4dc2fa89"
+        },
+        {
+          "class": "PlacementRealizationAuthorityTest",
+          "tests": 12,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "1441413a715e08f2f00dc89e967f8c4a7e7925d098dce3e53fa3d18f0fb559e1"
+        },
+        {
+          "class": "StepLmPublicationReceiptClosureTest",
+          "tests": 1,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "067f97e9f3951174ccb3976fdd52b7d7a59de31f9ecc686300c6b38269aa16a2"
+        },
+        {
+          "class": "RelocationBindingScheduleTest",
+          "tests": 6,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "07e7083f470c35ffa717a4bfb2e13b868364219f2f9730dde3f6ad0d431168b6"
+        },
+        {
+          "class": "MaterializedContinuityTest",
+          "tests": 4,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "89e0e695e35e2331de590f1971bd666e4c5b7d32d213e25138a1c624fa16f681"
+        },
+        {
+          "class": "SharedRegionalPreparationTest",
+          "tests": 12,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "75e03b7773aa83d8fbf1afb5773fdc59900079ef212dbc312e0c467ae2910e6a"
+        },
+        {
+          "class": "SharedRegionalCompactionParityTest",
+          "tests": 7,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "a6d980cefc1752c80386706d8e57539b7e919d6cbb0eb1d4561084f69af5b70e"
+        },
+        {
+          "class": "SharedReductionRepairTest",
+          "tests": 6,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "8866c3b06d8fedf131059912d72212b4662981c6c334b6e07a0937d6699d11c0"
+        },
+        {
+          "class": "IncrementalConditionalReplayTest",
+          "tests": 4,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "96794f8e4024c2d5d4e7d8712bf17c270dc749a17a676c434a7ec8207b568f42"
+        },
+        {
+          "class": "IncrementalRegionalOptimizerTest",
+          "tests": 20,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "d80e9669c85cb2c36a57e66f78e9e26d1fbc69076fb31f88eadf1072a1b049a9"
+        },
+        {
+          "class": "IncrementalBoundarySeedTest",
+          "tests": 11,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "389ee888fe0297c4d997ba3713e48f2f82826a2c5e8f6d4a0317a4a63de16eab"
+        },
+        {
+          "class": "IncrementalBoundaryMessageTest",
+          "tests": 17,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "xmlSha256": "53046d4ec17ac302f52dbaa59732a5db57528fc4b1001a48f2b4cb3b891b0314"
+        }
+      ],
+      "total": {
+        "tests": 183,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "conditionalWitnessFinalIsolated": {
+      "tests": 90,
+      "failures": 0,
+      "errors": 0,
+      "logPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-20261007/target/planning-evidence/conditional-witness-splice-01/focused-junit-06.log",
+      "logSha256": "ca14b3cb4a24f7fe663e4bf2b91108d421bd08974070be37a241e44d8bb77b8f"
+    }
+  },
+  "sourceHashNote": "These hashes represent the pre-main-integration intermediate commit. The earlier 579-case broad suite predates step17; additionalJava covers subsequent edits."
+}

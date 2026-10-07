@@ -51,6 +51,23 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 
 	/** One entry per source factor: cache cells can never exceed root input cells. */
 	private record Conditioned(int[] boundary, Factor factor) { }
+	/** Exact conditional result plus an optional assignment in the shared compact root. */
+	static record ConditionalResult(ExactCategoricalSolver.Result block, int[] rootWitness) {
+		ConditionalResult {
+			rootWitness = rootWitness == null ? null : rootWitness.clone();
+		}
+		@Override public int[] rootWitness() {
+			return rootWitness == null ? null : rootWitness.clone();
+		}
+	}
+
+	@FunctionalInterface
+	interface PreparedConditionalSolver {
+		ConditionalResult solve(int[] incumbent);
+	}
+
+	private record PreparedSlice(LocalCategoricalOptimizer.PreparedBlockSolver solver,
+		int[] indexes, int[] originalBlock) { }
 
 	SharedRegionalPreparation(RegionalSearchProblem problem, Limits limits, boolean compact) {
 		this(problem,limits,limits,0L,-1L,compact);
@@ -148,11 +165,20 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 
 	@Override
 	public LocalCategoricalOptimizer.PreparedBlockSolver prepare(int[] assignment, int[] block) {
+		PreparedConditionalSolver prepared = prepareConditional(assignment, block, null);
+		return prepared == null ? null : () -> prepared.solve(null).block();
+	}
+
+	PreparedConditionalSolver prepareConditional(int[] assignment, int[] block,
+		ExactPhysicalReducedSolver.CompactModel expectedRoot) {
 		long started = System.nanoTime();
 		lastFallbackReason = null;
 		try {
 			initialize();
-			return prepareReduced(assignment, block);
+			PreparedSlice prepared = prepareReduced(assignment, block);
+			boolean mapped = expectedRoot != null && root == expectedRoot;
+			int[] fixedSource = assignment.clone();
+			return incumbent -> solvePrepared(prepared, fixedSource, incumbent, mapped);
 		}
 		catch(IllegalArgumentException failure) {
 			if(!RegionalSearchProblem.isResourceLimit(failure))
@@ -208,7 +234,7 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 		}
 	}
 
-	private LocalCategoricalOptimizer.PreparedBlockSolver prepareReduced(int[] assignment, int[] block) {
+	private PreparedSlice prepareReduced(int[] assignment, int[] block) {
 		int decisions = problem.decisionCount();
 		boolean[] free = new boolean[root.variables().size()];
 		boolean[] selected = new boolean[scopes.size()];
@@ -331,14 +357,47 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 			solver = () -> ExactCategoricalSolver.solve(selectedCompilation);
 		}
 		blocks++;
-		int[] originalBlock = block.clone();
-		return () -> {
-			ExactCategoricalSolver.Result solved = solver.solve();
-			List<Integer> originalValues = new ArrayList<>();
-			for(int i = 0; i < originalBlock.length; i++)
-				originalValues.add(root.sourceValue(originalBlock[i], solved.assignmentInVariableOrder().get(i)));
-			return new ExactCategoricalSolver.Result(solved.objective(), originalValues, solved.statistics());
-		};
+		return new PreparedSlice(solver, indexes.stream().mapToInt(Integer::intValue).toArray(),
+			block.clone());
+	}
+
+	private ConditionalResult solvePrepared(PreparedSlice prepared, int[] sourceAssignment,
+		int[] incumbent, boolean mapped) {
+		ExactCategoricalSolver.Result solved = prepared.solver().solve();
+		List<Integer> solvedLocal = solved.assignmentInVariableOrder();
+		int[] block = prepared.originalBlock();
+		if(solvedLocal.size() < block.length)
+			throw new IllegalStateException("REGIONAL_CONDITIONAL_RESULT_SIZE_MISMATCH");
+		List<Integer> originalValues = new ArrayList<>(block.length);
+		for(int i = 0; i < block.length; i++)
+			originalValues.add(root.sourceValue(block[i], solvedLocal.get(i)));
+		ExactCategoricalSolver.Result blockResult = new ExactCategoricalSolver.Result(
+			solved.objective(), originalValues, solved.statistics());
+		if(!mapped || incumbent == null || incumbent.length != root.variables().size()
+			|| solvedLocal.size() != prepared.indexes().length)
+			return new ConditionalResult(blockResult, null);
+
+		boolean[] freeOriginal = new boolean[root.originalDecisionCount()];
+		for(int original : block) {
+			if(original < 0 || original >= freeOriginal.length)
+				return new ConditionalResult(blockResult, null);
+			freeOriginal[original] = true;
+		}
+		for(int original = 0; original < freeOriginal.length; original++)
+			if(!freeOriginal[original]
+				&& root.sourceValue(original, incumbent[original]) != sourceAssignment[original])
+				return new ConditionalResult(blockResult, null);
+
+		int[] witness = incumbent.clone();
+		for(int local = 0; local < prepared.indexes().length; local++) {
+			int target = prepared.indexes()[local];
+			int value = solvedLocal.get(local);
+			if(target < 0 || target >= witness.length || value < 0
+				|| value >= root.variables().get(target).domainSize())
+				return new ConditionalResult(blockResult, null);
+			witness[target] = value;
+		}
+		return new ConditionalResult(blockResult, witness);
 	}
 
 	/** Borrowed root tables are excluded; projected inputs and intermediates share one additional budget. */

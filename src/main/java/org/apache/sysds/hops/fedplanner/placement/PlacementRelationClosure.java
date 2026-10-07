@@ -3609,8 +3609,6 @@ final class PlacementRelationClosure {
 				? continuityForAllDefinitions(nodesByKey, origins, current.facts(), compiledEdges, reachingSources)
 				: new NativePlacementContinuity(nodesByKey, origins, current.facts(),
 					compiledEdges, directReachingSources, complexityMetrics);
-			DirectBindingIndex directIndex = directBindingIndex(directTemplates, current.nodes(), compiledEdges,
-				current.facts());
 			// The preceding composed pass already grounded a complete direct frontier.
 			// Revisit only rows whose exact proof context changed during CFG replay;
 			// the first pass or an unpairable revision keeps the old full path.
@@ -3618,11 +3616,18 @@ final class PlacementRelationClosure {
 				? initialPostPhysicalDirectDirty(lastDirectNodes, lastDirectFacts, lastDirectEdges,
 					lastDirectReaching, current.nodes(), current.facts(), compiledEdges,
 					directReachingSources, Set.of()) : null;
-			DirectClosureResult direct = closeDirectComponents(directIndex, current.facts(), current.nodes(),
-				compiledEdges, directReachingSources, constraints, origins, shapeFactsByHop, nativePools, directDirty);
+			DirectClosureResult direct = unchangedDirectClosure(current.facts(), nativePools, directDirty);
+			if(direct == null) {
+				DirectBindingIndex directIndex = directBindingIndex(directTemplates, current.nodes(), compiledEdges,
+					current.facts());
+				direct = closeDirectComponents(directIndex, current.facts(), current.nodes(),
+					compiledEdges, directReachingSources, constraints, origins, shapeFactsByHop,
+					nativePools, directDirty);
+			}
 			current = new ClosureUpdate(current.nodes(), current.domainKeys(), direct.facts(),
 				current.logicalInputs(), current.changedOrdinals());
 			nativePools = direct.continuity();
+			boolean continuityStale = false;
 			// Direct grounding can rebuild an alias from its static template. Restore
 			// dynamic boundary/map realizations before the first CFG replay, just as we
 			// do after the later physical direct pass. Otherwise the replay temporarily
@@ -3633,18 +3638,16 @@ final class PlacementRelationClosure {
 				List<CandidateRuleFact> beforeValueMapFacts = current.facts();
 				ValueMapCandidateClosure valueMaps = closeValueMapConsumersAndBoundaries(
 					current.nodes(), current.facts());
+				List<Integer> valueMapChanged = changedCandidateOwnerOrdinals(
+					beforeValueMapNodes, beforeValueMapFacts, valueMaps.nodes(), valueMaps.facts());
 				java.util.TreeSet<Integer> changed = new java.util.TreeSet<>(current.changedOrdinals());
-				changed.addAll(changedCandidateOwnerOrdinals(beforeValueMapNodes, beforeValueMapFacts,
-					valueMaps.nodes(), valueMaps.facts()));
+				changed.addAll(valueMapChanged);
 				current = new ClosureUpdate(valueMaps.nodes(), current.domainKeys(), valueMaps.facts(),
 					current.logicalInputs(), List.copyOf(changed));
+				continuityStale |= !valueMapChanged.isEmpty();
 				nodesByKey.clear();
 				for(Node node : current.nodes())
 					nodesByKey.put(node.key(), node);
-				nativePools = activeLoopSeeds.isEmpty()
-					? continuityForAllDefinitions(nodesByKey, origins, current.facts(), compiledEdges, reachingSources)
-					: new NativePlacementContinuity(nodesByKey, origins, current.facts(),
-						compiledEdges, directReachingSources, complexityMetrics);
 			}
 			if(actionAuthority != null && !actionAuthority.isEmpty()) {
 				List<CandidateRuleFact> beforeActionFacts = current.facts();
@@ -3656,12 +3659,14 @@ final class PlacementRelationClosure {
 						current.nodes(), actionBound));
 					current = new ClosureUpdate(current.nodes(), current.domainKeys(), actionBound,
 						current.logicalInputs(), List.copyOf(changed));
-					nativePools = activeLoopSeeds.isEmpty()
-						? continuityForAllDefinitions(nodesByKey, origins, current.facts(), compiledEdges, reachingSources)
-						: new NativePlacementContinuity(nodesByKey, origins, current.facts(),
-							compiledEdges, directReachingSources, complexityMetrics);
+					continuityStale = true;
 				}
 			}
+			if(continuityStale)
+				nativePools = activeLoopSeeds.isEmpty()
+					? continuityForAllDefinitions(nodesByKey, origins, current.facts(), compiledEdges, reachingSources)
+					: new NativePlacementContinuity(nodesByKey, origins, current.facts(),
+						compiledEdges, directReachingSources, complexityMetrics);
 			if(activeLoopSeeds.isEmpty())
 				allDefinitionContinuity = nativePools;
 			Set<CompiledHopKey> priorLoopSeeds = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -3776,8 +3781,6 @@ final class PlacementRelationClosure {
 					physicalEdges, seedReachingSources, complexityMetrics)
 				: continuityForAllDefinitions(physicalNodesByKey, origins,
 					physicallyClosed.facts(), physicalEdges, physicalReachingSources);
-			DirectBindingIndex physicalDirectIndex = directBindingIndex(directTemplates, physicalNodes,
-				physicalEdges, physicallyClosed.facts());
 			// Rebuilding a physical dirty cone restores base rows only in that cone.
 			// Keep the already-grounded rows outside it instead of starting another
 			// full proof pass. An unpairable revision conservatively uses the old path.
@@ -3785,23 +3788,37 @@ final class PlacementRelationClosure {
 				? initialPostPhysicalDirectDirty(current.nodes(), current.facts(), compiledEdges,
 					reachingSources, physicallyClosed.nodes(), physicallyClosed.facts(), physicalEdges,
 					seedReachingSources, newlyInstalledLoopSeeds.keySet()) : null;
-			DirectClosureResult physicalDirect = closeDirectComponents(physicalDirectIndex,
-				physicallyClosed.facts(), physicallyClosed.nodes(), physicalEdges, seedReachingSources,
-				constraints, origins, shapeFactsByHop, physicalPools, physicalDirectDirty);
+			DirectClosureResult physicalDirect = unchangedDirectClosure(
+				physicallyClosed.facts(), physicalPools, physicalDirectDirty);
+			if(physicalDirect == null) {
+				DirectBindingIndex physicalDirectIndex = directBindingIndex(directTemplates, physicalNodes,
+					physicalEdges, physicallyClosed.facts());
+				physicalDirect = closeDirectComponents(physicalDirectIndex,
+					physicallyClosed.facts(), physicallyClosed.nodes(), physicalEdges, seedReachingSources,
+					constraints, origins, shapeFactsByHop, physicalPools, physicalDirectDirty);
+			}
 			physicallyClosed = new ClosureUpdate(physicallyClosed.nodes(), physicallyClosed.domainKeys(),
 				physicalDirect.facts(), physicallyClosed.logicalInputs(),
 				physicallyClosed.changedOrdinals());
 			physicalPools = physicalDirect.continuity();
+			boolean physicalContinuityStale = false;
 			if(this.constraints != null) {
 				List<Node> beforeValueMapNodes = physicallyClosed.nodes();
 				List<CandidateRuleFact> beforeValueMapFacts = physicallyClosed.facts();
 				ValueMapCandidateClosure valueMaps = closeValueMapConsumersAndBoundaries(
 					physicallyClosed.nodes(), physicallyClosed.facts());
+				List<Integer> valueMapChanged = changedCandidateOwnerOrdinals(
+					beforeValueMapNodes, beforeValueMapFacts, valueMaps.nodes(), valueMaps.facts());
 				java.util.TreeSet<Integer> changed = new java.util.TreeSet<>(physicallyClosed.changedOrdinals());
-				changed.addAll(changedCandidateOwnerOrdinals(beforeValueMapNodes, beforeValueMapFacts,
-					valueMaps.nodes(), valueMaps.facts()));
+				changed.addAll(valueMapChanged);
 				physicallyClosed = new ClosureUpdate(valueMaps.nodes(), physicallyClosed.domainKeys(),
 					valueMaps.facts(), physicallyClosed.logicalInputs(), List.copyOf(changed));
+				physicalContinuityStale |= !valueMapChanged.isEmpty();
+				if(!valueMapChanged.isEmpty()) {
+					physicalNodesByKey.clear();
+					for(Node node : physicallyClosed.nodes())
+						physicalNodesByKey.put(node.key(), node);
+				}
 			}
 			// The next pass's direct dirty comparison must start from the relation that
 			// direct/VALUE_MAP closure actually consumed. Action binding below is new
@@ -3821,13 +3838,15 @@ final class PlacementRelationClosure {
 						physicallyClosed.nodes(), actionBound));
 					physicallyClosed = new ClosureUpdate(physicallyClosed.nodes(), physicallyClosed.domainKeys(),
 						actionBound, physicallyClosed.logicalInputs(), List.copyOf(changed));
-					physicalPools = provisionalSeedContext
-						? new NativePlacementContinuity(physicalNodesByKey, origins, physicallyClosed.facts(),
-							physicalEdges, seedReachingSources, complexityMetrics)
-						: continuityForAllDefinitions(physicalNodesByKey, origins,
-							physicallyClosed.facts(), physicalEdges, physicalReachingSources);
+					physicalContinuityStale = true;
 				}
 			}
+			if(physicalContinuityStale)
+				physicalPools = provisionalSeedContext
+					? new NativePlacementContinuity(physicalNodesByKey, origins, physicallyClosed.facts(),
+						physicalEdges, seedReachingSources, complexityMetrics)
+					: continuityForAllDefinitions(physicalNodesByKey, origins,
+						physicallyClosed.facts(), physicalEdges, physicalReachingSources);
 			if(!provisionalSeedContext)
 				allDefinitionContinuity = physicalPools;
 			// Direct grounding can replace normalized realization identities. Re-run the
@@ -3836,14 +3855,9 @@ final class PlacementRelationClosure {
 			// New seeds are installed only by the first replay, where their active source
 			// and pending physical cone are registered together. Newly grounded entry
 			// evidence here remains eligible for installation at the next pass start.
-			NativePlacementContinuity replayPools = provisionalSeedContext
-				? new NativePlacementContinuity(physicalNodesByKey, origins, physicallyClosed.facts(),
-					physicalEdges, seedReachingSources, complexityMetrics)
-				: continuityForAllDefinitions(physicalNodesByKey, origins,
-					physicallyClosed.facts(), physicalEdges, physicalReachingSources);
 			ClosureUpdate relationClosed = replayUniqueCfgTransientForwards(occurrences,
 				physicallyClosed.nodes(), cfg, shapeFactsByHop, physicallyClosed.domainKeys(),
-				physicallyClosed.facts(), physicallyClosed.logicalInputs(), baseline, replayPools,
+				physicallyClosed.facts(), physicallyClosed.logicalInputs(), baseline, physicalPools,
 				Set.of(), installedLoopSeeds, activeLoopSeeds);
 			if(this.constraints != null) {
 				List<Node> beforeValueMapNodes = relationClosed.nodes();
@@ -3940,6 +3954,63 @@ final class PlacementRelationClosure {
 
 	private record DirectClosureResult(List<CandidateRuleFact> facts,
 		NativePlacementContinuity continuity) { }
+	private record DirectBindingResult(List<CandidateRuleFact> facts,
+		Map<CompiledHopKey,Set<CompiledHopKey>> dependencyOccurrences) { }
+
+	/** Complete native-query read sets for rows successfully rebound in this invocation. */
+	private static final class DirectQuerySubscriptions {
+		private final Map<CompiledHopKey,Set<CompiledHopKey>> dependenciesByOwner =
+			new IdentityHashMap<>();
+		private final Map<CompiledHopKey,Set<CompiledHopKey>> ownersByDependency =
+			new IdentityHashMap<>();
+
+		private void replace(Set<CompiledHopKey> owners,
+			Map<CompiledHopKey,Set<CompiledHopKey>> dependencies) {
+			for(CompiledHopKey owner : owners) {
+				remove(owner);
+				Set<CompiledHopKey> ownerDependencies = dependencies.get(owner);
+				// Nodes without a candidate row perform no native query. Their empty
+				// binding is complete and depends only on their own row inventory.
+				if(ownerDependencies == null)
+					ownerDependencies = Set.of(owner);
+				dependenciesByOwner.put(owner, ownerDependencies);
+				for(CompiledHopKey dependency : ownerDependencies)
+					ownersByDependency.computeIfAbsent(dependency,
+						ignored -> Collections.newSetFromMap(new IdentityHashMap<>())).add(owner);
+			}
+		}
+
+		private void invalidate(Set<CompiledHopKey> owners) {
+			for(CompiledHopKey owner : owners)
+				remove(owner);
+		}
+
+		private void remove(CompiledHopKey owner) {
+			Set<CompiledHopKey> previous = dependenciesByOwner.remove(owner);
+			if(previous == null)
+				return;
+			for(CompiledHopKey dependency : previous) {
+				Set<CompiledHopKey> subscribers = ownersByDependency.get(dependency);
+				subscribers.remove(owner);
+				if(subscribers.isEmpty())
+					ownersByDependency.remove(dependency);
+			}
+		}
+
+		private boolean complete(CompiledHopKey owner) {
+			return dependenciesByOwner.containsKey(owner);
+		}
+
+		private Set<CompiledHopKey> subscribers(CompiledHopKey dependency) {
+			return ownersByDependency.getOrDefault(dependency, Set.of());
+		}
+	}
+
+	/** The exact dirty comparison proves this private CFG direct transfer is an identity. */
+	private static DirectClosureResult unchangedDirectClosure(List<CandidateRuleFact> facts,
+		NativePlacementContinuity continuity, Set<CompiledHopKey> dirty) {
+		return dirty != null && dirty.isEmpty() ? new DirectClosureResult(facts, continuity) : null;
+	}
 
 	/** Resolve ready dependency components, not the full descendant relation each pass. */
 	private DirectClosureResult closeDirectComponents(DirectBindingIndex index,
@@ -3975,6 +4046,7 @@ final class PlacementRelationClosure {
 		PlacementDependencyComponents components = directComponentSchedule(
 			owners, potential, support, aliasEdges, directComponentSchedules);
 		LogicalBoundaryRealizations.Session boundarySession = null;
+		DirectQuerySubscriptions querySubscriptions = new DirectQuerySubscriptions();
 		Set<CompiledHopKey> pending = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(var component : components.initialDirtyComponents(
 			initialDirty == null ? owners : List.copyOf(initialDirty)))
@@ -3985,7 +4057,7 @@ final class PlacementRelationClosure {
 			Set<PlacementDependencyComponents.Component> dirty = Collections.newSetFromMap(new IdentityHashMap<>());
 			for(CompiledHopKey owner : pending)
 				dirty.add(components.componentOf(owner));
-			Set<CompiledHopKey> selected = readyDirectOwners(components, pending);
+			Set<CompiledHopKey> selected = readyDirectOwners(components, pending, querySubscriptions);
 			if(selected.isEmpty())
 				throw new IllegalStateException("Direct component schedule has no ready dependency wave");
 			List<Integer> selectedSlots = new ArrayList<>();
@@ -3995,8 +4067,10 @@ final class PlacementRelationClosure {
 			List<CandidateRuleFact> selectedFacts = new ArrayList<>(selectedSlots.size());
 			for(int slot : selectedSlots)
 				selectedFacts.add(facts.get(slot));
-			List<CandidateRuleFact> rebound = bindDirectNativeCandidateRealizations(
+			DirectBindingResult binding = bindDirectNativeCandidateRealizations(
 				index, selectedFacts, origins, shapes, continuity, selected);
+			List<CandidateRuleFact> rebound = binding.facts();
+			querySubscriptions.replace(selected, binding.dependencyOccurrences());
 			List<CandidateRuleFact> merged = new ArrayList<>(facts);
 			for(int offset = 0; offset < selectedSlots.size(); offset++)
 				merged.set(selectedSlots.get(offset), rebound.get(offset));
@@ -4008,6 +4082,9 @@ final class PlacementRelationClosure {
 			Set<CompiledHopKey> touched = Collections.newSetFromMap(new IdentityHashMap<>());
 			touched.addAll(directChanged);
 			touched.addAll(boundary.changedOwners());
+			// A changed direct output, including one restored or rewritten by the
+			// boundary closure, was not proved against the committed row.
+			querySubscriptions.invalidate(touched);
 			// Direct binding writes only selected slots; the boundary session reports
 			// its complete delta. Compare their union to detect net cancellations too.
 			Set<CompiledHopKey> changed = changedCandidateOwnersInSlots(facts, merged, slots, touched);
@@ -4022,17 +4099,8 @@ final class PlacementRelationClosure {
 			if(changed.isEmpty())
 				continue;
 			DirectSupportUpdate supportUpdate = supportIndex.update(changed, merged);
-			Set<CompiledHopKey> affected = Collections.newSetFromMap(new IdentityHashMap<>());
-			java.util.ArrayDeque<CompiledHopKey> queue = new java.util.ArrayDeque<>(changed);
-			while(!queue.isEmpty()) {
-				CompiledHopKey owner = queue.removeFirst();
-				if(!affected.add(owner)) continue;
-				queue.addAll(potential.getOrDefault(owner, Set.of()));
-				queue.addAll(support.getOrDefault(owner, Set.of()));
-				queue.addAll(supportUpdate.removed().getOrDefault(owner, Set.of()));
-				queue.addAll(aliases.getOrDefault(owner, List.of()));
-			}
-			pending.addAll(affected);
+			pending.addAll(requiredDirectClosureOccurrences(changed, potential, support,
+				supportUpdate.removed(), aliases, querySubscriptions));
 			if(supportUpdate.changed()) {
 				// Preserve unsettled members when added OR removed edges change SCCs.
 				for(var component : dirty)
@@ -4054,8 +4122,47 @@ final class PlacementRelationClosure {
 		return new DirectClosureResult(facts, continuity);
 	}
 
+	private static Set<CompiledHopKey> requiredDirectClosureOccurrences(
+		Set<CompiledHopKey> changed,
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential,
+		Map<CompiledHopKey,Set<CompiledHopKey>> support,
+		Map<CompiledHopKey,Set<CompiledHopKey>> removedSupport,
+		Map<CompiledHopKey,List<CompiledHopKey>> aliases,
+		DirectQuerySubscriptions querySubscriptions) {
+		Set<CompiledHopKey> affected = Collections.newSetFromMap(new IdentityHashMap<>());
+		Set<CompiledHopKey> required = Collections.newSetFromMap(new IdentityHashMap<>());
+		required.addAll(changed);
+		for(CompiledHopKey owner : changed) {
+			required.addAll(potential.getOrDefault(owner, Set.of()));
+			required.addAll(support.getOrDefault(owner, Set.of()));
+			required.addAll(removedSupport.getOrDefault(owner, Set.of()));
+			required.addAll(aliases.getOrDefault(owner, List.of()));
+			required.addAll(querySubscriptions.subscribers(owner));
+		}
+		querySubscriptions.invalidate(changed);
+		java.util.ArrayDeque<CompiledHopKey> queue = new java.util.ArrayDeque<>(changed);
+		while(!queue.isEmpty()) {
+			CompiledHopKey owner = queue.removeFirst();
+			if(!affected.add(owner))
+				continue;
+			queue.addAll(potential.getOrDefault(owner, Set.of()));
+			queue.addAll(support.getOrDefault(owner, Set.of()));
+			queue.addAll(removedSupport.getOrDefault(owner, Set.of()));
+			queue.addAll(aliases.getOrDefault(owner, List.of()));
+		}
+		for(CompiledHopKey owner : affected)
+			if(!querySubscriptions.complete(owner))
+				required.add(owner);
+		return required;
+	}
+
 	private static Set<CompiledHopKey> readyDirectOwners(PlacementDependencyComponents components,
 		Set<CompiledHopKey> pending) {
+		return readyDirectOwners(components, pending, null);
+	}
+
+	private static Set<CompiledHopKey> readyDirectOwners(PlacementDependencyComponents components,
+		Set<CompiledHopKey> pending, DirectQuerySubscriptions subscriptions) {
 		Set<PlacementDependencyComponents.Component> dirty = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(CompiledHopKey owner : pending)
 			dirty.add(components.componentOf(owner));
@@ -4065,7 +4172,9 @@ final class PlacementRelationClosure {
 		Set<CompiledHopKey> selected = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(var component : components.topologicalOrder())
 			if(dirty.contains(component) && !blocked.contains(component))
-				selected.addAll(component.owners());
+				for(CompiledHopKey owner : component.owners())
+					if(pending.contains(owner) || subscriptions == null || !subscriptions.complete(owner))
+						selected.add(owner);
 		return selected;
 	}
 
@@ -4262,14 +4371,14 @@ final class PlacementRelationClosure {
 	}
 
 	/** Materializes candidate-specific direct native input authority before CFG replay. */
-	private List<CandidateRuleFact> bindDirectNativeCandidateRealizations(
+	private DirectBindingResult bindDirectNativeCandidateRealizations(
 		DirectBindingIndex index, List<CandidateRuleFact> facts,
 		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes,
 		NativePlacementContinuity continuity, Set<CompiledHopKey> dirtyOccurrences) {
 		SearchSpaceMetrics.PhaseToken started = complexityMetrics == null ? null
 			: complexityMetrics.startPhase(SearchSpaceMetrics.Phase.DIRECT_BINDING);
 		try {
-			return bindDirectNativeCandidateRealizationsMeasured(index, facts, origins, shapes,
+			return bindDirectNativeCandidateRealizationsWithDependenciesMeasured(index, facts, origins, shapes,
 				continuity, dirtyOccurrences);
 		}
 		finally {
@@ -4282,6 +4391,14 @@ final class PlacementRelationClosure {
 		DirectBindingIndex index, List<CandidateRuleFact> facts,
 		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes,
 		NativePlacementContinuity continuity, Set<CompiledHopKey> dirtyOccurrences) {
+		return bindDirectNativeCandidateRealizationsWithDependenciesMeasured(
+			index, facts, origins, shapes, continuity, dirtyOccurrences).facts();
+	}
+
+	private DirectBindingResult bindDirectNativeCandidateRealizationsWithDependenciesMeasured(
+		DirectBindingIndex index, List<CandidateRuleFact> facts,
+		Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes,
+		NativePlacementContinuity continuity, Set<CompiledHopKey> dirtyOccurrences) {
 		Map<CompiledHopKey,Node> nodesByKey = index.nodesByKey();
 		Map<FType,List<DurableAnchorKey>> durableAnchorsByType = index.durableAnchorsByType();
 		Map<CompiledHopKey,Map<Integer,CompiledHopKey>> inputs = index.inputs();
@@ -4290,9 +4407,14 @@ final class PlacementRelationClosure {
 		// Source realizations are immutable for this binding pass.
 		Map<CandidateEmissionRealization,Boolean> exactSourceLayouts = new IdentityHashMap<>();
 		List<CandidateRuleFact> rebound = new ArrayList<>(facts.size());
+		Map<CompiledHopKey,Set<CompiledHopKey>> dependencyOccurrences = new IdentityHashMap<>();
 		if(dirtyOccurrences != null && complexityMetrics != null)
 			complexityMetrics.recordIncrementalPass();
 		for(CandidateRuleFact fact : facts) {
+			CompiledHopKey factOccurrence = fact.key().parentOccurrence();
+			Set<CompiledHopKey> factDependencies = dependencyOccurrences.computeIfAbsent(
+				factOccurrence, ignored -> Collections.newSetFromMap(new IdentityHashMap<>()));
+			factDependencies.add(factOccurrence);
 			if(dirtyOccurrences != null && !dirtyOccurrences.contains(fact.key().parentOccurrence())) {
 				if(complexityMetrics != null)
 					complexityMetrics.recordIncrementalFact(false);
@@ -4471,22 +4593,23 @@ final class PlacementRelationClosure {
 						if(!requestedNativeRelations.add(new DirectNativeSeedKey(
 							seed.fType(), seed.partitions(), output)))
 							continue;
-						List<NativePlacementContinuity.NativeContinuityProof> proofs;
+						NativePlacementContinuity.CandidateSupportResult supportResult;
 						SearchSpaceMetrics.PhaseToken proofStarted = complexityMetrics == null ? null
 							: complexityMetrics.startPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CALL);
 						try {
 							// This is generation from an Oracle-owned emission, not validation
 							// of its prior publication. Existing root clauses must not restrict
 							// newly available input alternatives or make raw reset history matter.
-							proofs = recomputeNative
-								? continuity.proveGeneratedCandidateAlternatives(fact, emission, output, seed)
-								: continuity.provePrimitiveCandidateAlternatives(output, seed);
+							supportResult = recomputeNative
+								? continuity.proveGeneratedCandidateSupport(fact, emission, output, seed)
+								: continuity.provePrimitiveCandidateSupport(output, seed);
 						}
 						finally {
 							if(complexityMetrics != null)
 								complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CALL, proofStarted);
 						}
-						for(NativePlacementContinuity.NativeContinuityProof proof : proofs) {
+						factDependencies.addAll(supportResult.dependencyOccurrences());
+						for(NativePlacementContinuity.NativeContinuityProof proof : supportResult.proofs()) {
 							// Native proofs already own an immutable canonical list. Retain its marker and
 							// cached hash rather than forcing every output clause to sort the bindings again.
 							List<CandidateRealizationInputBinding> bindings = proof.immediateBindings();
@@ -4583,7 +4706,14 @@ final class PlacementRelationClosure {
 			rebound.add(unchangedEmissions ? fact : new CandidateRuleFact(fact.key(), fact.status(),
 				fact.capability(), fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
 		}
-		return List.copyOf(rebound);
+		Map<CompiledHopKey,Set<CompiledHopKey>> immutableDependencies = new IdentityHashMap<>();
+		dependencyOccurrences.forEach((owner, dependencies) -> {
+			Set<CompiledHopKey> immutable = Collections.newSetFromMap(new IdentityHashMap<>());
+			immutable.addAll(dependencies);
+			immutableDependencies.put(owner, Collections.unmodifiableSet(immutable));
+		});
+		return new DirectBindingResult(List.copyOf(rebound),
+			Collections.unmodifiableMap(immutableDependencies));
 	}
 
 	private CandidateEmissionRealization directNativePublication(
@@ -9108,6 +9238,8 @@ final class PlacementRelationClosure {
 	private record RelocationSourceOptionKey(CandidateRealizationReference reference,
 		DurableAnchorKey candidatePool, DurableAnchorKey nativeWorkerPoolWitness,
 		boolean nativeWorkerPoolLayoutExact) { }
+	private record RelocationConsumerActions(List<NeutralPlacementGraph.RelocationAction> actions,
+		List<DurableAnchorKey> targetPools) { }
 	private record DirectTemplateKey(CandidateRuleKey rule, PlacementEmissionState emission,
 		DerivedFoutMaterializationActionKey action) { }
 
@@ -9143,6 +9275,10 @@ final class PlacementRelationClosure {
 		List<NeutralPlacementGraph.RelocationAction> relocations, Map<CompiledHopKey,Hop> origins,
 		Map<Hop,NodeShapeFact> shapes) {
 		Map<RelocationProductKey,List<CandidateEmissionRealization>> currentProducts = new java.util.HashMap<>();
+		Set<RelocationActionKey> currentActionKeys =
+			Collections.newSetFromMap(new IdentityHashMap<>());
+		for(NeutralPlacementGraph.RelocationAction action : relocations)
+			currentActionKeys.add(action.key());
 		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
 		for(Node node : nodes)
 			nodesByKey.put(node.key(), node);
@@ -9165,6 +9301,8 @@ final class PlacementRelationClosure {
 			for(ObligationKey obligation : action.obligations())
 				if(!actionsByConsumer.computeIfAbsent(obligation.consumer(), ignored -> new ArrayList<>()).contains(action))
 					actionsByConsumer.get(obligation.consumer()).add(action);
+		Map<CompiledHopKey,Map<PlacementState,RelocationConsumerActions>> actionsByConsumerPlacement =
+			relocationActionsByConsumerPlacement(actionsByConsumer);
 		List<CandidateRuleFact> currentFacts = new ArrayList<>(facts);
 		for(PlacementDependencyComponents.Component component : components.topologicalOrder()) {
 			Map<Integer,CandidateRuleFact> replacements = new java.util.TreeMap<>();
@@ -9191,14 +9329,13 @@ final class PlacementRelationClosure {
 						exact.add(CandidateEmissionRealization
 							.fromAlreadyCanonicalSupportClauses(realization.key(), nonActionClauses));
 				}
-				List<NeutralPlacementGraph.RelocationAction> consumerActions = actionsByConsumer
-					.getOrDefault(fact.key().parentOccurrence(), List.of()).stream()
-					.filter(action -> action.obligations().stream().anyMatch(obligation ->
-						obligation.consumer() == fact.key().parentOccurrence()
-							&& obligation.requiredPlacement().equals(emission.emissionState().placementState())))
-					.sorted().toList();
-				List<DurableAnchorKey> targetPools = consumerActions.stream().map(action -> action.key().durableAnchor())
-					.distinct().sorted().toList();
+				RelocationConsumerActions consumer = actionsByConsumerPlacement
+					.getOrDefault(fact.key().parentOccurrence(), Map.of())
+					.get(emission.emissionState().placementState());
+				List<NeutralPlacementGraph.RelocationAction> consumerActions = consumer == null
+					? List.of() : consumer.actions();
+				List<DurableAnchorKey> targetPools = consumer == null
+					? List.of() : consumer.targetPools();
 				for(DurableAnchorKey targetPool : targetPools) {
 					List<List<CandidateRealizationInputBinding>> choices = new ArrayList<>();
 					boolean complete = true;
@@ -9263,8 +9400,11 @@ final class PlacementRelationClosure {
 							}).map(option -> CandidateRealizationInputBinding.relocation(
 								inputPosition, option.reference(), action.key())).toList());
 						}
-						bindings = bindings.stream().distinct()
-							.sorted(PlacementAnalysis.<CandidateRealizationInputBinding>canonicalComparator()).toList();
+					List<CandidateRealizationInputBinding> canonicalBindings =
+						new ArrayList<>(new LinkedHashSet<>(bindings));
+					canonicalBindings.sort(
+						PlacementAnalysis.<CandidateRealizationInputBinding>canonicalComparator());
+					bindings = List.copyOf(canonicalBindings);
 						if(bindings.isEmpty()) {
 							complete = false;
 							break;
@@ -9292,8 +9432,10 @@ final class PlacementRelationClosure {
 				else
 					emissions.add(emission);
 			}
-			replacements.put(slot, new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
-				fact.profile(), emissions, fact.failureCode()));
+			if(!sameRelocationBoundEmissionAuthority(
+				fact.allowedEmissionFacts(), emissions, currentActionKeys))
+				replacements.put(slot, new CandidateRuleFact(fact.key(), fact.status(), fact.capability(),
+					fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
 			}
 			Set<CompiledHopKey> changed = Collections.newSetFromMap(new IdentityHashMap<>());
 			for(var replacement : replacements.entrySet()) {
@@ -9304,6 +9446,76 @@ final class PlacementRelationClosure {
 		}
 		relocationProducts = currentProducts;
 		return List.copyOf(currentFacts);
+	}
+
+	/** Index immutable action authority once per relocation transfer. */
+	private static Map<CompiledHopKey,Map<PlacementState,RelocationConsumerActions>>
+		relocationActionsByConsumerPlacement(
+			Map<CompiledHopKey,List<NeutralPlacementGraph.RelocationAction>> actionsByConsumer) {
+		Map<CompiledHopKey,Map<PlacementState,RelocationConsumerActions>> result =
+			new IdentityHashMap<>();
+		for(var consumerEntry : actionsByConsumer.entrySet()) {
+			CompiledHopKey consumer = consumerEntry.getKey();
+			Map<PlacementState,List<NeutralPlacementGraph.RelocationAction>> grouped = new java.util.HashMap<>();
+			for(NeutralPlacementGraph.RelocationAction action : consumerEntry.getValue())
+				for(ObligationKey obligation : action.obligations())
+					if(obligation.consumer() == consumer) {
+						List<NeutralPlacementGraph.RelocationAction> actions = grouped.computeIfAbsent(
+							obligation.requiredPlacement(), ignored -> new ArrayList<>());
+						if(!actions.contains(action))
+							actions.add(action);
+					}
+			Map<PlacementState,RelocationConsumerActions> indexed = new java.util.HashMap<>();
+			for(var placementEntry : grouped.entrySet()) {
+				List<NeutralPlacementGraph.RelocationAction> actions = placementEntry.getValue();
+				actions.sort(null);
+				Set<DurableAnchorKey> uniqueTargetPools = new LinkedHashSet<>();
+				for(NeutralPlacementGraph.RelocationAction action : actions)
+					uniqueTargetPools.add(action.key().durableAnchor());
+				List<DurableAnchorKey> targetPools = new ArrayList<>(uniqueTargetPools);
+				targetPools.sort(null);
+				indexed.put(placementEntry.getKey(), new RelocationConsumerActions(
+					List.copyOf(actions), List.copyOf(targetPools)));
+			}
+			result.put(consumer, Collections.unmodifiableMap(indexed));
+		}
+		return result;
+	}
+
+	/** Preserve current row authority when relocation rebinding is an exact no-op. */
+	private static boolean sameRelocationBoundEmissionAuthority(
+		List<CandidateEmissionFact> current, List<CandidateEmissionFact> rebound,
+		Set<RelocationActionKey> currentActionKeys) {
+		if(!current.equals(rebound))
+			return false;
+		for(int emissionIndex = 0; emissionIndex < current.size(); emissionIndex++) {
+			CandidateEmissionFact oldEmission = current.get(emissionIndex);
+			CandidateEmissionFact newEmission = rebound.get(emissionIndex);
+			if(oldEmission.derivedFoutAction() != newEmission.derivedFoutAction())
+				return false;
+			for(int realizationIndex = 0; realizationIndex < oldEmission.realizations().size(); realizationIndex++) {
+				CandidateEmissionRealization oldRealization = oldEmission.realizations().get(realizationIndex);
+				CandidateEmissionRealization newRealization = newEmission.realizations().get(realizationIndex);
+				for(int clauseIndex = 0; clauseIndex < oldRealization.supportClauses().size(); clauseIndex++) {
+					List<CandidateRealizationInputBinding> oldBindings =
+						oldRealization.supportClauses().get(clauseIndex).inputBindings();
+					List<CandidateRealizationInputBinding> newBindings =
+						newRealization.supportClauses().get(clauseIndex).inputBindings();
+					for(int bindingIndex = 0; bindingIndex < oldBindings.size(); bindingIndex++) {
+						CandidateRealizationInputBinding oldBinding = oldBindings.get(bindingIndex);
+						CandidateRealizationInputBinding newBinding = newBindings.get(bindingIndex);
+						if(oldBinding.source().rule().parentOccurrence()
+							!= newBinding.source().rule().parentOccurrence())
+							return false;
+						if(oldBinding.kind() == CandidateInputBindingKind.RELOCATION
+							&& (oldBinding.relocationAction() != newBinding.relocationAction()
+								|| !currentActionKeys.contains(oldBinding.relocationAction())))
+							return false;
+					}
+				}
+			}
+		}
+		return true;
 	}
 
 	private record RelocationProductKey(IdentityListKey<CompiledHopKey> owner,
@@ -11607,32 +11819,30 @@ final class PlacementRelationClosure {
 					DurableAnchorKey readerAnchor = edge.readerRealization().realization().durableAnchor();
 					if(readerAnchor != null)
 						result.add(readerAnchor);
-					result.addAll(resolveCandidateRealization(edge.sourceRealization(), fType,
-						visitedReferences));
+					resolveCandidateRealization(edge.sourceRealization(), fType,
+						visitedReferences, result);
 				}
 			return result;
 		}
 
-		private Set<DurableAnchorKey> resolveCandidateRealization(CandidateRealizationReference reference,
-			FType fType, Set<String> visitedReferences) {
+		private void resolveCandidateRealization(CandidateRealizationReference reference,
+			FType fType, Set<String> visitedReferences, Set<DurableAnchorKey> result) {
 			// This query collects a union over reachable references, not path-specific
 			// proofs. Keep visited nodes for the whole query so shared DAGs and cycles
 			// are traversed once; do not cache a partial result across separate roots.
 			String signature = reference.normalizedSignature();
 			if(!visitedReferences.add(signature))
-				return Set.of();
-			Set<DurableAnchorKey> result = new java.util.TreeSet<>();
+				return;
 			CandidateEmissionRealization realization = realizationsByReference.get(signature);
 			if(realization == null)
-				return Set.of();
+				return;
 			for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 				DurableAnchorKey provenPool = realization.provenWorkerPoolForOwnedClause(clause);
 				if(provenPool != null && provenPool.fType() == fType)
 					result.add(provenPool);
 				for(var binding : clause.inputBindings())
-					result.addAll(resolveCandidateRealization(binding.source(), fType, visitedReferences));
+					resolveCandidateRealization(binding.source(), fType, visitedReferences, result);
 			}
-			return result;
 		}
 
 		private Set<DurableAnchorKey> resolveFunctionInput(CompiledHopKey producer, FType fType) {

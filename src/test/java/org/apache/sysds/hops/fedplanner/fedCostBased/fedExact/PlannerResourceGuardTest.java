@@ -64,6 +64,17 @@ public class PlannerResourceGuardTest {
 	}
 
 	@Test
+	public void acceptedPayloadStillValidatesPhaseAndNegativeRequest() {
+		for(String phase : new String[]{null,""," "})
+			assertEquals("SYSTEM_RESOURCE_PHASE_INVALID",assertThrows(IllegalArgumentException.class,
+				() -> PlannerResourceGuard.checkAdditionalBytes(0,phase)).getMessage());
+		assertTrue(assertThrows(IllegalArgumentException.class,
+			() -> PlannerResourceGuard.checkAdditionalBytes(-1,"negative"))
+			.getMessage().startsWith("SYSTEM_RESOURCE_REQUEST_INVALID|phase=negative"));
+		PlannerResourceGuard.checkAdditionalBytes(Runtime.getRuntime().maxMemory(),"maximum");
+	}
+
+	@Test
 	public void diagnosticOutOfMemoryStillReturnsPreallocatedTypedFailure() {
 		OutOfMemoryError allocationFailure = new OutOfMemoryError("array allocation");
 		PlannerResourceGuard.ResourceExhaustedException failure =

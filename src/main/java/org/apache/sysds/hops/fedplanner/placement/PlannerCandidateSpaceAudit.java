@@ -48,7 +48,10 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateSha
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
+import com.fasterxml.jackson.databind.SerializationFeature;
 
 /**
  * Off-by-default, selector-independent capture of the placement candidate domain.
@@ -67,6 +70,8 @@ public final class PlannerCandidateSpaceAudit {
 	private static final String DEFAULT_DIRECTORY = "target/fedplanner-space-audit";
 	private static final ObjectMapper MAPPER = new ObjectMapper();
 	private static final Object WRITE_LOCK = new Object();
+	private static final java.util.regex.Pattern REPLAY_LOCAL_PORT = java.util.regex.Pattern.compile(
+		"(?i)(localhost|127\\.0\\.0\\.1|\\[::1\\]):[0-9]{1,5}");
 
 	private PlannerCandidateSpaceAudit() {
 		// utility class
@@ -126,10 +131,12 @@ public final class PlannerCandidateSpaceAudit {
 			row.put("publishedNodeStates", states(publishedNode));
 			row.put("prePrivacyExclusions", exclusions(rawNode));
 			row.put("publishedExclusions", exclusions(publishedNode));
-			row.put("prePrivacyRule", fact(raw));
-			row.put("publishedRule", fact(published));
+			Map<String,Object> rawView = fact(raw);
+			Map<String,Object> publishedView = published == raw ? rawView : fact(published);
+			row.put("prePrivacyRule", rawView);
+			row.put("publishedRule", publishedView);
 			row.put("publishedStatesP", published == null ? List.of()
-				: emissions(published.allowedEmissionFacts()));
+				: publishedView.get("emissions"));
 			rows.add(row);
 		}
 		append(rows);
@@ -256,12 +263,20 @@ public final class PlannerCandidateSpaceAudit {
 	 */
 	static String normalizeReplayControlPath(String path) {
 		return String.join("/", java.util.Arrays.stream(path.split("/", -1))
-			.map(segment -> segment.matches("[0-9]+") ? "*" : segment).toList());
+			.map(segment -> numericReplaySegment(segment) ? "*" : segment).toList());
+	}
+
+	private static boolean numericReplaySegment(String segment) {
+		if(segment.isEmpty())
+			return false;
+		for(int index = 0; index < segment.length(); index++)
+			if(segment.charAt(index) < '0' || segment.charAt(index) > '9')
+				return false;
+		return true;
 	}
 
 	private static String normalizeReplayVolatileValues(String value) {
-		return value.replaceAll("(?i)(localhost|127\\.0\\.0\\.1|\\[::1\\]):[0-9]{1,5}",
-			"$1:<port>");
+		return REPLAY_LOCAL_PORT.matcher(value).replaceAll("$1:<port>");
 	}
 
 	/** Replay context shared by candidate and runtime-capability audit receipts. */
@@ -481,10 +496,13 @@ public final class PlannerCandidateSpaceAudit {
 			synchronized(WRITE_LOCK) {
 				Files.createDirectories(directory);
 				try(BufferedWriter writer = Files.newBufferedWriter(output, StandardCharsets.UTF_8,
-					StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+					StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+					JsonGenerator generator = MAPPER.getFactory().createGenerator(writer)) {
+					generator.setRootValueSeparator(null);
+					ObjectWriter rowWriter = MAPPER.writer().without(SerializationFeature.FLUSH_AFTER_WRITE_VALUE);
 					for(Map<String,Object> row : rows) {
-						writer.write(MAPPER.writeValueAsString(row));
-						writer.newLine();
+						rowWriter.writeValue(generator, row);
+						generator.writeRaw(System.lineSeparator());
 					}
 				}
 			}

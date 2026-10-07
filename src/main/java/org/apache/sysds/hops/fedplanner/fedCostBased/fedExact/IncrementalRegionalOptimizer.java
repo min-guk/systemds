@@ -91,6 +91,69 @@ final class IncrementalRegionalOptimizer {
 		long assignments, long work, long slots, int rank) { }
 	private record Neighborhood(int[] block, double potential, int interactionDepth,
 		long assignments, long work, int rank) { }
+	private record ConditionalBlockKey(List<Integer> positions) {
+		private ConditionalBlockKey { positions = List.copyOf(positions); }
+		private static ConditionalBlockKey of(int[] block) {
+			int[] canonical = block.clone();
+			Arrays.sort(canonical);
+			for(int index = 1; index < canonical.length; index++)
+				if(canonical[index] == canonical[index - 1])
+					throw new IllegalArgumentException("INCREMENTAL_CONDITIONAL_BLOCK_DUPLICATE");
+			return new ConditionalBlockKey(Arrays.stream(canonical).boxed().toList());
+		}
+	}
+	private static final class SuccessfulConditionalResult {
+		private final int[] outsideAssignment;
+		private final int[] blockValues;
+		private SuccessfulConditionalResult(int[] outsideAssignment, int[] blockValues) {
+			this.outsideAssignment = outsideAssignment.clone();
+			this.blockValues = blockValues.clone();
+		}
+	}
+	private static final class CanonicalCandidateMismatchException extends IllegalStateException {
+		private static final long serialVersionUID = 1L;
+		private CanonicalCandidateMismatchException(String message) { super(message); }
+	}
+	/** One last validated exact optimum per canonical block and its fixed original boundary. */
+	static final class ConditionalReplayCache {
+		private final Map<ConditionalBlockKey,SuccessfulConditionalResult> entries = new HashMap<>();
+
+		boolean applyIfPresent(int[] source, int[] block) {
+			ConditionalBlockKey key = ConditionalBlockKey.of(block);
+			SuccessfulConditionalResult entry = entries.get(key);
+			if(entry == null || entry.outsideAssignment.length != source.length)
+				return false;
+			int blockIndex = 0;
+			for(int position = 0; position < source.length; position++) {
+				if(blockIndex < key.positions().size() && key.positions().get(blockIndex) == position) {
+					blockIndex++;
+					continue;
+				}
+				if(source[position] != entry.outsideAssignment[position])
+					return false;
+			}
+			for(int index = 0; index < key.positions().size(); index++)
+				source[key.positions().get(index)] = entry.blockValues[index];
+			return true;
+		}
+
+		void rememberSuccessful(int[] source, int[] block, List<Integer> solvedValues) {
+			if(solvedValues.size() != block.length)
+				throw new IllegalArgumentException("INCREMENTAL_CONDITIONAL_RESULT_SIZE_MISMATCH");
+			ConditionalBlockKey key = ConditionalBlockKey.of(block);
+			int[] canonicalValues = new int[block.length];
+			for(int canonical = 0; canonical < key.positions().size(); canonical++) {
+				int position = key.positions().get(canonical);
+				int supplied = 0;
+				while(block[supplied] != position)
+					supplied++;
+				canonicalValues[canonical] = solvedValues.get(supplied);
+			}
+			entries.put(key,new SuccessfulConditionalResult(source,canonicalValues));
+		}
+
+		int size() { return entries.size(); }
+	}
 	private static final Comparator<Candidate> ORDER = Comparator.comparingLong(Candidate::slots)
 		.thenComparingLong(Candidate::work).thenComparingInt(Candidate::rank);
 	private static final Comparator<Neighborhood> NEIGHBORHOOD_ORDER =
@@ -113,6 +176,7 @@ final class IncrementalRegionalOptimizer {
 	private final Map<Variable,Candidate> candidates = new HashMap<>();
 	private final TreeSet<Candidate> queue = new TreeSet<>(ORDER);
 	private final Map<String,Neighborhood> rejectedNeighborhoods = new LinkedHashMap<>();
+	private final ConditionalReplayCache conditionalReplayCache = new ConditionalReplayCache();
 	private final List<Checkpoint> checkpoints = new ArrayList<>();
 	private final long started = System.nanoTime();
 	private int[] incumbent;
@@ -495,6 +559,13 @@ final class IncrementalRegionalOptimizer {
 			: limits.maximumMaterializedCells();
 		Limits conditionalLimits = new Limits(Math.min(limits.maximumFactorCells(),conditionalCells),
 			conditionalCells);
+		// The root is immutable throughout this pass. Preparation keys conditioned
+		// tables by the actual fixed boundary, including changes to the incumbent.
+		boolean compact = LocalCategoricalOptimizer.configuredCompaction();
+		SharedRegionalPreparation preparation = options.boundedTest()
+			? new SharedRegionalPreparation(problem,limits,limits,
+				options.maximumMergeAssignments(),options.maximumRetainedSlots(),compact)
+			: new SharedRegionalPreparation(problem,limits,compact);
 		for(Neighborhood neighborhood : rejectedNeighborhoods.values().stream()
 			.sorted(NEIGHBORHOOD_ORDER).toList()) {
 			if(options.earlyStop() && relativeGap(lower,upper)<=options.relativeGap())
@@ -511,30 +582,41 @@ final class IncrementalRegionalOptimizer {
 						+ neighborhood.block().length + " estimatedAssignments="
 						+ neighborhood.assignments() + " interactionDepth="
 						+ neighborhood.interactionDepth() + " block=" + Arrays.toString(neighborhood.block()));
-			SharedRegionalPreparation preparation = options.boundedTest()
-				? new SharedRegionalPreparation(problem,limits,limits,
-					options.maximumMergeAssignments(),options.maximumRetainedSlots(),false)
-				: new SharedRegionalPreparation(problem,limits,false);
-			LocalCategoricalOptimizer.PreparedBlockSolver solver =
-				preparation.prepare(source,neighborhood.block());
-			if(solver == null) {
-				if(FederatedPlannerTrace.isEnabled())
-					FederatedPlannerTrace.logGlobal("DP-ConditionalNeighborhoodRejected",
-						"interactionDepth=" + neighborhood.interactionDepth()
-							+ " reason=" + preparation.lastFallbackReason());
-				continue;
+			boolean replayed = conditionalReplayCache.applyIfPresent(source,neighborhood.block());
+			SharedRegionalPreparation.PreparedConditionalSolver solver = null;
+			if(!replayed) {
+				solver = preparation.prepareConditional(source,neighborhood.block(),root);
+				if(solver == null) {
+					if(FederatedPlannerTrace.isEnabled())
+						FederatedPlannerTrace.logGlobal("DP-ConditionalNeighborhoodRejected",
+							"interactionDepth=" + neighborhood.interactionDepth()
+								+ " reason=" + preparation.lastFallbackReason());
+					continue;
+				}
+				conditionalAttempts++;
 			}
-			conditionalAttempts++;
 			int priorImprovements = improvements;
 			try {
-				ExactCategoricalSolver.Result solved = solver.solve();
-				if(solved.assignmentInVariableOrder().size()!=neighborhood.block().length)
-					throw new IllegalStateException("INCREMENTAL_CONDITIONAL_RESULT_SIZE_MISMATCH");
-				for(int index=0; index<neighborhood.block().length; index++)
-					source[neighborhood.block()[index]] = solved.assignmentInVariableOrder().get(index);
+				List<Integer> solvedValues = null;
+				boolean skipLegacyLift = false;
+				if(!replayed) {
+					SharedRegionalPreparation.ConditionalResult conditional = solver.solve(incumbent);
+					ExactCategoricalSolver.Result solved = conditional.block();
+					if(solved.assignmentInVariableOrder().size()!=neighborhood.block().length)
+						throw new IllegalStateException("INCREMENTAL_CONDITIONAL_RESULT_SIZE_MISMATCH");
+					solvedValues = solved.assignmentInVariableOrder();
+					for(int index=0; index<neighborhood.block().length; index++)
+						source[neighborhood.block()[index]] = solvedValues.get(index);
+					int[] witness = conditional.rootWitness();
+					skipLegacyLift = witness != null && mappedWitnessProvesNoImprovement(witness);
+				}
 				// Conditioning can turn a canonical improvement/tie into a rounded
 				// local tie. Preserve the incumbent unless the full objective improves.
-				accept(IncrementalRegionalSeed.lift(root,Arrays.stream(source).boxed().toList(),conditionalLimits),false);
+				if(!skipLegacyLift)
+					accept(IncrementalRegionalSeed.lift(root,
+						Arrays.stream(source).boxed().toList(),conditionalLimits),false);
+				if(!replayed)
+					conditionalReplayCache.rememberSuccessful(source,neighborhood.block(),solvedValues);
 			}
 			catch(IllegalArgumentException failure) {
 				if(!RegionalSearchProblem.isResourceLimit(failure))
@@ -713,7 +795,7 @@ final class IncrementalRegionalOptimizer {
 			double canonical = problem.evaluate(encoded.subList(0,problem.decisionCount()));
 			if(!Double.isFinite(canonical) || Double.doubleToRawLongBits(frozen) != Double.doubleToRawLongBits(canonical)
 				|| Double.doubleToRawLongBits(original) != Double.doubleToRawLongBits(canonical))
-				throw new IllegalStateException("INCREMENTAL_REGIONAL_CANONICAL_MISMATCH|frozen=" + frozen
+				throw new CanonicalCandidateMismatchException("INCREMENTAL_REGIONAL_CANONICAL_MISMATCH|frozen=" + frozen
 					+ "|original=" + original + "|canonical=" + canonical);
 			return canonical;
 		}
@@ -729,6 +811,23 @@ final class IncrementalRegionalOptimizer {
 		if(requireNonIncreasing && objective > upper)
 			throw new IllegalStateException("INCREMENTAL_CONDITIONAL_DP_WORSENED");
 		if(objective < upper) { incumbent = candidate; upper = objective; improvements++; }
+	}
+	private boolean mappedWitnessProvesNoImprovement(int[] candidate) {
+		if(Arrays.equals(candidate,incumbent))
+			return true;
+		double objective;
+		try {
+			objective = validate(candidate);
+		}
+		catch(CanonicalCandidateMismatchException incompatible) {
+			return false;
+		}
+		if(objective < lower)
+			throw new IllegalStateException("INCREMENTAL_CANDIDATE_BELOW_PUBLISHED_LOWER");
+		// Retain the incumbent's exact auxiliary tie witness whenever the source plan
+		// does not strictly improve. A strict improvement still uses legacy lifting so
+		// subsequent partial-DP backtraces observe the same auxiliary assignment.
+		return objective >= upper;
 	}
 	private void updateLower() {
 		double bound = sealedLower;

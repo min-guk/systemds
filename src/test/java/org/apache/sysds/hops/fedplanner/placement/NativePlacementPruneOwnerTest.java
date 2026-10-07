@@ -122,6 +122,33 @@ public class NativePlacementPruneOwnerTest {
 	}
 
 	@Test
+	public void selfCycleAndRepeatedDependencyEdgesMatchFrozenPropagation() throws Exception {
+		Object witness = witness();
+		CompiledHopKey deadKey = key("repeated-dead"), selfKey = key("self-cycle");
+		Object dead = state(deadKey, 1, witness), self = state(selfKey, 2, witness);
+		Object removed = alternative(List.of(dependency(deadKey, 1, witness),
+			dependency(deadKey, 1, witness)), witness);
+		Object selfCycle = alternative(List.of(dependency(selfKey, 2, witness),
+			dependency(selfKey, 2, witness)), witness);
+		Map<Object,List<Object>> dependencies = new IdentityHashMap<>();
+		dependencies.put(removed, List.of(dead, dead));
+		dependencies.put(selfCycle, List.of(self, self));
+		Map<Object,List<Object>> graph = graph(dead, List.of(), self, List.of(selfCycle),
+			state(key("removed-owner"), 3, witness), List.of(removed));
+		long[] expectedCounts = new long[4];
+		Map<Object,List<Object>> expected = legacyPrune(graph, dependencies, expectedCounts);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		Map<?,?> actual = prune(continuity(metrics), graph);
+		assertIdenticalOrderedGraph("repeated dependency edges", expected, actual);
+		Assert.assertSame("the self-cycle alternative stays live by identity",
+			selfCycle, ((List<?>)actual.get(self)).get(0));
+		Assert.assertEquals(expectedCounts[0], metrics.snapshot().ownerCompactionElementsScanned());
+		Assert.assertEquals(expectedCounts[1], metrics.snapshot().deadStatesQueued());
+		Assert.assertEquals(expectedCounts[2], metrics.snapshot().dependencyNotifications());
+		Assert.assertEquals(expectedCounts[3], metrics.snapshot().alternativesRemoved());
+	}
+
+	@Test
 	public void duplicateObjectSlotsRetainLegacyOwnerCountButDistinctCopiesDoNot() throws Exception {
 		Object witness = witness();
 		CompiledHopKey deadKey = key("duplicate-dead"), ownerKey = key("duplicate-owner");

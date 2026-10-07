@@ -77,6 +77,10 @@ public class FederatedPlannerLogger {
     // Generic Logging Helpers
     // ===================================================================================
 
+    public static boolean isInfoMessageEnabled() {
+        return LOG.isDebugEnabled();
+    }
+
     public static void logInfoMessage(String message) {
         if (LOG.isDebugEnabled())
             LOG.debug(message);

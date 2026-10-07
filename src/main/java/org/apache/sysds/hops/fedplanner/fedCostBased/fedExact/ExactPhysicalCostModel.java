@@ -3643,22 +3643,26 @@ public final class ExactPhysicalCostModel {
 			var estimate = hop == null ? null : analysis.physicalCostEstimateFact(key);
 			if(estimate != null && estimate.multiReturnRows() > 0L && estimate.multiReturnCols() > 0L)
 				return new ExactMatrixShape(estimate.multiReturnRows(), estimate.multiReturnCols());
+			// Only these operations can derive a shape from input zero. Other
+			// operations already exhausted their own immutable shape authorities.
+			if(hop instanceof AggUnaryOp aggregate) {
+				if(aggregate.getDirection() != org.apache.sysds.common.Types.Direction.Row
+					&& aggregate.getDirection() != org.apache.sysds.common.Types.Direction.Col)
+					return null;
+			}
+			else if(!(hop instanceof DataOp data
+				&& (data.getOp() == OpOpData.TRANSIENTWRITE || data.getOp() == OpOpData.PERSISTENTWRITE)))
+				return null;
 			CompiledHopKey input = exactCompiledInput(analysis, key, 0);
 			ExactMatrixShape inputShape = input == null ? null
 				: exactMatrixShape(analysis, input, visiting);
-			if(hop instanceof AggUnaryOp && inputShape != null) {
-				org.apache.sysds.common.Types.Direction direction = ((AggUnaryOp)hop).getDirection();
-				if(direction == org.apache.sysds.common.Types.Direction.Row)
-					return new ExactMatrixShape(inputShape.rows(), 1L);
-				if(direction == org.apache.sysds.common.Types.Direction.Col)
-					return new ExactMatrixShape(1L, inputShape.cols());
-			}
-			if(hop instanceof DataOp && inputShape != null) {
-				OpOpData op = ((DataOp)hop).getOp();
-				if(op == OpOpData.TRANSIENTWRITE || op == OpOpData.PERSISTENTWRITE)
-					return inputShape;
-			}
-			return null;
+			if(inputShape == null)
+				return null;
+			if(hop instanceof AggUnaryOp aggregate)
+				return aggregate.getDirection() == org.apache.sysds.common.Types.Direction.Row
+					? new ExactMatrixShape(inputShape.rows(), 1L)
+					: new ExactMatrixShape(1L, inputShape.cols());
+			return inputShape;
 		}
 		finally {
 			visiting.remove(key);
@@ -3667,10 +3671,15 @@ public final class ExactPhysicalCostModel {
 
 	private static CompiledHopKey exactCompiledInput(PlacementAnalysis analysis,
 		CompiledHopKey consumer, int inputPosition) {
-		List<CompiledHopKey> inputs = analysis.compiledInputEdgesInCanonicalOrder().stream()
-			.filter(edge -> edge.consumer() == consumer && edge.inputPosition() == inputPosition)
-			.map(CompiledInputEdgeFact::producer).toList();
-		return inputs.size() == 1 ? inputs.get(0) : null;
+		if(consumer == null || inputPosition < 0)
+			return null;
+		var node = analysis.graph().node(consumer).orElse(null);
+		if(node == null || node.key() != consumer)
+			return null;
+		// Construction rejects duplicate consumer/position edges. Retain the old
+		// identity-only lookup while using the analysis-owned constant-time index.
+		return analysis.compiledInputEdge(consumer, inputPosition)
+			.map(CompiledInputEdgeFact::producer).orElse(null);
 	}
 
 	private static ExactMatrixShape anchorShape(PlacementAnalysis analysis, CompiledHopKey key) {
