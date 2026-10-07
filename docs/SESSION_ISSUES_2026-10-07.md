@@ -118,3 +118,13 @@
 
 - **비용 계산 추가 수정**: JFR에서 최종 planner 9.183초 중 비용 표면 2.931초, optimizer 3.996초를 확인했다. 동일 Alternative의 worker count를 새 visiting set으로 반복 계산하는 경로를 개선한다. PhysicalWorkerCounts 호출 범위에 완료된 root exact 결과만 identity memo로 저장하고, recursive 내부 결과와 caller별 fallback은 저장하지 않는다. 기존 durable anchor early return도 유지한다. 순환 A↔B, fallback 3/7, 공유 support, 동일/동등-but-distinct root와 호출 간 격리를 회귀로 검증했다. 실제 비용/탐색 parity와 성능 채택은 별도 최종 실행에서 확인한다.
 - **큰 factor 해석 정정**: metrics-03의 최대 1,470,976 logical-cell factor는 partial proof 9회·leaf 0회·약3.95ms로 전체 zero를 인증했다. 현재 wall-time 병목으로 지목하지 않는다. shared preparation 0.382초, seed boundary 40회가 약2.370초다. assignments 총수와 실제 시간 병목을 구분한다.
+
+
+### LogReg 후속 최종 검증 — 개선 채택, 1초 목표 미달
+
+- **통합**: origin/main의 StepLM closure 수정 fbfd4d790f를 보존해 af761a6fc1로 통합했다. activeLoopSeeds와 mandatory all-definition 검증이 유지됨을 독립 리뷰했다. 다른 담당자의 StepLM/GLM worktree는 수정하지 않았다.
+- **결과**: 같은 최신 기준에서 baseline→no-cost→final→final→baseline 실제 multiLogReg5회 PASS. 평균 analysis49.175→38.120초(22.48% 감소), compilation61.986→51.153초(17.48% 감소). 전체 planner11.418→11.621초로 개선을 확인하지 못했다. 이전40초대와 코드/호스트 조건이 달라 직접 비교하지 않는다. 1초 목표는 미달이다.
+- **메모리 근거**: 이전73d1eb 기준 별도 계측에서 전체 analysis 누적 할당27.794→13.650GB, CFG18.406→5.111GB다. 후보 계측은 Maven과 겹쳐 시간을 채택 근거로 사용하지 않았다. peak heap 감소로 해석하지 않는다.
+- **정확성**: 최신 Java63클래스477건 중472PASS/기존ignore5/실패0, package 및 Python30PASS. 실제16계수·shape8×2·audit/conversion gate와 시간 제외1,224개 DP checkpoints가 모든 군에서 같다. source1,651개/class-resource4,363개가 build와 같고 build 중 source 변경0이다.
+- **채택/위험**: 세production 파일에서 owner revision의 proof 철회, 정확한 reference membership, segmented canonical text, root exact worker-count 재사용을 반영했다. 합법 후보나 비용 공식을 줄이지 않는다. 삭제/순환/같은reference support변경, UTF-16 구분자/동률, fallback·context 혼합 위험은 differential 회귀로 확인했다. 공통분석 재구성과 seed 조건부 compile은 여전히 크며 전체 성능 문제 해결로 주장하지 않는다.
+- **상세**: [후속 보고서](LOGREG_REPLAY_COST_ABLATION_2026-10-07.md), [검증 JSON](experiments/logreg-replay-cost-20261007/validation.json). 기존 PhysicalGenerationEnvelopeTest4개 baseline fixture 실패는 별도 미해결로 남는다.

@@ -1,0 +1,2563 @@
+{
+  "status": "PASSED",
+  "baselineCommit": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+  "candidateCodeCommit": "af761a6fc1afe4e7496764e7215af0a000b9efe4",
+  "oneSecondTargetAchieved": false,
+  "rawRoot": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-deeper-20261007",
+  "actualWorkload": "builtin multiLogReg: X192x8,PRIVATE_AGGREGATE,3ROWworkers,numclasses3,maxi10,maxii5",
+  "finalSequentialRuns": [
+    {
+      "variant": "baseline",
+      "repeat": 1,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-deeper-20261007/logreg-final-baseline-r1",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 60.109183,
+        "executionSeconds": 4.066
+      },
+      "analysisSeconds": 47.265354749,
+      "fullPlannerSeconds": 11.444114382,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 3659515625,
+        "elapsedNanos": 4044512005,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 10447168670,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 151267703,
+        "upper": 122.26631334184357,
+        "validationNanos": 109008826
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "compilePhases": {
+        "CommonPreparation": 47.287401,
+        "Decision": 10.779012,
+        "Diagnostics": 0.004609,
+        "Conversion": 0.495204,
+        "Application": 0.165859,
+        "Finalization": 0.009416,
+        "CandidateE2E CommonPreparation": 0.017616,
+        "CandidateE2E Analysis": 47.265645,
+        "CandidateE2E PlannerSetup": 0.004127,
+        "CandidateE2E Model": 1.572312,
+        "CandidateE2E CostSurface": 4.102237,
+        "CandidateE2E Optimizer": 4.774986,
+        "CandidateE2E Selection": 0.328331,
+        "CandidateE2E OtherPlanning": 0.002027,
+        "CandidateE2E Diagnostics": 0.004491,
+        "CandidateE2E Conversion": 0.495205,
+        "CandidateE2E Application": 0.165859,
+        "CandidateE2E FinalVerification": 0.007623,
+        "CandidateE2E Registration": 0.005181,
+        "CandidateE2E ReceiptHandoff": 0.000237,
+        "CandidateE2E Total": 58.745876
+      },
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132",
+      "phaseTimings": [
+        {
+          "stage": "MODEL_SETUP",
+          "elapsedNanos": "5668701500",
+          "traceOutputNanos": "155260",
+          "remainderNanos": "5668546240",
+          "plannerElapsedNanos": "5673831298"
+        },
+        {
+          "stage": "OPTIMIZATION",
+          "elapsedNanos": "4772237537",
+          "traceOutputNanos": "74111106",
+          "remainderNanos": "4698126431",
+          "plannerElapsedNanos": "10448804477"
+        },
+        {
+          "stage": "SELECTION",
+          "elapsedNanos": "328273330",
+          "traceOutputNanos": "31889",
+          "remainderNanos": "328241441",
+          "plannerElapsedNanos": "10777138610"
+        },
+        {
+          "stage": "POST_SEARCH_TRACE",
+          "elapsedNanos": "4445458",
+          "traceOutputNanos": "69650",
+          "remainderNanos": "4375808",
+          "plannerElapsedNanos": "10783602982"
+        },
+        {
+          "stage": "PLAN_CONVERSION",
+          "elapsedNanos": "495111178",
+          "traceOutputNanos": "0",
+          "remainderNanos": "495111178",
+          "plannerElapsedNanos": "11278761058"
+        },
+        {
+          "stage": "EMISSION",
+          "elapsedNanos": "165760425",
+          "traceOutputNanos": "3563057",
+          "remainderNanos": "162197368",
+          "plannerElapsedNanos": "11444615919"
+        },
+        {
+          "stage": "FINAL_BOUNDARY_VERIFY",
+          "elapsedNanos": "7299352",
+          "traceOutputNanos": "0",
+          "remainderNanos": "7299352",
+          "plannerElapsedNanos": "11452348571"
+        }
+      ]
+    },
+    {
+      "variant": "no-cost",
+      "repeat": 1,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-deeper-20261007/logreg-final-no-cost-r1",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 52.946943,
+        "executionSeconds": 3.691
+      },
+      "analysisSeconds": 39.209963058,
+      "fullPlannerSeconds": 12.311143069,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 3764192362,
+        "elapsedNanos": 4233272908,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 10952045928,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 203759766,
+        "upper": 122.26631334184357,
+        "validationNanos": 111618672
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "compilePhases": {
+        "CommonPreparation": 39.231931,
+        "Decision": 11.329875,
+        "Diagnostics": 0.006759,
+        "Conversion": 0.758412,
+        "Application": 0.216739,
+        "Finalization": 0.011463,
+        "CandidateE2E CommonPreparation": 0.017655,
+        "CandidateE2E Analysis": 39.210335,
+        "CandidateE2E PlannerSetup": 0.003927,
+        "CandidateE2E Model": 1.554569,
+        "CandidateE2E CostSurface": 4.333928,
+        "CandidateE2E Optimizer": 5.066016,
+        "CandidateE2E Selection": 0.373967,
+        "CandidateE2E OtherPlanning": 0.002298,
+        "CandidateE2E Diagnostics": 0.006618,
+        "CandidateE2E Conversion": 0.758411,
+        "CandidateE2E Application": 0.216741,
+        "CandidateE2E FinalVerification": 0.009597,
+        "CandidateE2E Registration": 0.006132,
+        "CandidateE2E ReceiptHandoff": 0.000321,
+        "CandidateE2E Total": 51.560514
+      },
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132",
+      "phaseTimings": [
+        {
+          "stage": "MODEL_SETUP",
+          "elapsedNanos": "5882522074",
+          "traceOutputNanos": "230651",
+          "remainderNanos": "5882291423",
+          "plannerElapsedNanos": "5887788587"
+        },
+        {
+          "stage": "OPTIMIZATION",
+          "elapsedNanos": "5063419406",
+          "traceOutputNanos": "72065643",
+          "remainderNanos": "4991353763",
+          "plannerElapsedNanos": "10953794737"
+        },
+        {
+          "stage": "SELECTION",
+          "elapsedNanos": "373896411",
+          "traceOutputNanos": "53541",
+          "remainderNanos": "373842870",
+          "plannerElapsedNanos": "11327762501"
+        },
+        {
+          "stage": "POST_SEARCH_TRACE",
+          "elapsedNanos": "6559098",
+          "traceOutputNanos": "84398",
+          "remainderNanos": "6474700",
+          "plannerElapsedNanos": "11336613033"
+        },
+        {
+          "stage": "PLAN_CONVERSION",
+          "elapsedNanos": "758294940",
+          "traceOutputNanos": "0",
+          "remainderNanos": "758294940",
+          "plannerElapsedNanos": "12094968045"
+        },
+        {
+          "stage": "EMISSION",
+          "elapsedNanos": "216620658",
+          "traceOutputNanos": "4844088",
+          "remainderNanos": "211776570",
+          "plannerElapsedNanos": "12311704308"
+        },
+        {
+          "stage": "FINAL_BOUNDARY_VERIFY",
+          "elapsedNanos": "9233818",
+          "traceOutputNanos": "0",
+          "remainderNanos": "9233818",
+          "plannerElapsedNanos": "12321445064"
+        }
+      ]
+    },
+    {
+      "variant": "final",
+      "repeat": 1,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-deeper-20261007/logreg-final-final-r1",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 53.401349,
+        "executionSeconds": 3.623
+      },
+      "analysisSeconds": 39.757518924,
+      "fullPlannerSeconds": 12.237004469,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 5273172533,
+        "elapsedNanos": 5748406426,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 10799700001,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 208470271,
+        "upper": 122.26631334184357,
+        "validationNanos": 131386205
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "compilePhases": {
+        "CommonPreparation": 39.779617,
+        "Decision": 11.252721,
+        "Diagnostics": 0.00637,
+        "Conversion": 0.752264,
+        "Application": 0.226222,
+        "Finalization": 0.011122,
+        "CandidateE2E CommonPreparation": 0.017913,
+        "CandidateE2E Analysis": 39.757872,
+        "CandidateE2E PlannerSetup": 0.003821,
+        "CandidateE2E Model": 1.517657,
+        "CandidateE2E CostSurface": 2.819909,
+        "CandidateE2E Optimizer": 6.464706,
+        "CandidateE2E Selection": 0.449085,
+        "CandidateE2E OtherPlanning": 0.002237,
+        "CandidateE2E Diagnostics": 0.006216,
+        "CandidateE2E Conversion": 0.75227,
+        "CandidateE2E Application": 0.22622,
+        "CandidateE2E FinalVerification": 0.00914,
+        "CandidateE2E Registration": 0.006191,
+        "CandidateE2E ReceiptHandoff": 0.000282,
+        "CandidateE2E Total": 52.033519
+      },
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132",
+      "phaseTimings": [
+        {
+          "stage": "MODEL_SETUP",
+          "elapsedNanos": "4331466780",
+          "traceOutputNanos": "165149",
+          "remainderNanos": "4331301631",
+          "plannerElapsedNanos": "4336896488"
+        },
+        {
+          "stage": "OPTIMIZATION",
+          "elapsedNanos": "6462147637",
+          "traceOutputNanos": "101156516",
+          "remainderNanos": "6360991121",
+          "plannerElapsedNanos": "10801590725"
+        },
+        {
+          "stage": "SELECTION",
+          "elapsedNanos": "449017480",
+          "traceOutputNanos": "47419",
+          "remainderNanos": "448970061",
+          "plannerElapsedNanos": "11250675400"
+        },
+        {
+          "stage": "POST_SEARCH_TRACE",
+          "elapsedNanos": "6165212",
+          "traceOutputNanos": "77886",
+          "remainderNanos": "6087326",
+          "plannerElapsedNanos": "11259073546"
+        },
+        {
+          "stage": "PLAN_CONVERSION",
+          "elapsedNanos": "752159714",
+          "traceOutputNanos": "0",
+          "remainderNanos": "752159714",
+          "plannerElapsedNanos": "12011285868"
+        },
+        {
+          "stage": "EMISSION",
+          "elapsedNanos": "226095706",
+          "traceOutputNanos": "4240561",
+          "remainderNanos": "221855145",
+          "plannerElapsedNanos": "12237504624"
+        },
+        {
+          "stage": "FINAL_BOUNDARY_VERIFY",
+          "elapsedNanos": "8709157",
+          "traceOutputNanos": "0",
+          "remainderNanos": "8709157",
+          "plannerElapsedNanos": "12246770021"
+        }
+      ]
+    },
+    {
+      "variant": "final",
+      "repeat": 2,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-deeper-20261007/logreg-final-final-r2",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 48.904195,
+        "executionSeconds": 3.982
+      },
+      "analysisSeconds": 36.482299092,
+      "fullPlannerSeconds": 11.00583308,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 4585657802,
+        "elapsedNanos": 5111784611,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 9904602703,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 231015407,
+        "upper": 122.26631334184357,
+        "validationNanos": 123659337
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "compilePhases": {
+        "CommonPreparation": 36.50164,
+        "Decision": 10.193719,
+        "Diagnostics": 0.004591,
+        "Conversion": 0.632709,
+        "Application": 0.175292,
+        "Finalization": 0.01056,
+        "CandidateE2E CommonPreparation": 0.01578,
+        "CandidateE2E Analysis": 36.48263,
+        "CandidateE2E PlannerSetup": 0.003222,
+        "CandidateE2E Model": 1.437451,
+        "CandidateE2E CostSurface": 2.678278,
+        "CandidateE2E Optimizer": 5.792674,
+        "CandidateE2E Selection": 0.284158,
+        "CandidateE2E OtherPlanning": 0.002013,
+        "CandidateE2E Diagnostics": 0.004477,
+        "CandidateE2E Conversion": 0.632703,
+        "CandidateE2E Application": 0.175304,
+        "CandidateE2E FinalVerification": 0.008828,
+        "CandidateE2E Registration": 0.005765,
+        "CandidateE2E ReceiptHandoff": 0.000246,
+        "CandidateE2E Total": 47.52353
+      },
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132",
+      "phaseTimings": [
+        {
+          "stage": "MODEL_SETUP",
+          "elapsedNanos": "4111824045",
+          "traceOutputNanos": "194333",
+          "remainderNanos": "4111629712",
+          "plannerElapsedNanos": "4115043121"
+        },
+        {
+          "stage": "OPTIMIZATION",
+          "elapsedNanos": "5790503386",
+          "traceOutputNanos": "93240686",
+          "remainderNanos": "5697262700",
+          "plannerElapsedNanos": "9907716903"
+        },
+        {
+          "stage": "SELECTION",
+          "elapsedNanos": "284046855",
+          "traceOutputNanos": "37981",
+          "remainderNanos": "284008874",
+          "plannerElapsedNanos": "10191857183"
+        },
+        {
+          "stage": "POST_SEARCH_TRACE",
+          "elapsedNanos": "4430781",
+          "traceOutputNanos": "54271",
+          "remainderNanos": "4376510",
+          "plannerElapsedNanos": "10198297350"
+        },
+        {
+          "stage": "PLAN_CONVERSION",
+          "elapsedNanos": "632614788",
+          "traceOutputNanos": "0",
+          "remainderNanos": "632614788",
+          "plannerElapsedNanos": "10830957943"
+        },
+        {
+          "stage": "EMISSION",
+          "elapsedNanos": "175201957",
+          "traceOutputNanos": "3176382",
+          "remainderNanos": "172025575",
+          "plannerElapsedNanos": "11006248245"
+        },
+        {
+          "stage": "FINAL_BOUNDARY_VERIFY",
+          "elapsedNanos": "8466022",
+          "traceOutputNanos": "0",
+          "remainderNanos": "8466022",
+          "plannerElapsedNanos": "11015192592"
+        }
+      ]
+    },
+    {
+      "variant": "baseline",
+      "repeat": 2,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-deeper-20261007/logreg-final-baseline-r2",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 63.863157,
+        "executionSeconds": 3.866
+      },
+      "analysisSeconds": 51.084241681,
+      "fullPlannerSeconds": 11.391247569,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 4226930754,
+        "elapsedNanos": 4660523759,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 10127971915,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 194180073,
+        "upper": 122.26631334184357,
+        "validationNanos": 126722349
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "compilePhases": {
+        "CommonPreparation": 51.107983,
+        "Decision": 10.523755,
+        "Diagnostics": 0.005038,
+        "Conversion": 0.647545,
+        "Application": 0.215575,
+        "Finalization": 0.011453,
+        "CandidateE2E CommonPreparation": 0.019034,
+        "CandidateE2E Analysis": 51.084614,
+        "CandidateE2E PlannerSetup": 0.004317,
+        "CandidateE2E Model": 1.533645,
+        "CandidateE2E CostSurface": 3.251351,
+        "CandidateE2E Optimizer": 5.345446,
+        "CandidateE2E Selection": 0.392359,
+        "CandidateE2E OtherPlanning": 0.001937,
+        "CandidateE2E Diagnostics": 0.004921,
+        "CandidateE2E Conversion": 0.647545,
+        "CandidateE2E Application": 0.215577,
+        "CandidateE2E FinalVerification": 0.009787,
+        "CandidateE2E Registration": 0.005035,
+        "CandidateE2E ReceiptHandoff": 0.00025,
+        "CandidateE2E Total": 62.515819
+      },
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132",
+      "phaseTimings": [
+        {
+          "stage": "MODEL_SETUP",
+          "elapsedNanos": "4776738411",
+          "traceOutputNanos": "192931",
+          "remainderNanos": "4776545480",
+          "plannerElapsedNanos": "4784182954"
+        },
+        {
+          "stage": "OPTIMIZATION",
+          "elapsedNanos": "5342585602",
+          "traceOutputNanos": "84140427",
+          "remainderNanos": "5258445175",
+          "plannerElapsedNanos": "10129610347"
+        },
+        {
+          "stage": "SELECTION",
+          "elapsedNanos": "392326566",
+          "traceOutputNanos": "54512",
+          "remainderNanos": "392272054",
+          "plannerElapsedNanos": "10521984663"
+        },
+        {
+          "stage": "POST_SEARCH_TRACE",
+          "elapsedNanos": "4871985",
+          "traceOutputNanos": "73206",
+          "remainderNanos": "4798779",
+          "plannerElapsedNanos": "10528774894"
+        },
+        {
+          "stage": "PLAN_CONVERSION",
+          "elapsedNanos": "647433384",
+          "traceOutputNanos": "0",
+          "remainderNanos": "647433384",
+          "plannerElapsedNanos": "11176258662"
+        },
+        {
+          "stage": "EMISSION",
+          "elapsedNanos": "215454257",
+          "traceOutputNanos": "4026444",
+          "remainderNanos": "211427813",
+          "plannerElapsedNanos": "11391826762"
+        },
+        {
+          "stage": "FINAL_BOUNDARY_VERIFY",
+          "elapsedNanos": "9302476",
+          "traceOutputNanos": "0",
+          "remainderNanos": "9302476",
+          "plannerElapsedNanos": "11401743135"
+        }
+      ]
+    }
+  ],
+  "means": {
+    "baseline": {
+      "analysisSeconds": 49.174798214999996,
+      "fullPlannerSeconds": 11.417680975500001,
+      "compilationSeconds": 61.98617,
+      "executionSeconds": 3.966,
+      "costSurfaceSeconds": 3.676794,
+      "checkpointSeconds": 10.2875702925
+    },
+    "no-cost": {
+      "analysisSeconds": 39.209963058,
+      "fullPlannerSeconds": 12.311143069,
+      "compilationSeconds": 52.946943,
+      "executionSeconds": 3.691,
+      "costSurfaceSeconds": 4.333928,
+      "checkpointSeconds": 10.952045928
+    },
+    "final": {
+      "analysisSeconds": 38.119909008,
+      "fullPlannerSeconds": 11.6214187745,
+      "compilationSeconds": 51.152772,
+      "executionSeconds": 3.8025,
+      "costSurfaceSeconds": 2.7490935,
+      "checkpointSeconds": 10.352151352
+    }
+  },
+  "percentReduction": {
+    "analysisSeconds": 22.480802379028116,
+    "fullPlannerSeconds": -1.7844061279797392,
+    "compilationSeconds": 17.47712110620805,
+    "executionSeconds": 4.122541603630862,
+    "costSurfaceSeconds": 25.231234058802322,
+    "checkpointSeconds": -0.6277581359233277
+  },
+  "parity": [
+    {
+      "run": "logreg-final-baseline-r1",
+      "passed": true,
+      "checkpoints": 1224,
+      "checkpointParity": true,
+      "fingerprintParity": true,
+      "differingConditions": [],
+      "dependencyParity": true,
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": []
+    },
+    {
+      "run": "logreg-final-no-cost-r1",
+      "passed": true,
+      "checkpoints": 1224,
+      "checkpointParity": true,
+      "fingerprintParity": true,
+      "differingConditions": [],
+      "dependencyParity": true,
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": []
+    },
+    {
+      "run": "logreg-final-final-r1",
+      "passed": true,
+      "checkpoints": 1224,
+      "checkpointParity": true,
+      "fingerprintParity": true,
+      "differingConditions": [],
+      "dependencyParity": true,
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": []
+    },
+    {
+      "run": "logreg-final-final-r2",
+      "passed": true,
+      "checkpoints": 1224,
+      "checkpointParity": true,
+      "fingerprintParity": true,
+      "differingConditions": [],
+      "dependencyParity": true,
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": []
+    },
+    {
+      "run": "logreg-final-baseline-r2",
+      "passed": true,
+      "checkpoints": 1224,
+      "checkpointParity": true,
+      "fingerprintParity": true,
+      "differingConditions": [],
+      "dependencyParity": true,
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": []
+    }
+  ],
+  "artifactVerification": {
+    "status": "PASS",
+    "currentHead": "af761a6fc1afe4e7496764e7215af0a000b9efe4",
+    "baselineHead": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+    "finalSourceMatch": {
+      "currentFiles": 1651,
+      "artifactFiles": 1651,
+      "missing": 0,
+      "extra": 0,
+      "changed": 0,
+      "manifestSha256": "ec69766b6f6917126eeacef7e5c31b285052b9ec07efc35afb06507e2a98089d"
+    },
+    "finalClassMatch": {
+      "targetFiles": 4363,
+      "artifactFiles": 4363,
+      "missing": 0,
+      "extra": 0,
+      "changed": 0,
+      "manifestSha256": "97fb41e251a6b1c47cc8b8300f4d534af776c0e4be0ef143492438244267e502"
+    },
+    "baselineSourceMatch": {
+      "gitFiles": 1651,
+      "artifactFiles": 1651,
+      "missing": 0,
+      "extra": 0,
+      "changed": 0,
+      "manifestSha256": "c6c16a78fa93d80fd33f9da2bcbebed9ebc19a4da115de37724e3d2bfa5b0163"
+    },
+    "baselineToFinalChangedFiles": [
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java",
+      "org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.java",
+      "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java"
+    ],
+    "baselineToNoCostChangedFiles": [
+      "org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.java",
+      "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java"
+    ],
+    "noCostToFinalChangedFiles": [
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java"
+    ],
+    "integratedSourceFreeze": {
+      "manifestFiles": 3579,
+      "currentFiles": 3579,
+      "missing": 0,
+      "extra": 0,
+      "changed": 0,
+      "artifactSha256": "1beff98baac26e9130f3a9f469a9332f8416a2806602a29ae914d456e24c82cc"
+    },
+    "regression": {
+      "classes": 63,
+      "tests": 477,
+      "passed": 472,
+      "ignored": 5,
+      "failures": 0,
+      "errors": 0,
+      "artifactSha256": "464e11f394abb563b07b528603de130dac7dc8f908d2afdd5ad31cb004e94411"
+    }
+  },
+  "javaRegression": {
+    "totals": {
+      "tests": 477,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 5
+    },
+    "classes": [
+      {
+        "class": "JointPartialTruthTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactSharedSourceLinearPreparationTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CostBasedPruningTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactCategoricalSolverTest",
+        "tests": 21,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalRegionalConfigurationTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalCostFingerprintPreflightTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointPhysicalCostTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "SharedRegionalCompactionParityTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalRegionalSeedTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "SharedReductionRepairTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "BoundaryPruningTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactFiniteSupportJoinTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalUnaryPreparationTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalReducedSolverTest",
+        "tests": 35,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlannerResourceGuardTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactCompiledSupplySharingTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LocalPhysicalOptimizerIncrementalTraceTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "SharedRegionalPreparationTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "FederatedPlanLocalCostIntegrationTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactCategoricalSolverArithmeticParityTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalNativeSupplyRepresentationTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointBoundaryPhysicalModelProofTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointPhysicalCostRowsPrefixTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactNativeLocalAnchorFanoutCostTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalDyadicCertificateTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactDerivedSupplySharingTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalSharedSourceEncodingTest",
+        "tests": 25,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalBoundaryMessageTest",
+        "tests": 17,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CampaignBG014AlsPartitionedComputeCostRedTest#singleWorkerFullAlsHasCandidateReachableFedAllPlan",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactFactorFreezeOrderTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPartialHardFactorTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalWitnessEncodingTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalBoundarySeedTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalRegionalOptimizerTest",
+        "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactHardFactorObservationDecompositionTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointBoundaryMixedInputTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactFiniteRowIndexTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LocalCategoricalOptimizerTest",
+        "tests": 21,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "DynamicNativeLayoutCompositionTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "HeuristicProtectedNestedDemotionTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointValueMapRelationsTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "RelocationBindingPrefixPruningTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ReferenceProductPrefixPruningTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LogicalBoundaryRealizationsTest",
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PolicyGreedyGroundingTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PolicyGreedyPlacementSelectorTest",
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LogregProtectedLoopSliceTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointAliasProjectionTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "EarlyPrivacyPruningLegalSpaceParityTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PhysicalSinglePartitionProofFixedPointTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementJointInputEnvironmentTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointInputReachingDefinitionsTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "RuntimeReadLegalityParityTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointValueMapSelectionLegalityTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PublicationSupportClosureTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalSinglePartitionProofTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CfgReplayCompatibilityIndexTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactRootWorkerCountMemoTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PhysicalCandidateRefinementTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "TransientPlacementAlternativesTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 5
+      },
+      {
+        "class": "CfgNativeLineageNormalizationTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CandidateRealizationCanonicalizationTest",
+        "tests": 49,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LoopIdentityBackedgeClosureTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "pythonHarnessTests": {
+    "tests": 30,
+    "failures": 0,
+    "errors": 0
+  },
+  "firstAblationBase": "73d1eb024f6f70a7d869f363d895d72313bcbff6",
+  "firstAblationRuns": [
+    {
+      "variant": "baseline",
+      "repeat": 1,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-deeper-20261007/logreg-deeper-baseline-r1",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 39.793103,
+        "executionSeconds": 3.336
+      },
+      "analysisSeconds": 29.160478954,
+      "fullPlannerSeconds": 9.654968982,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 3372049249,
+        "elapsedNanos": 3730491716,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 8844487776,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 152905599,
+        "upper": 122.26631334184357,
+        "validationNanos": 95579129
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "entries": 16,
+        "errors": [],
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132",
+      "compilePhases": {
+        "CommonPreparation": 29.175898,
+        "Decision": 9.09121,
+        "Diagnostics": 0.004117,
+        "Conversion": 0.42934,
+        "Application": 0.130801,
+        "Finalization": 0.006934,
+        "CandidateE2E CommonPreparation": 0.012511,
+        "CandidateE2E Analysis": 29.160687,
+        "CandidateE2E PlannerSetup": 0.002695,
+        "CandidateE2E Model": 1.749727,
+        "CandidateE2E CostSurface": 2.781054,
+        "CandidateE2E Optimizer": 4.315745,
+        "CandidateE2E Selection": 0.24407,
+        "CandidateE2E OtherPlanning": 0.001564,
+        "CandidateE2E Diagnostics": 0.004005,
+        "CandidateE2E Conversion": 0.429342,
+        "CandidateE2E Application": 0.130801,
+        "CandidateE2E FinalVerification": 0.005754,
+        "CandidateE2E Registration": 0.004055,
+        "CandidateE2E ReceiptHandoff": 0.00017,
+        "CandidateE2E Total": 38.842179
+      }
+    },
+    {
+      "variant": "sort-only",
+      "repeat": 1,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-deeper-20261007/logreg-deeper-sort-only-r1",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 39.491772,
+        "executionSeconds": 2.933
+      },
+      "analysisSeconds": 28.552482207,
+      "fullPlannerSeconds": 9.830909252,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 3830704914,
+        "elapsedNanos": 4165694337,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 8983451137,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 158168401,
+        "upper": 122.26631334184357,
+        "validationNanos": 83870020
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "entries": 16,
+        "errors": [],
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132",
+      "compilePhases": {
+        "CommonPreparation": 28.57204,
+        "Decision": 9.228758,
+        "Diagnostics": 0.003478,
+        "Conversion": 0.456367,
+        "Application": 0.142869,
+        "Finalization": 0.008167,
+        "CandidateE2E CommonPreparation": 0.015583,
+        "CandidateE2E Analysis": 28.552991,
+        "CandidateE2E PlannerSetup": 0.003459,
+        "CandidateE2E Model": 1.156897,
+        "CandidateE2E CostSurface": 3.074936,
+        "CandidateE2E Optimizer": 4.753663,
+        "CandidateE2E Selection": 0.242453,
+        "CandidateE2E OtherPlanning": 0.001479,
+        "CandidateE2E Diagnostics": 0.003362,
+        "CandidateE2E Conversion": 0.45638,
+        "CandidateE2E Application": 0.142868,
+        "CandidateE2E FinalVerification": 0.006875,
+        "CandidateE2E Registration": 0.004156,
+        "CandidateE2E ReceiptHandoff": 0.000185,
+        "CandidateE2E Total": 38.415288
+      }
+    },
+    {
+      "variant": "cfg-only",
+      "repeat": 1,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-deeper-20261007/logreg-deeper-cfg-only-r1",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 38.536337,
+        "executionSeconds": 3.485
+      },
+      "analysisSeconds": 27.907081838,
+      "fullPlannerSeconds": 9.494405468,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 3414345047,
+        "elapsedNanos": 3815079109,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 8421750060,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 182678072,
+        "upper": 122.26631334184357,
+        "validationNanos": 108181100
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "entries": 16,
+        "errors": [],
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132",
+      "compilePhases": {
+        "CommonPreparation": 27.924486,
+        "Decision": 8.755471,
+        "Diagnostics": 0.004681,
+        "Conversion": 0.563684,
+        "Application": 0.170932,
+        "Finalization": 0.012469,
+        "CandidateE2E CommonPreparation": 0.0147,
+        "CandidateE2E Analysis": 27.9073,
+        "CandidateE2E PlannerSetup": 0.00248,
+        "CandidateE2E Model": 1.276097,
+        "CandidateE2E CostSurface": 2.753586,
+        "CandidateE2E Optimizer": 4.393827,
+        "CandidateE2E Selection": 0.33019,
+        "CandidateE2E OtherPlanning": 0.002286,
+        "CandidateE2E Diagnostics": 0.004541,
+        "CandidateE2E Conversion": 0.563692,
+        "CandidateE2E Application": 0.170933,
+        "CandidateE2E FinalVerification": 0.0103,
+        "CandidateE2E Registration": 0.007358,
+        "CandidateE2E ReceiptHandoff": 0.000348,
+        "CandidateE2E Total": 37.43764
+      }
+    },
+    {
+      "variant": "combined",
+      "repeat": 1,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-deeper-20261007/logreg-deeper-combined-r1",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 36.013835,
+        "executionSeconds": 3.276
+      },
+      "analysisSeconds": 25.058508967,
+      "fullPlannerSeconds": 9.894776215,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 3802933439,
+        "elapsedNanos": 4158318420,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 8949006463,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 151570108,
+        "upper": 122.26631334184357,
+        "validationNanos": 103184686
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "entries": 16,
+        "errors": [],
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132",
+      "compilePhases": {
+        "CommonPreparation": 25.073443,
+        "Decision": 9.214323,
+        "Diagnostics": 0.007548,
+        "Conversion": 0.528092,
+        "Application": 0.145287,
+        "Finalization": 0.008487,
+        "CandidateE2E CommonPreparation": 0.011433,
+        "CandidateE2E Analysis": 25.058747,
+        "CandidateE2E PlannerSetup": 0.003256,
+        "CandidateE2E Model": 1.516537,
+        "CandidateE2E CostSurface": 2.712211,
+        "CandidateE2E Optimizer": 4.722584,
+        "CandidateE2E Selection": 0.26148,
+        "CandidateE2E OtherPlanning": 0.002356,
+        "CandidateE2E Diagnostics": 0.007365,
+        "CandidateE2E Conversion": 0.528092,
+        "CandidateE2E Application": 0.145287,
+        "CandidateE2E FinalVerification": 0.00712,
+        "CandidateE2E Registration": 0.004351,
+        "CandidateE2E ReceiptHandoff": 0.000192,
+        "CandidateE2E Total": 34.98101
+      }
+    },
+    {
+      "variant": "combined",
+      "repeat": 2,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-deeper-20261007/logreg-deeper-combined-r2",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 36.084396,
+        "executionSeconds": 3.436
+      },
+      "analysisSeconds": 25.209447042,
+      "fullPlannerSeconds": 9.689530711,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 3664960356,
+        "elapsedNanos": 4017555312,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 8774133599,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 144027469,
+        "upper": 122.26631334184357,
+        "validationNanos": 106540607
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "entries": 16,
+        "errors": [],
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132",
+      "compilePhases": {
+        "CommonPreparation": 25.22703,
+        "Decision": 9.087651,
+        "Diagnostics": 0.005133,
+        "Conversion": 0.437963,
+        "Application": 0.159208,
+        "Finalization": 0.016661,
+        "CandidateE2E CommonPreparation": 0.01459,
+        "CandidateE2E Analysis": 25.209621,
+        "CandidateE2E PlannerSetup": 0.002815,
+        "CandidateE2E Model": 1.109757,
+        "CandidateE2E CostSurface": 3.018374,
+        "CandidateE2E Optimizer": 4.647913,
+        "CandidateE2E Selection": 0.310287,
+        "CandidateE2E OtherPlanning": 0.001851,
+        "CandidateE2E Diagnostics": 0.004996,
+        "CandidateE2E Conversion": 0.437968,
+        "CandidateE2E Application": 0.159209,
+        "CandidateE2E FinalVerification": 0.014926,
+        "CandidateE2E Registration": 0.00526,
+        "CandidateE2E ReceiptHandoff": 0.00022,
+        "CandidateE2E Total": 34.937787
+      }
+    },
+    {
+      "variant": "baseline",
+      "repeat": 2,
+      "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-deeper-20261007/logreg-deeper-baseline-r2",
+      "returncode": 0,
+      "passed": true,
+      "statistics": {
+        "compilationSeconds": 44.097331,
+        "executionSeconds": 2.934
+      },
+      "analysisSeconds": 33.300563574,
+      "fullPlannerSeconds": 9.702960868,
+      "final": {
+        "assignments": 17336646,
+        "clusters": 3527,
+        "conditionalAttempts": 40,
+        "conditionalImprovements": 4,
+        "dpNanos": 3714215031,
+        "elapsedNanos": 4079507378,
+        "improvements": 4,
+        "internalDecisions": 49,
+        "lower": 120.54269578813249,
+        "merges": 4566,
+        "phase": "TARGET_REACHED",
+        "plannerElapsedNanos": 8796563959,
+        "relativeGap": 0.014298813731032978,
+        "resourceRejected": 698,
+        "retainedSlots": 9578164,
+        "scoringNanos": 163191913,
+        "upper": 122.26631334184357,
+        "validationNanos": 92847003
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "entries": 16,
+        "errors": [],
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 2.220446049250313e-16,
+        "nonzero": true
+      },
+      "auditErrors": [],
+      "runtimeAuditViolations": [],
+      "runtimeConversionViolations": [],
+      "analysisFingerprint": "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132",
+      "compilePhases": {
+        "CommonPreparation": 33.317097,
+        "Decision": 9.086318,
+        "Diagnostics": 0.004455,
+        "Conversion": 0.455409,
+        "Application": 0.157167,
+        "Finalization": 0.00919,
+        "CandidateE2E CommonPreparation": 0.013645,
+        "CandidateE2E Analysis": 33.300779,
+        "CandidateE2E PlannerSetup": 0.002669,
+        "CandidateE2E Model": 1.337879,
+        "CandidateE2E CostSurface": 2.824025,
+        "CandidateE2E Optimizer": 4.636181,
+        "CandidateE2E Selection": 0.286926,
+        "CandidateE2E OtherPlanning": 0.001838,
+        "CandidateE2E Diagnostics": 0.004334,
+        "CandidateE2E Conversion": 0.455418,
+        "CandidateE2E Application": 0.157165,
+        "CandidateE2E FinalVerification": 0.007721,
+        "CandidateE2E Registration": 0.004459,
+        "CandidateE2E ReceiptHandoff": 0.00018,
+        "CandidateE2E Total": 43.033218
+      }
+    }
+  ],
+  "baselineDiagnosticPhases": {
+    "cp": [
+      {
+        "phase": "ANALYSIS",
+        "calls": 1,
+        "inclusiveWallNanos": 4411844597,
+        "exclusiveWallNanos": 660363797,
+        "inclusiveCpuNanos": 4305942387,
+        "exclusiveCpuNanos": 635998625,
+        "inclusiveAllocatedBytes": 2155938360,
+        "exclusiveAllocatedBytes": 86071552
+      },
+      {
+        "phase": "RELOCATION_DISCOVERY",
+        "calls": 3,
+        "inclusiveWallNanos": 23690321,
+        "exclusiveWallNanos": 23690321,
+        "inclusiveCpuNanos": 23687857,
+        "exclusiveCpuNanos": 23687857,
+        "inclusiveAllocatedBytes": 10405184,
+        "exclusiveAllocatedBytes": 10405184
+      },
+      {
+        "phase": "RELOCATION_BINDING",
+        "calls": 2,
+        "inclusiveWallNanos": 11279158,
+        "exclusiveWallNanos": 11279158,
+        "inclusiveCpuNanos": 11282345,
+        "exclusiveCpuNanos": 11282345,
+        "inclusiveAllocatedBytes": 3627064,
+        "exclusiveAllocatedBytes": 3627064
+      },
+      {
+        "phase": "SOURCE_PRUNING",
+        "calls": 2,
+        "inclusiveWallNanos": 6338331,
+        "exclusiveWallNanos": 6338331,
+        "inclusiveCpuNanos": 6268835,
+        "exclusiveCpuNanos": 6268835,
+        "inclusiveAllocatedBytes": 940296,
+        "exclusiveAllocatedBytes": 940296
+      },
+      {
+        "phase": "LOOP_SEED_BOOKKEEPING",
+        "calls": 16,
+        "inclusiveWallNanos": 62782107,
+        "exclusiveWallNanos": 62782107,
+        "inclusiveCpuNanos": 62693135,
+        "exclusiveCpuNanos": 62693135,
+        "inclusiveAllocatedBytes": 37388504,
+        "exclusiveAllocatedBytes": 37388504
+      },
+      {
+        "phase": "MATERIALIZATION",
+        "calls": 4,
+        "inclusiveWallNanos": 75655307,
+        "exclusiveWallNanos": 75655307,
+        "inclusiveCpuNanos": 75550785,
+        "exclusiveCpuNanos": 75550785,
+        "inclusiveAllocatedBytes": 16594240,
+        "exclusiveAllocatedBytes": 16594240
+      },
+      {
+        "phase": "CONTEXT_OBSERVER",
+        "calls": 0,
+        "inclusiveWallNanos": 0,
+        "exclusiveWallNanos": 0,
+        "inclusiveCpuNanos": 0,
+        "exclusiveCpuNanos": 0,
+        "inclusiveAllocatedBytes": 0,
+        "exclusiveAllocatedBytes": 0
+      },
+      {
+        "phase": "PROOF_TOPOLOGY",
+        "calls": 0,
+        "inclusiveWallNanos": 0,
+        "exclusiveWallNanos": 0,
+        "inclusiveCpuNanos": 0,
+        "exclusiveCpuNanos": 0,
+        "inclusiveAllocatedBytes": 0,
+        "exclusiveAllocatedBytes": 0
+      },
+      {
+        "phase": "PROOF_OVERLAY",
+        "calls": 0,
+        "inclusiveWallNanos": 0,
+        "exclusiveWallNanos": 0,
+        "inclusiveCpuNanos": 0,
+        "exclusiveCpuNanos": 0,
+        "inclusiveAllocatedBytes": 0,
+        "exclusiveAllocatedBytes": 0
+      },
+      {
+        "phase": "PROOF_DEPENDENCY_PRUNING",
+        "calls": 0,
+        "inclusiveWallNanos": 0,
+        "exclusiveWallNanos": 0,
+        "inclusiveCpuNanos": 0,
+        "exclusiveCpuNanos": 0,
+        "inclusiveAllocatedBytes": 0,
+        "exclusiveAllocatedBytes": 0
+      },
+      {
+        "phase": "PROOF_GROUNDING",
+        "calls": 0,
+        "inclusiveWallNanos": 0,
+        "exclusiveWallNanos": 0,
+        "inclusiveCpuNanos": 0,
+        "exclusiveCpuNanos": 0,
+        "inclusiveAllocatedBytes": 0,
+        "exclusiveAllocatedBytes": 0
+      },
+      {
+        "phase": "SUPPORT_PRODUCT_RELATION_MATERIALIZATION",
+        "calls": 0,
+        "inclusiveWallNanos": 0,
+        "exclusiveWallNanos": 0,
+        "inclusiveCpuNanos": 0,
+        "exclusiveCpuNanos": 0,
+        "inclusiveAllocatedBytes": 0,
+        "exclusiveAllocatedBytes": 0
+      },
+      {
+        "phase": "PUBLIC_PROOF_MATERIALIZATION",
+        "calls": 0,
+        "inclusiveWallNanos": 0,
+        "exclusiveWallNanos": 0,
+        "inclusiveCpuNanos": 0,
+        "exclusiveCpuNanos": 0,
+        "inclusiveAllocatedBytes": 0,
+        "exclusiveAllocatedBytes": 0
+      },
+      {
+        "phase": "CLAUSE_MERGE_CANONICALIZATION",
+        "calls": 1,
+        "inclusiveWallNanos": 2316811,
+        "exclusiveWallNanos": 2316811,
+        "inclusiveCpuNanos": 2315772,
+        "exclusiveCpuNanos": 2315772,
+        "inclusiveAllocatedBytes": 330944,
+        "exclusiveAllocatedBytes": 330944
+      },
+      {
+        "phase": "CLOSURE_REPLAY",
+        "calls": 7,
+        "inclusiveWallNanos": 2831702586,
+        "exclusiveWallNanos": 658062820,
+        "inclusiveCpuNanos": 2768100221,
+        "exclusiveCpuNanos": 644586827,
+        "inclusiveAllocatedBytes": 1749454544,
+        "exclusiveAllocatedBytes": 139440592
+      },
+      {
+        "phase": "DIRECT_BINDING",
+        "calls": 273,
+        "inclusiveWallNanos": 6874171,
+        "exclusiveWallNanos": 6874171,
+        "inclusiveCpuNanos": 6739873,
+        "exclusiveCpuNanos": 6739873,
+        "inclusiveAllocatedBytes": 853864,
+        "exclusiveAllocatedBytes": 853864
+      },
+      {
+        "phase": "DIRECT_PROOF_CALL",
+        "calls": 0,
+        "inclusiveWallNanos": 0,
+        "exclusiveWallNanos": 0,
+        "inclusiveCpuNanos": 0,
+        "exclusiveCpuNanos": 0,
+        "inclusiveAllocatedBytes": 0,
+        "exclusiveAllocatedBytes": 0
+      },
+      {
+        "phase": "PRIVACY_CLOSURE",
+        "calls": 6,
+        "inclusiveWallNanos": 30622974,
+        "exclusiveWallNanos": 30593769,
+        "inclusiveCpuNanos": 30591501,
+        "exclusiveCpuNanos": 30565794,
+        "inclusiveAllocatedBytes": 9606936,
+        "exclusiveAllocatedBytes": 9606936
+      },
+      {
+        "phase": "PRIVACY_EVIDENCE",
+        "calls": 6,
+        "inclusiveWallNanos": 29205,
+        "exclusiveWallNanos": 29205,
+        "inclusiveCpuNanos": 25707,
+        "exclusiveCpuNanos": 25707,
+        "inclusiveAllocatedBytes": 0,
+        "exclusiveAllocatedBytes": 0
+      },
+      {
+        "phase": "CFG_REPLAY",
+        "calls": 24,
+        "inclusiveWallNanos": 1759183254,
+        "exclusiveWallNanos": 1759183254,
+        "inclusiveCpuNanos": 1704189654,
+        "exclusiveCpuNanos": 1704189654,
+        "inclusiveAllocatedBytes": 1494406912,
+        "exclusiveAllocatedBytes": 1494406912
+      },
+      {
+        "phase": "PHYSICAL_REBUILD",
+        "calls": 15,
+        "inclusiveWallNanos": 516432640,
+        "exclusiveWallNanos": 516432640,
+        "inclusiveCpuNanos": 513936792,
+        "exclusiveCpuNanos": 513936792,
+        "inclusiveAllocatedBytes": 161599552,
+        "exclusiveAllocatedBytes": 161599552
+      },
+      {
+        "phase": "PUBLICATION_VALIDATION",
+        "calls": 1,
+        "inclusiveWallNanos": 166111,
+        "exclusiveWallNanos": 166111,
+        "inclusiveCpuNanos": 164018,
+        "exclusiveCpuNanos": 164018,
+        "inclusiveAllocatedBytes": 32,
+        "exclusiveAllocatedBytes": 32
+      },
+      {
+        "phase": "RECEIPT_RANK_CONSUMER_PREPARATION",
+        "calls": 1,
+        "inclusiveWallNanos": 598076795,
+        "exclusiveWallNanos": 598076795,
+        "inclusiveCpuNanos": 587936368,
+        "exclusiveCpuNanos": 587936368,
+        "inclusiveAllocatedBytes": 194672688,
+        "exclusiveAllocatedBytes": 194672688
+      }
+    ],
+    "fed": [
+      {
+        "phase": "ANALYSIS",
+        "calls": 1,
+        "inclusiveWallNanos": 30817424258,
+        "exclusiveWallNanos": 1013345714,
+        "inclusiveCpuNanos": 29473708832,
+        "exclusiveCpuNanos": 996648568,
+        "inclusiveAllocatedBytes": 27793604584,
+        "exclusiveAllocatedBytes": 394233768
+      },
+      {
+        "phase": "RELOCATION_DISCOVERY",
+        "calls": 15,
+        "inclusiveWallNanos": 213856112,
+        "exclusiveWallNanos": 213856112,
+        "inclusiveCpuNanos": 212483528,
+        "exclusiveCpuNanos": 212483528,
+        "inclusiveAllocatedBytes": 110153832,
+        "exclusiveAllocatedBytes": 110153832
+      },
+      {
+        "phase": "RELOCATION_BINDING",
+        "calls": 10,
+        "inclusiveWallNanos": 509400767,
+        "exclusiveWallNanos": 509400767,
+        "inclusiveCpuNanos": 506122344,
+        "exclusiveCpuNanos": 506122344,
+        "inclusiveAllocatedBytes": 280122304,
+        "exclusiveAllocatedBytes": 280122304
+      },
+      {
+        "phase": "SOURCE_PRUNING",
+        "calls": 10,
+        "inclusiveWallNanos": 205801537,
+        "exclusiveWallNanos": 205801537,
+        "inclusiveCpuNanos": 205168528,
+        "exclusiveCpuNanos": 205168528,
+        "inclusiveAllocatedBytes": 73684112,
+        "exclusiveAllocatedBytes": 73684112
+      },
+      {
+        "phase": "LOOP_SEED_BOOKKEEPING",
+        "calls": 33,
+        "inclusiveWallNanos": 156254265,
+        "exclusiveWallNanos": 156254265,
+        "inclusiveCpuNanos": 155016977,
+        "exclusiveCpuNanos": 155016977,
+        "inclusiveAllocatedBytes": 92704008,
+        "exclusiveAllocatedBytes": 92704008
+      },
+      {
+        "phase": "MATERIALIZATION",
+        "calls": 8,
+        "inclusiveWallNanos": 3589642852,
+        "exclusiveWallNanos": 1143082639,
+        "inclusiveCpuNanos": 3484805281,
+        "exclusiveCpuNanos": 1112866440,
+        "inclusiveAllocatedBytes": 1534955264,
+        "exclusiveAllocatedBytes": 686038928
+      },
+      {
+        "phase": "CONTEXT_OBSERVER",
+        "calls": 14418,
+        "inclusiveWallNanos": 32216197,
+        "exclusiveWallNanos": 32216197,
+        "inclusiveCpuNanos": 31079767,
+        "exclusiveCpuNanos": 31079767,
+        "inclusiveAllocatedBytes": 2979432,
+        "exclusiveAllocatedBytes": 2979432
+      },
+      {
+        "phase": "PROOF_TOPOLOGY",
+        "calls": 202123,
+        "inclusiveWallNanos": 1104275209,
+        "exclusiveWallNanos": 1104275209,
+        "inclusiveCpuNanos": 1071540895,
+        "exclusiveCpuNanos": 1071540895,
+        "inclusiveAllocatedBytes": 591743912,
+        "exclusiveAllocatedBytes": 591743912
+      },
+      {
+        "phase": "PROOF_OVERLAY",
+        "calls": 14418,
+        "inclusiveWallNanos": 1564139179,
+        "exclusiveWallNanos": 525610971,
+        "inclusiveCpuNanos": 1538500935,
+        "exclusiveCpuNanos": 530280253,
+        "inclusiveAllocatedBytes": 746652976,
+        "exclusiveAllocatedBytes": 176407224
+      },
+      {
+        "phase": "PROOF_DEPENDENCY_PRUNING",
+        "calls": 14418,
+        "inclusiveWallNanos": 219660181,
+        "exclusiveWallNanos": 219660181,
+        "inclusiveCpuNanos": 221134144,
+        "exclusiveCpuNanos": 221134144,
+        "inclusiveAllocatedBytes": 107782544,
+        "exclusiveAllocatedBytes": 107782544
+      },
+      {
+        "phase": "PROOF_GROUNDING",
+        "calls": 0,
+        "inclusiveWallNanos": 0,
+        "exclusiveWallNanos": 0,
+        "inclusiveCpuNanos": 0,
+        "exclusiveCpuNanos": 0,
+        "inclusiveAllocatedBytes": 0,
+        "exclusiveAllocatedBytes": 0
+      },
+      {
+        "phase": "SUPPORT_PRODUCT_RELATION_MATERIALIZATION",
+        "calls": 14418,
+        "inclusiveWallNanos": 456389591,
+        "exclusiveWallNanos": 456389591,
+        "inclusiveCpuNanos": 457296412,
+        "exclusiveCpuNanos": 457296412,
+        "inclusiveAllocatedBytes": 217918304,
+        "exclusiveAllocatedBytes": 217918304
+      },
+      {
+        "phase": "PUBLIC_PROOF_MATERIALIZATION",
+        "calls": 34936,
+        "inclusiveWallNanos": 306273546,
+        "exclusiveWallNanos": 306273546,
+        "inclusiveCpuNanos": 306104179,
+        "exclusiveCpuNanos": 306104179,
+        "inclusiveAllocatedBytes": 92715776,
+        "exclusiveAllocatedBytes": 92715776
+      },
+      {
+        "phase": "CLAUSE_MERGE_CANONICALIZATION",
+        "calls": 1,
+        "inclusiveWallNanos": 19601006,
+        "exclusiveWallNanos": 19601006,
+        "inclusiveCpuNanos": 19500515,
+        "exclusiveCpuNanos": 19500515,
+        "inclusiveAllocatedBytes": 5841704,
+        "exclusiveAllocatedBytes": 5841704
+      },
+      {
+        "phase": "CLOSURE_REPLAY",
+        "calls": 15,
+        "inclusiveWallNanos": 22950424431,
+        "exclusiveWallNanos": 3658847200,
+        "inclusiveCpuNanos": 21940505419,
+        "exclusiveCpuNanos": 3610429668,
+        "inclusiveAllocatedBytes": 22962654528,
+        "exclusiveAllocatedBytes": 1480518304
+      },
+      {
+        "phase": "DIRECT_BINDING",
+        "calls": 2024,
+        "inclusiveWallNanos": 5462483036,
+        "exclusiveWallNanos": 2902897932,
+        "inclusiveCpuNanos": 5350288353,
+        "exclusiveCpuNanos": 2826693556,
+        "inclusiveAllocatedBytes": 2277564600,
+        "exclusiveAllocatedBytes": 1231807448
+      },
+      {
+        "phase": "DIRECT_PROOF_CALL",
+        "calls": 35441,
+        "inclusiveWallNanos": 2559585104,
+        "exclusiveWallNanos": 436520971,
+        "inclusiveCpuNanos": 2523594797,
+        "exclusiveCpuNanos": 425363610,
+        "inclusiveAllocatedBytes": 1045757152,
+        "exclusiveAllocatedBytes": 83821304
+      },
+      {
+        "phase": "PRIVACY_CLOSURE",
+        "calls": 15,
+        "inclusiveWallNanos": 80615748,
+        "exclusiveWallNanos": 80560696,
+        "inclusiveCpuNanos": 80354349,
+        "exclusiveCpuNanos": 80325765,
+        "inclusiveAllocatedBytes": 28714328,
+        "exclusiveAllocatedBytes": 28714328
+      },
+      {
+        "phase": "PRIVACY_EVIDENCE",
+        "calls": 15,
+        "inclusiveWallNanos": 55052,
+        "exclusiveWallNanos": 55052,
+        "inclusiveCpuNanos": 28584,
+        "exclusiveCpuNanos": 28584,
+        "inclusiveAllocatedBytes": 0,
+        "exclusiveAllocatedBytes": 0
+      },
+      {
+        "phase": "CFG_REPLAY",
+        "calls": 87,
+        "inclusiveWallNanos": 10768466720,
+        "exclusiveWallNanos": 10253020949,
+        "inclusiveCpuNanos": 9986159815,
+        "exclusiveCpuNanos": 9472434848,
+        "inclusiveAllocatedBytes": 18405828680,
+        "exclusiveAllocatedBytes": 18178483032
+      },
+      {
+        "phase": "PHYSICAL_REBUILD",
+        "calls": 102,
+        "inclusiveWallNanos": 6137591964,
+        "exclusiveWallNanos": 6137591964,
+        "inclusiveCpuNanos": 5965126239,
+        "exclusiveCpuNanos": 5965126239,
+        "inclusiveAllocatedBytes": 2302579016,
+        "exclusiveAllocatedBytes": 2302579016
+      },
+      {
+        "phase": "PUBLICATION_VALIDATION",
+        "calls": 1,
+        "inclusiveWallNanos": 181820,
+        "exclusiveWallNanos": 181820,
+        "inclusiveCpuNanos": 179847,
+        "exclusiveCpuNanos": 179847,
+        "inclusiveAllocatedBytes": 32,
+        "exclusiveAllocatedBytes": 32
+      },
+      {
+        "phase": "RECEIPT_RANK_CONSUMER_PREPARATION",
+        "calls": 1,
+        "inclusiveWallNanos": 1441979939,
+        "exclusiveWallNanos": 1441979939,
+        "inclusiveCpuNanos": 1267884165,
+        "exclusiveCpuNanos": 1267884165,
+        "inclusiveAllocatedBytes": 1655355272,
+        "exclusiveAllocatedBytes": 1655355272
+      }
+    ]
+  },
+  "segmentedDiagnosticPhases": [
+    [
+      "ANALYSIS",
+      "1",
+      "46305062726",
+      "1658649463",
+      "44033997325",
+      "1601510511",
+      "13649786784",
+      "201238880"
+    ],
+    [
+      "RELOCATION_DISCOVERY",
+      "15",
+      "444033368",
+      "444033368",
+      "428591570",
+      "428591570",
+      "110174680",
+      "110174680"
+    ],
+    [
+      "RELOCATION_BINDING",
+      "10",
+      "961841299",
+      "961841299",
+      "898287640",
+      "898287640",
+      "272877880",
+      "272877880"
+    ],
+    [
+      "SOURCE_PRUNING",
+      "10",
+      "409146966",
+      "409146966",
+      "395475195",
+      "395475195",
+      "71433632",
+      "71433632"
+    ],
+    [
+      "LOOP_SEED_BOOKKEEPING",
+      "33",
+      "380066152",
+      "380066152",
+      "368524630",
+      "368524630",
+      "92829304",
+      "92829304"
+    ],
+    [
+      "MATERIALIZATION",
+      "8",
+      "5617976292",
+      "2366012442",
+      "5214375248",
+      "2210522847",
+      "1306045680",
+      "680881128"
+    ],
+    [
+      "CONTEXT_OBSERVER",
+      "14418",
+      "55179125",
+      "55179125",
+      "52960983",
+      "52960983",
+      "2984976",
+      "2984976"
+    ],
+    [
+      "PROOF_TOPOLOGY",
+      "202123",
+      "2197718333",
+      "2197718333",
+      "2019643907",
+      "2019643907",
+      "600543968",
+      "600543968"
+    ],
+    [
+      "PROOF_OVERLAY",
+      "14418",
+      "3115721621",
+      "1055323949",
+      "2887804108",
+      "998049256",
+      "755041784",
+      "177431808"
+    ],
+    [
+      "PROOF_DEPENDENCY_PRUNING",
+      "14418",
+      "431818626",
+      "431818626",
+      "430307959",
+      "430307959",
+      "107965760",
+      "107965760"
+    ],
+    [
+      "PROOF_GROUNDING",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0"
+    ],
+    [
+      "SUPPORT_PRODUCT_RELATION_MATERIALIZATION",
+      "14418",
+      "779158704",
+      "779158704",
+      "732398744",
+      "732398744",
+      "197995440",
+      "197995440"
+    ],
+    [
+      "PUBLIC_PROOF_MATERIALIZATION",
+      "34936",
+      "647261641",
+      "647261641",
+      "623203275",
+      "623203275",
+      "97102888",
+      "97102888"
+    ],
+    [
+      "CLAUSE_MERGE_CANONICALIZATION",
+      "1",
+      "56478561",
+      "56478561",
+      "56135739",
+      "56135739",
+      "5945728",
+      "5945728"
+    ],
+    [
+      "CLOSURE_REPLAY",
+      "15",
+      "33764283493",
+      "6914698196",
+      "32396801437",
+      "6747511572",
+      "9708428592",
+      "1376118880"
+    ],
+    [
+      "DIRECT_BINDING",
+      "2024",
+      "10033358533",
+      "5136382321",
+      "9629335450",
+      "4957900237",
+      "2233018416",
+      "1194855072"
+    ],
+    [
+      "DIRECT_PROOF_CALL",
+      "35441",
+      "4896976212",
+      "833313074",
+      "4671435213",
+      "797066105",
+      "1038163344",
+      "83675680"
+    ],
+    [
+      "PRIVACY_CLOSURE",
+      "15",
+      "170729151",
+      "170509171",
+      "168041944",
+      "167987393",
+      "29131800",
+      "29131800"
+    ],
+    [
+      "PRIVACY_EVIDENCE",
+      "15",
+      "219980",
+      "219980",
+      "54551",
+      "54551",
+      "0",
+      "0"
+    ],
+    [
+      "CFG_REPLAY",
+      "87",
+      "12322918197",
+      "11228751166",
+      "11600940291",
+      "10626634377",
+      "5110554688",
+      "4881283208"
+    ],
+    [
+      "PHYSICAL_REBUILD",
+      "102",
+      "8429108224",
+      "8429108224",
+      "8044054151",
+      "8044054151",
+      "1812722568",
+      "1812722568"
+    ],
+    [
+      "PUBLICATION_VALIDATION",
+      "1",
+      "355374",
+      "355374",
+      "352631",
+      "352631",
+      "32",
+      "32"
+    ],
+    [
+      "RECEIPT_RANK_CONSUMER_PREPARATION",
+      "1",
+      "2149036591",
+      "2149036591",
+      "1876824052",
+      "1876824052",
+      "1652593472",
+      "1652593472"
+    ]
+  ],
+  "conditions": {
+    "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "inputSha256": {
+      "data/A1.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+      "data/A1.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+      "data/A1_PUBLIC.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+      "data/A1_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+      "data/A2.csv": "a11192eae9705cdb946acb6bf07e42f1c2f57ecc33305de2da75bdc69bdb1dbd",
+      "data/A2.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+      "data/A2_PUBLIC.csv": "a11192eae9705cdb946acb6bf07e42f1c2f57ecc33305de2da75bdc69bdb1dbd",
+      "data/A2_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+      "data/B1.csv": "971f6c320a133932fc5223d98bd16171e1089e780c2c3e9c9e800b90d9c68618",
+      "data/B1.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+      "data/B1_PUBLIC.csv": "971f6c320a133932fc5223d98bd16171e1089e780c2c3e9c9e800b90d9c68618",
+      "data/B1_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+      "data/B2.csv": "9d3f6405691b679e1cd1ea3f9f5bf4d7b5a40d4179308bf42afa7dc2c1d8b6b6",
+      "data/B2.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+      "data/B2_PUBLIC.csv": "9d3f6405691b679e1cd1ea3f9f5bf4d7b5a40d4179308bf42afa7dc2c1d8b6b6",
+      "data/B2_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+      "data/X.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+      "data/X.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+      "data/X_ML_0.csv": "2db58fd05e48e711f78604edd4599113bdaac2290cbdcf46a5c7a5a9638b5449",
+      "data/X_ML_0.csv.mtd": "8c72e321bf8890a6d7c2b3999ebcbbedbc1271211a607175a875509c870e4c0e",
+      "data/X_ML_1.csv": "b25845d13ede155a86629feef98b94178d8a860fcfdfad376a4a47539cf68bfe",
+      "data/X_ML_1.csv.mtd": "8c72e321bf8890a6d7c2b3999ebcbbedbc1271211a607175a875509c870e4c0e",
+      "data/X_ML_2.csv": "e1f99cdf838ebfa9303c497cc9da468f082e38916a2866e1b17a86926c2c5218",
+      "data/X_ML_2.csv.mtd": "8c72e321bf8890a6d7c2b3999ebcbbedbc1271211a607175a875509c870e4c0e",
+      "data/X_ML_PUBLIC.csv": "ac04328eae4670b670835d6e7ecd552699f5a80ab622d664a21656cff3f8f353",
+      "data/X_ML_PUBLIC.csv.mtd": "4508ba414b0a8ac138649f03cb9c0d13351e97ee85a2c7540e794918cf96e18c",
+      "data/X_PUBLIC.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+      "data/X_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+      "data/Y_ML_LM.csv": "cac6cb509f52d0916fd1b9d86ba2d9350c99bbe3fbc8a4d796a0fb44805c12f8",
+      "data/Y_ML_LM.csv.mtd": "addccefa9722f2b9cb3d9d1935a23f001a5fb401e588145651940f51a5085a12",
+      "data/Y_ML_LOGREG.csv": "48df6a214fd585ba3e45444dd0bd8e15be0b2f2dc0dfb132ae742f54a934f156",
+      "data/Y_ML_LOGREG.csv.mtd": "addccefa9722f2b9cb3d9d1935a23f001a5fb401e588145651940f51a5085a12",
+      "data/Y_ML_SVM.csv": "a6ab0344d08311acbe11dfca6c0300c6b99348b1ffef8711c65fb9c2dcbcfab5",
+      "data/Y_ML_SVM.csv.mtd": "addccefa9722f2b9cb3d9d1935a23f001a5fb401e588145651940f51a5085a12"
+    },
+    "fixtureSha256": {
+      "config": {
+        "sha256": "0593f01a6400b1f69b53f16fa07eaf0df46dc12fe5ec74cbddbf71c4c5f6f0a7"
+      },
+      "ml_logreg": {
+        "cp": "9bba9c7b183ebecd3c25e4577de37bdd1a9d19efe5cd5c44c1d0992b58888214",
+        "fed": "a58bf9416ec78b146126cb744c9eead1e6c7e60b954014994bb8cc5264a48293"
+      }
+    },
+    "artifactInventoryDigests": {
+      "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+      "mainClasses": "7c89b5642cc525b924101b4dee7b185bd9347b48713b12d812aa010b1e34ee59",
+      "mainSources": "e1804ae9050582df0f87b7b9b4c9c0d34310bbf23b39eca6c0797aa02f730c81",
+      "testClasses": "51b81f21405301dd02cbb1cc11f50399d6de220c027f54ab72f021adbb5092c5",
+      "testSources": "c3c71f286172b74fa4d2cb7e14f5a74738146bb87c2914d8cb59d7c5d23e5ae3"
+    },
+    "planner": "COMPILE_COST_BASED",
+    "noFedRuntimeConversion": true
+  },
+  "limitations": [
+    "Each primary arm has two shared-host repetitions; no confidence interval or one-second claim.",
+    "Latest fbfd4d baseline and host state differ from earlier 73d1eb ablation; compare only within a group.",
+    "Segmented metrics run overlapped Maven; time is not adoption evidence, allocations and stack locations are diagnostic.",
+    "PhysicalGenerationEnvelopeTest has four matching preexisting baseline/candidate fixture failures and is outside passing suite.",
+    "Full checkstyle/RAT skipped in targeted Maven; no claim of full static-analysis pass."
+  ],
+  "diagnosticRuns": {
+    "baseline": "logreg-deeper-metrics-73d1eb-03",
+    "segmented": "logreg-deeper-segmented-metrics",
+    "candidateIncludesRootCostMemo": false,
+    "timeExcludedDueToMavenOverlap": true
+  },
+  "excludedAttempts": [
+    {
+      "run": "logreg-deeper-metrics-73d1eb-01",
+      "status": "stage-failed",
+      "exitCode": 120,
+      "cause": "unconfirmed"
+    },
+    {
+      "run": "logreg-deeper-metrics-73d1eb-02",
+      "status": "container-before-workload-failed",
+      "cause": "Docker daemon could not see /grid runtime stage: /evidence/container-run.sh missing"
+    }
+  ]
+}
