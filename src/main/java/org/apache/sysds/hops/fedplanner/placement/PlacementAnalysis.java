@@ -39,6 +39,7 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
@@ -2626,6 +2627,12 @@ public final class PlacementAnalysis {
 		public boolean knownPositiveMatrix() { return dataType == DataType.MATRIX && rows > 0 && cols > 0; }
 	}
 
+	/** Cost inputs captured before runtime recompilation can refresh mutable Hop estimates. */
+	public record PhysicalCostEstimateFact(DataType dataType, boolean dimensionsKnown,
+		long rows, long cols, long nnz, double outputMemEstimate,
+		double effectiveOutputMemEstimate, double effectiveUploadMemEstimate,
+		double multiReturnOutputMemEstimate, long multiReturnRows, long multiReturnCols) { }
+
 	/** Finite dimension lattice used by the occurrence-scoped common analysis. */
 	public enum DimensionKnowledge { BOTTOM, EXACT, UNKNOWN }
 
@@ -3018,6 +3025,8 @@ public final class PlacementAnalysis {
 	private final List<StatementBlock> topLevelStatementBlocks;
 	private final Map<CompiledHopKey, Hop> hopsByKey;
 	private final PlacementShapeFacts shapeFacts;
+	private final Map<CompiledHopKey,PhysicalCostEstimateFact> physicalCostEstimateFactsByIdentity;
+	private final Map<CompiledHopKey,Map<CompiledHopKey,Double>> physicalFunctionInputEstimatesByIdentity;
 	private final PlacementPrivacyFacts privacyFacts;
 	private final Optional<CandidatePrivacyClosureEvidence> candidatePrivacyClosureEvidence;
 	private final OccurrenceExecutionFrequencyFacts executionFrequencyFacts;
@@ -3058,6 +3067,77 @@ public final class PlacementAnalysis {
 	 */
 	interface ProgramStructureAuthority extends Runnable {
 		void authorizeCommittedEmission();
+	}
+
+	private static PhysicalCostEstimateFact capturePhysicalCostEstimate(Hop hop) {
+		FunctionOp multiReturn = exactMultiReturnBuiltinParent(hop);
+		double multiReturnEstimate = Double.NaN;
+		long multiReturnRows = -1L;
+		long multiReturnCols = -1L;
+		if(multiReturn != null) {
+			multiReturnEstimate = multiReturn.getMultiReturnBuiltinOutputMemEstimate(hop);
+			long[] dimensions = multiReturn.getMultiReturnBuiltinOutputDims(hop);
+			if(dimensions != null && dimensions.length >= 2) {
+				multiReturnRows = dimensions[0];
+				multiReturnCols = dimensions[1];
+			}
+		}
+		return new PhysicalCostEstimateFact(hop.getDataType(), hop.dimsKnown(),
+			hop.getDim1(), hop.getDim2(), hop.getNnz(), hop.getOutputMemEstimate(),
+			FederatedCostModel.getEffectiveOutputMemEstimate(hop),
+			FederatedCostModel.getEffectiveUploadMemEstimate(hop), multiReturnEstimate,
+			multiReturnRows, multiReturnCols);
+	}
+
+	private static FunctionOp exactMultiReturnBuiltinParent(Hop hop) {
+		if(!(hop instanceof DataOp data) || data.getOp() != OpOpData.FUNCTIONOUTPUT
+			|| hop.getInput() == null || hop.getInput().isEmpty() || hop.getInput().get(0) == null)
+			return null;
+		FunctionOp resolved = null;
+		for(Hop parent : hop.getInput().get(0).getParent()) {
+			if(!(parent instanceof FunctionOp function)
+				|| function.getFunctionType() != FunctionType.MULTIRETURN_BUILTIN
+				|| function.getOutputs() == null
+				|| function.getOutputs().stream().noneMatch(output -> output == hop))
+				continue;
+			if(resolved != null && resolved != function)
+				return null;
+			resolved = function;
+		}
+		return resolved;
+	}
+
+	private Map<CompiledHopKey,Map<CompiledHopKey,Double>> capturePhysicalFunctionInputEstimates() {
+		IdentityHashMap<CompiledHopKey,Map<CompiledHopKey,Double>> estimates = new IdentityHashMap<>();
+		for(LogicalFunctionInputFact fact : logicalFunctionInputsInCanonicalOrder)
+			capturePhysicalFunctionInputEstimate(estimates, fact.sourceArgument(), fact.targetRead());
+		for(LogicalTransientInputFact transientFact : logicalTransientInputsInCanonicalOrder) {
+			for(Constraint binding : graph.constraints()) {
+				if(binding.kind() != ConstraintKind.SAME_PLACEMENT
+					|| !"function-input-binding".equals(binding.evidence())
+					|| binding.right() != transientFact.sourceWrite())
+					continue;
+				for(LogicalFunctionInputFact authority : logicalFunctionInputsInCanonicalOrder)
+					if(authority.targetRead() == binding.left())
+						capturePhysicalFunctionInputEstimate(estimates, authority.sourceArgument(),
+							transientFact.targetRead());
+			}
+		}
+		IdentityHashMap<CompiledHopKey,Map<CompiledHopKey,Double>> frozen = new IdentityHashMap<>();
+		estimates.forEach((source, byTarget) -> frozen.put(source, Collections.unmodifiableMap(byTarget)));
+		return Collections.unmodifiableMap(frozen);
+	}
+
+	private void capturePhysicalFunctionInputEstimate(
+		IdentityHashMap<CompiledHopKey,Map<CompiledHopKey,Double>> estimates,
+		CompiledHopKey source, CompiledHopKey targetRead) {
+		double estimate = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
+			hopsByKey.get(targetRead), hopsByKey.get(source));
+		Map<CompiledHopKey,Double> byTarget = estimates.computeIfAbsent(source,
+			ignored -> new IdentityHashMap<>());
+		Double previous = byTarget.putIfAbsent(targetRead, estimate);
+		if(previous != null && Double.doubleToLongBits(previous) != Double.doubleToLongBits(estimate))
+			throw new IllegalArgumentException("Conflicting physical function-input estimates");
 	}
 
 	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
@@ -3238,6 +3318,12 @@ public final class PlacementAnalysis {
 		this.shapeFacts = Objects.requireNonNull(shapeFacts, "shapeFacts");
 		if(!shapeFacts.keys().equals(indexed.keySet()))
 			throw new IllegalArgumentException("Shape facts do not exactly cover indexed placement projections");
+		IdentityHashMap<CompiledHopKey,PhysicalCostEstimateFact> costEstimates = new IdentityHashMap<>();
+		IdentityHashMap<Hop,PhysicalCostEstimateFact> costEstimatesByHop = new IdentityHashMap<>();
+		for(HopOccurrenceProjection occurrence : this.occurrences)
+			costEstimates.put(occurrence.key(), costEstimatesByHop.computeIfAbsent(
+				occurrence.hop(), PlacementAnalysis::capturePhysicalCostEstimate));
+		this.physicalCostEstimateFactsByIdentity = Collections.unmodifiableMap(costEstimates);
 		hopsByKey = Map.copyOf(indexed);
 		if(analysisFingerprint == null || analysisFingerprint.isBlank())
 			throw new IllegalArgumentException("analysisFingerprint must not be blank");
@@ -3283,6 +3369,7 @@ public final class PlacementAnalysis {
 		this.logicalInlinedFunctionInputsInCanonicalOrder = logicalInlinedFunctionInputs == null
 			? deriveLogicalInlinedFunctionInputs()
 			: validateLogicalInlinedFunctionInputs(logicalInlinedFunctionInputs, analysisKeysByIdentity);
+		this.physicalFunctionInputEstimatesByIdentity = capturePhysicalFunctionInputEstimates();
 		for(HeuristicPolicyFact fact : heuristicPolicyFacts.demotions()) {
 			NeutralPlacementGraph.Node producer = graph.node(fact.producer()).orElseThrow(() ->
 				new IllegalArgumentException("Heuristic policy producer is missing from the analysis graph"));
@@ -4235,6 +4322,25 @@ public final class PlacementAnalysis {
 
 	public Optional<AbstractShapeFact> abstractShapeFact(CompiledHopKey key) {
 		return shapeFacts.abstractShapeFact(key);
+	}
+
+	public PhysicalCostEstimateFact physicalCostEstimateFact(CompiledHopKey key) {
+		PhysicalCostEstimateFact fact = physicalCostEstimateFactsByIdentity.get(
+			Objects.requireNonNull(key, "key"));
+		if(fact == null)
+			throw new IllegalArgumentException("Physical cost estimate key is not analysis-owned");
+		return fact;
+	}
+
+	/** Compile-time function-boundary payload fallback for an analysis-owned source/read pair. */
+	public double physicalFunctionInputEstimate(CompiledHopKey source, CompiledHopKey targetRead) {
+		Map<CompiledHopKey,Double> byTarget = physicalFunctionInputEstimatesByIdentity.get(
+			Objects.requireNonNull(source, "source"));
+		Double estimate = byTarget == null ? null : byTarget.get(
+			Objects.requireNonNull(targetRead, "targetRead"));
+		if(estimate == null)
+			throw new IllegalArgumentException("Physical function-input estimate pair is not analysis-owned");
+		return estimate;
 	}
 
 	/** Cost-only normal-completion bounds; never proof of exact geometry or legality. */

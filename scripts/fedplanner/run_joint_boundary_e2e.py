@@ -62,6 +62,7 @@ TERMINAL_CHECKPOINT_PHASES = {"EXACT", "TARGET_REACHED", "TIME", "RESOURCE"}
 ACTION_PATTERN = re.compile(
     r"(?i)(plannerSyntheticActionKey|localMaterializationAction|relocationAction|fed_refed|prefetch)")
 CLASS_PREFLIGHT_MAIN = (
+    "org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.class",
     "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class",
     "org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.class",
     "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.class",
