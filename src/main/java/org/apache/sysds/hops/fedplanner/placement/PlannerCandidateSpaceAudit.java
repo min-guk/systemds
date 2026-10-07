@@ -72,6 +72,8 @@ public final class PlannerCandidateSpaceAudit {
 	private static final ObjectWriter ROW_WRITER = MAPPER.writer()
 		.without(SerializationFeature.FLUSH_AFTER_WRITE_VALUE);
 	private static final Object WRITE_LOCK = new Object();
+	private static final java.util.regex.Pattern REPLAY_LOCAL_PORT = java.util.regex.Pattern.compile(
+		"(?i)(localhost|127\\.0\\.0\\.1|\\[::1\\]):[0-9]{1,5}");
 
 	private PlannerCandidateSpaceAudit() {
 		// utility class
@@ -131,10 +133,12 @@ public final class PlannerCandidateSpaceAudit {
 			row.put("publishedNodeStates", states(publishedNode));
 			row.put("prePrivacyExclusions", exclusions(rawNode));
 			row.put("publishedExclusions", exclusions(publishedNode));
-			row.put("prePrivacyRule", fact(raw));
-			row.put("publishedRule", fact(published));
+			Map<String,Object> rawView = fact(raw);
+			Map<String,Object> publishedView = published == raw ? rawView : fact(published);
+			row.put("prePrivacyRule", rawView);
+			row.put("publishedRule", publishedView);
 			row.put("publishedStatesP", published == null ? List.of()
-				: emissions(published.allowedEmissionFacts()));
+				: publishedView.get("emissions"));
 			rows.add(row);
 		}
 		append(rows);
@@ -261,12 +265,20 @@ public final class PlannerCandidateSpaceAudit {
 	 */
 	static String normalizeReplayControlPath(String path) {
 		return String.join("/", java.util.Arrays.stream(path.split("/", -1))
-			.map(segment -> segment.matches("[0-9]+") ? "*" : segment).toList());
+			.map(segment -> numericReplaySegment(segment) ? "*" : segment).toList());
+	}
+
+	private static boolean numericReplaySegment(String segment) {
+		if(segment.isEmpty())
+			return false;
+		for(int index = 0; index < segment.length(); index++)
+			if(segment.charAt(index) < '0' || segment.charAt(index) > '9')
+				return false;
+		return true;
 	}
 
 	private static String normalizeReplayVolatileValues(String value) {
-		return value.replaceAll("(?i)(localhost|127\\.0\\.0\\.1|\\[::1\\]):[0-9]{1,5}",
-			"$1:<port>");
+		return REPLAY_LOCAL_PORT.matcher(value).replaceAll("$1:<port>");
 	}
 
 	/** Replay context shared by candidate and runtime-capability audit receipts. */

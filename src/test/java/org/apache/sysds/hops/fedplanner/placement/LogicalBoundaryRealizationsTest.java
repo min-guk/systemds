@@ -396,6 +396,93 @@ public class LogicalBoundaryRealizationsTest {
 				realization.requireSingletonSupportClause()) == null));
 	}
 
+	@Test
+	public void carrierCreatedAndWithdrawnDuringClosureMatchesColdRounds() {
+		ChainedFixture f = new ChainedFixture();
+		f.edges.removeIf(edge -> edge.right() == f.downstreamReader);
+		f.edges.add(new Constraint(ConstraintKind.SAME_PLACEMENT, f.reader, f.downstreamReader,
+			0, "function-formal-input"));
+		for(int index = 0; index < f.nodes.size(); index++) {
+			Node node = f.nodes.get(index);
+			if(node.key() == f.reader)
+				f.nodes.set(index, new Node(node.key(), NodeKind.FUNCTION_INPUT, node.valueVersion(),
+					node.emittedWork(), node.legalAlternatives(), node.exclusions(), node.anchors()));
+		}
+		LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
+			f.nodes, f.edges, f.origins, f.facts);
+		List<CandidateRuleFact> expected = coldClose(f.nodes, f.edges, f.origins, f.facts);
+		var first = session.close(f.facts, Set.of());
+		Assert.assertEquals(expected, first.facts());
+		Assert.assertEquals(expected, LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, f.facts));
+		Assert.assertEquals(List.of(f.reader), new LogicalBoundaryRealizations(
+			f.nodes, f.edges, f.origins, first.facts()).sources(f.downstreamReader));
+		Assert.assertEquals(2, session.work().topologyBuilds());
+
+		Assert.assertTrue(hasValueMap(fact(first.facts(), f.reader)));
+		List<CandidateRuleFact> revision = first.facts();
+		for(CompiledHopKey source : List.of(f.argument, f.writer))
+			revision = replaceOwner(revision, source, unavailable(fact(revision, source)));
+		var withdrawn = session.close(revision, Set.of(f.argument, f.writer));
+		Assert.assertEquals(coldClose(f.nodes, f.edges, f.origins, revision), withdrawn.facts());
+		Assert.assertEquals(withdrawn.facts(), LogicalBoundaryRealizations.close(
+			f.nodes, f.edges, f.origins, revision));
+		Assert.assertFalse(hasValueMap(fact(withdrawn.facts(), f.reader)));
+		Assert.assertEquals(Set.of(f.argument, f.writer), Set.copyOf(new LogicalBoundaryRealizations(
+			f.nodes, f.edges, f.origins, withdrawn.facts()).sources(f.downstreamReader)));
+		Assert.assertEquals(3, session.work().topologyBuilds());
+	}
+
+	@Test
+	public void structurallyEqualFinalRoundRetainsCurrentSourceParentIdentity() {
+		Fixture f = new Fixture();
+		List<CandidateRuleFact> closed = coldClose(f.nodes, f.edges, f.origins, f.facts);
+		CompiledHopKey currentSource = key(f.argument.emittedHopInstance());
+		Assert.assertEquals(f.argument, currentSource);
+		Assert.assertNotSame(f.argument, currentSource);
+		for(int index = 0; index < f.nodes.size(); index++) {
+			Node node = f.nodes.get(index);
+			if(node.key() == f.argument)
+				f.nodes.set(index, new Node(currentSource, node.kind(), node.valueVersion(), node.emittedWork(),
+					node.legalAlternatives(), node.exclusions(), node.anchors()));
+		}
+		f.origins.put(currentSource, f.origins.remove(f.argument));
+		f.edges.replaceAll(edge -> edge.left() != f.argument ? edge : new Constraint(edge.kind(), currentSource,
+			edge.right(), edge.inputPosition(), edge.evidence()));
+		CandidateRuleFact old = fact(closed, f.argument);
+		List<CandidateRuleFact> revision = replaceOwner(closed, f.argument,
+			new CandidateRuleFact(new CandidateRuleKey(currentSource, old.key().orderedInputs()), old.status(),
+				old.capability(), old.shapeProof(), old.profile(), old.allowedEmissionFacts(), old.failureCode()));
+		LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
+			f.nodes, f.edges, f.origins, revision);
+		for(List<CandidateRuleFact> result : List.of(coldClose(f.nodes, f.edges, f.origins, revision),
+			session.close(revision, Set.of()).facts(),
+			LogicalBoundaryRealizations.close(f.nodes, f.edges, f.origins, revision))) {
+			Assert.assertEquals("identity repair preserves canonical facts", closed, result);
+			var bindings = fact(result, f.reader).allowedEmissionFacts().stream()
+				.flatMap(emission -> emission.realizations().stream())
+				.flatMap(realization -> realization.supportClauses().stream())
+				.flatMap(clause -> clause.inputBindings().stream())
+				.filter(binding -> binding.source().rule().parentOccurrence().equals(currentSource)).toList();
+			Assert.assertFalse(bindings.isEmpty());
+			for(var binding : bindings)
+				Assert.assertSame(currentSource, binding.source().rule().parentOccurrence());
+		}
+	}
+
+	/** Independent full-rebuild oracle retained when production uses incremental closure. */
+	private static List<CandidateRuleFact> coldClose(List<Node> nodes, java.util.Collection<Constraint> constraints,
+		Map<CompiledHopKey,Hop> origins, List<CandidateRuleFact> facts) {
+		List<CandidateRuleFact> current = facts;
+		for(int pass = 0; pass <= nodes.size(); pass++) {
+			List<CandidateRuleFact> next = new LogicalBoundaryRealizations(nodes, constraints, origins, current)
+				.bind(current);
+			if(next.equals(current))
+				return next;
+			current = next;
+		}
+		throw new AssertionError("Cold logical boundary closure did not converge");
+	}
+
 	private static Set<CompiledHopKey> owners(List<CandidateRuleFact> facts) {
 		Set<CompiledHopKey> result = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
 		for(CandidateRuleFact fact : facts)
@@ -415,6 +502,12 @@ public class LogicalBoundaryRealizationsTest {
 			current = next;
 		}
 		throw new IllegalStateException("Cold logical boundary oracle did not converge");
+	}
+
+	private static boolean hasValueMap(CandidateRuleFact fact) {
+		return fact.allowedEmissionFacts().stream().flatMap(emission -> emission.realizations().stream())
+			.anyMatch(realization -> realization.key().layoutKind()
+				== PlacementIdentity.PlacementLayoutKind.VALUE_MAP);
 	}
 
 	private static CandidateRuleFact fact(List<CandidateRuleFact> facts, CompiledHopKey owner) {

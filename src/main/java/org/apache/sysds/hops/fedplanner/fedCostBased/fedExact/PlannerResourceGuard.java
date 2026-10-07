@@ -57,6 +57,12 @@ public final class PlannerResourceGuard {
 	}
 
 	public static void checkAdditionalBytes(long bytes, String phase) {
+		// Total/free heap are diagnostic fields, not allocation-policy inputs.
+		// Avoid both native queries for the ordinary accepted request.
+		if(bytes >= 0 && bytes <= Runtime.getRuntime().maxMemory()) {
+			checkedPhase(phase);
+			return;
+		}
 		checkAdditionalBytes(bytes, phase, currentSnapshot());
 	}
 

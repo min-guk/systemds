@@ -42,6 +42,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRea
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateShapeProofFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
@@ -141,6 +142,8 @@ public class DirectSourceSeedProjectionTest {
 		nodes.put(mapOwner, node(mapOwner, List.of()));
 		Object first = projection(nodes, index, continuity(before));
 		Assert.assertEquals(List.of(pool), seeds(first, mapOwner, FType.ROW));
+		Assert.assertTrue("deep VALUE_MAP metadata requires conservative resubscription",
+			fixedValueMapConsulted(first, mapOwner, FType.ROW));
 
 		CandidateRuleFact withdrawn = failed(leafOwner);
 		List<CandidateRuleFact> after = List.of(withdrawn, valueMap);
@@ -148,6 +151,181 @@ public class DirectSourceSeedProjectionTest {
 		Object fresh = projection(nodes, index, continuity(after));
 		Assert.assertTrue("a new binder call must not retain the prior VALUE_MAP leaf pool",
 			seeds(fresh, mapOwner, FType.ROW).isEmpty());
+	}
+
+	@Test
+	public void incompleteDeepSeedSubscriptionKeepsTransitiveConsumerInDirtyCone()
+		throws Exception {
+		CompiledHopKey leaf = key("deep-leaf");
+		CompiledHopKey valueMap = key("deep-map");
+		CompiledHopKey consumer = key("deep-consumer");
+		Constructor<?> subscriptionsConstructor =
+			nested("DirectQuerySubscriptions").getDeclaredConstructor();
+		subscriptionsConstructor.setAccessible(true);
+		Object subscriptions = subscriptionsConstructor.newInstance();
+		Method replace = nested("DirectQuerySubscriptions").getDeclaredMethod(
+			"replace", Set.class, Map.class, Set.class);
+		replace.setAccessible(true);
+		Set<CompiledHopKey> incomplete = identitySet();
+		incomplete.add(consumer);
+		replace.invoke(subscriptions, identitySet(consumer), Map.of(consumer, identitySet(consumer)),
+			incomplete);
+
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential = new IdentityHashMap<>();
+		potential.put(leaf, identitySet(valueMap));
+		potential.put(valueMap, identitySet(consumer));
+		Method required = PlacementRelationClosure.class.getDeclaredMethod(
+			"requiredDirectClosureOccurrences", Set.class, Map.class, Map.class, Map.class,
+			Map.class, nested("DirectQuerySubscriptions"));
+		required.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		Set<CompiledHopKey> affected = (Set<CompiledHopKey>)required.invoke(null,
+			identitySet(leaf), potential, Map.of(), Map.of(), Map.of(), subscriptions);
+		Assert.assertTrue("deep leaf change must recompute an incompletely subscribed consumer",
+			affected.contains(consumer));
+	}
+
+	@Test
+	public void directBinderMarksDeepValueMapSeedFootprintIncomplete() throws Exception {
+		CompiledHopKey leafOwner = key("binder-leaf");
+		CompiledHopKey mapOwner = key("binder-map");
+		CompiledHopKey consumerOwner = key("binder-consumer");
+		CandidateRuleFact leaf = nativeFact(leafOwner, "binder-leaf", pool(
+			"binder-pool", FType.ROW, "worker", 8), 1);
+		CandidateRuleFact valueMap = valueMapFact(mapOwner, reference(leaf));
+		CandidateRuleFact consumer = fact(new CandidateRuleKey(consumerOwner,
+			List.of(CandidateInputState.present(FType.ROW))),
+			CandidateEmissionRealization.nativeLineage(ROW_EMISSION, "binder-consumer",
+				List.of(), List.of()));
+		List<CandidateRuleFact> allFacts = List.of(leaf, valueMap, consumer);
+		List<Node> nodes = List.of(node(leafOwner, List.of()), node(mapOwner, List.of()),
+			node(consumerOwner, List.of()));
+		List<CompiledInputEdgeFact> edges = List.of(
+			new CompiledInputEdgeFact(mapOwner, consumerOwner, 0));
+		Method indexBuilder = PlacementRelationClosure.class.getDeclaredMethod("directBindingIndex",
+			List.class, List.class, List.class, List.class, Map.class, Map.class);
+		indexBuilder.setAccessible(true);
+		Object index = indexBuilder.invoke(null, allFacts, nodes, edges, allFacts, Map.of(), Map.of());
+		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, null, true,
+			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
+		Method bind = PlacementRelationClosure.class.getDeclaredMethod(
+			"bindDirectNativeCandidateRealizationsWithDependenciesMeasured", nested("DirectBindingIndex"),
+			List.class, Map.class, Map.class, NativePlacementContinuity.class, Set.class);
+		bind.setAccessible(true);
+		Object result = bind.invoke(closure, index, List.of(consumer), new IdentityHashMap<>(),
+			new IdentityHashMap<>(),
+			continuity(allFacts), identitySet(consumerOwner));
+		Method incomplete = result.getClass().getDeclaredMethod("incompleteDependencyOccurrences");
+		incomplete.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		Set<CompiledHopKey> incompleteOwners = (Set<CompiledHopKey>)incomplete.invoke(result);
+		Assert.assertTrue("binder must not publish a complete subscription for a deep map seed",
+			incompleteOwners.contains(consumerOwner));
+	}
+
+	@Test
+	public void nativeQueryThroughValueMapKeepsHiddenLeafOnFullCone() throws Exception {
+		CompiledHopKey leafOwner = key("query-leaf");
+		CompiledHopKey mapOwner = key("query-map");
+		CompiledHopKey bridgeOwner = key("query-native-bridge");
+		CompiledHopKey consumerOwner = key("query-consumer");
+		DurableAnchorKey pool = pool("query-pool", FType.ROW, "worker", 8);
+		CandidateRuleFact leaf = nativeFact(leafOwner, "query-leaf", pool, 1);
+		CandidateRuleFact valueMap = valueMapFact(mapOwner, reference(leaf));
+		CandidateEmissionRealization bridgeRealization = CandidateEmissionRealization.nativeLineage(
+			ROW_EMISSION, "query-bridge", List.of(), List.of(
+				CandidateRealizationInputBinding.direct(0, reference(valueMap))));
+		CandidateRuleFact bridge = fact(new CandidateRuleKey(bridgeOwner,
+			List.of(CandidateInputState.present(FType.ROW))), bridgeRealization);
+		CandidateRuleFact consumer = fact(new CandidateRuleKey(consumerOwner,
+			List.of(CandidateInputState.present(FType.ROW))),
+			CandidateEmissionRealization.nativeLineage(ROW_EMISSION, "query-consumer",
+				List.of(), List.of()));
+		List<CandidateRuleFact> allFacts = List.of(leaf, valueMap, bridge, consumer);
+		List<Node> nodes = List.of(node(leafOwner, List.of()), node(mapOwner, List.of()),
+			node(bridgeOwner, List.of(pool)), node(consumerOwner, List.of()));
+		List<CompiledInputEdgeFact> edges = List.of(
+			new CompiledInputEdgeFact(leafOwner, mapOwner, 0),
+			new CompiledInputEdgeFact(mapOwner, bridgeOwner, 0),
+			new CompiledInputEdgeFact(bridgeOwner, consumerOwner, 0));
+		org.apache.sysds.hops.DataOp leafHop = new org.apache.sysds.hops.DataOp("query-leaf",
+			org.apache.sysds.common.Types.DataType.MATRIX, org.apache.sysds.common.Types.ValueType.FP64,
+			org.apache.sysds.common.Types.OpOpData.TRANSIENTREAD, "query-leaf", 8, 2, 16, 1000);
+		org.apache.sysds.hops.UnaryOp mapHop = new org.apache.sysds.hops.UnaryOp("query-map",
+			org.apache.sysds.common.Types.DataType.MATRIX, org.apache.sysds.common.Types.ValueType.FP64,
+			org.apache.sysds.common.Types.OpOp1.LOG, leafHop);
+		org.apache.sysds.hops.UnaryOp bridgeHop = new org.apache.sysds.hops.UnaryOp("query-bridge",
+			org.apache.sysds.common.Types.DataType.MATRIX, org.apache.sysds.common.Types.ValueType.FP64,
+			org.apache.sysds.common.Types.OpOp1.LOG, mapHop);
+		org.apache.sysds.hops.UnaryOp consumerHop = new org.apache.sysds.hops.UnaryOp("query-consumer",
+			org.apache.sysds.common.Types.DataType.MATRIX, org.apache.sysds.common.Types.ValueType.FP64,
+			org.apache.sysds.common.Types.OpOp1.LOG, bridgeHop);
+		Map<CompiledHopKey,org.apache.sysds.hops.Hop> origins = new IdentityHashMap<>();
+		origins.put(leafOwner, leafHop);
+		origins.put(mapOwner, mapHop);
+		origins.put(bridgeOwner, bridgeHop);
+		origins.put(consumerOwner, consumerHop);
+		Map<org.apache.sysds.hops.Hop,PlacementAnalysis.NodeShapeFact> shapes = new IdentityHashMap<>();
+		for(org.apache.sysds.hops.Hop hop : origins.values())
+			shapes.put(hop, new PlacementAnalysis.NodeShapeFact(
+				org.apache.sysds.common.Types.DataType.MATRIX, 8, 2));
+		Method indexBuilder = PlacementRelationClosure.class.getDeclaredMethod("directBindingIndex",
+			List.class, List.class, List.class, List.class, Map.class, Map.class);
+		indexBuilder.setAccessible(true);
+		Object index = indexBuilder.invoke(null, allFacts, nodes, edges, allFacts, origins, shapes);
+		Object sourceIndex = sourceIndex(allFacts);
+		Object projection = projection(nodes.stream().collect(java.util.stream.Collectors.toMap(
+			Node::key, node -> node, (left, right) -> right, IdentityHashMap::new)),
+			sourceIndex, continuity(allFacts));
+		Assert.assertFalse("the immediate native source does not itself resolve a VALUE_MAP",
+			fixedValueMapConsulted(projection, bridgeOwner, FType.ROW));
+
+		NativePlacementContinuity resolver = new NativePlacementContinuity(
+			nodes.stream().collect(java.util.stream.Collectors.toMap(
+				Node::key, node -> node, (left, right) -> right, IdentityHashMap::new)),
+			origins, allFacts, edges, Map.of());
+		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, null, true,
+			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
+		Method bind = PlacementRelationClosure.class.getDeclaredMethod(
+			"bindDirectNativeCandidateRealizationsWithDependenciesMeasured", nested("DirectBindingIndex"),
+			List.class, Map.class, Map.class, NativePlacementContinuity.class, Set.class);
+		bind.setAccessible(true);
+		Object result = bind.invoke(closure, index, List.of(consumer), origins, shapes,
+			resolver, identitySet(consumerOwner));
+		Method dependencies = result.getClass().getDeclaredMethod("dependencyOccurrences");
+		dependencies.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		Map<CompiledHopKey,Set<CompiledHopKey>> dependencyReads =
+			(Map<CompiledHopKey,Set<CompiledHopKey>>)dependencies.invoke(result);
+		Set<CompiledHopKey> queryReads = dependencyReads.getOrDefault(consumerOwner, Set.of());
+		Assert.assertTrue("the current Native query must visit unselected VALUE_MAP V",
+			queryReads.contains(mapOwner));
+		Method incomplete = result.getClass().getDeclaredMethod("incompleteDependencyOccurrences");
+		incomplete.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		Set<CompiledHopKey> incompleteOwners = (Set<CompiledHopKey>)incomplete.invoke(result);
+		Assert.assertTrue("R must stay on the full cone because V hides S metadata",
+			incompleteOwners.contains(consumerOwner));
+
+		Constructor<?> subscriptionsConstructor = nested("DirectQuerySubscriptions").getDeclaredConstructor();
+		subscriptionsConstructor.setAccessible(true);
+		Object subscriptions = subscriptionsConstructor.newInstance();
+		Method replace = nested("DirectQuerySubscriptions").getDeclaredMethod(
+			"replace", Set.class, Map.class, Set.class);
+		replace.setAccessible(true);
+		replace.invoke(subscriptions, identitySet(consumerOwner), dependencyReads, incompleteOwners);
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential = new IdentityHashMap<>();
+		potential.put(leafOwner, identitySet(mapOwner));
+		potential.put(mapOwner, identitySet(bridgeOwner));
+		potential.put(bridgeOwner, identitySet(consumerOwner));
+		Method required = PlacementRelationClosure.class.getDeclaredMethod(
+			"requiredDirectClosureOccurrences", Set.class, Map.class, Map.class, Map.class,
+			Map.class, nested("DirectQuerySubscriptions"));
+		required.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		Set<CompiledHopKey> affected = (Set<CompiledHopKey>)required.invoke(null,
+			identitySet(leafOwner), potential, Map.of(), Map.of(), Map.of(), subscriptions);
+		Assert.assertTrue("S withdrawal must recompute R through B and V", affected.contains(consumerOwner));
 	}
 
 	private static List<DurableAnchorKey> legacySeeds(Map<CompiledHopKey,Node> nodes,
@@ -274,6 +452,20 @@ public class DirectSourceSeedProjectionTest {
 		Method method = nested("DirectSourceSeedProjection").getDeclaredMethod("clauseVisits");
 		method.setAccessible(true);
 		return (long) method.invoke(projection);
+	}
+
+	private static boolean fixedValueMapConsulted(Object projection, CompiledHopKey owner,
+		FType type) throws Exception {
+		Method method = nested("DirectSourceSeedProjection").getDeclaredMethod(
+			"fixedValueMapConsulted", CompiledHopKey.class, FType.class);
+		method.setAccessible(true);
+		return (boolean)method.invoke(projection, owner, type);
+	}
+
+	private static Set<CompiledHopKey> identitySet(CompiledHopKey... values) {
+		Set<CompiledHopKey> result = Collections.newSetFromMap(new IdentityHashMap<>());
+		Collections.addAll(result, values);
+		return result;
 	}
 
 	@SuppressWarnings("unchecked")

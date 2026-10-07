@@ -489,6 +489,19 @@ public final class PlacementAnalysis {
 	}
 
 	private static final class CanonicalTextBuilder {
+		// Length/delimiter metadata is immutable and independent of every authority
+		// and payload. Share the small prefixes without interning field values.
+		private static final String[][] FIELD_PREFIXES = fieldPrefixes();
+
+		private static String[][] fieldPrefixes() {
+			String[][] prefixes = new String[2][4096];
+			for(int length = 0; length < prefixes[0].length; length++) {
+				prefixes[0][length] = length + ":";
+				prefixes[1][length] = "|" + prefixes[0][length];
+			}
+			return prefixes;
+		}
+
 		private final List<Object> pieces = new ArrayList<>();
 
 		private CanonicalTextBuilder append(String value) {
@@ -505,8 +518,6 @@ public final class PlacementAnalysis {
 
 		private CanonicalTextBuilder appendFields(Object... values) {
 			for(int index = 0; index < values.length; index++) {
-				if(index > 0)
-					append("|");
 				Object value = Objects.requireNonNull(values[index], "canonical field");
 				int length;
 				if(value instanceof String literal)
@@ -515,7 +526,8 @@ public final class PlacementAnalysis {
 					length = text.length;
 				else
 					throw new IllegalArgumentException("Unsupported canonical field type " + value.getClass().getName());
-				append(Integer.toString(length)).append(":");
+				append(length < FIELD_PREFIXES[0].length ? FIELD_PREFIXES[index == 0 ? 0 : 1][length]
+					: index == 0 ? length + ":" : "|" + length + ":");
 				// Literals already carry their UTF-16 text; only actual structural
 				// children need a rope node. Preserve those children by identity.
 				if(length != 0)
@@ -556,8 +568,8 @@ public final class PlacementAnalysis {
 		private static final long ENTRY_OVERHEAD = 64;
 		private static final long LEDGER_BASE_OVERHEAD = 256;
 		private static final long LEDGER_IDENTITY_OVERHEAD = 128;
-		private final IdentityHashMap<Object,CanonicalText> values = new IdentityHashMap<>();
-		private final IdentityHashMap<Object,Boolean> retainedDescriptors = new IdentityHashMap<>();
+		private IdentityHashMap<Object,CanonicalText> values = new IdentityHashMap<>();
+		private IdentityHashMap<Object,Boolean> retainedDescriptors = new IdentityHashMap<>();
 		private final int maxEntries;
 		private final long maxWeight;
 		private long retainedWeight;
@@ -573,28 +585,79 @@ public final class PlacementAnalysis {
 			return cacheableCanonicalType(key) ? values.get(key) : null;
 		}
 
-		private void retain(Object key, CanonicalText value) {
-			if(!cacheableCanonicalType(key) || values.containsKey(key)
-				|| values.size() >= maxEntries)
+		private record PreparedGeneration(IdentityHashMap<Object,CanonicalText> values,
+			IdentityHashMap<Object,Boolean> descriptors, long weight) { }
+
+		private PreparedGeneration prepareGeneration(Object key, CanonicalText value) {
+			if(maxEntries == 0)
+				return null;
+			long weight = ENTRY_OVERHEAD + LEDGER_BASE_OVERHEAD;
+			if(weight > maxWeight)
+				return null;
+			IdentityHashMap<Object,Boolean> staged = new IdentityHashMap<>();
+			ArrayDeque<java.util.Iterator<Object>> pending = new ArrayDeque<>();
+			Object next = value;
+			while(true) {
+				if(!staged.containsKey(next)) {
+					long additional = descriptorWeight(next);
+					if(additional > maxWeight - weight)
+						return null;
+					weight += additional;
+					staged.put(next, Boolean.TRUE);
+					if(next instanceof CanonicalText text && !text.pieces.isEmpty())
+						pending.addLast(text.pieces.iterator());
+				}
+				while(!pending.isEmpty() && !pending.getLast().hasNext())
+					pending.removeLast();
+				if(pending.isEmpty())
+					break;
+				next = pending.getLast().next();
+			}
+			IdentityHashMap<Object,CanonicalText> stagedValues = new IdentityHashMap<>();
+			stagedValues.put(key, value);
+			return new PreparedGeneration(stagedValues, staged, weight);
+		}
+
+		private void replaceGenerationIfAloneFits(Object key, CanonicalText value) {
+			PreparedGeneration prepared = prepareGeneration(key, value);
+			if(prepared == null)
 				return;
+			values = prepared.values();
+			retainedDescriptors = prepared.descriptors();
+			retainedWeight = prepared.weight();
+		}
+
+		private void retain(Object key, CanonicalText value) {
+			if(!cacheableCanonicalType(key) || values.containsKey(key))
+				return;
+			if(values.size() >= maxEntries) {
+				replaceGenerationIfAloneFits(key, value);
+				return;
+			}
 			long remaining = maxWeight - retainedWeight;
 			long weight = ENTRY_OVERHEAD + (values.isEmpty() ? LEDGER_BASE_OVERHEAD : 0);
-			if(weight > remaining)
+			if(weight > remaining) {
+				replaceGenerationIfAloneFits(key, value);
 				return;
+			}
 			// A retained parent already paid for every descriptor reachable from it.
 			// The recursive tree weight counts shared children repeatedly; this ledger
 			// instead charges their identity union without interning any authority.
 			if(!retainedDescriptors.containsKey(value)) {
-				if(descriptorWeight(value) > remaining - weight)
+				if(descriptorWeight(value) > remaining - weight) {
+					replaceGenerationIfAloneFits(key, value);
 					return;
+				}
 				IdentityHashMap<Object,Boolean> staged = new IdentityHashMap<>();
 				ArrayDeque<java.util.Iterator<Object>> pending = new ArrayDeque<>();
 				Object next = value;
 				while(true) {
 					if(!retainedDescriptors.containsKey(next) && !staged.containsKey(next)) {
 						long additional = descriptorWeight(next);
-						if(additional > remaining - weight)
+						if(additional > remaining - weight) {
+							replaceGenerationIfAloneFits(key, value);
 							return; // Failed admission must not leave a partial retained ledger.
+						}
 						weight += additional;
 						staged.put(next, Boolean.TRUE);
 						if(next instanceof CanonicalText text && !text.pieces.isEmpty())
@@ -1914,11 +1977,16 @@ public final class PlacementAnalysis {
 			List<List<CanonicalText>> keysByGroup, int totalClauses, SearchSpaceMetrics metrics) {
 			CanonicalTextComparison comparison = new CanonicalTextComparison();
 			List<ClauseRunEntry> ordered = new ArrayList<>(totalClauses);
-			Set<CandidateRealizationSupportClause> seen = new java.util.HashSet<>();
+			Set<CandidateRealizationSupportClause> seenIdentities =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<CandidateRealizationSupportClause> seenAuthorities = new java.util.HashSet<>();
 			for(int group = 0; group < clausesByGroup.size(); group++)
 				for(int position = 0; position < clausesByGroup.get(group).size(); position++) {
 					CandidateRealizationSupportClause clause = clausesByGroup.get(group).get(position);
-					boolean unique = seen.add(clause);
+					// Shared immutable clauses avoid another structural hash. Equal distinct
+					// authorities still use full equality, retaining the first descriptor.
+					boolean uniqueIdentity = seenIdentities.add(clause);
+					boolean unique = uniqueIdentity && seenAuthorities.add(clause);
 					if(metrics != null)
 						metrics.recordRealizationMergeClause(unique);
 					if(unique)
@@ -2028,9 +2096,13 @@ public final class PlacementAnalysis {
 
 	/** Ordered, deeply immutable exact-candidate fact universe. */
 	public static final class CandidateRuleFacts {
+		private record IndexedRealization(CandidateEmissionRealization realization, int matches) { }
+		private record RealizationIndex(Map<PlacementRealizationKey,IndexedRealization> realizations) { }
+
 		private final List<CandidateRuleFact> orderedFacts;
 		private final Map<CandidateRuleKey,CandidateRuleFact> factsByKey;
 		private final Map<CompiledHopKey,List<CandidateRuleFact>> factsByParent;
+		private final Map<CandidateRuleKey,RealizationIndex> realizationsByRule;
 		private final CandidateRuleDomain domain;
 
 		public CandidateRuleFacts(CandidateRuleDomain domain, List<CandidateRuleFact> facts) {
@@ -2052,10 +2124,24 @@ public final class PlacementAnalysis {
 			orderedFacts = List.copyOf(indexed.values());
 			factsByKey = Collections.unmodifiableMap(indexed);
 			Map<CompiledHopKey,List<CandidateRuleFact>> parentIndex = new IdentityHashMap<>();
+			Map<CandidateRuleKey,RealizationIndex> realizationIndex = new IdentityHashMap<>();
 			for(CandidateRuleFact fact : orderedFacts)
 				parentIndex.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(fact);
+			for(CandidateRuleFact fact : orderedFacts) {
+				Map<PlacementRealizationKey,IndexedRealization> indexedRealizations = new java.util.HashMap<>();
+				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+					for(CandidateEmissionRealization realization : emission.realizations()) {
+						IndexedRealization prior = indexedRealizations.get(realization.key());
+						indexedRealizations.put(realization.key(), prior == null
+							? new IndexedRealization(realization, 1)
+							: new IndexedRealization(prior.realization(), Math.incrementExact(prior.matches())));
+					}
+				realizationIndex.put(fact.key(), new RealizationIndex(
+					Collections.unmodifiableMap(indexedRealizations)));
+			}
 			parentIndex.replaceAll((ignored, parentFacts) -> List.copyOf(parentFacts));
 			factsByParent = Collections.unmodifiableMap(parentIndex);
+			realizationsByRule = Collections.unmodifiableMap(realizationIndex);
 		}
 
 		public List<CandidateRuleFact> orderedFacts() { return orderedFacts; }
@@ -2079,7 +2165,13 @@ public final class PlacementAnalysis {
 				if(input == null)
 					throw new CandidateRuleLookupException(CandidateLookupFailure.PRESENT_NULL,
 						"Present-null cannot be a candidate input state");
-			CandidateRuleFact fact = factsByKey.get(new CandidateRuleKey(parentOccurrence, orderedInputs));
+			return requireExact(new CandidateRuleKey(parentOccurrence, orderedInputs));
+		}
+
+		private CandidateRuleFact requireExact(CandidateRuleKey requested) {
+			CompiledHopKey parentOccurrence = requested.parentOccurrence();
+			List<CandidateInputState> orderedInputs = requested.orderedInputs();
+			CandidateRuleFact fact = factsByKey.get(requested);
 			if(fact == null) {
 				if(domain.privacyRejects(parentOccurrence, orderedInputs))
 					throw new CandidateRuleLookupException(CandidateLookupFailure.PRIVACY_EXCLUDED,
@@ -2099,6 +2191,29 @@ public final class PlacementAnalysis {
 				|| !fact.key().orderedInputs().equals(orderedInputs))
 				throw new IllegalArgumentException("Candidate rule lookup identity or order differs");
 			return fact;
+		}
+
+		CandidateEmissionRealization requireExactRealization(CandidateRealizationReference reference) {
+			Objects.requireNonNull(reference, "reference");
+			CandidateRuleKey requested = reference.rule();
+			if(!domain.containsExactParent(requested.parentOccurrence()))
+				throw new CandidateRuleLookupException(CandidateLookupFailure.NON_CANDIDATE_PARENT,
+					"Parent is foreign, copied, or outside the canonical candidate domain");
+			CandidateRuleFact fact = requireExact(requested);
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE)
+				throw new IllegalArgumentException(
+					"Transient compatibility references an unavailable candidate row");
+			RealizationIndex index = realizationsByRule.get(fact.key());
+			IndexedRealization indexed = index.realizations().get(reference.realization());
+			int matches = indexed == null ? 0 : indexed.matches();
+			if(matches != 1)
+				throw new IllegalArgumentException(
+					"Transient compatibility realization is missing or ambiguous: reference="
+						+ reference.normalizedSignature() + ", matching=" + matches
+						+ ", available=" + fact.allowedEmissionFacts().stream()
+							.flatMap(emission -> emission.realizations().stream())
+							.map(CandidateEmissionRealization::normalizedSignature).toList());
+			return indexed.realization();
 		}
 
 		private static boolean sameMultiplicity(List<CandidateInputState> left, List<CandidateInputState> right) {
@@ -3095,8 +3210,6 @@ public final class PlacementAnalysis {
 	private final HeuristicPolicyFacts heuristicPolicyFacts;
 	private final CandidateRuleDomain candidateRuleDomain;
 	private final CandidateRuleFacts candidateRuleFacts;
-	private final Map<CandidateRuleFact,Map<PlacementRealizationKey,List<CandidateEmissionRealization>>>
-		realizationsByRule;
 	private final CandidateReceiptDomain candidateReceiptDomain;
 	private final RelocationSelections.CanonicalOrderIndex relocationOrder;
 	private volatile RelocationSelections.RelocationPrivacyIndex relocationPrivacy;
@@ -3444,7 +3557,6 @@ public final class PlacementAnalysis {
 			if(!analysisKeysByIdentity.containsKey(key.parentOccurrence()))
 				throw new IllegalArgumentException("Candidate domain parent is not analysis-owned");
 		this.candidateRuleFacts = new CandidateRuleFacts(this.candidateRuleDomain, candidateRuleFacts);
-		this.realizationsByRule = indexRealizations(this.candidateRuleFacts);
 		this.candidateReceiptDomain = new CandidateReceiptDomain(this.candidateRuleFacts);
 		for(var action : graph.derivedFoutMaterializationActions())
 			for(var authority : action.nativeAnchorAuthorities()) {
@@ -3721,36 +3833,8 @@ public final class PlacementAnalysis {
 		return List.copyOf(sorted);
 	}
 
-	private static Map<CandidateRuleFact,Map<PlacementRealizationKey,List<CandidateEmissionRealization>>>
-		indexRealizations(CandidateRuleFacts facts) {
-		Map<CandidateRuleFact,Map<PlacementRealizationKey,List<CandidateEmissionRealization>>> indexed =
-			new IdentityHashMap<>();
-		for(CandidateRuleFact fact : facts.orderedFacts()) {
-			Map<PlacementRealizationKey,List<CandidateEmissionRealization>> realizations = new java.util.HashMap<>();
-			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
-				for(CandidateEmissionRealization realization : emission.realizations())
-					realizations.computeIfAbsent(realization.key(), ignored -> new ArrayList<>()).add(realization);
-			realizations.replaceAll((ignored, matches) -> List.copyOf(matches));
-			indexed.put(fact, Collections.unmodifiableMap(realizations));
-		}
-		return Collections.unmodifiableMap(indexed);
-	}
-
 	private CandidateEmissionRealization requireReferencedRealization(CandidateRealizationReference reference) {
-		CandidateRuleFact rule = candidateRuleFacts.requireExact(reference.rule().parentOccurrence(),
-			reference.rule().orderedInputs());
-		if(rule.status() != CandidateEvaluationStatus.AVAILABLE)
-			throw new IllegalArgumentException("Transient compatibility references an unavailable candidate row");
-		List<CandidateEmissionRealization> matching = realizationsByRule.get(rule)
-			.getOrDefault(reference.realization(), List.of());
-		if(matching.size() != 1)
-			throw new IllegalArgumentException(
-				"Transient compatibility realization is missing or ambiguous: reference="
-					+ reference.normalizedSignature() + ", matching=" + matching.size()
-					+ ", available=" + rule.allowedEmissionFacts().stream()
-						.flatMap(emission -> emission.realizations().stream())
-						.map(CandidateEmissionRealization::normalizedSignature).toList());
-		return matching.get(0);
+		return candidateRuleFacts.requireExactRealization(reference);
 	}
 
 	private void validateCandidateRealizationSupport() {

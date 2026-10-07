@@ -408,6 +408,42 @@ public class CandidateRealizationCanonicalizationTest {
 	}
 
 	@Test
+	public void sharedClauseRunsDeduplicateIdentityBeforeOrdering() {
+		CandidateEmissionRealization template = fixture().get(0);
+		List<CandidateRealizationSupportClause> shared = new ArrayList<>();
+		for(int index = 0; index < 64; index++)
+			shared.add(new CandidateRealizationSupportClause(List.of(proof("shared-run-" + index)), List.of()));
+		List<CandidateEmissionRealization> groups = new ArrayList<>();
+		List<CandidateRealizationSupportClause> expected = new ArrayList<>(shared);
+		for(int group = 0; group < 16; group++) {
+			List<CandidateRealizationSupportClause> clauses = new ArrayList<>(shared);
+			CandidateRealizationSupportClause extra = new CandidateRealizationSupportClause(
+				List.of(proof("extra-run-" + group)), List.of());
+			clauses.add(extra);
+			expected.add(extra);
+			groups.add(new CandidateEmissionRealization(template.key(), clauses));
+		}
+		expected.sort(java.util.Comparator.comparing(CandidateRealizationCanonicalizationTest::legacySignature));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.setActiveMetrics(metrics);
+		try {
+			CandidateEmissionRealization union = new CandidateEmissionFact(
+				EMISSION, FType.ROW, null, groups).realizations().get(0);
+			Assert.assertEquals(expected, union.supportClauses());
+			for(int index = 0; index < expected.size(); index++)
+				Assert.assertSame(expected.get(index), union.supportClauses().get(index));
+			SearchSpaceMetrics.Snapshot work = metrics.snapshot();
+			Assert.assertEquals(80, work.realizationMergeUniqueClauses());
+			Assert.assertEquals(960, work.realizationMergeDuplicateClauses());
+			Assert.assertTrue("shared immutable clauses need only one ordering entry: "
+				+ work.canonicalComparisons(), work.canonicalComparisons() < expected.size() * 6L);
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
+	}
+
+	@Test
 	public void manySameKeySingletonGroupsUseSubquadraticCanonicalComparisons() {
 		CandidateEmissionRealization template = fixture().get(0);
 		int groupCount = 128;
@@ -743,6 +779,41 @@ public class CandidateRealizationCanonicalizationTest {
 		Assert.assertEquals(2, union.supportClauses().size());
 		Assert.assertSame(a, union.supportClauses().get(0));
 		Assert.assertSame(b, union.supportClauses().get(1));
+	}
+
+	@Test
+	public void unequalLengthSharedPrefixDescriptorsSkipPostSortEqualityComparison() throws Exception {
+		CandidateEmissionRealization template = fixture().get(0);
+		CandidateRealizationSupportClause shorter =
+			new CandidateRealizationSupportClause(List.of(proof("length-prefix-short")), List.of());
+		CandidateRealizationSupportClause longer =
+			new CandidateRealizationSupportClause(List.of(proof("length-prefix-long")), List.of());
+		CandidateEmissionRealization first = CandidateEmissionRealization
+			.fromAlreadyCanonicalSupportClauses(template.key(), List.of(shorter));
+		CandidateEmissionRealization second = CandidateEmissionRealization
+			.fromAlreadyCanonicalSupportClauses(template.key(), List.of(longer));
+		Class<?> textClass = Class.forName(PlacementAnalysis.class.getName() + "$CanonicalText");
+		var literal = textClass.getDeclaredMethod("literal", String.class);
+		literal.setAccessible(true);
+		Object prefix = literal.invoke(null, "shared-prefix");
+		Object extended = literal.invoke(null, "shared-prefix-tail");
+		setDescriptorSidecar(first.supportClauses(), List.of(prefix));
+		setDescriptorSidecar(second.supportClauses(), List.of(extended));
+
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.setActiveMetrics(metrics);
+		try {
+			CandidateEmissionRealization union = new CandidateEmissionFact(
+				EMISSION, FType.ROW, null, List.of(first, second)).realizations().get(0);
+			Assert.assertEquals(List.of(shorter, longer), union.supportClauses());
+			Assert.assertSame(shorter, union.supportClauses().get(0));
+			Assert.assertSame(longer, union.supportClauses().get(1));
+			Assert.assertEquals("sorting compares the pair once; unequal lengths skip the grouping comparison",
+				1, metrics.snapshot().canonicalComparisons());
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
 	}
 
 	@Test
@@ -1202,24 +1273,24 @@ public class CandidateRealizationCanonicalizationTest {
 		Object context = canonicalTextContext();
 		PlacementProofKey proof = new PlacementProofKey(PlacementProofKind.SHAPE, null, "literal-proof");
 		List<?> proofPieces = canonicalTextPieces(canonicalDescriptor(proof, context));
-		Assert.assertEquals("literal kind is not a one-piece rope", "SHAPE", proofPieces.get(2));
-		Assert.assertEquals("null owner marker stays a literal", "-", proofPieces.get(6));
-		Assert.assertEquals("authority text stays a literal", "literal-proof", proofPieces.get(10));
+		Assert.assertEquals("literal kind is not a one-piece rope", "SHAPE", proofPieces.get(1));
+		Assert.assertEquals("null owner marker stays a literal", "-", proofPieces.get(3));
+		Assert.assertEquals("authority text stays a literal", "literal-proof", proofPieces.get(5));
 		CandidateRealizationReference reference = source("literal-fields", "literal-source");
 		Object referenceText = canonicalDescriptor(reference, context);
 		CandidateRealizationInputBinding direct = CandidateRealizationInputBinding.direct(10, reference);
 		List<?> directPieces = canonicalTextPieces(canonicalDescriptor(direct, context));
-		Assert.assertEquals("10", directPieces.get(2));
-		Assert.assertSame("cached reference remains a shared structural child", referenceText, directPieces.get(6));
-		Assert.assertEquals("DIRECT", directPieces.get(10));
-		Assert.assertEquals("-", directPieces.get(14));
+		Assert.assertEquals("10", directPieces.get(1));
+		Assert.assertSame("cached reference remains a shared structural child", referenceText, directPieces.get(3));
+		Assert.assertEquals("DIRECT", directPieces.get(5));
+		Assert.assertEquals("-", directPieces.get(7));
 		RelocationActionKey action = fixture().get(1).supportClauses().get(0).inputBindings().get(1)
 			.relocationAction();
 		Object actionText = canonicalDescriptor(action, context);
 		CandidateRealizationInputBinding relocated = CandidateRealizationInputBinding.relocation(99, reference, action);
 		List<?> relocatedPieces = canonicalTextPieces(canonicalDescriptor(relocated, context));
-		Assert.assertSame(referenceText, relocatedPieces.get(6));
-		Assert.assertSame("cached action remains a shared structural child", actionText, relocatedPieces.get(14));
+		Assert.assertSame(referenceText, relocatedPieces.get(3));
+		Assert.assertSame("cached action remains a shared structural child", actionText, relocatedPieces.get(7));
 	}
 
 	@Test
@@ -1235,7 +1306,8 @@ public class CandidateRealizationCanonicalizationTest {
 		var literal = textType.getDeclaredMethod("literal", String.class);
 		literal.setAccessible(true);
 		for(String payload : List.of("", "|:[]", "123456789", "1234567890", "x".repeat(99),
-			"x".repeat(100), "\ud800", "\udc00", "😀")) {
+			"x".repeat(100), "x".repeat(4095), "x".repeat(4096), "x".repeat(4097),
+			"\ud800", "\udc00", "😀")) {
 			Object shared = literal.invoke(null, payload);
 			Object empty = literal.invoke(null, "");
 			Object builder = constructor.newInstance();
@@ -1243,8 +1315,10 @@ public class CandidateRealizationCanonicalizationTest {
 			Assert.assertSame(builder, appendFields.invoke(builder, new Object[] {fields}));
 			Object text = build.invoke(builder);
 			assertCanonicalTextValue(text, legacyFields(List.of(payload, payload, "", "", "tail")));
+			Assert.assertEquals("one prefix per field plus every nonempty value",
+				payload.isEmpty() ? 6 : 8, canonicalTextPieces(text).size());
 			if(!payload.isEmpty())
-				Assert.assertSame("nonempty structural field is not flattened", shared, canonicalTextPieces(text).get(6));
+				Assert.assertSame("nonempty structural field is not flattened", shared, canonicalTextPieces(text).get(3));
 		}
 		Object emptyBuilder = constructor.newInstance();
 		appendFields.invoke(emptyBuilder, new Object[] {new Object[0]});
@@ -1257,6 +1331,33 @@ public class CandidateRealizationCanonicalizationTest {
 		var unsupportedFailure = Assert.assertThrows(java.lang.reflect.InvocationTargetException.class,
 			() -> appendFields.invoke(unsupportedBuilder, new Object[] {new Object[] {1}}));
 		Assert.assertTrue(unsupportedFailure.getCause() instanceof IllegalArgumentException);
+	}
+
+	@Test
+	public void fieldPrefixSharingPreservesPayloadIdentityAndDelimiter() throws Exception {
+		Class<?> builderType = Class.forName(PlacementAnalysis.class.getName() + "$CanonicalTextBuilder");
+		var constructor = builderType.getDeclaredConstructor();
+		constructor.setAccessible(true);
+		var appendFields = builderType.getDeclaredMethod("appendFields", Object[].class);
+		appendFields.setAccessible(true);
+		var build = builderType.getDeclaredMethod("build");
+		build.setAccessible(true);
+		String first = new String("same bytes");
+		String second = new String(first);
+		Object left = constructor.newInstance(), right = constructor.newInstance();
+		appendFields.invoke(left, new Object[] {new Object[] {first, second}});
+		appendFields.invoke(right, new Object[] {new Object[] {second, first}});
+		Object leftText = build.invoke(left), rightText = build.invoke(right);
+		List<?> a = canonicalTextPieces(leftText), b = canonicalTextPieces(rightText);
+		Assert.assertSame("first-field metadata is independent of payload authority", a.get(0), b.get(0));
+		Assert.assertSame("subsequent-field metadata includes its delimiter", a.get(2), b.get(2));
+		Assert.assertNotEquals(a.get(0), a.get(2));
+		Assert.assertSame(first, a.get(1));
+		Assert.assertSame(second, a.get(3));
+		Assert.assertSame(second, b.get(1));
+		Assert.assertSame(first, b.get(3));
+		assertCanonicalTextValue(leftText, legacyFields(List.of(first, second)));
+		assertCanonicalTextValue(rightText, legacyFields(List.of(second, first)));
 	}
 
 	private static Object canonicalTextContext() throws Exception {

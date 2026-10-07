@@ -357,34 +357,20 @@ public class NativePlacementContinuityTest {
 	}
 
 	@SuppressWarnings("unchecked")
-	private static Set<CompiledHopKey> broadcastAliasSources(
+	private static Set<ValueVersionKey> broadcastCapableValueVersions(
 		NativePlacementContinuity continuity) throws ReflectiveOperationException {
-		Object context = accessibleField(
-			NativePlacementContinuity.class, "structuralContext").get(continuity);
-		Method method = context.getClass().getDeclaredMethod("broadcastAliasSources");
-		method.setAccessible(true);
-		return (Set<CompiledHopKey>)method.invoke(context);
+		return (Set<ValueVersionKey>)accessibleField(
+			NativePlacementContinuity.class, "broadcastCapableValueVersions").get(continuity);
 	}
 
-	private static Object broadcastAliasSourceCache(
-		NativePlacementContinuity continuity) throws ReflectiveOperationException {
-		Object context = accessibleField(
-			NativePlacementContinuity.class, "structuralContext").get(continuity);
-		return accessibleField(context.getClass(), "broadcastAliasSources").get(context);
-	}
-
-	private static Set<CompiledHopKey> coldBroadcastAliasSources(
+	private static Set<ValueVersionKey> coldBroadcastCapableValueVersions(
 		Map<CompiledHopKey,Node> nodes) {
-		Set<ValueVersionKey> broadcastValues = new java.util.HashSet<>();
+		Set<ValueVersionKey> result = new java.util.HashSet<>();
 		for(Node node : nodes.values())
 			if(node.legalAlternatives().stream().anyMatch(state ->
 				state.output() == FederatedOutput.FOUT && state.fType() == FType.BROADCAST))
-				broadcastValues.add(node.valueVersion());
-		Set<CompiledHopKey> result = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
-		for(Node node : nodes.values())
-			if(broadcastValues.contains(node.valueVersion()))
-				result.add(node.key());
-		return result;
+				result.add(node.valueVersion());
+		return Set.copyOf(result);
 	}
 
 	@SuppressWarnings("unchecked")
@@ -618,6 +604,19 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void releasedAggregateSourceKeepsBroadcastRelocationRowActive() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		full.privacy(seed, Privacy.PRIVATE_AGGREGATE_TO_PUBLIC);
+		Ref append = full.binary("append", OpOp2.CBIND, seed, seed, false);
+		full.additionalCandidate(append, List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.present(FType.BROADCAST)));
+
+		Assert.assertFalse("Released aggregate data may still use explicit BROADCAST relocation",
+			full.resolver().proves(List.of(append.key), seed.anchor));
+	}
+
+	@Test
 	public void protectedSourceWithSelectableBroadcastAliasKeepsRowActive() {
 		Fixture full = new Fixture(FType.FULL);
 		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
@@ -629,6 +628,47 @@ public class NativePlacementContinuityTest {
 
 		Assert.assertFalse("Any same-value BROADCAST alias keeps the exact row selectable",
 			full.resolver().proves(List.of(append.key), seed.anchor));
+	}
+
+	@Test
+	public void protectedSourceCannotUseBroadcastAliasForAnotherValueVersion() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		full.privacy(seed, Privacy.PRIVATE_AGGREGATE);
+		Ref other = full.source("other", anchor(FType.FULL, "worker1:8001", 0, 50));
+		full.broadcastAlias("other-alias", other);
+		Ref append = full.binary("append", OpOp2.CBIND, seed, seed, false);
+		full.additionalCandidate(append, List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.present(FType.BROADCAST)));
+
+		Assert.assertTrue("A BROADCAST alias for a different value version cannot authorize the row",
+			full.resolver().proves(List.of(append.key), seed.anchor));
+	}
+
+	@Test
+	public void broadcastCapabilityRefreshesWithNodeAuthorityAndSharesFactRevisions() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		full.privacy(seed, Privacy.PRIVATE_AGGREGATE);
+		Ref alias = full.broadcastAlias("seed-alias", seed);
+		Ref append = full.binary("append", OpOp2.CBIND, seed, seed, false);
+		full.additionalCandidate(append, List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.present(FType.BROADCAST)));
+		NativePlacementContinuity initial = full.resolver();
+		Assert.assertFalse(initial.proves(List.of(append.key), seed.anchor));
+
+		Field index = accessibleField(initial.getClass(), "broadcastCapableValueVersions");
+		Assert.assertSame("candidate-only revisions retain the exact structural membership index",
+			index.get(initial), index.get(initial.nextRevision(List.copyOf(full.candidates))));
+
+		Node prior = full.nodes.get(alias.key);
+		Node withoutBroadcast = new Node(prior.key(), prior.kind(), prior.valueVersion(),
+			prior.emittedWork(), List.of(state(FType.FULL)), prior.exclusions(), prior.anchors());
+		NativePlacementContinuity revised = initial.nextNodeAuthorityRevision(withoutBroadcast, List.of());
+		Assert.assertNotSame("node-authority changes rebuild the structural membership index",
+			index.get(initial), index.get(revised));
+		Assert.assertTrue("removing the last same-version BROADCAST alternative disables the row",
+			revised.proves(List.of(append.key), seed.anchor));
 	}
 
 	@Test
@@ -2262,32 +2302,26 @@ public class NativePlacementContinuityTest {
 			aliasNode.anchors()));
 
 		NativePlacementContinuity continuity = full.resolver();
-		Assert.assertNull("construction must leave the BROADCAST index cold",
-			broadcastAliasSourceCache(continuity));
-		Set<CompiledHopKey> indexed = broadcastAliasSources(continuity);
-		Set<CompiledHopKey> expected = coldBroadcastAliasSources(full.nodes);
-		Assert.assertEquals(expected.size(), indexed.size());
-		for(CompiledHopKey owner : full.nodes.keySet())
-			Assert.assertEquals("indexed alias membership must match the legacy scan",
-				expected.contains(owner), indexed.contains(owner));
+		Set<ValueVersionKey> indexed = broadcastCapableValueVersions(continuity);
+		Set<ValueVersionKey> expected = coldBroadcastCapableValueVersions(full.nodes);
+		Assert.assertEquals("indexed value membership must match the independent scan",
+			expected, indexed);
 		Assert.assertTrue("structurally equal value versions must join the alias class",
-			indexed.contains(seed.key));
+			indexed.contains(value));
 
-		CompiledHopKey foreign = new CompiledHopKey(seed.key.programFingerprint(),
-			seed.key.functionNamespace(), seed.key.callSitePath(), seed.key.recompileContext(),
-			seed.key.controlRegion(), seed.key.emittedHopInstance(), seed.key.canonicalSourceOrigin());
-		Assert.assertEquals(seed.key, foreign);
-		Assert.assertNotSame(seed.key, foreign);
-		Assert.assertFalse("a value-equal foreign owner must not gain graph authority",
-			indexed.contains(foreign));
+		ValueVersionKey different = new ValueVersionKey(value.programFingerprint(),
+			value.lexicalVariable() + "-other", value.definingControlRegion(), value.definitionOrdinal(),
+			value.versionKind(), value.predecessorVersions());
+		Assert.assertFalse("a different value version must not gain BROADCAST capability",
+			indexed.contains(different));
 
 		NativePlacementContinuity factRevision = continuity.nextRevision(List.copyOf(full.candidates));
 		NativePlacementContinuity fresh = continuity.freshQueryState();
-		Assert.assertSame(indexed, broadcastAliasSources(factRevision));
-		Assert.assertSame(indexed, broadcastAliasSources(fresh));
+		Assert.assertSame(indexed, broadcastCapableValueVersions(factRevision));
+		Assert.assertSame(indexed, broadcastCapableValueVersions(fresh));
 		seed.hop.setName("renamed-after-index");
 		Assert.assertSame("mutable Hop metadata is outside the immutable node index",
-			indexed, broadcastAliasSources(continuity.freshQueryState()));
+			indexed, broadcastCapableValueVersions(continuity.freshQueryState()));
 	}
 
 	@Test
@@ -2300,8 +2334,9 @@ public class NativePlacementContinuityTest {
 		full.additionalCandidate(append, List.of(CandidateInputState.present(FType.FULL),
 			CandidateInputState.present(FType.BROADCAST)));
 		NativePlacementContinuity initial = full.resolver();
-		Set<CompiledHopKey> initialIndex = broadcastAliasSources(initial);
-		Assert.assertTrue(initialIndex.contains(seed.key));
+		ValueVersionKey seedValue = full.nodes.get(seed.key).valueVersion();
+		Set<ValueVersionKey> initialIndex = broadcastCapableValueVersions(initial);
+		Assert.assertTrue(initialIndex.contains(seedValue));
 		Assert.assertFalse("the selectable alias keeps the protected relocation row active",
 			initial.proves(List.of(append.key), seed.anchor));
 
@@ -2309,9 +2344,9 @@ public class NativePlacementContinuityTest {
 		Node unavailable = new Node(prior.key(), prior.kind(), prior.valueVersion(), prior.emittedWork(),
 			List.of(state(FType.FULL)), prior.exclusions(), prior.anchors());
 		NativePlacementContinuity removed = initial.nextNodeAuthorityRevision(unavailable, List.of());
-		Assert.assertNull("node authority changes must invalidate the lazy index",
-			broadcastAliasSourceCache(removed));
-		Assert.assertFalse(broadcastAliasSources(removed).contains(seed.key));
+		Assert.assertNotSame("node authority changes must rebuild the structural index",
+			initialIndex, broadcastCapableValueVersions(removed));
+		Assert.assertFalse(broadcastCapableValueVersions(removed).contains(seedValue));
 		Assert.assertTrue("without a selectable alias the protected relocation row is inactive",
 			removed.proves(List.of(append.key), seed.anchor));
 
@@ -2319,11 +2354,10 @@ public class NativePlacementContinuityTest {
 			prior.legalAlternatives(), prior.exclusions(), prior.anchors());
 		NativePlacementContinuity restoredContinuity =
 			removed.nextNodeAuthorityRevision(restored, List.of());
-		Assert.assertNull(broadcastAliasSourceCache(restoredContinuity));
-		Assert.assertTrue(broadcastAliasSources(restoredContinuity).contains(seed.key));
+		Assert.assertTrue(broadcastCapableValueVersions(restoredContinuity).contains(seedValue));
 		Assert.assertFalse(restoredContinuity.proves(List.of(append.key), seed.anchor));
 		Assert.assertSame("the prior immutable context remains valid after a later authority revision",
-			initialIndex, broadcastAliasSources(initial));
+			initialIndex, broadcastCapableValueVersions(initial));
 	}
 
 	@Test
@@ -3248,12 +3282,25 @@ public class NativePlacementContinuityTest {
 			foreignBase.key(), first.realization());
 		Assert.assertNotEquals("equal-looking foreign owner authority cannot collide", firstKey,
 			supportKey(resolver, foreignSource, seed.anchor, true));
+		NativePlacementContinuity.CandidateSupportResult rejected =
+			resolver.proveGeneratedCandidateSupport(foreignBase,
+				foreignBase.allowedEmissionFacts().get(0), foreignSource, seed.anchor);
+		Assert.assertTrue(rejected.proofs().isEmpty());
+		Assert.assertEquals("an authority rejection still has a complete local invalidation footprint",
+			Set.of(foreignRoot.key), rejected.dependencyOccurrences());
 		Assert.assertEquals("a refined memo must preserve exact generated proofs", full.resolver(null, 0, 0)
 			.proveGeneratedCandidateAlternatives(base, emission, first, seed.anchor),
 			resolver.proveGeneratedCandidateAlternatives(base, emission, first, seed.anchor));
 		Assert.assertEquals(full.resolver(null, 0, 0)
 			.proveGeneratedCandidateAlternatives(base, emission, second, seed.anchor),
 			resolver.proveGeneratedCandidateAlternatives(base, emission, second, seed.anchor));
+		NativePlacementContinuity.CandidateSupportResult cached =
+			resolver.proveGeneratedCandidateSupport(base, emission, first, seed.anchor);
+		NativePlacementContinuity.CandidateSupportResult cold = full.resolver(null, 0, 0)
+			.proveGeneratedCandidateSupport(base, emission, first, seed.anchor);
+		Assert.assertEquals(cold.proofs(), cached.proofs());
+		Assert.assertEquals("memo hits and zero-budget recomputation must expose the same complete footprint",
+			cold.dependencyOccurrences(), cached.dependencyOccurrences());
 	}
 
 	private static Object supportKey(NativePlacementContinuity resolver,
@@ -3334,6 +3381,55 @@ public class NativePlacementContinuityTest {
 
 		Assert.assertEquals("staging history must not change the generator-root relation", absent, staging);
 		Assert.assertEquals("an old exact support subset must not constrain generation", absent, partialProofs);
+	}
+
+	@Test
+	public void generatedRootHistoryReuseUsesExactTraversalInsideConservativeCycle() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("root", OpOp1.LOG, seed, false);
+		// The extra structural edge makes the conservative occurrence component cyclic,
+		// but it is outside the candidate row's declared input positions and is never read.
+		full.edges.add(new CompiledInputEdgeFact(root.key, root.key, 1));
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		CandidateRuleFact base = full.fact(root, inputs);
+		CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization publication = CandidateEmissionRealization.nativeLineage(
+			emission.emissionState(), "conservative-cycle-publication", List.of(), List.of());
+		CandidateRealizationReference proposed = CandidateRealizationReference.of(
+			base.key(), publication);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity first = full.resolver(metrics, 128, 2048);
+		Object holder = accessibleField(
+			NativePlacementContinuity.class, "occurrenceComponents").get(first);
+		Method componentsMethod = holder.getClass().getDeclaredMethod("components");
+		componentsMethod.setAccessible(true);
+		PlacementDependencyComponents components =
+			(PlacementDependencyComponents)componentsMethod.invoke(holder);
+		Assert.assertTrue("the fixture must exercise a conservative cyclic component",
+			components.componentOf(root.key).cyclic());
+		List<NativePlacementContinuity.NativeContinuityProof> expected = first
+			.proveGeneratedCandidateAlternatives(base, emission, proposed, seed.anchor);
+		Assert.assertFalse(expected.isEmpty());
+		long built = metrics.snapshot().proofGraphsBuilt();
+		long reused = metrics.snapshot().supportMemoRevisionEntriesReused();
+
+		CandidateRuleFact published = replaceRootRealization(full, base, emission, publication);
+		List<CandidateRuleFact> publishedFacts = List.copyOf(full.candidates);
+		NativePlacementContinuity revised = first.nextRevisionWithCompleteCandidateDelta(
+			publishedFacts, identitySet(root.key));
+		List<NativePlacementContinuity.NativeContinuityProof> actual = revised
+			.proveGeneratedCandidateAlternatives(published,
+				published.allowedEmissionFacts().get(0), proposed, seed.anchor);
+
+		Assert.assertEquals(new NativePlacementContinuity(full.nodes, full.origins,
+			publishedFacts, full.edges, full.reaching, Set.of(), full.privacy)
+			.proveGeneratedCandidateAlternatives(published,
+				published.allowedEmissionFacts().get(0), proposed, seed.anchor), actual);
+		Assert.assertEquals("an unread publication-only root change must reuse exact support",
+			built, metrics.snapshot().proofGraphsBuilt());
+		Assert.assertTrue("the exact support entry must cross the candidate revision",
+			metrics.snapshot().supportMemoRevisionEntriesReused() > reused);
 	}
 
 	@Test

@@ -221,9 +221,9 @@ public class ExactEliminationScoreReuseTest {
 	private static Object scoreCache(Object graph, int[] domains, int count) throws Exception {
 		Class<?> type = nested("OrderScoreCache");
 		Constructor<?> constructor = type.getDeclaredConstructor(
-			nested("EliminationGraph"), int[].class, int.class);
+			nested("EliminationGraph"), int[].class, int.class, nested("EliminationScoreCounters"));
 		constructor.setAccessible(true);
-		return constructor.newInstance(graph, domains, count);
+		return constructor.newInstance(graph, domains, count, null);
 	}
 
 	private static Object invokeCache(Object cache, String method, int variable) throws Exception {

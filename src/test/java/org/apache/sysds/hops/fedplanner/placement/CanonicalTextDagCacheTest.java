@@ -108,8 +108,49 @@ public class CanonicalTextDagCacheTest {
 		Object capped = cache(1, Long.MAX_VALUE);
 		retain(capped, a, root);
 		retain(capped, b, root);
-		Assert.assertNull(get(capped, b));
+		Assert.assertNull("entry-cap replacement discards the prior identity generation", get(capped, a));
+		Assert.assertSame(root, get(capped, b));
 		Assert.assertEquals(exact, weight(capped));
+	}
+
+	@Test
+	public void weightReplacementReaccountsSharedSubtreeFromTheNewRoot() throws Exception {
+		Object shared = text(List.of("shared".repeat(200)));
+		Object first = text(List.of(shared, "first".repeat(200)));
+		Object second = text(List.of(shared, "second".repeat(200)));
+		long firstWeight = expectedWeight(List.of(first), 1);
+		long secondWeight = expectedWeight(List.of(second), 1);
+		long budget = Math.max(firstWeight, secondWeight);
+		Assert.assertTrue(expectedWeight(List.of(first, second), 2) > budget);
+		Object cache = cache(8, budget);
+		Object a = key("first"), b = key("second");
+		retain(cache, a, first);
+		retain(cache, b, second);
+		Assert.assertNull(get(cache, a));
+		Assert.assertSame(second, get(cache, b));
+		Assert.assertEquals(secondWeight, weight(cache));
+		Assert.assertEquals(identityDagSize(second), ledger(cache).size());
+	}
+
+	@Test
+	public void oversizedReplacementRefusalPreservesThePriorGenerationExactly() throws Exception {
+		Object first = text(List.of("retained"));
+		Object oversized = text(List.of("oversized".repeat(10_000)));
+		long budget = expectedWeight(List.of(first), 1);
+		Object a = key("first"), b = key("oversized");
+		for(int maxEntries : new int[] {1, 8}) {
+			Object cache = cache(maxEntries, budget);
+			retain(cache, a, first);
+			long beforeWeight = weight(cache);
+			Map<?,?> beforeValues = values(cache), beforeLedger = ledger(cache);
+			retain(cache, b, oversized);
+			Assert.assertSame(first, get(cache, a));
+			Assert.assertNull(get(cache, b));
+			Assert.assertEquals(beforeWeight, weight(cache));
+			Assert.assertSame("failed replacement keeps the exact authority map", beforeValues, values(cache));
+			Assert.assertSame("failed replacement keeps the exact descriptor ledger", beforeLedger, ledger(cache));
+			Assert.assertEquals(1, values(cache).size());
+		}
 	}
 
 	@Test
@@ -163,6 +204,19 @@ public class CanonicalTextDagCacheTest {
 			}
 		}
 		return total;
+	}
+
+	private static int identityDagSize(Object root) throws Exception {
+		IdentityHashMap<Object,Boolean> seen = new IdentityHashMap<>();
+		ArrayDeque<Object> queue = new ArrayDeque<>();
+		queue.add(root);
+		while(!queue.isEmpty()) {
+			Object value = queue.removeLast();
+			if(seen.put(value, Boolean.TRUE) != null || value instanceof String)
+				continue;
+			queue.addAll((List<?>)field(value, "pieces"));
+		}
+		return seen.size();
 	}
 
 	private static Object key(String name) {

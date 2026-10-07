@@ -115,7 +115,8 @@ final class JointPhysicalCostRows {
 			if(binding.relocationAction() != null)
 				pools.add(binding.relocationAction().durableAnchor());
 			else {
-				if(!collectExactMapChoices(binding.source(), new java.util.HashSet<>(), pools))
+				if(!collectExactMapChoices(binding.source(), new java.util.HashSet<>(),
+					new java.util.HashSet<>(), pools))
 					return List.of();
 			}
 			// Value/alias IDs do not change a layout's price. Preserve every range
@@ -143,10 +144,15 @@ final class JointPhysicalCostRows {
 	}
 
 	private boolean collectExactMapChoices(CandidateRealizationReference reference,
-		Set<CandidateRealizationReference> active, Set<DurableAnchorKey> pools) {
-		if(!active.add(reference)) return true; // Anchors must still be found outside the cycle.
+		Set<CandidateRealizationReference> active, Set<CandidateRealizationReference> completed,
+		Set<DurableAnchorKey> pools) {
+		var source = analysis.requireExactCandidateRealization(reference);
+		// Resolve every edge before either skip so a repeated or cyclic foreign
+		// reference cannot borrow an earlier analysis-owned realization.
+		if(active.contains(reference) || completed.contains(reference))
+			return true; // Anchors must still be found outside the cycle.
+		active.add(reference);
 		try {
-			var source = analysis.requireExactCandidateRealization(reference);
 			for(var clause : source.supportClauses()) {
 				if(source.key().layoutKind() != PlacementLayoutKind.VALUE_MAP) {
 					var pool = source.provenWorkerPool(clause);
@@ -158,10 +164,12 @@ final class JointPhysicalCostRows {
 					for(var binding : clause.inputBindings()) {
 						if(binding.relocationAction() != null)
 							pools.add(binding.relocationAction().durableAnchor());
-						else if(!collectExactMapChoices(binding.source(), active, pools)) return false;
+						else if(!collectExactMapChoices(binding.source(), active, completed, pools))
+							return false;
 					}
 				}
 			}
+			completed.add(reference);
 			return true;
 		}
 		finally { active.remove(reference); }
@@ -172,14 +180,16 @@ final class JointPhysicalCostRows {
 		PlacementAnalysis.CandidateEmissionRealization realization,
 		PlacementAnalysis.CandidateRealizationSupportClause clause) {
 		Set<DurableAnchorKey> result = new LinkedHashSet<>();
-		possiblePools(analysis, realization, clause, new java.util.HashSet<>(), result);
+		possiblePools(analysis, realization, clause, new java.util.HashSet<>(),
+			new java.util.HashSet<>(), result);
 		return Set.copyOf(result);
 	}
 
 	private static void possiblePools(PlacementAnalysis analysis,
 		PlacementAnalysis.CandidateEmissionRealization realization,
 		PlacementAnalysis.CandidateRealizationSupportClause clause,
-		Set<CandidateRealizationReference> visiting, Set<DurableAnchorKey> result) {
+		Set<CandidateRealizationReference> visiting,
+		Set<CandidateRealizationReference> completed, Set<DurableAnchorKey> result) {
 		DurableAnchorKey pool = realization.provenWorkerPool(clause);
 		if(pool != null) {
 			result.add(pool);
@@ -190,10 +200,18 @@ final class JointPhysicalCostRows {
 				result.add(binding.relocationAction().durableAnchor());
 				continue;
 			}
-			if(!visiting.add(binding.source())) continue;
 			var source = analysis.requireExactCandidateRealization(binding.source());
-			for(var support : source.supportClauses()) possiblePools(analysis, source, support, visiting, result);
-			visiting.remove(binding.source());
+			// Authority belongs to the exact edge, including cycle and completed-DAG
+			// skips. Only fully expanded references enter the query-local completion set.
+			if(visiting.contains(binding.source()) || completed.contains(binding.source()))
+				continue;
+			visiting.add(binding.source());
+			try {
+				for(var support : source.supportClauses())
+					possiblePools(analysis, source, support, visiting, completed, result);
+				completed.add(binding.source());
+			}
+			finally { visiting.remove(binding.source()); }
 		}
 	}
 

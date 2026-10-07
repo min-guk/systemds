@@ -76,6 +76,35 @@ public class WorkerPoolRealizationTraversalTest {
 				List.of(CandidateRealizationInputBinding.direct(0, root)))), new CountingSet()).isEmpty());
 	}
 
+	@Test
+	public void sharedAccumulatorKeepsFirstEqualAnchorRepresentative() throws Exception {
+		DurableAnchorKey first = anchor("localhost:1234");
+		DurableAnchorKey equalSecond = anchor("localhost:1234");
+		DurableAnchorKey alreadyPresent = anchor("localhost:1234");
+		Assert.assertEquals(first, equalSecond);
+		Assert.assertNotSame(first, equalSecond);
+		CandidateRealizationReference left = reference("left", first);
+		CandidateRealizationReference right = reference("right", equalSecond);
+		CandidateRealizationReference root = reference("root", null);
+		Map<String,CandidateEmissionRealization> facts = Map.of(
+			left.normalizedSignature(), new CandidateEmissionRealization(
+				left.realization(), List.of(), List.of()),
+			right.normalizedSignature(), new CandidateEmissionRealization(
+				right.realization(), List.of(), List.of()),
+			root.normalizedSignature(), new CandidateEmissionRealization(root.realization(), List.of(),
+				List.of(CandidateRealizationInputBinding.direct(0, left),
+					CandidateRealizationInputBinding.direct(1, right))));
+
+		Set<DurableAnchorKey> discovered = resolve(root, facts, new CountingSet());
+		Assert.assertSame("DFS binding order retains the first equal anchor authority",
+			first, discovered.iterator().next());
+		Set<DurableAnchorKey> accumulated = new java.util.TreeSet<>();
+		accumulated.add(alreadyPresent);
+		resolve(root, facts, new CountingSet(), accumulated);
+		Assert.assertSame("an existing caller-owned representative remains authoritative",
+			alreadyPresent, accumulated.iterator().next());
+	}
+
 	private static class CountingSet extends HashSet<String> {
 		private static final long serialVersionUID = 1L;
 		private int attempts;
@@ -85,6 +114,15 @@ public class WorkerPoolRealizationTraversalTest {
 	@SuppressWarnings("unchecked")
 	private static Set<DurableAnchorKey> resolve(CandidateRealizationReference root,
 		Map<String,CandidateEmissionRealization> facts, Set<String> visited) throws Exception {
+		Set<DurableAnchorKey> result = new java.util.TreeSet<>();
+		resolve(root, facts, visited, result);
+		return result;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static void resolve(CandidateRealizationReference root,
+		Map<String,CandidateEmissionRealization> facts, Set<String> visited,
+		Set<DurableAnchorKey> result) throws Exception {
 		Class<?> type = Class.forName(PlacementRelationClosure.class.getName() + "$WorkerPoolAnchorResolver");
 		Constructor<?> constructor = type.getDeclaredConstructor(Map.class, Map.class, List.class,
 			List.class, Collection.class, Map.class, Map.class);
@@ -94,9 +132,9 @@ public class WorkerPoolRealizationTraversalTest {
 		field.setAccessible(true);
 		((Map<String,CandidateEmissionRealization>)field.get(resolver)).putAll(facts);
 		Method method = type.getDeclaredMethod("resolveCandidateRealization",
-			CandidateRealizationReference.class, FType.class, Set.class);
+			CandidateRealizationReference.class, FType.class, Set.class, Set.class);
 		method.setAccessible(true);
-		return (Set<DurableAnchorKey>)method.invoke(resolver, root, FType.FULL, visited);
+		method.invoke(resolver, root, FType.FULL, visited, result);
 	}
 
 	private static CandidateRealizationReference reference(String name, DurableAnchorKey anchor) {

@@ -259,6 +259,33 @@ public class PlacementRealizationAuthorityTest {
 			RULE, exactEmission, exactNative, foreign, List.of()));
 	}
 
+	@Test
+	public void wideSupportPoolQueriesKeepExactClauseIdentity() {
+		DurableAnchorKey pool = anchor("wide-native-pool", 4);
+		List<CandidateRealizationSupportClause> clauses = new java.util.ArrayList<>();
+		for(int index = 0; index < 32; index++)
+			clauses.add(new CandidateRealizationSupportClause(List.of(new PlacementProofKey(
+				PlacementProofKind.NATIVE_CONTINUITY, OWNER, "wide-clause-" + index)), List.of(), pool,
+				true));
+		CandidateEmissionRealization realization = new CandidateEmissionRealization(
+			PlacementRealizationKey.nativeLineage(FED_EMISSION, "wide-native"), clauses);
+		Assert.assertEquals(32, realization.supportClauses().size());
+		for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+			Assert.assertSame(clause.nativeWorkerPoolLayoutExact() ? pool : null,
+				realization.provenWorkerPool(clause));
+			Assert.assertSame(pool, realization.nativeWorkerPoolResidencyWitness(clause));
+			Assert.assertEquals(clause.nativeWorkerPoolLayoutExact(), realization.nativeWorkerPoolLayoutExact(clause));
+			CandidateRealizationSupportClause foreign = new CandidateRealizationSupportClause(
+				clause.proofDependencies(), clause.inputBindings(), pool, clause.nativeWorkerPoolLayoutExact());
+			Assert.assertEquals(clause, foreign);
+			Assert.assertThrows(IllegalArgumentException.class, () -> realization.provenWorkerPool(foreign));
+			Assert.assertThrows(IllegalArgumentException.class,
+				() -> realization.nativeWorkerPoolResidencyWitness(foreign));
+			Assert.assertThrows(IllegalArgumentException.class,
+				() -> realization.nativeWorkerPoolLayoutExact(foreign));
+		}
+	}
+
 	private static void assertReceiptPoolQueries(CandidateEmissionFact emission,
 		CandidateEmissionRealization realization, CandidateRealizationSupportClause clause,
 		DurableAnchorKey expectedProvenPool, DurableAnchorKey expectedResidency) {
