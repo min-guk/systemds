@@ -774,6 +774,108 @@
       ],
       "harnessStatus": "PASSED",
       "twentySecondGate": true
+    },
+    {
+      "run": "steplm-20s-legacy-final4-01",
+      "workload": "original-lm",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-legacy-final4-01/result.json",
+      "resultSha256": "c14c3c8bdd5eb3065abff0d549fe37a28ab47eca7e3dd98f133891b0779a38de",
+      "compilationSeconds": 20.507247,
+      "canonicalCost": 37040.115993804146,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": false,
+      "sourceCommit": "4736b23e01f5f2cc9557cfedc2c3c3f63b6f70d9"
+    },
+    {
+      "run": "steplm-20s-legacy-final4-02",
+      "workload": "original-lm",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-legacy-final4-02/result.json",
+      "resultSha256": "7dfe15f32cf5f2ea62f9dac2b5069034344f76f5be33bdd6853e7629589c2c3d",
+      "compilationSeconds": 21.926934,
+      "canonicalCost": 37040.115993804146,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": false,
+      "sourceCommit": "4736b23e01f5f2cc9557cfedc2c3c3f63b6f70d9"
+    },
+    {
+      "run": "steplm-20s-legacy-final4-03",
+      "workload": "original-lm",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-legacy-final4-03/result.json",
+      "resultSha256": "c7e6f592526afcc689160aa8b90c13d588fd58f56abaaf9fee1f2dd46407ea0a",
+      "compilationSeconds": 21.471499,
+      "canonicalCost": 37040.115993804146,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": false,
+      "sourceCommit": "4736b23e01f5f2cc9557cfedc2c3c3f63b6f70d9"
+    },
+    {
+      "run": "steplm-20s-cg-final3-01",
+      "workload": "current-main-lmCG",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-cg-final3-01/result.json",
+      "resultSha256": "a6e9235b1d82dd716fcc7c4b8ab3bce9ae68ad44d0794eda4929b4364fe527df",
+      "compilationSeconds": 19.225814,
+      "canonicalCost": 65701.88346157457,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": true,
+      "sourceCommit": "4736b23e01f5f2cc9557cfedc2c3c3f63b6f70d9"
+    },
+    {
+      "run": "steplm-20s-cg-final3-02",
+      "workload": "current-main-lmCG",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-cg-final3-02/result.json",
+      "resultSha256": "8695d252bc57627d4b6799ac21c7215a1935b36d620d5743dd888c3b313c4a58",
+      "compilationSeconds": 21.122758,
+      "canonicalCost": 65701.88346157457,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": false,
+      "sourceCommit": "4736b23e01f5f2cc9557cfedc2c3c3f63b6f70d9"
+    },
+    {
+      "run": "steplm-20s-cg-final3-03",
+      "workload": "current-main-lmCG",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-cg-final3-03/result.json",
+      "resultSha256": "6c8fff044afe2a04bf2febbd11951a85762b5c9b4bf94006f35f2c5cbc42edfd",
+      "compilationSeconds": 18.991695,
+      "canonicalCost": 65701.88346157457,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": true,
+      "sourceCommit": "4736b23e01f5f2cc9557cfedc2c3c3f63b6f70d9"
     }
   ],
   "failedEvaluations": [
@@ -816,6 +918,28 @@
         19.255013
       ],
       "reason": "Timing failures only; all correctness/cost/builtin/environment/artifact gates passed."
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-legacy-final4-evaluation.json",
+      "sha256": "b2a7b2971c4af8b9b36fb3a722c63fefc946a348c23ba446eb1a2926bd21d8f7",
+      "status": "FAILED",
+      "compilationSeconds": [
+        20.507247,
+        21.926934,
+        21.471499
+      ],
+      "reason": "Timing failures only; all correctness/cost/builtin/environment/artifact/source gates passed."
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-cg-final3-evaluation.json",
+      "sha256": "19d3f6718b71f187502693df975c38a35df07b58acf5caea0f320b40932af608",
+      "status": "FAILED",
+      "compilationSeconds": [
+        19.225814,
+        21.122758,
+        18.991695
+      ],
+      "reason": "Timing failures only; all correctness/cost/builtin/environment/artifact/source gates passed."
     }
   ],
   "publicationCommit": "f298378925c2aebb8facbc5a363b277f5d557a74",

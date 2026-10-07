@@ -239,22 +239,23 @@
     "passed": 16,
     "log": "target/planning-evidence/step18-evaluator-python.log"
   },
-  "review": "CLEAR: three allocation changes, support cursor and nine exact-cardinality maps",
+  "review": "CLEAR: exact arithmetic/order/identity/authority; private signature front rotation has unchanged bounds and canonical misses",
   "package": "step18, step19, step20 PASS",
   "performance": {
     "status": "FAILED",
-    "combinedReport": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/step19-two-workload-final-evaluation.json",
+    "combinedReport": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/step20-two-workload-final-evaluation.json",
     "legacyCompilationSeconds": [
-      22.836013,
-      21.851988,
-      18.783427
+      20.507247,
+      21.926934,
+      21.471499
     ],
     "currentCgCompilationSeconds": [
-      21.698392,
-      19.212769,
-      19.255013
+      19.225814,
+      21.122758,
+      18.991695
     ],
-    "correctness": "All six PASSED model/selection/audits/cost/resource/builtin/artifact/source gates"
+    "correctness": "All six PASSED model/selection/audits/cost/resource/builtin/artifact/source gates",
+    "sourceCommit": "4736b23e01f5f2cc9557cfedc2c3c3f63b6f70d9"
   },
   "sourceSha256": {
     "scripts/fedplanner/evaluate_steplm_planning.py": "0146832fc6567f86dfa14d7c0abe30cdbaec27f877b833027697eb5693279fd6",
@@ -343,7 +344,7 @@
   "nextPerformanceBatch": {
     "legacy": "steplm-20s-legacy-final4",
     "currentCg": "steplm-20s-cg-final3",
-    "status": "PENDING"
+    "status": "FAILED_TIMING_ONLY"
   },
   "signatureFrontTelemetry": {
     "control": {
@@ -374,5 +375,21 @@
       },
       "unitTest": "1/1 PASS; compile-only; not training-time evidence"
     }
+  },
+  "implementationCommit": "4736b23e01f5f2cc9557cfedc2c3c3f63b6f70d9",
+  "previousPerformance": {
+    "status": "FAILED",
+    "combinedReport": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/step19-two-workload-final-evaluation.json",
+    "legacyCompilationSeconds": [
+      22.836013,
+      21.851988,
+      18.783427
+    ],
+    "currentCgCompilationSeconds": [
+      21.698392,
+      19.212769,
+      19.255013
+    ],
+    "correctness": "All six PASSED model/selection/audits/cost/resource/builtin/artifact/source gates"
   }
 }

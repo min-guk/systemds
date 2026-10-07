@@ -511,3 +511,5 @@
 
 - **최신 동결 실패**: step19 원래lm3회22.836013/21.851988/18.783427초, 현재CG3회21.698392/19.212769/19.255013초로 둘 다 시간 조건만 FAIL. 비용·모델·선택·artifact/builtin/resource 검증은 모두 PASS다.
 - **signature front 포화**: 작은 StepLM compile-only telemetry에서65536 identity front가6,668,400회 포화 상태였고1,714,667 admission이 거절됐다. private identity front만 다음 admission에서 교체하여 structural fallback1773560→255426회(-85.6%), rotation3회, canonical miss6643회 동일을 확인했다. structural String cache/64M character 예산/weak cache/authority arena는 유지한다. PlacementIdentity.java와 AnalysisScope 회귀를 수정했다. 양쪽 compile-only 테스트 및 신규 scope6회귀 PASS/독립review CLEAR; 중앙/Docker 검증은 진행중이다. 이전 hotalias 재조회 비용은 실제 반복측정으로 확인한다.
+
+- **후속 중간 게시 근거**: `4736b23e01`의 중앙 step20은116PASS/기존ignore1/실패·오류0, package PASS다. 동결 Docker 원래lm3회20.507247/21.926934/21.471499초, 현재CG3회19.225814/21.122758/18.991695초로 시간 목표만 FAIL이다. 6회 모두 비용·전체5계수·선택·audit·artifact/source 검증 PASS. 실행시간 변동과 모든 실패를 보고서·JSON에 보존하며 중간 개선분을 게시한다. 목표는 계속 진행중이고 resource/후보/비용 규칙 완화는 없다.

@@ -277,5 +277,8 @@ cleanup 회귀 6/6 PASS 및 독립 검토 CLEAR다. 원자료는
 확정하지 않는다. 중앙 검증 후 같은 builtin·환경의 새 official Docker 3회씩을 판정한다.
 
 후속 중앙 step20은 117건 중 **116 PASS / 기존 제외 1 / 실패·오류 0**, package/diff check
-PASS다. 검증된 후속 구현을 별도 커밋한 후 `legacy-final4`, `cg-final3`라는 새 run ID로
-두 workload를 각각 3회 측정한다. 시간 목표는 그 판정이 끝날 때까지 미완료다.
+PASS다. 후속 구현 커밋 `4736b23e01`을 동결한 실제 Docker `legacy-final4`는
+20.507247 / 21.926934 / 21.471499초, `cg-final3`는 19.225814 / 21.122758 /
+18.991695초다. 비용·모델·선택·audit·builtin·resource·artifact·source 검증은 6회 모두
+PASS지만 두 평가기는 시간 조건으로 FAIL이다. 이 결과까지 보존해 중간 게시하고,
+변경된 owner와 무관한 경계 재검사의 비용을 추가 조사한다. 20초 목표는 미완료다.
