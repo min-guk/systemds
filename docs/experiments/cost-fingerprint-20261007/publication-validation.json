@@ -1,0 +1,85 @@
+{
+  "upstreamMain": "344f88360919e3eb109c4e4bc121cf949be6a757",
+  "workloadExperimentBaseline": "241b9c491a56e46e41c197b461801ec4b9b0948a",
+  "scope": "Fresh build, focused integration regressions, and independent-JVM determinism. Prior Docker measurements retain their original baseline.",
+  "build": {
+    "argv": [
+      "mvn",
+      "-q",
+      "-DskipTests",
+      "-Dcheckstyle.skip=true",
+      "-Drat.skip=true",
+      "-Dmaven.javadoc.skip=true",
+      "test-compile"
+    ],
+    "exitCode": 0,
+    "log": "/home/mchoi/w1357-main-revalidation-r4-20261007/target/cost-fingerprint-evidence/publication-build.log",
+    "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "tests": {
+    "argv": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+      "--add-modules",
+      "jdk.incubator.vector",
+      "--add-opens=java.base/java.nio=ALL-UNNAMED",
+      "--add-opens=java.base/java.io=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+      "-Xmx4g",
+      "-XX:ActiveProcessorCount=4",
+      "-cp",
+      "target/classes:target/test-classes:target/lib/*",
+      "org.junit.runner.JUnitCore",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostFingerprintDeterminismTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostFingerprintStreamingTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointPhysicalCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactNativeLocalAnchorFanoutCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointAliasProjectionTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointPartialTruthTest",
+      "org.apache.sysds.hops.fedplanner.placement.CampaignBG014ExactCandidateRuleFactAuthorityFingerprintRedTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostSurfaceEstimateSnapshotTest"
+    ],
+    "exitCode": 0,
+    "count": 34,
+    "failures": 0,
+    "junitSeconds": 14.086,
+    "log": "/home/mchoi/w1357-main-revalidation-r4-20261007/target/cost-fingerprint-evidence/publication-tests.log",
+    "logSha256": "f1fcd8ea613b6d8521465235fd6d337e51d1342f8fd6b1047ade0962fc37f367"
+  },
+  "independentJvms": {
+    "argv": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+      "--add-modules",
+      "jdk.incubator.vector",
+      "-Xmx4g",
+      "-XX:ActiveProcessorCount=2",
+      "-cp",
+      "target/classes:target/test-classes:target/lib/*",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostFingerprintDeterminismTest"
+    ],
+    "records": [
+      {
+        "repeat": 1,
+        "exitCode": 0,
+        "snapshot": "COST_FINGERPRINT_SNAPSHOT|Snapshot[analysis=6c7ee5d5d465163e992868a130cbfcf5a34b0c32afd67c74a71fb81ea8599906, costTables=63d7f8ac05f38aab3fa4ed8853fc4c903fd168b78bdcf0ee5aa1c11c18e80244, costOrder=815b785c4319c118fb598b8f04ad4197c7c2c7e24589538458650dde1bbd5962, cost=833b857b5616d569cc3c3543fd71ada931802e4bf74850377bcd8220d5df1177, assignment=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], objectiveBits=4616189974494933156, plan=6bedb0503b4794964aa7d0441ea4474cb9180144bd991492ac9ffa8817fceeca]",
+        "log": "/home/mchoi/w1357-main-revalidation-r4-20261007/target/cost-fingerprint-evidence/publication-jvm-1.log",
+        "logSha256": "8c4ba48912f68b434281d3c3433830d1884cfdc77239a0f7dcdd6ba987210257"
+      },
+      {
+        "repeat": 2,
+        "exitCode": 0,
+        "snapshot": "COST_FINGERPRINT_SNAPSHOT|Snapshot[analysis=6c7ee5d5d465163e992868a130cbfcf5a34b0c32afd67c74a71fb81ea8599906, costTables=63d7f8ac05f38aab3fa4ed8853fc4c903fd168b78bdcf0ee5aa1c11c18e80244, costOrder=815b785c4319c118fb598b8f04ad4197c7c2c7e24589538458650dde1bbd5962, cost=833b857b5616d569cc3c3543fd71ada931802e4bf74850377bcd8220d5df1177, assignment=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], objectiveBits=4616189974494933156, plan=6bedb0503b4794964aa7d0441ea4474cb9180144bd991492ac9ffa8817fceeca]",
+        "log": "/home/mchoi/w1357-main-revalidation-r4-20261007/target/cost-fingerprint-evidence/publication-jvm-2.log",
+        "logSha256": "8c4ba48912f68b434281d3c3433830d1884cfdc77239a0f7dcdd6ba987210257"
+      }
+    ],
+    "equalSnapshots": true
+  },
+  "sourceSha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java": "00693ebd57cb8a3101c8178cc2d5ef36b56effbe73e81353b7ba461a22738fe6",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostFingerprintDeterminismTest.java": "ea62c5e78e0fa1bdfec04299b2fbba67964565fc2718c64068ac1e6ff0cb08e5"
+  }
+}

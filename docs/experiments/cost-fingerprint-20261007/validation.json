@@ -1,0 +1,716 @@
+{
+  "baselineCommit": "241b9c491a56e46e41c197b461801ec4b9b0948a",
+  "status": "FIXED_AND_VALIDATED",
+  "rootCause": "IdentityHashMap domain iteration permuted joint execution factors; factor ordinal and scope are fingerprint inputs. The objective certificate carries costFingerprint into planHash.",
+  "fix": "Emit joint factors in model.domains() order, retaining identity-based lookup and the full cost/authority hash payload.",
+  "build": {
+    "argv": [
+      "mvn",
+      "-q",
+      "-DskipTests",
+      "-Dcheckstyle.skip=true",
+      "-Drat.skip=true",
+      "-Dmaven.javadoc.skip=true",
+      "test-compile"
+    ],
+    "exitCode": 0,
+    "log": "/home/mchoi/w1357-main-revalidation-r4-20261007/target/cost-fingerprint-evidence/build.log",
+    "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "sourceSha256": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java": "0a023114edc2b6c6a730892add184657271a682bf889bfe145235021934a0284",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostFingerprintDeterminismTest.java": "ea62c5e78e0fa1bdfec04299b2fbba67964565fc2718c64068ac1e6ff0cb08e5"
+  },
+  "regressions": {
+    "count": 32,
+    "failures": 0,
+    "seconds": 13.396,
+    "baselineNewTests": 2,
+    "baselineNewTestFailures": 2,
+    "argv": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+      "--add-modules",
+      "jdk.incubator.vector",
+      "--add-opens=java.base/java.nio=ALL-UNNAMED",
+      "--add-opens=java.base/java.io=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+      "-Xmx4g",
+      "-XX:ActiveProcessorCount=4",
+      "-cp",
+      "target/classes:target/test-classes:target/lib/*",
+      "org.junit.runner.JUnitCore",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostFingerprintDeterminismTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostFingerprintStreamingTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointPhysicalCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactNativeLocalAnchorFanoutCostTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointAliasProjectionTest",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointPartialTruthTest",
+      "org.apache.sysds.hops.fedplanner.placement.CampaignBG014ExactCandidateRuleFactAuthorityFingerprintRedTest"
+    ],
+    "baselineArgv": [
+      "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+      "--add-modules",
+      "jdk.incubator.vector",
+      "-Xmx4g",
+      "-XX:ActiveProcessorCount=2",
+      "-cp",
+      "/home/mchoi/cost-fingerprint-validation-20261007/baseline/main-classes:/home/mchoi/cost-fingerprint-validation-20261007/test-classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib/*",
+      "org.junit.runner.JUnitCore",
+      "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostFingerprintDeterminismTest"
+    ],
+    "logs": {
+      "baseline-final-test.log": {
+        "rawPath": "/home/mchoi/w1357-main-revalidation-r4-20261007/target/cost-fingerprint-evidence/baseline-final-test.log",
+        "rawSha256": "2deb23f6c87dad90815e56bfd5f463da8d28338b225d31b24b3b7dd08ca551c9",
+        "committedSha256": "2a6cce1cc8d832a873fe1d7ec7ca9404b3cf25cdfd7a6545d35ecceed8910744",
+        "formatting": "Only trailing blank lines removed in committed copy."
+      },
+      "regressions.log": {
+        "rawPath": "/home/mchoi/w1357-main-revalidation-r4-20261007/target/cost-fingerprint-evidence/regressions.log",
+        "rawSha256": "7dd5b1a7177567e5e7c0809587c344f24205894f617e586ea6eaaa951bdff369",
+        "committedSha256": "b2b781a298f82985fe76b1ca020c7739af71140aa962d1a322c964619023ce97",
+        "formatting": "Only trailing blank lines removed in committed copy."
+      }
+    }
+  },
+  "independentJvms": {
+    "count": 6,
+    "baselineDistinctCostAndPlanHashes": 2,
+    "candidateDistinctCostAndPlanHashes": 1,
+    "allCostTablesAssignmentObjectiveEqual": true,
+    "argvByVariant": {
+      "baseline": [
+        "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+        "--add-modules",
+        "jdk.incubator.vector",
+        "-Xmx4g",
+        "-XX:ActiveProcessorCount=2",
+        "-cp",
+        "/home/mchoi/cost-fingerprint-validation-20261007/baseline/main-classes:/home/mchoi/cost-fingerprint-validation-20261007/test-classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib/*",
+        "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostFingerprintDeterminismTest"
+      ],
+      "candidate": [
+        "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+        "--add-modules",
+        "jdk.incubator.vector",
+        "-Xmx4g",
+        "-XX:ActiveProcessorCount=2",
+        "-cp",
+        "/home/mchoi/cost-fingerprint-validation-20261007/candidate/main-classes:/home/mchoi/cost-fingerprint-validation-20261007/test-classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib/*",
+        "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalCostFingerprintDeterminismTest"
+      ]
+    },
+    "runs": [
+      {
+        "variant": "baseline",
+        "repeat": 1,
+        "exitCode": 0,
+        "analysis": "6c7ee5d5d465163e992868a130cbfcf5a34b0c32afd67c74a71fb81ea8599906",
+        "costTables": "63d7f8ac05f38aab3fa4ed8853fc4c903fd168b78bdcf0ee5aa1c11c18e80244",
+        "costOrder": "07aa7205d3b3765ce5747d02e57bbc84306382e280a6a7ba784652d16aa64863",
+        "cost": "59257f4dee6b8403391de48aae7b3dab6cd8ff838b7c8c108c3b07996ca41696",
+        "objectiveBits": "4616189974494933156",
+        "plan": "9cb45a57cbfeaa0dfd4a6313f45383c4ee06826aed70ce7ed88f8f8f6403f0d8",
+        "assignmentDigest": "e4d797a32f1bc7c09653a021b347e32ace044d3074922000396d8defe00ccf40",
+        "log": "/home/mchoi/cost-fingerprint-validation-20261007/baseline-jvm-1.log",
+        "logSha256": "b8ab668490bae9bbddf0583f83052327b24386a42d3a42c4adf166699971a0c8"
+      },
+      {
+        "variant": "baseline",
+        "repeat": 2,
+        "exitCode": 0,
+        "analysis": "6c7ee5d5d465163e992868a130cbfcf5a34b0c32afd67c74a71fb81ea8599906",
+        "costTables": "63d7f8ac05f38aab3fa4ed8853fc4c903fd168b78bdcf0ee5aa1c11c18e80244",
+        "costOrder": "c6fde53ea06105cedacc4c6865194b90396af6aa3bae7cb8443ed31c388ac3d5",
+        "cost": "c11fe47af4f7d49c64f4720f705ffd4855c385ab5e7bc554f9fdd78f812f66e8",
+        "objectiveBits": "4616189974494933156",
+        "plan": "9e8511165b0e483ffa52b14046eea0e61ed5477d2bfc6ac5f87360ce3e18be06",
+        "assignmentDigest": "e4d797a32f1bc7c09653a021b347e32ace044d3074922000396d8defe00ccf40",
+        "log": "/home/mchoi/cost-fingerprint-validation-20261007/baseline-jvm-2.log",
+        "logSha256": "a151e30fb56effd4a570b130387ba7b1ef54d26668e10f9172c8957a0d08b521"
+      },
+      {
+        "variant": "baseline",
+        "repeat": 3,
+        "exitCode": 0,
+        "analysis": "6c7ee5d5d465163e992868a130cbfcf5a34b0c32afd67c74a71fb81ea8599906",
+        "costTables": "63d7f8ac05f38aab3fa4ed8853fc4c903fd168b78bdcf0ee5aa1c11c18e80244",
+        "costOrder": "07aa7205d3b3765ce5747d02e57bbc84306382e280a6a7ba784652d16aa64863",
+        "cost": "59257f4dee6b8403391de48aae7b3dab6cd8ff838b7c8c108c3b07996ca41696",
+        "objectiveBits": "4616189974494933156",
+        "plan": "9cb45a57cbfeaa0dfd4a6313f45383c4ee06826aed70ce7ed88f8f8f6403f0d8",
+        "assignmentDigest": "e4d797a32f1bc7c09653a021b347e32ace044d3074922000396d8defe00ccf40",
+        "log": "/home/mchoi/cost-fingerprint-validation-20261007/baseline-jvm-3.log",
+        "logSha256": "b8ab668490bae9bbddf0583f83052327b24386a42d3a42c4adf166699971a0c8"
+      },
+      {
+        "variant": "candidate",
+        "repeat": 1,
+        "exitCode": 0,
+        "analysis": "6c7ee5d5d465163e992868a130cbfcf5a34b0c32afd67c74a71fb81ea8599906",
+        "costTables": "63d7f8ac05f38aab3fa4ed8853fc4c903fd168b78bdcf0ee5aa1c11c18e80244",
+        "costOrder": "815b785c4319c118fb598b8f04ad4197c7c2c7e24589538458650dde1bbd5962",
+        "cost": "833b857b5616d569cc3c3543fd71ada931802e4bf74850377bcd8220d5df1177",
+        "objectiveBits": "4616189974494933156",
+        "plan": "6bedb0503b4794964aa7d0441ea4474cb9180144bd991492ac9ffa8817fceeca",
+        "assignmentDigest": "e4d797a32f1bc7c09653a021b347e32ace044d3074922000396d8defe00ccf40",
+        "log": "/home/mchoi/cost-fingerprint-validation-20261007/candidate-jvm-1.log",
+        "logSha256": "8c4ba48912f68b434281d3c3433830d1884cfdc77239a0f7dcdd6ba987210257"
+      },
+      {
+        "variant": "candidate",
+        "repeat": 2,
+        "exitCode": 0,
+        "analysis": "6c7ee5d5d465163e992868a130cbfcf5a34b0c32afd67c74a71fb81ea8599906",
+        "costTables": "63d7f8ac05f38aab3fa4ed8853fc4c903fd168b78bdcf0ee5aa1c11c18e80244",
+        "costOrder": "815b785c4319c118fb598b8f04ad4197c7c2c7e24589538458650dde1bbd5962",
+        "cost": "833b857b5616d569cc3c3543fd71ada931802e4bf74850377bcd8220d5df1177",
+        "objectiveBits": "4616189974494933156",
+        "plan": "6bedb0503b4794964aa7d0441ea4474cb9180144bd991492ac9ffa8817fceeca",
+        "assignmentDigest": "e4d797a32f1bc7c09653a021b347e32ace044d3074922000396d8defe00ccf40",
+        "log": "/home/mchoi/cost-fingerprint-validation-20261007/candidate-jvm-2.log",
+        "logSha256": "8c4ba48912f68b434281d3c3433830d1884cfdc77239a0f7dcdd6ba987210257"
+      },
+      {
+        "variant": "candidate",
+        "repeat": 3,
+        "exitCode": 0,
+        "analysis": "6c7ee5d5d465163e992868a130cbfcf5a34b0c32afd67c74a71fb81ea8599906",
+        "costTables": "63d7f8ac05f38aab3fa4ed8853fc4c903fd168b78bdcf0ee5aa1c11c18e80244",
+        "costOrder": "815b785c4319c118fb598b8f04ad4197c7c2c7e24589538458650dde1bbd5962",
+        "cost": "833b857b5616d569cc3c3543fd71ada931802e4bf74850377bcd8220d5df1177",
+        "objectiveBits": "4616189974494933156",
+        "plan": "6bedb0503b4794964aa7d0441ea4474cb9180144bd991492ac9ffa8817fceeca",
+        "assignmentDigest": "e4d797a32f1bc7c09653a021b347e32ace044d3074922000396d8defe00ccf40",
+        "log": "/home/mchoi/cost-fingerprint-validation-20261007/candidate-jvm-3.log",
+        "logSha256": "8c4ba48912f68b434281d3c3433830d1884cfdc77239a0f7dcdd6ba987210257"
+      }
+    ]
+  },
+  "firstWorkloadDivergence": {
+    "headerDigest": "8a480f76f8fc0dad059286f292d8f37ee2623109ef528813e5494b9937407610",
+    "beforeFirstJointDigest": "d58ab0eda6f538b3ef30759b58a8879ed1407c74c8fa3763aefc93a4a6af0c07",
+    "firstDifferentContributionOrdinal": 2106,
+    "jointFactorCount": 10,
+    "jointRowsMultisetDigest": "408b13cfb2466efb6d5d4c02b825bfb30fe6e6fb0481755a7e3bc6c6661a6bd1",
+    "baseline1FirstDifferentRow": "JOINT_VALUE_MAP_EXECUTION_INVARIANT|[64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinNS::m_multiLogReg|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|225:64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinNS::m_multiLogReg|56:53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|53:function/.builtinNS::m_multiLogReg/body/5/loop-body/2|9:recompile|14:root-0/input-0|81:scripts/builtin/multiLogReg.dml:235:4:org.apache.sysds.hops.AggUnaryOp:ua(+RC):gs]|bits=545bd10c876952b55d7c000ad47e96f76d77399180ad5824ab1f609d71f00f0b",
+    "baseline2FirstDifferentRow": "JOINT_VALUE_MAP_EXECUTION_INVARIANT|[64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinNS::m_multiLogReg|65:function/.builtinNS::m_multiLogReg/body/5/loop-body/6/branch-if/0|9:recompile|249:64:9762c7a2d0bd83affa92a365c68782d799b1772e13b2112bf831202731e99bdb|25:.builtinNS::m_multiLogReg|68:65:function/.builtinNS::m_multiLogReg/body/5/loop-body/6/branch-if/0|65:function/.builtinNS::m_multiLogReg/body/5/loop-body/6/branch-if/0|9:recompile|30:root-2/input-0/input-0/input-0|93:scripts/builtin/multiLogReg.dml:287:35:org.apache.sysds.hops.AggBinaryOp:ba(+*):compiler-temp]|bits=7c0f56ac5b5dd4a24c0c26bf029c2e17b80f416f7b59c4abd4aa3d8818cdda77",
+    "rawReceipt": "/home/mchoi/cost-fingerprint-validation-20261007/first-divergence.json",
+    "rawReceiptSha256": "074098074552d8a4fb51037b87b5c03e3b7aa6af77d4a0ba8f4fa399cc647d06"
+  },
+  "workload": {
+    "artifactRoot": "/grid/3/cofee-lm-sweep-mchoi-20260914/cost-fingerprint-20261007",
+    "runnerRoot": "/home/mchoi/cost-fingerprint-validation-20261007",
+    "conditions": "multiLogReg: 192x8 PRIVATE_AGGREGATE X, public local labels, 3 ROW workers, 3 classes, maxi=10/maxii=5, pinned Docker image, 4 CPUs, 8 GiB. Each run uses fresh JVMs.",
+    "allFourRunsPassed": true,
+    "candidateRepeatedCostFingerprintEqual": true,
+    "candidateRepeatedPlanHashEqual": true,
+    "parityAcrossAllRuns": {
+      "checkpointDigestWithoutTimes": true,
+      "candidateSpaceDigestWithoutPid": true,
+      "selectedExecutionPlacementDigest": true,
+      "analysisFingerprints": true,
+      "inputDigest": true,
+      "fixtureDigest": true,
+      "runnerSha256": true
+    },
+    "fedModelMaxAbsDifferenceAcrossAllRuns": 0.0,
+    "performanceClaim": false,
+    "instrumentation": "Baseline copies only add hash checkpoints and joint row raw-bit digests. Candidate copies are uninstrumented. No latency A/B claim.",
+    "runs": [
+      {
+        "run": "fingerprint-logreg-baseline-r1",
+        "variant": "baseline",
+        "diagnostic": true,
+        "status": "PASSED",
+        "analysisFingerprints": [
+          "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+        ],
+        "costFingerprints": [
+          "5b53fb341cef86e3129c449b5bf9c0864dfaa5a2f4cfab0760186154bcdb838b"
+        ],
+        "planHashes": [
+          "4e713b7b6c0554c27c46dfa21b8dbde4452ef5690856048db46c93f7e72ca331"
+        ],
+        "candidateSpaceRows": 653,
+        "candidateSpaceDigestWithoutPid": "3daa067cdf649f3b57020c84517c23eb3f4ca87a5fd3ffc5d3a29d39caf5ca70",
+        "selectedNodeCount": 524,
+        "selectedExecutionPlacementDigest": "76adc157399188f5fda9ef7224bafb82d842d87b5d6283f0e1d2aa31177d829d",
+        "checkpointCount": 1224,
+        "checkpointDigestWithoutTimes": "a21df229c63a779de6c3f6c1622a3c150fe9b0e71b7937883c9af09dbc10db1d",
+        "finalCheckpointWithoutTimes": {
+          "assignments": 16306786,
+          "clusters": 3527,
+          "conditionalAttempts": 40,
+          "conditionalImprovements": 4,
+          "improvements": 4,
+          "internalDecisions": 49,
+          "lower": 120.54269578813249,
+          "merges": 4566,
+          "phase": "TARGET_REACHED",
+          "relativeGap": 0.014298813731032978,
+          "resourceRejected": 698,
+          "retainedSlots": 8979004,
+          "upper": 122.26631334184357
+        },
+        "modelComparison": {
+          "actualEntries": 16,
+          "actualShape": [
+            8,
+            2
+          ],
+          "entries": 16,
+          "errors": [],
+          "expectedShape": null,
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 2.220446049250313e-16,
+          "nonzero": true,
+          "referenceShape": [
+            8,
+            2
+          ],
+          "shapeMatched": true
+        },
+        "runtimeAuditViolations": [],
+        "runtimeConversionViolations": [],
+        "inputDigest": "364c75a657ea1ba5e6706484e470d9d9d4fcbc4c8dd1553868a2cbbbd90f2fbe",
+        "fixtureDigest": "1b7de13204f77f1893898a30800434e780c7d41592a0bc0b23854d99b5739685",
+        "runnerSha256": {
+          "dispatch": "de7ba5c51ff0773c4eb2c0552dd54a77bda3b3c02a1e91ece4281bd5accc731b",
+          "runner": "887af9540a6f64977e8f9c8868962a923edc7ccb7adac4219d2213ee0c99e036"
+        },
+        "artifactInventoryDigests": {
+          "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+          "mainClasses": "98f22d411165bb5a2c664df2f607b744c57c42bec8ec6d7e93156073568d065e",
+          "mainSources": "32ca52c7c43b7fe724d0aae49f0d2cdadb879aca876396a1dd9226e09d2e8eac",
+          "testClasses": "d66ec1202fcb736c6e782d151a945e6a8a4c633ab33a2199d6723217b6feef56",
+          "testSources": "db5c901ff3f4554c9a922394ffe35a50dc64a6db71e1ca900fa1f0ac564d8d1c"
+        },
+        "logSha256": "797ad05ab9958a7c9bc03eb290987f6b2ee4cc5b58cd8c507a68cef5be6b1051",
+        "resultSha256": "ad31cd1335f8e7b621a0472cf0e635882870bc685fbf96aef34f980c4d49ded3"
+      },
+      {
+        "run": "fingerprint-logreg-baseline-r2",
+        "variant": "baseline",
+        "diagnostic": true,
+        "status": "PASSED",
+        "analysisFingerprints": [
+          "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+        ],
+        "costFingerprints": [
+          "c574bb981e7a20984b4d208abda6ee562b0aaec19173954225d7bd3acb3a1b2e"
+        ],
+        "planHashes": [
+          "71b62d69cd4c184214160a2429f98f258fa56134eb9c2ca8be7a8d65462c5094"
+        ],
+        "candidateSpaceRows": 653,
+        "candidateSpaceDigestWithoutPid": "3daa067cdf649f3b57020c84517c23eb3f4ca87a5fd3ffc5d3a29d39caf5ca70",
+        "selectedNodeCount": 524,
+        "selectedExecutionPlacementDigest": "76adc157399188f5fda9ef7224bafb82d842d87b5d6283f0e1d2aa31177d829d",
+        "checkpointCount": 1224,
+        "checkpointDigestWithoutTimes": "a21df229c63a779de6c3f6c1622a3c150fe9b0e71b7937883c9af09dbc10db1d",
+        "finalCheckpointWithoutTimes": {
+          "assignments": 16306786,
+          "clusters": 3527,
+          "conditionalAttempts": 40,
+          "conditionalImprovements": 4,
+          "improvements": 4,
+          "internalDecisions": 49,
+          "lower": 120.54269578813249,
+          "merges": 4566,
+          "phase": "TARGET_REACHED",
+          "relativeGap": 0.014298813731032978,
+          "resourceRejected": 698,
+          "retainedSlots": 8979004,
+          "upper": 122.26631334184357
+        },
+        "modelComparison": {
+          "actualEntries": 16,
+          "actualShape": [
+            8,
+            2
+          ],
+          "entries": 16,
+          "errors": [],
+          "expectedShape": null,
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 2.220446049250313e-16,
+          "nonzero": true,
+          "referenceShape": [
+            8,
+            2
+          ],
+          "shapeMatched": true
+        },
+        "runtimeAuditViolations": [],
+        "runtimeConversionViolations": [],
+        "inputDigest": "364c75a657ea1ba5e6706484e470d9d9d4fcbc4c8dd1553868a2cbbbd90f2fbe",
+        "fixtureDigest": "1b7de13204f77f1893898a30800434e780c7d41592a0bc0b23854d99b5739685",
+        "runnerSha256": {
+          "dispatch": "de7ba5c51ff0773c4eb2c0552dd54a77bda3b3c02a1e91ece4281bd5accc731b",
+          "runner": "887af9540a6f64977e8f9c8868962a923edc7ccb7adac4219d2213ee0c99e036"
+        },
+        "artifactInventoryDigests": {
+          "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+          "mainClasses": "98f22d411165bb5a2c664df2f607b744c57c42bec8ec6d7e93156073568d065e",
+          "mainSources": "32ca52c7c43b7fe724d0aae49f0d2cdadb879aca876396a1dd9226e09d2e8eac",
+          "testClasses": "d66ec1202fcb736c6e782d151a945e6a8a4c633ab33a2199d6723217b6feef56",
+          "testSources": "db5c901ff3f4554c9a922394ffe35a50dc64a6db71e1ca900fa1f0ac564d8d1c"
+        },
+        "logSha256": "c43e732ea3f6f7009fe3ef341d9ec70978da3dd8b1ddd4b2232e9e420f851e38",
+        "resultSha256": "3bfe713cd57f3df679a2cd46462f645ba067d8538a55bba480fd35e7b7f610d2"
+      },
+      {
+        "run": "fingerprint-logreg-candidate-r1",
+        "variant": "candidate",
+        "diagnostic": false,
+        "status": "PASSED",
+        "analysisFingerprints": [
+          "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+        ],
+        "costFingerprints": [
+          "ea843a934bf62f44095daf86c1aa961fa77a395b00c97a7cbf00cdcafad303a5"
+        ],
+        "planHashes": [
+          "2569ce07148e86ab0321a2612ef55b7d940bdc29b087d378736a9449ed8b0f6f"
+        ],
+        "candidateSpaceRows": 653,
+        "candidateSpaceDigestWithoutPid": "3daa067cdf649f3b57020c84517c23eb3f4ca87a5fd3ffc5d3a29d39caf5ca70",
+        "selectedNodeCount": 524,
+        "selectedExecutionPlacementDigest": "76adc157399188f5fda9ef7224bafb82d842d87b5d6283f0e1d2aa31177d829d",
+        "checkpointCount": 1224,
+        "checkpointDigestWithoutTimes": "a21df229c63a779de6c3f6c1622a3c150fe9b0e71b7937883c9af09dbc10db1d",
+        "finalCheckpointWithoutTimes": {
+          "assignments": 16306786,
+          "clusters": 3527,
+          "conditionalAttempts": 40,
+          "conditionalImprovements": 4,
+          "improvements": 4,
+          "internalDecisions": 49,
+          "lower": 120.54269578813249,
+          "merges": 4566,
+          "phase": "TARGET_REACHED",
+          "relativeGap": 0.014298813731032978,
+          "resourceRejected": 698,
+          "retainedSlots": 8979004,
+          "upper": 122.26631334184357
+        },
+        "modelComparison": {
+          "actualEntries": 16,
+          "actualShape": [
+            8,
+            2
+          ],
+          "entries": 16,
+          "errors": [],
+          "expectedShape": null,
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 2.220446049250313e-16,
+          "nonzero": true,
+          "referenceShape": [
+            8,
+            2
+          ],
+          "shapeMatched": true
+        },
+        "runtimeAuditViolations": [],
+        "runtimeConversionViolations": [],
+        "inputDigest": "364c75a657ea1ba5e6706484e470d9d9d4fcbc4c8dd1553868a2cbbbd90f2fbe",
+        "fixtureDigest": "1b7de13204f77f1893898a30800434e780c7d41592a0bc0b23854d99b5739685",
+        "runnerSha256": {
+          "dispatch": "de7ba5c51ff0773c4eb2c0552dd54a77bda3b3c02a1e91ece4281bd5accc731b",
+          "runner": "887af9540a6f64977e8f9c8868962a923edc7ccb7adac4219d2213ee0c99e036"
+        },
+        "artifactInventoryDigests": {
+          "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+          "mainClasses": "bbca56e999860325a69cfb69c238c34085519d7002aee1bf8bf9edc29696dbed",
+          "mainSources": "e658aaa460b9f2baca95d83b370387bdb4462655bbe06b09f380ab3d0059c361",
+          "testClasses": "d66ec1202fcb736c6e782d151a945e6a8a4c633ab33a2199d6723217b6feef56",
+          "testSources": "db5c901ff3f4554c9a922394ffe35a50dc64a6db71e1ca900fa1f0ac564d8d1c"
+        },
+        "logSha256": "f51de5d4c852cb0d0605186626d558c6c4aa6afb32bb0243f75ec862ab9493ca",
+        "resultSha256": "1057ed0bef4025780e09f7e9ab6c802356b458d031a7b757d50b65484d08b36d"
+      },
+      {
+        "run": "fingerprint-logreg-candidate-r2",
+        "variant": "candidate",
+        "diagnostic": false,
+        "status": "PASSED",
+        "analysisFingerprints": [
+          "459fec8071fb033dabdf2f28739bcc881dbf594bf53598d1338d3af2f8d35132"
+        ],
+        "costFingerprints": [
+          "ea843a934bf62f44095daf86c1aa961fa77a395b00c97a7cbf00cdcafad303a5"
+        ],
+        "planHashes": [
+          "2569ce07148e86ab0321a2612ef55b7d940bdc29b087d378736a9449ed8b0f6f"
+        ],
+        "candidateSpaceRows": 653,
+        "candidateSpaceDigestWithoutPid": "3daa067cdf649f3b57020c84517c23eb3f4ca87a5fd3ffc5d3a29d39caf5ca70",
+        "selectedNodeCount": 524,
+        "selectedExecutionPlacementDigest": "76adc157399188f5fda9ef7224bafb82d842d87b5d6283f0e1d2aa31177d829d",
+        "checkpointCount": 1224,
+        "checkpointDigestWithoutTimes": "a21df229c63a779de6c3f6c1622a3c150fe9b0e71b7937883c9af09dbc10db1d",
+        "finalCheckpointWithoutTimes": {
+          "assignments": 16306786,
+          "clusters": 3527,
+          "conditionalAttempts": 40,
+          "conditionalImprovements": 4,
+          "improvements": 4,
+          "internalDecisions": 49,
+          "lower": 120.54269578813249,
+          "merges": 4566,
+          "phase": "TARGET_REACHED",
+          "relativeGap": 0.014298813731032978,
+          "resourceRejected": 698,
+          "retainedSlots": 8979004,
+          "upper": 122.26631334184357
+        },
+        "modelComparison": {
+          "actualEntries": 16,
+          "actualShape": [
+            8,
+            2
+          ],
+          "entries": 16,
+          "errors": [],
+          "expectedShape": null,
+          "finite": true,
+          "matched": true,
+          "maxAbsDifference": 2.220446049250313e-16,
+          "nonzero": true,
+          "referenceShape": [
+            8,
+            2
+          ],
+          "shapeMatched": true
+        },
+        "runtimeAuditViolations": [],
+        "runtimeConversionViolations": [],
+        "inputDigest": "364c75a657ea1ba5e6706484e470d9d9d4fcbc4c8dd1553868a2cbbbd90f2fbe",
+        "fixtureDigest": "1b7de13204f77f1893898a30800434e780c7d41592a0bc0b23854d99b5739685",
+        "runnerSha256": {
+          "dispatch": "de7ba5c51ff0773c4eb2c0552dd54a77bda3b3c02a1e91ece4281bd5accc731b",
+          "runner": "887af9540a6f64977e8f9c8868962a923edc7ccb7adac4219d2213ee0c99e036"
+        },
+        "artifactInventoryDigests": {
+          "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+          "mainClasses": "bbca56e999860325a69cfb69c238c34085519d7002aee1bf8bf9edc29696dbed",
+          "mainSources": "e658aaa460b9f2baca95d83b370387bdb4462655bbe06b09f380ab3d0059c361",
+          "testClasses": "d66ec1202fcb736c6e782d151a945e6a8a4c633ab33a2199d6723217b6feef56",
+          "testSources": "db5c901ff3f4554c9a922394ffe35a50dc64a6db71e1ca900fa1f0ac564d8d1c"
+        },
+        "logSha256": "7f5874dbde09f8e854c4d589f977ae9fb2c3e0c1ffd6701a54c7a2a1d5fbfd4b",
+        "resultSha256": "5ed32183cf7236ea01c32826e02f12a9c3b730233c970186f3c269335a1920a1"
+      }
+    ],
+    "commands": [
+      {
+        "run": "fingerprint-logreg-baseline-r1",
+        "variant": "baseline",
+        "repeat": 1,
+        "returnCode": 0,
+        "wallSeconds": 76.55705912411213,
+        "artifact": "/grid/3/cofee-lm-sweep-mchoi-20260914/cost-fingerprint-20261007/fingerprint-logreg-baseline-r1",
+        "command": [
+          "bash",
+          "scripts/fedplanner/run_LAN_docker.sh",
+          "--joint-boundary-e2e",
+          "--run-id",
+          "fingerprint-logreg-baseline-r1",
+          "--output-root",
+          "/grid/3/cofee-lm-sweep-mchoi-20260914/cost-fingerprint-20261007",
+          "--stage-root",
+          "/home/mchoi/cost-fingerprint-validation-20261007/runtime",
+          "--case",
+          "ml_logreg",
+          "--timeout-seconds",
+          "600",
+          "--case-timeout-seconds",
+          "180",
+          "--classes",
+          "/home/mchoi/cost-fingerprint-validation-20261007/baseline/main-classes",
+          "--main-sources",
+          "/home/mchoi/cost-fingerprint-validation-20261007/baseline/main-sources",
+          "--test-classes",
+          "/home/mchoi/cost-fingerprint-validation-20261007/test-classes",
+          "--test-sources",
+          "/home/mchoi/cost-fingerprint-validation-20261007/test-sources",
+          "--dependencies",
+          "/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib"
+        ]
+      },
+      {
+        "run": "fingerprint-logreg-baseline-r2",
+        "variant": "baseline",
+        "repeat": 2,
+        "returnCode": 0,
+        "wallSeconds": 81.55318841338158,
+        "artifact": "/grid/3/cofee-lm-sweep-mchoi-20260914/cost-fingerprint-20261007/fingerprint-logreg-baseline-r2",
+        "command": [
+          "bash",
+          "scripts/fedplanner/run_LAN_docker.sh",
+          "--joint-boundary-e2e",
+          "--run-id",
+          "fingerprint-logreg-baseline-r2",
+          "--output-root",
+          "/grid/3/cofee-lm-sweep-mchoi-20260914/cost-fingerprint-20261007",
+          "--stage-root",
+          "/home/mchoi/cost-fingerprint-validation-20261007/runtime",
+          "--case",
+          "ml_logreg",
+          "--timeout-seconds",
+          "600",
+          "--case-timeout-seconds",
+          "180",
+          "--classes",
+          "/home/mchoi/cost-fingerprint-validation-20261007/baseline/main-classes",
+          "--main-sources",
+          "/home/mchoi/cost-fingerprint-validation-20261007/baseline/main-sources",
+          "--test-classes",
+          "/home/mchoi/cost-fingerprint-validation-20261007/test-classes",
+          "--test-sources",
+          "/home/mchoi/cost-fingerprint-validation-20261007/test-sources",
+          "--dependencies",
+          "/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib"
+        ]
+      },
+      {
+        "run": "fingerprint-logreg-candidate-r1",
+        "variant": "candidate",
+        "repeat": 1,
+        "returnCode": 0,
+        "wallSeconds": 75.46507015824318,
+        "artifact": "/grid/3/cofee-lm-sweep-mchoi-20260914/cost-fingerprint-20261007/fingerprint-logreg-candidate-r1",
+        "command": [
+          "bash",
+          "scripts/fedplanner/run_LAN_docker.sh",
+          "--joint-boundary-e2e",
+          "--run-id",
+          "fingerprint-logreg-candidate-r1",
+          "--output-root",
+          "/grid/3/cofee-lm-sweep-mchoi-20260914/cost-fingerprint-20261007",
+          "--stage-root",
+          "/home/mchoi/cost-fingerprint-validation-20261007/runtime",
+          "--case",
+          "ml_logreg",
+          "--timeout-seconds",
+          "600",
+          "--case-timeout-seconds",
+          "180",
+          "--classes",
+          "/home/mchoi/cost-fingerprint-validation-20261007/candidate/main-classes",
+          "--main-sources",
+          "/home/mchoi/cost-fingerprint-validation-20261007/candidate/main-sources",
+          "--test-classes",
+          "/home/mchoi/cost-fingerprint-validation-20261007/test-classes",
+          "--test-sources",
+          "/home/mchoi/cost-fingerprint-validation-20261007/test-sources",
+          "--dependencies",
+          "/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib"
+        ]
+      },
+      {
+        "run": "fingerprint-logreg-candidate-r2",
+        "variant": "candidate",
+        "repeat": 2,
+        "returnCode": 0,
+        "wallSeconds": 75.53299505263567,
+        "artifact": "/grid/3/cofee-lm-sweep-mchoi-20260914/cost-fingerprint-20261007/fingerprint-logreg-candidate-r2",
+        "command": [
+          "bash",
+          "scripts/fedplanner/run_LAN_docker.sh",
+          "--joint-boundary-e2e",
+          "--run-id",
+          "fingerprint-logreg-candidate-r2",
+          "--output-root",
+          "/grid/3/cofee-lm-sweep-mchoi-20260914/cost-fingerprint-20261007",
+          "--stage-root",
+          "/home/mchoi/cost-fingerprint-validation-20261007/runtime",
+          "--case",
+          "ml_logreg",
+          "--timeout-seconds",
+          "600",
+          "--case-timeout-seconds",
+          "180",
+          "--classes",
+          "/home/mchoi/cost-fingerprint-validation-20261007/candidate/main-classes",
+          "--main-sources",
+          "/home/mchoi/cost-fingerprint-validation-20261007/candidate/main-sources",
+          "--test-classes",
+          "/home/mchoi/cost-fingerprint-validation-20261007/test-classes",
+          "--test-sources",
+          "/home/mchoi/cost-fingerprint-validation-20261007/test-sources",
+          "--dependencies",
+          "/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib"
+        ]
+      }
+    ]
+  },
+  "classParity": {
+    "baselineCommit": "241b9c491a56e46e41c197b461801ec4b9b0948a",
+    "mainClassCount": 3800,
+    "changedClassCount": 43,
+    "changedClassFiles": [
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$ActivationDemand.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$1AliasCreation.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$InputLayoutCache.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$FedCostProjection.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$RuntimeMaterializationDemand.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$1DownloadGroup.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$RuntimeMaterializationSource.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$PhysicalTransferEndpoint.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$FrozenCostTransport$Zero.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$1Demand.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$SolverFactorization.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$BranchLiteral.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$BoundaryMode.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$PhysicalContribution.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$ExactMatrixShape.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$FrozenDyadicCostTransport.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$SupplySharingGroup.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$ZeroCostTransport.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$FrozenCostTransport$OneMonetaryTable.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$PhysicalWorkerCountCacheProbe.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$OccurrenceProfile.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$NativeLocalTargetCost.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$EffectiveLogicalFunctionInput.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$PhysicalTransferKey.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$RetainedFunctionDownload.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$PhysicalWorkerCounts.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$1CreationScope.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$FunctionOutputAliases.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$LoopPhiSnapshotEpoch.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$ContributionEncoding.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$1DownloadKey.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$CostTransportDeclaration$Identity.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$ExecutionWorkerCounts.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$PhysicalCostSurface.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$1Source.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$FrozenCostTransport$Identity.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$FingerprintWriter.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$CostTransportDeclaration$OneMonetaryTable.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$1Key.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$Direction.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$CostTransportKind.class",
+      "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel$FusedFactorUse.class"
+    ],
+    "unchangedClassCount": 3757,
+    "diagnosticBaseline": "Only hash checkpoint logging is added outside production source.",
+    "candidate": "Uninstrumented canonical domain iteration fix."
+  },
+  "review": "Independent read-only code and JVM/baseline divergence review found no blocker; actual candidate parity verified by the main agent after completion.",
+  "limits": [
+    "Canonical hashes can differ from old nondeterministic hashes.",
+    "This is a determinism fix, not a performance optimization claim.",
+    "Large W1 and unrelated factor-size failures are outside this fix."
+  ]
+}

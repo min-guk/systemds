@@ -1,0 +1,10 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+......EXACT_COST_FINGERPRINT_STREAMING_EVIDENCE|facts=12|legacyAggregateCharacters=11009
+.................JOINT_ALIAS_SOLVER_EVIDENCE|exactScenarios=4|regionalBlocks=4|oldCacheHits=20|newCacheHits=21
+.JOINT_ALIAS_PROJECTION_EVIDENCE|oldCells=1872|newCells=936|assignments=1872|supportFinite=312|referenceSupportFinite=312|invalidPredicateDifferences=112|partialCertificates=936
+.JOINT_ALIAS_REJECTION_EVIDENCE|factors=160
+.......
+Time: 13.396
+
+OK (32 tests)

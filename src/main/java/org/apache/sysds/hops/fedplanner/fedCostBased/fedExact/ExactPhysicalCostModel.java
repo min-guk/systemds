@@ -529,7 +529,7 @@ public final class ExactPhysicalCostModel {
 				frequencies, factors, factorKinds, preparedCosts.get(domain.node().key()),
 				nativeSupply.domain(domain.node().key()));
 		}
-		addJointPhysicalExecutionFactors(analysis, sparseAssignments, domains, frequencies,
+		addJointPhysicalExecutionFactors(analysis, sparseAssignments, model.domains(), domains, frequencies,
 			preparedCosts, factors, factorKinds);
 		addPhysicalFusedKernelFactors(analysis, model.domains(), domains, workers,
 			physicalWorkerCounts, frequencies, preparedCosts, factors, factorKinds);
@@ -1044,12 +1044,15 @@ public final class ExactPhysicalCostModel {
 
 	private static void addJointPhysicalExecutionFactors(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments,
+		List<ExactPhysicalModel.DecisionDomain> orderedDomains,
 		Map<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains,
 		OccurrenceExecutionFrequencyFacts frequencies, Map<CompiledHopKey,PreparedExecutionCost> preparedCosts,
 		List<ExactCategoricalSolver.Factor> factors,
 		IdentityHashMap<ExactCategoricalSolver.Factor,String> kinds) {
 		JointPhysicalCostRows projections = null;
-		for(var domain : domains.values()) {
+		// Factor ordinals are part of the cost certificate and solver input order.
+		// Keep identity-based domain lookup separate from canonical factor emission.
+		for(var domain : orderedDomains) {
 			Hop hop = analysis.hop(domain.node().key()).orElseThrow();
 			if(hop instanceof DataOp || analysis.isDmlFunctionCallBoundary(domain.node().key())
 				|| org.apache.sysds.hops.fedplanner.placement.BranchPlacementNormalization.isPlacementAlias(hop)
