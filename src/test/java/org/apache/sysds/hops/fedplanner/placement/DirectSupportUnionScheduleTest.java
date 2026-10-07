@@ -21,6 +21,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRea
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateShapeProofFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
@@ -168,6 +170,120 @@ public class DirectSupportUnionScheduleTest {
 	}
 
 	@Test
+	public void groundedPreparationMatchesLegacyCarryAndMembership() throws Exception {
+		CompiledHopKey firstSource = key("prep-first"), secondSource = key("prep-second");
+		CandidateEmissionFact first = supportFact(firstSource, key("prep-owner"))
+			.allowedEmissionFacts().get(0);
+		CandidateEmissionFact second = supportFact(secondSource, key("prep-owner"))
+			.allowedEmissionFacts().get(0);
+		CandidateEmissionFact prior = new CandidateEmissionFact(first.emissionState(), null, null,
+			List.of(first.realizations().get(0), second.realizations().get(0)));
+
+		Object preparation = groundedPreparation(prior);
+		List<CandidateEmissionRealization> legacyRetained = retainedGrounded(prior);
+		Assert.assertEquals(legacyRetained, preparedRetained(preparation));
+		for(int index = 0; index < legacyRetained.size(); index++)
+			Assert.assertSame("unchanged grounded carry keeps its exact object and order",
+				legacyRetained.get(index), preparedRetained(preparation).get(index));
+		Assert.assertTrue(preparedContains(preparation, preparedRetained(preparation)));
+		Assert.assertEquals(containsExactGroundedNativeSupport(prior, preparedRetained(preparation)),
+			preparedContains(preparation, preparedRetained(preparation)));
+		List<CandidateEmissionRealization> replacedCarry = new ArrayList<>(preparedRetained(preparation));
+		CandidateEmissionRealization firstCopy = CandidateEmissionRealization
+			.fromAlreadyCanonicalSupportClauses(replacedCarry.get(0).key(),
+				replacedCarry.get(0).supportClauses());
+		Assert.assertEquals(replacedCarry.get(0), firstCopy);
+		Assert.assertNotSame(replacedCarry.get(0), firstCopy);
+		replacedCarry.set(0, firstCopy);
+		Assert.assertFalse("the prepared prefix is the exact carry just installed by the caller",
+			preparedContains(preparation, replacedCarry));
+
+		CandidateEmissionRealization added = supportFact(key("prep-added"), key("prep-owner"))
+			.allowedEmissionFacts().get(0).realizations().get(0);
+		List<CandidateEmissionRealization> scheduled = new ArrayList<>(legacyRetained);
+		scheduled.add(added);
+		Assert.assertEquals(containsExactGroundedNativeSupport(prior, scheduled),
+			preparedContains(preparation, scheduled));
+	}
+
+	@Test
+	public void liveBinderReusesTheExactPreparedGroundedEmission() throws Exception {
+		CompiledHopKey sourceOwner = (CompiledHopKey)seedFixture("key",
+			new Class<?>[] {String.class}, "live-source");
+		CompiledHopKey consumerOwner = (CompiledHopKey)seedFixture("key",
+			new Class<?>[] {String.class}, "live-consumer");
+		DurableAnchorKey pool = anchor("live-pool", 8, 2);
+		CandidateRuleFact source = (CandidateRuleFact)seedFixture("nativeFact",
+			new Class<?>[] {CompiledHopKey.class, String.class, DurableAnchorKey.class, int.class},
+			sourceOwner, "live-source", pool, 1);
+		PlacementEmissionState emission = new PlacementEmissionState(new PlacementState(
+			ExecType.FED, FederatedOutput.FOUT, FType.ROW, false), false);
+		CandidateRuleKey consumerRule = new CandidateRuleKey(consumerOwner,
+			List.of(CandidateInputState.present(FType.ROW)));
+		CandidateEmissionRealization staging = CandidateEmissionRealization.nativeLineage(
+			emission, "live-consumer", List.of(), List.of());
+		CandidateRuleFact consumer = (CandidateRuleFact)seedFixture("fact",
+			new Class<?>[] {CandidateRuleKey.class, CandidateEmissionRealization.class},
+			consumerRule, staging);
+		List<CandidateRuleFact> inventory = List.of(source, consumer);
+		List<Object> nodes = List.of(
+			seedFixture("node", new Class<?>[] {CompiledHopKey.class, List.class}, sourceOwner, List.of(pool)),
+			seedFixture("node", new Class<?>[] {CompiledHopKey.class, List.class}, consumerOwner, List.of()));
+		List<CompiledInputEdgeFact> edges = List.of(
+			new CompiledInputEdgeFact(sourceOwner, consumerOwner, 0));
+		org.apache.sysds.hops.DataOp sourceHop = new org.apache.sysds.hops.DataOp("live-source",
+			org.apache.sysds.common.Types.DataType.MATRIX,
+			org.apache.sysds.common.Types.ValueType.FP64,
+			org.apache.sysds.common.Types.OpOpData.TRANSIENTREAD, "live-source", 8, 2, 16, 1000);
+		org.apache.sysds.hops.UnaryOp consumerHop = new org.apache.sysds.hops.UnaryOp("live-consumer",
+			org.apache.sysds.common.Types.DataType.MATRIX,
+			org.apache.sysds.common.Types.ValueType.FP64,
+			org.apache.sysds.common.Types.OpOp1.LOG, sourceHop);
+		Map<CompiledHopKey,org.apache.sysds.hops.Hop> origins = new IdentityHashMap<>();
+		origins.put(sourceOwner, sourceHop);
+		origins.put(consumerOwner, consumerHop);
+		Map<org.apache.sysds.hops.Hop,PlacementAnalysis.NodeShapeFact> shapes =
+			new IdentityHashMap<>();
+		shapes.put(sourceHop, new PlacementAnalysis.NodeShapeFact(
+			org.apache.sysds.common.Types.DataType.MATRIX, 8, 2));
+		shapes.put(consumerHop, new PlacementAnalysis.NodeShapeFact(
+			org.apache.sysds.common.Types.DataType.MATRIX, 8, 2));
+		Method indexBuilder = PlacementRelationClosure.class.getDeclaredMethod("directBindingIndex",
+			List.class, List.class, List.class, List.class, Map.class, Map.class);
+		indexBuilder.setAccessible(true);
+		Object index = indexBuilder.invoke(null, inventory, nodes, edges, inventory, origins, shapes);
+		@SuppressWarnings("unchecked")
+		Map<CompiledHopKey,NeutralPlacementGraph.Node> nodesByKey = (Map<CompiledHopKey,
+			NeutralPlacementGraph.Node>)nodes.stream().map(NeutralPlacementGraph.Node.class::cast)
+			.collect(java.util.stream.Collectors.toMap(NeutralPlacementGraph.Node::key,
+				node -> node, (left, right) -> right, IdentityHashMap::new));
+		NativePlacementContinuity continuity = new NativePlacementContinuity(
+			nodesByKey, origins, inventory, edges, Map.of());
+		PlacementRelationClosure closure = closure();
+		Method bind = PlacementRelationClosure.class.getDeclaredMethod(
+			"bindDirectNativeCandidateRealizationsWithDependenciesMeasured", index.getClass(),
+			List.class, Map.class, Map.class, NativePlacementContinuity.class, Set.class);
+		bind.setAccessible(true);
+		Set<CompiledHopKey> dirty = Collections.newSetFromMap(new IdentityHashMap<>());
+		dirty.add(consumerOwner);
+		CandidateRuleFact first = boundFacts(bind.invoke(closure, index, List.of(consumer),
+			origins, shapes, continuity, dirty)).get(0);
+		CandidateEmissionFact grounded = first.allowedEmissionFacts().get(0);
+		Assert.assertTrue(grounded.realizations().stream().flatMap(realization ->
+			realization.supportClauses().stream()).anyMatch(clause -> !clause.inputBindings().isEmpty()));
+
+		List<CandidateRuleFact> nextInventory = List.of(source, first);
+		Object nextIndex = indexBuilder.invoke(null, nextInventory, nodes, edges,
+			nextInventory, origins, shapes);
+		NativePlacementContinuity nextContinuity = new NativePlacementContinuity(
+			nodesByKey, origins, nextInventory, edges, Map.of());
+		CandidateRuleFact second = boundFacts(bind.invoke(closure, nextIndex, List.of(first),
+			origins, shapes, nextContinuity, dirty)).get(0);
+		Assert.assertSame("an unchanged full live binding must reuse its prepared emission",
+			grounded, second.allowedEmissionFacts().get(0));
+	}
+
+	@Test
 	public void exactGroundedSubsetReusesOldOrAuthorityOnly() throws Exception {
 		CompiledHopKey firstSource = key("first-source"), secondSource = key("second-source");
 		CandidateEmissionFact first = supportFact(firstSource, key("owner"))
@@ -185,12 +301,17 @@ public class DirectSupportUnionScheduleTest {
 
 		Assert.assertTrue(containsExactGroundedNativeSupport(prior,
 			List.of(merged, subset)));
+		assertPreparedParity(prior, List.of(merged, subset));
 		CandidateRealizationSupportClause unbound = new CandidateRealizationSupportClause(
 			List.of(), List.of());
 		CandidateEmissionRealization staging = CandidateEmissionRealization
 			.fromAlreadyCanonicalSupportClauses(merged.key(), List.of(unbound));
 		Assert.assertFalse("generic staging authority must never enter the reuse path",
 			containsExactGroundedNativeSupport(prior, List.of(staging)));
+		Object stagingPreparation = groundedPreparation(new CandidateEmissionFact(
+			first.emissionState(), null, null, List.of(staging, merged)));
+		Assert.assertTrue(preparedFlag(stagingPreparation, "hasStaging"));
+		Assert.assertFalse(preparedContains(stagingPreparation, List.of(merged)));
 	}
 
 	@Test
@@ -215,10 +336,12 @@ public class DirectSupportUnionScheduleTest {
 			emission, "other-lineage", witness, List.of(proof), bindings);
 		Assert.assertFalse("a new realization key must force the canonical merge",
 			containsExactGroundedNativeSupport(prior, List.of(newKey)));
+		assertPreparedParity(prior, List.of(newKey));
 		Assert.assertEquals("the layout precision difference stays under one realization key",
 			exact.key(), dynamic.key());
 		Assert.assertFalse("an equal-key dynamic witness is a distinct support clause",
 			containsExactGroundedNativeSupport(prior, List.of(dynamic)));
+		assertPreparedParity(prior, List.of(dynamic));
 
 		CandidateRealizationSupportClause exactClause = exact.supportClauses().get(0);
 		CandidateRealizationSupportClause nonEqual = new CandidateRealizationSupportClause(
@@ -227,6 +350,9 @@ public class DirectSupportUnionScheduleTest {
 			containsExactGroundedNativeSupport(prior, List.of(
 				CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
 					exact.key(), List.of(nonEqual)))));
+		assertPreparedParity(prior, List.of(
+			CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
+				exact.key(), List.of(nonEqual))));
 	}
 
 	@Test
@@ -240,6 +366,7 @@ public class DirectSupportUnionScheduleTest {
 			foreignBinding.supportClauses().get(0));
 		Assert.assertFalse("structural equality cannot replace exact input-owner authority",
 			containsExactGroundedNativeSupport(prior, List.of(foreignBinding)));
+		assertPreparedParity(prior, List.of(foreignBinding));
 
 		CandidateEmissionRealization retained = prior.realizations().get(0);
 		List<CandidateRealizationInputBinding> bindings = retained.supportClauses().get(0).inputBindings();
@@ -258,6 +385,7 @@ public class DirectSupportUnionScheduleTest {
 		Assert.assertFalse("structural equality cannot replace exact proof-owner authority",
 			containsExactGroundedNativeSupport(proofPrior,
 				List.of(structurallyEqualForeignProof)));
+		assertPreparedParity(proofPrior, List.of(structurallyEqualForeignProof));
 	}
 
 	@Test
@@ -389,6 +517,65 @@ public class DirectSupportUnionScheduleTest {
 		var field = PlacementRelationClosure.class.getDeclaredField("directNativePublicationMemo");
 		field.setAccessible(true);
 		return ((Map<?,?>)field.get(closure)).size();
+	}
+
+	private static Object groundedPreparation(CandidateEmissionFact emission) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"prepareGroundedNativeSupport", CandidateEmissionFact.class);
+		method.setAccessible(true);
+		return method.invoke(null, emission);
+	}
+
+	private static Object seedFixture(String name, Class<?>[] parameters, Object... arguments)
+		throws Exception {
+		Method method = DirectSourceSeedProjectionTest.class.getDeclaredMethod(name, parameters);
+		method.setAccessible(true);
+		return method.invoke(null, arguments);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<CandidateRuleFact> boundFacts(Object result) throws Exception {
+		Method method = result.getClass().getDeclaredMethod("facts");
+		method.setAccessible(true);
+		return (List<CandidateRuleFact>)method.invoke(result);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<CandidateEmissionRealization> preparedRetained(Object preparation) throws Exception {
+		Method method = preparation.getClass().getDeclaredMethod("retained");
+		method.setAccessible(true);
+		return (List<CandidateEmissionRealization>)method.invoke(preparation);
+	}
+
+	private static boolean preparedContains(Object preparation,
+		List<CandidateEmissionRealization> candidates) throws Exception {
+		Method method = preparation.getClass().getDeclaredMethod("containsExact", List.class);
+		method.setAccessible(true);
+		return (boolean)method.invoke(preparation, candidates);
+	}
+
+	private static boolean preparedFlag(Object preparation, String name) throws Exception {
+		Method method = preparation.getClass().getDeclaredMethod(name);
+		method.setAccessible(true);
+		return (boolean)method.invoke(preparation);
+	}
+
+	private static void assertPreparedParity(CandidateEmissionFact emission,
+		List<CandidateEmissionRealization> additions) throws Exception {
+		Object preparation = groundedPreparation(emission);
+		List<CandidateEmissionRealization> scheduled = new ArrayList<>(preparedRetained(preparation));
+		scheduled.addAll(additions);
+		Assert.assertEquals(containsExactGroundedNativeSupport(emission, scheduled),
+			preparedContains(preparation, scheduled));
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<CandidateEmissionRealization> retainedGrounded(
+		CandidateEmissionFact emission) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"retainPreviouslyGroundedNativeSupport", CandidateEmissionFact.class);
+		method.setAccessible(true);
+		return (List<CandidateEmissionRealization>)method.invoke(null, emission);
 	}
 
 	private static boolean containsExactGroundedNativeSupport(CandidateEmissionFact emission,

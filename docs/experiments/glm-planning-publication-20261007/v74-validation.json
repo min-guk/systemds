@@ -1,0 +1,252 @@
+{
+  "version": "v74-java-v75-runner",
+  "baselineCommit": "cbf946073bdd1dab825d65f9ab4ca368d285b4f1",
+  "changes": [
+    "Avoid rebuilding clause ownership for clauses traversed directly from the current immutable snapshot.",
+    "Prepare grounded native carry and exact membership together while retaining order, authority and staging checks.",
+    "Bind pinned runtime resources, portable image content, effective heap and ordered compilation authority generations to original evidence."
+  ],
+  "sourceSha256": {
+    "scripts/fedplanner/run_matrix_campaign.py": "7127131f8137ee86b0f835252879bd6be5bb40ea9a7053ec92d856926bcdbd4a",
+    "scripts/fedplanner/tests/test_matrix_direct_runtime.py": "fe9d442d43d882a4da85ee703c2b7f839a86495c7efe3cb8985b28ec2085ab32",
+    "scripts/fedplanner/tests/test_matrix_overhead.py": "fd403f99f9fdbb73733a20c3f9aa1153375674b4577fb265fd7357cb16d8e873",
+    "scripts/fedplanner/tests/test_matrix_runtime_diagnostic.py": "d86edf42011d89c91f92864501b3446481a0c40bdf1e32451703c630b044d669",
+    "scripts/fedplanner/tests/test_matrix_runtime_selection.py": "b897509422cbff6d1b62020e3ce11f72ccfd62362177d6d2c1cce10f0fd397c1",
+    "scripts/fedplanner/tests/test_pinned_runtime_contract.py": "5f47f46d601da9ddfb0c1b392bcdeb8de6da111daadd8ca19d8f16a1797f71a6",
+    "scripts/fedplanner/tests/test_pinned_runtime_hardening.py": "6527f376a44ffc00865cab4d1e47de58acfe12eb70681d42ef58fca5cec190ed",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/NativePlacementContinuity.java": "e3aee4e825037a50145d9a5ac287beb1e46439efaad3ca0a91b9c2f653327831",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java": "41300f77e9fba25e109cf97089742db7e01523324d4d048a093594367d64f72f",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlannerRuntimePlacementAudit.java": "ea66a774bc504659957036da65426aabc486c386082fddb3a019ed22ef415620",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/DirectSupportUnionScheduleTest.java": "8be25cce8b5818520bcffa4cd4169d746725c53541cf21744848b5511dd78bd1",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/NativeClausePinProjectionTest.java": "711803cbe328b30013c8674a3cb71f8d8b8421c63a26f67a6fbb4a6f949d87d4",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/PlannerRuntimeGenerationReceiptTest.java": "fa0c1b8da4399eaf827efae6a288079d690a65e46b9ee96771360a23cec1a8c9",
+    "src/test/java/org/apache/sysds/test/functions/federated/fedplanning/MatrixCampaignProbe.java": "442045844b4cbdf2d633944861f273ce85426e8b4ce572ec39327e73e30eb34c",
+    "src/test/java/org/apache/sysds/test/functions/federated/fedplanning/MatrixCampaignProbeAuthorityReceiptTest.java": "d76a889448d27bd8315777146344ff8b46daee33a8eeedc7468adcd90ae98d0d"
+  },
+  "independentReview": {
+    "v69RuntimeWitness": "CLEAR with regression and behavioral mutants",
+    "v72OwnedNativePath": "CLEAR",
+    "v73DirectNativePreparation": "CLEAR including real binder reuse regression",
+    "v75ImageContentPin": "CLEAR"
+  },
+  "javaTests": {
+    "counts": {
+      "tests": 233,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "classes": 36,
+    "sameSourceSnapshot": true,
+    "summary": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v74-integration-summary.json",
+      "sha256": "67976675aacc9c6b1743471d0685744c2a8cec2867d5e5228848aea4d8b9b454"
+    },
+    "command": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v74-integration-command.json",
+      "sha256": "07f70b06d2fe90139ab35fba79dc88593eabdce8dc6eb38b0774f7d5227e043a"
+    }
+  },
+  "pythonTests": {
+    "tests": 83,
+    "failures": 0,
+    "errors": 0,
+    "log": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v74-v75-python-integration.log",
+      "sha256": "8020393a6c82c84e2fdbfa33e115250c644f4edef1edbacaf65adf1e8ba8c008"
+    }
+  },
+  "provenance": {
+    "engine": "/home/mchoi/fedplanner-boundary-correctness-20261006/engine-merged-v74",
+    "completeSourceAndClassInventoriesVerified": true,
+    "inventory": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v74-publication-inventory.json",
+      "sha256": "cb0ae395512ef80a99b81216ae1073803845d5c8689ecbb427dca239650502ac"
+    },
+    "jar": {
+      "sha256": "1a92c824133bd36adc4c712d17860d867b51eef16e34b7841802064cc9301856",
+      "classDifferences": []
+    },
+    "inputParity": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v74-baseline-input-parity.json",
+      "sha256": "0326457bd7a4802ffc6dc84c8d0e739adc98f69a57ac08c2bb0dbd7eb6f2a71f"
+    },
+    "dockerImage": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "containerCpus": 4,
+    "containerMemoryGiB": 16,
+    "jvmHeapGiB": 10,
+    "profiler": false
+  },
+  "glmCompileOnly": [
+    {
+      "planner": "DP-LocalConflict",
+      "wallSeconds": 472.433783411,
+      "planningSucceeded": true,
+      "runtimeExecuted": false,
+      "selectedStateCount": 1240,
+      "case": "glm_w1",
+      "objectiveBits": "local-conflict-objective=4671489731595367111",
+      "completeAssignmentSha256": "bf5669ea0c032f2509b190d9cf7c64b3e4c1a429f9fb2b7dcdc0aae04bef1fe9",
+      "comparison": {
+        "baseline": "v65",
+        "wallSeconds": 477.189625916,
+        "objectiveBitsEqual": true,
+        "completeAssignmentEqual": true
+      },
+      "result": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/glm-merged-v74-w1/results/B/glm_w1.json",
+        "sha256": "bc99edacb93dde6d825d091e9dcdc325bb51ebd43b32fbd330f894d229a0a290"
+      },
+      "command": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/glm-merged-v74-w1/results/B/glm_w1.command.json",
+        "sha256": "808eb95963d861b43d83a7c572b46172ef956728b1816af2cb7b671c3b7f3d94"
+      },
+      "log": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/glm-merged-v74-w1/results/B/glm_w1.log",
+        "sha256": "0122a486472ed79f86be3ca68c73a5bd2154e9ba53f571f21173db7d52a50daf"
+      },
+      "localQualityTermination": "[PlannerTrace][DP-IncrementalRegional] phase=TARGET_REACHED merges=14097 clusters=11557 lower=20492.62480608965 upper=20956.64109049996 relativeGap=0.022643086905705816 elapsedNanos=60790445776 dpNanos=57441271278 scoringNanos=2031374027 validationNanos=338425150 assignments=1486198413 retainedSlots=709985028 improvements=6 resourceRejected=6545 internalDecisions=79 conditionalAttempts=82 conditionalImprovements=6 plannerElapsedNanos=169962571835 separateGlobalCalls=0 scope=encoded-model"
+    },
+    {
+      "planner": "DP-LocalConflict",
+      "wallSeconds": 303.932516046,
+      "planningSucceeded": true,
+      "runtimeExecuted": false,
+      "selectedStateCount": 1252,
+      "case": "glm_w3",
+      "objectiveBits": "local-conflict-objective=4671453370371391968",
+      "completeAssignmentSha256": "67ad64196ced72f38f60deb308ea0dd5f1793018f046cc8b415d71a9ade913be",
+      "comparison": {
+        "baseline": "v65",
+        "wallSeconds": 306.130198798,
+        "objectiveBitsEqual": true,
+        "completeAssignmentEqual": true
+      },
+      "result": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/glm-merged-v74-w3/results/B/glm_w3.json",
+        "sha256": "7f73dc6d73a1e373641f28ff3423394153304414be6e4ec51afa2ba67d7a47a9"
+      },
+      "command": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/glm-merged-v74-w3/results/B/glm_w3.command.json",
+        "sha256": "b3cd99bf4c1349bde3ede3b41cb9f100694777756f67cf4ad8103d0f07644e30"
+      },
+      "log": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/glm-merged-v74-w3/results/B/glm_w3.log",
+        "sha256": "40a1151cb8470c02078211184a12c039709f0a185d6e03e41f3617ce91bb3851"
+      },
+      "localQualityTermination": "[PlannerTrace][DP-IncrementalRegional] phase=TARGET_REACHED merges=12662 clusters=10875 lower=20821.370754298612 upper=20824.359728278476 relativeGap=1.435531798138977E-4 elapsedNanos=38022186508 dpNanos=36506304204 scoringNanos=1054020599 validationNanos=153625935 assignments=766228555 retainedSlots=326767584 improvements=3 resourceRejected=4918 internalDecisions=68 conditionalAttempts=57 conditionalImprovements=3 plannerElapsedNanos=100048152139 separateGlobalCalls=0 scope=encoded-model"
+    }
+  ],
+  "p1CompileOnly": [
+    {
+      "planner": "DP-LocalConflict",
+      "wallSeconds": 33.126347987,
+      "planningSucceeded": true,
+      "runtimeExecuted": false,
+      "selectedStateCount": 1537,
+      "case": "P1_FULL_w1",
+      "objectiveBits": "local-conflict-objective=4728318273290936294",
+      "completeAssignmentSha256": "90d6be436496cf5e9406698173682744d8a02f38ea8e363e28bd1ac3ca7575d3",
+      "comparison": {
+        "baseline": "v65",
+        "wallSeconds": 31.53791588,
+        "objectiveBitsEqual": true,
+        "completeAssignmentEqual": true
+      },
+      "result": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v74-local/results/B/P1_FULL_w1.json",
+        "sha256": "736b6cba96a01e813c24a56a9a16cc3499a5e091cedfed3d232be8ddc67addf9"
+      },
+      "command": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v74-local/results/B/P1_FULL_w1.command.json",
+        "sha256": "86c3c89f97e00815712a42e5105ec29b836dd9f46be4c8e32adb94d8541a45f1"
+      },
+      "log": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v74-local/results/B/P1_FULL_w1.log",
+        "sha256": "0d2a3e90c2e0b258695e20d20f120d39e37538a94568fc055311757afa421d74"
+      },
+      "localQualityTermination": "[PlannerTrace][DP-IncrementalRegional] phase=TARGET_REACHED merges=10214 clusters=7901 lower=1.2701353236810264E8 upper=1.2734329412365684E8 relativeGap=0.0025962726128937546 elapsedNanos=4832008117 dpNanos=3801276400 scoringNanos=198009704 validationNanos=634472635 assignments=42869521 retainedSlots=21978652 improvements=10 resourceRejected=395 internalDecisions=163 conditionalAttempts=108 conditionalImprovements=7 plannerElapsedNanos=6629141146 separateGlobalCalls=0 scope=encoded-model"
+    },
+    {
+      "planner": "DP-LocalConflict",
+      "wallSeconds": 21.790063274,
+      "planningSucceeded": true,
+      "runtimeExecuted": false,
+      "selectedStateCount": 1545,
+      "case": "P1_FULL_w3",
+      "objectiveBits": "local-conflict-objective=4734494558711388671",
+      "completeAssignmentSha256": "576b41c7312f0ed9484a596dc2d0b93ce70ec4a38b0a5def3de413d2d8d0e55d",
+      "comparison": {
+        "baseline": "v65",
+        "wallSeconds": 18.603471361,
+        "objectiveBitsEqual": true,
+        "completeAssignmentEqual": true
+      },
+      "result": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v74-local/results/B/P1_FULL_w3.json",
+        "sha256": "e040b52f1e2d6d7fa7a1c37d3102bff274f1e1c04fbfd6b0385874a9493a7c87"
+      },
+      "command": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v74-local/results/B/P1_FULL_w3.command.json",
+        "sha256": "bff96e6b1c4d61c237729a6a31112f0d0dde0d5a2221a6c9517424c705e3a20c"
+      },
+      "log": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v74-local/results/B/P1_FULL_w3.log",
+        "sha256": "983b7a104cb1afb50e04009896d7c8f6a9569b139c74a7d89c1510e721e5beef"
+      },
+      "localQualityTermination": "[PlannerTrace][DP-IncrementalRegional] phase=TARGET_REACHED merges=9604 clusters=8730 lower=3.4063756301211464E8 upper=3.406375630121154E8 relativeGap=2.2747355729894085E-15 elapsedNanos=623826926 dpNanos=259183547 scoringNanos=87642845 validationNanos=159961003 assignments=640691 retainedSlots=380176 improvements=2 resourceRejected=111 internalDecisions=68 conditionalAttempts=12 conditionalImprovements=2 plannerElapsedNanos=2069732530 separateGlobalCalls=0 scope=encoded-model"
+    },
+    {
+      "planner": "Exact",
+      "wallSeconds": 20.036123288,
+      "planningSucceeded": true,
+      "runtimeExecuted": false,
+      "selectedStateCount": 1545,
+      "case": "P1_FULL_w3",
+      "objectiveBits": "physical-ve-objective=4734494558711388677",
+      "completeAssignmentSha256": "34f3edfa6128c9d12fc5258a61a6db91410ceaf5a882515480a6ed329dfddef1",
+      "comparison": {
+        "baseline": "v65",
+        "wallSeconds": 20.642865103,
+        "objectiveBitsEqual": true,
+        "completeAssignmentEqual": true
+      },
+      "result": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v74-global/results/B/P1_FULL_w3.json",
+        "sha256": "aec210e1ca39a4cea4d1145b9ece275f07a07a65e0367ae6e02ca64eb77ec89c"
+      },
+      "command": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v74-global/results/B/P1_FULL_w3.command.json",
+        "sha256": "d185dd571710897f4d090365648cc30ea971af14a3fcf56f7a2420825a4dd6de"
+      },
+      "log": {
+        "path": "/home/mchoi/fedplanner-boundary-correctness-20261006/p1-merged-v74-global/results/B/P1_FULL_w3.log",
+        "sha256": "de0749f9e9cbb69ae9f26fd98ffc8737a77afeb080f23fca32f5c30d48bc3a27"
+      }
+    }
+  ],
+  "actualRuntime": {
+    "status": "not-started",
+    "reason": "Official launcher could not acquire the runtime lane lock held by another live campaign.",
+    "attemptCommand": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v74-pinned-runtime-command.json",
+      "sha256": "80b66f3d5eae302a691169a2cb836e8e4a6a50e9535a68ea28c66c3e328aa959"
+    },
+    "attemptExit": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v74-pinned-runtime-exit.json",
+      "sha256": "23f5e28a8239f5f3187ca674a2072d693e2de7309319f71e29dffb694f55bf6a"
+    },
+    "attemptLog": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/boundary-correctness-20261006/merged-v74-pinned-runtime.log",
+      "sha256": "2317b6eab865fcf83a20f548f097709d08451788d52752d3df6f3e039448e602"
+    }
+  },
+  "limits": [
+    "One fresh-JVM screening run per configuration; timing differences are not a statistical performance claim.",
+    "Compile-only planning and mocked runner tests do not establish actual workload runtime correctness.",
+    "Selected-plan parity and bounded authority regressions do not prove equality of every GLM candidate identity.",
+    "The under-20-second goal, six qualifying runs, actual runtime and final durable evaluator remain unachieved."
+  ],
+  "qualifyingRuns": 0,
+  "goalAchieved": false
+}

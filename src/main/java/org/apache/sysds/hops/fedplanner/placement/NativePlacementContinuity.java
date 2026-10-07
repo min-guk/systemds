@@ -3001,7 +3001,7 @@ final class NativePlacementContinuity {
 						boolean fixedMapGround = fixedMap != null
 							&& witness.matches(nativeWitness(fixedMap.pool()), fixedMap.exactLayout());
 						List<CandidateDependencySkeleton> dependencies = fixedMapGround ? List.of()
-							: candidateDependencySkeletons(fact, clause, hop, witness);
+							: candidateDependencySkeletons(fact, clause, hop, witness, true);
 						if(dependencies != null) {
 							boolean realizationGround = realization.key().layoutKind()
 								== PlacementIdentity.PlacementLayoutKind.DURABLE_MAP
@@ -3133,6 +3133,12 @@ final class NativePlacementContinuity {
 	private List<CandidateDependencySkeleton> candidateDependencySkeletons(CandidateRuleFact fact,
 		CandidateRealizationSupportClause clause, Hop owner, NativePoolWitness witness) {
 		boolean cacheable = ownsCandidateClause(fact, clause);
+		return candidateDependencySkeletons(fact, clause, owner, witness, cacheable);
+	}
+
+	private List<CandidateDependencySkeleton> candidateDependencySkeletons(CandidateRuleFact fact,
+		CandidateRealizationSupportClause clause, Hop owner, NativePoolWitness witness,
+		boolean cacheable) {
 		SkeletonFactMemo factMemo = cacheable ? dependencySkeletonMemo.get(fact) : null;
 		SkeletonClauseMemo clauseMemo = factMemo == null ? null : factMemo.clauses.get(clause);
 		boolean prepared = clauseMemo != null && clauseMemo.clause == clause

@@ -56,6 +56,49 @@ public class NativeClausePinProjectionTest {
 	}
 
 	@Test
+	public void measuredTopologyTrustsItsIteratedOwnedClauseWithoutGenericOwnershipScan()
+		throws Exception {
+		FixtureAccess fixture = FixtureAccess.create();
+		DurableAnchorKey pool = anchor("worker1:8001");
+		Object left = fixture.source("topology-left", pool);
+		Object right = fixture.source("topology-right", pool);
+		Object root = fixture.binary("topology-root", left, right);
+		List<CandidateInputState> inputs = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+		CandidateRealizationSupportClause clause =
+			new CandidateRealizationSupportClause(List.of(), List.of());
+		CandidateRealizationReference reference = fixture.withClauses(root, inputs, List.of(clause));
+		CandidateRuleFact fact = fixture.fact(root, inputs);
+		NativePlacementContinuity resolver = fixture.resolver();
+
+		long scans = counter(resolver, "dependencySkeletonOwnerFactScans");
+		Assert.assertFalse(ownedClauses(resolver).containsKey(fact));
+		List<NativePlacementContinuity.NativeContinuityProof> actual =
+			resolver.proveCandidateAlternatives(reference, pool);
+		Assert.assertFalse("the actual topology path must produce a complete proof", actual.isEmpty());
+		Assert.assertEquals("the iterated fact/clause identity is already owned authority",
+			scans, counter(resolver, "dependencySkeletonOwnerFactScans"));
+		Assert.assertFalse("the trusted topology path must not construct the generic ownership map",
+			ownedClauses(resolver).containsKey(fact));
+
+		NativePlacementContinuity cold = fixture.resolver();
+		Assert.assertEquals("trusted preparation must preserve ordered full proofs",
+			cold.proveCandidateAlternatives(reference, pool), actual);
+
+		Assert.assertNotNull(skeletons(resolver, fact, clause, fixture.hop(root), pool));
+		Assert.assertEquals("the four-argument generic wrapper remains checked",
+			scans + 1, counter(resolver, "dependencySkeletonOwnerFactScans"));
+		Assert.assertTrue(ownedClauses(resolver).get(fact).contains(clause));
+		CandidateRealizationSupportClause unowned =
+			new CandidateRealizationSupportClause(List.of(), List.of());
+		Assert.assertNotSame(clause, unowned);
+		long builds = counter(resolver, "dependencySkeletonBuilds");
+		Assert.assertNotNull(skeletons(resolver, fact, unowned, fixture.hop(root), pool));
+		Assert.assertEquals("an equal unowned clause remains on the checked cold path",
+			builds + 1, counter(resolver, "dependencySkeletonBuilds"));
+	}
+
+	@Test
 	public void exactRevisionReusesClauseSupportAfterThreadCacheReset() throws Exception {
 		FixtureAccess fixture = FixtureAccess.create();
 		Object left = fixture.source("left", anchor("worker1:8001"));
@@ -443,6 +486,14 @@ public class NativeClausePinProjectionTest {
 		return field.getLong(resolver);
 	}
 
+	@SuppressWarnings("unchecked")
+	private static Map<CandidateRuleFact,java.util.Set<CandidateRealizationSupportClause>>
+		ownedClauses(NativePlacementContinuity resolver) throws Exception {
+		Field field = NativePlacementContinuity.class.getDeclaredField("ownedCandidateClausesByFact");
+		field.setAccessible(true);
+		return (Map<CandidateRuleFact,java.util.Set<CandidateRealizationSupportClause>>)field.get(resolver);
+	}
+
 	private static Object pinned(List<?> skeletons, CompiledHopKey owner) throws Exception {
 		for(Object skeleton : skeletons) {
 			Field key = skeleton.getClass().getDeclaredField("key");
@@ -564,9 +615,10 @@ public class NativeClausePinProjectionTest {
 				boolean.class}, name, OpOp2.PLUS, left, right, false);
 		}
 
-		private void withClauses(Object owner, List<CandidateInputState> inputs,
+		private CandidateRealizationReference withClauses(Object owner, List<CandidateInputState> inputs,
 			List<CandidateRealizationSupportClause> clauses) throws Exception {
-			invoke("withClauses", new Class<?>[] {refType, List.class, List.class}, owner, inputs, clauses);
+			return (CandidateRealizationReference)invoke("withClauses",
+				new Class<?>[] {refType, List.class, List.class}, owner, inputs, clauses);
 		}
 
 		private CandidateRuleFact fact(Object owner, List<CandidateInputState> inputs) throws Exception {

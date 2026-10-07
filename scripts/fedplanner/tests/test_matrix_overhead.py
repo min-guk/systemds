@@ -90,6 +90,8 @@ class NodeEvidenceTest(unittest.TestCase):
                 _strict_experiment_cleanup=cleanup)
             base = SimpleNamespace(parse_manifest=lambda life: spec,
                 prepare_remote_directories=lambda *a: None, build_plan=lambda *a: None,
+                prepare_cost_profile=mock.Mock(return_value={"profile_sha256": "p" * 64,
+                    "_runtime": {"preparation_seconds": 0.0}}),
                 capture_network_snapshot=lambda *a: {},
                 validate_network_quality=lambda *a: {"valid": True})
             with mock.patch.object(CAMPAIGN, "run", return_value=""), \
@@ -170,6 +172,9 @@ class ContinuationIntegrationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
             (repo / "src/main").mkdir(parents=True)
+            (repo / "scripts/builtin").mkdir(parents=True)
+            for name in CAMPAIGN.BUILTIN_SCRIPTS:
+                (repo / "scripts/builtin" / name).write_text(name)
             (repo / "pom.xml").write_text("pom")
             probe = repo / "Probe.java"
             probe.write_text("probe")
@@ -186,6 +191,7 @@ class ContinuationIntegrationTest(unittest.TestCase):
 
             with mock.patch.object(CAMPAIGN, "REPO", repo), \
                     mock.patch.object(CAMPAIGN, "PROBE_SOURCE", probe), \
+                    mock.patch.object(CAMPAIGN, "verify_builtin_sync"), \
                     mock.patch.object(CAMPAIGN, "sha", return_value="a" * 64), \
                     mock.patch.object(CAMPAIGN, "run", return_value="mocked"), \
                     mock.patch.object(CAMPAIGN.continuation, "build_snapshot", side_effect=build) as builder, \

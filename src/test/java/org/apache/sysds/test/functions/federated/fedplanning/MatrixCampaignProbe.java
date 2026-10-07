@@ -2,21 +2,27 @@
 package org.apache.sysds.test.functions.federated.fedplanning;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.management.HotSpotDiagnosticMXBean;
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.conf.FederatedPlannerConfiguration;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
 import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
 import org.apache.sysds.utils.Statistics;
@@ -32,6 +38,11 @@ import org.apache.sysds.utils.Statistics;
  */
 public final class MatrixCampaignProbe {
 	private static final String SCHEMA = "matrix-campaign-probe-v1";
+	private static final List<String> COST_KEYS = List.of("SYSDS_FED_COST_FLOPS",
+		"SYSDS_FED_COST_AGGBINARY_FLOPS", "SYSDS_FED_COST_MEM_BW", "SYSDS_FED_COST_NET_LATENCY_C2W",
+		"SYSDS_FED_COST_NET_LATENCY_W2C", "SYSDS_FED_COST_NET_BW_C2W", "SYSDS_FED_COST_NET_BW_W2C",
+		"SYSDS_FED_COST_NET_BW_COORD_C2W", "SYSDS_FED_COST_NET_BW_COORD_W2C",
+		"SYSDS_FED_COST_NET_SERDES_BW_C2W", "SYSDS_FED_COST_NET_SERDES_BW_W2C");
 	private static final Pattern CANDIDATE_RECEIPT = Pattern.compile(
 		"(?m)^CandidateE2EReceipt schema=candidate-e2e-v1 calls=(\\d+) exactPhaseCalls=(\\d+)(.*)$");
 	private static final Pattern NANOS_FIELD = Pattern.compile(" ([A-Za-z][A-Za-z0-9]*)=(\\d+)");
@@ -107,6 +118,20 @@ public final class MatrixCampaignProbe {
 			receipt.put("executedSparkInstructions", executedSparkInstructions);
 			receipt.put("plannerRuntimeAuditSummary", audit.raw());
 			receipt.put("plannerRuntimeAudit", audit.values());
+			appendAuthorityReceipt(receipt, audit.values(), PlannerRuntimePlacementAudit.authorityGenerations());
+			if(!receipt.get("scriptSha256").equals(fileHash(options.script()))
+				|| !receipt.get("configSha256").equals(fileHash(options.config()))
+				|| !receipt.get("effectiveCostEnvironment").equals(effectiveCostEnvironment()))
+				throw new IllegalStateException("Executed script, config or cost settings changed during invocation");
+			Map<String,Object> settings = new LinkedHashMap<>();
+			settings.put("sysds.native.blas", ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.NATIVE_BLAS));
+			settings.put("sysds.codegen.enabled", Boolean.toString(
+				ConfigurationManager.getDMLConfig().getBooleanValue(DMLConfig.CODEGEN)));
+			settings.put("jvmArguments", ManagementFactory.getRuntimeMXBean().getInputArguments());
+			settings.put("availableProcessors", Runtime.getRuntime().availableProcessors());
+			settings.put("maxHeapBytes", Runtime.getRuntime().maxMemory());
+			settings.put("maxHeapSizeBytes", effectiveMaximumHeapSizeBytes());
+			receipt.put("executionSettings", settings);
 			validateExecutionEvidence(options.mode(), observedRunNanos, executedSparkInstructions, audit);
 
 			receipt.put("status", "success");
@@ -165,10 +190,56 @@ public final class MatrixCampaignProbe {
 		receipt.put("mode", options.mode().cliName);
 		receipt.put("script", options.script().toRealPath().toString());
 		receipt.put("config", options.config().toRealPath().toString());
+		receipt.put("scriptSha256", fileHash(options.script()));
+		receipt.put("configSha256", fileHash(options.config()));
+		receipt.put("effectiveCostEnvironment", effectiveCostEnvironment());
 		receipt.put("expectedPlanner", options.planner());
 		if(options.seed() != null)
 			receipt.put("seed", options.seed());
 		return receipt;
+	}
+
+	private static Map<String,String> effectiveCostEnvironment() {
+		Map<String,String> values = new LinkedHashMap<>();
+		for(String key : COST_KEYS)
+			values.put(key, FederatedPlannerConfiguration.captureNonEmptyPropertyOrEnvironment(key));
+		return values;
+	}
+
+	private static String fileHash(Path path) throws IOException {
+		try {
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path)));
+		}
+		catch(NoSuchAlgorithmException impossible) {
+			throw new IllegalStateException("JVM does not support SHA-256", impossible);
+		}
+	}
+
+	static Long effectiveMaximumHeapSizeBytes() {
+		HotSpotDiagnosticMXBean bean = ManagementFactory.getPlatformMXBean(HotSpotDiagnosticMXBean.class);
+		return bean == null ? null : Long.valueOf(bean.getVMOption("MaxHeapSize").getValue());
+	}
+
+	static void appendAuthorityReceipt(Map<String,Object> receipt, Map<String,Object> audit,
+		List<PlannerRuntimePlacementAudit.AuthorityGeneration> generations) {
+		if(generations.isEmpty())
+			throw new IllegalStateException("No committed initial planner authority");
+		var last = generations.get(generations.size() - 1);
+		long unique = generations.stream().map(
+			PlannerRuntimePlacementAudit.AuthorityGeneration::planFingerprint).distinct().count();
+		if(!last.planFingerprint().equals(audit.get("plan"))
+			|| unique != ((Number)audit.get("authorityGenerations")).longValue())
+			throw new IllegalStateException("Runtime audit and committed generation receipt disagree");
+		List<Map<String,Object>> rows = new ArrayList<>();
+		for(var generation : generations) {
+			if(generation.sequence() != rows.size())
+				throw new IllegalStateException("Planner authority generation order is incomplete");
+			rows.add(Map.of("sequence", generation.sequence(), "planFingerprint", generation.planFingerprint(),
+				"analysisFingerprint", generation.analysisFingerprint()));
+		}
+		receipt.put("initialSelectionFingerprint", generations.get(0).planFingerprint());
+		receipt.put("finalSelectionFingerprint", last.planFingerprint());
+		receipt.put("plannerAuthorityGenerations", List.copyOf(rows));
 	}
 
 	private static Map<String, Long> compilePhases() {

@@ -4940,9 +4940,11 @@ final class PlacementRelationClosure {
 						: CandidateEmissionRealization.nativeLineage(emission.emissionState(),
 							"direct-template:" + emission.emissionState().normalizedSignature(),
 							List.of(), List.of())) : templateEmission.realizations();
+				GroundedNativePreparation grounded = recomputeNative
+					? prepareGroundedNativeSupport(emission) : null;
 				List<CandidateEmissionRealization> realizations = new ArrayList<>();
-				if(recomputeNative)
-					realizations.addAll(retainPreviouslyGroundedNativeSupport(emission));
+				if(grounded != null)
+					realizations.addAll(grounded.retained());
 				for(CandidateEmissionRealization realization : templatesForEmission) {
 					if(realization.key().layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
 						|| realization.supportClauses().stream().anyMatch(clause -> !clause.inputBindings().isEmpty())
@@ -5152,7 +5154,7 @@ final class PlacementRelationClosure {
 					else
 						realizations.addAll(bound);
 				}
-				if(recomputeNative && containsExactGroundedNativeSupport(emission, realizations)) {
+				if(grounded != null && grounded.containsExact(realizations)) {
 					emissions.add(emission);
 					continue;
 				}
@@ -5243,6 +5245,65 @@ final class PlacementRelationClosure {
 					: CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(candidate.key(), grounded));
 		}
 		return List.copyOf(retained);
+	}
+
+	private record GroundedNativePreparation(List<CandidateEmissionRealization> retained,
+		Map<PlacementIdentity.PlacementRealizationKey,
+			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause>> prior,
+		boolean hasStaging, boolean hasConflictingEqualAuthority) {
+		private boolean containsExact(List<CandidateEmissionRealization> realizations) {
+			if(hasStaging || hasConflictingEqualAuthority)
+				return false;
+			if(realizations.size() < retained.size())
+				return false;
+			for(int index = 0; index < retained.size(); index++)
+				if(realizations.get(index) != retained.get(index))
+					return false;
+			for(int index = retained.size(); index < realizations.size(); index++) {
+				CandidateEmissionRealization realization = realizations.get(index);
+				Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> clauses =
+					prior.get(realization.key());
+				if(clauses == null)
+					return false;
+				for(CandidateRealizationSupportClause candidate : realization.supportClauses()) {
+					CandidateRealizationSupportClause retainedClause = clauses.get(candidate);
+					if(retainedClause == null || !sameDirectSupportAuthority(retainedClause, candidate))
+						return false;
+				}
+			}
+			return true;
+		}
+	}
+
+	private static GroundedNativePreparation prepareGroundedNativeSupport(
+		CandidateEmissionFact emission) {
+		List<CandidateEmissionRealization> retained = new ArrayList<>();
+		Map<PlacementIdentity.PlacementRealizationKey,
+			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause>> prior =
+			new HashMap<>();
+		boolean hasStaging = false;
+		boolean hasConflictingEqualAuthority = false;
+		for(CandidateEmissionRealization candidate : emission.realizations()) {
+			List<CandidateRealizationSupportClause> grounded = new ArrayList<>();
+			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> clauses =
+				prior.computeIfAbsent(candidate.key(), ignored -> new HashMap<>());
+			for(CandidateRealizationSupportClause clause : candidate.supportClauses()) {
+				if(clause.inputBindings().isEmpty()) {
+					hasStaging = true;
+					continue;
+				}
+				grounded.add(clause);
+				CandidateRealizationSupportClause previous = clauses.put(clause, clause);
+				if(previous != null && !sameDirectSupportAuthority(previous, clause))
+					hasConflictingEqualAuthority = true;
+			}
+			if(!grounded.isEmpty())
+				retained.add(grounded.size() == candidate.supportClauses().size() ? candidate
+					: CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
+						candidate.key(), grounded));
+		}
+		return new GroundedNativePreparation(List.copyOf(retained), prior,
+			hasStaging, hasConflictingEqualAuthority);
 	}
 
 	/** Exact membership only: comparator ties never authorize reuse of prior support. */

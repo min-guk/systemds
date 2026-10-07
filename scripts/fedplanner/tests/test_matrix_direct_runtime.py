@@ -54,6 +54,9 @@ class DirectRuntimeManifestContractTest(unittest.TestCase):
 		with tempfile.TemporaryDirectory() as directory:
 			repo = Path(directory)
 			(repo / "src/main").mkdir(parents=True)
+			(repo / "scripts/builtin").mkdir(parents=True)
+			for name in CAMPAIGN.BUILTIN_SCRIPTS:
+				(repo / "scripts/builtin" / name).write_text(name)
 			(repo / "pom.xml").write_text("pom")
 			probe = repo / "Probe.java"
 			probe.write_text("probe")
@@ -62,6 +65,7 @@ class DirectRuntimeManifestContractTest(unittest.TestCase):
 			jar.write_text("jar")
 			with mock.patch.object(CAMPAIGN, "REPO", repo), \
 					mock.patch.object(CAMPAIGN, "PROBE_SOURCE", probe), \
+					mock.patch.object(CAMPAIGN, "verify_builtin_sync"), \
 					mock.patch.object(CAMPAIGN, "sha", return_value="a" * 64), \
 					mock.patch.object(CAMPAIGN, "run", return_value="mocked"):
 				root = repo / "direct"

@@ -280,6 +280,9 @@ public final class PlannerRuntimePlacementAudit {
 	}
 
 	private static volatile Authority CURRENT;
+	/** Ordered committed generations; hashes retain no HOP graph or mutable runtime authority. */
+	public record AuthorityGeneration(int sequence, String planFingerprint, String analysisFingerprint) { }
+	private static final List<AuthorityGeneration> AUTHORITY_GENERATIONS = new ArrayList<>();
 	private static final Map<String,LoweredExpectation> LOWERED = new ConcurrentHashMap<>();
 	private static final Map<String,List<String>> SELECTED_INPUT_SIGNATURES = new ConcurrentHashMap<>();
 	private static final Map<String,List<String>> SELECTED_INPUT_ROLES = new ConcurrentHashMap<>();
@@ -580,6 +583,13 @@ public final class PlannerRuntimePlacementAudit {
 		CURRENT = next;
 		AUTHORITY_PLAN_HASHES.add(next.planHash);
 		AUTHORITY_ANALYSIS_FINGERPRINTS.put(next.planHash, next.analysisFingerprint);
+		AUTHORITY_GENERATIONS.add(new AuthorityGeneration(AUTHORITY_GENERATIONS.size(),
+			next.planHash, next.analysisFingerprint));
+	}
+
+	/** Initial compilation and later recompilations remain distinguishable in runtime receipts. */
+	public static synchronized List<AuthorityGeneration> authorityGenerations() {
+		return List.copyOf(AUTHORITY_GENERATIONS);
 	}
 
 	private static void carryForwardUnchangedLowering(Authority previous, Authority next) {
@@ -1824,7 +1834,7 @@ public final class PlannerRuntimePlacementAudit {
 		return out.toString();
 	}
 
-	public static void resetForTesting() {
+	public static synchronized void resetForTesting() {
 		CURRENT = null;
 		LOWERED.clear();
 		SELECTED_INPUT_SIGNATURES.clear();
@@ -1837,6 +1847,7 @@ public final class PlannerRuntimePlacementAudit {
 		LOWERED_SYNTHETIC_KEYS.clear();
 		AUTHORITY_PLAN_HASHES.clear();
 		AUTHORITY_ANALYSIS_FINGERPRINTS.clear();
+		AUTHORITY_GENERATIONS.clear();
 		ACTIVE_FEDERATED_PARENT.remove();
 	}
 
