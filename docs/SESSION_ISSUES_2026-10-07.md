@@ -496,3 +496,18 @@
 - **게시 범위**: 기존 evaluation의 maxi10/max_features2 설정은 그대로이고 별도 planner Java 수정/LogReg 수정/실험 재시작은 포함하지 않는다. 이번 결과는 source/JAR/호출 그래프/수치·예산 회귀 검증이며50K×128 전체 플래닝이나 학습 runtime 완주를 뜻하지 않는다. 기록은 `steplm-origin-sync-20261007/validation.json`, `build-test.log`, `guard-validation/`에 보존한다.
 
 - **StepLM 성능 중간 main 통합 게시 검증**:09588f7f4d와origin0b6dc23522186bf8d67bfbcfb1bb82c905abf4e2를 통합했다. 압축DP 내부좌표 delta/rollover, direct read-set+eligibility/no-op wave, native snapshot/handle 권한을 함께 검증했다. 중복realization/broadcast 인덱스는 하나로 유지하며 테스트reflection2건을 조정했다. Java656PASS+기존ignore1/Python78PASS/packagePASS/독립reviewCLEAR; actualDocker11/11PASS, StepLM전체compile17.911837초,5계수/선택[3,1,5]정확일치/audit0이다. 다만upstream은lm→lmCG로 workload를 바꿔 비용65701.88346157457을 과거37040.115993804146과 직접비교하지 않는다. 3회20초검증은진행중이다. 상세 `docs/experiments/steplm-planning-20s-20261007/publication-validation.json`.
+
+
+## StepLM 중간 게시 후 시간 변동과 workload 분리 — 진행중
+
+- **문제/조건**: f298378925를 origin/main에 게시했으나 원래 lm workload의 fresh JVM 3회가 20.870906/19.681566/19.244135초여서 20초 목표는 실패다. 전체 compile을 측정하며 Docker/리소스/입력은 유지한다.
+- **원인/해결**: 새 upstream의 lmCG builtin은 별도 workload다. 원래 lm 비교를 보존하고 origin0b6의 검증된 Java/classes와 정확한 새 builtin으로 실제 CG baseline을 실행했다(91.989792초, 비용65701.88346157457, 정확성 PASS). 평가기는 builtin 전체 fingerprint와 각 실행의 class inventory 재hash를 검증하며 비용 상한을 실제 baseline에서만 가져온다.
+- **추가 수정**: CandidateRuleKey의 동일 ordered structural 비교에서 iterator를 제거하고 DP boundary RHS 임시 PreciseCost 객체 및 audit hex formatter를 제거했다. 후보/authority/연산순서/비용·tie 규칙은 변경하지 않았다.
+- **수정 파일**: PlacementAnalysis.java, ExactCategoricalSolver.java, PlannerRuntimePlacementAudit.java, 대응 회귀 및 scripts/fedplanner/evaluate_steplm_planning.py.
+- **검증**: 중앙 Java105/105 PASS, Python evaluator16/16 PASS, package/독립review CLEAR. run_LAN_docker.sh의 legacy-screen28은20.989561초로 정확성만 PASS. 증거는 target/planning-evidence/step18-* 및 steplm-planning-20s-validation-20261007 아래에 보존한다.
+- **잔여/위험**: 양 workload 각각 fresh JVM3회≤20초 조건은 아직 미달이다. raw double/signedzero/overflow, record equality/hash충돌, 잘못된 UTF-16/locale 회귀로 미세 변경의 의미 차이를 감지한다. 큰 모델/CSV는 제외하고 resource 정책·합법 후보·runtime 규칙을 완화하지 않는다.
+
+- **후속 검증/변경**: support count/fill의 동일 좌표 decode를 O(scope rank) cursor로 바꾸고 기존 strict-majority 기준이 확정되면 count만 종료한다. factor/후보를 제거하는 조건이 아니다. entry 수가 알려진 identity map9곳은 정확한 크기로 초기화한다. source/key/value authority·정렬·산술·tie·resource cap은 유지한다. 독립review CLEAR, isolated51PASS, 중앙171건 중170PASS/기존ignore1/실패·오류0다. package 이후 원래lm/현재lmCG 각각 동결fresh JVM3회를 진행한다.
+
+- **최신 동결 실패**: step19 원래lm3회22.836013/21.851988/18.783427초, 현재CG3회21.698392/19.212769/19.255013초로 둘 다 시간 조건만 FAIL. 비용·모델·선택·artifact/builtin/resource 검증은 모두 PASS다.
+- **signature front 포화**: 작은 StepLM compile-only telemetry에서65536 identity front가6,668,400회 포화 상태였고1,714,667 admission이 거절됐다. private identity front만 다음 admission에서 교체하여 structural fallback1773560→255426회(-85.6%), rotation3회, canonical miss6643회 동일을 확인했다. structural String cache/64M character 예산/weak cache/authority arena는 유지한다. PlacementIdentity.java와 AnalysisScope 회귀를 수정했다. 양쪽 compile-only 테스트 및 신규 scope6회귀 PASS/독립review CLEAR; 중앙/Docker 검증은 진행중이다. 이전 hotalias 재조회 비용은 실제 반복측정으로 확인한다.

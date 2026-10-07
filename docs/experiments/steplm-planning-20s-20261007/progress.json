@@ -499,6 +499,281 @@
       ],
       "harnessStatus": "PASSED",
       "twentySecondGate": false
+    },
+    {
+      "run": "steplm-20s-legacy-final2-01",
+      "workload": "original-lm",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-legacy-final2-01/result.json",
+      "resultSha256": "ab66be80bcd8018b36e682da7109267b1c69a1c2a962601d07c3f2cae9e8eeea",
+      "compilationSeconds": 20.870906,
+      "plannerCheckpointSeconds": 6.758078825,
+      "dpSeconds": 3.566929954,
+      "executionSeconds": 0.95,
+      "canonicalCost": 37040.115993804146,
+      "lowerBound": 23216.114867705463,
+      "phase": "RESOURCE",
+      "merges": 4899,
+      "logicalAssignments": 12482523649,
+      "conditionalAttempts": 54,
+      "modelMaxAbsDifference": 0.0,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": false
+    },
+    {
+      "run": "steplm-20s-legacy-final2-02",
+      "workload": "original-lm",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-legacy-final2-02/result.json",
+      "resultSha256": "bb30bce9aafa470911ab554ac062ba0852af354f0c3d0b90cc6e003532e2021f",
+      "compilationSeconds": 19.681566,
+      "plannerCheckpointSeconds": 5.971701816,
+      "dpSeconds": 3.363945049,
+      "executionSeconds": 0.881,
+      "canonicalCost": 37040.115993804146,
+      "lowerBound": 23216.114867705463,
+      "phase": "RESOURCE",
+      "merges": 4899,
+      "logicalAssignments": 12482523649,
+      "conditionalAttempts": 54,
+      "modelMaxAbsDifference": 0.0,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": true
+    },
+    {
+      "run": "steplm-20s-legacy-final2-03",
+      "workload": "original-lm",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-legacy-final2-03/result.json",
+      "resultSha256": "0b263b22d29b912b6f70a35635872c563ba4cabd2cc101a334b7cbb369ee5429",
+      "compilationSeconds": 19.244135,
+      "plannerCheckpointSeconds": 5.981608511,
+      "dpSeconds": 2.995141569,
+      "executionSeconds": 0.725,
+      "canonicalCost": 37040.115993804146,
+      "lowerBound": 23216.114867705463,
+      "phase": "RESOURCE",
+      "merges": 4899,
+      "logicalAssignments": 12482523649,
+      "conditionalAttempts": 54,
+      "modelMaxAbsDifference": 0.0,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": true
+    },
+    {
+      "run": "steplm-20s-origin-cg-26",
+      "workload": "current-lmCG",
+      "role": "baseline",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-origin-cg-26/result.json",
+      "resultSha256": "5ee814aca2218bde19a6a9351c3ef1ee8bc5667673a3bf40e976a89bf434918c",
+      "compilationSeconds": 91.989792,
+      "plannerCheckpointSeconds": 76.437749293,
+      "dpSeconds": 69.063137839,
+      "executionSeconds": 1.131,
+      "canonicalCost": 65701.88346157457,
+      "lowerBound": 30681.08112697982,
+      "phase": "RESOURCE",
+      "merges": 4456,
+      "logicalAssignments": 905386608,
+      "conditionalAttempts": 65,
+      "modelMaxAbsDifference": 0.0,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": false
+    },
+    {
+      "run": "steplm-20s-legacy-screen-28",
+      "workload": "original-lm",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-legacy-screen-28/result.json",
+      "resultSha256": "59009f0584071d8af9600ae544efde8b13c3efa3c8531f3542b6a6ace0c44b33",
+      "compilationSeconds": 20.989561,
+      "plannerCheckpointSeconds": 6.908712626,
+      "dpSeconds": 3.699801902,
+      "executionSeconds": 0.748,
+      "canonicalCost": 37040.115993804146,
+      "lowerBound": 23216.114867705463,
+      "phase": "RESOURCE",
+      "merges": 4899,
+      "logicalAssignments": 12482523649,
+      "conditionalAttempts": 54,
+      "modelMaxAbsDifference": 0.0,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": false
+    },
+    {
+      "run": "steplm-20s-legacy-final3-01",
+      "workload": "original-lm",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-legacy-final3-01/result.json",
+      "resultSha256": "d50a490045622b3add40f1ebae987eb8e922da39bc7028190f0d4ac070ed4fda",
+      "compilationSeconds": 22.836013,
+      "executionSeconds": 0.775,
+      "plannerCheckpointSeconds": 7.040933814,
+      "dpSeconds": 4.009901808,
+      "canonicalCost": 37040.115993804146,
+      "lowerBound": 23216.114867705463,
+      "phase": "RESOURCE",
+      "merges": 4899,
+      "logicalAssignments": 12482523649,
+      "conditionalAttempts": 54,
+      "modelMaxAbsDifference": 0.0,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": false
+    },
+    {
+      "run": "steplm-20s-legacy-final3-02",
+      "workload": "original-lm",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-legacy-final3-02/result.json",
+      "resultSha256": "6963d025b970c95f1d3c4072623c014ff9d73743d7adf4a81df5e719a3bab818",
+      "compilationSeconds": 21.851988,
+      "executionSeconds": 0.758,
+      "plannerCheckpointSeconds": 7.907235658,
+      "dpSeconds": 4.162963326,
+      "canonicalCost": 37040.115993804146,
+      "lowerBound": 23216.114867705463,
+      "phase": "RESOURCE",
+      "merges": 4899,
+      "logicalAssignments": 12482523649,
+      "conditionalAttempts": 54,
+      "modelMaxAbsDifference": 0.0,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": false
+    },
+    {
+      "run": "steplm-20s-legacy-final3-03",
+      "workload": "original-lm",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-legacy-final3-03/result.json",
+      "resultSha256": "4bd0e0dc4da13aaaa5bf8981e322d0f068e0276604aaed4605755802660e9963",
+      "compilationSeconds": 18.783427,
+      "executionSeconds": 0.839,
+      "plannerCheckpointSeconds": 5.867267758,
+      "dpSeconds": 3.488198684,
+      "canonicalCost": 37040.115993804146,
+      "lowerBound": 23216.114867705463,
+      "phase": "RESOURCE",
+      "merges": 4899,
+      "logicalAssignments": 12482523649,
+      "conditionalAttempts": 54,
+      "modelMaxAbsDifference": 0.0,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": true
+    },
+    {
+      "run": "steplm-20s-cg-final2-01",
+      "workload": "current-lmCG",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-cg-final2-01/result.json",
+      "resultSha256": "f257efc3ba239413977405786ae393cf1a758e6ae1f5fbfa54539033039a5c12",
+      "compilationSeconds": 21.698392,
+      "executionSeconds": 1.368,
+      "plannerCheckpointSeconds": 7.028801575,
+      "dpSeconds": 3.801946192,
+      "canonicalCost": 65701.88346157457,
+      "lowerBound": 38053.88120937728,
+      "phase": "RESOURCE",
+      "merges": 4501,
+      "logicalAssignments": 12501832068,
+      "conditionalAttempts": 51,
+      "modelMaxAbsDifference": 0.0,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": false
+    },
+    {
+      "run": "steplm-20s-cg-final2-02",
+      "workload": "current-lmCG",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-cg-final2-02/result.json",
+      "resultSha256": "9ac37892dbeb22952f53cea02194d8e02912ebaa144e55bcb5cb4ed6659382af",
+      "compilationSeconds": 19.212769,
+      "executionSeconds": 1.211,
+      "plannerCheckpointSeconds": 6.491628586,
+      "dpSeconds": 3.034899117,
+      "canonicalCost": 65701.88346157457,
+      "lowerBound": 38053.88120937728,
+      "phase": "RESOURCE",
+      "merges": 4501,
+      "logicalAssignments": 12501832068,
+      "conditionalAttempts": 51,
+      "modelMaxAbsDifference": 0.0,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": true
+    },
+    {
+      "run": "steplm-20s-cg-final2-03",
+      "workload": "current-lmCG",
+      "role": "candidate",
+      "resultPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-cg-final2-03/result.json",
+      "resultSha256": "6c4e3602ef26e12b7f82703429436530deda79d30dc013a1d4d57b00985722f4",
+      "compilationSeconds": 19.255013,
+      "executionSeconds": 1.345,
+      "plannerCheckpointSeconds": 6.991612556,
+      "dpSeconds": 3.743891948,
+      "canonicalCost": 65701.88346157457,
+      "lowerBound": 38053.88120937728,
+      "phase": "RESOURCE",
+      "merges": 4501,
+      "logicalAssignments": 12501832068,
+      "conditionalAttempts": 51,
+      "modelMaxAbsDifference": 0.0,
+      "selection": [
+        3,
+        1,
+        5
+      ],
+      "harnessStatus": "PASSED",
+      "twentySecondGate": true
     }
   ],
   "failedEvaluations": [
@@ -511,6 +786,38 @@
         23.449315
       ],
       "reason": "All three total compilation times exceeded 20 seconds; correctness and provenance gates passed."
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-legacy-final2-evaluation.json",
+      "status": "FAILED",
+      "compilationSeconds": [
+        20.870906,
+        19.681566,
+        19.244135
+      ],
+      "reason": "First of three exceeds 20 seconds; all correctness, resource, builtin and artifact gates passed."
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-legacy-final3-evaluation.json",
+      "status": "FAILED",
+      "compilationSeconds": [
+        22.836013,
+        21.851988,
+        18.783427
+      ],
+      "reason": "Timing failures only; all correctness/cost/builtin/environment/artifact gates passed."
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-cg-final2-evaluation.json",
+      "status": "FAILED",
+      "compilationSeconds": [
+        21.698392,
+        19.212769,
+        19.255013
+      ],
+      "reason": "Timing failures only; all correctness/cost/builtin/environment/artifact gates passed."
     }
-  ]
+  ],
+  "publicationCommit": "f298378925c2aebb8facbc5a363b277f5d557a74",
+  "additionalCurrentMainAcceptance": "Three fresh official Docker lmCG runs each <=20 seconds with the same builtin/resources and canonical cost no worse than validated origin0b6 baseline65701.88346157457; does not replace original lm contract."
 }

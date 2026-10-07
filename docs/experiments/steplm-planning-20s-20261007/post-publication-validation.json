@@ -1,0 +1,378 @@
+{
+  "status": "CORRECTNESS_PASSED_PERFORMANCE_TARGET_FAILED",
+  "publishedCommit": "f298378925c2aebb8facbc5a363b277f5d557a74",
+  "javaStep18": {
+    "suites": [
+      {
+        "name": "CandidateRuleKeyEqualityTest",
+        "tests": "2",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.175",
+        "timestamp": null
+      },
+      {
+        "name": "CandidateRuleFactsRealizationIndexTest",
+        "tests": "3",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.113",
+        "timestamp": null
+      },
+      {
+        "name": "CandidateRealizationReferenceHashTest",
+        "tests": "4",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.19",
+        "timestamp": null
+      },
+      {
+        "name": "PlacementRealizationAuthorityTest",
+        "tests": "12",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.436",
+        "timestamp": null
+      },
+      {
+        "name": "PlacementRealizationLookupIndexTest",
+        "tests": "1",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "2.745",
+        "timestamp": null
+      },
+      {
+        "name": "PlannerRuntimePlacementAuditShortHashTest",
+        "tests": "4",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.199",
+        "timestamp": null
+      },
+      {
+        "name": "PlannerCandidateSpaceAuditEncodingTest",
+        "tests": "2",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.99",
+        "timestamp": null
+      },
+      {
+        "name": "ExactCategoricalSolverArithmeticParityTest",
+        "tests": "10",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.275",
+        "timestamp": null
+      },
+      {
+        "name": "BoundarySupportMergeTest",
+        "tests": "13",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.268",
+        "timestamp": null
+      },
+      {
+        "name": "IncrementalBoundaryMessageTest",
+        "tests": "18",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.156",
+        "timestamp": null
+      },
+      {
+        "name": "SparseKnownZeroMaskTest",
+        "tests": "9",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.139",
+        "timestamp": null
+      },
+      {
+        "name": "ExactCategoricalSolverTest",
+        "tests": "22",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.552",
+        "timestamp": null
+      },
+      {
+        "name": "ExactDyadicOrderedResidualBoundaryTest",
+        "tests": "4",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.046",
+        "timestamp": null
+      },
+      {
+        "name": "StepLmPublicationReceiptClosureTest",
+        "tests": "1",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "17.447",
+        "timestamp": null
+      }
+    ],
+    "summary": {
+      "tests": 105,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "command_exit": 0,
+    "review": "CLEAR exact semantics/authority/ties"
+  },
+  "javaStep19": {
+    "suites": [
+      {
+        "name": "BoundarySupportMergeTest",
+        "tests": "14",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.283"
+      },
+      {
+        "name": "IncrementalBoundaryMessageTest",
+        "tests": "18",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.179"
+      },
+      {
+        "name": "ExactCategoricalSolverArithmeticParityTest",
+        "tests": "10",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.281"
+      },
+      {
+        "name": "SparseKnownZeroMaskTest",
+        "tests": "9",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.134"
+      },
+      {
+        "name": "PlacementDependencyComponentsTest",
+        "tests": "11",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.13"
+      },
+      {
+        "name": "DirectComponentScheduleCacheTest",
+        "tests": "4",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.073"
+      },
+      {
+        "name": "NativePlacementContinuityTest",
+        "tests": "89",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "1",
+        "time": "1.074"
+      },
+      {
+        "name": "NativePlacementGroundingAndSignatureTest",
+        "tests": "3",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.33"
+      },
+      {
+        "name": "PlacementRealizationAuthorityTest",
+        "tests": "12",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.439"
+      },
+      {
+        "name": "StepLmPublicationReceiptClosureTest",
+        "tests": "1",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "18.419"
+      }
+    ],
+    "summary": {
+      "tests": 171,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1
+    },
+    "commandExit": 0,
+    "review": "CLEAR cursor/order/identity/cardinality/authority/caps"
+  },
+  "isolatedCursorRegression": {
+    "passed": 51,
+    "log": "target/planning-evidence/boundary-projection-odometer-01/junit.log"
+  },
+  "pythonEvaluator": {
+    "passed": 16,
+    "log": "target/planning-evidence/step18-evaluator-python.log"
+  },
+  "review": "CLEAR: three allocation changes, support cursor and nine exact-cardinality maps",
+  "package": "step18, step19, step20 PASS",
+  "performance": {
+    "status": "FAILED",
+    "combinedReport": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/step19-two-workload-final-evaluation.json",
+    "legacyCompilationSeconds": [
+      22.836013,
+      21.851988,
+      18.783427
+    ],
+    "currentCgCompilationSeconds": [
+      21.698392,
+      19.212769,
+      19.255013
+    ],
+    "correctness": "All six PASSED model/selection/audits/cost/resource/builtin/artifact/source gates"
+  },
+  "sourceSha256": {
+    "scripts/fedplanner/evaluate_steplm_planning.py": "0146832fc6567f86dfa14d7c0abe30cdbaec27f877b833027697eb5693279fd6",
+    "scripts/fedplanner/tests/test_evaluate_steplm_planning.py": "c39ea3cbfcd2245e8f3f4be6647105862bf7b960b7dd6f32a7e6a78d64bd27d6",
+    "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.java": "ee8f3a30701890208a870c7dcc1d5f262c9ff544256c347face48dfc1650d13e",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/NativePlacementContinuity.java": "83e3680c0eebf9b096efffe7819d9d538f258eba7593016aea402e3dede49fa2",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.java": "aa2afbf281e62ca703f53f8f5ca13b393f0a5a2b27501e7e5f419cf3398c9880",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementDependencyComponents.java": "9ed0818b06112a1fc9842926fb6a00c75143d0e2124fda5d30d4c58b7ea3bd50",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementIdentity.java": "9cb90129be1513355320f2012702557b137ef5ccdd2418c190179aece30a421e",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java": "db39d9c57c7c0b2549ecfaf4b98a0c12b0aa4bdc7b75105ec4a3bced9146978c",
+    "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlannerRuntimePlacementAudit.java": "77c4a4a439201ff948acb8e2f21451e313e0d0306ed6839e41ef58538785a7ba",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/BoundarySupportMergeTest.java": "49c0bd715b407fe1790786ce3ec386b743b3307770247c61c1625a898ddf8fed",
+    "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolverArithmeticParityTest.java": "bc8405b89500bf6ab41218c5dc555ca592325f0679442adfc63f372498bbe0b9",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementIdentityAnalysisScopeTest.java": "8afbed9ee875aa0cf5ca2786895f69ec5dd7fe5a98d2c4c33ba1e5366ac943d0",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/CandidateRuleKeyEqualityTest.java": "e45d0b030af2f73401715f8d76350f90a44580d0c881799b2978cd9f75f1e9cf",
+    "src/test/java/org/apache/sysds/hops/fedplanner/placement/PlannerRuntimePlacementAuditShortHashTest.java": "c122b097e48961b8090d88f0c62895193c04238b89313a4d56dd210c1ed7117c"
+  },
+  "javaStep20": {
+    "suites": [
+      {
+        "name": "PlacementIdentityAnalysisScopeTest",
+        "tests": "6",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.293"
+      },
+      {
+        "name": "NativePlacementContinuityTest",
+        "tests": "89",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "1",
+        "time": "1.001"
+      },
+      {
+        "name": "NativePlacementGroundingAndSignatureTest",
+        "tests": "3",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.402"
+      },
+      {
+        "name": "CandidateRealizationReferenceHashTest",
+        "tests": "4",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.158"
+      },
+      {
+        "name": "CandidateRuleKeyEqualityTest",
+        "tests": "2",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.102"
+      },
+      {
+        "name": "PlacementRealizationAuthorityTest",
+        "tests": "12",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "0.458"
+      },
+      {
+        "name": "StepLmPublicationReceiptClosureTest",
+        "tests": "1",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "14.025"
+      }
+    ],
+    "summary": {
+      "tests": 117,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1
+    },
+    "commandExit": 0,
+    "review": "CLEAR private front only; structural cache/character budget/authority/lifecycle unchanged"
+  },
+  "nextPerformanceBatch": {
+    "legacy": "steplm-20s-legacy-final4",
+    "currentCg": "steplm-20s-cg-final3",
+    "status": "PENDING"
+  },
+  "signatureFrontTelemetry": {
+    "control": {
+      "log": "target/planning-evidence/identity-front-telemetry-01/control.log",
+      "sha256": "740de6bb3e233879e5f52fa393e894b5fa2c3ae5da0cc0cfb7d1219775ea66a9",
+      "counts": {
+        "calls": 8511543,
+        "identityHits": 6731340,
+        "structuralHits": 1773560,
+        "misses": 6643,
+        "atCapacity": 6668400,
+        "rotationsOrBlocked": 1714667,
+        "maxFront": 65536
+      },
+      "unitTest": "1/1 PASS; compile-only; not training-time evidence"
+    },
+    "new": {
+      "log": "target/planning-evidence/identity-front-telemetry-01/new.log",
+      "sha256": "5345cc07f91203da4b4ce71edad114b6ed5994272663731664570883503ae526",
+      "counts": {
+        "calls": 8516359,
+        "identityHits": 8254290,
+        "structuralHits": 255426,
+        "misses": 6643,
+        "atCapacity": 20,
+        "rotationsOrBlocked": 3,
+        "maxFront": 65536
+      },
+      "unitTest": "1/1 PASS; compile-only; not training-time evidence"
+    }
+  }
+}

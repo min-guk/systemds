@@ -3684,7 +3684,7 @@ final class NativePlacementContinuity {
 
 	private static <K,V> Map<K,V> immutableIdentityMap(Map<K,V> source, String name) {
 		Objects.requireNonNull(source, name);
-		Map<K,V> copy = new IdentityHashMap<>();
+		Map<K,V> copy = new IdentityHashMap<>(source.size());
 		source.forEach((key, value) -> copy.put(Objects.requireNonNull(key, name + " key"),
 			Objects.requireNonNull(value, name + " value")));
 		return Collections.unmodifiableMap(copy);

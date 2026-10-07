@@ -2468,10 +2468,13 @@ public final class PlannerRuntimePlacementAudit {
 		try {
 			byte[] digest = MessageDigest.getInstance("SHA-256")
 				.digest(value.getBytes(StandardCharsets.UTF_8));
-			StringBuilder out = new StringBuilder(16);
-			for(int i = 0; i < 8; i++)
-				out.append(String.format("%02x", digest[i]));
-			return out.toString();
+			char[] out = new char[16];
+			for(int i = 0; i < 8; i++) {
+				int next = digest[i] & 0xff;
+				out[2 * i] = "0123456789abcdef".charAt(next >>> 4);
+				out[2 * i + 1] = "0123456789abcdef".charAt(next & 0xf);
+			}
+			return new String(out);
 		}
 		catch(NoSuchAlgorithmException ex) {
 			throw new IllegalStateException("SHA-256 unavailable", ex);

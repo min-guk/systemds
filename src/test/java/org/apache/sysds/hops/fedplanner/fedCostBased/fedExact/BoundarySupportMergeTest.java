@@ -258,6 +258,41 @@ public class BoundarySupportMergeTest {
 	}
 
 	@Test
+	public void quotientOdometerPreservesNoncontiguousClassesRolloverAndSupportThresholds() {
+		var x = variable("odometer-x", 12);
+		var padding = variable("odometer-padding", 8);
+		var y = variable("odometer-y", 8);
+		var singleton = variable("odometer-singleton", 1);
+		var variables = List.of(x, padding, y, singleton);
+		List<ExactCategoricalSolver.Factor> childFactors = List.of(
+			factor(List.of(x, padding), 12, 8, ignored -> 1.0e16),
+			factor(List.of(x, padding), 12, 8,
+				cell -> cell[0] % 3 + (cell[1] % 2) * .25));
+		var denseChild = merge("baseline", variables, childFactors, List.of(x), null);
+		var compressedChild = merge("local_only", variables, childFactors, List.of(x), null);
+		Assert.assertTrue(compressedChild.retainedCells() < denseChild.retainedCells());
+
+		// The x profile repeats 0,1,2,0,..., so the compressed child's stored map is
+		// noncontiguous. This selective relation crosses both x/y rollover axes, while
+		// the y relation has 5/8 finite rows and must be omitted from the sparse join.
+		var selective = ExactCategoricalSolver.boundaryLeaf(variables,
+			factor(List.of(y, x), 8, 12,
+				cell -> cell[1] % 3 == cell[0] % 3 ? cell[1] + cell[0] * .01 : INF), LIMITS);
+		var omitted = ExactCategoricalSolver.boundaryLeaf(variables,
+			ExactCategoricalSolver.Factor.dense(List.of(y), 0d, 0d, 0d, 0d, 0d, INF, INF, INF),
+			LIMITS);
+		var singletonMessage = ExactCategoricalSolver.boundaryLeaf(variables,
+			ExactCategoricalSolver.Factor.dense(List.of(singleton), .5), LIMITS);
+		var emptyScope = ExactCategoricalSolver.boundaryLeaf(variables,
+			ExactCategoricalSolver.Factor.dense(List.of(), .25), LIMITS);
+		var baseline = mergeMessages("baseline",
+			List.of(denseChild, selective, omitted, singletonMessage, emptyScope), List.of(singleton));
+		var joined = mergeMessages("local_only",
+			List.of(compressedChild, selective, omitted, singletonMessage, emptyScope), List.of(singleton));
+		assertSnapshotEquals(snapshot(baseline, variables), snapshot(joined, variables));
+	}
+
+	@Test
 	public void singletonProjectionPreservesCompressedCoordinatesAndNestedWitnesses() {
 		var x = variable("alias-x", 12);
 		var y = variable("alias-y", 8);

@@ -185,3 +185,97 @@ lm 기준37040.115993804146과 직접 비교하지 않는다. 이전 실패 기�
 같은 builtin과 환경을 고정한 fresh JVM3회 검증이 남아 있으므로20초 목표 완료를 선언하지 않는다.
 자세한 SHA·source/class inventory·검증 결과는
 [`publication-validation.json`](experiments/steplm-planning-20s-20261007/publication-validation.json)에 있다.
+
+## 중간 게시 후 원래 workload 재검증 및 추가 할당 제거
+
+중간 개선본은 `f298378925c2aebb8facbc5a363b277f5d557a74`로 origin/main에 게시했다.
+원래 `lm` builtin을 별도 class snapshot에 고정한 fresh JVM 3회(`legacy-final2`)는
+20.870906 / 19.681566 / 19.244135초다. 첫 실행이 20초를 넘으므로 최종 판정은 **FAIL**이다.
+세 실행 모두 비용 `37040.115993804146`, 모델·선택·audit·artifact 검증은 통과했다.
+
+현재 main의 `lmCG` workload도 별도로 비교한다. 최적화 전 origin `0b6dc23522`의 Java
+1,645개가 보존된 빌드의 source와 일치함을 확인하고 정확한 builtin 두 파일을 적용해 실행했다.
+실제 Docker 기준 실행 `steplm-20s-origin-cg-26`은 전체 compile 91.989792초, 비용
+`65701.88346157457`로 성공했다. 원래 lm 비용 기준을 높이는 근거로 사용하지 않는다.
+완료에는 원래 lm과 현재 lmCG 각각 동일 workload 기준의 fresh JVM 3회 통과가 필요하다.
+
+평가기에는 전체 builtin DML의 파일명·내용 fingerprint와 frozen class inventory의 실제 재hash
+검사를 추가했다. baseline/candidate Java bytecode가 서로 다른 것은 허용하지만, 각 실행은
+자신의 manifest와 실제 class inventory가 일치해야 한다. 비용 상한은 정확성·환경 검증을
+통과한 실제 baseline receipt에서만 가져오며 임의의 상향 수치를 받지 않는다. 관련 Python
+회귀 16개가 통과했다.
+
+profile27에서 후보 rule key 비교의 ListItr 할당 251.2MB, DP boundary RHS 임시 비용 객체
+246.3MB가 sample weight로 관측됐다. rule key는 같은 immutable ordered list를 인덱스로
+비교하고, DP는 기존 high/low/tie 덧셈 순서를 유지하며 primitive 필드를 직접 전달한다.
+audit shortHash의 hex 출력도 String.format 대신 같은 소문자 16자 배열로 만든다.
+shortHash 전체의 348.7MB는 getBytes/digest 호출 경로이며 hex 변경으로 전부 없어졌다는
+뜻은 아니다. 구현별 wall-time 개선율도 따로 주장하지 않는다.
+
+변경 후 Java 집중 회귀 105/105, package, 독립 검토 CLEAR다. 실제 legacy screen28은
+20.989561초로 정확성 PASS / 시간 목표 미달이다. 원래 record equality와 비용 덧셈을
+독립 oracle로 비교하고 raw low 값, signed zero, INF/null/overflow 우선순위, hash 충돌,
+잘못된 UTF-16 및 locale를 검증했다. 추가 성능 조사와 최종 반복 검증을 계속한다.
+
+## support 좌표 반복 계산과 identity map 재확장 제거
+
+profile27의 788개 CPU sample 중 25개는 selective support의 count/fill 두 pass에서
+동일 quotient 좌표를 나눗셈으로 다시 decode하는 경로였다. 각 child scope 길이만큼의
+scratch를 사용하는 cursor로 바꾸고, 같은 ascending row 순서를 증분 계산한다.
+두 번째 pass 전에 초기 representative의 실제 storage 좌표로 reset한다. 기존의
+`finite rows * 2 > cells` 조건이 확정되면 count를 종료한다. 이 조건은 support-index
+사용 여부만 결정하며 factor 또는 후보를 제거하지 않는다. range/overflow certificate,
+논리 scope/cell preflight, support 배열 내용과 backtrace는 유지한다.
+
+별도로 정확한 entry 수를 이미 알고 있는 identity map 9곳을 그 크기로 초기화한다.
+반복 resize/rehash를 줄이는 변경이며 identity equality와 명시적 정렬 순서는 유지한다.
+선택 후보·cache/resource cap을 늘리지 않는다. 작은 map의 내부 순서는 달라질 수 있으나
+해당 소비 경로는 lookup/membership 또는 명시적 정렬만 사용함을 독립 검토했다.
+
+압축된 비연속 storage map, 여러 축의 rollover, singleton·empty scope, selective/omitted
+relation을 기존 dense 계산과 대조한 isolated 회귀 51/51 PASS와 독립 실제 diff 검토
+CLEAR를 확보했다. 중앙 검증과 두 workload의 동결 3회 측정을 이어서 수행한다.
+
+## 두 workload 동결 반복 판정 — 시간 목표 미달
+
+step19 중앙 171건 중 170 PASS / 기존 제외 1, package PASS 후 소스·class를 동결했다.
+원래 lm(`legacy-final3`)은 22.836013 / 21.851988 / 18.783427초, 현재 lmCG(`cg-final2`)는
+21.698392 / 19.212769 / 19.255013초다. 두 평가기 모두 **시간 조건만 FAIL**이며, 비용·모델·
+선택·builtin·resource·각 실행 artifact manifest 및 batch source 불변 조건은 모두 PASS다.
+단일 20초 미만 실행을 선택해서 목표 달성으로 보고하지 않는다. 실패 평가 원문은 결과 root의
+`steplm-20s-legacy-final3-evaluation.json`, `steplm-20s-cg-final2-evaluation.json`에 보존한다.
+
+후속 profile29는 983 CPU sample이다. support merge 전체 비중은 profile27의 55/788에서
+36/983으로 줄었으나, 이는 표본 관측이며 독립 wall-time 개선율이 아니다. 공통 분석과 조건부
+solve가 남아 있다. profile29에서는 실행 중 GC pause 총량이 작아 heap/GC 설정 변경 근거로
+사용하지 않는다. 기존 Docker/JVM 조건은 유지한다.
+
+큰 revisioned CandidateFactIndex 및 LogicalBoundary Session의 호출 간 공유는 채택하지
+않았다. 동적 owner/slot/order/anchor/carrier 검증 경계를 넓혀야 하고 현재 근거에 비해 변경이
+크다. 대신 signature identity front의 포화 이후 재사용 가능성을 좁은 범위에서 검증한다.
+
+## signature identity front 포화 후 반복 hash 해소
+
+StepLM compile-only fixture에서 identity front는 실제로 65,536개 한도에 도달했다.
+회전만 제거한 isolated control은 capacity 상태 조회 6,668,400회, admission 거절
+1,714,667회, identity hit 6,731,340회, structural hit 1,773,560회였다. 회전 후보는
+identity front를 3번 교체해 identity hit 8,254,290회, structural hit 255,426회다.
+비싼 structural fallback이 1,518,134회(85.6%) 줄었고 canonical miss는 양쪽 모두
+6,643회다. 전체 호출 수 8,511,543 대 8,516,359 차이는 내부 재귀 조회 경로 차이이며
+동일 호출 수를 주장하지 않는다. 양쪽 같은 StepLM 컴파일 회귀가 통과했다. 이 계측은
+작업량 근거이며 host 시간을 ML 성능으로 사용하지 않는다.
+
+변경은 한도에 도달한 private active identity front를 다음 유효 admission에서 clear하고
+현재 key를 넣는 것이다. 실제 문자열을 가진 structural cache와 64M character 예산,
+analysis 밖 weak cache, structural arena·candidate-reference authority는 유지한다.
+기존 identity hit는 rotation을 일으키지 않으며 예산을 넘는 serialization도 front를 지우지
+않는다. 70,000개 동등 alias의 동일 String instance, 두 admission 경로, bound와 scope
+cleanup 회귀 6/6 PASS 및 독립 검토 CLEAR다. 원자료는
+`target/planning-evidence/identity-front-telemetry-01/{control,new}.log`에 있다.
+
+기존 hot alias가 front에서 빠져 다시 준비될 수 있으므로 작업량 감소만으로 채택 성능을
+확정하지 않는다. 중앙 검증 후 같은 builtin·환경의 새 official Docker 3회씩을 판정한다.
+
+후속 중앙 step20은 117건 중 **116 PASS / 기존 제외 1 / 실패·오류 0**, package/diff check
+PASS다. 검증된 후속 구현을 별도 커밋한 후 `legacy-final4`, `cg-final3`라는 새 run ID로
+두 workload를 각각 3회 측정한다. 시간 목표는 그 판정이 끝날 때까지 미완료다.

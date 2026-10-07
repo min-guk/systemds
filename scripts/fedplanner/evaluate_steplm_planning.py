@@ -22,6 +22,8 @@ REFERENCE_RESULT = Path(
 CASE = "ml_steplm_local_matrix"
 RUN_COUNT = 3
 MAX_COMPILATION_SECONDS = 20.0
+# Historical default-reference objective. Candidate limits are derived from the
+# validated reference receipt rather than from this compatibility constant.
 MAX_OBJECTIVE = 37040.115993804146
 EXPECTED_SELECTION = [3, 1, 5]
 REQUIRED_AUDIT_SCHEMAS = {
@@ -53,6 +55,23 @@ def read_json(path: Path) -> dict[str, Any]:
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def tree_inventory_digest(root: Path) -> tuple[int, str] | None:
+    if not root.is_dir():
+        return None
+    inventory = {str(path.relative_to(root)): sha256_file(path)
+                 for path in sorted(root.rglob("*")) if path.is_file()}
+    payload = json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
+    return len(inventory), sha256_bytes(payload)
 
 
 def git_provenance() -> dict[str, Any]:
@@ -107,6 +126,48 @@ def docker_environment(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def builtin_dml_fingerprint(manifest: dict[str, Any]) -> dict[str, Any]:
+    frozen = manifest.get("frozenClasses")
+    root = Path(frozen) if isinstance(frozen, str) else None
+    builtin = root / "scripts/builtin" if root is not None else None
+    files = sorted(builtin.rglob("*.dml")) if builtin is not None and builtin.is_dir() else []
+    tree = hashlib.sha256()
+    hashes: dict[str, str] = {}
+    for path in files:
+        relative = path.relative_to(builtin).as_posix()
+        relative_bytes = relative.encode("utf-8")
+        content = path.read_bytes()
+        digest = sha256_bytes(content)
+        hashes[relative] = digest
+        tree.update(len(relative_bytes).to_bytes(8, "big"))
+        tree.update(relative_bytes)
+        tree.update(len(content).to_bytes(8, "big"))
+        tree.update(content)
+    return {
+        "builtinDmlTreePresent": bool(files),
+        "builtinDmlTreeSha256": tree.hexdigest() if files else None,
+        "builtinDmlFileCount": len(files),
+        "steplmDmlSha256": hashes.get("steplm.dml"),
+        "lmCgDmlSha256": hashes.get("lmCG.dml"),
+    }
+
+
+def frozen_main_classes_evidence(manifest: dict[str, Any]) -> dict[str, Any]:
+    inventories = manifest.get("artifactInventoryDigests")
+    inventories = inventories if isinstance(inventories, dict) else {}
+    frozen = manifest.get("frozenClasses")
+    actual = (tree_inventory_digest(Path(frozen))
+              if isinstance(frozen, str) else None)
+    declared = inventories.get("mainClasses")
+    return {
+        "present": actual is not None,
+        "fileCount": actual[0] if actual else None,
+        "actualSha256": actual[1] if actual else None,
+        "declaredSha256": declared,
+        "matched": actual is not None and actual[1] == declared,
+    }
+
+
 def workload_fingerprint(manifest: dict[str, Any]) -> dict[str, Any]:
     raw_inputs = manifest.get("inputSha256")
     inputs = raw_inputs if isinstance(raw_inputs, dict) else {}
@@ -120,6 +181,7 @@ def workload_fingerprint(manifest: dict[str, Any]) -> dict[str, Any]:
         "caseFixtureSha256": fixtures.get(CASE),
         "configFixtureSha256": fixtures.get("config"),
         "dependenciesSha256": inventories.get("dependencies"),
+        **builtin_dml_fingerprint(manifest),
     }
 
 
@@ -164,7 +226,8 @@ def require(errors: list[str], condition: bool, message: str) -> None:
         errors.append(message)
 
 
-def evaluate_result(result_path: Path, reference: dict[str, Any]) -> dict[str, Any]:
+def evaluate_result(result_path: Path, reference: dict[str, Any], *,
+                    validating_reference: bool = False) -> dict[str, Any]:
     errors: list[str] = []
     if result_path.is_file():
         result = read_json(result_path)
@@ -180,19 +243,28 @@ def evaluate_result(result_path: Path, reference: dict[str, Any]) -> dict[str, A
     case = one_case(result, errors)
     environment = docker_environment(manifest)
     workload = workload_fingerprint(manifest)
+    frozen_classes = frozen_main_classes_evidence(manifest)
     jvm_resources = jvm_resource_fingerprint(result_path.with_name("container-run.sh"))
     require(errors, environment == reference["environment"],
             f"environment mismatch: actual={environment!r} reference={reference['environment']!r}")
     require(errors, workload == reference["workload"],
             f"workload fingerprint mismatch: actual={workload!r} reference={reference['workload']!r}")
+    require(errors, frozen_classes["matched"] is True,
+            "frozen main classes inventory does not match manifest mainClasses digest")
     require(errors, jvm_resources == reference["jvmResources"],
             f"JVM resource mismatch: actual={jvm_resources!r} reference={reference['jvmResources']!r}")
     require(errors, result.get("status") == "PASSED", "result.status is not PASSED")
     require(errors, result.get("containerReturncode") == 0, "container return code is not zero")
-    require(errors, result.get("requestedCases") == [CASE],
-            f"result.requestedCases must be [{CASE!r}]")
-    require(errors, manifest.get("requestedCases") == [CASE],
-            f"manifest.requestedCases must be [{CASE!r}]")
+    if validating_reference:
+        require(errors, CASE in (result.get("requestedCases") or []),
+                f"reference result.requestedCases does not contain {CASE!r}")
+        require(errors, CASE in (manifest.get("requestedCases") or []),
+                f"reference manifest.requestedCases does not contain {CASE!r}")
+    else:
+        require(errors, result.get("requestedCases") == [CASE],
+                f"result.requestedCases must be [{CASE!r}]")
+        require(errors, manifest.get("requestedCases") == [CASE],
+                f"manifest.requestedCases must be [{CASE!r}]")
     require(errors, result.get("classPreflightPassed") is True,
             "class preflight did not pass")
     require(errors, result.get("overlayPreflightPassed") is True,
@@ -243,9 +315,13 @@ def evaluate_result(result_path: Path, reference: dict[str, Any]) -> dict[str, A
     require(errors, finite_number(compilation_seconds),
             "FED compilationSeconds is missing or non-finite")
     if finite_number(compilation_seconds):
-        require(errors, 0 <= compilation_seconds <= MAX_COMPILATION_SECONDS,
-                f"FED compilationSeconds {compilation_seconds} is outside "
-                f"[0, {MAX_COMPILATION_SECONDS}]")
+        if validating_reference:
+            require(errors, compilation_seconds >= 0,
+                    f"reference FED compilationSeconds {compilation_seconds} is negative")
+        else:
+            require(errors, 0 <= compilation_seconds <= MAX_COMPILATION_SECONDS,
+                    f"FED compilationSeconds {compilation_seconds} is outside "
+                    f"[0, {MAX_COMPILATION_SECONDS}]")
     summary = case.get("plannerCheckpointSummary")
     summary = summary if isinstance(summary, dict) else {}
     final = summary.get("final")
@@ -254,8 +330,13 @@ def evaluate_result(result_path: Path, reference: dict[str, Any]) -> dict[str, A
     require(errors, finite_number(objective),
             "selected canonical objective (final.upper) is missing or non-finite")
     if finite_number(objective):
-        require(errors, objective <= MAX_OBJECTIVE,
-                f"selected objective {objective} is worse than {MAX_OBJECTIVE}")
+        maximum_objective = reference.get("maximumObjective")
+        require(errors, finite_number(maximum_objective),
+                "reference maximum objective is missing or non-finite")
+        if finite_number(maximum_objective):
+            require(errors, objective <= maximum_objective,
+                    f"selected objective {objective} is worse than reference "
+                    f"{maximum_objective}")
 
     inventories = manifest.get("artifactInventoryDigests")
     inventories = inventories if isinstance(inventories, dict) else {}
@@ -288,6 +369,7 @@ def evaluate_result(result_path: Path, reference: dict[str, Any]) -> dict[str, A
         "auditRows": case.get("auditRows"),
         "environment": environment,
         "workloadFingerprint": workload,
+        "frozenMainClassesEvidence": frozen_classes,
         "jvmResourceFingerprint": jvm_resources,
         "manifestContainer": manifest.get("container"),
         "manifestRun": manifest.get("run"),
@@ -306,9 +388,12 @@ def reference_contract(reference_result: Path) -> dict[str, Any]:
     reference = read_json(reference_result)
     case_errors: list[str] = []
     case = one_case(reference, case_errors)
+    if case_errors:
+        raise ValueError(f"reference case is invalid: {case_errors!r}")
     final = ((case.get("plannerCheckpointSummary") or {}).get("final") or {})
-    if final.get("upper") != MAX_OBJECTIVE:
-        raise ValueError("reference canonical objective does not match the pinned contract")
+    objective = final.get("upper")
+    if not finite_number(objective) or objective < 0:
+        raise ValueError("reference canonical objective is missing, non-finite, or negative")
     manifest = read_json(manifest_path)
     environment = docker_environment(manifest)
     if any(value is None for value in environment.values()):
@@ -316,12 +401,38 @@ def reference_contract(reference_result: Path) -> dict[str, Any]:
     workload = workload_fingerprint(manifest)
     if (not isinstance(workload["caseFixtureSha256"], dict)
             or not isinstance(workload["configFixtureSha256"], dict)
-            or not isinstance(workload["dependenciesSha256"], str)):
+            or not isinstance(workload["dependenciesSha256"], str)
+            or workload["builtinDmlTreePresent"] is not True
+            or not isinstance(workload["builtinDmlTreeSha256"], str)
+            or not isinstance(workload["steplmDmlSha256"], str)
+            or not isinstance(workload["lmCgDmlSha256"], str)):
         raise ValueError(f"reference workload fingerprint is incomplete: {workload!r}")
+    frozen_classes = frozen_main_classes_evidence(manifest)
+    if frozen_classes["matched"] is not True:
+        raise ValueError("reference frozen main classes inventory does not match manifest digest")
     resources = jvm_resource_fingerprint(reference_result.with_name("container-run.sh"))
     if len(resources.get("workers") or []) != 3 or len(resources.get("caseProcesses") or []) != 2:
         raise ValueError(f"reference JVM resource fingerprint is incomplete: {resources!r}")
-    return {"environment": environment, "workload": workload, "jvmResources": resources}
+    contract = {
+        "environment": environment,
+        "workload": workload,
+        "jvmResources": resources,
+        "maximumObjective": objective,
+        "provenance": {
+            "result": str(reference_result.resolve()),
+            "resultSha256": sha256_bytes(reference_result.read_bytes()),
+            "manifest": str(manifest_path.resolve()),
+            "manifestSha256": sha256_bytes(manifest_path.read_bytes()),
+            "manifestContainer": manifest.get("container"),
+            "manifestRun": manifest.get("run"),
+            "selectedObjective": objective,
+            "frozenMainClassesEvidence": frozen_classes,
+        },
+    }
+    evaluated = evaluate_result(reference_result, contract, validating_reference=True)
+    if not evaluated["passed"]:
+        raise ValueError(f"reference result is not a valid PASSED baseline: {evaluated['errors']!r}")
+    return contract
 
 
 def harness_command(output_root: Path, stage_root: Path, run_id: str) -> list[str]:
@@ -392,7 +503,7 @@ def write_report(args: argparse.Namespace, result_paths: list[Path],
         "runCount": len(runs),
         "requiredRunCount": RUN_COUNT,
         "maxCompilationSeconds": MAX_COMPILATION_SECONDS,
-        "maxSelectedObjective": MAX_OBJECTIVE,
+        "maxSelectedObjective": reference["maximumObjective"],
         "expectedSelection": EXPECTED_SELECTION,
         "referenceResult": str(args.reference_result),
         "referenceContract": reference,

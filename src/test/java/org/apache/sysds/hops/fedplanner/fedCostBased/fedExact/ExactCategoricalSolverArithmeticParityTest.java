@@ -33,6 +33,9 @@ public class ExactCategoricalSolverArithmeticParityTest {
 	private static final Method HIGH;
 	private static final Method LOW;
 	private static final Method TIE;
+	private static final Constructor<?> PRECISE_CONSTRUCTOR;
+	private static final Method PRECISE_PLUS_OBJECT;
+	private static final Method PRECISE_PLUS_COMPONENTS;
 
 	static {
 		try {
@@ -44,16 +47,56 @@ public class ExactCategoricalSolverArithmeticParityTest {
 				"preciseSum", List.class, int[].class);
 			PRECISE_SUM.setAccessible(true);
 			Class<?> precise = Class.forName(ExactCategoricalSolver.class.getName() + "$PreciseCost");
+			PRECISE_CONSTRUCTOR = precise.getDeclaredConstructor(
+				double.class, double.class, long.class);
+			PRECISE_PLUS_OBJECT = precise.getDeclaredMethod("plus", precise);
+			PRECISE_PLUS_COMPONENTS = precise.getDeclaredMethod(
+				"plus", double.class, double.class, long.class);
 			HIGH = precise.getDeclaredMethod("high");
 			LOW = precise.getDeclaredMethod("low");
 			TIE = precise.getDeclaredMethod("tieCost");
 			HIGH.setAccessible(true);
 			LOW.setAccessible(true);
 			TIE.setAccessible(true);
+			PRECISE_CONSTRUCTOR.setAccessible(true);
+			PRECISE_PLUS_OBJECT.setAccessible(true);
+			PRECISE_PLUS_COMPONENTS.setAccessible(true);
 		}
 		catch(ReflectiveOperationException error) {
 			throw new ExceptionInInitializerError(error);
 		}
+	}
+
+	@Test
+	public void primitivePreciseAdditionMatchesLegacyObjectArithmetic() throws Exception {
+		Random random = new Random(0xA110CA7EL);
+		for(int trial = 0; trial < 2_000; trial++) {
+			LegacyCost left = new LegacyCost(randomFinite(random),
+				randomFinite(random) * 0x1.0p-48, random.nextInt(1_000_000));
+			LegacyCost right = new LegacyCost(randomFinite(random),
+				randomFinite(random) * 0x1.0p-48, random.nextInt(1_000_000));
+			assertRawEquals(left.plus(right), primitivePlus(left, right));
+		}
+		for(LegacyCost left : List.of(
+			new LegacyCost(+0d, -0d, 7L),
+			new LegacyCost(-0d, +0d, 11L),
+			new LegacyCost(1.0e16, 1d, 13L),
+			new LegacyCost(-1.0e16, -1d, 17L),
+			new LegacyCost(Double.POSITIVE_INFINITY, -19d, 23L)))
+			for(LegacyCost right : List.of(
+				new LegacyCost(+0d, -0d, 29L),
+				new LegacyCost(-0d, +0d, 31L),
+				new LegacyCost(1d, Math.scalb(1d, -54), 37L),
+				new LegacyCost(Double.POSITIVE_INFINITY, 41d, 43L)))
+				assertRawEquals(left.plus(right), primitivePlus(left, right));
+
+		Object infinity = PRECISE_CONSTRUCTOR.newInstance(Double.POSITIVE_INFINITY, -7d, 5L);
+		Object absorbed = PRECISE_PLUS_OBJECT.invoke(infinity, new Object[] {null});
+		assertRawEquals(new LegacyCost(Double.POSITIVE_INFINITY, 0d, 0L), reflectedCost(absorbed));
+		assertPrimitivePlusError(new LegacyCost(Double.MAX_VALUE, 0d, Long.MAX_VALUE),
+			new LegacyCost(Double.MAX_VALUE, 0d, 1L), "EXACT_VE_OBJECTIVE_OVERFLOW");
+		assertPrimitivePlusError(new LegacyCost(1d, 0d, Long.MAX_VALUE),
+			new LegacyCost(1d, 0d, 1L), "EXACT_VE_TIE_COST_OVERFLOW");
 	}
 
 	@Test
@@ -347,8 +390,27 @@ public class ExactCategoricalSolverArithmeticParityTest {
 		catch(InvocationTargetException error) {
 			throw error;
 		}
+		return reflectedCost(precise);
+	}
+
+	private static LegacyCost primitivePlus(LegacyCost left, LegacyCost right) throws Exception {
+		Object precise = PRECISE_CONSTRUCTOR.newInstance(left.high, left.low, left.tie);
+		return reflectedCost(PRECISE_PLUS_COMPONENTS.invoke(
+			precise, right.high, right.low, right.tie));
+	}
+
+	private static LegacyCost reflectedCost(Object precise) throws Exception {
 		return new LegacyCost((double) HIGH.invoke(precise), (double) LOW.invoke(precise),
 			(long) TIE.invoke(precise));
+	}
+
+	private static void assertPrimitivePlusError(LegacyCost left, LegacyCost right,
+		String expected) throws Exception {
+		Object precise = PRECISE_CONSTRUCTOR.newInstance(left.high, left.low, left.tie);
+		InvocationTargetException error = Assert.assertThrows(InvocationTargetException.class,
+			() -> PRECISE_PLUS_COMPONENTS.invoke(precise, right.high, right.low, right.tie));
+		Assert.assertEquals(IllegalArgumentException.class, error.getCause().getClass());
+		Assert.assertEquals(expected, error.getCause().getMessage());
 	}
 
 	private static LegacyCost legacySum(List<LegacyFactor> factors, int[] assignment) {

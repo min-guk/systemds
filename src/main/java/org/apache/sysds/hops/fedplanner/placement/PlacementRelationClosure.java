@@ -1474,7 +1474,7 @@ final class PlacementRelationClosure {
 		List<CandidateRuleFact> beforeFacts, List<Node> afterNodes, List<CandidateRuleFact> afterFacts) {
 		if(beforeNodes.size() != afterNodes.size())
 			throw new IllegalStateException("VALUE_MAP closure changed the occurrence universe");
-		IdentityHashMap<CompiledHopKey,Integer> ordinals = new IdentityHashMap<>();
+		IdentityHashMap<CompiledHopKey,Integer> ordinals = new IdentityHashMap<>(afterNodes.size());
 		java.util.TreeSet<Integer> changed = new java.util.TreeSet<>();
 		for(int ordinal = 0; ordinal < afterNodes.size(); ordinal++) {
 			Node before = beforeNodes.get(ordinal);
@@ -4072,7 +4072,7 @@ final class PlacementRelationClosure {
 				directBindingSlots.set(slot);
 		}
 		List<CompiledHopKey> owners = nodes.stream().map(Node::key).toList();
-		Set<CompiledHopKey> ownerSet = Collections.newSetFromMap(new IdentityHashMap<>());
+		Set<CompiledHopKey> ownerSet = Collections.newSetFromMap(new IdentityHashMap<>(owners.size()));
 		ownerSet.addAll(owners);
 		Map<CompiledHopKey,Set<CompiledHopKey>> potential = new IdentityHashMap<>();
 		for(CompiledInputEdgeFact edge : edges)
