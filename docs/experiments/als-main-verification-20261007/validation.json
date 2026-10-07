@@ -1,0 +1,149 @@
+{
+  "baseline": "9668cb432f051d0313c5668719b9adadb0c60314",
+  "branch": "verify/als-main-20261007",
+  "status": "ORIGINAL_ALS_REGRESSION_PASS",
+  "workspaceCleanup": {
+    "oldHead": "56d2ac628e4fde3cc1a3c3ddfc705931bab4c0f9",
+    "baseline": "9668cb432f051d0313c5668719b9adadb0c60314",
+    "workspace": "/home/mchoi/w1357-main-revalidation-r4-20261007",
+    "archive": "/grid/3/cofee-lm-sweep-mchoi-20260914/als-main-verification-20261007/previous-target-56d2ac628e",
+    "archivedEntries": 7259,
+    "verifiedArchiveBeforeCleanup": true,
+    "retainedEvidenceLinks": [
+      "alias-reachability-evidence",
+      "cost-fingerprint-evidence"
+    ],
+    "dependencies": "/home/mchoi/w1357-main-revalidation-r2-20261007/target/lib",
+    "cleanupScope": "Only current workspace target; all tracked work was committed/pushed. Other worktrees and external artifacts unchanged.",
+    "inventoryReceipt": "/home/mchoi/als-main-verification-20261007/workspace-cleanup.json",
+    "inventoryReceiptSha256": "fdf018e7a82989d8d646a4b84cc8e57929f4f29d2c77314cb449b723572ea142",
+    "newBranch": "verify/als-main-20261007"
+  },
+  "build": {
+    "command": {
+      "argv": [
+        "mvn",
+        "-q",
+        "-DskipTests",
+        "-Dcheckstyle.skip=true",
+        "-Drat.skip=true",
+        "-Dmaven.javadoc.skip=true",
+        "test-compile"
+      ],
+      "cwd": "/home/mchoi/w1357-main-revalidation-r4-20261007",
+      "baseline": "9668cb432f051d0313c5668719b9adadb0c60314",
+      "sourceFiles": 3808
+    },
+    "result": {
+      "exitCode": 0,
+      "sourceFiles": 3808,
+      "sourceChanged": false,
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "sourceManifest": "/home/mchoi/als-main-verification-20261007/source-sha-before-build.json",
+    "sourceManifestSha256": "b118f628d9254f239bff407295e3cbd413a952c317d25bb0b312eb017e3a134e",
+    "sourcesUnchangedAfterTest": true
+  },
+  "originalRegression": {
+    "class": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+    "method": "singleWorkerAlsPricesOneReusableCpRuntimeWeightMaterialization",
+    "testSourceSha256": "f241d50dbeebb24938b6eb678055aa57050b8f807a6b9247f9cd35d799e2446c",
+    "methodBodyIdenticalToPriorFailure": true,
+    "command": {
+      "argv": [
+        "/usr/lib/jvm/java-17-openjdk-amd64/bin/java",
+        "--add-modules",
+        "jdk.incubator.vector",
+        "--add-opens=java.base/java.nio=ALL-UNNAMED",
+        "--add-opens=java.base/java.io=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.ref=ALL-UNNAMED",
+        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+        "-Xmx8g",
+        "-XX:ActiveProcessorCount=4",
+        "-cp",
+        "/home/mchoi/als-main-verification-20261007/runner-classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/test-classes:/home/mchoi/w1357-main-revalidation-r4-20261007/target/lib/*",
+        "SingleMethodRunner",
+        "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.CampaignBG014AlsPartitionedComputeCostRedTest",
+        "singleWorkerAlsPricesOneReusableCpRuntimeWeightMaterialization"
+      ],
+      "cwd": "/home/mchoi/w1357-main-revalidation-r4-20261007",
+      "head": "9668cb432f051d0313c5668719b9adadb0c60314",
+      "timeoutSeconds": 600,
+      "parallelismNote": "Separate JVMs; compile-only verification on shared host, not a latency experiment."
+    },
+    "result": {
+      "exitCode": 0,
+      "timedOut": false,
+      "seconds": 76.00941576808691,
+      "stdoutSha256": "f98d9f211fe034029dd0ff5b1d89afaae18e5a1ee34d3184ba9fd8d8ecaa8dbb",
+      "stderrSha256": "edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0"
+    },
+    "junit": {
+      "run": 1,
+      "failures": 0,
+      "ignored": 0,
+      "runtimeMillis": 74910
+    }
+  },
+  "conditions": {
+    "n": 50000,
+    "d": 2100,
+    "rank": 10,
+    "maxi": 2,
+    "workers": 1,
+    "layout": "FULL",
+    "privacy": "PRIVATE_AGGREGATE",
+    "profile": "WAN-light",
+    "metadataOnly": true,
+    "heapGiB": 8,
+    "activeProcessorCount": 4
+  },
+  "covered": [
+    "Common analysis and candidate construction",
+    "Complete shared physical model and cost-surface preflight",
+    "One reusable FULL W2C materialization contribution; generic transfer dedup assertions",
+    "Exact optimization and validated physical selection",
+    "Local DP optimization and validated physical selection",
+    "Exact/Local cost-surface equality and existing selected-owner assertions"
+  ],
+  "notCovered": [
+    "Plan projection/emission and LOP generation",
+    "Actual distributed ALS training and CP/FED numerical comparison",
+    "Performance comparison or a universal ALS success guarantee"
+  ],
+  "priorFailure": {
+    "baseline": "fbfd4d790feccc84997c3ac749eb8742b9e03a59",
+    "status": "EXACT_VE_FACTOR_CELL_OVERFLOW",
+    "stage": "physical cost-surface preflight before optimization",
+    "result": {
+      "exitCode": 1,
+      "timedOut": false,
+      "seconds": 26.012461118400097,
+      "stdoutSha256": "7db57991578677d455b80eb9712fcecf0adc29732155e524d1599da06f2021db",
+      "stderrSha256": "edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0"
+    },
+    "stdout": "/home/mchoi/main-revalidation-r4-20261007/als-canonical/stdout.log",
+    "stdoutSha256": "7db57991578677d455b80eb9712fcecf0adc29732155e524d1599da06f2021db"
+  },
+  "logs": {
+    "stdout.log": {
+      "raw": "/home/mchoi/als-main-verification-20261007/als-canonical/stdout.log",
+      "rawSha256": "f98d9f211fe034029dd0ff5b1d89afaae18e5a1ee34d3184ba9fd8d8ecaa8dbb",
+      "committedSha256": "f98d9f211fe034029dd0ff5b1d89afaae18e5a1ee34d3184ba9fd8d8ecaa8dbb",
+      "formatting": "Only trailing blank lines removed."
+    },
+    "stderr.log": {
+      "raw": "/home/mchoi/als-main-verification-20261007/als-canonical/stderr.log",
+      "rawSha256": "edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0",
+      "committedSha256": "edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0",
+      "formatting": "Only trailing blank lines removed."
+    }
+  },
+  "implementationChanged": false,
+  "expectationsRelaxed": false,
+  "solverLimitsChanged": false,
+  "performanceClaim": false
+}
