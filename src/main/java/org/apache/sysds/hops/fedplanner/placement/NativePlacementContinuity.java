@@ -135,6 +135,7 @@ final class NativePlacementContinuity {
 	private final int topologyMaxEntries;
 	private final long topologyMaxRows;
 	private long topologyRetainedRows;
+	private long topologyRetainedOwnerReads;
 	private final SearchSpaceMetrics metrics;
 	// The observer is revision-local. CandidateQueryKey additionally retains the
 	// complete rule/emission/product reference and exact worker/layout witness.
@@ -180,9 +181,6 @@ final class NativePlacementContinuity {
 	private long acyclicComponentRetainedStates;
 	private long acyclicComponentRetainedAlternatives;
 	private RevisionComparisonSnapshot revisionComparison = RevisionComparisonSnapshot.EMPTY;
-	private final Map<CandidateRealizationReference,FixedValueMapPool> fixedValueMapPools =
-		new java.util.HashMap<>();
-	private final Set<CandidateRealizationReference> unresolvedFixedValueMaps = new java.util.HashSet<>();
 	// Only local immutable rows are shared. A query's representative anchor still
 	// depends on its historical BFS/sweep order, so cached results are not graph leaves.
 	// Reference equality is structural, while candidate fact lookup owns exact Hop
@@ -210,9 +208,47 @@ final class NativePlacementContinuity {
 	FixedPoolWorkSnapshot fixedPoolWorkSnapshot() {
 		return fixedPoolWork == null ? new FixedPoolWorkSnapshot(0, 0, 0, 0, 0) : fixedPoolWork.snapshot();
 	}
+	private final Map<FixedValueMapReferenceKey,FixedValueMapResolution> fixedValueMapResolutions =
+		new java.util.LinkedHashMap<>(16, 0.75f, true);
+	private final int fixedValueMapMaxEntries;
+	private final long fixedValueMapMaxOwnerReads;
+	private long fixedValueMapRetainedOwnerReads;
 
 	record FixedValueMapPool(DurableAnchorKey pool, boolean exactLayout,
 		boolean exactPhysicalLayout) { }
+	record FixedValueMapResolution(FixedValueMapPool pool, Set<CompiledHopKey> ownerReads) {
+		FixedValueMapResolution {
+			if(!(ownerReads instanceof ImmutableIdentityOwnerReads))
+				ownerReads = new ImmutableIdentityOwnerReads(ownerReads);
+		}
+	}
+	private static final class ImmutableIdentityOwnerReads
+		extends java.util.AbstractSet<CompiledHopKey> {
+		private final Set<CompiledHopKey> delegate;
+		private ImmutableIdentityOwnerReads(java.util.Collection<CompiledHopKey> owners) {
+			Set<CompiledHopKey> identity = Collections.newSetFromMap(new IdentityHashMap<>());
+			identity.addAll(owners);
+			delegate = Collections.unmodifiableSet(identity);
+		}
+		@Override public java.util.Iterator<CompiledHopKey> iterator() { return delegate.iterator(); }
+		@Override public int size() { return delegate.size(); }
+		@Override public boolean contains(Object owner) { return delegate.contains(owner); }
+	}
+	private static final class FixedValueMapReferenceKey {
+		private final CompiledHopKey owner;
+		private final CandidateRealizationReference reference;
+		private final int hashCode;
+		private FixedValueMapReferenceKey(CandidateRealizationReference reference) {
+			owner = reference.rule().parentOccurrence();
+			this.reference = reference;
+			hashCode = 31 * System.identityHashCode(owner) + reference.hashCode();
+		}
+		@Override public int hashCode() { return hashCode; }
+		@Override public boolean equals(Object other) {
+			return this == other || other instanceof FixedValueMapReferenceKey that
+				&& owner == that.owner && reference.equals(that.reference);
+		}
+	}
 	private record FixedPoolClause(FixedValueMapPool leaf,
 		List<CandidateRealizationReference> sources) { }
 	private record FixedPoolNode(List<FixedPoolClause> clauses) { }
@@ -380,6 +416,10 @@ final class NativePlacementContinuity {
 			Integer.getInteger("sysds.fedplanner.continuityTopology.maxEntries", 2048));
 		topologyMaxRows = Math.max(0,
 			Long.getLong("sysds.fedplanner.continuityTopology.maxRows", 131072L));
+		fixedValueMapMaxEntries = Math.max(0,
+			Integer.getInteger("sysds.fedplanner.fixedValueMap.maxEntries", 4096));
+		fixedValueMapMaxOwnerReads = Math.max(0,
+			Long.getLong("sysds.fedplanner.fixedValueMap.maxOwnerReads", 131072L));
 		completedProofMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
 		completedSupportMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
 		acyclicRootSupportMemo = new java.util.LinkedHashMap<>(16, 0.75f, true);
@@ -587,6 +627,10 @@ final class NativePlacementContinuity {
 				next, key, changedOccurrences, comparisonWork, boundOwnerImpact)))
 				continue;
 			CandidateTopology topology = entry.getValue();
+			if(topology.metadataOwnerReads.stream().anyMatch(owner ->
+				!unchangedRows.computeIfAbsent(owner, key -> unchangedContinuityFacts(
+					next, key, changedOccurrences, comparisonWork, boundOwnerImpact))))
+				continue;
 			CandidateTopology migrated = sharedExactAuthority && topology.hasStableStructuralHandles()
 				? topology : next.reindexTopology(topology);
 			if(next.cacheTopology(entry.getKey(), migrated))
@@ -2160,9 +2204,24 @@ final class NativePlacementContinuity {
 			.flatMap(fact -> fact.allowedEmissionFacts().stream())
 			.flatMap(emission -> emission.realizations().stream())
 			.filter(realization -> realization.key().equals(reference.realization()))
-			.flatMap(realization -> realization.supportClauses().stream())
-			.anyMatch(clause -> clause.nativeWorkerPoolWitness() != null
-				&& !clause.nativeWorkerPoolLayoutExact());
+			.anyMatch(realization -> hasDynamicNativeLayout(realization.supportClauses()));
+	}
+
+	static boolean hasDynamicNativeLayout(List<CandidateRealizationSupportClause> supportClauses) {
+		if(supportClauses instanceof FactorizedSupportClauses factorized)
+			return factorized.nativeWorkerPoolWitness() != null
+				&& !factorized.nativeWorkerPoolLayoutExact();
+		if(supportClauses instanceof IndexedSupportClauses indexed) {
+			for(int row = 0; row < indexed.size(); row++)
+				if(indexed.witnessAt(row) != null && !indexed.layoutExactAt(row))
+					return true;
+			return false;
+		}
+		for(var clause : supportClauses)
+			if(clause.nativeWorkerPoolWitness() != null
+				&& !clause.nativeWorkerPoolLayoutExact())
+				return true;
+		return false;
 	}
 
 	private ComputedPublicProof proveCandidateAlternatives(CandidateRealizationReference source,
@@ -2382,6 +2441,8 @@ final class NativePlacementContinuity {
 		Set<CompiledHopKey> occurrences = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(CandidateProofState state : graph.keySet())
 			occurrences.add(state.key());
+		for(Set<CompiledHopKey> hiddenReads : traversal.hiddenOwnerReadsByState.values())
+			occurrences.addAll(hiddenReads);
 		// A reused acyclic boundary deliberately hides its transitive graph states
 		// from this query's work graph. They still belong to the completed support's
 		// invalidation footprint and must cross revisions only when every row matches.
@@ -2701,38 +2762,113 @@ final class NativePlacementContinuity {
 	private void enumerateImmediateSupports(List<List<CandidateRealizationInputBinding>> options,
 		int ordinal, List<CandidateRealizationInputBinding> current,
 		java.util.function.Consumer<List<CandidateRealizationInputBinding>> consumer) {
-		enumerateImmediateSupports(options, ordinal, current, new IdentityHashMap<>(), consumer);
+		if(ordinal != 0 || !current.isEmpty())
+			throw new IllegalArgumentException("Immediate support enumeration must start at the root");
+		Map<CompiledHopKey,List<Integer>> ownerAxes = new IdentityHashMap<>();
+		for(int axis = 0; axis < options.size(); axis++) {
+			Set<CompiledHopKey> owners = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(CandidateRealizationInputBinding binding : options.get(axis))
+				if(owners.add(binding.source().rule().parentOccurrence()))
+					ownerAxes.computeIfAbsent(binding.source().rule().parentOccurrence(),
+						ignored -> new ArrayList<>()).add(axis);
+		}
+		if(metrics != null)
+			metrics.recordSupportMrvProduct();
+		if(ownerAxes.values().stream().noneMatch(axes -> axes.size() > 1)) {
+			// Owner-disjoint domains never narrow under another input choice. Their
+			// MRV order is constant: avoid rebuilding a selected-owner map and
+			// rescanning every domain at each prefix of this common product.
+			List<Integer> order = java.util.stream.IntStream.range(0, options.size()).boxed()
+				.sorted(java.util.Comparator.comparingInt(axis -> options.get(axis).size())).toList();
+			enumerateIndependentImmediateSupports(options, order,
+				new CandidateRealizationInputBinding[options.size()], 0, consumer);
+			return;
+		}
+		enumerateImmediateSupportsMrv(new ArrayList<>(options),
+			new CandidateRealizationInputBinding[options.size()], 0,
+			ownerAxes, new IdentityHashMap<>(), consumer);
 	}
 
-	private void enumerateImmediateSupports(List<List<CandidateRealizationInputBinding>> options,
-		int ordinal, List<CandidateRealizationInputBinding> current,
+	private void enumerateIndependentImmediateSupports(List<List<CandidateRealizationInputBinding>> domains,
+		List<Integer> order, CandidateRealizationInputBinding[] current, int depth,
+		java.util.function.Consumer<List<CandidateRealizationInputBinding>> consumer) {
+		if(metrics != null)
+			metrics.recordSupportPrefix(depth);
+		if(depth == domains.size()) {
+			if(metrics != null)
+				metrics.recordSupportLeaf();
+			consumer.accept(List.of(current.clone()));
+			return;
+		}
+		int axis = order.get(depth);
+		for(CandidateRealizationInputBinding binding : domains.get(axis)) {
+			current[axis] = binding;
+			enumerateIndependentImmediateSupports(domains, order, current, depth + 1, consumer);
+		}
+		current[axis] = null;
+	}
+
+	private void enumerateImmediateSupportsMrv(List<List<CandidateRealizationInputBinding>> domains,
+		CandidateRealizationInputBinding[] current, int depth, Map<CompiledHopKey,List<Integer>> ownerAxes,
 		Map<CompiledHopKey,CandidateRealizationReference> selected,
 		java.util.function.Consumer<List<CandidateRealizationInputBinding>> consumer) {
 		if(metrics != null)
-			metrics.recordSupportPrefix(ordinal);
-		if(ordinal == options.size()) {
+			metrics.recordSupportPrefix(depth);
+		if(depth == domains.size()) {
 			if(metrics != null)
 				metrics.recordSupportLeaf();
-			consumer.accept(List.copyOf(current));
+			// Search order is independent of the exact input-position binding order.
+			consumer.accept(List.of(current.clone()));
 			return;
 		}
-		for(CandidateRealizationInputBinding binding : options.get(ordinal)) {
+		int axis = -1;
+		for(int candidate = 0; candidate < domains.size(); candidate++)
+			if(current[candidate] == null && (axis < 0 || domains.get(candidate).size() < domains.get(axis).size()))
+				axis = candidate;
+		for(CandidateRealizationInputBinding binding : domains.get(axis)) {
 			CompiledHopKey owner = binding.source().rule().parentOccurrence();
-			CandidateRealizationReference prior = selected.get(owner);
-			// The physical decision owner can select only one exact realization.
-			// Reject mixed choices before constructing a product leaf (ExactPhysicalModel
-			// rejects the same pair later through its selected-source factor).
-			if(prior != null && !prior.equals(binding.source())) {
-				if(metrics != null)
-					metrics.recordSupportConflictPrefix();
-				continue;
-			}
-			boolean first = prior == null;
-			if(first)
+			boolean first = !selected.containsKey(owner);
+			current[axis] = binding;
+			List<List<CandidateRealizationInputBinding>> narrowed = domains;
+			boolean viable = true;
+			if(first) {
 				selected.put(owner, binding.source());
-			current.add(binding);
-			enumerateImmediateSupports(options, ordinal + 1, current, selected, consumer);
-			current.remove(current.size() - 1);
+				// Only incident axes can conflict. Narrow them once when this exact
+				// owner is pinned, before expanding unrelated input choices.
+				for(int other : ownerAxes.get(owner)) {
+					if(current[other] != null)
+						continue;
+					List<CandidateRealizationInputBinding> remaining = null;
+					List<CandidateRealizationInputBinding> domain = domains.get(other);
+					for(int index = 0; index < domain.size(); index++) {
+						CandidateRealizationInputBinding option = domain.get(index);
+						boolean conflict = option.source().rule().parentOccurrence() == owner
+							&& !binding.source().equals(option.source());
+						if(metrics != null)
+							metrics.recordSupportSourceCheck(conflict);
+						if(conflict) {
+							if(metrics != null)
+								metrics.recordSupportConflictPrefix();
+							if(remaining == null)
+								remaining = new ArrayList<>(domain.subList(0, index));
+						}
+						else if(remaining != null)
+							remaining.add(option);
+					}
+					if(remaining != null) {
+						if(remaining.isEmpty()) {
+							viable = false;
+							break;
+						}
+						if(narrowed == domains)
+							narrowed = new ArrayList<>(domains);
+						narrowed.set(other, remaining);
+					}
+				}
+			}
+			if(viable)
+				enumerateImmediateSupportsMrv(narrowed, current, depth + 1, ownerAxes, selected, consumer);
+			current[axis] = null;
 			if(first)
 				selected.remove(owner);
 		}
@@ -2769,9 +2905,12 @@ final class NativePlacementContinuity {
 		try {
 			List<SelectedCandidateProof> alternatives = candidateProofAlternatives(
 				state.key(), state.realization(), state.realizationHandle(), state.witness(),
-				state.templateRoot(), fixed, fixedHandles, generatedRoot ? generation : null);
+				state.templateRoot(), fixed, fixedHandles, generatedRoot ? generation : null, traversal);
 			DefaultTraversalSchedule defaultSchedule = alternatives instanceof DefaultAlternativeList defaults
 				? defaults.traversalSchedule(metrics) : null;
+			if(generation != null && traversal.hiddenOwnerReadsByState
+				.getOrDefault(state, Set.of()).contains(root.key()))
+				traversal.generatedRootDependencyObserved = true;
 			// Record dependency-to-root reads from the unpruned alternatives. The
 			// dependency is query-pinned to the generated realization, so its recursive
 			// state can equal the active root and return before an ordinary row is built.
@@ -2890,6 +3029,7 @@ final class NativePlacementContinuity {
 				continue;
 			}
 			occurrences.add(state.key());
+			occurrences.addAll(traversal.hiddenOwnerReadsByState.getOrDefault(state, Set.of()));
 			retainedStates++;
 			if(retainedStates > acyclicComponentMaxStates)
 				return null;
@@ -2897,8 +3037,9 @@ final class NativePlacementContinuity {
 				for(CandidateProofDependency dependency : alternative.dependencies)
 					pending.addLast(dependency.state());
 		}
-		return new AcyclicComponentFootprint(Collections.unmodifiableSet(occurrences),
-			retainedStates);
+		retainedStates = Math.max(retainedStates, occurrences.size());
+		return retainedStates > acyclicComponentMaxStates ? null
+			: new AcyclicComponentFootprint(Collections.unmodifiableSet(occurrences), retainedStates);
 	}
 
 	private void cacheAcyclicRootChildren(
@@ -2967,11 +3108,23 @@ final class NativePlacementContinuity {
 		CandidateRealizationReference pinned, int pinnedHandle, NativePoolWitness witness,
 		boolean allowPinnedTemplate, Map<CompiledHopKey,CandidateRealizationReference> fixed,
 		Map<CompiledHopKey,Integer> fixedHandles, GenerationRoot generation) {
+		return candidateProofAlternatives(key, pinned, pinnedHandle, witness,
+			allowPinnedTemplate, fixed, fixedHandles, generation, new CandidateProofTraversal());
+	}
+
+	private List<SelectedCandidateProof> candidateProofAlternatives(CompiledHopKey key,
+		CandidateRealizationReference pinned, int pinnedHandle, NativePoolWitness witness,
+		boolean allowPinnedTemplate, Map<CompiledHopKey,CandidateRealizationReference> fixed,
+		Map<CompiledHopKey,Integer> fixedHandles, GenerationRoot generation,
+		CandidateProofTraversal traversal) {
 		if(metrics != null)
 			metrics.recordTopologyOverlayEvaluation();
 		if(generation != null)
 			return generatedRootAlternative(key, pinned, witness, fixed, fixedHandles, generation);
 		CandidateTopology topology = candidateTopology(key, witness);
+		traversal.hiddenOwnerReadsByState.put(
+			new CandidateProofState(key, pinned, pinnedHandle, witness, allowPinnedTemplate),
+			topology.metadataOwnerReads);
 		if(!topology.eligible)
 			return List.of();
 		// A topology owns immutable default edges, not query support results.
@@ -3129,7 +3282,7 @@ final class NativePlacementContinuity {
 		if(node == null || hop == null || incompleteSources.contains(key)
 			|| node.legalAlternatives().stream().noneMatch(state ->
 				state.output() == FederatedOutput.FOUT && state.fType() == witness.fType)) {
-			CandidateTopology unavailable = new CandidateTopology(false, false, List.of(), Map.of());
+			CandidateTopology unavailable = new CandidateTopology(false, false, List.of(), Map.of(), Set.of());
 			cacheTopology(topologyKey, unavailable);
 			if(metrics != null)
 				metrics.recordTopologyExpansion(false, 0);
@@ -3140,6 +3293,7 @@ final class NativePlacementContinuity {
 				&& state.fType() == witness.fType) && node.anchors().stream()
 			.anyMatch(anchor -> witness.matches(nativeWitness(anchor), true));
 		List<CandidateTopologyRow> rows = new ArrayList<>();
+		Set<CompiledHopKey> metadataOwnerReads = Collections.newSetFromMap(new IdentityHashMap<>());
 		Set<ContinuityEdgeKey> seen = new java.util.HashSet<>();
 		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
 			if(metrics != null)
@@ -3196,9 +3350,12 @@ final class NativePlacementContinuity {
 					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 						if(metrics != null)
 							metrics.recordProofRowExamined();
-						FixedValueMapPool fixedMap = realization.key().layoutKind()
+						FixedValueMapResolution fixedResolution = realization.key().layoutKind()
 							== PlacementIdentity.PlacementLayoutKind.VALUE_MAP
-							? fixedValueMapPool(reference) : null;
+							? fixedValueMapResolution(reference)
+							: new FixedValueMapResolution(null, Set.of());
+						metadataOwnerReads.addAll(fixedResolution.ownerReads());
+						FixedValueMapPool fixedMap = fixedResolution.pool();
 						boolean fixedMapGround = fixedMap != null
 							&& witness.matches(nativeWitness(fixedMap.pool()), fixedMap.exactLayout());
 						List<CandidateDependencySkeleton> dependencies = fixedMapGround ? List.of()
@@ -3233,7 +3390,7 @@ final class NativePlacementContinuity {
 				ignored -> new ArrayList<>()).add(row);
 		mutableRowsByHandle.replaceAll((ignored, referenceRows) -> List.copyOf(referenceRows));
 		CandidateTopology topology = new CandidateTopology(true, nodeDirectGround, canonicalRows,
-			Collections.unmodifiableMap(mutableRowsByHandle));
+			Collections.unmodifiableMap(mutableRowsByHandle), metadataOwnerReads);
 		cacheTopology(topologyKey, topology);
 		if(metrics != null)
 			metrics.recordTopologyExpansion(false, canonicalRows.size());
@@ -3293,30 +3450,37 @@ final class NativePlacementContinuity {
 				ignored -> new ArrayList<>()).add(row);
 		rowsByHandle.replaceAll((ignored, referenceRows) -> List.copyOf(referenceRows));
 		return new CandidateTopology(true, topology.nodeDirectGround, List.copyOf(rows),
-			Collections.unmodifiableMap(rowsByHandle));
+			Collections.unmodifiableMap(rowsByHandle), topology.metadataOwnerReads);
 	}
 
 	private boolean cacheTopology(CandidateTopologyKey key, CandidateTopology topology) {
 		long rows = topology.rows.size();
-		if(topologyMaxEntries == 0 || topologyMaxRows == 0 || rows > topologyMaxRows) {
+		long ownerReads = topology.metadataOwnerReads.size();
+		if(topologyMaxEntries == 0 || topologyMaxRows == 0
+			|| rows + ownerReads > topologyMaxRows) {
 			if(metrics != null)
 				metrics.recordTopologyCacheBypass();
 			return false;
 		}
 		CandidateTopology prior = candidateTopologies.remove(key);
-		if(prior != null)
+		if(prior != null) {
 			topologyRetainedRows -= prior.rows.size();
+			topologyRetainedOwnerReads -= prior.metadataOwnerReads.size();
+		}
 		while(!candidateTopologies.isEmpty()
 			&& (candidateTopologies.size() >= topologyMaxEntries
-				|| topologyRetainedRows + rows > topologyMaxRows)) {
+				|| topologyRetainedRows + topologyRetainedOwnerReads + rows + ownerReads
+					> topologyMaxRows)) {
 			var oldest = candidateTopologies.entrySet().iterator().next();
 			topologyRetainedRows -= oldest.getValue().rows.size();
+			topologyRetainedOwnerReads -= oldest.getValue().metadataOwnerReads.size();
 			candidateTopologies.remove(oldest.getKey());
 			if(metrics != null)
 				metrics.recordTopologyCacheEviction();
 		}
 		candidateTopologies.put(key, topology);
 		topologyRetainedRows += rows;
+		topologyRetainedOwnerReads += ownerReads;
 		if(metrics != null)
 			metrics.recordTopologyCacheResident(candidateTopologies.size(), topologyRetainedRows);
 		return true;
@@ -3568,42 +3732,48 @@ final class NativePlacementContinuity {
 	 * is selected.
 	 */
 	FixedValueMapPool fixedValueMapPool(CandidateRealizationReference reference) {
-		FixedValueMapPool cached = fixedValueMapPools.get(reference);
-		if(cached != null || unresolvedFixedValueMaps.contains(reference))
-			return cached;
-		FixedValueMapPool resolved = resolveFixedValueMapGraph(reference);
-		if(resolved == null)
-			unresolvedFixedValueMaps.add(reference);
-		return resolved;
+		return fixedValueMapResolution(reference).pool();
 	}
 
-	private FixedValueMapPool resolveFixedValueMapGraph(CandidateRealizationReference root) {
+	FixedValueMapResolution fixedValueMapResolution(CandidateRealizationReference reference) {
+		FixedValueMapReferenceKey key = new FixedValueMapReferenceKey(reference);
+		FixedValueMapResolution cached = fixedValueMapResolutions.get(key);
+		if(cached != null)
+			return cached;
+		return resolveFixedValueMapGraph(reference);
+	}
+
+	private FixedValueMapResolution resolveFixedValueMapGraph(CandidateRealizationReference root) {
+		Set<CompiledHopKey> ownerReads = Collections.newSetFromMap(new IdentityHashMap<>());
 		if(root.realization().layoutKind() != PlacementIdentity.PlacementLayoutKind.VALUE_MAP)
-			return null;
-		Map<CandidateRealizationReference,FixedPoolNode> graph = new java.util.LinkedHashMap<>();
+			return rememberFixedValueMapResolution(root, null, ownerReads);
+		Map<FixedValueMapReferenceKey,FixedPoolNode> graph = new java.util.LinkedHashMap<>();
 		java.util.ArrayDeque<CandidateRealizationReference> pending = new java.util.ArrayDeque<>();
 		pending.add(root);
 		while(!pending.isEmpty()) {
 			CandidateRealizationReference current = pending.removeFirst();
-			if(graph.containsKey(current))
+			FixedValueMapReferenceKey currentKey = new FixedValueMapReferenceKey(current);
+			if(graph.containsKey(currentKey))
 				continue;
+			ownerReads.add(current.rule().parentOccurrence());
 			FixedPoolNode node = fixedPoolNodes.computeIfAbsent(
 				current.rule().parentOccurrence(), ignored -> new java.util.HashMap<>())
 				.computeIfAbsent(current, this::decodeFixedPoolNode);
 			if(node.clauses().isEmpty())
-				return null;
-			graph.put(current, node);
+				return rememberFixedValueMapResolution(root, null, ownerReads);
+			graph.put(currentKey, node);
 			for(FixedPoolClause clause : node.clauses())
 				pending.addAll(clause.sources());
 		}
 
-		List<CandidateRealizationReference> references = new ArrayList<>(graph.keySet());
+		List<CandidateRealizationReference> references = graph.keySet().stream()
+			.map(key -> key.reference).collect(java.util.stream.Collectors.toList());
 		List<FixedPoolNode> rows = new ArrayList<>(graph.values());
 		int size = rows.size();
-		Map<CandidateRealizationReference,Integer> ids = new java.util.HashMap<>();
+		Map<FixedValueMapReferenceKey,Integer> ids = new java.util.HashMap<>();
 		FixedPoolGrounding[] work = new FixedPoolGrounding[size];
 		for(int owner = 0; owner < size; owner++) {
-			ids.put(references.get(owner), owner);
+			ids.put(new FixedValueMapReferenceKey(references.get(owner)), owner);
 			work[owner] = new FixedPoolGrounding(rows.get(owner).clauses().size());
 		}
 		// The priority is the old full-scan position: round * size + BFS ordinal.
@@ -3614,9 +3784,9 @@ final class NativePlacementContinuity {
 			for(int clauseIndex = 0; clauseIndex < clauses.size(); clauseIndex++) {
 				FixedPoolClause clause = clauses.get(clauseIndex);
 				if(clause.leaf() != null && !work[owner].accept(clauseIndex, -1, clause.leaf()))
-					return null;
+					return rememberFixedValueMapResolution(root, null, ownerReads);
 				for(int position = 0; position < clause.sources().size(); position++)
-					work[ids.get(clause.sources().get(position))].consumers.add(
+					work[ids.get(new FixedValueMapReferenceKey(clause.sources().get(position)))].consumers.add(
 						new FixedPoolUse(owner, clauseIndex, position));
 			}
 			if(work[owner].missingClauses == 0)
@@ -3633,7 +3803,7 @@ final class NativePlacementContinuity {
 			// The old final stable sweep compares prior/common even on singleton
 			// leaves. PART/OTHER or empty endpoints must not gain authority here.
 			if(!sameFixedEndpoints(node.selected, node.selected))
-				return null;
+				return rememberFixedValueMapResolution(root, null, ownerReads);
 			grounded++;
 			for(FixedPoolUse use : node.consumers) {
 				if(fixedPoolWork != null)
@@ -3641,7 +3811,7 @@ final class NativePlacementContinuity {
 				FixedPoolGrounding consumer = work[use.owner()];
 				boolean wasIncomplete = consumer.missingClauses != 0;
 				if(!consumer.accept(use.clause(), use.position(), node.selected))
-					return null;
+					return rememberFixedValueMapResolution(root, null, ownerReads);
 				if(wasIncomplete && consumer.missingClauses == 0) {
 					long round = activation / size + (use.owner() <= source ? 1 : 0);
 					ready.add(round * size + use.owner());
@@ -3650,7 +3820,7 @@ final class NativePlacementContinuity {
 		}
 		// A provisionally grounded parent cannot hide an ungrounded reachable SCC.
 		if(grounded != size)
-			return null;
+			return rememberFixedValueMapResolution(root, null, ownerReads);
 
 		// Inspect local geometry once, then propagate the two independent false
 		// bits only to consumers whose inputs changed. Never rescan all clauses.
@@ -3672,7 +3842,7 @@ final class NativePlacementContinuity {
 				for(CandidateRealizationReference source : clause.sources()) {
 					if(fixedPoolWork != null)
 						fixedPoolWork.geometryVisits++;
-					DurableAnchorKey pool = work[ids.get(source)].selected.pool();
+					DurableAnchorKey pool = work[ids.get(new FixedValueMapReferenceKey(source))].selected.pool();
 					inexact[owner] |= fixedPoolGeometryDifference(representative, pool);
 					representative = representative == null ? pool : representative;
 				}
@@ -3699,10 +3869,47 @@ final class NativePlacementContinuity {
 				}
 			}
 		}
-		for(int owner = 0; owner < size; owner++)
-			fixedValueMapPools.put(references.get(owner), new FixedValueMapPool(
-				work[owner].selected.pool(), (inexact[owner] & 1) == 0, (inexact[owner] & 2) == 0));
-		return fixedValueMapPools.get(root);
+		Set<CompiledHopKey> sharedOwnerReads = new ImmutableIdentityOwnerReads(ownerReads);
+		FixedValueMapResolution rootResolution = null;
+		for(int owner = 0; owner < size; owner++) {
+			FixedValueMapPool pool = new FixedValueMapPool(work[owner].selected.pool(),
+				(inexact[owner] & 1) == 0, (inexact[owner] & 2) == 0);
+			FixedValueMapResolution resolution = new FixedValueMapResolution(pool, sharedOwnerReads);
+			CandidateRealizationReference reference = references.get(owner);
+			cacheFixedValueMapResolution(reference, resolution);
+			if(new FixedValueMapReferenceKey(reference).equals(new FixedValueMapReferenceKey(root)))
+				rootResolution = resolution;
+		}
+		return rootResolution;
+	}
+
+	private FixedValueMapResolution rememberFixedValueMapResolution(
+		CandidateRealizationReference reference, FixedValueMapPool pool,
+		Set<CompiledHopKey> ownerReads) {
+		FixedValueMapResolution resolution = new FixedValueMapResolution(pool, ownerReads);
+		cacheFixedValueMapResolution(reference, resolution);
+		return resolution;
+	}
+
+	private void cacheFixedValueMapResolution(CandidateRealizationReference reference,
+		FixedValueMapResolution resolution) {
+		long ownerReads = resolution.ownerReads().size();
+		if(fixedValueMapMaxEntries == 0 || fixedValueMapMaxOwnerReads == 0
+			|| ownerReads > fixedValueMapMaxOwnerReads)
+			return;
+		FixedValueMapReferenceKey key = new FixedValueMapReferenceKey(reference);
+		FixedValueMapResolution prior = fixedValueMapResolutions.remove(key);
+		if(prior != null)
+			fixedValueMapRetainedOwnerReads -= prior.ownerReads().size();
+		while(!fixedValueMapResolutions.isEmpty()
+			&& (fixedValueMapResolutions.size() >= fixedValueMapMaxEntries
+				|| fixedValueMapRetainedOwnerReads + ownerReads > fixedValueMapMaxOwnerReads)) {
+			var oldest = fixedValueMapResolutions.entrySet().iterator().next();
+			fixedValueMapRetainedOwnerReads -= oldest.getValue().ownerReads().size();
+			fixedValueMapResolutions.remove(oldest.getKey());
+		}
+		fixedValueMapResolutions.put(key, resolution);
+		fixedValueMapRetainedOwnerReads += ownerReads;
 	}
 
 	private FixedPoolNode decodeFixedPoolNode(CandidateRealizationReference reference) {
@@ -4143,9 +4350,16 @@ final class NativePlacementContinuity {
 		private final List<SelectedCandidateProof> defaultAlternatives;
 		private final Map<Integer,List<SelectedCandidateProof>> defaultAlternativesByHandle;
 		private final Set<CompiledHopKey> dependencyOwners;
+		private final Set<CompiledHopKey> metadataOwnerReads;
 
 		private CandidateTopology(boolean eligible, boolean nodeDirectGround,
 			List<CandidateTopologyRow> rows, Map<Integer,List<CandidateTopologyRow>> rowsByHandle) {
+			this(eligible, nodeDirectGround, rows, rowsByHandle, Set.of());
+		}
+
+		private CandidateTopology(boolean eligible, boolean nodeDirectGround,
+			List<CandidateTopologyRow> rows, Map<Integer,List<CandidateTopologyRow>> rowsByHandle,
+			Set<CompiledHopKey> metadataOwnerReads) {
 			this.eligible = eligible;
 			this.nodeDirectGround = nodeDirectGround;
 			this.rows = List.copyOf(rows);
@@ -4162,6 +4376,9 @@ final class NativePlacementContinuity {
 				for(CandidateDependencySkeleton dependency : row.dependencies)
 					owners.add(dependency.key);
 			dependencyOwners = Collections.unmodifiableSet(owners);
+			Set<CompiledHopKey> metadata = Collections.newSetFromMap(new IdentityHashMap<>());
+			metadata.addAll(metadataOwnerReads);
+			this.metadataOwnerReads = Collections.unmodifiableSet(metadata);
 		}
 
 		private boolean hasFixedDependency(Map<CompiledHopKey,CandidateRealizationReference> fixed) {
@@ -4509,6 +4726,8 @@ final class NativePlacementContinuity {
 		private final Set<CandidateProofState> active = new java.util.HashSet<>();
 		private final List<CandidateProofState> completionOrder = new ArrayList<>();
 		private final Map<CandidateProofState,AcyclicComponentSummary> reusedComponents =
+			new java.util.HashMap<>();
+		private final Map<CandidateProofState,Set<CompiledHopKey>> hiddenOwnerReadsByState =
 			new java.util.HashMap<>();
 		private boolean cycleDetected;
 		private boolean generatedRootDependencyObserved;

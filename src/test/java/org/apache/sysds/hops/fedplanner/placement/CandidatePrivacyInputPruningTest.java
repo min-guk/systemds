@@ -182,6 +182,37 @@ public class CandidatePrivacyInputPruningTest {
 	}
 
 	@Test
+	public void survivorDomainCertificateRequiresIdenticalConsumerAndSourceAuthorities() throws Exception {
+		PlacementAnalysis analysis = analyze(PAYLOAD_SCRIPT);
+		CandidatePrivacyInputPruning prior = analysis.candidateRuleDomain()
+			.privacyPrunedInputs().stream().findFirst().orElseThrow();
+		Assert.assertTrue("the same exact revision may retain its original-domain certificate",
+			PlacementRelationClosure.samePrivacyMaskAuthority(
+				prior, prior.consumer(), prior.protectedInputs()));
+
+		PrivacyFact differentValue = analysis.privacyFactAuthority().orderedFacts().stream()
+			.filter(fact -> fact.valueVersion() != prior.consumer().valueVersion())
+			.findFirst().orElseThrow();
+		PrivacyFact changedConsumer = new PrivacyFact(prior.consumer().occurrence(),
+			differentValue.valueVersion(), prior.consumer().privacy(), prior.consumer().predecessors());
+		Assert.assertFalse("a new consumer/value revision cannot inherit the older unmasked domain",
+			PlacementRelationClosure.samePrivacyMaskAuthority(
+				prior, changedConsumer, prior.protectedInputs()));
+
+		Map<Integer,PrivacyFact> changedSources = new LinkedHashMap<>(prior.protectedInputs());
+		var first = changedSources.entrySet().iterator().next();
+		PrivacyFact source = first.getValue();
+		PrivacyFact changedSource = new PrivacyFact(source.occurrence(), differentValue.valueVersion(),
+			source.privacy(), source.predecessors());
+		changedSources.put(first.getKey(), changedSource);
+		Assert.assertEquals("adversary keeps the same protected input position",
+			prior.protectedInputs().keySet(), changedSources.keySet());
+		Assert.assertFalse("a changed source/value authority cannot import omitted tuples",
+			PlacementRelationClosure.samePrivacyMaskAuthority(
+				prior, prior.consumer(), changedSources));
+	}
+
+	@Test
 	public void validationRejectsCertificateThatOmitsOneProtectedPayloadPosition() throws Exception {
 		PlacementAnalysis analysis = analyze(FEDERATED_SOURCE + "B=A+1;C=B+B;print(sum(C));\n");
 		CandidatePrivacyInputPruning complete = analysis.candidateRuleDomain().privacyPrunedInputs().stream()

@@ -92,19 +92,33 @@ public final class NeutralPlacementGraphBuilder {
 	NeutralPlacementGraphBuilder(FixedPointObserver observer, SearchSpaceMetrics metrics,
 		boolean incrementalDirectClosure, boolean earlyPrivacyPruning) {
 		this(null, null, observer, metrics, incrementalDirectClosure, PrivacyEvidenceMode.NONE,
-			earlyPrivacyPruning);
+			earlyPrivacyPruning, true);
+	}
+
+	NeutralPlacementGraphBuilder(FixedPointObserver observer, SearchSpaceMetrics metrics,
+		boolean incrementalDirectClosure, boolean earlyPrivacyPruning, boolean enableFedRelations) {
+		this(null, null, observer, metrics, incrementalDirectClosure, PrivacyEvidenceMode.NONE,
+			earlyPrivacyPruning, enableFedRelations);
 	}
 
 	private NeutralPlacementGraphBuilder(FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes,
 		FixedPointObserver fixedPointObserver, SearchSpaceMetrics complexityMetrics,
 		boolean incrementalDirectClosure, PrivacyEvidenceMode privacyEvidenceMode) {
 		this(fgraph, fcallSizes, fixedPointObserver, complexityMetrics, incrementalDirectClosure,
-			privacyEvidenceMode, true);
+			privacyEvidenceMode, true, true);
 	}
 
 	private NeutralPlacementGraphBuilder(FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes,
 		FixedPointObserver fixedPointObserver, SearchSpaceMetrics complexityMetrics,
 		boolean incrementalDirectClosure, PrivacyEvidenceMode privacyEvidenceMode, boolean earlyPrivacyPruning) {
+		this(fgraph, fcallSizes, fixedPointObserver, complexityMetrics, incrementalDirectClosure,
+			privacyEvidenceMode, earlyPrivacyPruning, true);
+	}
+
+	private NeutralPlacementGraphBuilder(FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes,
+		FixedPointObserver fixedPointObserver, SearchSpaceMetrics complexityMetrics,
+		boolean incrementalDirectClosure, PrivacyEvidenceMode privacyEvidenceMode,
+		boolean earlyPrivacyPruning, boolean enableFedRelations) {
 		if((fgraph == null) != (fcallSizes == null))
 			throw new IllegalArgumentException("Function graph and call-size summary must be supplied together");
 		suppliedFunctionCallGraph = fgraph;
@@ -112,7 +126,8 @@ public final class NeutralPlacementGraphBuilder {
 		this.fixedPointObserver = fixedPointObserver;
 		this.complexityMetrics = complexityMetrics;
 		candidateGenerator = new PlacementCandidateGenerator(
-			new OracleFacade(RulesCore.RulesModule.createDefaultRegistry()), complexityMetrics);
+			new OracleFacade(RulesCore.RulesModule.createDefaultRegistry()), complexityMetrics,
+			enableFedRelations);
 		relationClosure = new PlacementRelationClosure(candidateGenerator, fixedPointObserver,
 			complexityMetrics, incrementalDirectClosure,
 			Objects.requireNonNull(privacyEvidenceMode, "privacyEvidenceMode"), earlyPrivacyPruning);

@@ -116,6 +116,7 @@ def cases() -> tuple[Case, ...]:
         Case("l2svm_protected_y_negative", "l2svm", (0, 1, 0, 1, 0, 1, 0, 1),
              y_privacy="private", expected_success=False),
         Case("ml_logreg", "ml_logreg", training=True, default_selected=False),
+        Case("ml_glm", "ml_glm", training=True, default_selected=False),
         Case("ml_l2svm", "ml_l2svm", training=True, default_selected=False),
         Case("ml_lm", "ml_lm", training=True, default_selected=False),
         Case("ml_steplm", "ml_steplm", training=True, default_selected=False),
@@ -383,6 +384,11 @@ def program(case: Case, federated: bool) -> str:
             body = (local_read("Y_ML_LOGREG") + "Y=Y_ML_LOGREG;\n"
                     "m=multiLogReg(X=X,Y=Y,icpt=0,tol=1e-7,reg=1e-4,maxi=10,maxii=5,"
                     "verbose=FALSE,numclasses=3,numrows=192,numcols=8);\n")
+        elif case.kind == "ml_glm":
+            body = (local_read("Y_ML_SVM") + "Y=(Y_ML_SVM+1)/2;\n"
+                    "m=glm(X=X,Y=Y,dfam=2,vpow=0,link=2,lpow=1,yneg=0,"
+                    "icpt=0,disp=0,reg=1e-4,tol=1e-6,moi=5,mii=5,"
+                    "verbose=FALSE);\n")
         elif case.kind == "ml_l2svm":
             body = (local_read("Y_ML_SVM") + "Y=Y_ML_SVM;\n"
                     "m=l2svm(X=X,Y=Y,intercept=FALSE,epsilon=1e-8,reg=1e-3,"
@@ -619,6 +625,7 @@ def java_command(case: Case, mode: str, case_timeout_seconds: int = 300,
                  profile_jfr: bool = False, planner: str = "local",
                  canonical_proof: bool = False) -> str:
     audit = f"/evidence/audit/{case.name}-{mode}"
+    use_probe = mode == "fed" and canonical_proof_required(planner, canonical_proof)
     properties = " ".join((
         "-Dsysds.fedplanner.runtime.audit=true",
         "-Dsysds.fedplanner.phaseMarkers=true",
@@ -631,6 +638,8 @@ def java_command(case: Case, mode: str, case_timeout_seconds: int = 300,
     ))
     if case.training:
         properties += " -Dsysds.fedplanner.trace=true -Dsysds.fedplanner.trace.details=false"
+    if use_probe:
+        properties += " -Dsysds.fedplanner.liveMetrics=true"
     jfr = ('-XX:FlightRecorderOptions=stackdepth=256 '
            f'-XX:StartFlightRecording=filename=/evidence/cases/{case.name}/fed.jfr,'
            f'settings=profile,disk=true,dumponexit=true,duration={case_timeout_seconds - 1}s '
@@ -640,7 +649,6 @@ def java_command(case: Case, mode: str, case_timeout_seconds: int = 300,
     if is_steplm(case):
         output_argument += (f' SELECTION_OUTPUT=/evidence/cases/{case.name}/'
                             f'{mode}-selection.csv')
-    use_probe = mode == "fed" and canonical_proof_required(planner, canonical_proof)
     invocation = (f'{CANONICAL_PROBE_CLASS} /evidence/cases/{case.name}/{mode}.dml '
                   f'/evidence/config.xml /evidence/cases/{case.name}/fed-canonical-proof.json'
                   if use_probe else
@@ -663,7 +671,8 @@ def write_container_script(run: Path, model_proof_class: str = DEFAULT_MODEL_PRO
     write_json(run / "class-preflight-expected.json", class_preflight or {})
     lines = [
         "#!/usr/bin/env bash", "set -euo pipefail", "cd /evidence",
-        "export HOME=/tmp/joint-boundary-home", "mkdir -p \"$HOME\" /evidence/tmp /evidence/audit",
+        "export HOME=/evidence/tmp/joint-boundary-home", "export TMPDIR=/evidence/tmp",
+        "mkdir -p \"$HOME\" \"$TMPDIR\" /evidence/audit",
         "CP='/engine/classes:/engine/test-classes:/deps/*'", "export CP",
         "python3 - <<'PY'",
         "import hashlib,json,pathlib",

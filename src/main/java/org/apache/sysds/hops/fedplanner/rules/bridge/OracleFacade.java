@@ -66,6 +66,7 @@ import org.apache.sysds.parser.DataExpression;
  * Bridge that exposes the rule oracle via canonicalized {@link OpSig} inputs.
  */
 public final class OracleFacade {
+  private static final long MAX_EAGER_EXECUTION_RELATION_REGIONS = 4_096L;
 	public record NodeShape(DataType dataType, long rows, long cols) { }
 
 	/** Canonical rules-boundary capture of immutable compiled-Hop shape metadata. */
@@ -156,7 +157,9 @@ public final class OracleFacade {
         RulesApi.PartialTruth> partialDecision;
     private final boolean partialDecisionSupported;
     private final ShapeHint.DiagnosticSnapshot partialShape;
-    private final Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision;
+    private final Optional<RulesApi.DecisionDependencies> decisionDependencies;
+    private final boolean legacyShapeIndependentDeclaration;
+    private final Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies;
     private long partialRequests;
     private long partialEvaluations;
 
@@ -166,7 +169,9 @@ public final class OracleFacade {
       decision = oracle.prepare(signature);
       partialDecision = oracle.preparePartial(signature);
       partialDecisionSupported = oracle.supportsPartial(signature);
-      shapeIndependentDecision = oracle.shapeIndependentDecision(signature);
+      legacyShapeIndependentDeclaration = oracle.shapeIndependentDecision(signature).isPresent();
+      decisionDependencies = oracle.decisionDependencies(signature);
+      candidateFamilyDependencies = oracle.candidateFamilyDependencies(signature);
       // Current partial kernels are shape-independent. A fixed unknown hint prevents
       // prefix probing from borrowing registry-derived or tuple-derived shape authority.
       partialShape = new ShapeHint(-1, -1, -1).diagnosticSnapshot();
@@ -241,8 +246,185 @@ public final class OracleFacade {
       return partialDecisionSupported;
     }
 
+    public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies() {
+      return candidateFamilyDependencies;
+    }
+
+    public Optional<RulesApi.DecisionDependencies> decisionDependencies() {
+      return decisionDependencies;
+    }
+
+    /**
+     * Lazily proves whether partial input assignments have any FED completion by
+     * enumerating only the complete dependency positions declared by the selected
+     * forward rule. Rules without such a declaration retain the exact tuple path.
+     */
+    public Optional<EarlyFedFeasibility> prepareEarlyFedFeasibility(
+        List<List<FTypes.FType>> runtimeDomains,
+        java.util.function.Function<List<FType>,ShapeHint> exactHintForInputs) {
+      if(hop instanceof FunctionOp || partialDecisionSupported || decisionDependencies.isEmpty()
+          || runtimeDomains == null || runtimeDomains.size() != signature.arity()
+          || exactHintForInputs == null || runtimeDomains.stream().anyMatch(
+              domain -> domain == null || domain.isEmpty()))
+        return Optional.empty();
+      if(decisionDependencies.get().enumeratedPositions().stream()
+          .anyMatch(position -> position < 0 || position >= runtimeDomains.size()))
+        throw new IllegalArgumentException("Early FED feasibility dependency exceeds input arity");
+      return Optional.of(new EarlyFedFeasibility(runtimeDomains,
+          decisionDependencies.get(), exactHintForInputs));
+    }
+
     public PartialDecisionDiagnostics partialDecisionDiagnostics() {
       return new PartialDecisionDiagnostics(partialRequests, partialEvaluations);
+    }
+
+    public final class EarlyFedFeasibility {
+      private static final int MAX_EVIDENCE = 4096;
+      private static final int MAX_PREFIX_COMPLETIONS = 4096;
+      private final List<List<FType>> runtimeDomains;
+      private final List<Integer> dependencyPositions;
+      private final Set<Integer> shapeSelectorPositions;
+      private final Set<String> allowedShapeFacts;
+      private final java.util.function.Function<List<FType>,ShapeHint> exactHintForInputs;
+      private final Map<DecisionKey,DecisionEvidence> evidenceByKey =
+          new LinkedHashMap<>(16, 0.75f, true);
+      private long requests;
+      private long oracleEvaluations;
+      private long completionVisits;
+      private long budgetExhaustions;
+
+      private EarlyFedFeasibility(List<List<FType>> runtimeDomains,
+          RulesApi.DecisionDependencies dependencies,
+          java.util.function.Function<List<FType>,ShapeHint> exactHintForInputs) {
+        List<List<FType>> copied = new ArrayList<>(runtimeDomains.size());
+        for(List<FType> domain : runtimeDomains)
+          copied.add(Collections.unmodifiableList(new ArrayList<>(domain)));
+        this.runtimeDomains = Collections.unmodifiableList(copied);
+        dependencyPositions = List.copyOf(dependencies.enumeratedPositions());
+        shapeSelectorPositions = Set.copyOf(dependencies.shapeSelectorPositions());
+        allowedShapeFacts = Set.copyOf(dependencies.allowedShapeFacts());
+        this.exactHintForInputs = exactHintForInputs;
+      }
+
+      public RulesApi.PartialTruth fedFeasibility(RulesApi.PartialInputs inputs) {
+        Objects.requireNonNull(inputs, "inputs");
+        if(inputs.values().size() != runtimeDomains.size())
+          throw new IllegalArgumentException("Early FED feasibility input arity mismatch");
+        requests++;
+        List<FType> representative = new ArrayList<>(runtimeDomains.size());
+        for(int position = 0; position < runtimeDomains.size(); position++)
+          representative.add(inputs.isAssigned(position)
+              ? inputs.values().get(position) : runtimeDomains.get(position).get(0));
+        EarlyFedOutcomes outcomes = new EarlyFedOutcomes();
+        enumerateDependencyCompletions(inputs, representative, 0, outcomes);
+        completionVisits += outcomes.completionVisits;
+        if(outcomes.incomplete) {
+          budgetExhaustions++;
+          return RulesApi.PartialTruth.UNKNOWN;
+        }
+        if(outcomes.unresolved)
+          return RulesApi.PartialTruth.UNKNOWN;
+        if(outcomes.fed && !outcomes.nonFed)
+          return RulesApi.PartialTruth.FEASIBLE;
+        if(!outcomes.fed)
+          return RulesApi.PartialTruth.INFEASIBLE;
+        return RulesApi.PartialTruth.UNKNOWN;
+      }
+
+      public Optional<DecisionEvidence> evidenceFor(List<FType> runtimeInputs) {
+        if(runtimeInputs == null || runtimeInputs.size() != runtimeDomains.size())
+          return Optional.empty();
+        return Optional.ofNullable(evidenceByKey.get(decisionKey(runtimeInputs)));
+      }
+
+      public EarlyFedFeasibilityDiagnostics diagnostics() {
+        return new EarlyFedFeasibilityDiagnostics(
+            requests, oracleEvaluations, evidenceByKey.size(), completionVisits, budgetExhaustions);
+      }
+
+      private void enumerateDependencyCompletions(RulesApi.PartialInputs inputs,
+          List<FType> representative, int offset, EarlyFedOutcomes outcomes) {
+        // Mixed FED/CP evidence already proves UNKNOWN. Stop this prefix scan;
+        // exact descendants still evaluate their own keys and preserve RULE_ERROR.
+        if(outcomes.incomplete || outcomes.fed && outcomes.nonFed)
+          return;
+        if(offset < dependencyPositions.size()) {
+          int position = dependencyPositions.get(offset);
+          if(inputs.isAssigned(position)) {
+            enumerateDependencyCompletions(inputs, representative, offset + 1, outcomes);
+            return;
+          }
+          for(FType value : runtimeDomains.get(position)) {
+            FType prior = representative.set(position, value);
+            try {
+              enumerateDependencyCompletions(inputs, representative, offset + 1, outcomes);
+            }
+            finally {
+              representative.set(position, prior);
+            }
+          }
+          return;
+        }
+        if(outcomes.completionVisits >= MAX_PREFIX_COMPLETIONS) {
+          outcomes.incomplete = true;
+          return;
+        }
+        outcomes.completionVisits++;
+        DecisionEvidence evidence = evidence(representative);
+        if(evidence.caps().reason() == RulesApi.ReasonCode.RULE_ERROR
+            || !evidence.shapeProof().missingRequiredFacts().isEmpty())
+          outcomes.unresolved = true;
+        else if(evidence.caps().exec() == org.apache.sysds.common.Types.ExecType.FED)
+          outcomes.fed = true;
+        else
+          outcomes.nonFed = true;
+      }
+
+      private DecisionEvidence evidence(List<FType> runtimeInputs) {
+        DecisionKey key = decisionKey(runtimeInputs);
+        DecisionEvidence prior = evidenceByKey.get(key);
+        if(prior != null)
+          return prior;
+        List<FType> runtimeSnapshot = Collections.unmodifiableList(
+            new ArrayList<>(runtimeInputs));
+        List<FType> mapped = mapFederatedTypes(hop, runtimeSnapshot);
+        ShapeHint hint;
+        if(allowedShapeFacts.isEmpty() && shapeSelectorPositions.isEmpty())
+          hint = shapeHint(partialShape);
+        else {
+          ShapeHint supplied = Objects.requireNonNull(exactHintForInputs.apply(runtimeSnapshot),
+              "early FED feasibility exact shape hint");
+          hint = shapeHint(supplied.diagnosticSnapshot());
+        }
+        RulesApi.OpCaps caps = normalizeConcreteOutputPlacement(hop,
+            decision.apply(mapped, hint));
+        DecisionEvidence evidence = new DecisionEvidence(caps, hint.proof());
+        if(!allowedShapeFacts.containsAll(evidence.shapeProof().consultedFacts().keySet()))
+          throw new IllegalStateException("Rule consulted undeclared ShapeHint facts"
+              + "|opcode=" + signature.opcode() + "|dependencies=" + dependencyPositions
+              + "|allowed=" + allowedShapeFacts + "|proof=" + evidence.shapeProof());
+        oracleEvaluations++;
+        if(evidenceByKey.size() >= MAX_EVIDENCE)
+          evidenceByKey.remove(evidenceByKey.entrySet().iterator().next().getKey());
+        evidenceByKey.put(key, evidence);
+        return evidence;
+      }
+
+      private DecisionKey decisionKey(List<FType> runtimeInputs) {
+        List<FType> values = new ArrayList<>(dependencyPositions.size());
+        for(int position : dependencyPositions)
+          values.add(shapeSelectorPositions.contains(position) ? runtimeInputs.get(position)
+              : mapInputType(position, runtimeInputs.get(position)));
+        return new DecisionKey(values);
+      }
+    }
+
+    private final class EarlyFedOutcomes {
+      private boolean fed;
+      private boolean nonFed;
+      private boolean unresolved;
+      private boolean incomplete;
+      private int completionVisits;
     }
 
     /**
@@ -251,11 +433,26 @@ public final class OracleFacade {
      */
     public Optional<ExecutionRelation> prepareExecutionRelation(
         List<List<FTypes.FType>> runtimeDomains) {
-      if(shapeIndependentDecision.isEmpty() || runtimeDomains == null
+      if(decisionDependencies.isEmpty() || !decisionDependencies.get().shapeIndependent())
+        return Optional.empty();
+      return prepareExecutionRelation(runtimeDomains, ignored -> shapeHint(partialShape));
+    }
+
+    /**
+     * Shape-qualified counterpart. The provider receives each exact raw runtime
+     * representative; its result is copied before every distinct decision evaluation.
+     */
+    public Optional<ExecutionRelation> prepareExecutionRelation(
+        List<List<FTypes.FType>> runtimeDomains,
+        java.util.function.Function<List<FType>,ShapeHint> exactHintForInputs) {
+      if(decisionDependencies.isEmpty() || runtimeDomains == null
           || runtimeDomains.size() != signature.arity())
         return Optional.empty();
+      RulesApi.DecisionDependencies dependencies = decisionDependencies.get();
+      if(exactHintForInputs == null)
+        return Optional.empty();
       List<Integer> determinants = List.copyOf(
-          shapeIndependentDecision.get().determinantPositions());
+          dependencies.enumeratedPositions());
       if(determinants.stream().anyMatch(position -> position >= runtimeDomains.size()))
         return Optional.empty();
       for(List<FType> domain : runtimeDomains)
@@ -263,37 +460,68 @@ public final class OracleFacade {
           return Optional.empty();
       if(runtimeDomains.stream().anyMatch(List::isEmpty))
         return Optional.of(new ExecutionRelation(runtimeDomains.size(), determinants,
-            List.of()));
+            dependencies.shapeSelectorPositions(), List.of(), exactHintForInputs,
+            dependencies.allowedShapeFacts()));
+
+      boolean compressesVaryingAxis = false;
+      for(int position = 0; position < runtimeDomains.size(); position++)
+        if(!determinants.contains(position) && runtimeDomains.get(position).size() > 1) {
+          compressesVaryingAxis = true;
+          break;
+        }
+      if(!legacyShapeIndependentDeclaration && !compressesVaryingAxis)
+        return Optional.empty();
+
+      // Relation preparation is an optional representation optimization. Fall
+      // back to the existing streaming tuple path before allocating an eager
+      // Cartesian seed table that is itself larger than the bounded relation.
+      long regionCount = 1L;
+      for(int position : determinants) {
+        int domainSize = runtimeDomains.get(position).size();
+        if(regionCount > MAX_EAGER_EXECUTION_RELATION_REGIONS / domainSize)
+          return Optional.empty();
+        regionCount *= domainSize;
+      }
 
       List<List<MappedOptionGroup>> groups = new ArrayList<>(determinants.size());
       for(int position : determinants)
         groups.add(mappedOptionGroups(position, runtimeDomains.get(position)));
       List<FType> representative = new ArrayList<>(runtimeDomains.size());
+      List<FType> runtimeRepresentative = new ArrayList<>(runtimeDomains.size());
       for(int position = 0; position < runtimeDomains.size(); position++)
         representative.add(mapInputType(position, runtimeDomains.get(position).get(0)));
+      for(List<FType> domain : runtimeDomains)
+        runtimeRepresentative.add(domain.get(0));
       List<ExecutionRegionSeed> regions = new ArrayList<>();
-      buildExecutionRegions(runtimeDomains, determinants, groups, 0, representative,
+      buildExecutionRegions(runtimeDomains, determinants,
+          dependencies.shapeSelectorPositions(), groups, 0, representative,
+          runtimeRepresentative,
           new ArrayList<>(), regions);
       return Optional.of(new ExecutionRelation(runtimeDomains.size(), determinants,
-          regions));
+          dependencies.shapeSelectorPositions(), regions, exactHintForInputs,
+          dependencies.allowedShapeFacts()));
     }
 
     private void buildExecutionRegions(List<List<FType>> runtimeDomains,
-        List<Integer> determinants, List<List<MappedOptionGroup>> groups, int offset,
-        List<FType> representative, List<MappedOptionGroup> selected,
+        List<Integer> determinants, Set<Integer> shapeSelectors,
+        List<List<MappedOptionGroup>> groups, int offset,
+        List<FType> representative, List<FType> runtimeRepresentative,
+        List<MappedOptionGroup> selected,
         List<ExecutionRegionSeed> regions) {
       if(offset < determinants.size()) {
         int position = determinants.get(offset);
         for(MappedOptionGroup group : groups.get(offset)) {
           FType prior = representative.set(position, group.mappedType());
+          FType priorRuntime = runtimeRepresentative.set(position, group.runtimeType());
           selected.add(group);
           try {
-            buildExecutionRegions(runtimeDomains, determinants, groups, offset + 1,
-                representative, selected, regions);
+            buildExecutionRegions(runtimeDomains, determinants, shapeSelectors, groups, offset + 1,
+                representative, runtimeRepresentative, selected, regions);
           }
           finally {
             selected.remove(selected.size() - 1);
             representative.set(position, prior);
+            runtimeRepresentative.set(position, priorRuntime);
           }
         }
         return;
@@ -309,11 +537,13 @@ public final class OracleFacade {
       for(int determinantIndex = 0; determinantIndex < determinants.size(); determinantIndex++) {
         MappedOptionGroup group = selected.get(determinantIndex);
         allowedOrdinals.set(determinants.get(determinantIndex), group.optionOrdinals());
-        keyValues.add(group.mappedType());
+        keyValues.add(shapeSelectors.contains(determinants.get(determinantIndex))
+            ? group.runtimeType() : group.mappedType());
       }
       DecisionKey key = new DecisionKey(keyValues);
       regions.add(new ExecutionRegionSeed(allowedOrdinals, key,
-          Collections.unmodifiableList(new ArrayList<>(representative))));
+          Collections.unmodifiableList(new ArrayList<>(representative)),
+          Collections.unmodifiableList(new ArrayList<>(runtimeRepresentative))));
     }
 
     private List<MappedOptionGroup> mappedOptionGroups(int position, List<FType> domain) {
@@ -321,7 +551,7 @@ public final class OracleFacade {
       // Keep one rectangle per original ordinal so relation traversal preserves
       // input-domain order even when distinct runtime values map to the same rule value.
       for(int ordinal = 0; ordinal < domain.size(); ordinal++)
-        groups.add(new MappedOptionGroup(mapInputType(position, domain.get(ordinal)),
+        groups.add(new MappedOptionGroup(domain.get(ordinal), mapInputType(position, domain.get(ordinal)),
             List.of(ordinal)));
       return Collections.unmodifiableList(groups);
     }
@@ -335,17 +565,27 @@ public final class OracleFacade {
     public final class ExecutionRelation {
       private final int arity;
       private final List<Integer> determinantPositions;
+      private final Set<Integer> shapeSelectorPositions;
       private final List<ExecutionRegionSeed> regionSeeds;
       private final Map<DecisionKey,ExecutionRegionSeed> seedByKey;
       private final Map<DecisionKey,DecisionEvidence> evidenceByKey = new LinkedHashMap<>();
+      private final java.util.function.Function<List<FType>,ShapeHint> exactHintForInputs;
+      private final Set<String> allowedShapeFacts;
       private List<ExecutionRegion> exposedRegions;
       private int oracleEvaluations;
 
       private ExecutionRelation(int arity, List<Integer> determinantPositions,
-          List<ExecutionRegionSeed> regionSeeds) {
+          Set<Integer> shapeSelectorPositions,
+          List<ExecutionRegionSeed> regionSeeds,
+          java.util.function.Function<List<FType>,ShapeHint> exactHintForInputs,
+          Set<String> allowedShapeFacts) {
         this.arity = arity;
         this.determinantPositions = List.copyOf(determinantPositions);
+        this.shapeSelectorPositions = Set.copyOf(shapeSelectorPositions);
         this.regionSeeds = List.copyOf(regionSeeds);
+        this.exactHintForInputs = Objects.requireNonNull(
+            exactHintForInputs, "execution relation shape provider");
+        this.allowedShapeFacts = Set.copyOf(allowedShapeFacts);
         Map<DecisionKey,ExecutionRegionSeed> indexed = new LinkedHashMap<>();
         for(ExecutionRegionSeed seed : regionSeeds)
           indexed.put(seed.key(), seed);
@@ -368,7 +608,8 @@ public final class OracleFacade {
           throw new IllegalArgumentException("Execution relation input arity mismatch");
         List<FType> keyValues = new ArrayList<>(determinantPositions.size());
         for(int position : determinantPositions)
-          keyValues.add(mapInputType(position, runtimeInputs.get(position)));
+          keyValues.add(shapeSelectorPositions.contains(position) ? runtimeInputs.get(position)
+              : mapInputType(position, runtimeInputs.get(position)));
         ExecutionRegionSeed seed = seedByKey.get(new DecisionKey(keyValues));
         if(seed == null)
           throw new IllegalArgumentException("Input is outside prepared execution relation: "
@@ -380,13 +621,21 @@ public final class OracleFacade {
         DecisionEvidence prior = evidenceByKey.get(seed.key());
         if(prior != null)
           return prior;
-        ShapeHint hint = shapeHint(partialShape);
+        ShapeHint hint;
+        if(allowedShapeFacts.isEmpty() && shapeSelectorPositions.isEmpty())
+          hint = shapeHint(partialShape);
+        else {
+          ShapeHint supplied = Objects.requireNonNull(exactHintForInputs.apply(seed.runtimeRepresentative()),
+              "execution relation exact shape hint");
+          hint = shapeHint(supplied.diagnosticSnapshot());
+        }
         RulesApi.OpCaps caps = normalizeConcreteOutputPlacement(hop,
             decision.apply(seed.representative(), hint));
         DecisionEvidence evidence = new DecisionEvidence(caps, hint.proof());
-        if(!evidence.shapeProof().requiredFacts().isEmpty())
-          throw new IllegalStateException("Shape-independent rule consulted ShapeHint"
+        if(!allowedShapeFacts.containsAll(evidence.shapeProof().consultedFacts().keySet()))
+          throw new IllegalStateException("Rule consulted undeclared ShapeHint facts"
               + "|opcode=" + signature.opcode() + "|determinants=" + determinantPositions
+              + "|allowed=" + allowedShapeFacts
               + "|proof=" + evidence.shapeProof());
         oracleEvaluations++;
         evidenceByKey.put(seed.key(), evidence);
@@ -418,6 +667,8 @@ public final class OracleFacade {
   }
 
   public record PartialDecisionDiagnostics(long requests, long evaluations) { }
+  public record EarlyFedFeasibilityDiagnostics(long requests, long oracleEvaluations,
+      int retainedEvidence, long completionVisits, long budgetExhaustions) { }
   public static final class ExecutionRegion {
     private final List<List<Integer>> allowedOptionOrdinals;
     private final java.util.function.Supplier<DecisionEvidence> evidence;
@@ -434,9 +685,10 @@ public final class OracleFacade {
     public List<List<Integer>> allowedOptionOrdinals() { return allowedOptionOrdinals; }
     public DecisionEvidence evidence() { return evidence.get(); }
   }
-  private record MappedOptionGroup(FType mappedType, List<Integer> optionOrdinals) { }
+  private record MappedOptionGroup(FType runtimeType, FType mappedType,
+      List<Integer> optionOrdinals) { }
   private record ExecutionRegionSeed(List<List<Integer>> allowedOptionOrdinals,
-      DecisionKey key, List<FType> representative) { }
+      DecisionKey key, List<FType> representative, List<FType> runtimeRepresentative) { }
   private record DecisionKey(List<FType> values) {
     private DecisionKey {
       values = Collections.unmodifiableList(new ArrayList<>(values));

@@ -22,6 +22,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.RandomAccess;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -39,7 +40,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLay
  * retained. Individual clause objects are lightweight, cached handles created on
  * demand; the canonical input clauses are never retained.</p>
  */
-final class IndexedSupportClauses extends AbstractList<CandidateRealizationSupportClause>
+public final class IndexedSupportClauses extends AbstractList<CandidateRealizationSupportClause>
 	implements RandomAccess {
 	private static final BigInteger LONG_MAX = BigInteger.valueOf(Long.MAX_VALUE);
 
@@ -210,20 +211,20 @@ final class IndexedSupportClauses extends AbstractList<CandidateRealizationSuppo
 		return combinationIds == null ? largeCombinationIds.length : combinationIds.length;
 	}
 
-	List<PlacementProofKey> proofsAt(int row) {
+	public List<PlacementProofKey> proofsAt(int row) {
 		return metadata.get(metadataOrdinalAt(row)).proofs;
 	}
 
-	List<CandidateRealizationInputBinding> bindingsAt(int row) {
+	public List<CandidateRealizationInputBinding> bindingsAt(int row) {
 		Objects.checkIndex(row, size());
 		return new BindingView(row);
 	}
 
-	DurableAnchorKey witnessAt(int row) {
+	public DurableAnchorKey witnessAt(int row) {
 		return metadata.get(metadataOrdinalAt(row)).witness;
 	}
 
-	boolean layoutExactAt(int row) {
+	public boolean layoutExactAt(int row) {
 		return metadata.get(metadataOrdinalAt(row)).layoutExact;
 	}
 
@@ -263,10 +264,130 @@ final class IndexedSupportClauses extends AbstractList<CandidateRealizationSuppo
 	}
 
 	int retainedMetadataCount() { return metadata.size(); }
-	int materializedHandleCount() { return handles.size(); }
+	public int materializedHandleCount() { return handles.size(); }
+	public int bindingCountAt(int row) {
+		Objects.checkIndex(row, size());
+		return bindingCount(row);
+	}
+	public CandidateRealizationInputBinding bindingAt(int row, int axis) {
+		Objects.checkIndex(row, size());
+		Objects.checkIndex(axis, bindingCount(row));
+		return bindingAtUnchecked(row, axis);
+	}
+	int ordinalOfBindings(List<CandidateRealizationInputBinding> bindings) {
+		return ordinalOfBindings(bindings, null);
+	}
+	int ordinalOfBindings(List<CandidateRealizationInputBinding> bindings, int[] admittedRows) {
+		for(int position = 0; position < (admittedRows == null ? size() : admittedRows.length); position++) {
+			int row = admittedRows == null ? position : admittedRows[position];
+			if(bindingsEqual(row, bindings))
+				return row;
+		}
+		return -1;
+	}
+
+	/** Partition by proven physical authority without constructing a clause or an alternative per row. */
+	List<PlacementAnalysis.IndependentSupportProduct> physicalSupportRegions(
+		java.util.function.Function<CandidateRealizationInputBinding,DurableAnchorKey> layoutOf) {
+		Map<Object,Integer> identities = new IdentityHashMap<>();
+		Map<List<Object>,Integer> layouts = new HashMap<>();
+		Map<CandidateRealizationInputBinding,List<Integer>> authorityByBinding = new IdentityHashMap<>();
+		Map<CandidateRealizationInputBinding,DurableAnchorKey> layoutByBinding = new IdentityHashMap<>();
+		for(CandidateRealizationInputBinding binding : uniqueBindings) {
+			if(binding.source().realization().layoutKind() == PlacementLayoutKind.VALUE_MAP
+				|| binding.kind() != PlacementIdentity.CandidateInputBindingKind.DIRECT
+					&& binding.kind() != PlacementIdentity.CandidateInputBindingKind.RELOCATION)
+				return List.of();
+			DurableAnchorKey layout = layoutOf.apply(binding);
+			if(layout == null)
+				return List.of();
+			layoutByBinding.put(binding, layout);
+			int layoutId = layouts.computeIfAbsent(List.of(layout.fType(), layout.partitions()),
+				ignored -> layouts.size());
+			int owner = identities.computeIfAbsent(binding.source().rule().parentOccurrence(),
+				ignored -> identities.size());
+			int action = binding.relocationAction() == null ? -1
+				: identities.computeIfAbsent(binding.relocationAction(), ignored -> identities.size());
+			authorityByBinding.put(binding, List.of(binding.inputPosition(), owner,
+				binding.kind().ordinal(), action, layoutId));
+		}
+		Map<List<Object>,List<Integer>> rowsByAuthority = new java.util.LinkedHashMap<>();
+		for(int row = 0; row < size(); row++) {
+			List<Object> signature = new ArrayList<>();
+			signature.add(metadataOrdinalAt(row));
+			for(int axis = 0; axis < bindingCount(row); axis++)
+					signature.add(authorityByBinding.get(bindingAtUnchecked(row, axis)));
+			rowsByAuthority.computeIfAbsent(List.copyOf(signature), ignored -> new ArrayList<>()).add(row);
+		}
+		List<PlacementAnalysis.IndependentSupportProduct> result = new ArrayList<>();
+		for(List<Integer> rows : rowsByAuthority.values()) {
+			int count = bindingCount(rows.get(0));
+			if(count == 0)
+				return List.of();
+			List<PlacementAnalysis.IndependentSupportAxis> axes = new ArrayList<>();
+			for(int axis = 0; axis < count; axis++) {
+				Map<PlacementIdentity.CandidateRealizationSupportKey,CandidateRealizationInputBinding>
+					options = new java.util.LinkedHashMap<>();
+				for(int row : rows) {
+					CandidateRealizationInputBinding binding = bindingAtUnchecked(row, axis);
+					var key = CandidateSelections.requiredInputSupportIdentity(binding.source());
+					CandidateRealizationInputBinding prior = options.putIfAbsent(key, binding);
+					if(prior != null && !prior.equals(binding))
+						return List.of();
+				}
+				var first = bindingAtUnchecked(rows.get(0), axis);
+				List<PlacementAnalysis.IndependentSupportOption> choices = new ArrayList<>();
+				options.forEach((key, binding) -> choices.add(new PlacementAnalysis.IndependentSupportOption(
+					key, binding, layoutByBinding.get(binding))));
+				axes.add(new PlacementAnalysis.IndependentSupportAxis(first.inputPosition(),
+					first.source().rule().parentOccurrence(), first.kind(), first.relocationAction(), choices));
+			}
+			result.add(new PlacementAnalysis.IndependentSupportProduct(this, axes,
+				rows.stream().mapToInt(Integer::intValue).toArray()));
+		}
+		return List.copyOf(result);
+	}
+
+	Optional<PlacementAnalysis.IndependentSupportProduct> uniformSupportRelation() {
+		if(metadata.size() != 1 || bindingOptions.isEmpty())
+			return Optional.empty();
+		for(int row = 0; row < size(); row++)
+			if(bindingCount(row) != bindingOptions.size())
+				return Optional.empty();
+		List<PlacementAnalysis.IndependentSupportAxis> axes = new ArrayList<>();
+		java.util.Set<Integer> positions = new java.util.HashSet<>();
+		for(List<CandidateRealizationInputBinding> options : bindingOptions) {
+			CandidateRealizationInputBinding first = options.get(0);
+			if(!positions.add(first.inputPosition())
+				|| first.kind() != PlacementIdentity.CandidateInputBindingKind.DIRECT
+					&& first.kind() != PlacementIdentity.CandidateInputBindingKind.RELOCATION)
+				return Optional.empty();
+			List<PlacementAnalysis.IndependentSupportOption> choices = new ArrayList<>();
+			java.util.Set<PlacementIdentity.CandidateRealizationSupportKey> keys = new java.util.HashSet<>();
+			for(CandidateRealizationInputBinding binding : options) {
+				if(binding.source().realization().layoutKind() == PlacementLayoutKind.VALUE_MAP)
+					return Optional.empty();
+				var key = CandidateSelections.requiredInputSupportIdentity(binding.source());
+				if(!keys.add(key))
+					return Optional.empty();
+				choices.add(new PlacementAnalysis.IndependentSupportOption(key, binding));
+			}
+			try {
+				axes.add(new PlacementAnalysis.IndependentSupportAxis(first.inputPosition(),
+					first.source().rule().parentOccurrence(), first.kind(), first.relocationAction(), choices));
+			}
+			catch(IllegalArgumentException varyingAuthority) {
+				return Optional.empty();
+			}
+		}
+		return Optional.of(new PlacementAnalysis.IndependentSupportProduct(this, axes));
+	}
 	Collection<CandidateRealizationInputBinding> uniqueBindings() { return uniqueBindings; }
 	boolean hasMissingNativeWitness() {
 		return metadata.stream().anyMatch(candidate -> candidate.witness == null);
+	}
+	boolean allRowsHaveExactNativeLayout() {
+		return metadata.stream().allMatch(candidate -> candidate.layoutExact);
 	}
 
 	void validateRealizationKey(PlacementRealizationKey key) {
@@ -384,7 +505,7 @@ final class IndexedSupportClauses extends AbstractList<CandidateRealizationSuppo
 		if(count != that.bindingCount(thatRow))
 			return false;
 		for(int axis = 0; axis < count; axis++)
-			if(!bindingAt(row, axis).equals(that.bindingAt(thatRow, axis)))
+			if(!bindingAtUnchecked(row, axis).equals(that.bindingAtUnchecked(thatRow, axis)))
 				return false;
 		return true;
 	}
@@ -394,12 +515,12 @@ final class IndexedSupportClauses extends AbstractList<CandidateRealizationSuppo
 		if(count != that.size())
 			return false;
 		for(int axis = 0; axis < count; axis++)
-			if(!bindingAt(row, axis).equals(that.get(axis)))
+			if(!bindingAtUnchecked(row, axis).equals(that.get(axis)))
 				return false;
 		return true;
 	}
 
-	private CandidateRealizationInputBinding bindingAt(int row, int axis) {
+	private CandidateRealizationInputBinding bindingAtUnchecked(int row, int axis) {
 		int digit = digitAt(row, axis);
 		if(digit == 0)
 			throw new IndexOutOfBoundsException("Absent indexed support binding");
@@ -411,7 +532,7 @@ final class IndexedSupportClauses extends AbstractList<CandidateRealizationSuppo
 		int bindingHash = 1;
 		int count = bindingCount(row);
 		for(int axis = 0; axis < count; axis++)
-			bindingHash = 31 * bindingHash + bindingAt(row, axis).hashCode();
+			bindingHash = 31 * bindingHash + bindingAtUnchecked(row, axis).hashCode();
 		hash = 31 * hash + bindingHash;
 		hash = 31 * hash + Objects.hashCode(witnessAt(row));
 		return 31 * hash + Boolean.hashCode(layoutExactAt(row));
@@ -429,7 +550,7 @@ final class IndexedSupportClauses extends AbstractList<CandidateRealizationSuppo
 
 		@Override public CandidateRealizationInputBinding get(int index) {
 			Objects.checkIndex(index, size);
-			return bindingAt(row, index);
+			return bindingAtUnchecked(row, index);
 		}
 		@Override public int size() { return size; }
 	}

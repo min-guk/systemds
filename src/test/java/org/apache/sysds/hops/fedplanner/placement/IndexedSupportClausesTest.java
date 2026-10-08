@@ -191,6 +191,10 @@ public class IndexedSupportClausesTest {
 		valid.validateRealizationKey(PlacementRealizationKey.nativeLineage(
 			FOUT_EMISSION, "native"));
 		Assert.assertFalse(valid.hasMissingNativeWitness());
+		CandidateEmissionRealization validRealization = new CandidateEmissionRealization(
+			PlacementRealizationKey.nativeLineage(FOUT_EMISSION, "native"), valid);
+		Assert.assertTrue(validRealization.allOwnedSupportClausesHaveExactNativeLayout());
+		Assert.assertEquals(0, valid.materializedHandleCount());
 		Assert.assertThrows(IllegalArgumentException.class,
 			() -> valid.validateRealizationKey(LOCAL_KEY));
 

@@ -116,6 +116,35 @@ public class FactorizedCandidateReceiptRankTest {
 		}
 	}
 
+	@Test
+	public void indexedRanksUseRowMetadataAndMaterializeOnlyTheSelectedReceipt() throws Exception {
+		CandidateEmissionRealization product = factorized(
+			List.of("short", "much-longer-left"),
+			List.of("r", "medium-right", "very-much-longer-right"));
+		List<CandidateRealizationSupportClause> rows = new ArrayList<>(product.supportClauses());
+		CandidateEmissionRealization explicit = new CandidateEmissionRealization(
+			PlacementRealizationKey.local(LOCAL), rows);
+		CandidateEmissionRealization indexed = explicit.withIndexedSupport();
+		CandidateRuleFact explicitFact = fact(key("indexed-rank"), explicit);
+		CandidateRuleFact indexedFact = fact(key("indexed-rank"), indexed);
+		Object explicitDomain = receiptDomain(List.of(explicitFact));
+		Object indexedDomain = receiptDomain(List.of(indexedFact));
+
+		assertEquals("domain construction must not create indexed clause handles",
+			0, indexed.fullyMaterializedSupportClauseCount());
+		int selectedOrdinal = 4;
+		CandidateRealizationSupportClause selected = indexed.supportClauses().get(selectedOrdinal);
+		assertEquals(1, indexed.fullyMaterializedSupportClauseCount());
+		CandidateSelectionReceipt indexedReceipt = receipt(
+			indexedDomain, indexedFact, indexed, selected);
+		CandidateSelectionReceipt explicitReceipt = receipt(explicitDomain, explicitFact, explicit,
+			explicit.supportClauses().get(selectedOrdinal));
+
+		assertEquals(rank(explicitDomain, explicitReceipt), rank(indexedDomain, indexedReceipt));
+		assertEquals("rank initialization must not materialize unselected indexed rows",
+			1, indexed.fullyMaterializedSupportClauseCount());
+	}
+
 	private static CandidateEmissionRealization factorized(int leftSize, int rightSize, String prefix) {
 		List<String> left = new ArrayList<>();
 		List<String> right = new ArrayList<>();

@@ -28,6 +28,7 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
@@ -101,7 +102,11 @@ public final class AutomaticSupplySharingDockerProbe {
 			System.setProperty(PlannerRuntimePlacementAudit.PROPERTY, "true");
 			System.setProperty(RefedReuseAudit.PROPERTY, "true");
 			RefedReuseAudit.reset();
-			boolean success = DMLScript.executeScript(dmlArguments.toArray(String[]::new));
+			CommitProofCapture commitProofs = new CommitProofCapture(expectedPlanner);
+			boolean success;
+			try(var ignored = PlacementEmissionTransaction.observeCommitsForTesting(commitProofs)) {
+				success = DMLScript.executeScript(dmlArguments.toArray(String[]::new));
+			}
 			if(!success)
 				throw new IllegalStateException("DMLScript.executeScript returned false");
 
@@ -118,7 +123,7 @@ public final class AutomaticSupplySharingDockerProbe {
 			if(!reuseAudit.enabled() || reuseAudit.droppedEvents() != 0
 				|| reuseAudit.loggingFailures() != 0)
 				throw new IllegalStateException("REFED reuse audit is incomplete: " + reuseAudit);
-			CanonicalProof proof = canonicalProof(selected, reuseAudit);
+			CanonicalProof proof = commitProofs.require(selected, committedPlanHash(selected));
 			if(!proof.objectiveMatches() || !proof.costSurfaceMatches()
 				|| !proof.selectedStatesMatch() || !proof.sharedLifetimesMatch())
 				throw new IllegalStateException("Selected plan failed canonical reconstruction: " + proof.summary());
@@ -131,6 +136,7 @@ public final class AutomaticSupplySharingDockerProbe {
 			output.put("committedResults", committed.stream().map(
 				AutomaticSupplySharingDockerProbe::committedResult).toList());
 			output.put("canonicalProof", proof.summary());
+			output.put("canonicalProofCapture", "commit-boundary-instrumented");
 			if(proof.flatUpdatedDiagnostic() != null) {
 				output.put("flatUpdatedDiagnostic", proof.flatUpdatedDiagnostic());
 				if(!Boolean.TRUE.equals(proof.flatUpdatedDiagnostic()
@@ -147,9 +153,12 @@ public final class AutomaticSupplySharingDockerProbe {
 						"Flat updated exact plan is more expensive than a legal relocation plan");
 			}
 			output.put("selectedOccurrences", proof.selectedOccurrences());
-			output.put("selectedRelocations", proof.selectedRelocations());
+			output.put("selectedRelocations",
+				withRuntimeReuseEvidence(proof.selectedRelocations(), reuseAudit));
 			output.put("selectedCandidateSelections",
 				selected.selectedCandidateSelections().stream().map(Object::toString).toList());
+			output.put("selectedCandidateSupport", selected.selectedCandidateSelections().stream()
+				.map(AutomaticSupplySharingDockerProbe::selectedCandidateSupport).toList());
 			List<?> selectedLocalMaterializations = selected.selectedLocalMaterializations();
 			output.put("selectedLocalMaterializations",
 				selectedLocalMaterializations.stream().map(Object::toString).toList());
@@ -336,6 +345,20 @@ public final class AutomaticSupplySharingDockerProbe {
 		return List.copyOf(results);
 	}
 
+	private static String committedPlanHash(NormalizedPlannerResult selected) {
+		String planHash = null;
+		for(var entry : PlacementEmissionTransaction.receiptSnapshotForTesting().entrySet()) {
+			if(PlacementEmissionTransaction.currentNormalizedResult(entry.getKey()) != selected)
+				continue;
+			if(planHash != null)
+				throw new IllegalStateException("Selected result has more than one committed owner");
+			planHash = entry.getValue().planHash();
+		}
+		if(planHash == null)
+			throw new IllegalStateException("Selected result has no committed receipt");
+		return planHash;
+	}
+
 	private static Map<String,Object> committedResult(NormalizedPlannerResult result) {
 		Map<String,Object> out = new LinkedHashMap<>();
 		out.put("planner", result.plannerId());
@@ -398,6 +421,81 @@ public final class AutomaticSupplySharingDockerProbe {
 			derivedShared.equals(selected.sharedSupplyLifetimes()), surface.contributionFingerprint(),
 			assignment, List.copyOf(occurrences), relocations, flatUpdatedDiagnostic,
 			Map.copyOf(modelCounts));
+	}
+
+	static final class CommitProofCapture
+		implements PlacementEmissionTransaction.CommitObserverForTesting {
+		private final String expectedPlanner;
+		private final ExactCommitIndex<CanonicalProof> captured = new ExactCommitIndex<>();
+
+		CommitProofCapture(String expectedPlanner) {
+			this.expectedPlanner = expectedPlanner;
+		}
+
+		@Override
+		public void committed(DMLProgram program, NormalizedPlannerResult result,
+			PlacementEmissionTransaction.PlacementEmissionReceipt receipt) {
+			if(!expectedPlanner.equals(result.plannerId()))
+				return;
+			if(!receipt.applied() || receipt.noOp())
+				throw new IllegalStateException("Commit proof requires one applied receipt");
+			CanonicalProof proof = canonicalProof(result, RefedReuseAudit.snapshot());
+			captured.record(result, receipt.planHash(), proof);
+		}
+
+		CanonicalProof require(NormalizedPlannerResult result, String planHash) {
+			return captured.require(result, planHash);
+		}
+
+		int size() {
+			return captured.size();
+		}
+	}
+
+	static final class ExactCommitIndex<T> {
+		private final IdentityHashMap<NormalizedPlannerResult,CapturedCommit<T>> values =
+			new IdentityHashMap<>();
+
+		void record(NormalizedPlannerResult result, String planHash, T proof) {
+			if(values.put(result, new CapturedCommit<>(planHash, proof)) != null)
+				throw new IllegalStateException("Result identity was committed more than once");
+		}
+
+		T require(NormalizedPlannerResult result, String planHash) {
+			CapturedCommit<T> commit = values.get(result);
+			if(commit == null)
+				throw new IllegalStateException("Selected result has no commit-boundary canonical proof");
+			if(!commit.planHash().equals(planHash))
+				throw new IllegalStateException("Selected commit receipt differs from captured proof");
+			return commit.proof();
+		}
+
+		int size() {
+			return values.size();
+		}
+	}
+
+	private record CapturedCommit<T>(String planHash, T proof) { }
+
+	private static List<Map<String,Object>> withRuntimeReuseEvidence(
+		List<Map<String,Object>> captured, RefedReuseAudit.Snapshot reuseAudit) {
+		List<Map<String,Object>> result = new ArrayList<>(captured.size());
+		for(Map<String,Object> relocation : captured) {
+			Map<String,Object> enriched = new LinkedHashMap<>(relocation);
+			String digest = String.valueOf(relocation.get("actionKeyDigest"));
+			boolean staged = Boolean.TRUE.equals(relocation.get("expectedStaged"));
+			List<RefedReuseAudit.SupplyEvent> matching = reuseAudit.supplyEvents().stream()
+				.filter(event -> digest.equals(event.actionKeyDigest())).toList();
+			if(matching.stream().anyMatch(event -> event.staged() != staged))
+				throw new IllegalStateException(
+					"Runtime supply staging differs from commit-boundary proof: " + relocation.get("action"));
+			enriched.put("runtimeSupplyEventCount", matching.size());
+			enriched.put("runtimeCreationCount", matching.stream()
+				.filter(RefedReuseAudit.SupplyEvent::created).count());
+			enriched.put("runtimeSupplyEvents", matching);
+			result.add(enriched);
+		}
+		return List.copyOf(result);
 	}
 
 	private static Map<String,Object> flatUpdatedDiagnostic(PlacementAnalysis analysis,
@@ -794,8 +892,64 @@ public final class AutomaticSupplySharingDockerProbe {
 		out.put("physicalState", alternative.state().normalizedSignature());
 		out.put("authority", alternative.authorityKind().name());
 		out.put("alternativeSignature", alternative.signature());
+		out.put("inputAuthorities", alternative.inputAuthorities().stream().map(authority -> {
+			Map<String,Object> row = new LinkedHashMap<>();
+			row.put("inputPosition", authority.inputPosition());
+			row.put("kind", authority.kind().name());
+			row.put("expectedFType", authority.expectedFType() == null
+				? null : authority.expectedFType().name());
+			row.put("sourceDecision", authority.sourceDecision() == null
+				? null : authority.sourceDecision().normalizedSignature());
+			row.put("relocationAction", authority.relocationAction() == null
+				? null : authority.relocationAction().key().normalizedSignature());
+			return row;
+		}).toList());
+		out.put("supportClause", selectedSupportClause(alternative.supportClause()));
 		out.put("expectedExecutions", domain.node().kind().name().startsWith("FUNCTION_") ? null
 			: analysis.executionFrequencyFacts().exactExecutionWeight(domain.node().key()));
+		return out;
+	}
+
+	private static Map<String,Object> selectedSupportClause(
+		PlacementAnalysis.CandidateRealizationSupportClause clause) {
+		if(clause == null)
+			return null;
+		Map<String,Object> out = new LinkedHashMap<>();
+		out.put("indexed", clause.isIndexed());
+		out.put("combinationId", clause.isIndexed()
+			? clause.indexedCombinationId().toString() : null);
+		out.put("proofDependencies", clause.proofDependencies().stream()
+			.map(proof -> proof.normalizedSignature()).toList());
+		out.put("inputBindings", clause.inputBindings().stream().map(binding -> {
+			Map<String,Object> row = new LinkedHashMap<>();
+			row.put("inputPosition", binding.inputPosition());
+			row.put("kind", binding.kind().name());
+			row.put("sourceRule", binding.source().rule().normalizedSignature());
+			row.put("sourceOwner",
+				binding.source().rule().parentOccurrence().normalizedSignature());
+			row.put("sourceRealization",
+				binding.source().realization().normalizedSignature());
+			row.put("relocationAction", binding.relocationAction() == null
+				? null : binding.relocationAction().normalizedSignature());
+			return row;
+		}).toList());
+		out.put("nativeWorkerPoolWitness", clause.nativeWorkerPoolWitness() == null
+			? null : clause.nativeWorkerPoolWitness().normalizedSignature());
+		out.put("nativeWorkerPoolLayoutExact", clause.nativeWorkerPoolLayoutExact());
+		return out;
+	}
+
+	private static Map<String,Object> selectedCandidateSupport(CandidateSelectionReceipt receipt) {
+		Map<String,Object> out = new LinkedHashMap<>();
+		out.put("exactRule", receipt.rule().normalizedSignature());
+		out.put("emission", receipt.emission().selectionSignature());
+		out.put("realization", receipt.realization().key().normalizedSignature());
+		out.put("support", receipt.supportClause().normalizedSignature());
+		out.put("proofKeys", receipt.supportClause().proofDependencies().stream()
+			.map(proof -> proof.normalizedSignature()).toList());
+		out.put("inputBindings", receipt.supportClause().inputBindings().stream()
+			.map(binding -> binding.normalizedSignature()).toList());
+		out.put("supportClause", selectedSupportClause(receipt.supportClause()));
 		return out;
 	}
 

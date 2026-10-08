@@ -1,0 +1,23 @@
+{
+  "adjustment": {
+    "actualWorker": "so006",
+    "canonicalWorker": "so002",
+    "reason": "canonical-worker-occupied-by-unowned-containers"
+  },
+  "coordinator": {
+    "host": "so007",
+    "ip": "130.149.237.17"
+  },
+  "schema": "cofee-w1357-validation-topology/v1",
+  "worker_sweep": [
+    1
+  ],
+  "workers": [
+    {
+      "host": "so006",
+      "index": 1,
+      "ip": "130.149.237.16",
+      "port": 8001
+    }
+  ]
+}

@@ -461,6 +461,49 @@ public class PlacementSupportDeletionWorklistTest {
 		Assert.assertEquals(0, rightRelation.materializedClauseCount());
 	}
 
+	@Test
+	public void correlatedOwnerChoiceDeletionRemovesEveryAxisBindingAndKeepsLiveChoice()
+		throws Exception {
+		CandidateRuleKey missing = rule("correlated-missing");
+		CandidateRuleKey sourceRule = rule("correlated-source");
+		CandidateRuleKey consumer = rule("correlated-consumer");
+		CandidateEmissionRealization missingIdentity = durable("correlated-missing-value");
+		CandidateEmissionRealization deadTemplate = durable("correlated-dead");
+		CandidateEmissionRealization dead = new CandidateEmissionRealization(deadTemplate.key(),
+			List.of(clause(CandidateRealizationInputBinding.direct(0,
+				ref(missing, missingIdentity)))));
+		CandidateEmissionRealization live = durable("correlated-live");
+		CandidateRealizationReference deadRef = ref(sourceRule, dead);
+		CandidateRealizationReference liveRef = ref(sourceRule, live);
+		CandidateEmissionRealization product = CandidateEmissionRealization.factorized(
+			CandidateEmissionRealization.local(LOCAL).key(), List.of(), List.of(
+				List.of(CandidateRealizationInputBinding.direct(0, deadRef),
+					CandidateRealizationInputBinding.direct(0, liveRef)),
+				List.of(CandidateRealizationInputBinding.direct(1, deadRef),
+					CandidateRealizationInputBinding.direct(1, liveRef))), null, true);
+		FactorizedSupportClauses original = (FactorizedSupportClauses)product.supportClauses();
+		List<CandidateRuleFact> facts = List.of(fact(sourceRule, ROW, List.of(dead, live)),
+			fact(consumer, LOCAL, List.of(product)));
+
+		PlacementSupportRelations.WorklistResult result = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPointWithWork(facts, null, null, null);
+		CandidateEmissionRealization survivor = result.facts().get(1).allowedEmissionFacts()
+			.get(0).realizations().get(0);
+		FactorizedSupportClauses remaining = (FactorizedSupportClauses)survivor.supportClauses();
+
+		Assert.assertEquals(2, original.size());
+		Assert.assertEquals(1, remaining.size());
+		Assert.assertEquals(1, remaining.factors().get(0).size());
+		Assert.assertEquals(1, remaining.factors().get(1).size());
+		Assert.assertSame(liveRef, remaining.factors().get(0).get(0).source());
+		Assert.assertSame(liveRef, remaining.factors().get(1).get(0).source());
+		Assert.assertTrue("one shared-owner choice is invalidated as one logical clause",
+			result.work().invalidatedClauses() >= 1);
+		Assert.assertEquals(0, original.materializedClauseCount());
+		Assert.assertEquals(0, remaining.materializedClauseCount());
+		Assert.assertEquals(repeated(facts, null, null, null), result.facts());
+	}
+
 	private static long workMetric(Object work, String name) throws Exception {
 		try {
 			return ((Number) work.getClass().getDeclaredMethod(name).invoke(work)).longValue();

@@ -5,6 +5,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
@@ -364,6 +365,60 @@ public class NativeValueMapFixedPoolContinuityTest {
 	}
 
 	@Test
+	public void unrelatedOwnerRevisionReusesValueMapProofWhileLeafRevisionInvalidatesIt() {
+		Node leaf = node("revision-leaf", 60);
+		Node alias = node("revision-alias", 61);
+		Node unrelated = node("revision-unrelated", 62);
+		DurableAnchorKey pool = pool("revision-pool", "a:9000", "b:9000");
+		CandidateRuleKey leafRule = rule(leaf, 0);
+		CandidateEmissionRealization leafRealization = durable(pool);
+		CandidateRuleKey aliasRule = rule(alias, 1);
+		CandidateEmissionRealization aliasRealization = CandidateEmissionRealization.valueMap(
+			EMISSION, "revision-map", List.of(clause(
+				CandidateRealizationInputBinding.logicalTransient(0,
+					CandidateRealizationReference.of(leafRule, leafRealization)))));
+		CandidateRuleKey unrelatedRule = rule(unrelated, 0);
+		CandidateEmissionRealization unrelatedBefore = durable(pool(
+			"unrelated-before", "x:9000", "y:9000"));
+		CandidateEmissionRealization unrelatedAfter = durable(pool(
+			"unrelated-after", "x:9000", "z:9000"));
+		List<Node> nodes = List.of(leaf, alias, unrelated);
+		List<CandidateRuleFact> initialFacts = List.of(fact(leafRule, leafRealization),
+			fact(aliasRule, aliasRealization), fact(unrelatedRule, unrelatedBefore));
+		CandidateRealizationReference aliasReference =
+			CandidateRealizationReference.of(aliasRule, aliasRealization);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity initial = continuity(nodes, initialFacts, metrics);
+		List<NativePlacementContinuity.NativeContinuityProof> expected =
+			initial.proveCandidateAlternatives(aliasReference, pool);
+		Assert.assertFalse(expected.isEmpty());
+		long graphBuilds = metrics.snapshot().proofGraphsBuilt();
+		long topologyBuilds = metrics.snapshot().topologyExpansionBuilds();
+
+		List<CandidateRuleFact> unrelatedFacts = List.of(fact(leafRule, leafRealization),
+			fact(aliasRule, aliasRealization), fact(unrelatedRule, unrelatedAfter));
+		NativePlacementContinuity unrelatedRevision = initial.nextRevisionWithCompleteCandidateDelta(
+			unrelatedFacts, Set.of(unrelated.key()));
+		Assert.assertSame("an unrelated owner change must reuse the completed proof object",
+			expected, unrelatedRevision.proveCandidateAlternatives(aliasReference, pool));
+		Assert.assertEquals(graphBuilds, metrics.snapshot().proofGraphsBuilt());
+		Assert.assertEquals(topologyBuilds, metrics.snapshot().topologyExpansionBuilds());
+		Assert.assertTrue("unchanged VALUE_MAP topologies must cross the revision",
+			metrics.snapshot().topologyRevisionEntriesReused() > 0);
+
+		List<CandidateRuleFact> withdrawnFacts = List.of(
+			fact(aliasRule, aliasRealization), fact(unrelatedRule, unrelatedBefore));
+		NativePlacementContinuity withdrawn = initial.nextRevisionWithCompleteCandidateDelta(
+			withdrawnFacts, Set.of(leaf.key()));
+		long beforeLeafQuery = metrics.snapshot().proofGraphsBuilt();
+		Assert.assertEquals("warm invalidation must match a cold resolver",
+			continuity(nodes, withdrawnFacts).proveCandidateAlternatives(aliasReference, pool),
+			withdrawn.proveCandidateAlternatives(aliasReference, pool));
+		Assert.assertEquals("a hidden leaf change rebuilds the exact and dynamic witness graphs",
+			beforeLeafQuery + 2, metrics.snapshot().proofGraphsBuilt());
+	}
+
+	@Test
 	@SuppressWarnings("unchecked")
 	public void relocationBinderCombinesFixedValueMapDirectInputWithOtherRelocation() throws Exception {
 		Node leaf = node("binder-leaf", 30);
@@ -538,6 +593,11 @@ public class NativeValueMapFixedPoolContinuityTest {
 
 	private static NativePlacementContinuity continuity(List<Node> nodes,
 		List<CandidateRuleFact> facts) {
+		return continuity(nodes, facts, null);
+	}
+
+	private static NativePlacementContinuity continuity(List<Node> nodes,
+		List<CandidateRuleFact> facts, SearchSpaceMetrics metrics) {
 		Map<CompiledHopKey,Node> nodeMap = new java.util.IdentityHashMap<>();
 		Map<CompiledHopKey,org.apache.sysds.hops.Hop> hops = new java.util.IdentityHashMap<>();
 		for(Node node : nodes) {
@@ -546,7 +606,9 @@ public class NativeValueMapFixedPoolContinuityTest {
 				DataType.MATRIX, ValueType.FP64, OpOpData.TRANSIENTREAD,
 				node.key().canonicalSourceOrigin(), 8, 2, 16, 1000));
 		}
-		return new NativePlacementContinuity(nodeMap, hops, facts, List.of(), Map.of());
+		return metrics == null
+			? new NativePlacementContinuity(nodeMap, hops, facts, List.of(), Map.of())
+			: new NativePlacementContinuity(nodeMap, hops, facts, List.of(), Map.of(), metrics);
 	}
 
 	private static DataOp hop(String name) {

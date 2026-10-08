@@ -248,15 +248,97 @@ public class FactorizedSupportClausesTest {
 	}
 
 	@Test
-	public void repeatedSourceOwnerRequiresExplicitCorrelation() {
-		CompiledHopKey shared = key("shared");
-		CandidateRealizationReference first = reference(shared);
-		CandidateRealizationReference second = reference(shared);
-		IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
-			() -> CandidateEmissionRealization.factorized(KEY, List.of(), List.of(
-				List.of(CandidateRealizationInputBinding.direct(0, first)),
-				List.of(CandidateRealizationInputBinding.direct(1, second))), null, true));
-		Assert.assertTrue(error.getMessage().contains("Repeated source owner"));
+	public void repeatedSourceOwnerUsesOneChoiceAcrossAxesWithoutTupleStorage() {
+		CompiledHopKey shared = key("shared"), independent = key("independent");
+		List<CandidateRealizationInputBinding> first = new ArrayList<>();
+		List<CandidateRealizationInputBinding> second = new ArrayList<>();
+		List<CandidateRealizationInputBinding> third = new ArrayList<>();
+		for(int option = 0; option < 100; option++) {
+			CandidateRealizationReference sharedChoice = reference(shared, option);
+			first.add(CandidateRealizationInputBinding.direct(0, sharedChoice));
+			second.add(CandidateRealizationInputBinding.direct(1, sharedChoice));
+			third.add(CandidateRealizationInputBinding.direct(2, reference(independent, option)));
+		}
+		CandidateEmissionRealization compact = CandidateEmissionRealization.factorized(
+			KEY, List.of(), List.of(third, second, first), null, true);
+		FactorizedSupportClauses relation = (FactorizedSupportClauses)compact.supportClauses();
+		Assert.assertEquals(10_000, relation.size());
+		Assert.assertEquals("two owner-choice domains are retained", 200,
+			relation.retainedFactorOptionCount());
+		Assert.assertEquals(2, relation.choiceGroups().size());
+		Assert.assertEquals(0, relation.materializedClauseCount());
+
+		List<CandidateRealizationSupportClause> expanded = new ArrayList<>();
+		for(List<CandidateRealizationInputBinding> sharedChoice :
+			relation.choiceGroups().get(0).choices())
+			for(List<CandidateRealizationInputBinding> independentChoice :
+				relation.choiceGroups().get(1).choices()) {
+				List<CandidateRealizationInputBinding> bindings = new ArrayList<>(List.of(
+					sharedChoice.get(0), sharedChoice.get(1), independentChoice.get(0)));
+				expanded.add(new CandidateRealizationSupportClause(List.of(), bindings));
+			}
+		List<CandidateRealizationSupportClause> explicit =
+			new CandidateEmissionRealization(KEY, expanded).supportClauses();
+		Assert.assertTrue(relation.equals(explicit));
+		Assert.assertEquals(explicit.hashCode(), relation.hashCode());
+		List<CandidateRealizationInputBinding> selected = List.of(
+			relation.choiceGroups().get(0).choices().get(17).get(0),
+			relation.choiceGroups().get(0).choices().get(17).get(1),
+			relation.choiceGroups().get(1).choices().get(23).get(0));
+		Assert.assertEquals(1_723, relation.ordinalOfBindings(selected));
+		Assert.assertEquals(1_723, relation.indexOf(
+			new CandidateRealizationSupportClause(List.of(), selected)));
+		Assert.assertEquals(0, relation.materializedClauseCount());
+	}
+
+	@Test
+	public void repeatedOwnerAxesIntersectHolesByExactSupportIdentity() {
+		CompiledHopKey shared = key("shared-holes");
+		List<CandidateRealizationInputBinding> first = new ArrayList<>();
+		List<CandidateRealizationInputBinding> second = new ArrayList<>();
+		for(int option = 0; option < 7; option++) {
+			CandidateRealizationReference source = reference(shared, option);
+			if(option < 5)
+				first.add(CandidateRealizationInputBinding.direct(0, source));
+			if(option >= 2)
+				second.add(CandidateRealizationInputBinding.direct(1, source));
+		}
+		FactorizedSupportClauses relation = FactorizedSupportClauses.of(
+			List.of(), List.of(first, second), null, true);
+		Assert.assertEquals(3, relation.size());
+		Assert.assertEquals(3, relation.factors().get(0).size());
+		Assert.assertEquals(3, relation.factors().get(1).size());
+		Assert.assertEquals(3, relation.retainedFactorOptionCount());
+		Assert.assertEquals(0, relation.materializedClauseCount());
+		CandidateRealizationInputBinding removed = relation.factors().get(1).get(1);
+		FactorizedSupportClauses restricted = relation.restrictBindings(binding -> binding != removed)
+			.orElseThrow();
+		Assert.assertEquals("removing either correlated binding removes the owner choice", 2,
+			restricted.size());
+		Assert.assertEquals(2, restricted.factors().get(0).size());
+		Assert.assertEquals(2, restricted.factors().get(1).size());
+		Assert.assertEquals(0, restricted.materializedClauseCount());
+	}
+
+	@Test
+	public void explicitRepeatedOwnerRowsCompressToTheSameGroupedRelation() {
+		CompiledHopKey shared = key("explicit-shared");
+		CandidateRealizationReference first = reference(shared, 0);
+		CandidateRealizationReference second = reference(shared, 1);
+		List<CandidateRealizationSupportClause> rows = List.of(
+			new CandidateRealizationSupportClause(List.of(), List.of(
+				CandidateRealizationInputBinding.direct(0, first),
+				CandidateRealizationInputBinding.direct(1, first))),
+			new CandidateRealizationSupportClause(List.of(), List.of(
+				CandidateRealizationInputBinding.direct(0, second),
+				CandidateRealizationInputBinding.direct(1, second))));
+		CandidateEmissionRealization compressed = CandidateEmissionRealization.tryFactorize(KEY, rows)
+			.orElseThrow();
+		FactorizedSupportClauses relation = (FactorizedSupportClauses)compressed.supportClauses();
+		Assert.assertEquals(2, relation.size());
+		Assert.assertEquals(2, relation.retainedFactorOptionCount());
+		Assert.assertTrue(relation.equals(new CandidateEmissionRealization(KEY, rows).supportClauses()));
+		Assert.assertEquals(0, relation.materializedClauseCount());
 	}
 
 	@Test
@@ -370,6 +452,14 @@ public class FactorizedSupportClausesTest {
 	private static CandidateRealizationReference reference(CompiledHopKey owner) {
 		CandidateRuleKey rule = new CandidateRuleKey(owner, List.of(CandidateInputState.absentLocal()));
 		return new CandidateRealizationReference(rule, PlacementRealizationKey.local(EMISSION));
+	}
+
+	private static CandidateRealizationReference reference(CompiledHopKey owner, int variant) {
+		List<CandidateInputState> inputs = new ArrayList<>();
+		for(int index = 0; index <= variant; index++)
+			inputs.add(CandidateInputState.absentLocal());
+		return new CandidateRealizationReference(new CandidateRuleKey(owner, inputs),
+			PlacementRealizationKey.local(EMISSION));
 	}
 
 	private static PlacementProofKey proof(CompiledHopKey owner) {

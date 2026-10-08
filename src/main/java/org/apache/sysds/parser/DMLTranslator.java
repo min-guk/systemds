@@ -536,6 +536,14 @@ public class DMLTranslator
 		if(metrics == null)
 			return;
 		SearchSpaceMetrics.Snapshot snapshot = metrics.snapshot();
+		SearchSpaceMetrics.ExecutionRelationSnapshot execution = metrics.executionRelationSnapshot();
+		SearchSpaceMetrics.PrivacyPruningSnapshot privacy = metrics.privacyPruningSnapshot();
+		SearchSpaceMetrics.ObjectCreationSnapshot objects = metrics.objectCreationSnapshot();
+		System.err.println("SEARCH_SPACE_OBJECT_CREATION|analysis=" + analysisFingerprint
+			+ "|candidateRuleKeys=" + objects.candidateRuleKeys()
+			+ "|candidateRuleFacts=" + objects.candidateRuleFacts()
+			+ "|explicitSupportClauses=" + objects.explicitSupportClauses()
+			+ "|indexedSupportHandles=" + objects.indexedSupportHandles());
 		System.err.println("SEARCH_SPACE_TOPOLOGY|analysis=" + analysisFingerprint
 			+ "|builds=" + snapshot.topologyExpansionBuilds()
 			+ "|hits=" + snapshot.topologyExpansionHits()
@@ -546,6 +554,23 @@ public class DMLTranslator
 			+ "|bypasses=" + snapshot.topologyCacheBypasses()
 			+ "|residentEntries=" + snapshot.topologyCacheEntries()
 			+ "|retainedRows=" + snapshot.topologyCacheRetainedRows());
+		System.err.println("SEARCH_SPACE_EXECUTION_RELATION|analysis=" + analysisFingerprint
+			+ "|candidateOracleCalls=" + privacy.oracleCalls()
+			+ "|relations=" + execution.relations()
+			+ "|regions=" + execution.regions()
+			+ "|relationOracleCalls=" + execution.oracleCalls()
+			+ "|logicalTuples=" + execution.logicalTuples());
+		System.err.println("SEARCH_SPACE_SUPPORT_STORAGE|analysis=" + analysisFingerprint
+			+ "|supportPrefixes=" + snapshot.supportPrefixes()
+			+ "|supportLeaves=" + snapshot.supportLeaves()
+			+ "|factorizedClauses=" + snapshot.factorizedClauses()
+			+ "|structuralHandleLookups=" + snapshot.structuralHandleLookups()
+			+ "|structuralHandlesCreated=" + snapshot.structuralHandlesCreated()
+			+ "|structuralHandleIdentityHits=" + snapshot.structuralHandleIdentityHits()
+			+ "|structuralHandleStructuralHits=" + snapshot.structuralHandleStructuralHits()
+			+ "|receiptRelationSlots=" + snapshot.receiptRelationSlots()
+			+ "|candidateReceiptsCreated=" + snapshot.candidateReceiptsCreated()
+			+ "|privacyEmissionAllocationsAvoided=" + snapshot.privacyEmissionAllocationsAvoided());
 		System.err.println("SEARCH_SPACE_PROOF_MEMO|analysis=" + analysisFingerprint
 			+ "|hits=" + snapshot.memoHits() + "|misses=" + snapshot.memoMisses()
 			+ "|evictions=" + snapshot.memoEvictions()

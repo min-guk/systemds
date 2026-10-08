@@ -415,6 +415,28 @@ public final class RulesApi {
       return Optional.empty();
     }
 
+    /**
+     * Complete input and shape dependencies of {@link #caps}. Shape-independent
+     * declarations remain source compatible through {@link #shapeIndependentDecision};
+     * a rule that names shape facts authorizes relation construction only when the
+     * caller supplies an exact ShapeHint for every enumerated runtime representative.
+     */
+    default Optional<DecisionDependencies> decisionDependencies(OpSig sig) {
+      return shapeIndependentDecision(sig).map(decision ->
+          new DecisionDependencies(decision.determinantPositions(), Set.of(), Set.of()));
+    }
+
+    /**
+     * Exact input positions on which the forward rule capability, profile, and
+     * native emission template depend. This declaration alone never authorizes
+     * reuse of closure-derived emissions, materialization anchors, relocation
+     * actions, source identities, or proofs; a family producer must validate those
+     * authorities independently. Unsupported producers retain exact tuple generation.
+     */
+    default Optional<CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return Optional.empty();
+    }
+
     default boolean supportsPartialFedFeasibility() {
       return false;
     }
@@ -437,6 +459,58 @@ public final class RulesApi {
       for(int position : determinantPositions)
         if(position < 0)
           throw new IllegalArgumentException("Negative determinant position: " + position);
+    }
+  }
+
+  public record DecisionDependencies(Set<Integer> determinantPositions,
+      Set<Integer> shapeSelectorPositions, Set<String> allowedShapeFacts) {
+    public DecisionDependencies {
+      determinantPositions = positions(determinantPositions, "determinantPositions");
+      shapeSelectorPositions = positions(shapeSelectorPositions, "shapeSelectorPositions");
+      java.util.TreeSet<String> facts = new java.util.TreeSet<>(
+          Objects.requireNonNull(allowedShapeFacts, "allowedShapeFacts"));
+      if(facts.stream().anyMatch(fact -> fact == null || fact.isBlank()))
+        throw new IllegalArgumentException("Shape fact names must be nonblank");
+      allowedShapeFacts = Collections.unmodifiableSet(facts);
+    }
+    public Set<Integer> enumeratedPositions() {
+      java.util.TreeSet<Integer> result = new java.util.TreeSet<>(determinantPositions);
+      result.addAll(shapeSelectorPositions);
+      return Collections.unmodifiableSet(result);
+    }
+    private static Set<Integer> positions(Set<Integer> source, String label) {
+      java.util.TreeSet<Integer> result = new java.util.TreeSet<>(
+          Objects.requireNonNull(source, label));
+      for(int position : result)
+        if(position < 0)
+          throw new IllegalArgumentException("Negative decision position: " + position);
+      return Collections.unmodifiableSet(result);
+    }
+    public boolean shapeIndependent() {
+      return shapeSelectorPositions.isEmpty() && allowedShapeFacts.isEmpty();
+    }
+  }
+
+  public record CandidateFamilyDependencies(Set<Integer> capabilityPositions,
+      Set<Integer> profilePositions, Set<Integer> emissionPositions) {
+    public CandidateFamilyDependencies {
+      capabilityPositions = positions(capabilityPositions, "capabilityPositions");
+      profilePositions = positions(profilePositions, "profilePositions");
+      emissionPositions = positions(emissionPositions, "emissionPositions");
+    }
+    private static Set<Integer> positions(Set<Integer> source, String label) {
+      java.util.TreeSet<Integer> result = new java.util.TreeSet<>(
+          Objects.requireNonNull(source, label));
+      for(int position : result)
+        if(position < 0)
+          throw new IllegalArgumentException("Negative candidate-family position: " + position);
+      return Collections.unmodifiableSet(result);
+    }
+    public Set<Integer> allPositions() {
+      java.util.TreeSet<Integer> result = new java.util.TreeSet<>(capabilityPositions);
+      result.addAll(profilePositions);
+      result.addAll(emissionPositions);
+      return Collections.unmodifiableSet(result);
     }
   }
 

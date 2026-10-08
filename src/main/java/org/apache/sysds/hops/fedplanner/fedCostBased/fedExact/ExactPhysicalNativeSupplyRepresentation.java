@@ -228,6 +228,7 @@ final class ExactPhysicalNativeSupplyRepresentation {
 		}
 		NativeExecutionKind kind = rule != null ? NativeExecutionKind.CANDIDATE
 			: switch(alternative.authorityKind()) {
+				case CANDIDATE_RULE_RELATION -> NativeExecutionKind.CANDIDATE;
 				case DURABLE_ANCHOR -> NativeExecutionKind.DURABLE_SOURCE;
 				case RELOCATION_SOURCE -> NativeExecutionKind.SUPPLY_ONLY;
 				case SYNTHETIC_BOUNDARY -> NativeExecutionKind.SYNTHETIC_BOUNDARY;

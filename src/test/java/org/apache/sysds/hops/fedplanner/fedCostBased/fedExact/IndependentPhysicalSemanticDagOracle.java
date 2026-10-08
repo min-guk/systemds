@@ -25,6 +25,7 @@ import java.util.function.Consumer;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.Alternative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.InputAuthority;
+import org.apache.sysds.hops.fedplanner.placement.CpRuleFamily;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
@@ -108,6 +109,44 @@ final class IndependentPhysicalSemanticDagOracle {
 			node.integer("realizations", emission.realizations().size());
 			for(CandidateEmissionRealization realization : emission.realizations())
 				node.child("realization", realization(realization));
+		});
+	}
+
+	private byte[] cpRuleFamily(CpRuleFamily family) {
+		return digest("cp-rule-family", node -> {
+			node.text("parent", family.parent().normalizedSignature());
+			node.integer("axes", family.axes().size());
+			for(List<CandidateInputState> axis : family.axes()) {
+				node.integer("axisSize", axis.size());
+				for(CandidateInputState input : axis)
+					node.text("axisInput", input.normalizedSignature());
+			}
+			CandidateCapabilityFact capability = family.capability();
+			node.text("category", capability.category().name());
+			node.text("opcode", capability.opcode());
+			node.text("nativeExec", capability.nativeExec().name());
+			node.text("nativeOutput", capability.nativeOutput().name());
+			node.nullableText("nativeFoutFType", capability.nativeFoutFType() == null
+				? null : capability.nativeFoutFType().name());
+			node.text("reasonCode", capability.reasonCode().name());
+			node.text("detail", capability.detail());
+			node.integer("notes", capability.notes().size());
+			capability.notes().forEach(note -> {
+				node.text("noteCode", note.code().name());
+				node.text("noteMessage", note.message());
+			});
+			node.integer("consultedFacts", family.shapeProof().consultedFacts().size());
+			for(Map.Entry<String,String> entry : family.shapeProof().consultedFacts().entrySet()) {
+				node.text("consultedKey", entry.getKey());
+				node.nullableText("consultedValue", entry.getValue());
+			}
+			texts(node, "requiredFact", family.shapeProof().requiredFacts());
+			texts(node, "missingFact", family.shapeProof().missingRequiredFacts());
+			node.integer("producerOutputs", family.profile().producerOutputs().size());
+			family.profile().producerOutputs().forEach(value ->
+				node.text("producerOutput", value.name()));
+			node.text("profileFailure", family.profile().evaluationFailure());
+			node.child("emission", emission(family.emission()));
 		});
 	}
 
@@ -216,6 +255,14 @@ final class IndependentPhysicalSemanticDagOracle {
 				: alternative.relocationAction().normalizedSignature());
 			node.nullableText("derivedFoutAction", alternative.derivedFoutAction() == null ? null
 				: alternative.derivedFoutAction().normalizedSignature());
+			if(alternative.cpRuleFamily() != null)
+				node.child("cpRuleFamily", cpRuleFamily(alternative.cpRuleFamily()));
+			if(alternative.candidateRuleRelation() != null) {
+				node.text("candidateRuleRelation",
+					alternative.candidateRuleRelation().normalizedSignature());
+				node.text("candidateRuleRegion",
+					alternative.candidateRuleRegion().normalizedSignature());
+			}
 			node.integer("orderedInputs", alternative.orderedInputs().size());
 			for(CandidateInputState input : alternative.orderedInputs()) {
 				node.text("inputPresence", input.presence().name());
@@ -235,13 +282,34 @@ final class IndependentPhysicalSemanticDagOracle {
 				&& NormalizedText.literal(recipe).equals(alternative.normalizedSignature());
 			node.text("signatureEncoding", canonical ? "CANONICAL_RECIPE" : "RAW_UTF16");
 			if(canonical)
-				node.text("signatureRecipe", alternative.captured() ? "CAPTURED_V1" : "NONCAPTURED_V1");
+				node.text("signatureRecipe", alternative.captured() ? "CAPTURED_V1"
+					: alternative.relationFamily() ? "CANDIDATE_RULE_RELATION_V1" : "NONCAPTURED_V1");
 			else
 				node.normalizedText("normalizedSignature", alternative.normalizedSignature());
 		});
 	}
 
 	private static String canonicalRecipe(Alternative alternative) {
+		if(alternative.relationFamily()) {
+			if(alternative.candidateRuleRelation() == null || alternative.candidateRuleRegion() == null
+				|| alternative.executionEmission() == null || alternative.realization() == null
+				|| alternative.supportClause() == null)
+				return null;
+			return "CANDIDATE_RULE_RELATION|" + alternative.state().normalizedSignature()
+				+ "|relation=" + alternative.candidateRuleRelation().normalizedSignature()
+				+ "|region=" + alternative.candidateRuleRegion().normalizedSignature()
+				+ "|inputs=" + alternative.orderedInputs().stream()
+					.map(CandidateInputState::normalizedSignature).toList()
+				+ "|emission=" + alternative.executionEmission().normalizedSignature()
+				+ "|realization=" + alternative.realization().normalizedSignature()
+				+ "|support=" + alternative.supportClause().normalizedSignature()
+				+ "|authorities=" + alternative.inputAuthorities().stream()
+					.map(IndependentPhysicalSemanticDagOracle::authoritySignature).toList();
+		}
+		if(alternative.family())
+			return alternative.cpRuleFamily() == null ? null
+				: "CP_RULE_FAMILY|" + alternative.state().normalizedSignature()
+					+ "|family=" + alternative.cpRuleFamily().normalizedSignature();
 		if(alternative.authorityKind() == ExactPhysicalModel.AuthorityKind.CAPTURED_RULE) {
 			if(alternative.candidateRule() == null || alternative.candidateEmission() == null
 				|| alternative.executionRule() != null || alternative.executionEmission() != null
@@ -285,7 +353,9 @@ final class IndependentPhysicalSemanticDagOracle {
 
 	private static String compactSignature(Alternative alternative) {
 		if(alternative.compactSupport() == null) return "";
-		return "|compactSupport=" + alternative.compactSupport().axes().stream().map(axis ->
+		String admitted = alternative.compactSupport().correlated()
+			? "|admittedSupport=" + alternative.compactSupport().admittedIndexSignature() : "";
+		return admitted + "|compactSupport=" + alternative.compactSupport().axes().stream().map(axis ->
 			axis.inputPosition() + ":" + axis.sourceOwner().normalizedSignature() + ":"
 				+ axis.kind().name() + ":" + (axis.relocationAction() == null ? "-"
 					: axis.relocationAction().normalizedSignature()) + ":options="

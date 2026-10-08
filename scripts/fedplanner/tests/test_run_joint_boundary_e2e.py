@@ -46,7 +46,7 @@ class JointBoundaryE2ETest(unittest.TestCase):
                           "joint_dynamic_reverse",
                           "joint_function_private_mix_negative",
                           "joint_branch_upload",
-                          "l2svm_protected_y_negative", "ml_logreg", "ml_l2svm",
+                          "l2svm_protected_y_negative", "ml_logreg", "ml_glm", "ml_l2svm",
                           "ml_lm", "ml_steplm", "ml_steplm_local_matrix",
                           "ml_logreg_gd", "ml_l2svm_gd",
                           "ml_lm_gd", "weighted_quaternary_with_private_aggregate",
@@ -56,14 +56,14 @@ class JointBoundaryE2ETest(unittest.TestCase):
         self.assertFalse(by_name["l2svm_protected_y_negative"].expected_success)
         self.assertTrue(by_name["l2svm_true_01"].requires_action_evidence)
         self.assertTrue(by_name["joint_branch_upload"].requires_branch_upload)
-        self.assertEqual({"ml_logreg", "ml_l2svm", "ml_lm", "ml_steplm",
+        self.assertEqual({"ml_logreg", "ml_glm", "ml_l2svm", "ml_lm", "ml_steplm",
                           "ml_steplm_local_matrix"},
                          {case.name for case in runner.cases()
                           if case.training and not case.requires_loss_progress})
         self.assertEqual({"ml_logreg_gd", "ml_l2svm_gd", "ml_lm_gd"},
                          {case.name for case in runner.cases()
                           if case.requires_loss_progress})
-        self.assertFalse({"ml_logreg", "ml_l2svm", "ml_lm", "ml_steplm",
+        self.assertFalse({"ml_logreg", "ml_glm", "ml_l2svm", "ml_lm", "ml_steplm",
                           "ml_steplm_local_matrix",
                           "ml_logreg_gd", "ml_l2svm_gd", "ml_lm_gd"}
                          & {case.name for case in runner.default_cases()})
@@ -129,7 +129,7 @@ class JointBoundaryE2ETest(unittest.TestCase):
 
     def test_ml_training_programs_use_three_protected_shards_and_write_full_model(self):
         by_name = {case.name: case for case in runner.cases()}
-        for name, builtin in (("ml_logreg", "multiLogReg"),
+        for name, builtin in (("ml_logreg", "multiLogReg"), ("ml_glm", "glm"),
                               ("ml_l2svm", "l2svm"), ("ml_lm", "lmCG")):
             script = runner.program(by_name[name], True)
             self.assertIn(f"m={builtin}(", script)
@@ -142,7 +142,7 @@ class JointBoundaryE2ETest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             runner.write_inputs(root, tuple(by_name[name] for name in
-                                            ("ml_logreg", "ml_l2svm", "ml_lm")))
+                                            ("ml_logreg", "ml_glm", "ml_l2svm", "ml_lm")))
             public = (root / "data/X_ML_PUBLIC.csv").read_text()
             shards = "".join((root / f"data/X_ML_{index}.csv").read_text()
                              for index in range(3))
@@ -151,6 +151,18 @@ class JointBoundaryE2ETest(unittest.TestCase):
                 metadata = json.loads((root / f"data/X_ML_{index}.csv.mtd").read_text())
                 self.assertEqual((64, 8, "private-aggregate"),
                                  (metadata["rows"], metadata["cols"], metadata["privacy"]))
+
+    def test_glm_program_pins_binomial_logit_parameters_and_binary_response(self):
+        case = next(case for case in runner.cases() if case.name == "ml_glm")
+        self.assertTrue(case.training)
+        self.assertFalse(case.default_selected)
+        for federated in (False, True):
+            script = runner.program(case, federated)
+            self.assertIn('Y=(Y_ML_SVM+1)/2;', script)
+            self.assertIn('m=glm(X=X,Y=Y,dfam=2,vpow=0,link=2,lpow=1,yneg=0,', script)
+            self.assertIn('icpt=0,disp=0,reg=1e-4,tol=1e-6,moi=5,mii=5,', script)
+            self.assertIn('verbose=FALSE);', script)
+            self.assertIn('write(m,$MODEL_OUTPUT,format="csv")', script)
 
     def test_steplm_fixture_is_public_nondegenerate_and_uses_one_full_worker(self):
         case = next(case for case in runner.cases() if case.name == "ml_steplm")
@@ -379,6 +391,7 @@ class JointBoundaryE2ETest(unittest.TestCase):
         command = runner.java_command(case, "fed", planner="global")
         self.assertIn(runner.CANONICAL_PROBE_CLASS, command)
         self.assertIn("fed-canonical-proof.json", command)
+        self.assertIn("-Dsysds.fedplanner.liveMetrics=true", command)
         self.assertTrue(command.endswith(
             "-nvargs MODEL_OUTPUT=/evidence/cases/ml_l2svm/fed-model.csv"))
         cp_command = runner.java_command(case, "cp", planner="global")
@@ -391,8 +404,10 @@ class JointBoundaryE2ETest(unittest.TestCase):
         canonical = runner.java_command(case, "fed", canonical_proof=True)
         self.assertIn("org.apache.sysds.api.DMLScript", default)
         self.assertNotIn(runner.CANONICAL_PROBE_CLASS, default)
+        self.assertNotIn("-Dsysds.fedplanner.liveMetrics=true", default)
         self.assertIn(runner.CANONICAL_PROBE_CLASS, canonical)
         self.assertIn("-Dsysds.fedplanner.trace=true", canonical)
+        self.assertIn("-Dsysds.fedplanner.liveMetrics=true", canonical)
 
     def test_canonical_proof_rejects_missing_false_and_planner_mismatch(self):
         valid = {
@@ -594,6 +609,9 @@ class JointBoundaryE2ETest(unittest.TestCase):
         self.assertIn("-w 13002", script)
         self.assertIn("org.junit.runner.JUnitCore", script)
         self.assertIn(runner.DEFAULT_MODEL_PROOF_CLASS, script)
+        self.assertIn("export HOME=/evidence/tmp/joint-boundary-home", script)
+        self.assertIn("export TMPDIR=/evidence/tmp", script)
+        self.assertNotIn("HOME=/tmp/", script)
         self.assertLess(script.index("class-preflight-expected.json"), script.index("-w 13000"))
 
     def test_class_preflight_pins_main_and_model_proof_hashes(self):

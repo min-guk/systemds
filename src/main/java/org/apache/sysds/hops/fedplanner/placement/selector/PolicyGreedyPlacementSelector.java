@@ -385,26 +385,32 @@ public final class PolicyGreedyPlacementSelector implements PlacementSelector, P
 				node.legalAlternatives().forEach(state -> owned.put(state, state));
 				var facts = analysis.candidateRuleFacts().orderedFactsForParent(node.key());
 				for(var fact : facts) if(fact.status() == CandidateEvaluationStatus.AVAILABLE)
-					for(var emission : fact.allowedEmissionFacts()) {
-						PlacementState state = owned.get(emission.emissionState().placementState());
-						if(state == null) continue; // A caller's explicit legal graph projection.
-						for(var receipt : analysis.canonicalCandidateReceipts(fact.key(), emission)) {
-							Row row = new Row(domain, state, receipt);
-							row.preferLocalAggregate = aggregateVector(node.key(), emission.executionFType());
-							for(var binding : receipt.supportClause().inputBindings()) {
-								if(binding.kind() == CandidateInputBindingKind.RELOCATION) row.movementInputs++;
-								else if(binding.source().realization().emissionState().placementState().output()
-									== FederatedOutput.FOUT) row.residentInputs++;
-							}
-							domain.add(row);
-						}
-					}
+					indexFactRows(domain, owned, fact);
+				for(var relation : analysis.candidateRuleFacts().candidateRelationsForParent(node.key()))
+					relation.forEachExactMember(fact -> indexFactRows(domain, owned, fact));
 				// Match common active-consumer semantics: only AVAILABLE emissions
 				// require a receipt. A legal non-candidate state remains state-only even
 				// when this occurrence has excluded/error facts for other states.
 				for(PlacementState state : node.legalAlternatives())
 					if(!domain.states.containsKey(state)) domain.add(new Row(domain, state, null));
 				if(domain.rows.isEmpty()) throw conflict(domain);
+			}
+		}
+		private void indexFactRows(Domain domain, Map<PlacementState,PlacementState> owned,
+			org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact fact) {
+			for(var emission : fact.allowedEmissionFacts()) {
+				PlacementState state = owned.get(emission.emissionState().placementState());
+				if(state == null) continue; // A caller's explicit legal graph projection.
+				for(var receipt : analysis.canonicalCandidateReceipts(fact.key(), emission)) {
+					Row row = new Row(domain, state, receipt);
+					row.preferLocalAggregate = aggregateVector(domain.node.key(), emission.executionFType());
+					for(var binding : receipt.supportClause().inputBindings()) {
+						if(binding.kind() == CandidateInputBindingKind.RELOCATION) row.movementInputs++;
+						else if(binding.source().realization().emissionState().placementState().output()
+							== FederatedOutput.FOUT) row.residentInputs++;
+					}
+					domain.add(row);
+				}
 			}
 		}
 		boolean aggregateVector(CompiledHopKey key, FType executionType) {

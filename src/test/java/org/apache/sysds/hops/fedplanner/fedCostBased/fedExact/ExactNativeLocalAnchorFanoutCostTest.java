@@ -43,12 +43,14 @@ public class ExactNativeLocalAnchorFanoutCostTest {
 	// Component regression: ExactExplicitWdivmmTransferTest; alias lifetime/versions:
 	// ExactAliasGetCoalescingTest. Prior R55 digests and change evidence are recorded
 	// in docs/COST_EXPLICIT_ALIAS_CALIBRATION_2026-10-05_KO.md.
+	// Refreshed from frozen e468797556 and independently compared with the revised
+	// engine: experiments/general-factorized-plan-space-20261008/*-hash-probe.log.
 	private static final String PROTECTED_NATIVE_LOCAL_FINGERPRINT =
-		"physical-semantic-dag-v3:830d58fd87625efb92e5254d7c993a511a82d73b9d3b72ceef829832720a7629";
+		"physical-semantic-dag-v3:fbe4ee550347a630fec74741f6516668f40287ae186b429f9660999052133f5f";
 	private static final String PROTECTED_NATIVE_LOCAL_STRUCTURE_SHA256 =
-		"be38b2b3443c56373846f157adaffaca113f1952673f64550beb7e295d7d2507";
+		"71bb4eb6866315a243d7c653e6155b695be8c52a2e61c424b541c6445b2ab3b0";
 	private static final String PROTECTED_NATIVE_LOCAL_BITS_SHA256 =
-		"ed382489615a62cb3bccecf5f90264d071a1a8413505a8f60dc15bbfe2dda2db";
+		"2f930fb0aa023f59c850d565fcabae2da726fb776751a9abc872146855069b47";
 
 	@Test
 	public void buildScopedWorkerCountMemoPreservesLegacyInvalidAddressCardinality() {
@@ -91,23 +93,18 @@ public class ExactNativeLocalAnchorFanoutCostTest {
 		Assert.assertTrue(nativeLocalAlternatives > 0);
 		Assert.assertEquals(PROTECTED_NATIVE_LOCAL_STRUCTURE_SHA256, structureDigest(model, surface));
 		Assert.assertEquals(PROTECTED_NATIVE_LOCAL_BITS_SHA256, contributionBitsDigest(model, surface));
-		// The authority receipt hashes even excluded rows. Certified omission of
-		// the aggregate's illegal ABSENT_LOCAL row changes that receipt, not the
-		// raw cost bits asserted above. The derived-supply change gives the
-		// same factors explicit operator/movement ownership labels, changing
-		// the structure and receipt digests while preserving those bits. R59 also
-		// canonicalizes initializer/TWrite/TRead creation identity in the activation
-		// descriptor. That receipt change preserves this fixture's structure and bits.
-		// Fused FOUT staging unifies the upload descriptor under source=ORIGINAL;
-		// this protected fixture still preserves both structure and numeric bit digests.
-		var omittedAggregate = analysis.candidateRuleDomain().privacyPrunedInputs().stream()
-			.filter(proof -> analysis.hop(proof.consumer().occurrence()).orElseThrow()
+		// The current source domain already supplies only PRESENT FULL to this
+		// aggregate, including in frozen e468797556. ABSENT_LOCAL was never in
+		// that domain, so no later privacy-pruning certificate should be invented.
+		var aggregate = analysis.candidateRuleFacts().orderedFacts().stream()
+			.filter(fact -> analysis.hop(fact.key().parentOccurrence()).orElseThrow()
 				instanceof org.apache.sysds.hops.AggUnaryOp).findFirst().orElseThrow();
+		Assert.assertEquals(List.of(PlacementAnalysis.CandidateInputState.present(FType.FULL)),
+			aggregate.key().orderedInputs());
 		var localTuple = List.of(PlacementAnalysis.CandidateInputState.absentLocal());
-		Assert.assertTrue(omittedAggregate.rejects(localTuple));
 		var lookup = Assert.assertThrows(PlacementAnalysis.CandidateRuleLookupException.class,
-			() -> analysis.candidateRuleFacts().requireExact(omittedAggregate.consumer().occurrence(), localTuple));
-		Assert.assertEquals(PlacementAnalysis.CandidateLookupFailure.PRIVACY_EXCLUDED, lookup.failure());
+			() -> analysis.candidateRuleFacts().requireExact(aggregate.key().parentOccurrence(), localTuple));
+		Assert.assertEquals(PlacementAnalysis.CandidateLookupFailure.MISSING_FACT, lookup.failure());
 		Assert.assertEquals(PROTECTED_NATIVE_LOCAL_FINGERPRINT, surface.contributionFingerprint());
 	}
 

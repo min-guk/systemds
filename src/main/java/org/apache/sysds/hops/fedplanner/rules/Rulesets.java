@@ -163,6 +163,44 @@ public final class Rulesets {
         ? Optional.of(new RulesApi.ShapeIndependentDecision(Set.of(0)))
         : Optional.empty();
   }
+  private static Set<Integer> allInputPositions(OpSig sig) {
+    if(sig == null || sig.arity() == 0)
+      return Set.of();
+    java.util.TreeSet<Integer> positions = new java.util.TreeSet<>();
+    for(int position = 0; position < sig.arity(); position++)
+      positions.add(position);
+    return java.util.Collections.unmodifiableSet(positions);
+  }
+
+  private static Set<Integer> primaryInputPosition(OpSig sig) {
+    return sig != null && sig.arity() > 0 ? Set.of(0) : Set.of();
+  }
+
+  private static Optional<RulesApi.DecisionDependencies> inputDecision(
+      OpSig sig, Set<Integer> determinants) {
+    return sig == null ? Optional.empty() : Optional.of(
+        new RulesApi.DecisionDependencies(determinants, Set.of(), Set.of()));
+  }
+
+  private static Optional<RulesApi.DecisionDependencies> shapeDecision(
+      OpSig sig, Set<Integer> determinants, Set<Integer> shapeSelectors,
+      String... shapeFacts) {
+    return sig == null ? Optional.empty() : Optional.of(
+        new RulesApi.DecisionDependencies(determinants, shapeSelectors,
+            Set.of(shapeFacts)));
+  }
+
+  private static Optional<RulesApi.CandidateFamilyDependencies> familyDependencies(
+      OpSig sig, Set<Integer> capability, Set<Integer> profile, Set<Integer> emission) {
+    return sig == null ? Optional.empty() : Optional.of(
+        new RulesApi.CandidateFamilyDependencies(capability, profile, emission));
+  }
+
+  private static Optional<RulesApi.CandidateFamilyDependencies> allInputFamilyDependencies(
+      OpSig sig) {
+    Set<Integer> all = allInputPositions(sig);
+    return familyDependencies(sig, all, all, all);
+  }
 
   private static boolean axisKnown(FType axis, ShapeHint hint) {
     if (axis == null || hint == null)
@@ -870,6 +908,10 @@ public final class Rulesets {
     @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       return primaryDecision(sig, EXPECTED_ARITY);
     }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? Optional.of(new RulesApi.CandidateFamilyDependencies(
+          Set.of(0), Set.of(), Set.of(0))) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -922,6 +964,10 @@ public final class Rulesets {
     @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       return primaryDecision(sig, EXPECTED_ARITY);
     }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? Optional.of(new RulesApi.CandidateFamilyDependencies(
+          Set.of(0), Set.of(), Set.of(0))) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -964,6 +1010,10 @@ public final class Rulesets {
     @Override public boolean supportsPartialFedFeasibility() { return true; }
     @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       return primaryDecision(sig, EXPECTED_ARITY);
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? Optional.of(new RulesApi.CandidateFamilyDependencies(
+          Set.of(0), Set.of(0), Set.of(0))) : Optional.empty();
     }
 
     @Override
@@ -1022,6 +1072,12 @@ public final class Rulesets {
     @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       return primaryDecisionAtLeast(sig, 1);
     }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of(0)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(), Set.of(0)) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -1057,6 +1113,12 @@ public final class Rulesets {
     @Override public Set<String> opcodes() { return OPCODES; }
     @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       return primaryDecisionAtLeast(sig, 1);
+    }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of(0)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(0), Set.of(0)) : Optional.empty();
     }
 
     @Override
@@ -1106,6 +1168,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of(0)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(0), Set.of(0)) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -1152,6 +1220,14 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? shapeDecision(sig, Set.of(0), allInputPositions(sig),
+          "rows", "cols", "fullSinglePartition")
+          : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(0), Set.of(0)) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -1434,6 +1510,10 @@ public final class Rulesets {
     @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       return primaryDecision(sig, 1);
     }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? Optional.of(new RulesApi.CandidateFamilyDependencies(
+          Set.of(0), Set.of(0), Set.of(0))) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -1495,6 +1575,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of(0)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(0), Set.of(0)) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -1584,6 +1670,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.REORG; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of(0)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(0), Set.of(0)) : Optional.empty();
+    }
 
     @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       if (!supports(sig))
@@ -1752,6 +1844,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.RESHAPE; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of(0)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(), Set.of(0)) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -1833,6 +1931,12 @@ public final class Rulesets {
     @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       return primaryDecisionAtLeast(sig, 1);
     }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of(0)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(0), Set.of(0)) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -1890,6 +1994,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.INDEXING; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, allInputPositions(sig)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
     @Override public boolean supportsPartialFedFeasibility() { return true; }
 
     @Override
@@ -1967,6 +2077,13 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.INDEXING; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? shapeDecision(sig, allInputPositions(sig), allInputPositions(sig),
+          "fullSinglePartition") : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -2054,6 +2171,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.VARIABLE_CAST; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of(0)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(0), Set.of(0)) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -2130,6 +2253,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of(0)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(0), Set.of(0)) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -2191,6 +2320,12 @@ public final class Rulesets {
     @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       return primaryDecision(sig, 1);
     }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of(0)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(0), Set.of(0)) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -2225,6 +2360,12 @@ public final class Rulesets {
     @Override public Set<String> opcodes() { return OPCODES; }
     @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       return primaryDecisionAtLeast(sig, 2);
+    }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of(0)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(), Set.of(0)) : Optional.empty();
     }
 
     @Override
@@ -2268,6 +2409,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of(0)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(0), Set.of(0)) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -2346,6 +2493,13 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.AGG_TERNARY; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? shapeDecision(sig, allInputPositions(sig), Set.of(), "rows", "cols")
+          : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -2444,6 +2598,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, allInputPositions(sig)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -2554,6 +2714,13 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? shapeDecision(sig, allInputPositions(sig), allInputPositions(sig),
+          "rows", "cols", "rowsA", "colsA", "rowsB", "colsB") : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -2634,6 +2801,12 @@ public final class Rulesets {
     @Override public Set<String> opcodes() { return Set.of(); }
     @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       return primaryDecisionAtLeast(sig, 1);
+    }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of(0)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(0), Set.of(0)) : Optional.empty();
     }
 
     @Override
@@ -2731,6 +2904,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.AGG_UNARY; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, allInputPositions(sig)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       if (sig == null || sig.arity() < 1 || sig.arity() > 2)
@@ -2801,6 +2980,13 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.TSMM; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? shapeDecision(sig, Set.of(0), Set.of(0), "fullSinglePartition")
+          : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(), Set.of(0)) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -2939,7 +3125,10 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.BINARY_MM; }
     @Override public Set<String> opcodes() { return OPCODES; }
-
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return supports(sig) && attr(sig, ATTR_R_IS_VECTOR) != null
+          ? Optional.of(new RulesApi.ShapeIndependentDecision(Set.of(0, 1))) : Optional.empty();
+    }
     @Override
     public boolean supports(OpSig sig) {
       return sig != null
@@ -3052,6 +3241,13 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.BINARY_MM; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? shapeDecision(sig, allInputPositions(sig), allInputPositions(sig),
+          "fullSinglePartition") : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -3330,6 +3526,13 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? shapeDecision(sig, allInputPositions(sig), allInputPositions(sig),
+          "fullSinglePartition") : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -3452,6 +3655,16 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return sig != null && OPCODES.contains(normalizedOpcode(sig))
+          ? shapeDecision(sig, allInputPositions(sig), allInputPositions(sig),
+              "fullSinglePartition", "rows", "cols", "rowsA", "colsA", "rowsB", "colsB")
+          : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return sig != null && OPCODES.contains(normalizedOpcode(sig))
+          ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override
     public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
@@ -3665,6 +3878,13 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? shapeDecision(sig, allInputPositions(sig), allInputPositions(sig),
+          "fullSinglePartition") : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -3763,6 +3983,13 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.APPEND; }
     @Override public Set<String> opcodes() { return Set.of(APPEND, CBIND, RBIND); }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? shapeDecision(sig, allInputPositions(sig), allInputPositions(sig),
+          "fullSinglePartition", "rowsA", "colsA", "rowsB", "colsB") : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -4019,6 +4246,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.QUANTILE_SORT; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? shapeDecision(sig, Set.of(0), Set.of(0), "cols") : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(0), Set.of(0)) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -4102,6 +4335,13 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.QUANTILE_PICK; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? shapeDecision(sig, allInputPositions(sig), allInputPositions(sig),
+          "fullSinglePartition") : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -4182,6 +4422,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, allInputPositions(sig)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -4297,6 +4543,12 @@ public final class Rulesets {
       return sig == null ? Optional.empty()
           : Optional.of(new RulesApi.ShapeIndependentDecision(Set.of()));
     }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of()) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(), Set.of(), Set.of()) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -4327,6 +4579,13 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? shapeDecision(sig, Set.of(0), allInputPositions(sig), "fullSinglePartition")
+          : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(0), Set.of(0), Set.of(0)) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -4451,6 +4710,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, allInputPositions(sig)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -4563,6 +4828,14 @@ public final class Rulesets {
       return sig == null ? Optional.empty()
           : Optional.of(new RulesApi.ShapeIndependentDecision(Set.of()));
     }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return sig != null && OPCODES.contains(normalizedOpcode(sig))
+          ? inputDecision(sig, Set.of()) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return sig != null && OPCODES.contains(normalizedOpcode(sig))
+          ? familyDependencies(sig, Set.of(), Set.of(), Set.of()) : Optional.empty();
+    }
 
     @Override
     public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
@@ -4577,6 +4850,13 @@ public final class Rulesets {
 
   public static final class SpoofCellwiseRule extends BaseRule {
     @Override public OpCategory category() { return OpCategory.SPOOF; }
+
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, allInputPositions(sig)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override public boolean supports(OpSig sig) {
       return matchesSpoofTemplate(sig, SpoofTemplate.CELLWISE);
@@ -4648,6 +4928,13 @@ public final class Rulesets {
   public static final class SpoofRowwiseRule extends BaseRule {
     @Override public OpCategory category() { return OpCategory.SPOOF; }
 
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, allInputPositions(sig)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
+
     @Override public boolean supports(OpSig sig) {
       return matchesSpoofTemplate(sig, SpoofTemplate.ROWWISE);
     }
@@ -4702,6 +4989,13 @@ public final class Rulesets {
   public static final class SpoofMultiAggregateRule extends BaseRule {
     @Override public OpCategory category() { return OpCategory.SPOOF; }
 
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, allInputPositions(sig)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
+
     @Override public boolean supports(OpSig sig) {
       return matchesSpoofTemplate(sig, SpoofTemplate.MULTIAGG);
     }
@@ -4733,6 +5027,13 @@ public final class Rulesets {
 
   public static final class SpoofOuterProductRule extends BaseRule {
     @Override public OpCategory category() { return OpCategory.SPOOF; }
+
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, allInputPositions(sig)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override public boolean supports(OpSig sig) {
       return matchesSpoofTemplate(sig, SpoofTemplate.OUTER);
@@ -4811,10 +5112,17 @@ public final class Rulesets {
     @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       return primaryDecisionAtLeast(sig, 1);
     }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, primaryInputPosition(sig)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      Set<Integer> primary = primaryInputPosition(sig);
+      return supports(sig) ? familyDependencies(sig, primary, primary, primary) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
-      return sig != null && OPCODES.contains(normalizedOpcode(sig));
+      return sig != null && OpOpData.TRANSIENTWRITE.toString().equalsIgnoreCase(sig.opcode());
     }
 
     @Override
@@ -4846,6 +5154,13 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, primaryInputPosition(sig)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      Set<Integer> primary = primaryInputPosition(sig);
+      return supports(sig) ? familyDependencies(sig, primary, primary, primary) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -4916,6 +5231,13 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, primaryInputPosition(sig)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      Set<Integer> primary = primaryInputPosition(sig);
+      return supports(sig) ? familyDependencies(sig, primary, primary, primary) : Optional.empty();
+    }
 
     @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       if (sig == null)
@@ -4926,7 +5248,7 @@ public final class Rulesets {
 
     @Override
     public boolean supports(OpSig sig) {
-      return sig != null && OPCODES.contains(normalizedOpcode(sig));
+      return sig != null && OpOpData.TRANSIENTREAD.toString().equalsIgnoreCase(sig.opcode());
     }
 
     @Override
@@ -4963,6 +5285,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return null; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, allInputPositions(sig)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -5053,6 +5381,12 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return null; }
+    @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, allInputPositions(sig)) : Optional.empty();
+    }
+    @Override public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? allInputFamilyDependencies(sig) : Optional.empty();
+    }
 
     @Override
     public boolean supports(OpSig sig) {

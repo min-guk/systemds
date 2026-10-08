@@ -1,0 +1,23 @@
+{
+  "schema": "fed-oracle-native-validation-preparation-v1",
+  "status": "PASSED",
+  "baselineEngine": "/grid/3/cofee-lm-sweep-mchoi-20260914/fed-oracle-native-20261008/evidence/baseline-engine-final-authority",
+  "baselineManifest": "/grid/3/cofee-lm-sweep-mchoi-20260914/fed-oracle-native-20261008/evidence/baseline-engine-manifest.json",
+  "baselineImmutableFiles": true,
+  "pairedOrder": ["baseline,candidate", "candidate,baseline", "baseline,candidate"],
+  "fixedRuntime": {
+    "seed": 7,
+    "cpus": 4,
+    "containerMemory": "8g",
+    "coordinatorHeap": "3g",
+    "workerHeap": "1g"
+  },
+  "cgroupV2": true,
+  "containerMemoryPeakReadable": true,
+  "jfrRecordingSupported": true,
+  "hostJfrParser": "/usr/lib/jvm/java-17-openjdk-amd64/bin/jfr",
+  "defaultWorkloads": ["ml_logreg", "ml_glm"],
+  "optionalWorkloads": ["ml_steplm", "ml_steplm_local_matrix"],
+  "baselineRunsExecuted": 0,
+  "reasonBaselineNotExecuted": "Paired protocol waits for the frozen candidate engine to avoid unpaired temporal drift."
+}

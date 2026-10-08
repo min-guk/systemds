@@ -142,8 +142,9 @@ public class DirectSourceSeedProjectionTest {
 		nodes.put(mapOwner, node(mapOwner, List.of()));
 		Object first = projection(nodes, index, continuity(before));
 		Assert.assertEquals(List.of(pool), seeds(first, mapOwner, FType.ROW));
-		Assert.assertTrue("deep VALUE_MAP metadata requires conservative resubscription",
-			fixedValueMapConsulted(first, mapOwner, FType.ROW));
+		Assert.assertEquals("deep VALUE_MAP seed records its exact owner-read footprint",
+			identitySet(mapOwner, leafOwner),
+			dependencyOccurrences(first, mapOwner, FType.ROW));
 
 		CandidateRuleFact withdrawn = failed(leafOwner);
 		List<CandidateRuleFact> after = List.of(withdrawn, valueMap);
@@ -151,6 +152,110 @@ public class DirectSourceSeedProjectionTest {
 		Object fresh = projection(nodes, index, continuity(after));
 		Assert.assertTrue("a new binder call must not retain the prior VALUE_MAP leaf pool",
 			seeds(fresh, mapOwner, FType.ROW).isEmpty());
+	}
+
+	@Test
+	public void unresolvedValueMapSubscribesToMissingExactOwner() throws Exception {
+		CompiledHopKey missingOwner = key("missing-leaf");
+		CompiledHopKey mapOwner = key("missing-map");
+		CandidateRuleFact missingLeaf = nativeFact(missingOwner, "missing-leaf",
+			pool("missing-pool", FType.ROW, "worker", 8), 1);
+		CandidateRuleFact valueMap = valueMapFact(mapOwner, reference(missingLeaf));
+		List<CandidateRuleFact> facts = List.of(valueMap);
+		Map<CompiledHopKey,Node> nodes = new IdentityHashMap<>();
+		nodes.put(missingOwner, node(missingOwner, List.of()));
+		nodes.put(mapOwner, node(mapOwner, List.of()));
+		Object projection = projection(nodes, sourceIndex(facts), continuity(facts));
+
+		Assert.assertTrue(seeds(projection, mapOwner, FType.ROW).isEmpty());
+		Assert.assertEquals("negative resolution must subscribe before the failed owner lookup",
+			identitySet(mapOwner, missingOwner),
+			dependencyOccurrences(projection, mapOwner, FType.ROW));
+	}
+
+	@Test
+	public void equalButNonidenticalOwnerCannotReuseFixedMapResolution() {
+		CompiledHopKey presentOwner = key("equal-owner");
+		CompiledHopKey missingOwner = key("equal-owner");
+		Assert.assertEquals(presentOwner, missingOwner);
+		Assert.assertNotSame(presentOwner, missingOwner);
+		CandidateRuleFact leaf = nativeFact(presentOwner, "equal-leaf",
+			pool("equal-pool", FType.ROW, "worker", 8), 1);
+		CompiledHopKey firstMapOwner = key("equal-map-present");
+		CompiledHopKey secondMapOwner = key("equal-map-missing");
+		CandidateRuleFact firstMap = valueMapFact(firstMapOwner, reference(leaf));
+		CandidateRuleFact missingLeafShape = nativeFact(missingOwner, "equal-leaf",
+			pool("equal-pool", FType.ROW, "worker", 8), 1);
+		CandidateRuleFact secondMap = valueMapFact(secondMapOwner, reference(missingLeafShape));
+		NativePlacementContinuity continuity = continuity(List.of(leaf, firstMap, secondMap));
+
+		Assert.assertNotNull(continuity.fixedValueMapPool(reference(firstMap)));
+		NativePlacementContinuity.FixedValueMapResolution missing =
+			continuity.fixedValueMapResolution(reference(secondMap));
+		Assert.assertNull("equal structural text cannot alias a different owner identity", missing.pool());
+		Assert.assertTrue(missing.ownerReads().contains(missingOwner));
+		Assert.assertFalse(missing.ownerReads().contains(presentOwner));
+	}
+
+	@Test
+	public void positiveGraphMembersShareOneImmutableOwnerReadSet() {
+		CompiledHopKey leafOwner = key("shared-read-leaf");
+		CompiledHopKey mapOwner = key("shared-read-map");
+		CandidateRuleFact leaf = nativeFact(leafOwner, "shared-read-leaf",
+			pool("shared-read-pool", FType.ROW, "worker", 8), 1);
+		CandidateRuleFact valueMap = valueMapFact(mapOwner, reference(leaf));
+		NativePlacementContinuity continuity = continuity(List.of(leaf, valueMap));
+		NativePlacementContinuity.FixedValueMapResolution root =
+			continuity.fixedValueMapResolution(reference(valueMap));
+		NativePlacementContinuity.FixedValueMapResolution child =
+			continuity.fixedValueMapResolution(reference(leaf));
+
+		Assert.assertNotNull(root.pool());
+		Assert.assertNotNull(child.pool());
+		Assert.assertSame("one graph resolution must not copy the owner set per child",
+			root.ownerReads(), child.ownerReads());
+		try {
+			root.ownerReads().clear();
+			Assert.fail("owner reads must be immutable");
+		}
+		catch(UnsupportedOperationException expected) {
+			// expected
+		}
+	}
+
+	@Test
+	public void exactDeepSubscriptionSkipsUnrelatedOwnerButRetainsLeafInvalidation()
+		throws Exception {
+		CompiledHopKey leaf = key("subscribed-leaf");
+		CompiledHopKey map = key("subscribed-map");
+		CompiledHopKey consumer = key("subscribed-consumer");
+		CompiledHopKey unrelated = key("unrelated-owner");
+		Constructor<?> constructor = nested("DirectQuerySubscriptions").getDeclaredConstructor();
+		constructor.setAccessible(true);
+		Object subscriptions = constructor.newInstance();
+		Method replace = nested("DirectQuerySubscriptions").getDeclaredMethod(
+			"replace", Set.class, Map.class, Set.class);
+		replace.setAccessible(true);
+		replace.invoke(subscriptions, identitySet(consumer),
+			Map.of(consumer, identitySet(consumer, map, leaf)), Set.of());
+		Method required = PlacementRelationClosure.class.getDeclaredMethod(
+			"requiredDirectClosureOccurrences", Set.class, Map.class, Map.class, Map.class,
+			Map.class, nested("DirectQuerySubscriptions"));
+		required.setAccessible(true);
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential = new IdentityHashMap<>();
+		potential.put(leaf, identitySet(map));
+		potential.put(map, identitySet(consumer));
+
+		@SuppressWarnings("unchecked")
+		Set<CompiledHopKey> unrelatedAffected = (Set<CompiledHopKey>)required.invoke(null,
+			identitySet(unrelated), potential, Map.of(), Map.of(), Map.of(), subscriptions);
+		Assert.assertFalse("an unrelated owner change must not recompute the subscribed consumer",
+			unrelatedAffected.contains(consumer));
+		@SuppressWarnings("unchecked")
+		Set<CompiledHopKey> leafAffected = (Set<CompiledHopKey>)required.invoke(null,
+			identitySet(leaf), potential, Map.of(), Map.of(), Map.of(), subscriptions);
+		Assert.assertTrue("the exact hidden leaf dependency must still invalidate the consumer",
+			leafAffected.contains(consumer));
 	}
 
 	@Test
@@ -196,7 +301,7 @@ public class DirectSourceSeedProjectionTest {
 	}
 
 	@Test
-	public void directBinderMarksDeepValueMapSeedFootprintIncomplete() throws Exception {
+	public void directBinderSubscribesToDeepValueMapSeedFootprint() throws Exception {
 		CompiledHopKey leafOwner = key("binder-leaf");
 		CompiledHopKey mapOwner = key("binder-map");
 		CompiledHopKey consumerOwner = key("binder-consumer");
@@ -230,11 +335,18 @@ public class DirectSourceSeedProjectionTest {
 		incomplete.setAccessible(true);
 		@SuppressWarnings("unchecked")
 		Set<CompiledHopKey> incompleteOwners = (Set<CompiledHopKey>)incomplete.invoke(result);
-		Assert.assertTrue("binder must not publish a complete subscription for a deep map seed",
+		Assert.assertFalse("complete deep-map owner reads must avoid the full-cone fallback",
 			incompleteOwners.contains(consumerOwner));
-		Assert.assertEquals(1, directMetric(metrics, "INCOMPLETE_SEED_VALUE_MAP_INCIDENCES"));
+		Assert.assertEquals(0, directMetric(metrics, "INCOMPLETE_SEED_VALUE_MAP_INCIDENCES"));
 		Assert.assertEquals(0, directMetric(metrics, "INCOMPLETE_PROOF_METADATA_INCIDENCES"));
-		Assert.assertEquals(1, directMetric(metrics, "INCOMPLETE_UNIQUE_OWNERS"));
+		Assert.assertEquals(0, directMetric(metrics, "INCOMPLETE_UNIQUE_OWNERS"));
+		Method dependencies = result.getClass().getDeclaredMethod("dependencyOccurrences");
+		dependencies.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		Map<CompiledHopKey,Set<CompiledHopKey>> dependencyReads =
+			(Map<CompiledHopKey,Set<CompiledHopKey>>)dependencies.invoke(result);
+		Assert.assertEquals(identitySet(consumerOwner, mapOwner, leafOwner),
+			dependencyReads.get(consumerOwner));
 	}
 
 	@Test
@@ -291,8 +403,8 @@ public class DirectSourceSeedProjectionTest {
 		Object projection = projection(nodes.stream().collect(java.util.stream.Collectors.toMap(
 			Node::key, node -> node, (left, right) -> right, IdentityHashMap::new)),
 			sourceIndex, continuity(allFacts));
-		Assert.assertFalse("the immediate native source does not itself resolve a VALUE_MAP",
-			fixedValueMapConsulted(projection, bridgeOwner, FType.ROW));
+		Assert.assertEquals("the immediate native source reads only its own inventory",
+			identitySet(bridgeOwner), dependencyOccurrences(projection, bridgeOwner, FType.ROW));
 
 		NativePlacementContinuity resolver = new NativePlacementContinuity(
 			nodes.stream().collect(java.util.stream.Collectors.toMap(
@@ -315,15 +427,17 @@ public class DirectSourceSeedProjectionTest {
 		Set<CompiledHopKey> queryReads = dependencyReads.getOrDefault(consumerOwner, Set.of());
 		Assert.assertTrue("the current Native query must visit unselected VALUE_MAP V",
 			queryReads.contains(mapOwner));
+		Assert.assertTrue("the topology must expose V's hidden leaf owner read",
+			queryReads.contains(leafOwner));
 		Method incomplete = result.getClass().getDeclaredMethod("incompleteDependencyOccurrences");
 		incomplete.setAccessible(true);
 		@SuppressWarnings("unchecked")
 		Set<CompiledHopKey> incompleteOwners = (Set<CompiledHopKey>)incomplete.invoke(result);
-		Assert.assertTrue("R must stay on the full cone because V hides S metadata",
+		Assert.assertFalse("complete topology metadata reads avoid the full-cone fallback",
 			incompleteOwners.contains(consumerOwner));
 		Assert.assertEquals(0, directMetric(metrics, "INCOMPLETE_SEED_VALUE_MAP_INCIDENCES"));
-		Assert.assertEquals(1, directMetric(metrics, "INCOMPLETE_PROOF_METADATA_INCIDENCES"));
-		Assert.assertEquals(1, directMetric(metrics, "INCOMPLETE_UNIQUE_OWNERS"));
+		Assert.assertEquals(0, directMetric(metrics, "INCOMPLETE_PROOF_METADATA_INCIDENCES"));
+		Assert.assertEquals(0, directMetric(metrics, "INCOMPLETE_UNIQUE_OWNERS"));
 
 		Constructor<?> subscriptionsConstructor = nested("DirectQuerySubscriptions").getDeclaredConstructor();
 		subscriptionsConstructor.setAccessible(true);
@@ -472,12 +586,13 @@ public class DirectSourceSeedProjectionTest {
 		return (long) method.invoke(projection);
 	}
 
-	private static boolean fixedValueMapConsulted(Object projection, CompiledHopKey owner,
-		FType type) throws Exception {
+	@SuppressWarnings("unchecked")
+	private static Set<CompiledHopKey> dependencyOccurrences(Object projection,
+		CompiledHopKey owner, FType type) throws Exception {
 		Method method = nested("DirectSourceSeedProjection").getDeclaredMethod(
-			"fixedValueMapConsulted", CompiledHopKey.class, FType.class);
+			"dependencyOccurrences", CompiledHopKey.class, FType.class);
 		method.setAccessible(true);
-		return (boolean)method.invoke(projection, owner, type);
+		return (Set<CompiledHopKey>)method.invoke(projection, owner, type);
 	}
 
 	private static long directMetric(SearchSpaceMetrics metrics, String name) {

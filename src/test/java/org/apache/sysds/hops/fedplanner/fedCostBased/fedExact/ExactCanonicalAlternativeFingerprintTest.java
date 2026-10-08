@@ -20,17 +20,30 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.Alternative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.AuthorityKind;
+import org.apache.sysds.hops.fedplanner.placement.CandidateRuleRelation;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateProfileFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateShapeProofFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedText;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedTextBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
@@ -128,7 +141,8 @@ public class ExactCanonicalAlternativeFingerprintTest {
 		}
 		Alternative base = firstAlternative(model("B-11"));
 		for(AuthorityKind kind : AuthorityKind.values()) {
-			if(kind == AuthorityKind.CAPTURED_RULE || kind == AuthorityKind.CP_RULE_FAMILY)
+			if(kind == AuthorityKind.CAPTURED_RULE || kind == AuthorityKind.CP_RULE_FAMILY
+				|| kind == AuthorityKind.CANDIDATE_RULE_RELATION)
 				continue;
 			Alternative placeholder = new Alternative(base.decision(), base.state(), kind,
 				null, null, null, null, null, null, null, List.of(), List.of(), null, null, "placeholder");
@@ -138,6 +152,35 @@ public class ExactCanonicalAlternativeFingerprintTest {
 				ExactPhysicalModel.canonicalAlternativeSignature(canonical));
 			seen.add(kind);
 		}
+		var relationState = base.state().execType() == ExecType.CP
+			? base.state() : new org.apache.sysds.hops.fedplanner.placement.PlacementState(
+				ExecType.CP, FederatedOutput.LOUT, null, false);
+		var relationEmission = new CandidateEmissionFact(
+			new PlacementEmissionState(relationState, false), null);
+		var relationRegion = new CandidateRuleRelation.ConditionalRegion(
+			List.of(List.of(CandidateInputState.absentLocal())),
+			new CandidateRuleRelation.Header(new CandidateCapabilityFact(OpCategory.OTHER,
+				"EXP", ExecType.CP, FederatedOutput.LOUT, null, ReasonCode.OK, "", List.of()),
+				new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
+				new CandidateProfileFact(List.of(), ""), List.of(relationEmission)));
+		var relation = new CandidateRuleRelation(base.decision(), List.of(relationRegion));
+		var relationRealization = relationEmission.realizations().get(0);
+		var relationClause = relationRealization.supportClauses().get(0);
+		Alternative relationPlaceholder = new Alternative(base.decision(), relationState,
+			AuthorityKind.CANDIDATE_RULE_RELATION, null, null, null, relationEmission,
+			null, null, null, relation.canonicalInputs(), List.of(), relationRealization,
+			relationClause, null, null, relation, relationRegion, NormalizedText.literal("placeholder"));
+		NormalizedText relationSignature = ExactPhysicalModel.canonicalAlternativeSignature(
+			relationPlaceholder);
+		Alternative relationAlternative = new Alternative(base.decision(), relationState,
+			AuthorityKind.CANDIDATE_RULE_RELATION, null, null, null, relationEmission,
+			null, null, null, relation.canonicalInputs(), List.of(), relationRealization,
+			relationClause, null, null, relation, relationRegion, relationSignature);
+		Assert.assertEquals(relationSignature,
+			ExactPhysicalModel.canonicalAlternativeSignature(relationAlternative));
+		Assert.assertFalse(ExactPhysicalCostModel.physicalAlternativeDagFingerprintForTest(
+			relationAlternative).isEmpty());
+		seen.add(AuthorityKind.CANDIDATE_RULE_RELATION);
 		Assert.assertEquals(EnumSet.allOf(AuthorityKind.class), seen);
 		Assert.assertTrue("derived output action fixture missing", derived);
 		Assert.assertTrue("relocation fixture missing", relocation);
@@ -254,12 +297,60 @@ public class ExactCanonicalAlternativeFingerprintTest {
 		}
 	}
 
+	@Test
+	public void correlatedCompactRecipeRetainsAdmittedHoleIdentity() throws Exception {
+		Alternative correlated = correlatedIndexedModel().domains().stream()
+			.flatMap(domain -> domain.alternatives().stream())
+			.filter(alternative -> alternative.compactSupport() != null
+				&& alternative.compactSupport().correlated())
+			.findFirst().orElseThrow();
+		String recipe = independentRecipe(correlated);
+		Assert.assertEquals(recipe, correlated.signature());
+		Assert.assertTrue(recipe.contains("|admittedSupport="));
+		String digest = ExactPhysicalCostModel.physicalAlternativeDagFingerprintForTest(correlated);
+		Assert.assertEquals(IndependentPhysicalSemanticDagOracle.alternativeValue(correlated), digest);
+
+		int admitted = recipe.indexOf("|admittedSupport=");
+		int compact = recipe.indexOf("|compactSupport=", admitted);
+		Alternative missingHoleIdentity = copy(correlated, NormalizedText.literal(
+			recipe.substring(0, admitted) + recipe.substring(compact)));
+		Assert.assertNotEquals(missingHoleIdentity.normalizedSignature(),
+			ExactPhysicalModel.canonicalAlternativeSignature(missingHoleIdentity));
+		Assert.assertEquals(IndependentPhysicalSemanticDagOracle.alternativeValue(missingHoleIdentity),
+			ExactPhysicalCostModel.physicalAlternativeDagFingerprintForTest(missingHoleIdentity));
+		Assert.assertFalse(digest.equals(
+			ExactPhysicalCostModel.physicalAlternativeDagFingerprintForTest(missingHoleIdentity)));
+	}
+
 	private static ExactPhysicalModel model(String id) throws Exception {
 		DMLProgram program = "RELOCATION".equals(id) ? relocationFixture()
 			: "LOOP".equals(id) ? loopFixture()
 			: "WEIGHTED".equals(id) ? weightedFixture()
 			: CampaignBG014HermeticPlannerFixtureFactory.compile(id);
 		return ExactPhysicalModel.build(new NeutralPlacementGraphBuilder().buildAnalysis(program));
+	}
+
+	/** Reuses the sparse-hole fixture without exposing its private record types to production code. */
+	@SuppressWarnings({"rawtypes", "unchecked"})
+	private static ExactPhysicalModel correlatedIndexedModel() throws Exception {
+		Class<?> owner = ExactFactorizedSupportPipelineTest.class;
+		Class<?> encoding = java.util.Arrays.stream(owner.getDeclaredClasses())
+			.filter(type -> type.getSimpleName().equals("SupportEncoding")).findFirst().orElseThrow();
+		Class<?> pair = java.util.Arrays.stream(owner.getDeclaredClasses())
+			.filter(type -> type.getSimpleName().equals("SupportPair")).findFirst().orElseThrow();
+		var pairConstructor = pair.getDeclaredConstructor(int.class, int.class);
+		pairConstructor.setAccessible(true);
+		List<Object> admitted = List.of(pairConstructor.newInstance(0, 0),
+			pairConstructor.newInstance(0, 2), pairConstructor.newInstance(1, 1),
+			pairConstructor.newInstance(1, 2));
+		var fixtureFactory = owner.getDeclaredMethod("fixture", int.class, int.class,
+			encoding, boolean.class, List.class);
+		fixtureFactory.setAccessible(true);
+		Object fixture = fixtureFactory.invoke(null, 2, 3,
+			Enum.valueOf((Class<? extends Enum>)encoding, "INDEXED"), false, admitted);
+		var analysisAccessor = fixture.getClass().getDeclaredMethod("analysis");
+		analysisAccessor.setAccessible(true);
+		return ExactPhysicalModel.build((PlacementAnalysis)analysisAccessor.invoke(fixture));
 	}
 
 	private static DMLProgram weightedFixture() throws Exception {
@@ -321,7 +412,8 @@ public class ExactCanonicalAlternativeFingerprintTest {
 		return new Alternative(a.decision(), a.state(), a.authorityKind(), a.candidateRule(),
 			a.candidateEmission(), a.executionRule(), a.executionEmission(), a.durableAnchor(),
 			a.relocationAction(), a.derivedFoutAction(), a.orderedInputs(), a.inputAuthorities(),
-			a.realization(), a.supportClause(), a.compactSupport(), a.cpRuleFamily(), signature);
+			a.realization(), a.supportClause(), a.compactSupport(), a.cpRuleFamily(),
+			a.candidateRuleRelation(), a.candidateRuleRegion(), signature);
 	}
 
 	private static Alternative canonicalized(Alternative alternative) {
@@ -338,6 +430,15 @@ public class ExactCanonicalAlternativeFingerprintTest {
 		if(a.authorityKind() == AuthorityKind.CP_RULE_FAMILY)
 			return "CP_RULE_FAMILY|" + a.state().normalizedSignature() + "|family="
 				+ a.cpRuleFamily().normalizedSignature();
+		if(a.authorityKind() == AuthorityKind.CANDIDATE_RULE_RELATION)
+			return "CANDIDATE_RULE_RELATION|" + a.state().normalizedSignature() + "|relation="
+				+ a.candidateRuleRelation().normalizedSignature() + "|region="
+				+ a.candidateRuleRegion().normalizedSignature() + "|inputs="
+				+ a.orderedInputs().stream().map(CandidateInputState::normalizedSignature).toList()
+				+ "|emission=" + a.executionEmission().normalizedSignature()
+				+ "|realization=" + a.realization().normalizedSignature()
+				+ "|support=" + a.supportClause().normalizedSignature()
+				+ "|authorities=" + inputs;
 		if(a.authorityKind() == AuthorityKind.CAPTURED_RULE)
 			return "CAPTURED|" + a.state().normalizedSignature() + "|rule="
 				+ a.candidateRule().key().normalizedSignature() + "|emission="
@@ -345,7 +446,7 @@ public class ExactCanonicalAlternativeFingerprintTest {
 				+ a.realization().key().normalizedSignature() + "|clause="
 				+ a.supportClause().normalizedSignature() + "|foutMaterializationAction="
 				+ (a.derivedFoutAction() == null ? "-" : a.derivedFoutAction().normalizedSignature())
-				+ "|inputs=" + inputs;
+				+ "|inputs=" + inputs + independentCompactSupport(a);
 		return a.authorityKind() + "|" + a.state().normalizedSignature()
 			+ "|anchor=" + (a.durableAnchor() == null ? "-" : a.durableAnchor().normalizedSignature())
 			+ "|action=" + (a.relocationAction() == null ? "-" : a.relocationAction().normalizedSignature())
@@ -353,7 +454,35 @@ public class ExactCanonicalAlternativeFingerprintTest {
 			+ "|executionEmission=" + (a.executionEmission() == null ? "-" : a.executionEmission().selectionSignature())
 			+ "|realization=" + (a.realization() == null ? "-" : a.realization().key().normalizedSignature())
 			+ "|clause=" + (a.supportClause() == null ? "-" : a.supportClause().normalizedSignature())
-			+ "|inputs=" + inputs;
+			+ "|inputs=" + inputs + independentCompactSupport(a);
+	}
+
+	private static String independentCompactSupport(Alternative alternative) {
+		var product = alternative.compactSupport();
+		if(product == null)
+			return "";
+		StringBuilder result = new StringBuilder();
+		if(product.correlated())
+			result.append("|admittedSupport=").append(product.admittedIndexSignature());
+		result.append("|compactSupport=[");
+		for(int axisIndex = 0; axisIndex < product.axes().size(); axisIndex++) {
+			if(axisIndex > 0)
+				result.append(", ");
+			var axis = product.axes().get(axisIndex);
+			result.append(axis.inputPosition()).append(':')
+				.append(axis.sourceOwner().normalizedSignature()).append(':')
+				.append(axis.kind().name()).append(':')
+				.append(axis.relocationAction() == null ? "-"
+					: axis.relocationAction().normalizedSignature())
+				.append(":options=[");
+			for(int optionIndex = 0; optionIndex < axis.options().size(); optionIndex++) {
+				if(optionIndex > 0)
+					result.append(", ");
+				result.append(axis.options().get(optionIndex).binding().normalizedSignature());
+			}
+			result.append(']');
+		}
+		return result.append(']').toString();
 	}
 
 	private static String modelFingerprint(PhysicalSemanticDagFingerprint fingerprint,

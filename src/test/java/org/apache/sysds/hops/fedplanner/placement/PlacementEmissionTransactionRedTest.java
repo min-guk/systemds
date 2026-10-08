@@ -124,6 +124,43 @@ public class PlacementEmissionTransactionRedTest {
 	}
 
 	@Test
+	public void commitObserverCapturesAfterAuthorizationBeforeLaterMetadataMutation() throws Exception {
+		List<String> captured = new ArrayList<>();
+		try(var ignored = PlacementEmissionTransaction.observeCommitsForTesting((program, result, receipt) -> {
+			result.analysis().assertProgramStructureUnchanged();
+			captured.add(receipt.planHash() + "|" + result.objectiveCertificate());
+		})) {
+			PlacementEmissionTransaction.emit(
+				fixture.program(), fixture.plan(), FailureInjector.none());
+		}
+		Assert.assertEquals(1, captured.size());
+		String immutableCapture = captured.get(0);
+		Hop mutable = fixture.analysis().occurrences().stream().map(
+			PlacementAnalysis.HopOccurrenceProjection::hop)
+			.filter(hop -> !hop.requiresRecompile()).findFirst().orElseThrow();
+		mutable.setRequiresRecompile();
+
+		Assert.assertThrows(IllegalStateException.class,
+			fixture.analysis()::assertProgramStructureUnchanged);
+		Assert.assertEquals("commit-time capture is independent of later Hop metadata",
+			immutableCapture, captured.get(0));
+	}
+
+	@Test
+	public void commitObserverFailureIsNotSwallowedAfterExactCommit() throws Exception {
+		try(var ignored = PlacementEmissionTransaction.observeCommitsForTesting(
+			(program, result, receipt) -> { throw new IllegalStateException("proof failed"); })) {
+			IllegalStateException failure = Assert.assertThrows(IllegalStateException.class,
+				() -> PlacementEmissionTransaction.emit(
+					fixture.program(), fixture.plan(), FailureInjector.none()));
+			Assert.assertEquals("proof failed", failure.getMessage());
+		}
+		Assert.assertEquals(1, PlacementEmissionTransaction.receiptSnapshotForTesting().size());
+		Assert.assertSame(fixture.plan(),
+			PlacementEmissionTransaction.currentNormalizedResult(fixture.program()));
+	}
+
+	@Test
 	public void failureAfterFirstHopMutationRestoresEveryOwnedSurfaceExactly() throws Exception {
 		assertExactRollback(FailurePoint.AFTER_FIRST_HOP_MUTATION);
 	}
@@ -172,16 +209,10 @@ public class PlacementEmissionTransactionRedTest {
 			spec.getConsumerInputs().stream().noneMatch(ConsumerInputSpec::allInputs));
 		Assert.assertEquals("G007_REFED_REGISTRY_PRESERVES_EXACT_MATERIALIZATION_FTYPE",
 			upload.key().materializationFType(), spec.getMaterializationFType());
-		long expectedHint = fixture.analysis().graph().nodes().stream()
-			.filter(node -> node.anchors().contains(upload.key().durableAnchor()))
-			.map(NeutralPlacementGraph.Node::key)
-			.map(key -> fixture.analysis().occurrences().stream()
-				.filter(occurrence -> occurrence.key() == key).findFirst().orElseThrow())
-			.sorted(java.util.Comparator.comparing(
-				PlacementAnalysis.HopOccurrenceProjection::normalizedSignature))
-			.mapToLong(occurrence -> occurrence.hop().getHopID()).findFirst().orElseThrow();
-		Assert.assertEquals("G007_EXISTING_EXACT_RECORD_HINT_IS_RETAINED",
-			expectedHint, spec.getAnchorHopId());
+		Assert.assertEquals("G007_NONIDENTICAL_VALUE_ANCHOR_IS_NOT_USED_AS_A_HINT",
+			-1L, spec.getAnchorHopId());
+		Assert.assertEquals("G007_ACTION_ANCHOR_KEY_REMAINS_AUTHORITATIVE",
+			ExactPlacementRegistration.runtimeAnchorKey(upload.key().durableAnchor()), spec.getAnchorKey());
 	}
 
 	@Test
@@ -276,6 +307,24 @@ public class PlacementEmissionTransactionRedTest {
 			refedInstructions.stream().anyMatch(instruction -> instruction.contains(spec.getAnchorKey())));
 		Assert.assertNotEquals("successful transaction must apply only after full prevalidation",
 			before, snapshot(metadataOnly.analysis()));
+	}
+
+	@Test
+	public void sameLayoutDifferentValueNeverBecomesAnAnchorHopHint() throws Exception {
+		Fixture differentValue = relocationFixtureWithoutExactRecordAnchor(true);
+		RelocationAction action = selectedRelocation(differentValue);
+		PlacementEmissionTransaction.emit(
+			differentValue.program(), differentValue.plan(), FailureInjector.none());
+		NeutralPlacementGraph.Node source = selectedRelocationSource(differentValue, action);
+		long scope = differentValue.analysis().occurrences().stream()
+			.filter(occurrence -> occurrence.key() == source.key()).findFirst().orElseThrow().scopeId();
+		long sourceHop = differentValue.analysis().hop(source.key()).orElseThrow().getHopID();
+		FederatedRefedRegistry.AnchorSpec spec = FederatedRefedRegistry.snapshot(scope).get(sourceHop);
+		Assert.assertNotNull(spec);
+		Assert.assertEquals("equal layout does not prove equal federated value", -1L,
+			spec.getAnchorHopId());
+		Assert.assertEquals(ExactPlacementRegistration.runtimeAnchorKey(action.key().durableAnchor()),
+			spec.getAnchorKey());
 	}
 
 	@Test
@@ -545,14 +594,20 @@ public class PlacementEmissionTransactionRedTest {
 	}
 
 	private static Fixture relocationFixture() throws Exception {
-		return relocationFixture(true);
+		return relocationFixture(true, false);
 	}
 
 	private static Fixture relocationFixtureWithoutExactRecordAnchor() throws Exception {
-		return relocationFixture(false);
+		return relocationFixture(false, false);
 	}
 
-	private static Fixture relocationFixture(boolean retainExactAnchorRecord) throws Exception {
+	private static Fixture relocationFixtureWithoutExactRecordAnchor(boolean sameGeometry)
+		throws Exception {
+		return relocationFixture(false, sameGeometry);
+	}
+
+	private static Fixture relocationFixture(boolean retainExactAnchorRecord,
+		boolean sameGeometryDifferentValue) throws Exception {
 		FixtureProgram program = FixtureProgram.adopt(compileRelocationProgram());
 		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program);
 		PlacementAnalysis baseline = new NeutralPlacementGraphBuilder().buildAnalysis(program);
@@ -596,8 +651,9 @@ public class PlacementEmissionTransactionRedTest {
 		Assert.assertTrue("P4_FIXTURE_REQUIRES_EXACT_LOCAL_INPUT", !localEdges.isEmpty());
 		Assert.assertTrue("P4_FIXTURE_REQUIRES_LOCAL_CP_LOUT_SOURCE",
 			selected(plan, local.key(), ExecType.CP, FederatedOutput.LOUT));
-		Assert.assertTrue("P4 fixture's partition-preserving local source must retain the exact"
-			+ " durable target layout used by its selected upload", local.anchors().contains(upload.key().durableAnchor()));
+		Assert.assertTrue("P4 fixture's partition-preserving local source must retain the canonical"
+			+ " durable target layout used by its selected upload", local.anchors().stream().anyMatch(anchorKey ->
+				PlacementIdentity.canonicalPhysicalLayout(anchorKey).equals(upload.key().durableAnchor())));
 		Assert.assertEquals("P4_FIXTURE_REQUIRES_ONE_EXACT_RELOCATION_OBLIGATION", 1,
 			upload.obligations().size());
 		Assert.assertEquals("P4_FIXTURE_RELOCATION_ENDPOINTS_ARE_EXACT",
@@ -611,8 +667,9 @@ public class PlacementEmissionTransactionRedTest {
 			anchor.anchors().get(0).fType());
 		Assert.assertTrue("P4_FIXTURE_REQUIRES_FED_FOUT_ANCHOR_SOURCE",
 			selected(plan, anchor.key(), ExecType.FED, FederatedOutput.FOUT));
-		Assert.assertEquals("P4_FIXTURE_RELOCATION_USES_EXACT_ANCHOR", anchor.anchors().get(0),
-			upload.key().durableAnchor());
+		Assert.assertTrue("P4_FIXTURE_RELOCATION_USES_EXACT_PHYSICAL_LAYOUT",
+			PlacementIdentity.canonicalPhysicalLayout(anchor.anchors().get(0))
+				.equals(upload.key().durableAnchor()));
 		Assert.assertEquals("P4_FIXTURE_RELOCATION_NAMES_EXACT_COMPATIBLE_CONSUMERS",
 			upload.obligations().stream().map(PlacementIdentity.ObligationKey::consumer)
 				.distinct().sorted().toList(),
@@ -644,11 +701,14 @@ public class PlacementEmissionTransactionRedTest {
 			program.install(baseline);
 			return new Fixture(program, baseline, plan);
 		}
-		DurableAnchorKey decoyAnchor = samePoolDifferentGeometry(upload.key().durableAnchor());
+		DurableAnchorKey decoyAnchor = sameGeometryDifferentValue
+			? sameLayoutDifferentValue(upload.key().durableAnchor())
+			: samePoolDifferentGeometry(upload.key().durableAnchor());
 		List<NeutralPlacementGraph.Node> nodes = baseline.graph().nodes().stream()
 			.map(node -> new NeutralPlacementGraph.Node(node.key(), node.kind(), node.valueVersion(),
 				node.emittedWork(), node.legalAlternatives(), node.exclusions(), node.anchors().stream()
-					.map(anchorKey -> anchorKey.equals(upload.key().durableAnchor()) ? decoyAnchor : anchorKey)
+					.map(anchorKey -> PlacementIdentity.canonicalPhysicalLayout(anchorKey)
+						.equals(upload.key().durableAnchor()) ? decoyAnchor : anchorKey)
 					.toList()))
 			.toList();
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes,
@@ -688,6 +748,11 @@ public class PlacementEmissionTransactionRedTest {
 			return new AnchorPartition(partition.workerId(), partition.begin(), end);
 		}).toList();
 		return new DurableAnchorKey(anchor.placementId() + "-different-geometry", anchor.fType(), partitions);
+	}
+
+	private static DurableAnchorKey sameLayoutDifferentValue(DurableAnchorKey anchor) {
+		return new DurableAnchorKey(anchor.placementId() + "-different-value",
+			anchor.fType(), anchor.partitions());
 	}
 
 	private static Fixture localMaterializationFixture() throws Exception {
