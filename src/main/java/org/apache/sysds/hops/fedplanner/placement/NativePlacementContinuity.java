@@ -3182,9 +3182,10 @@ final class NativePlacementContinuity {
 		if(generation != null)
 			return generatedRootAlternative(key, pinned, witness, fixed, fixedHandles, generation);
 		CandidateTopology topology = candidateTopology(key, witness);
-		traversal.hiddenOwnerReadsByState.put(
-			new CandidateProofState(key, pinned, pinnedHandle, witness, allowPinnedTemplate),
-			topology.metadataOwnerReads);
+		if(!topology.metadataOwnerReads.isEmpty())
+			traversal.hiddenOwnerReadsByState.put(
+				new CandidateProofState(key, pinned, pinnedHandle, witness, allowPinnedTemplate),
+				topology.metadataOwnerReads);
 		if(!topology.eligible)
 			return List.of();
 		// A topology owns immutable default edges, not query support results.
@@ -3369,6 +3370,7 @@ final class NativePlacementContinuity {
 				// native generation templates still follow their separate strict path.
 				if(emission.derivedFoutAction() != null) {
 					var action = emission.derivedFoutAction();
+					metadataOwnerReads.add(action.durableAnchorOwner());
 					Node anchorOwner = nodesByKey.get(action.durableAnchorOwner());
 					boolean sourceAvailable = fact.allowedEmissionFacts().stream().anyMatch(source ->
 						source.derivedFoutAction() == null
@@ -3410,12 +3412,12 @@ final class NativePlacementContinuity {
 					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 						if(metrics != null)
 							metrics.recordProofRowExamined();
-						FixedValueMapResolution fixedResolution = realization.key().layoutKind()
-							== PlacementIdentity.PlacementLayoutKind.VALUE_MAP
-							? fixedValueMapResolution(reference)
-							: new FixedValueMapResolution(null, Set.of());
-						metadataOwnerReads.addAll(fixedResolution.ownerReads());
-						FixedValueMapPool fixedMap = fixedResolution.pool();
+						FixedValueMapPool fixedMap = null;
+						if(realization.key().layoutKind() == PlacementIdentity.PlacementLayoutKind.VALUE_MAP) {
+							FixedValueMapResolution fixedResolution = fixedValueMapResolution(reference);
+							metadataOwnerReads.addAll(fixedResolution.ownerReads());
+							fixedMap = fixedResolution.pool();
+						}
 						boolean fixedMapGround = fixedMap != null
 							&& witness.matches(nativeWitness(fixedMap.pool()), fixedMap.exactLayout());
 						List<CandidateDependencySkeleton> dependencies = fixedMapGround ? List.of()

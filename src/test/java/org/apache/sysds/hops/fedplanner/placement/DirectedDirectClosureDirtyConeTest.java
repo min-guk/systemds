@@ -137,6 +137,40 @@ public class DirectedDirectClosureDirtyConeTest {
 	}
 
 	@Test
+	public void invalidationMetricsSeparateAlreadyPendingFromNewQueueWork() throws Exception {
+		Node changed = node("pending-changed"), alreadyPending = node("pending-existing");
+		Node incompleteNew = node("pending-incomplete-new");
+		Node incompleteAlreadyPending = node("pending-incomplete-existing");
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential =
+			dependencies(changed, alreadyPending, alreadyPending, incompleteNew,
+				alreadyPending, incompleteAlreadyPending);
+		Object measuredSubscriptions = subscriptions(Map.of(
+			alreadyPending.key(), keys(alreadyPending)));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		Set<CompiledHopKey> measured = required(keys(changed), potential, Map.of(), Map.of(),
+			Map.of(), measuredSubscriptions, metrics,
+			keys(alreadyPending, incompleteAlreadyPending));
+
+		Object unmeasuredSubscriptions = subscriptions(Map.of(
+			alreadyPending.key(), keys(alreadyPending)));
+		Set<CompiledHopKey> unmeasured = required(keys(changed), potential, Map.of(), Map.of(),
+			Map.of(), unmeasuredSubscriptions);
+		assertSameKeys(unmeasured, measured);
+		Object nullMetricsSubscriptions = subscriptions(Map.of(
+			alreadyPending.key(), keys(alreadyPending)));
+		Set<CompiledHopKey> nullMetrics = required(keys(changed), potential, Map.of(), Map.of(),
+			Map.of(), nullMetricsSubscriptions, null,
+			keys(alreadyPending, incompleteAlreadyPending));
+		assertSameKeys(unmeasured, nullMetrics);
+		Assert.assertEquals(2, directMetric(metrics, "INVALIDATION_NEW_PENDING_OWNERS"));
+		Assert.assertEquals(2, directMetric(metrics, "INVALIDATION_ALREADY_PENDING_OWNERS"));
+		Assert.assertEquals(1, directMetric(metrics,
+			"INVALIDATION_INCOMPLETE_ONLY_NEW_PENDING_OWNERS"));
+		Assert.assertEquals(2, directMetric(metrics,
+			"INVALIDATION_INCOMPLETE_ONLY_EXTRA_OWNERS"));
+	}
+
+	@Test
 	public void removedSupportCyclesAndAliasesRemainImmediateInvalidations() throws Exception {
 		Node source = node("hybrid-source"), first = node("hybrid-first");
 		Node second = node("hybrid-second"), alias = node("hybrid-alias");
@@ -588,6 +622,65 @@ public class DirectedDirectClosureDirtyConeTest {
 	}
 
 	@Test
+	public void coveredSupportChangesDoNotRequeueCertifiedCleanSccMembers() throws Exception {
+		Node a = node("covered-a"), b = node("covered-b"), c = node("covered-c");
+		List<Node> nodes = List.of(a, b, c);
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential = dependencies(a, b, b, c, c, a);
+		List<CandidateRuleFact> before = List.of(excludedFact(a), excludedFact(b), excludedFact(c));
+		List<CandidateRuleFact> added = List.of(before.get(0), supportFact(a, b), before.get(2));
+		Object index = supportIndex(before, potential);
+		PlacementDependencyComponents schedule = supportSchedule(nodes, potential, indexedSupport(index));
+		Assert.assertEquals(1, schedule.topologicalOrder().size());
+		for(List<CandidateRuleFact> revision : List.of(added, before)) {
+			Object update = updateSupport(index, keys(b), revision);
+			Assert.assertTrue(supportChanged(update));
+			Object subscriptions = subscriptions(Map.of(a.key(), keys(a), b.key(), keys(b), c.key(), keys(c)));
+			Set<CompiledHopKey> pending = required(keys(b), potential, indexedSupport(index),
+				removedSupport(update), Map.of(), subscriptions);
+			assertSameKeys(keys(b, c), pending);
+			Assert.assertFalse(prepareRebuild(update, Set.of(schedule.componentOf(b.key())), pending));
+			assertSameKeys(keys(b, c), pending);
+			assertSameKeys(keys(b, c), ready(schedule, pending, subscriptions));
+			Method invalidate = subscriptions.getClass().getDeclaredMethod("invalidate", Set.class);
+			invalidate.setAccessible(true);
+			invalidate.invoke(subscriptions, keys(a));
+			assertSameKeys(keys(a, b, c), ready(schedule, pending, subscriptions));
+			// Settled does not mean immune: the next genuine predecessor delta requeues A.
+			Assert.assertTrue(required(keys(c), potential, indexedSupport(index), Map.of(),
+				Map.of(), subscriptions).contains(a.key()));
+		}
+	}
+
+	@Test
+	public void dependencyUnionChangesPreserveUnsettledOldSccMembers() throws Exception {
+		Node a = node("rebuild-a"), b = node("rebuild-b"), c = node("rebuild-c");
+		List<Node> nodes = List.of(a, b, c);
+		List<CandidateRuleFact> before = List.of(excludedFact(a), supportFact(a, b), supportFact(b, c));
+		List<CandidateRuleFact> cycle = List.of(supportFact(c, a), before.get(1), before.get(2));
+		Object index = supportIndex(before);
+		PlacementDependencyComponents oldSchedule = supportSchedule(nodes, indexedSupport(index));
+		Object added = updateSupport(index, keys(a), cycle);
+		Set<CompiledHopKey> pending = keys(a);
+		Assert.assertTrue(prepareRebuild(added, Set.copyOf(oldSchedule.topologicalOrder()), pending));
+		PlacementDependencyComponents cyclic = supportSchedule(nodes, indexedSupport(index));
+		Assert.assertEquals(1, cyclic.topologicalOrder().size());
+		Object removed = updateSupport(index, keys(a), before);
+		pending = keys(a);
+		Assert.assertTrue(prepareRebuild(removed, Set.of(cyclic.componentOf(a.key())), pending));
+		assertSameKeys(keys(a, b, c), pending);
+		Assert.assertEquals(3, supportSchedule(nodes, indexedSupport(index)).topologicalOrder().size());
+	}
+
+	@Test
+	public void unionRebuildGuardDoesNotConfuseStructurallyEqualOwners() throws Exception {
+		Node source = node("covered-identity"), twin = node("covered-identity"), owner = node("covered-owner");
+		List<CandidateRuleFact> before = List.of(excludedFact(owner));
+		Object index = supportIndex(before, dependencies(source, owner));
+		Object update = updateSupport(index, keys(owner), List.of(supportFact(twin, owner)));
+		Assert.assertTrue(prepareRebuild(update, Set.of(), keys(owner)));
+	}
+
+	@Test
 	public void incrementalSupportRefusesInventoryOwnerOrRuleKeyDrift() throws Exception {
 		Node owner = node("fixed-slot-owner"), other = node("foreign-slot-owner");
 		CandidateRuleFact fact = supportFact(owner, owner);
@@ -617,14 +710,46 @@ public class DirectedDirectClosureDirtyConeTest {
 			Map.of(), support, List.of());
 	}
 
+	private static PlacementDependencyComponents supportSchedule(List<Node> nodes,
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential,
+		Map<CompiledHopKey,Set<CompiledHopKey>> support) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod("directComponentSchedule",
+			List.class, Map.class, Map.class, List.class);
+		method.setAccessible(true);
+		return (PlacementDependencyComponents)method.invoke(null, nodes.stream().map(Node::key).toList(),
+			potential, support, List.of());
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Set<CompiledHopKey> ready(PlacementDependencyComponents schedule,
+		Set<CompiledHopKey> pending, Object subscriptions) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod("readyDirectOwners",
+			PlacementDependencyComponents.class, Set.class, subscriptions.getClass());
+		method.setAccessible(true);
+		return (Set<CompiledHopKey>)method.invoke(null, schedule, pending, subscriptions);
+	}
+
+	private static boolean prepareRebuild(Object update,
+		Set<PlacementDependencyComponents.Component> dirty, Set<CompiledHopKey> pending) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"prepareDirectComponentRebuild", update.getClass(), Set.class, Set.class);
+		method.setAccessible(true);
+		return (boolean)method.invoke(null, update, dirty, pending);
+	}
+
 	private static Object supportIndex(List<CandidateRuleFact> facts) throws Exception {
+		return supportIndex(facts, Map.of());
+	}
+
+	private static Object supportIndex(List<CandidateRuleFact> facts,
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential) throws Exception {
 		Class<?> type = Class.forName(PlacementRelationClosure.class.getName() + "$DirectSupportIndex");
-		Constructor<?> constructor = type.getDeclaredConstructor(Map.class, List.class);
+		Constructor<?> constructor = type.getDeclaredConstructor(Map.class, List.class, Map.class);
 		constructor.setAccessible(true);
 		Map<CompiledHopKey,List<Integer>> slots = new IdentityHashMap<>();
 		for(int i = 0; i < facts.size(); i++)
 			slots.computeIfAbsent(facts.get(i).key().parentOccurrence(), ignored -> new ArrayList<>()).add(i);
-		return constructor.newInstance(slots, facts);
+		return constructor.newInstance(slots, facts, potential);
 	}
 
 	private static Object updateSupport(Object index, Set<CompiledHopKey> changed,
@@ -869,6 +994,21 @@ public class DirectedDirectClosureDirtyConeTest {
 		method.setAccessible(true);
 		return (Set<CompiledHopKey>)method.invoke(null,
 			changed, potential, support, removed, aliases, subscriptions);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Set<CompiledHopKey> required(Set<CompiledHopKey> changed,
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential,
+		Map<CompiledHopKey,Set<CompiledHopKey>> support,
+		Map<CompiledHopKey,Set<CompiledHopKey>> removed,
+		Map<CompiledHopKey,List<CompiledHopKey>> aliases, Object subscriptions,
+		SearchSpaceMetrics metrics, Set<CompiledHopKey> pending) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"requiredDirectClosureOccurrences", Set.class, Map.class, Map.class, Map.class,
+			Map.class, subscriptions.getClass(), SearchSpaceMetrics.class, Set.class);
+		method.setAccessible(true);
+		return (Set<CompiledHopKey>)method.invoke(null,
+			changed, potential, support, removed, aliases, subscriptions, metrics, pending);
 	}
 
 	private static Set<CompiledHopKey> keys(Node... nodes) {

@@ -130,3 +130,23 @@
 - Python COFEE/evaluator42 PASS, joint-boundary harness38 PASS. 별도 reviewer가 merged preflight/caller, singleton worker certificate, metadata-native layout/dependency 계약을 CLEAR로 판정했다. 네 병합 파일의 독립 계약 검토도 통과했다.
 - 검증 증거: `/grid/3/cofee-lm-sweep-mchoi-20260914/fed-oracle-native-20261008/merge-backups/origin-main-merge-a03365e-20261008T230334Z/final-merged-green-948`. 초기 실패는 같은 backup의 `first-merged-red-906`에 보존했다. Python 증거는 `evidence/generation-pruning/root-v4-python-validation/validation.json`이다.
 - 동일 source를 frozen engine v4로 패키징한 뒤 실제 LogReg를 실행한다. 이 게시 시점에는 20초 목표가 미달이며, 기존 v2의 실패를 성공으로 대체하지 않는다. 새 relation-native native support 구현은 별도 작업공간에서 진행하며 이 검증본에는 포함하지 않는다.
+
+### origin/main 통합 gate 및 v12 반복 작업 구분 (진행중)
+
+- **통합**: v10/v11 commit `6d9bf2ebe6`과 incoming `5f9edeeb2f`를 `1b06166eea`로 병합했다. VALUE_MAP resolution의 identity-keyed cache 및 positive/negative owner-read receipts를 유지하고, 최종 보수적 BFS/derived-anchor footprint와 결합했다. 독립 merge 검토 CLEAR, fresh Maven **1,012 tests/failure0/error0/skip1**. JAR `6bda179dd544d5f59a690888b94b9225a736e6a79906450901574211803fb392`. `1b06166eea`를 origin/main에 push하고 remote SHA를 확인했다.
+- **계측 계획/변경**: required owner가 이미 pending인지, 실제 새로 enqueue되는지를 구분한다. 이전 6/7-arg entrypoint 및 원래 set insertion을 보존하며 production call은 selected 제거 후, pending.addAll 이전의 queue를 전달한다. red test33건 중 기대한 missing8arg failure1을 보존했다. 이는 scheduling 변경이 아니다.
+- **추가 할당 개선 계획**: merge에서 유입된 topology clause loop는 non-VALUE_MAP clause마다 null-resolution 및 빈 immutable identity set을 생성한다. 같은 null pool 의미를 유지하며 VALUE_MAP일 때만 resolver/owner-read union을 실행한다. 1,012 green baseline과 fixed-map/materialized/topology tests가 의미를 잠그며, 분기 변경 후 재검증한다. 실제 VALUE_MAP positive/negative receipt 및 cached lookup은 바꾸지 않는다.
+- **측정 제한/잔여**: merged detailed Docker 진단 중 별도 worktree Maven을 관측했으며 `evidence/merged-main-external-contention.txt`에 저장했다. 자체 build/JFR parse는 timed run과 겹치지 않는다.20초 및 full planning 완료는 아직 달성하지 못했다.
+- **위험/검출**: metrics OFF의 삽입 누락, duplicate pending의 과계수, metadata receipt 누락은 queue partition parity/기존 cold-warm revision tests로 검증한다. Oracle/runtime/privacy/후보군/DP arithmetic 변경 없음.
+
+### v12 승인 및 v13 component/receipt 개선 계획 (진행중)
+
+- **v12 검증**: fresh1,013tests/failure0/error0/skip1, independent CLEAR; JAR `49bab1063133a63a5e4d101c5eec18e6f91e2c5c8e898818ee249d1e8a1aefe5`. pending metrics는 후속 SCC 전체 확장을 포함하지 않으며 실제 executed fact 수와 동일하지 않다. 동일 Docker 상세 관측 중.
+- **다음 문제**: support edge가 바뀌어도 고정 potential graph에 이미 있는 edge이면 semantic union P∪S와 SCC는 그대로다. 기존 코드는 이 경우에도 old SCC의 모든 settled member를 다시 pending에 넣는다. 완전한 read receipt가 있고 독립 invalidation도 없는 member만 제외할 수 있다.
+- **계획/회귀**: 기존 preservation/rebuild decision을 3-arg private helper로 의미 변경 없이 추출하고, 실제 DirectSupportIndex의 covered add/remove delta에서 old helper가 잘못 settled A를 추가함을 red로 확인한다. union이 변할 때의 add/merge, remove/split, structural twin, incomplete/cancelled member 및 later invalidation은 그대로 유지한다. 그 뒤 dependencyUnionChanged만으로 preservation+rebuild를 gate한다. Required invalidation은 무조건 기존대로 실행한다.
+- **별도 Native receipt**: derived topology가 실제 읽는 durable anchor owner를 검증/lookup 전에 정확히 기록한다. 모든 positive/negative/cache/component 경로의 receipt를 잠그고, empty metadata set은 traversal map에 저장하지 않는다. binder fast reuse/seed projection에는 query 없는 경로가 있으므로 최종 broad BFS/identity guard를 제거하지 않는다.
+- **잔여/위험**:20초 목표 미달. SCC requeue 누락과 hidden metadata cache stale는 production helper regression, full-recompute ordered-fact/fingerprint parity, cold/warm withdrawal-restoration으로 감지한다. Runtime/privacy/oracle/합법 후보군 변경은 없다.
+
+- **v12 실측 해석**: LogReg incomplete-only-extra46,872 중 실제 new-pending67, 전체 required의 new2,097/already47,190. GLM incomplete-only-extra59,838 중 new8,255, 전체 new9,672/already52,371. 따라서 LogReg의 큰 기존 집계 대부분은 이미 대기하던 일이며, GLM에는 실제 새 invalidation이 많이 남아 있다. 두 workload 모두60초 timeout/no receipt이며20초 성공으로 해석하지 않는다.
+- **v13 red/green**: 의미를 보존한 old SCC helper에서 covered-edge regression은 예상{B,C}/실제{A,B,C}로 실패했다. 최초 Native 새4tests 중3개 기대 receipt 실패와1개 fixture fingerprint setup 오류를 분리했다. fixture를 수정하고 sealed v12 binary로 재검증한15tests는 정확히4개 receipt assertion 실패였다. 구현 뒤 SCC+Native focused **51PASS**, source freeze 후 full package 중. Broad BFS/identity certification 및 required invalidation은 유지했다.
+- **v13 full gate**: fresh **1,020 selected tests/failure0/error0/skip1**, BUILD SUCCESS01:33:37. Independent production delta review CLEAR, sealed-v12 hash reconstruction으로 이전 변경과 구분했다. Covered-edge unit fixture의 AVAILABLE/PRIVACY_EXCLUDED 전환은 index-only adjacency 검증이며 실제 privacy 정책 변경이 아니다. 실제 통합 경로는 기존 full-recompute ordered-fact/fingerprint 비교로 추가 검증했다. 다음 동일 Docker 실측 전 전체 속도 달성을 주장하지 않는다.
