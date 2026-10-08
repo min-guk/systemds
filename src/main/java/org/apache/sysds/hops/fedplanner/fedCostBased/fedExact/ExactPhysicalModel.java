@@ -527,6 +527,12 @@ final class ExactPhysicalModel {
 		return build(analysis, indexedCandidateRuleLookup(analysis), true, true, true, true);
 	}
 
+	/** Forces only the derived-FOUT encoding so its exact consumer can be compared in tests. */
+	static ExactPhysicalModel buildWithForcedDerivedFoutEncodingForTest(PlacementAnalysis analysis) {
+		return build(analysis, indexedCandidateRuleLookup(analysis), true, true, true, true,
+			true, true, true, true);
+	}
+
 	/** Legacy whole-universe lookup retained only as a focused parity oracle for R1-A. */
 	static ExactPhysicalModel buildWithLegacyCandidateRuleScanForTest(PlacementAnalysis analysis) {
 		return build(analysis, new CandidateRuleLookup() {
@@ -631,6 +637,17 @@ final class ExactPhysicalModel {
 		boolean prunePrivacyIllegalRelocations, boolean allocationFreeInputAuthorityEvaluation,
 		boolean lazyAlternativeSignatures, boolean indexedRelocationObligations,
 		boolean projectJointAliases, boolean pruneVacuousJointFactors, boolean compactJointEncoding) {
+		return build(analysis, ruleLookup, prunePrivacyIllegalRelocations,
+			allocationFreeInputAuthorityEvaluation, lazyAlternativeSignatures,
+			indexedRelocationObligations, projectJointAliases, pruneVacuousJointFactors,
+			compactJointEncoding, false);
+	}
+
+	private static ExactPhysicalModel build(PlacementAnalysis analysis, CandidateRuleLookup ruleLookup,
+		boolean prunePrivacyIllegalRelocations, boolean allocationFreeInputAuthorityEvaluation,
+		boolean lazyAlternativeSignatures, boolean indexedRelocationObligations,
+		boolean projectJointAliases, boolean pruneVacuousJointFactors, boolean compactJointEncoding,
+		boolean forceDerivedFoutEncoding) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(ruleLookup, "ruleLookup");
 		analysis.assertProgramStructureUnchanged();
@@ -677,7 +694,8 @@ final class ExactPhysicalModel {
 		RealizationSupportPreparationStatistics realizationSupportStatistics =
 			addRealizationSupportFactors(analysis, byDecision, factors, hardFactorizations);
 		addCorrelatedSupportFactors(byDecision, factors);
-		addDerivedFoutAnchorFactors(analysis, byDecision, factors);
+		addDerivedFoutAnchorFactors(analysis, byDecision, factors, hardFactorizations,
+			forceDerivedFoutEncoding);
 		InputAuthorityPreparationStatistics inputAuthorityStatistics =
 			addInputAuthorityFactors(analysis, relocationPrivacy, incoming, byDecision, factors,
 				allocationFreeInputAuthorityEvaluation, hardFactorizations);
@@ -2366,7 +2384,7 @@ final class ExactPhysicalModel {
 			CandidateSelections.requiredInputSupportIdentity(selected));
 	}
 
-	private static CandidateSelectionReceipt candidateReceipt(PlacementAnalysis analysis, Alternative alternative) {
+	static CandidateSelectionReceipt candidateReceipt(PlacementAnalysis analysis, Alternative alternative) {
 		if(alternative.relationFamily()) {
 			// The alternative constructor has verified this exact member emission against
 			// its owning relation. Relocation predicates need its binding authority even
@@ -2389,8 +2407,12 @@ final class ExactPhysicalModel {
 	 * transaction must reject later.
 	 */
 	private static void addDerivedFoutAnchorFactors(PlacementAnalysis analysis,
-		Map<CompiledHopKey,DecisionDomain> domains, List<ExactCategoricalSolver.Factor> factors) {
-		for(DerivedFoutMaterializationAction action : analysis.graph().derivedFoutMaterializationActions()) {
+		Map<CompiledHopKey,DecisionDomain> domains, List<ExactCategoricalSolver.Factor> factors,
+		Map<ExactCategoricalSolver.Factor,ExactHardFactorObservationDecomposition.Result> factorizations,
+		boolean forceEncodingForTest) {
+		List<DerivedFoutMaterializationAction> actions = analysis.graph().derivedFoutMaterializationActions();
+		for(int actionOrdinal = 0; actionOrdinal < actions.size(); actionOrdinal++) {
+			DerivedFoutMaterializationAction action = actions.get(actionOrdinal);
 			DecisionDomain producer = domains.get(action.key().producer());
 			DerivedFoutAnchorCompatibility.Prepared compatibility =
 				DerivedFoutAnchorCompatibility.prepare(analysis, action);
@@ -2450,7 +2472,15 @@ final class ExactPhysicalModel {
 					: ExactCategoricalSolver.PartialTruth.ALL_ZERO;
 			}
 			};
-			factors.add(ExactCategoricalSolver.Factor.lazy(variables, evaluator));
+			ExactCategoricalSolver.Factor factor =
+				ExactCategoricalSolver.Factor.lazy(variables, evaluator);
+			factors.add(factor);
+			var encoded = ExactDerivedFoutAnchorEncoding.create(
+				"derived-fout-anchor|ordinal=" + actionOrdinal + "|action="
+					+ action.normalizedSignature(), analysis,
+				action, compatibility, producer, domains, factor, !forceEncodingForTest);
+			if(encoded != null)
+				factorizations.put(factor, encoded);
 		}
 	}
 

@@ -2,11 +2,11 @@
 
 ## 상태
 
-최신 실제 수정본 v2의 COFEE 50K×128 LogReg Analysis는 **460.528초**다. Cost Model의 singleton-worker certificate가 실제로 성공했지만, 이어서 factor 크기 사전 검사에서 **`EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패**했다. 전체 플래닝/학습의 성공 시간은 아직 없다. 이전 v1 Analysis는490.139초이며, 단일 실행 차이를 paired 전체 compilation 개선율로 보고하지 않는다. 아래의 과거 baseline 진단과 최신 수정본 검증을 구분한다. 192×8 결과는 소규모 회귀 검증으로만 남긴다.
+최신 게시본 v4(`5f9edeeb2f`)의 COFEE50K×128 LogReg Analysis는 **333.489초**, explicit Clause 생성은 **2,550,102개**다. 이전 v2의460.528초·20,882,097개보다 줄었으나 각각 단일 실행 관측이다. 이후 **Local DP의 unary/binary reduction 뒤 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패**했다. 전체 planning/학습 성공 시간과 numeric receipt는 아직 없으며20초 목표는 미달이다. 과거 baseline 진단 및 소규모192×8 회귀 결과와 구분한다.
 
 사용자의 최신 지시에 따라 DML·Y 위치·전처리를 바꾸지 않는다. 같은 COFEE workload에서 기존 pruning/압축의 적용 범위와 downstream 재탐색을 수정한다.
 
-최신 main `a03365e`와 압축 cost preflight 수정 통합본은 **948 JUnit PASS**, 소스112개 해시 일치, Python42+38 PASS 및 독립 검토 CLEAR다. 같은 코드의 v4 엔진으로 실제 검증을 이어간다. 테스트 성공을 20초 성능 달성으로 해석하지 않는다.
+최신 main `a03365e`와 압축 cost preflight 수정 통합본은 **948 JUnit PASS**, 소스112개 해시 일치, Python42+38 PASS 및 독립 검토 CLEAR다. v4 실제 검증은 위의 DP 준비 오류로 종료됐으며 후속 수정을 진행한다. 테스트 성공을 20초 성능 달성으로 해석하지 않는다.
 
 ## 현재 병목: pruning 누락과 조합 전개를 구분
 

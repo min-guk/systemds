@@ -579,6 +579,30 @@ final class ExactPhysicalReducedSolver {
 		try {
 			frozen = ExactCategoricalSolver.freezeInputs(early.variables(), early.factors(), limits);
 		}
+		catch(IllegalArgumentException failure) {
+			if("EXACT_VE_FACTOR_CELL_OVERFLOW".equals(failure.getMessage())) {
+				// Restriction preserves factor order. Keep the original failure contract,
+				// while identifying its residual and original authority evaluator without
+				// materializing anything or adding work to successful planning.
+				for(int ordinal = 0; ordinal < early.factors().size(); ordinal++) {
+					ExactCategoricalSolver.Factor residual = early.factors().get(ordinal);
+					long cells = 1L;
+					for(ExactCategoricalSolver.Variable variable : residual.scope()) {
+						cells *= variable.domainSize();
+						if(cells > Integer.MAX_VALUE)
+							break;
+					}
+					if(cells > Integer.MAX_VALUE) {
+						failure.addSuppressed(new IllegalArgumentException(
+							"EXACT_REDUCTION_INPUT_OVERFLOW|original="
+							+ ExactCategoricalSolver.factorOverflowContext(ordinal, factors.get(ordinal))
+							+ "|residual=" + ExactCategoricalSolver.factorOverflowContext(ordinal, residual)));
+						break;
+					}
+				}
+			}
+			throw failure;
+		}
 		finally {
 			timer.freezeNanos += elapsedNanos(phaseStarted);
 		}

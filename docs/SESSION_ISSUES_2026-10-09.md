@@ -98,3 +98,34 @@
 - Python COFEE/evaluator42 PASS, joint-boundary harness38 PASS. 별도 reviewer가 merged preflight/caller, singleton worker certificate, metadata-native layout/dependency 계약을 CLEAR로 판정했다. 네 병합 파일의 독립 계약 검토도 통과했다.
 - 검증 증거: `/grid/3/cofee-lm-sweep-mchoi-20260914/fed-oracle-native-20261008/merge-backups/origin-main-merge-a03365e-20261008T230334Z/final-merged-green-948`. 초기 실패는 같은 backup의 `first-merged-red-906`에 보존했다. Python 증거는 `evidence/generation-pruning/root-v4-python-validation/validation.json`이다.
 - 동일 source를 frozen engine v4로 패키징한 뒤 실제 LogReg를 실행한다. 이 게시 시점에는 20초 목표가 미달이며, 기존 v2의 실패를 성공으로 대체하지 않는다. 새 relation-native native support 구현은 별도 작업공간에서 진행하며 이 검증본에는 포함하지 않는다.
+
+
+### v4 게시 및 실제 재검증 시작
+
+- **게시 완료**: `5f9edeeb2f68dddf3b28c55ebaee82fc0e7e453f`가 `origin/main`에 반영됐다. force push 없이 a03365e→5f9edeeb2f fast-forward이며 generated evidence와 기존 stash는 보존했다.
+- **Frozen v4**: JAR `1c9349ebfbf03f0afa381382af3012c0a2ad2a3d8e34a1e5369e5fa678e2e1d5`, manifest `8b8ec4d528e432a862ec849a31f995ce830b6cf54011f946bc5f460e50a5c039`, class/resource4593개. 검증112개 source는 게시 commit과 모두 일치한다.
+- **실제 실행**: `evidence/cofee-50k128-a03365e-v4-validation/candidate-logreg-run2`, attempt `01791501166303919409-afb50896`, campaign `w1357-bounded-8a10a5dc277144`. 앞의 run0/run1 argparse 설정 실패는 runtimeStarted=false로 별도 보존하고 성능 측정에서 제외했다. run2가 실제 workload 실행이다.
+- **중간 관측/목표 미달**: seq9 Analysis40.018초에서 아직 분석 중이다. 따라서 이번 실행은 전체 planning20초 gate를 이미 넘었다. proof rows2,619,158, 내부 proof alternatives36,101,769, dependency edges60,821,481; 누적 할당24.69GB는 peak가 아니다. MRV24/조기검사79/cuts0, privacy avoided64/rejected12. 전체 planning/수치 결과 확인을 위해 실행을 계속하며 미완료 결과를 성공으로 집계하지 않는다.
+- **후속 구현 검토**: 합법 native support product를 descriptor로 전달하는 별도 구현은 member별 proof authority를 유지해야 한다. lazy list를 도입해도 canonical ordering, emission merge, semantic fingerprint 및 generic Closure stream에서 즉시 전개된다면 end-to-end 압축 성공이 아니다. 실제 publication→PhysicalModel→CostSurface 테스트에서 생성 handle 수와 논리 member 방문 수를 따로 확인한다. Factory 단계에서 축의 position/DIRECT/unique binding 조건을 직접 검증한다.
+
+
+### v4 종료: Analysis 개선과 후속 DP 전개 실패를 구분
+
+- **결과**: Analysis333.489347229초. v2의460.527664756초보다 짧지만 각각 단일 실행이고 전체 compilation paired 성공 비교가 아니다. Explicit Clause 생성20,882,097→2,550,102, keys27,442/facts222,582/indexed handles2,276은 동일하다. Proof rows19,957,286와 support leaves3,942,161도 그대로여서 객체 생성을 줄인 개선과 논리 조합 전개 제거를 구분한다.
+- **새 실패 경계**: cost preflight 및 singleton worker certificate는 통과했다. Local DP의 `RegionalSearchProblem.reducedRoot → ExactPhysicalReducedSolver.reduce → freezeInputs`에서 unary/binary reduction 뒤 남은 lazy hard factor의 Cartesian 크기가 int 범위를 넘어 실패했다. 실행/수치 receipt는 없다. Coordinator peak7,285,755,904B, OOM kill0, own cleanup resolved. GLM은 아직 실행하지 않았다.
+- **증거**: `evidence/cofee-50k128-a03365e-v4-validation/candidate-logreg-run2/v4-overflow-evidence.json`, SHA `d6312aa9bd314961fee06671b68070f592336fe225706a6f11ae55f1449a7eda`. 실패 실행을 포함한 evaluator는 LogReg0/3·GLM0/3 FAIL이다.
+- **문제 식별의 한계/변경**: 기존 예외에는 factor ordinal/domains/evaluator가 없어 정확한 residual family를 특정할 수 없었다. 정상 경로의 계측을 추가하지 않고 실패 시에만 원본·감축 후 factor의 첫8축과 길이 제한 key/evaluator를 suppressed exception에 남기도록 했다. 기존 primary `EXACT_VE_FACTOR_CELL_OVERFLOW`와 evaluator 호출 순서는 유지한다. 새 프로파일링 실행은 하지 않는다.
+- **회귀**: 새 테스트는 변경 전10개 중 의도한1실패(예외 context 없음)를 재현했다. 변경 후 compressed preflight/native-local projection/reduced solver 관련56 tests PASS(57.671초), main/test compile PASS. 이 변경은 진단 정확성 개선이며 성능 최적화로 보고하지 않는다.
+- **다음 구현**: native product의 생성·Closure 압축과 별개로 derived-FOUT fixed-pool 합법성을 작은 hard circuit으로 분해하는 lane을 시작했다. 이는 정적으로 확인한 큰 factor 경로이며 실제 v4 culprit이라고 단정하지 않는다. 기존 canonical 판정/비용을 대조 기준으로 보존하고 SCC grounding, source/receipt 권한 및 보조 변수의 비용/tie가0임을 검증한다.
+
+
+### 다음 후보: derived-FOUT circuit 및 native support metadata 소비 (통합 중)
+
+- **DP 구현**: derived-FOUT의 fixed-pool 합법성을 최대 arity 3인 +0/+INF 제약으로 분해한다. 원본 canonical factor는 최종 검증에 유지한다. Query/source owner는 identity로 구분하고 relation-family receipt를 기존 helper로 복원한다. 순환은 SCC 내 근거 경로로 검증하며, 외부 근거 없는 자기 순환/2-node 순환 및 grounded되지 않은 공동 입력을 거부한다. 보조 변수의 monetary/tie cost는 0이다. 최소 producer gate조차 원본보다 크면 그래프 탐색 전에 기존 경로를 유지한다.
+- **DP 증거**: real fixture의 action별 144개 leaf에서 원본 판정과 인코딩의 existential projection이 일치한다. 강제 인코딩된 full PhysicalModel→CostSurface→ExactPhysicalOptimizer→PhysicalSelection 테스트에서 objective raw bits, decision assignment, canonical receipt identity, relocation choices/emitted relocations가 일치했다. 독립 reviewer CLEAR. Lane focused5/combined9 PASS, root 통합 compressed overflow/preflight 포함19 PASS(4.171초). 매우 깊은 proof graph에서 재귀 Tarjan의 stack 사용은 남은 제한이다.
+- **Cost Model 후속**: native relation의 Clause witness/exactness를 직접 읽어 입력 layout, recursive worker count 및 singleton certificate가 조합을 다시 펼치지 않도록 한다. Dynamic pool은 endpoint만 보증하므로 exact ranges로 승격하지 않는다. Witness가 없으면 축별 source binding을 확인하며 기존 검증 한계를 유지한다.
+- **Cost 검증**: 변경 전4개 회귀가 모두 실패했다. 입력 layout/다중 worker 거부가 각각 Clause1개를 생성했고 recursive count가400개를 생성했다. 100만 member의 single-worker relation은 explicit clause budget 때문에 fast path를 사용하지 못했다. 변경 후 관련23 tests PASS(3.759초), zero-handle assertions 및1/3-worker 결과를 확인했다. 첫 green 시도는 live lane 재빌드와 classpath가 겹쳐 NoClassDefFoundError21건으로 실패했으며, immutable source overlay로 분리하여 다시 compile/test했다. 양쪽 로그를 모두 보존한다.
+- **측정 한계**: 이는 작은 회귀 및 큰 논리 relation의 구조 테스트다. 새 실제 COFEE 전체 planning 시간이나20초 달성 결과가 아니다. Native Closure-wave와 전체 통합 검증 뒤 v5 실제 실행을 수행한다.
+- **환경 보존**: root filesystem 여유가4.7MB까지 줄어 immutable pinned baseline target317개 파일을 grid로 복사/SHA 검증하고 원래 경로를 symlink로 유지했다. 원본도 grid에 별도 보존했으며 pinned JAR/dependencies 내용은 변경하지 않았다. Manifest: `evidence/pinned-base-target-relocation-20261009/manifest.json`.
+
+- **DP 전체 회귀 완료**: 첫 확장738 tests 중1개는 observation-star 전용 테스트가 새 circuit의 모든 auxiliary domain을 product로 계산해 int overflow가 난 검사기 문제였다. Production의 `isObservationStar()`와 같은 typed 구분을 적용하고 circuit은 독립 existential/forced-optimizer 테스트로 검증한다. Baseline selector까지 합친 최종 **953 tests PASS(174.246초)**, independent reviewer CLEAR. 원본 실패 로그와 최종 로그는 각각 `evidence/root-derived-fout-full-regression/`, `evidence/root-derived-fout-full-regression-final/`에 보존했다. 이는 아직 native relation 통합 전 DP snapshot 결과다.

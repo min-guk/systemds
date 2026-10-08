@@ -8,6 +8,8 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.DerivedF
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.JointValueMapRelations.Grounding.ProofQuery;
+import org.apache.sysds.hops.fedplanner.placement.JointValueMapRelations.Grounding.ProofStep;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** The selected owner must supply the pool encoded by an explicit output upload. */
@@ -34,6 +36,16 @@ public final class DerivedFoutAnchorCompatibility {
 
 		/** Only decisions whose selected support can affect the encoded anchor pool. */
 		public List<CompiledHopKey> supportOwners() { return owners; }
+
+		/** Structural root used by the exact fixed-pool circuit. */
+		public ProofQuery proofQuery(CandidateSelectionReceipt receipt) {
+			return grounding.fixedPoolProofQuery(receipt);
+		}
+
+		/** Exact local transition used by the exact fixed-pool circuit. */
+		public ProofStep proofStep(ProofQuery query, CandidateSelectionReceipt selected) {
+			return grounding.fixedPoolProofStep(query, selected);
+		}
 
 		public boolean matches(Map<CompiledHopKey,CandidateSelectionReceipt> selected,
 			boolean allowUnassigned) {
