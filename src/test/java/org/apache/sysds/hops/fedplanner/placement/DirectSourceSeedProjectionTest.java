@@ -196,7 +196,7 @@ public class DirectSourceSeedProjectionTest {
 	}
 
 	@Test
-	public void directBinderMarksDeepValueMapSeedFootprintIncomplete() throws Exception {
+	public void directBinderCompletesDeepValueMapSeedFootprint() throws Exception {
 		CompiledHopKey leafOwner = key("binder-leaf");
 		CompiledHopKey mapOwner = key("binder-map");
 		CompiledHopKey consumerOwner = key("binder-consumer");
@@ -230,15 +230,22 @@ public class DirectSourceSeedProjectionTest {
 		incomplete.setAccessible(true);
 		@SuppressWarnings("unchecked")
 		Set<CompiledHopKey> incompleteOwners = (Set<CompiledHopKey>)incomplete.invoke(result);
-		Assert.assertTrue("binder must not publish a complete subscription for a deep map seed",
+		Assert.assertFalse("complete metadata projection permits an exact deep-map subscription",
 			incompleteOwners.contains(consumerOwner));
+		Method dependencies = result.getClass().getDeclaredMethod("dependencyOccurrences");
+		dependencies.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		Map<CompiledHopKey,Set<CompiledHopKey>> reads =
+			(Map<CompiledHopKey,Set<CompiledHopKey>>) dependencies.invoke(result);
+		Assert.assertTrue(reads.get(consumerOwner).contains(mapOwner));
+		Assert.assertTrue(reads.get(consumerOwner).contains(leafOwner));
 		Assert.assertEquals(1, directMetric(metrics, "INCOMPLETE_SEED_VALUE_MAP_INCIDENCES"));
 		Assert.assertEquals(0, directMetric(metrics, "INCOMPLETE_PROOF_METADATA_INCIDENCES"));
-		Assert.assertEquals(1, directMetric(metrics, "INCOMPLETE_UNIQUE_OWNERS"));
+		Assert.assertEquals(0, directMetric(metrics, "INCOMPLETE_UNIQUE_OWNERS"));
 	}
 
 	@Test
-	public void nativeQueryThroughValueMapKeepsHiddenLeafOnFullCone() throws Exception {
+	public void nativeQueryThroughValueMapSubscribesHiddenLeaf() throws Exception {
 		CompiledHopKey leafOwner = key("query-leaf");
 		CompiledHopKey mapOwner = key("query-map");
 		CompiledHopKey bridgeOwner = key("query-native-bridge");
@@ -319,11 +326,12 @@ public class DirectSourceSeedProjectionTest {
 		incomplete.setAccessible(true);
 		@SuppressWarnings("unchecked")
 		Set<CompiledHopKey> incompleteOwners = (Set<CompiledHopKey>)incomplete.invoke(result);
-		Assert.assertTrue("R must stay on the full cone because V hides S metadata",
+		Assert.assertTrue("the hidden leaf is an explicit identity dependency", queryReads.contains(leafOwner));
+		Assert.assertFalse("complete VALUE_MAP metadata needs no full-cone fallback",
 			incompleteOwners.contains(consumerOwner));
 		Assert.assertEquals(0, directMetric(metrics, "INCOMPLETE_SEED_VALUE_MAP_INCIDENCES"));
 		Assert.assertEquals(1, directMetric(metrics, "INCOMPLETE_PROOF_METADATA_INCIDENCES"));
-		Assert.assertEquals(1, directMetric(metrics, "INCOMPLETE_UNIQUE_OWNERS"));
+		Assert.assertEquals(0, directMetric(metrics, "INCOMPLETE_UNIQUE_OWNERS"));
 
 		Constructor<?> subscriptionsConstructor = nested("DirectQuerySubscriptions").getDeclaredConstructor();
 		subscriptionsConstructor.setAccessible(true);
@@ -344,6 +352,140 @@ public class DirectSourceSeedProjectionTest {
 		Set<CompiledHopKey> affected = (Set<CompiledHopKey>)required.invoke(null,
 			identitySet(leafOwner), potential, Map.of(), Map.of(), Map.of(), subscriptions);
 		Assert.assertTrue("S withdrawal must recompute R through B and V", affected.contains(consumerOwner));
+	}
+
+
+	@Test
+	public void metadataFootprintCoversWarmPositiveNegativeAndMissingOwners() throws Exception {
+		CompiledHopKey leafOwner = key("footprint-leaf");
+		CompiledHopKey middleOwner = key("footprint-middle");
+		CompiledHopKey rootOwner = key("footprint-root");
+		CandidateRuleFact leaf = nativeFact(leafOwner, "leaf", pool("pool", FType.ROW, "worker", 8), 1);
+		CandidateRuleFact middle = valueMapFact(middleOwner, reference(leaf));
+		CandidateRuleFact root = valueMapFact(rootOwner, reference(middle));
+		for(List<CandidateRuleFact> facts : List.of(List.of(root, middle, leaf), List.of(root, middle),
+			List.of(root, middle, failed(leafOwner)))) {
+			NativePlacementContinuity resolver = continuity(facts);
+			for(int repeat = 0; repeat < 3; repeat++) {
+				if(repeat != 0) {
+					NativePlacementContinuity.FixedValueMapPool resolved =
+						resolver.fixedValueMapPool(reference(root));
+					if(facts.contains(leaf))
+						Assert.assertNotNull("positive cache must be populated", resolved);
+					else
+						Assert.assertNull("missing/unavailable leaves must stay negative", resolved);
+				}
+				Set<CompiledHopKey> reads = identitySet(rootOwner);
+				Assert.assertTrue(expandMetadata(resolver, reads));
+				Assert.assertEquals(identitySet(rootOwner, middleOwner, leafOwner), reads);
+			}
+		}
+	}
+
+	@Test
+	public void metadataFootprintCyclesTerminateAndMissingLeafRestorationChangesPools() throws Exception {
+		CompiledHopKey a = key("cycle-a"), b = key("cycle-b"), leafOwner = key("restored-leaf");
+		CandidateRuleFact leaf = nativeFact(leafOwner, "leaf", pool("pool", FType.ROW, "worker", 8), 1);
+		CandidateRuleFact provisionalB = valueMapFact(b, reference(leaf));
+		CandidateRuleFact first = valueMapFact(a, reference(provisionalB));
+		CandidateRuleFact second = valueMapFact(b, reference(first));
+		NativePlacementContinuity cycle = continuity(List.of(first, second));
+		Assert.assertNull(cycle.fixedValueMapPool(reference(first)));
+		Set<CompiledHopKey> reads = identitySet(a);
+		Assert.assertTrue(expandMetadata(cycle, reads));
+		Assert.assertEquals(identitySet(a, b), reads);
+		NativePlacementContinuity absent = continuity(List.of(provisionalB));
+		Assert.assertNull(absent.fixedValueMapPool(reference(provisionalB)));
+		NativePlacementContinuity restored = absent.nextRevision(List.of(provisionalB, leaf));
+		Assert.assertNotNull(restored.fixedValueMapPool(reference(provisionalB)));
+		Set<CompiledHopKey> restoredReads = identitySet(b);
+		Assert.assertTrue(expandMetadata(restored, restoredReads));
+		Assert.assertEquals(identitySet(b, leafOwner), restoredReads);
+	}
+
+	@Test
+	public void metadataFootprintRejectsStructuralOwnerTwinsAndForeignReferences() throws Exception {
+		CompiledHopKey canonical = key("identity-leaf"), foreign = key("identity-leaf");
+		CompiledHopKey rootOwner = key("identity-root");
+		CandidateRuleFact leaf = nativeFact(canonical, "leaf", pool("pool", FType.ROW, "worker", 8), 1);
+		CandidateRuleFact foreignLeaf = nativeFact(foreign, "leaf", pool("pool", FType.ROW, "worker", 8), 1);
+		CandidateRuleFact root = valueMapFact(rootOwner, reference(foreignLeaf));
+		Assert.assertFalse(expandMetadata(continuity(List.of(root, leaf)), identitySet(rootOwner)));
+		Assert.assertFalse(expandMetadata(continuity(List.of(root, leaf, foreignLeaf)), identitySet(rootOwner)));
+		Map<CompiledHopKey,Node> nodes = new IdentityHashMap<>();
+		nodes.put(canonical, node(canonical, List.of()));
+		NativePlacementContinuity withNodeOnlyTwin = new NativePlacementContinuity(
+			nodes, Map.of(), List.of(root), List.of(), Map.of());
+		Assert.assertFalse(expandMetadata(withNodeOnlyTwin, identitySet(rootOwner)));
+	}
+
+	@Test
+	public void metadataFootprintUnionsEveryOwnerRowAndTracksDeepDerivedAuthority()
+		throws Exception {
+		CompiledHopKey owner = key("all-rows"), left = key("left-leaf"), right = key("right-derived");
+		CompiledHopKey authorityOwner = key("derived-authority");
+		DurableAnchorKey pool = pool("pool", FType.ROW, "worker", 8);
+		CandidateRuleFact leaf = nativeFact(left, "leaf", pool, 1);
+		CandidateRuleKey derivedRule = new CandidateRuleKey(right, List.of());
+		PlacementEmissionState derivedEmission = new PlacementEmissionState(ROW_STATE, true);
+		PlacementIdentity.DerivedFoutMaterializationActionKey action =
+			new PlacementIdentity.DerivedFoutMaterializationActionKey(right,
+				new ValueVersionKey(FINGERPRINT, "right-derived", REGION, 0, VersionKind.ORDINARY, List.of()),
+				derivedRule, new PlacementState(ExecType.FED, FederatedOutput.LOUT, null, false),
+				ROW_STATE, pool, authorityOwner, FType.ROW, FType.ROW, REGION.normalizedSignature());
+		CandidateEmissionRealization derivedRealization = CandidateEmissionRealization.durable(
+			derivedEmission, pool, List.of(new PlacementProofKey(PlacementProofKind.DURABLE_ANCHOR,
+				right, "derived-fout:" + action.normalizedSignature())), List.of());
+		CandidateRuleFact base = fact(derivedRule, CandidateEmissionRealization.nativeLineage(
+			ROW_EMISSION, "base", List.of(), List.of()));
+		CandidateRuleFact derived = new CandidateRuleFact(derivedRule, base.status(), base.capability(),
+			base.shapeProof(), base.profile(), List.of(new CandidateEmissionFact(
+				derivedEmission, FType.ROW, action, List.of(derivedRealization))), "");
+		CandidateRuleFact first = valueMapFact(owner, reference(leaf));
+		CandidateRuleFact secondValue = valueMapFact(owner, reference(derived));
+		CandidateRuleFact second = fact(new CandidateRuleKey(owner,
+			List.of(CandidateInputState.present(FType.ROW), CandidateInputState.present(FType.ROW))),
+			secondValue.allowedEmissionFacts().get(0).realizations().get(0));
+		NativePlacementContinuity resolver = continuity(List.of(first, second, leaf, derived));
+		Set<CompiledHopKey> reads = identitySet(owner);
+		Assert.assertTrue("derived authority is complete only after recording its exact owner",
+			expandMetadata(resolver, reads));
+		Assert.assertEquals("missing authority must remain a negative dependency",
+			identitySet(owner, left, right, authorityOwner), reads);
+		CandidateRuleFact authority = nativeFact(authorityOwner, "authority", pool, 1);
+		NativePlacementContinuity restored = resolver.nextRevision(List.of(first, second, leaf, derived, authority));
+		Set<CompiledHopKey> restoredReads = identitySet(owner);
+		Assert.assertTrue(expandMetadata(restored, restoredReads));
+		Assert.assertEquals(reads, restoredReads);
+		List<CandidateRuleFact> facts = List.of(first, second, leaf, derived);
+		Method indexBuilder = PlacementRelationClosure.class.getDeclaredMethod("directBindingIndex",
+			List.class, List.class, List.class, List.class, Map.class, Map.class);
+		indexBuilder.setAccessible(true);
+		Object index = indexBuilder.invoke(null, facts, List.of(node(owner, List.of()),
+			node(left, List.of()), node(right, List.of())), List.of(), facts, Map.of(), Map.of());
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, metrics, true,
+			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
+		Method bind = PlacementRelationClosure.class.getDeclaredMethod(
+			"bindDirectNativeCandidateRealizationsWithDependenciesMeasured", nested("DirectBindingIndex"),
+			List.class, Map.class, Map.class, NativePlacementContinuity.class, Set.class);
+		bind.setAccessible(true);
+		Object result = bind.invoke(closure, index, List.of(first, second), Map.of(), Map.of(),
+			resolver, identitySet(owner));
+		Method incomplete = result.getClass().getDeclaredMethod("incompleteDependencyOccurrences");
+		incomplete.setAccessible(true);
+		Assert.assertFalse(((Set<?>)incomplete.invoke(result)).contains(owner));
+		Assert.assertEquals(0, directMetric(metrics, "INCOMPLETE_UNIQUE_OWNERS"));
+		Assert.assertEquals(0, directMetric(metrics, "METADATA_FOOTPRINT_FALLBACK_OWNERS"));
+		Assert.assertEquals(1, directMetric(metrics, "METADATA_FOOTPRINT_CERTIFIED_OWNERS"));
+	}
+
+	private static boolean expandMetadata(NativePlacementContinuity resolver,
+		Set<CompiledHopKey> owners) throws Exception {
+		Method method = NativePlacementContinuity.class.getDeclaredMethod(
+			"expandValueMapMetadataDependencies", Set.class);
+		method.setAccessible(true);
+		return (boolean) method.invoke(resolver, owners);
 	}
 
 	private static List<DurableAnchorKey> legacySeeds(Map<CompiledHopKey,Node> nodes,

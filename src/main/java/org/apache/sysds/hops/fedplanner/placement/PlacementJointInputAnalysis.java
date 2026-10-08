@@ -494,23 +494,69 @@ public final class PlacementJointInputAnalysis {
 	/** Immutable marker retaining the exact comparator used by every analysis-local environment set. */
 	private static final class OrderedEnvironments extends AbstractSet<Environment>
 		implements SortedSet<Environment> {
-		private final SortedSet<Environment> values;
+		private final List<Environment> values;
+		private final Comparator<Environment> comparator;
 
-		private OrderedEnvironments(TreeSet<Environment> ownedValues) {
-			values = Collections.unmodifiableSortedSet(ownedValues);
+		private OrderedEnvironments(List<Environment> ownedValues,
+			Comparator<Environment> comparator) {
+			values = List.copyOf(ownedValues);
+			this.comparator = comparator;
 		}
 
-		@Override public Comparator<? super Environment> comparator() { return values.comparator(); }
-		@Override public Environment first() { return values.first(); }
-		@Override public Environment last() { return values.last(); }
+		@Override public Comparator<? super Environment> comparator() { return comparator; }
+		@Override public Environment first() {
+			if(values.isEmpty())
+				throw new java.util.NoSuchElementException();
+			return values.get(0);
+		}
+		@Override public Environment last() {
+			if(values.isEmpty())
+				throw new java.util.NoSuchElementException();
+			return values.get(values.size() - 1);
+		}
 		@Override public int size() { return values.size(); }
-		@Override public boolean contains(Object value) { return values.contains(value); }
+		@Override public boolean contains(Object value) {
+			if(!(value instanceof Environment environment))
+				return false;
+			return Collections.binarySearch(values, environment, comparator) >= 0;
+		}
 		@Override public Iterator<Environment> iterator() { return values.iterator(); }
 		@Override public SortedSet<Environment> subSet(Environment from, Environment to) {
-			return values.subSet(from, to);
+			return immutableTreeView().subSet(from, to);
 		}
-		@Override public SortedSet<Environment> headSet(Environment to) { return values.headSet(to); }
-		@Override public SortedSet<Environment> tailSet(Environment from) { return values.tailSet(from); }
+		@Override public SortedSet<Environment> headSet(Environment to) {
+			return immutableTreeView().headSet(to);
+		}
+		@Override public SortedSet<Environment> tailSet(Environment from) {
+			return immutableTreeView().tailSet(from);
+		}
+		@Override public boolean add(Environment value) {
+			throw new UnsupportedOperationException();
+		}
+		@Override public boolean remove(Object value) {
+			throw new UnsupportedOperationException();
+		}
+		@Override public boolean addAll(java.util.Collection<? extends Environment> values) {
+			throw new UnsupportedOperationException();
+		}
+		@Override public boolean removeAll(java.util.Collection<?> values) {
+			throw new UnsupportedOperationException();
+		}
+		@Override public boolean retainAll(java.util.Collection<?> values) {
+			throw new UnsupportedOperationException();
+		}
+		@Override public boolean removeIf(java.util.function.Predicate<? super Environment> filter) {
+			throw new UnsupportedOperationException();
+		}
+		@Override public void clear() {
+			throw new UnsupportedOperationException();
+		}
+
+		private SortedSet<Environment> immutableTreeView() {
+			TreeSet<Environment> view = new TreeSet<>(comparator);
+			view.addAll(values);
+			return Collections.unmodifiableSortedSet(view);
+		}
 	}
 
 	private record Observation(String context, StatementBlock block, Environment environment) { }
@@ -852,12 +898,12 @@ public final class PlacementJointInputAnalysis {
 		for(int ordinal : ordinalsByBlock.getOrDefault(block, List.of())) {
 			Hop hop = occurrences.get(ordinal).hop();
 			if(PlacementProgramFacts.isTransientRead(hop) && tracks(variable(ordinal), context)) {
-				TreeSet<Environment> observed = newEnvironmentSet();
+				List<Environment> observed = new ArrayList<>(states.size());
 				for(Environment state : states) {
 					Definition source = state.values().get(variable(ordinal));
 					observed.add(source == null ? state : state.observe(ordinal, source));
 				}
-				states = freezeOwned(observed);
+				states = freezeCandidates(observed);
 				Set<Observation> observations = observationsByRead.computeIfAbsent(ordinal,
 					ignored -> new LinkedHashSet<>());
 				for(Environment state : states)
@@ -867,10 +913,10 @@ public final class PlacementJointInputAnalysis {
 				states = invoke(ordinal, call, states, context).callerEnvironments();
 			else if(PlacementProgramFacts.isTransientWrite(hop)
 				&& tracks(variable(ordinal), context)) {
-				TreeSet<Environment> updated = newEnvironmentSet();
+				List<Environment> updated = new ArrayList<>(states.size());
 				for(Environment state : states)
 					updated.add(state.with(variable(ordinal), writeDefinition(ordinal, state, context)));
-				states = freezeOwned(updated);
+				states = freezeCandidates(updated);
 			}
 		}
 		return states;
@@ -1010,14 +1056,40 @@ public final class PlacementJointInputAnalysis {
 	private Set<Environment> union(Set<Environment> left, Set<Environment> right) {
 		Set<Environment> orderedLeft = ordered(left);
 		Set<Environment> orderedRight = ordered(right);
-		if(orderedLeft == orderedRight || orderedRight.isEmpty()
-			|| orderedLeft.containsAll(orderedRight))
+		if(orderedLeft == orderedRight || orderedRight.isEmpty())
 			return orderedLeft;
 		if(orderedLeft.isEmpty())
 			return orderedRight;
-		TreeSet<Environment> result = mutableOrderedCopy(orderedLeft);
-		result.addAll(orderedRight);
-		return freezeOwned(result);
+		List<Environment> result = new ArrayList<>(orderedLeft.size() + orderedRight.size());
+		Iterator<Environment> leftIterator = orderedLeft.iterator();
+		Iterator<Environment> rightIterator = orderedRight.iterator();
+		Environment leftValue = leftIterator.hasNext() ? leftIterator.next() : null;
+		Environment rightValue = rightIterator.hasNext() ? rightIterator.next() : null;
+		boolean rightContributed = false;
+		while(leftValue != null && rightValue != null) {
+			int order = environmentOrder.compare(leftValue, rightValue);
+			if(order <= 0) {
+				result.add(leftValue);
+				leftValue = leftIterator.hasNext() ? leftIterator.next() : null;
+				if(order == 0)
+					rightValue = rightIterator.hasNext() ? rightIterator.next() : null;
+			}
+			else {
+				result.add(rightValue);
+				rightContributed = true;
+				rightValue = rightIterator.hasNext() ? rightIterator.next() : null;
+			}
+		}
+		while(leftValue != null) {
+			result.add(leftValue);
+			leftValue = leftIterator.hasNext() ? leftIterator.next() : null;
+		}
+		while(rightValue != null) {
+			result.add(rightValue);
+			rightContributed = true;
+			rightValue = rightIterator.hasNext() ? rightIterator.next() : null;
+		}
+		return rightContributed ? freezeAlreadyOrdered(result) : orderedLeft;
 	}
 
 	private int compareEnvironments(Environment left, Environment right) {
@@ -1059,37 +1131,51 @@ public final class PlacementJointInputAnalysis {
 			}
 		if(!hasObservations)
 			return ordered(values);
-		TreeSet<Environment> result = newEnvironmentSet();
+		List<Environment> result = new ArrayList<>(values.size());
 		for(Environment value : values)
 			result.add(value.nextBlock());
-		return freezeOwned(result);
+		return freezeCandidates(result);
 	}
 
 	private Set<Environment> bounded(Set<Environment> values) {
 		if(values instanceof OrderedEnvironments ordered
 			&& ordered.comparator() == environmentOrder)
 			return values;
-		return freezeOwned(mutableOrderedCopy(values));
+		return freezeCandidates(new ArrayList<>(values));
 	}
 
 	private TreeSet<Environment> newEnvironmentSet() {
 		return new TreeSet<>(environmentOrder);
 	}
 
-	@SuppressWarnings("unchecked")
-	private TreeSet<Environment> mutableOrderedCopy(Set<Environment> values) {
-		if(values instanceof SortedSet<?> sorted && sorted.comparator() == environmentOrder)
-			return new TreeSet<>((SortedSet<Environment>)sorted);
-		TreeSet<Environment> result = newEnvironmentSet();
-		result.addAll(values);
-		return result;
+	private Set<Environment> freezeCandidates(List<Environment> candidates) {
+		List<Environment> ordered = new ArrayList<>(candidates);
+		ordered.sort(environmentOrder);
+		if(ordered.size() > 1) {
+			List<Environment> compacted = new ArrayList<>(ordered.size());
+			Environment retained = ordered.get(0);
+			compacted.add(retained);
+			for(int index = 1; index < ordered.size(); index++) {
+				Environment candidate = ordered.get(index);
+				if(environmentOrder.compare(retained, candidate) != 0) {
+					retained = candidate;
+					compacted.add(candidate);
+				}
+			}
+			ordered = compacted;
+		}
+		return freezeAlreadyOrdered(ordered);
 	}
 
-	private Set<Environment> freezeOwned(TreeSet<Environment> values) {
+	private Set<Environment> freezeAlreadyOrdered(List<Environment> values) {
 		if(values.size() > MAX_ENVIRONMENTS)
 			throw new ResourceLimitException("Joint-input CFG exceeded finite environment limit "
 				+ MAX_ENVIRONMENTS + "; refusing an inexact Cartesian fallback");
-		return new OrderedEnvironments(values);
+		return new OrderedEnvironments(values, environmentOrder);
+	}
+
+	private Set<Environment> freezeOwned(TreeSet<Environment> values) {
+		return freezeAlreadyOrdered(new ArrayList<>(values));
 	}
 
 	private static <K> Map<K,List<Integer>> immutableIdentityLists(Map<K,List<Integer>> source) {

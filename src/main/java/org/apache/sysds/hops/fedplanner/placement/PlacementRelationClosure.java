@@ -5202,18 +5202,17 @@ final class PlacementRelationClosure {
 						CompiledHopKey sourceKey = input.sourceKey();
 						Node source = sourceKey == null ? null : nodesByKey.get(sourceKey);
 						if(source != null) {
+							// Empty and cached seed queries also read this exact source owner.
+							factDependencies.add(sourceKey);
 							seeds.addAll(sourceSeeds.seeds(sourceKey, input.fType()));
 							// fixedValueMapPool recursively reads VALUE_MAP support metadata.
-							// Until that resolver exposes its complete owner footprint, keep this
-							// row unsubscribed so the ordinary dependency cone recomputes it.
+							// Mark provisionally; final owner-footprint expansion either
+							// certifies these reads or retains conservative invalidation.
 							if(sourceSeeds.fixedValueMapConsulted(sourceKey, input.fType())) {
 								if(complexityMetrics != null)
 									complexityMetrics.recordDirectWork(
 										DirectWork.INCOMPLETE_SEED_VALUE_MAP_INCIDENCES);
-								if(incompleteDependencyOccurrences.add(factOccurrence)
-									&& complexityMetrics != null)
-									complexityMetrics.recordDirectWork(
-										DirectWork.INCOMPLETE_UNIQUE_OWNERS);
+								incompleteDependencyOccurrences.add(factOccurrence);
 							}
 						}
 					}
@@ -5273,10 +5272,7 @@ final class PlacementRelationClosure {
 								if(complexityMetrics != null)
 									complexityMetrics.recordDirectWork(
 										DirectWork.INCOMPLETE_PROOF_METADATA_INCIDENCES);
-								if(incompleteDependencyOccurrences.add(factOccurrence)
-									&& complexityMetrics != null)
-									complexityMetrics.recordDirectWork(
-										DirectWork.INCOMPLETE_UNIQUE_OWNERS);
+								incompleteDependencyOccurrences.add(factOccurrence);
 							}
 							List<DirectInputBinding> requiredInputs = ruleBinding.requiredInputs();
 							if(requiredInputs == null)
@@ -5430,11 +5426,38 @@ final class PlacementRelationClosure {
 				fact.capability(), fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
 		}
 		Map<CompiledHopKey,Set<CompiledHopKey>> immutableDependencies = new IdentityHashMap<>();
-		dependencyOccurrences.forEach((owner, dependencies) -> {
-			Set<CompiledHopKey> immutable = Collections.newSetFromMap(new IdentityHashMap<>());
-			immutable.addAll(dependencies);
-			immutableDependencies.put(owner, Collections.unmodifiableSet(immutable));
-		});
+		SearchSpaceMetrics.PhaseToken metadataStarted = complexityMetrics == null ? null
+			: complexityMetrics.startPhase(SearchSpaceMetrics.Phase.DIRECT_METADATA_DEPENDENCIES);
+		try {
+			// Multiple facts may share an owner. Certify only after unioning every
+			// proof receipt and seed-source read, including negative results.
+			dependencyOccurrences.forEach((owner, dependencies) -> {
+				int originalSize = dependencies.size();
+				boolean complete = continuity.expandValueMapMetadataDependencies(dependencies);
+				if(complete)
+					incompleteDependencyOccurrences.remove(owner);
+				else
+					incompleteDependencyOccurrences.add(owner);
+				if(complexityMetrics != null) {
+					complexityMetrics.recordDirectWork(complete
+						? DirectWork.METADATA_FOOTPRINT_CERTIFIED_OWNERS
+						: DirectWork.METADATA_FOOTPRINT_FALLBACK_OWNERS);
+					complexityMetrics.recordDirectWork(DirectWork.METADATA_FOOTPRINT_OWNERS_ADDED,
+						dependencies.size() - originalSize);
+				}
+				Set<CompiledHopKey> immutable = Collections.newSetFromMap(new IdentityHashMap<>());
+				immutable.addAll(dependencies);
+				immutableDependencies.put(owner, Collections.unmodifiableSet(immutable));
+			});
+			if(complexityMetrics != null)
+				complexityMetrics.recordDirectWork(DirectWork.INCOMPLETE_UNIQUE_OWNERS,
+					incompleteDependencyOccurrences.size());
+		}
+		finally {
+			if(complexityMetrics != null)
+				complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.DIRECT_METADATA_DEPENDENCIES,
+					metadataStarted);
+		}
 		return new DirectBindingResult(List.copyOf(rebound),
 			Collections.unmodifiableMap(immutableDependencies),
 			Collections.unmodifiableSet(incompleteDependencyOccurrences));
@@ -5443,7 +5466,9 @@ final class PlacementRelationClosure {
 	/**
 	 * Native proof-state receipts do not include metadata owners recursively read by
 	 * VALUE_MAP grounding or derived FOUT action authority. Rows whose proof touches
-	 * one of these owners must stay on the ordinary dependency cone.
+	 * one of these owners are provisional until final footprint expansion certifies
+	 * their VALUE_MAP and derived-anchor owner reads. Ambiguous owner identities
+	 * retain conservative invalidation; materialization legality is unchanged.
 	 */
 	private static boolean readsIncompleteDirectMetadata(Set<CompiledHopKey> dependencies,
 		Set<CompiledHopKey> metadataSensitiveOwners) {

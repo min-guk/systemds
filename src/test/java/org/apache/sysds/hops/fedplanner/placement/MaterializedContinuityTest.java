@@ -16,6 +16,10 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -129,6 +133,81 @@ public class MaterializedContinuityTest {
 				.proveCandidate(valid.output(), valid.outputPool()));
 		Assert.assertNull("fresh authority without the owner certificate is the reference result",
 			valid.freshWithdrawn().proveCandidate(valid.output(), valid.outputPool()));
+	}
+
+	@Test
+	public void derivedActionMetadataFootprintIncludesExactAnchorOwnerColdAndWarm() {
+		for(Fixture fixture : List.of(fixture(true, true, false),
+			nativeBoundaryFixture(NativeOwnerMode.EXACT_ACTUAL_TO_FORMAL))) {
+			CompiledHopKey producer = fixture.output().rule().parentOccurrence();
+			for(int invocation = 0; invocation < 2; invocation++) {
+				Set<CompiledHopKey> footprint = identitySet(producer);
+				Assert.assertTrue("certified anchor authority has a complete exact read inventory",
+					fixture.continuity().expandValueMapMetadataDependencies(footprint));
+				Assert.assertTrue("derived materialization must subscribe to its exact anchor owner",
+					containsIdentity(footprint, fixture.authorityOwner()));
+				Assert.assertNotNull("second expansion must cover a warm positive proof cache",
+					fixture.continuity().proveCandidate(fixture.output(), fixture.outputPool()));
+			}
+		}
+	}
+
+	@Test
+	public void derivedActionFootprintStaysCompleteAcrossNegativeAuthorityAndWithdrawal() {
+		for(NativeOwnerMode mode : List.of(NativeOwnerMode.WRONG_POOL, NativeOwnerMode.LOCAL_ONLY)) {
+			Fixture fixture = nativeBoundaryFixture(mode);
+			Set<CompiledHopKey> footprint = identitySet(
+				fixture.output().rule().parentOccurrence());
+			Assert.assertTrue(mode.name(),
+				fixture.continuity().expandValueMapMetadataDependencies(footprint));
+			Assert.assertTrue(mode.name(), containsIdentity(footprint, fixture.authorityOwner()));
+			Assert.assertNull("footprint completeness must not grant materialization legality",
+				fixture.continuity().proveCandidate(fixture.output(), fixture.outputPool()));
+		}
+
+		Fixture valid = nativeBoundaryFixture(NativeOwnerMode.EXACT_ACTUAL_TO_FORMAL);
+		Assert.assertNotNull("withdrawal revision must start from a warm certified proof",
+			valid.continuity().proveCandidate(valid.output(), valid.outputPool()));
+		NativePlacementContinuity withdrawn = valid.continuity().nextRevision(valid.withdrawnFacts());
+		Set<CompiledHopKey> revisedFootprint = identitySet(
+			valid.output().rule().parentOccurrence());
+		Assert.assertTrue(withdrawn.expandValueMapMetadataDependencies(revisedFootprint));
+		Assert.assertTrue(containsIdentity(revisedFootprint, valid.authorityOwner()));
+		Assert.assertNull(withdrawn.proveCandidate(valid.output(), valid.outputPool()));
+		Set<CompiledHopKey> freshFootprint = identitySet(
+			valid.output().rule().parentOccurrence());
+		Assert.assertTrue(valid.freshWithdrawn()
+			.expandValueMapMetadataDependencies(freshFootprint));
+		Assert.assertTrue(containsIdentity(freshFootprint, valid.authorityOwner()));
+		assertIdentitySetEquals(freshFootprint, revisedFootprint);
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	public void anchorOnlyChangeInvalidatesItsSubscribedMaterializationConsumer() throws Exception {
+		Fixture fixture = fixture(true, true, false);
+		CompiledHopKey consumer = fixture.output().rule().parentOccurrence();
+		Set<CompiledHopKey> footprint = identitySet(consumer);
+		Assert.assertTrue(fixture.continuity().expandValueMapMetadataDependencies(footprint));
+
+		Class<?> subscriptionsType = Class.forName(
+			PlacementRelationClosure.class.getName() + "$DirectQuerySubscriptions");
+		Constructor<?> constructor = subscriptionsType.getDeclaredConstructor();
+		constructor.setAccessible(true);
+		Object subscriptions = constructor.newInstance();
+		Method replace = subscriptionsType.getDeclaredMethod(
+			"replace", Set.class, Map.class, Set.class);
+		replace.setAccessible(true);
+		replace.invoke(subscriptions, identitySet(consumer), Map.of(consumer, footprint), Set.of());
+		Method required = PlacementRelationClosure.class.getDeclaredMethod(
+			"requiredDirectClosureOccurrences", Set.class, Map.class, Map.class, Map.class,
+			Map.class, subscriptionsType);
+		required.setAccessible(true);
+		Set<CompiledHopKey> invalidated = (Set<CompiledHopKey>)required.invoke(null,
+			identitySet(fixture.authorityOwner()), Map.of(), Map.of(), Map.of(), Map.of(),
+			subscriptions);
+		Assert.assertTrue("an anchor-only revision must requeue the subscribed upload consumer",
+			containsIdentity(invalidated, consumer));
 	}
 
 	private enum NativeOwnerMode {
@@ -331,7 +410,7 @@ public class MaterializedContinuityTest {
 		CandidateRealizationReference output = CandidateRealizationReference.of(
 			producerRule, uploadEmission.realizations().get(0));
 		return new Fixture(continuity, producerFact, uploadEmission, output, outputPool,
-			List.of(), null, null);
+			List.of(), null, anchorOwner);
 	}
 
 	private static CandidateRuleFact fact(CandidateRuleKey rule, ExecType exec,
@@ -373,6 +452,23 @@ public class MaterializedContinuityTest {
 		return new DurableAnchorKey(id, FType.ROW, List.of(
 			new AnchorPartition(first, List.of(0L, 0L), List.of(4L, 2L)),
 			new AnchorPartition(second, List.of(4L, 0L), List.of(8L, 2L))));
+	}
+
+	private static Set<CompiledHopKey> identitySet(CompiledHopKey... owners) {
+		Set<CompiledHopKey> result = Collections.newSetFromMap(new IdentityHashMap<>());
+		Collections.addAll(result, owners);
+		return result;
+	}
+
+	private static boolean containsIdentity(Set<CompiledHopKey> owners, CompiledHopKey target) {
+		return owners.stream().anyMatch(owner -> owner == target);
+	}
+
+	private static void assertIdentitySetEquals(Set<CompiledHopKey> expected,
+		Set<CompiledHopKey> actual) {
+		Assert.assertEquals(expected.size(), actual.size());
+		for(CompiledHopKey owner : expected)
+			Assert.assertTrue(actual.stream().anyMatch(candidate -> candidate == owner));
 	}
 
 	private record Fixture(NativePlacementContinuity continuity,

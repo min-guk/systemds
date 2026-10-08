@@ -22,6 +22,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
@@ -190,6 +191,10 @@ final class NativePlacementContinuity {
 	private final Map<CompiledHopKey,Map<CandidateRealizationReference,FixedPoolNode>> fixedPoolNodes =
 		new IdentityHashMap<>();
 	private final FixedPoolWork fixedPoolWork;
+	// Snapshot-local guard for structurally keyed pool results versus exact owner reads.
+	private Map<CompiledHopKey,CompiledHopKey> metadataOwnerIdentities;
+	private Set<CompiledHopKey> ambiguousMetadataOwners;
+
 
 	record FixedPoolWorkSnapshot(long decodedRows, long activations, long groundingEdgeVisits,
 		long geometryVisits, long inexactEdgeVisits) { }
@@ -789,6 +794,61 @@ final class NativePlacementContinuity {
 		Map<CompiledHopKey,List<CompiledHopKey>> immutable = new IdentityHashMap<>();
 		readersBySource.forEach((source, readers) -> immutable.put(source, List.copyOf(readers)));
 		return Collections.unmodifiableMap(immutable);
+	}
+
+	/**
+	 * Complete the physical proof receipt with VALUE_MAP and derived-FOUT metadata reads. This is
+	 * deliberately a conservative owner closure, not a new proof or a candidate
+	 * filter. Reusing the immutable per-fact projection covers positive, negative
+	 * and cached fixed-pool queries alike, including references not yet available.
+	 * The supplied set is binder-owned and identity-based; no closure is retained.
+	 */
+	boolean expandValueMapMetadataDependencies(Set<CompiledHopKey> owners) {
+		if(metadataOwnerIdentities == null) {
+			metadataOwnerIdentities = new HashMap<>();
+			ambiguousMetadataOwners = new HashSet<>();
+			for(CompiledHopKey owner : nodesByKey.keySet())
+				registerMetadataOwner(owner);
+			for(CompiledHopKey owner : candidateFactsByKey.keySet())
+				registerMetadataOwner(owner);
+		}
+		boolean complete = true;
+		java.util.ArrayDeque<CompiledHopKey> pending = new java.util.ArrayDeque<>(owners);
+		while(!pending.isEmpty()) {
+			CompiledHopKey owner = pending.removeFirst();
+			CompiledHopKey registered = metadataOwnerIdentities.get(owner);
+			// Pool/reference caches use structural equality. Never certify a receipt
+			// that could borrow a distinct owner's cached positive or negative result.
+			if(ambiguousMetadataOwners.contains(owner) || registered != null && registered != owner) {
+				complete = false;
+				if(metrics != null)
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.METADATA_FOOTPRINT_IDENTITY_REJECTS);
+			}
+			for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(owner, List.of())) {
+				if(fact.status() == CandidateEvaluationStatus.AVAILABLE)
+					for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+						if(emission.derivedFoutAction() != null) {
+							// Topology reads this node and its owned native-pool certificate,
+							// even on failed authority checks. The certificate accessor is
+							// field-only; no upstream binding is implicitly authorized here.
+							CompiledHopKey anchorOwner = emission.derivedFoutAction().durableAnchorOwner();
+							if(owners.add(anchorOwner))
+								pending.addLast(anchorOwner);
+							if(metrics != null)
+								metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.METADATA_FOOTPRINT_DERIVED_EDGES);
+						}
+				for(CompiledHopKey source : boundCandidateSources(fact, null))
+					if(owners.add(source))
+						pending.addLast(source);
+			}
+		}
+		return complete;
+	}
+
+	private void registerMetadataOwner(CompiledHopKey owner) {
+		CompiledHopKey previous = metadataOwnerIdentities.putIfAbsent(owner, owner);
+		if(previous != null && previous != owner)
+			ambiguousMetadataOwners.add(owner);
 	}
 
 	private List<CompiledHopKey> boundCandidateSources(CandidateRuleFact fact,

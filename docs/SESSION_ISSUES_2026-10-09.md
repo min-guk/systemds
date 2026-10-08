@@ -75,3 +75,33 @@
 - **측정 제한**: unrelated worktree Maven/javac를 관측하여 v9 detailed는 진단 근거만 채택한다(`evidence/v9-external-contention.json`). 자체 compile/JFR parse는 timed run과 겹치지 않았다.
 - **게시 gate**: 최종 v9 source hashes 전부 fresh767 selected tests/0failure/0error/1skip package seal과 일치. Independent metric/algorithm review CLEAR. origin/main fetch+merge는 Already up to date였다. 미검증 v10 bulk 테스트는 이 milestone에 포함하지 않는다.
 - **위험/잔여**:20초 및 전체 planning 완료는 아직 달성하지 못했다. Metadata dependency 보완 전에 기존 conservative guard를 단순 제거하지 않는다. Derived-FOUT 및 ambiguous/foreign owner identity는 보수적으로 남길 계획이다.
+
+### v10 VALUE_MAP metadata owner footprint 및 GLM bulk ordering (구현/검증 중)
+
+- **문제**: fixed-pool resolver가 proof-state 밖의 VALUE_MAP source owner를 읽지만 direct subscription에는 그 owner가 없어 대부분의 consumer를 full-cone fallback으로 재분석했다. v9의 incomplete-only-extra48,511이 우선순위 근거다.
+- **해결**: NativePlacementContinuity의 기존 immutable per-fact boundCandidateSources projection을 재사용해, binder owner별 모든 seed/proof dependency를 모은 후 한 번 identity BFS로 확장한다. Positive/negative/cache-hit에도 같은 현재 snapshot의 dependency가 보존된다. 새로운 transitive memo는 없다. Node/fact owner 구조에 equal-but-distinct identity가 있거나 foreign identity를 만나면 certify하지 않으며, available derived-FOUT가 하나라도 도달하면 보수적 fallback을 유지한다. 확장 성공 때만 provisional incompleteness를 제거한다. Seed query의 source owner는 empty/cache-hit일 때도 명시 추가한다.
+- **계측**: metadata expansion phase와 certified/fallback/added-owner counters를 추가했다. 기존 seed/proof incomplete incidence는 이제 certification 이전의 provisional trigger이며, INCOMPLETE_UNIQUE_OWNERS는 최종 fallback owner 수다. 이전 v9 계측 의미와 구분한다.
+- **회귀/검토**: 변경 전 DirectSource9tests 중5개 예상 실패(누락expander3, 실제binder2)를 확인했다. Positive/negative/missing/cycle/withdrawal-restoration/foreign-twins, deep seed/proof path, multiple owner rows와 hidden derived-FOUT를 검증한다. Production independent review CLEAR; 최종 focused/full gate는 진행 중이다.
+- **GLM**: observe/write/nextBlock의 bounded one-to-one 결과를 stable sort+comparator tie compaction으로 수집하며, union은 left-biased linear merge다. invoke의 caller×exit raw product는 메모리 폭증을 피하기 위해 기존 TreeSet을 유지한다. 새 bulk tests5개는 기존v9에서 모두 예상 missing-method red였다. Root review에서 nested bounded view 및 empty mutator 계약 누락을 발견했고, 격리 source build에서5tests/1failure로 재현해 수정 중이다. 문자열 comparator와 첫 representative identity는 그대로 유지한다.
+- **검증 중 발견한 빌드 오류**: root 신규 HashSet import 누락으로 focused Maven compile 실패. import를 고쳤고 fresh 재컴파일할 예정이다. 실패 뒤 target/classes가 부분적이라 isolated GLM compile의 첫 시도에서 의존 class가 없었으며, sealed v9 JAR를 의존으로 사용해 실제 view 실패를 분리했다.
+- **잔여/위험**: complete이지만 넓은 owner closure가 실제 subscriber invalidation을 얼마나 줄이는지는 새 Docker로 측정해야 한다. 20초 목표 미달이며, legality/privacy/TR/TW/recompile/runtime 규칙 변경은 없다. 변경 후 전체 gate 및 cold-vs-warm identity receipt parity, independent review와 동일 Docker 실측 전에 성능 달성을 주장하지 않는다.
+
+- **v10 최종 regression gate**: missing import 및 GLM immutable view를 수정한 뒤 fresh package **781 selected tests/failure0/error0/skip1**, BUILD SUCCESS01:05:22. Metadata10tests, bulk5tests, invocation exit memo6tests 포함. 두 slice 독립 source/test review CLEAR. JAR SHA `086d7d4528d535390b609c26aa2633efb1a46e51f4d5b9e00c1fcebf7d7bcd99`. 새 봉인 artifact로 상세 Docker 관측 중이다.
+- **후속 범위 확인**: v9 route counters에서 MM/ternary/일부binary/cast/TRead/fcall의 정확 oracle residual 경로가 남아 있으므로 모든 연산이 rule-directed로 바뀌었다고 주장하지 않는다. 호출 수는 조합 수/시간과 다르며 current exact residual 표본 비중은 낮다. MM/ternary는 shape-qualified relation의 완전 oracle parity를 증명해야 확대할 수 있다. 현재는20초 목표의 지배적 공통 분석 비용을 먼저 줄인다.
+
+### v10 실측 및 v11 derived-FOUT metadata footprint 확장 (진행중)
+
+- **v10 결과**: 두 workload 모두60초 timeout/no receipt. GLM joint canonical 비교 표본 비중은 v9 상세15.46%에서 v10 상세4.11%로 줄었고 v10은 fixedPoint8/publication1까지 진행했다. 이는 동일 완료 작업의 wall-time speedup은 아니다. LogReg metadata certification은1,727 성공/4,547 fallback, expansion wall 약134ms였다. Incomplete-only-extra48,046이 남아 VALUE_MAP 보완만으로 부족하다.
+- **추가 원인/설계**: v10의 blanket derived-action guard가 보수적 fallback을 남길 수 있다. Native topology의 실제 derived authority 읽기는 현재 producer owner와 durableAnchorOwner의 node/fact뿐이다. declaresExactNativeOwnerAuthority는 그 owner의 owned NATIVE_LINEAGE certificate 필드만 읽고 upstream binding을 재귀적으로 해석하지 않는다. 해당 anchorOwner를 기존 identity closure에 성공/실패와 무관하게 넣으면 missing/negative/cache-hit까지 완전하게 기록할 수 있다는 독립 설계 검토 CLEAR를 받았다. 실제 fallback 원인을 구분하기 위해 identity-reject와 derived-edge counters도 추가한다.
+- **v11 변경**: available derived action의 anchor owner를 identity-add/enqueue한다. 모호한 구조적 twin/foreign identity는 계속 실패하며, action의 실제 materialization legality/selected-clause grounding/privacy는 전혀 바꾸지 않는다. 추가 memo나 public flag는 없다.
+- **회귀**: root deep-derived test10개 중1개 기대한 old-v10 certificate 실패; 실제 MaterializedContinuity11개 중3개 기대 실패를 확인했다. Literal/native positive, warm caches, wrongpool/localonly negative, certificate withdrawal revised/fresh, ordinary edge가 없는 anchor-only subscription invalidation을 추가했다. Cold/warm fixture는 proof query를 사이에 실행하도록 보강했다. Derived/legal/privacy/layout 관련10개 suite를 selector에 추가하여 fresh package 중이다.
+- **운영 오류 분리**: v11 첫 test-edit shell의 잘못된 workdir 및 Python 문자열 오류로 테스트가 변경되지 않은 control run10PASS가 있었고 이를 `v11-unmodified-test-control.log`로 보존했다. 실제 patch 적용 뒤10/1 expected red를 별도로 확인했다. Production/test 성공 근거로 잘못된 control을 쓰지 않는다.
+- **잔여/위험**: counters가 아직 derived 원인의 지배성을 증명한 것은 아니다. v11 새 identity/derived 계측과 실제 subscriber invalidation을 확인해야 한다.20초 목표 미달; footprint가 넓으면 exact projection별 delta 비교가 다음 후보지만 아직 적용하지 않는다.
+
+### v11 검증 milestone 및 invalidation 계측 해석 보정 (부분 개선/20초 미달)
+
+- **검증**: 관련820tests/failure0/error0/skip1, BUILD SUCCESS01:13:35; independent v10-seal delta review APPROVE. JAR `8582a971ec06b29636001976635e9b7616e0032f1f092bb39bd57c6b71ed4e23`. 새 actual-derived tests11PASS 및 binder/metadata10PASS 포함. 컴포넌트/full-recompute 구성 parity 테스트도 selector에 포함된다.
+- **실제 결과**: 동일 Docker 상세 run 두 workload 모두60초 timeout/no receipt, own container 삭제 확인. LogReg certified5,946/fallback0/identityreject0/derivededges115,691; GLM certified7,353/fallback0/identityreject0/derivededges66,904. Derived edge count는 distinct owner가 아니라 방문한 action emission 수다.
+- **중요한 해석 보정**: 최종 metadata fallback이0이어도 incomplete-only-extra는 LogReg47,346/GLM59,416이다. 해당 집계에는 아직 처리되지 않았거나 이미 pending에 있는 owner, 그리고 touched로 subscription이 무효화된 owner가 포함된다. 따라서 이전98% 비중을 실제 불필요한 재실행의98%라고 해석하면 안 된다. 다음 v12는 required 집합 중 새 pending/이미 pending을 분리한다. 이 계측 없이 fallback 제거율을 총성능 개선율로 주장하지 않는다.
+- **관측된 부분 개선**: v11 LogReg no-delta eligible facts3,750(이전 v9는5,007) 및 no-delta publication968,269(이전1,283,520)이다. 진행지점이 다른 partial snapshots이므로 총속도 개선율이 아니다. GLM canonical collection의 감소도 별도 경로 개선일 뿐20초 완료 증거가 아니다.
+- **게시 범위**: v10+v11 sealed/검증/독립승인된 source/tests만 게시하며, 아직 red-run 전인 v12 DirectedDirectClosureDirtyConeTest 추가는 제외한다. Source hash 대조로 구분했다. Candidate legality/privacy/DP arithmetic/derived authority 규칙 변경은 없다.
