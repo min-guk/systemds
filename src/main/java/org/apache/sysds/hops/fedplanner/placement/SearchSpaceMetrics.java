@@ -47,12 +47,121 @@ public final class SearchSpaceMetrics {
 		CLOSURE_REPLAY,
 		DIRECT_BINDING,
 		DIRECT_PROOF_CALL,
+		DIRECT_PROOF_CONSUMPTION,
+		DIRECT_EMISSION_CANONICALIZATION,
 		PRIVACY_CLOSURE,
 		PRIVACY_EVIDENCE,
 		CFG_REPLAY,
 		PHYSICAL_REBUILD,
 		PUBLICATION_VALIDATION,
 		RECEIPT_RANK_CONSUMER_PREPARATION
+	}
+
+	/**
+	 * Generator invocations, except CP_FAMILY which counts published families.
+	 * EXACT_RULE_RESIDUAL classifies rule evaluation and overlaps its MRV/CARTESIAN traversal;
+	 * these counters are not disjoint and must not be summed as total invocations.
+	 */
+	public enum CandidateRoute { EXECUTION_RELATION, CP_FAMILY, MRV, CARTESIAN, EXACT_RULE_RESIDUAL }
+
+	private long exactRuleCalls, evidenceReuses, evidenceOverflow;
+	private long headerRequests, headerReuses, profileRequests, profileReuses;
+	public record CandidateConstructionSnapshot(long exactRuleCalls, long evidenceReuses,
+		long evidenceOverflow, long headerRequests, long headerReuses,
+		long profileRequests, long profileReuses) { }
+	public CandidateConstructionSnapshot candidateConstructionSnapshot() {
+		return new CandidateConstructionSnapshot(exactRuleCalls, evidenceReuses, evidenceOverflow,
+			headerRequests, headerReuses, profileRequests, profileReuses);
+	}
+	void recordExactRule(org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade.ExactRuleDiagnostics work) {
+		exactRuleCalls += work.oracleCalls();
+		evidenceReuses += work.reusedEvidence();
+		evidenceOverflow += work.overflowEvidence();
+	}
+	void recordCandidateHeader(boolean reused) { headerRequests++; if(reused) headerReuses++; }
+	void recordCandidateProfile(boolean reused) { profileRequests++; if(reused) profileReuses++; }
+
+	/** Event counts, not distinct semantic identities or numbers of live objects. */
+	enum DirectWork {
+		FACT_VISITS, FACTS_SKIPPED_CLEAN, FACTS_SKIPPED_INELIGIBLE,
+		EMISSION_VISITS, EMISSIONS_REUSED, EMISSIONS_REBUILT,
+		SEEDS_BEFORE_DEDUP, SEED_RELATIONS_REQUESTED, SEED_RELATIONS_DUPLICATE,
+		PROOFS_CONSUMED, REQUIRED_INPUT_CHECKS, BINDING_CANDIDATES_EXAMINED,
+		INCOMPLETE_PROOFS, LAYOUT_CHECKS, LAYOUT_CACHE_HITS,
+		MEMOIZED_NATIVE_PUBLICATION_REQUESTS, MEMOIZED_NATIVE_PUBLICATION_CACHE_HITS
+	}
+
+	private static final int CANDIDATE_OPCODE_LIMIT = 64;
+	private final Map<String,long[]> candidateRoutes = new LinkedHashMap<>();
+	private final long[] candidateRouteTotals = new long[CandidateRoute.values().length];
+	private long candidateRouteOverflow;
+	private final long[] directWork = new long[DirectWork.values().length];
+	private long factorizedRelocationProducts;
+	private long factorizedRelocationLogicalLeaves;
+	private long explicitRelocationLeaves;
+
+	void recordCandidateRoute(CandidateRoute route, String opcode) {
+		candidateRouteTotals[route.ordinal()]++;
+		// Hop diagnostics append variable names/literal values after the opcode.
+		// Those are instances, not operation kinds, and must not exhaust this table.
+		int separator = opcode.indexOf(' ');
+		if(separator >= 0)
+			opcode = opcode.substring(0, separator);
+		long[] counts = candidateRoutes.get(opcode);
+		if(counts == null) {
+			if(candidateRoutes.size() == CANDIDATE_OPCODE_LIMIT) {
+				candidateRouteOverflow++;
+				return;
+			}
+			counts = new long[CandidateRoute.values().length];
+			candidateRoutes.put(opcode, counts);
+		}
+		counts[route.ordinal()]++;
+	}
+
+	public record CandidateRouteCount(String opcode, CandidateRoute route, long calls) { }
+
+	public List<CandidateRouteCount> candidateRouteSnapshot() {
+		List<CandidateRouteCount> result = new ArrayList<>();
+		candidateRoutes.forEach((opcode, counts) -> {
+			for(CandidateRoute route : CandidateRoute.values())
+				if(counts[route.ordinal()] != 0)
+					result.add(new CandidateRouteCount(opcode, route, counts[route.ordinal()]));
+		});
+		return List.copyOf(result);
+	}
+
+	/** Exact route totals remain available even when the per-opcode table overflows. */
+	public Map<CandidateRoute,Long> candidateRouteTotalsSnapshot() {
+		Map<CandidateRoute,Long> result = new LinkedHashMap<>();
+		for(CandidateRoute route : CandidateRoute.values())
+			result.put(route, candidateRouteTotals[route.ordinal()]);
+		return java.util.Collections.unmodifiableMap(result);
+	}
+
+	long candidateRouteOverflow() { return candidateRouteOverflow; }
+	void recordDirectWork(DirectWork work) { recordDirectWork(work, 1); }
+	void recordDirectWork(DirectWork work, long count) {
+		directWork[work.ordinal()] += count;
+		// A large result-consumption loop may not enter another timed child phase.
+		// Check the existing wall-clock throttle only once per 1024 consumed proofs.
+		if(liveMetrics && work == DirectWork.PROOFS_CONSUMED
+			&& (directWork[work.ordinal()] & 1023) == 0)
+			emitLiveMetrics(false);
+	}
+	Map<DirectWork,Long> directBindingSnapshot() {
+		Map<DirectWork,Long> result = new LinkedHashMap<>();
+		for(DirectWork work : DirectWork.values())
+			result.put(work, directWork[work.ordinal()]);
+		return java.util.Collections.unmodifiableMap(result);
+	}
+
+	/** Separates logical factorized cardinality from actually enumerated relocation leaves. */
+	record RelocationStorageWork(long factorizedProducts, long factorizedLogicalLeaves,
+		long explicitLeaves) { }
+	RelocationStorageWork relocationStorageSnapshot() {
+		return new RelocationStorageWork(factorizedRelocationProducts,
+			factorizedRelocationLogicalLeaves, explicitRelocationLeaves);
 	}
 
 	enum ContextObservationResult { FIRST, REPEATED, OVERFLOW }
@@ -288,6 +397,13 @@ public final class SearchSpaceMetrics {
 	void reset() {
 		if(!phaseStack.isEmpty())
 			throw new IllegalStateException("SEARCH_SPACE_PHASE_RESET_WHILE_ACTIVE");
+		exactRuleCalls = evidenceReuses = evidenceOverflow = 0;
+		headerRequests = headerReuses = profileRequests = profileReuses = 0;
+		candidateRoutes.clear();
+		Arrays.fill(candidateRouteTotals, 0);
+		candidateRouteOverflow = 0;
+		Arrays.fill(directWork, 0);
+		factorizedRelocationProducts = factorizedRelocationLogicalLeaves = explicitRelocationLeaves = 0;
 		candidateOracleCalls = preparedProfileQueries = preparedProfileHits = 0;
 		executionRelations = executionRegions = executionRelationOracleCalls = 0;
 		executionRegionTuples = java.math.BigInteger.ZERO;
@@ -468,6 +584,22 @@ public final class SearchSpaceMetrics {
 			+ "|serializations=" + signatureSerializations + "|serializedChars=" + signatureSerializedChars
 			+ "|sorts=" + canonicalSortCalls + "|sortElements=" + canonicalSortElements
 			+ "|comparisons=" + canonicalComparisons);
+		// Numeric aggregate snapshots remain available even if analysis never returns.
+		// They do not enumerate support tuples or retain rich semantic query keys.
+		System.err.println("SEARCH_SPACE_COUNTERS|seq=" + sequence + "|" + snapshot());
+		System.err.println("SEARCH_SPACE_EXECUTION_RELATIONS|seq=" + sequence
+			+ "|" + executionRelationSnapshot());
+		System.err.println("SEARCH_SPACE_CANDIDATE_CONSTRUCTION|seq=" + sequence
+			+ "|" + candidateConstructionSnapshot());
+		System.err.println("SEARCH_SPACE_DIRECT_WORK|seq=" + sequence + "|" + directBindingSnapshot());
+		System.err.println("SEARCH_SPACE_RELOCATION_STORAGE|seq=" + sequence
+			+ "|" + relocationStorageSnapshot());
+		for(CandidateRouteCount route : candidateRouteSnapshot())
+			System.err.println("SEARCH_SPACE_CANDIDATE_ROUTE|seq=" + sequence + "|" + route);
+		System.err.println("SEARCH_SPACE_CANDIDATE_ROUTE_TOTALS|seq=" + sequence
+			+ "|" + candidateRouteTotalsSnapshot());
+		System.err.println("SEARCH_SPACE_CANDIDATE_ROUTE_OVERFLOW|seq=" + sequence
+			+ "|calls=" + candidateRouteOverflow);
 		System.err.flush();
 	}
 
@@ -582,11 +714,14 @@ public final class SearchSpaceMetrics {
 	}
 	void recordRelocationLeaf() {
 		relocationLeaves++;
+		explicitRelocationLeaves++;
 		relocationPeakPendingAssignments = Math.max(relocationPeakPendingAssignments, 1);
 	}
 	void recordFactorizedRelocationProduct(long logicalLeaves, long logicalPrefixes, int depth) {
 		if(logicalLeaves < 0 || logicalPrefixes < 0)
 			throw new IllegalArgumentException("Negative factorized relocation metrics");
+		factorizedRelocationProducts++;
+		factorizedRelocationLogicalLeaves = saturatedAdd(factorizedRelocationLogicalLeaves, logicalLeaves);
 		relocationPrefixes = saturatedAdd(relocationPrefixes, logicalPrefixes);
 		relocationLeaves = saturatedAdd(relocationLeaves, logicalLeaves);
 		relocationPeakDepth = Math.max(relocationPeakDepth, depth);

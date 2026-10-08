@@ -1,0 +1,5 @@
+X = federated(addresses=list("worker1:8001/data/P2P2D_features.data"), ranges=list(list(0, 0), list(50000, 2100)))
+Y = federated(addresses=list("worker1:8001/data/P2P2D_labels.data"), ranges=list(list(0, 0), list(50000, 1)))
+
+m = l2svm(X=X, Y=Y, verbose=FALSE, epsilon = 1e-22, maxIterations = 30)
+write(m, "outputs/l2svm.res", format= "csv")

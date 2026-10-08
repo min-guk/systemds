@@ -32,6 +32,7 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import matrix_runtime_compare as runtime_compare
+import matrix_current_reference as current_reference
 import matrix_lifecycle as lifecycle
 import matrix_continuation as continuation
 
@@ -42,9 +43,12 @@ IMAGE = 'cofee-experiment:content-0861f4ff197c868f42abf6478b66505f650325c267caa8
 PLANNERS = ('DP-local', 'FedFirst', 'AggLocal', 'DP-global')
 PROFILES = ('lan', 'wan_light', 'wan_mid', 'wan_heavy')
 WORKERS = (1, 3, 5, 7)
-# User policy: neither compilation nor runtime has a workload deadline.
+# Default policy: neither compilation nor runtime has a workload deadline.
 # Administrative connection/setup/cleanup waits are separate from computation.
 WORKLOAD_TIMEOUT_SECONDS = None
+PERFORMANCE_WATCHDOG_SECONDS = 60
+PERFORMANCE_WATCHDOG_KILL_AFTER_SECONDS = 30
+PERFORMANCE_WATCHDOG_ADMIN_TIMEOUT_SECONDS = 150
 WORKLOADS = (('ml', 'logreg'), ('ml', 'l2svm'), ('ml', 'pca'), ('ml', 'als'),
              ('ml', 'kmeans'), ('ml', 'lm'), ('ml', 'steplm'), ('ml', 'glm'),
              ('ml', 'gnmf'), ('ml', 'gmm'), ('p1', 'P1_FULL'), ('p2', 'P2_PREP'),
@@ -93,8 +97,9 @@ def sha(path):
 
 
 def verify_builtin_sync(jar):
-    """Require engine, evaluation, and packaged STEP-LM builtins to be identical."""
-    sources = {}
+    """Bind every builtin to the JAR, and STEP-LM to its evaluation contract."""
+    sources = {str(path.relative_to(REPO)): path.read_bytes()
+               for path in (REPO / 'scripts/builtin').rglob('*.dml') if path.is_file()}
     for name in BUILTIN_SCRIPTS:
         source = REPO / 'scripts/builtin' / name
         canonical = EVALUATION / 'campaign/engine_workflow/scripts/builtin' / name
@@ -107,13 +112,11 @@ def verify_builtin_sync(jar):
         if source_bytes != canonical.read_bytes():
             raise RuntimeError(f'source builtin {source} differs from canonical evaluation '
                                f'snapshot {canonical}; sync the engine source before rebuilding')
-        sources[name] = source_bytes
     if not Path(jar).is_file():
         raise RuntimeError(f'production JAR missing: {jar}; rebuild the exact synchronized source')
     try:
         with zipfile.ZipFile(jar) as archive:
-            for name, source_bytes in sources.items():
-                entry = f'scripts/builtin/{name}'
+            for entry, source_bytes in sorted(sources.items()):
                 try:
                     packaged = archive.read(entry)
                 except KeyError as error:
@@ -390,6 +393,21 @@ def diagnostic_contract(enabled, compact=False, runtime_cell=False, plan_details
             'diagnostic_plan_details': bool(plan_details)}
 
 
+def timeout_policy(performance_watchdog=False):
+    """Return one of the two supported immutable workload deadline policies."""
+    seconds = PERFORMANCE_WATCHDOG_SECONDS if performance_watchdog else WORKLOAD_TIMEOUT_SECONDS
+    return dict.fromkeys(('compile', 'runtime'), seconds)
+
+
+def frozen_timeout_policy(manifest):
+    """Validate and return the campaign's identity-bound workload deadline policy."""
+    identity = manifest.get('identity', {}).get('timeout_seconds')
+    measurement = manifest.get('measurement', {}).get('timeout_seconds')
+    if identity != measurement or identity not in (timeout_policy(False), timeout_policy(True)):
+        raise RuntimeError('campaign timeout policy is missing, unsupported, or inconsistent')
+    return identity
+
+
 def read_runtime_selection(path):
     """Select work, never import historical results or change the canonical matrix."""
     raw = Path(path).read_bytes()
@@ -416,7 +434,7 @@ def runtime_selection_ids(root, manifest):
 def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False, direct_runtime=False,
                continuation_source=None, diagnostic_runtime_cell=False,
                diagnostic_plan_details=False, runtime_selection=None, profile_native_blas="mkl",
-               pinned_runtime_contract=None):
+               pinned_runtime_contract=None, performance_watchdog=False):
     """Freeze build/probe once. Resumes verify rather than replace artifacts."""
     selection_raw = None
     pinned_raw = pinned_digest = None
@@ -437,7 +455,7 @@ def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False, dire
     manifest_path = root / 'manifest.json'
     jar = REPO / 'target/systemds-3.4.0-SNAPSHOT.jar'
     verify_builtin_sync(jar)
-    builtin_sources = [REPO / 'scripts/builtin' / name for name in BUILTIN_SCRIPTS]
+    builtin_sources = sorted(path for path in (REPO / 'scripts/builtin').rglob('*.dml') if path.is_file())
     files = (sorted(p for p in (REPO / 'src/main').rglob('*') if p.is_file())
              + [REPO / 'pom.xml', *builtin_sources])
     if not jar.is_file() or jar.stat().st_mtime_ns < max(p.stat().st_mtime_ns for p in files):
@@ -453,14 +471,16 @@ def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False, dire
         'campaign/w1357_output_compare.py', 'campaign/w1357_metric_producer.py',
         'config/w1357_correctness_contract.json', 'calibration/java/W1357OutputDecoder.java',
         'campaign/generate_w1357_references.py', 'campaign/w1357_reference.py')]
+    workload_timeouts = timeout_policy(performance_watchdog)
     identity = {'jar_sha256': sha(jar), 'source_sha256': {str(p.relative_to(REPO)): sha(p) for p in files},
                 'probe_source_sha256': sha(PROBE_SOURCE), 'runner_sha256': sha(Path(__file__)),
                 'runtime_compare_sha256': sha(Path(runtime_compare.__file__)),
+                'current_reference_sha256': sha(Path(current_reference.__file__)),
                 'lifecycle_sha256': sha(Path(lifecycle.__file__)),
                 'continuation_module_sha256': sha(Path(continuation.__file__)),
                 'external_sha256': {str(p): sha(p) for p in external},
                 'stage': str(stage), 'stage_seal_sha256': sha(stage / 'W1357_STAGE.json'),
-                'timeout_seconds': dict.fromkeys(('compile', 'runtime'), WORKLOAD_TIMEOUT_SECONDS),
+                'timeout_seconds': workload_timeouts,
                 'direct_runtime': bool(direct_runtime),
                 'cost_profiling': ('auto-measured-environment/v1' if pinned_digest is None
                     else 'pinned-runtime-replay/v1'),
@@ -522,7 +542,8 @@ def initialize(root, stage, diagnostic_jfr=False, diagnostic_compact=False, dire
                     'timeout_seconds': dict(identity['timeout_seconds']),
                     'direct_runtime': identity['direct_runtime'],
                     'pinned_runtime_contract_sha256': pinned_digest,
-                    'timeout_semantics': 'no workload deadline',
+                    'timeout_semantics': ('fixed 60s GNU timeout watchdog; TERM then KILL after 30s'
+                                          if performance_watchdog else 'no workload deadline'),
                     'runtime_order': [list(x) for x in WORKLOADS],
                     **diagnostic_contract(diagnostic_jfr, diagnostic_compact,
                                           diagnostic_runtime_cell,
@@ -594,20 +615,25 @@ def latest(root, phase):
 
 def compile_gate(root):
     manifest_path = Path(root) / 'manifest.json'
-    if manifest_path.is_file():
-        manifest = json.loads(manifest_path.read_text())
-        if (manifest.get('measurement', {}).get('diagnostic_jfr') is True
-                or manifest.get('measurement', {}).get('diagnostic_compact') is True
-                or manifest.get('measurement', {}).get('diagnostic_runtime_cell') is True
-                or manifest.get('identity', {}).get('diagnostic', {}).get('diagnostic_jfr') is True
-                or manifest.get('identity', {}).get('diagnostic', {}).get('diagnostic_compact') is True
-                or manifest.get('identity', {}).get('diagnostic', {}).get('diagnostic_runtime_cell') is True):
-            return False
+    if not manifest_path.is_file():
+        return False
+    manifest = json.loads(manifest_path.read_text())
+    try:
+        expected_timeout = frozen_timeout_policy(manifest)['compile']
+    except RuntimeError:
+        return False
+    if (manifest.get('measurement', {}).get('diagnostic_jfr') is True
+            or manifest.get('measurement', {}).get('diagnostic_compact') is True
+            or manifest.get('measurement', {}).get('diagnostic_runtime_cell') is True
+            or manifest.get('identity', {}).get('diagnostic', {}).get('diagnostic_jfr') is True
+            or manifest.get('identity', {}).get('diagnostic', {}).get('diagnostic_compact') is True
+            or manifest.get('identity', {}).get('diagnostic', {}).get('diagnostic_runtime_cell') is True):
+        return False
     rows = latest(root, 'compile')
     return len(rows) == len(matrix()) and all(
         rows.get(c['id'], {}).get('status') == 'passed'
         and 'timeout_seconds' in rows[c['id']]
-        and rows[c['id']].get('timeout_seconds') == WORKLOAD_TIMEOUT_SECONDS
+        and rows[c['id']].get('timeout_seconds') == expected_timeout
         and not rows[c['id']].get('diagnostic_only') for c in matrix())
 
 
@@ -832,6 +858,7 @@ def collect_node_evidence(local, spec, nodes):
 
 
 def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, reference_manifest=None):
+    workload_timeout = frozen_timeout_policy(manifest)[phase]
     cell_started = time.monotonic()
     token = f'{time.time_ns():020d}-{uuid.uuid4().hex[:8]}'
     local = root / 'attempts' / phase / token
@@ -872,7 +899,7 @@ def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, re
               'jar_sha256': manifest['identity']['jar_sha256'],
               'pinned_runtime_contract_sha256': manifest['identity'].get(
                   'pinned_runtime_contract_sha256'),
-              'timeout_seconds': WORKLOAD_TIMEOUT_SECONDS}
+              'timeout_seconds': workload_timeout}
     nodes = [spec.coordinator, *spec.workers]
     start_attempted = False
     before = None
@@ -928,14 +955,21 @@ def execute_cell(root, manifest, cell, phase, args, campaign, base, renderer, re
         java = coordinator_java(cell, phase, getattr(args, 'diagnostic_jfr', False),
                                 getattr(args, 'diagnostic_compact', False),
                                 getattr(args, 'diagnostic_plan_details', False), pinned_runtime)
+        container_command = ['docker', 'exec', spec.container_name(spec.coordinator)]
+        if workload_timeout == PERFORMANCE_WATCHDOG_SECONDS:
+            container_command += ['timeout', '--signal=TERM',
+                f'--kill-after={PERFORMANCE_WATCHDOG_KILL_AFTER_SECONDS}s',
+                str(PERFORMANCE_WATCHDOG_SECONDS)]
+        container_command += java
         command = ['ssh', '-o', 'BatchMode=yes', '--', spec.coordinator.host,
-            shlex.join(['docker', 'exec', spec.container_name(spec.coordinator), *java])]
+            shlex.join(container_command)]
         dump(local / 'command.json', command)
         started = time.monotonic()
         result['setup_seconds'] = started - cell_started
         with (local / 'coordinator.log').open('x') as output:
             completed = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT,
-                timeout=None)
+                timeout=(PERFORMANCE_WATCHDOG_ADMIN_TIMEOUT_SECONDS
+                         if workload_timeout == PERFORMANCE_WATCHDOG_SECONDS else None))
         result['process_seconds'] = time.monotonic() - started
         result['returncode'] = completed.returncode
         raw = ssh(spec.coordinator.host, ['bash', '-lc',
@@ -1064,6 +1098,31 @@ def summarize(root):
     return summary
 
 
+def prepare_runtime_reference(root, stage, manifest, cell, campaign, hosts, leases, direct_runtime):
+    """Prepare a changed-workload reference without overlapping stage leases."""
+    selector = cell['suite'] + ':' + cell['workload']
+    if sha(stage / 'systemds/target/SystemDS.jar') != manifest['identity']['jar_sha256']:
+        raise RuntimeError('reference stage JAR differs from actual campaign candidate JAR')
+    pin = root / current_reference.pin_directory(selector) / 'reference-pin.json'
+    attempt = 'main-' + cell['workload'].lower() + '-' + sha(stage / 'W1357_STAGE.json')[:24]
+
+    def prepare():
+        return current_reference.prepare(root, stage, attempt, selector=selector)
+    if pin.is_file():
+        return prepare()
+    released = campaign.release_remote_stage_leases(leases)
+    dump(root / f'reference-lease-handoff-{time.time_ns()}.json', released)
+    if not released['released']:
+        raise RuntimeError('reference lease handoff was not proven')
+    leases.clear()
+    try:
+        return prepare()
+    finally:
+        leases.extend(campaign.acquire_remote_stage_leases(hosts, stage))
+        dump(root / f'post-reference-stage-{time.time_ns()}.json',
+             campaign.verify_remote_bounded_stage(hosts, stage))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
@@ -1085,6 +1144,9 @@ def main(argv=None):
     parser.add_argument('--runtime-without-compile-survey', action='store_true',
                         help='explicit full runtime campaign without a separate compile-only survey; '
                              'actual compilation, runtime audits and numerical comparison remain required')
+    parser.add_argument('--performance-watchdog', action='store_true',
+                        help='fixed 60-second workload watchdog for evaluator campaigns; '
+                             'does not select or imply runtime execution')
     parser.add_argument('--diagnostic-jfr', action='store_true',
                         help='single compile-only coordinator JFR/planner-trace diagnostic; never benchmark data')
     parser.add_argument('--diagnostic-compact', action='store_true',
@@ -1154,7 +1216,8 @@ def main(argv=None):
     if args.pinned_runtime_contract is not None:
         continuation_options['pinned_runtime_contract'] = args.pinned_runtime_contract.resolve()
     manifest = initialize(args.root, args.stage, args.diagnostic_jfr, args.diagnostic_compact,
-                          direct_runtime=direct_runtime, profile_native_blas=args.profile_native_blas, **continuation_options)
+                          direct_runtime=direct_runtime, profile_native_blas=args.profile_native_blas,
+                          performance_watchdog=args.performance_watchdog, **continuation_options)
     selected_ids = runtime_selection_ids(args.root, manifest)
     if args.phase == 'prepare':
         print(json.dumps({'prepared': True, 'cells': len(matrix()), 'root': str(args.root)}))
@@ -1202,27 +1265,9 @@ def main(argv=None):
                         raise RuntimeError('remote stage lease lost')
                     reference_manifest = None
                     if phase == 'runtime':
-                        if (cell['suite'], cell['workload']) == ('p2', 'P2_PREP'):
-                            if not (args.root / 'reference-p2ref1/reference-pin.json').is_file():
-                                # The trusted reference generator owns an exclusive stage lease.
-                                # Keep the physical lane, but release shared leases before it starts.
-                                released = campaign.release_remote_stage_leases(leases)
-                                leases = []
-                                dump(args.root / f'p2-reference-lease-handoff-{time.time_ns()}.json', released)
-                                if not released['released']:
-                                    raise RuntimeError('P2 reference lease handoff was not proven')
-                                try:
-                                    reference = runtime_compare.prepare_workload_reference(
-                                        args.root, args.stage, cell, compile_gate(args.root),
-                                        direct_runtime=direct_runtime)
-                                finally:
-                                    leases = campaign.acquire_remote_stage_leases(hosts, args.stage)
-                                    dump(args.root / f'post-reference-stage-{time.time_ns()}.json',
-                                         campaign.verify_remote_bounded_stage(hosts, args.stage))
-                            else:
-                                reference = runtime_compare.prepare_workload_reference(
-                                    args.root, args.stage, cell, compile_gate(args.root),
-                                    direct_runtime=direct_runtime)
+                        if (cell['suite'], cell['workload']) in (('p2', 'P2_PREP'), ('ml', 'steplm')):
+                            reference = prepare_runtime_reference(args.root, args.stage, manifest, cell,
+                                                                  campaign, hosts, leases, direct_runtime)
                         else:
                             reference = phase_reference
                         reference_manifest = Path(reference['result_manifest']['local_path'])

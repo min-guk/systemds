@@ -1,0 +1,20 @@
+# Frozen compiler-only training workload fixtures.
+# Campaign inventory authority: /home/mchoi/cofee-evaluation/campaign/run_ml10_campaign.py
+# Campaign inventory SHA-256: 82206cf1b982ec35d532411f6ee97ab58185ffbff6da66fa0fde96525d0680f9
+# Declared campaign order: pca,als,kmeans,lm,logreg,l2svm,steplm,glm,gnmf,gmm
+# Template authority: /home/mchoi/cofee-evaluation/planning_study/native/input_templates/w1/programs
+# The campaign names gmm; its exact frozen program fixture is gmm-vvi.dml.
+# These 50000x2100 templates intentionally differ from the existing 50000x128
+# full LogReg/GLM measurement fixtures. They are distinct authoritative studies,
+# not byte-identical or shape-identical substitutes.
+# SHA-256 is over exact fixture bytes.
+ddb1ef62238821f579c366c71b81f8b4df49d002f2d7ce36ac87f20ba4315f12  als.dml
+ca5ede0c62be882d66d9925ba8fd684960e5057550298317d1394f32784f9678  glm.dml
+18a5ff9006984e8d3cc430cb153571cda398844b4e73fdf025622dc9eb1ffdee  gmm-vvi.dml
+d6f5ad7189a8afb45f6cc1a5dc3cb369c73f2382ed01c309062f19fbc9d9e6e4  gnmf.dml
+8e8e3c92bbb1a4e603eca5d71150ee74813eb563663b0792616beed8df4fb4d6  kmeans.dml
+7a7b1b3d48883640e300f9014776ab3a4707864340e26d1d9d293b2ca64a7411  l2svm.dml
+c25f17ca5ae76c6e73750f1dbbac760b00889f15515a58bed42a431a068b8af8  lm.dml
+cba5475e4bd4488a6f8229740d5c8114bfd9f1299e8672cd32ae76ddf8ea80a6  logreg.dml
+486274b587590be8b63582b038381fc05e4dd3e290e3f9a9904f78f6a7d09c81  pca.dml
+94ef02c2872c5927a4dc2986aa21539425260d1efbe8834300aaea12b6435a4b  steplm.dml

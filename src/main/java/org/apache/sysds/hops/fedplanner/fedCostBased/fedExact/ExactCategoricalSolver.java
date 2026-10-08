@@ -1567,8 +1567,20 @@ public final class ExactCategoricalSolver {
 	private static BoundaryMessage mergeBoundaryInternal(List<BoundaryMessage> inputMessages,
 		List<Variable> outputBoundary, Limits limits, Long maximumAssignments,
 		BoundaryMergeCounters counters) {
+		return mergeBoundaryInternal(inputMessages, outputBoundary, limits, maximumAssignments,
+			counters, defaultCostPruningMode());
+	}
+
+	static BoundaryMessage mergeBoundaryWithPruningForTest(List<BoundaryMessage> inputs,
+		List<Variable> boundary, Limits limits, CostPruningMode mode, BoundaryMergeCounters counters) {
+		return mergeBoundaryInternal(inputs, boundary, limits, null, counters, mode);
+	}
+
+	private static BoundaryMessage mergeBoundaryInternal(List<BoundaryMessage> inputMessages,
+		List<Variable> outputBoundary, Limits limits, Long maximumAssignments,
+		BoundaryMergeCounters counters, CostPruningMode mode) {
 		try {
-			return computeBoundaryMerge(inputMessages, outputBoundary, limits, maximumAssignments, counters);
+			return computeBoundaryMerge(inputMessages, outputBoundary, limits, maximumAssignments, counters, mode);
 		}
 		catch(OutOfMemoryError failure) {
 			// The merge only reads its inputs and publishes a completed message. If any
@@ -1579,7 +1591,7 @@ public final class ExactCategoricalSolver {
 
 	private static BoundaryMessage computeBoundaryMerge(List<BoundaryMessage> inputMessages,
 		List<Variable> outputBoundary, Limits limits, Long maximumAssignments,
-		BoundaryMergeCounters counters) {
+		BoundaryMergeCounters counters, CostPruningMode mode) {
 		Objects.requireNonNull(inputMessages, "inputMessages");
 		Objects.requireNonNull(outputBoundary, "outputBoundary");
 		Objects.requireNonNull(limits, "limits");
@@ -1644,7 +1656,7 @@ public final class ExactCategoricalSolver {
 		boolean localPrefixCuts = PruningAblation.current().local();
 		if(localPrefixCuts && unionCells > 64) {
 			BoundaryMessage supported = mergeBoundarySupport(inputMessages, outputBoundary,
-				unionScope, outputScope, unionCells, counters);
+				unionScope, outputScope, unionCells, counters, mode);
 			if(supported != null)
 				return supported;
 		}
@@ -1658,6 +1670,8 @@ public final class ExactCategoricalSolver {
 			: first.hardSupport() == null ? List.of() : List.of(first.hardSupport());
 		boolean localCostCut = localPrefixCuts && inputMessages.size() > 1 && internalCells > 1
 			&& exactNonnegativeSum;
+		CostPruning costPruning = internalCells > 1
+			? boundaryCostPruning(inputMessages, mode, counters, exactNonnegativeSum) : null;
 		// Three double arrays and one int backpointer array; borrowed inputs are
 		// already reflected in the JVM's used heap, not charged a second time.
 		PlannerResourceGuard.checkAdditionalBytes(outputCells * (3L * Double.BYTES + Integer.BYTES),
@@ -1694,6 +1708,11 @@ public final class ExactCategoricalSolver {
 						&& absorbingBoundaryInfinity(candidateCost[0],candidateLower)) {
 						if(counters != null)
 							counters.infeasibleCuts++;
+						cut = true;
+						break;
+					}
+					if(costPruning != null && costPruning.exceeds(candidateCost[0], candidateCost[1],
+						messageIndex + 1, bestHigh, bestLow)) {
 						cut = true;
 						break;
 					}
@@ -1764,6 +1783,9 @@ public final class ExactCategoricalSolver {
 						counters.infeasibleCuts++;
 					continue;
 				}
+				if(costPruning != null && costPruning.exceeds(candidateCost[0], candidateCost[1],
+					1, bestHigh, bestLow))
+					continue;
 				// The certificate proves exact partial sums and nonnegative unread terms.
 				// Equality is also removable because canonical enumeration keeps the first tie.
 				if(inputMessages.size() > 1 && localCostCut
@@ -1786,6 +1808,11 @@ public final class ExactCategoricalSolver {
 						&& absorbingBoundaryInfinity(candidateCost[0], candidateLower)) {
 						if(counters != null)
 							counters.infeasibleCuts++;
+						cut = true;
+						break;
+					}
+					if(costPruning != null && costPruning.exceeds(candidateCost[0], candidateCost[1],
+						messageIndex + 1, bestHigh, bestLow)) {
 						cut = true;
 						break;
 					}
@@ -2120,7 +2147,7 @@ public final class ExactCategoricalSolver {
 	 */
 	private static BoundaryMessage mergeBoundarySupport(List<BoundaryMessage> inputs,
 		List<Variable> boundary, int[] unionScope, int[] outputScope, long unionCells,
-		BoundaryMergeCounters counters) {
+		BoundaryMergeCounters counters, CostPruningMode mode) {
 		// As in sparseRangeSafe, a conservative exponent certificate protects the
 		// ordered DD arithmetic. At most 2^20 additions of high/low terms <= 2^400
 		// (including their rounding intermediates) stay far below binary64 overflow.
@@ -2187,15 +2214,21 @@ public final class ExactCategoricalSolver {
 		Arrays.fill(lowers, Double.POSITIVE_INFINITY);
 		Arrays.fill(choices, -1);
 		BoundaryMessage first = inputs.get(0);
+		CostPruning costPruning = mode == CostPruningMode.LEGACY ? null
+			: boundaryCostPruning(inputs, mode, counters, exactNonnegativeBoundarySum(inputs));
 		int[] originalAssignment = projection.identity ? null : new int[first.domains.length];
 		ExactFiniteSupportJoin.forEach(unionScope, projection.domains, relations, quotient -> {
 			int[] assignment = projection.lift(quotient, originalAssignment);
+			int outputCell = encode(outputScope, projection.domains, quotient);
 			int childCell = first.boundaryCellUnchecked(assignment);
 			PreciseCost candidate = first.valueAt(childCell);
 			double lower = first.lowerAt(childCell);
 			if(counters != null)
 				counters.childEvaluations++;
 			for(int index = 1; index < inputs.size(); index++) {
+				if(costPruning != null && costPruning.exceeds(candidate.high, candidate.low,
+					index, values[outputCell], lows[outputCell]))
+					return;
 				BoundaryMessage input = inputs.get(index);
 				childCell = input.boundaryCellUnchecked(assignment);
 				candidate = candidate.plus(input.highAt(childCell),input.lowAt(childCell),0L);
@@ -2203,7 +2236,6 @@ public final class ExactCategoricalSolver {
 				if(counters != null)
 					counters.childEvaluations++;
 			}
-			int outputCell = encode(outputScope, projection.domains, quotient);
 			int comparison = candidate.compareTo(new PreciseCost(values[outputCell], lows[outputCell], 0L));
 			if(comparison < 0 || comparison == 0 && choices[outputCell] >= 0) {
 				int unionCell = encode(unionScope, first.domains, assignment);
@@ -2229,11 +2261,11 @@ public final class ExactCategoricalSolver {
 				continue;
 			tables.add(message.values);
 			for(int cell = 0; cell < message.values.length; cell++) {
-				double high = message.valueAt(cell).high;
+				double high = message.values[cell];
 				double low = message.lowValues == null ? 0d : message.lowValues[cell];
 				if(high != Double.POSITIVE_INFINITY && high < 0d)
 					return false;
-				if(low != 0d || Double.doubleToRawLongBits(message.lowerAt(cell))
+				if(low != 0d || Double.doubleToRawLongBits(message.lowerValues[cell])
 					!= Double.doubleToRawLongBits(high))
 					return false;
 			}
@@ -2242,18 +2274,192 @@ public final class ExactCategoricalSolver {
 		return certificate.supported() && certificate.maximumSumBits() <= 53;
 	}
 
+	/** Legacy experiment names retain their original behavior; no new public flags. */
+	enum CostPruningMode { LEGACY, PREFIX, SUFFIX }
+
+	private static CostPruningMode defaultCostPruningMode() {
+		return PruningAblation.current().explicit() ? CostPruningMode.LEGACY : CostPruningMode.SUFFIX;
+	}
+
+	/** Exact, nonnegative suffix bounds over disjoint child factors, never across output states. */
+	private static final class CostPruning {
+		private final double[] suffixHigh;
+		private final double[] suffixLow;
+		private final boolean dyadic;
+		private final BoundaryMergeCounters counters;
+
+		private CostPruning(double[] high, double[] low, boolean dyadic, BoundaryMergeCounters counters) {
+			suffixHigh = high;
+			suffixLow = low;
+			this.dyadic = dyadic;
+			this.counters = counters;
+			for(int index = high.length - 2; index >= 0; index--) {
+				if(dyadic) {
+					long sum = (long)low[index] + (long)low[index + 1];
+					high[index] += high[index + 1] + (sum >>> 53);
+					low[index] = sum & ExactDyadicCosts.MAX_DIGIT;
+				}
+				else
+					high[index] += high[index + 1];
+			}
+			if(counters != null)
+				counters.certifiedCostBuckets++;
+		}
+
+		private boolean exceeds(double high, double low, int next, double bestHigh, double bestLow) {
+			if(next >= suffixHigh.length - 1 || !Double.isFinite(bestHigh))
+				return false;
+			double boundHigh;
+			double boundLow;
+			if(dyadic) {
+				long sum = (long)low + (long)suffixLow[next];
+				boundHigh = high + suffixHigh[next] + (sum >>> 53);
+				boundLow = sum & ExactDyadicCosts.MAX_DIGIT;
+			}
+			else {
+				// The 53-bit lattice certificate makes this addition exact and finite.
+				boundHigh = high + suffixHigh[next];
+				boundLow = 0d;
+			}
+			if(compareWords(boundHigh, boundLow, bestHigh, bestLow) <= 0)
+				return false;
+			if(counters != null) {
+				counters.costCuts++;
+				if(compareWords(high, low, bestHigh, bestLow) <= 0)
+					counters.suffixCostCuts++;
+			}
+			return true;
+		}
+	}
+
+	private static CostPruning boundaryCostPruning(List<BoundaryMessage> inputs,
+		CostPruningMode mode, BoundaryMergeCounters counters, boolean certified) {
+		if(mode == CostPruningMode.LEGACY || inputs.size() < 2)
+			return null;
+		if(!certified) {
+			if(counters != null)
+				counters.uncertifiedCostBuckets++;
+			return null;
+		}
+		long start = counters == null ? 0L : System.nanoTime();
+		final double[] minima;
+		try {
+			minima = PlannerResourceGuard.allocateDoubles(inputs.size() + 1, "regional-cost-bounds");
+		}
+		catch(PlannerResourceGuard.ResourceExhaustedException unavailable) {
+			// Only the optional bound allocation may be omitted. Exact message
+			// allocations and arithmetic still follow their original failure contract.
+			if(counters != null) {
+				counters.resourceSkippedCostBuckets++;
+				counters.boundPreparationNanos += System.nanoTime() - start;
+			}
+			return null;
+		}
+		if(mode == CostPruningMode.SUFFIX)
+			for(int index = 0; index < inputs.size(); index++) {
+				double minimum = inputs.get(index).cachedMinimum.high;
+				// No finite completion: zero is still a safe lower bound. Keep normal
+				// infeasibility handling, and never cast infinity to an integer word.
+				minima[index] = Double.isFinite(minimum) ? minimum : 0d;
+			}
+		CostPruning result = new CostPruning(minima, null, false, counters);
+		if(counters != null)
+			counters.boundPreparationNanos += System.nanoTime() - start;
+		return result;
+	}
+
+	/** Called only after materialization has performed every original cost callback. */
+	private static boolean exactNonnegativeGlobalSum(List<DenseFactor> inputs) {
+		List<double[]> tables = new ArrayList<>(inputs.size());
+		for(DenseFactor input : inputs) {
+			if(input.tieCosts != null || input.lowValues != null)
+				return false;
+			if(input.hardValues == null)
+				tables.add(input.values);
+		}
+		ExactDyadicCosts.Certificate proof = ExactDyadicCosts.certifyTables(tables);
+		return proof.supported() && proof.maximumSumBits() <= 53;
+	}
+
+	private static CostPruning globalCostPruning(List<DenseFactor> inputs, boolean dyadic,
+		CostPruningMode mode, BoundaryMergeCounters counters, boolean certified) {
+		if(mode == CostPruningMode.LEGACY || inputs.size() < 2)
+			return null;
+		if(!certified) {
+			if(counters != null)
+				counters.uncertifiedCostBuckets++;
+			return null;
+		}
+		long start = counters == null ? 0L : System.nanoTime();
+		final double[] high;
+		final double[] low;
+		try {
+			high = PlannerResourceGuard.allocateDoubles(inputs.size() + 1, "exact-cost-bounds");
+			low = dyadic
+				? PlannerResourceGuard.allocateDoubles(inputs.size() + 1, "exact-cost-bound-words") : null;
+		}
+		catch(PlannerResourceGuard.ResourceExhaustedException unavailable) {
+			// Losing an optional bound must not prevent the original exact sum.
+			// Keep validation and all essential storage failures outside this catch.
+			if(counters != null) {
+				counters.resourceSkippedCostBuckets++;
+				counters.boundPreparationNanos += System.nanoTime() - start;
+			}
+			return null;
+		}
+		if(mode == CostPruningMode.SUFFIX)
+			for(int index = 0; index < inputs.size(); index++) {
+				DenseFactor input = inputs.get(index);
+				if(input.hardValues != null)
+					continue; // Typed hard costs are zero or forbidden, including sparse holes.
+				double minimumHigh = Double.POSITIVE_INFINITY;
+				double minimumLow = 0d;
+				for(int stored = 0; stored < input.values.length; stored++) {
+					double candidateHigh = input.values[stored];
+					double candidateLow = input.lowValues == null ? 0d : input.lowValues[stored];
+					if(compareWords(candidateHigh, candidateLow, minimumHigh, minimumLow) < 0) {
+						minimumHigh = candidateHigh;
+						minimumLow = candidateLow;
+					}
+				}
+				if(Double.isFinite(minimumHigh)) {
+					high[index] = minimumHigh;
+					if(dyadic)
+						low[index] = minimumLow;
+				}
+				if(counters != null)
+					counters.boundCellsExamined += input.values.length;
+			}
+		CostPruning result = new CostPruning(high, low, dyadic, counters);
+		if(counters != null)
+			counters.boundPreparationNanos += System.nanoTime() - start;
+		return result;
+	}
+
 	static final class BoundaryMergeCounters {
 		private long fullChildEvaluations;
 		private long childEvaluations;
 		private long infeasibleCuts;
 		private long costCuts;
 		private long supportCellsExamined;
+		private long suffixCostCuts;
+		private long certifiedCostBuckets;
+		private long uncertifiedCostBuckets;
+		private long resourceSkippedCostBuckets;
+		private long boundCellsExamined;
+		private long boundPreparationNanos;
 
 		long fullChildEvaluations() { return fullChildEvaluations; }
 		long childEvaluations() { return childEvaluations; }
 		long infeasibleCuts() { return infeasibleCuts; }
 		long costCuts() { return costCuts; }
 		long supportCellsExamined() { return supportCellsExamined; }
+		long suffixCostCuts() { return suffixCostCuts; }
+		long certifiedCostBuckets() { return certifiedCostBuckets; }
+		long uncertifiedCostBuckets() { return uncertifiedCostBuckets; }
+		long resourceSkippedCostBuckets() { return resourceSkippedCostBuckets; }
+		long boundCellsExamined() { return boundCellsExamined; }
+		long boundPreparationNanos() { return boundPreparationNanos; }
 	}
 
 	/** Both exact cost and lower bound are absorbing; later nonnegative terms cannot change either. */
@@ -2285,11 +2491,27 @@ public final class ExactCategoricalSolver {
 	private static Result solve(Prepared prepared, List<Factor> factors,
 		TieCostFunction tieCostFunction, Consumer<EliminationSnapshot> observer,
 		ExactDyadicCosts.Certificate dyadic) {
+		return solve(prepared, factors, tieCostFunction, observer, dyadic, defaultCostPruningMode(), null);
+	}
+
+	static Result solveWithPruningForTest(CompiledProblem compiled, TieCostFunction tieCostFunction,
+		ExactDyadicCosts.Certificate dyadic, CostPruningMode mode, BoundaryMergeCounters counters,
+		Consumer<EliminationSnapshot> observer) {
+		return solve(compiled.prepared, compiled.factors, tieCostFunction, observer, dyadic, mode, counters);
+	}
+
+	private static Result solve(Prepared prepared, List<Factor> factors,
+		TieCostFunction tieCostFunction, Consumer<EliminationSnapshot> observer,
+		ExactDyadicCosts.Certificate dyadic, CostPruningMode mode, BoundaryMergeCounters counters) {
 		// Only the two no-callback entry points pass null. Caller callbacks remain
 		// observable even for infeasible candidates and therefore retain dense visits.
 		List<DenseFactor> active = materializeInputs(prepared, factors);
 		if(dyadic != null)
 			active = dyadicInputs(prepared.domains, active, dyadic);
+		// Every replacement owns disjoint original factors. An exact whole-input
+		// bound therefore also certifies each later bucket and its suffix minima.
+		boolean certifiedCosts = mode != CostPruningMode.LEGACY && tieCostFunction == null
+			&& (dyadic != null || exactNonnegativeGlobalSum(active));
 		boolean sparseEligible = tieCostFunction == null
 			&& (dyadic != null || sparseRangeSafe(prepared, active));
 		long storedCells = active.stream().mapToLong(DenseFactor::storedCells).sum();
@@ -2304,9 +2526,13 @@ public final class ExactCategoricalSolver {
 				if(factor.contains(step.variable))
 					bucket.add(factor);
 			active.removeAll(bucket);
+			CostPruning costPruning = globalCostPruning(bucket, dyadic != null, mode, counters, certifiedCosts);
 			long logicalOutputCells = prepared.deferredDyadic
 				? saturatedCells(step.separator, prepared.domains)
 				: checkedCells(step.separator, prepared.domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
+			if(counters != null)
+				counters.fullChildEvaluations += saturatedMultiply(saturatedMultiply(logicalOutputCells,
+					prepared.domains[step.variable]), bucket.size());
 			if(sparseEligible) {
 				BucketProjection projection = new BucketProjection(step, prepared.domains, bucket);
 				List<ExactFiniteSupportJoin.Relation> supports = new ArrayList<>();
@@ -2331,7 +2557,7 @@ public final class ExactCategoricalSolver {
 						? new StorageBudget(prepared.limits, storedCells) : null;
 					SparseStep sparse = eliminateSparse(step, bucket, supports, projection,
 						knownZeroTokens,
-						logicalOutputCells, dyadic != null, storageBudget);
+						logicalOutputCells, dyadic != null, storageBudget, costPruning, counters);
 					if(prepared.deferredDyadic) {
 						storedCells = checkedAdd(storedCells, sparse.factor.values.length,
 							"EXACT_VE_MATERIALIZED_CELL_OVERFLOW");
@@ -2397,9 +2623,12 @@ public final class ExactCategoricalSolver {
 						prepared.variables.get(step.variable), value);
 					if(tieCost < 0)
 						throw new IllegalArgumentException("EXACT_VE_TIE_COST_INVALID");
-					PreciseCost candidate = (dyadic == null
-						? preciseSum(bucket, global, baseCells, valueStrides, value)
-						: dyadicSum(bucket, global, baseCells, valueStrides, value)).plusTie(tieCost);
+					PreciseCost candidate = dyadic == null
+						? preciseSum(bucket, global, baseCells, valueStrides, value, costPruning, best, counters)
+						: dyadicSum(bucket, global, baseCells, valueStrides, value, costPruning, best, counters);
+					if(candidate == null)
+						continue; // Certified dominated, not an infeasible boundary cell.
+					candidate = candidate.plusTie(tieCost);
 					// A previous best already rounded successfully. Preserve candidate-first
 					// validation and the same rounded-primary/secondary/first-value ordering.
 					double candidateRounded = dyadic == null ? candidate.rounded() : 0d;
@@ -2622,6 +2851,13 @@ public final class ExactCategoricalSolver {
 			this.storageBudget = storageBudget;
 		}
 
+		private PreciseCost best(int cell) {
+			if(high != null)
+				return new PreciseCost(high[cell], low == null ? 0d : low[cell], 0L);
+			SparseMinimum prior = minima.get(cell);
+			return prior == null ? PreciseCost.POSITIVE_INFINITY : prior.cost;
+		}
+
 		private void offer(int cell, int value, PreciseCost candidate) {
 			double rounded = dyadic ? candidate.high : candidate.rounded();
 			if(rounded == Double.POSITIVE_INFINITY)
@@ -2704,6 +2940,14 @@ public final class ExactCategoricalSolver {
 		List<ExactFiniteSupportJoin.Relation> supports, BucketProjection projection,
 		int[] knownZeroTokens, long logicalOutputCells, boolean dyadic,
 		StorageBudget storageBudget) {
+		return eliminateSparse(step, bucket, supports, projection, knownZeroTokens,
+			logicalOutputCells, dyadic, storageBudget, null, null);
+	}
+
+	private static SparseStep eliminateSparse(Step step, List<DenseFactor> bucket,
+		List<ExactFiniteSupportJoin.Relation> supports, BucketProjection projection,
+		int[] knownZeroTokens, long logicalOutputCells, boolean dyadic,
+		StorageBudget storageBudget, CostPruning costPruning, BoundaryMergeCounters counters) {
 		int[] domains = projection.domains;
 		int outputCells = checkedCells(step.separator, domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
 		long supportRows = 0L;
@@ -2721,7 +2965,8 @@ public final class ExactCategoricalSolver {
 		SparseAccumulator accumulator = new SparseAccumulator(outputCells, dyadic, storageBudget);
 		ExactFiniteSupportJoin.Work work;
 		if(dyadic && supports.isEmpty())
-			work = eliminateDyadicSeparatorMajor(step, bucket, projection, outputCells, accumulator);
+			work = eliminateDyadicSeparatorMajor(step, bucket, projection, outputCells, accumulator,
+				costPruning, counters);
 		else {
 			int[] original = new int[domains.length];
 			work = ExactFiniteSupportJoin.forEach(
@@ -2733,11 +2978,15 @@ public final class ExactCategoricalSolver {
 					projection.lift(assignment, original);
 					selected = original;
 				}
-				PreciseCost candidate = dyadic ? dyadicSum(bucket, selected, null, null, 0)
-					: knownZeroTokens == null ? preciseSum(bucket, selected)
-						: preciseSumKnownZeros(bucket, selected, knownZeroTokens);
 				int cell = encode(step.separator, domains, assignment);
-				accumulator.offer(cell, selected[step.variable], candidate);
+				PreciseCost best = costPruning == null ? PreciseCost.POSITIVE_INFINITY : accumulator.best(cell);
+				PreciseCost candidate = dyadic
+					? dyadicSum(bucket, selected, null, null, 0, costPruning, best, counters)
+					: knownZeroTokens == null
+						? preciseSum(bucket, selected, null, null, 0, costPruning, best, counters)
+						: preciseSumKnownZeros(bucket, selected, knownZeroTokens, costPruning, best, counters);
+				if(candidate != null)
+					accumulator.offer(cell, selected[step.variable], candidate);
 				});
 		}
 		SparseStep stored = accumulator.finish(step, domains);
@@ -2764,7 +3013,7 @@ public final class ExactCategoricalSolver {
 	 */
 	private static ExactFiniteSupportJoin.Work eliminateDyadicSeparatorMajor(Step step,
 		List<DenseFactor> bucket, BucketProjection projection, int outputCells,
-		SparseAccumulator accumulator) {
+		SparseAccumulator accumulator, CostPruning costPruning, BoundaryMergeCounters counters) {
 		int[] domains = projection.domains;
 		int[] representatives = projection.representatives[step.variable];
 		int[] axes = new int[bucket.size()];
@@ -2793,7 +3042,9 @@ public final class ExactCategoricalSolver {
 			int bestRepresentative = firstRepresentative;
 			for(int representative : representatives) {
 				PreciseCost candidate = dyadicSeparatorSum(bucket, axes, strides,
-					zeroCoordinates, baseCells, representative);
+					zeroCoordinates, baseCells, representative, costPruning, best, counters);
+				if(candidate == null)
+					continue;
 				int comparison = compareWords(candidate.high, candidate.low, best.high, best.low);
 				if(comparison < 0 || comparison == 0 && representative < bestRepresentative) {
 					best = candidate;
@@ -2807,7 +3058,8 @@ public final class ExactCategoricalSolver {
 
 	/** Base-2^53 sum over affine eliminated-axis cells, preserving factor order. */
 	private static PreciseCost dyadicSeparatorSum(List<DenseFactor> bucket, int[] axes,
-		int[] strides, int[] zeroCoordinates, int[] baseCells, int representative) {
+		int[] strides, int[] zeroCoordinates, int[] baseCells, int representative,
+		CostPruning costPruning, PreciseCost best, BoundaryMergeCounters counters) {
 		final long mask = (1L << 53) - 1;
 		long high = 0L;
 		long low = 0L;
@@ -2817,6 +3069,8 @@ public final class ExactCategoricalSolver {
 			int logicalCell = baseCells[index]
 				+ (coordinate - zeroCoordinates[index]) * strides[index];
 			int cell = factor.storageCell(logicalCell);
+			if(counters != null)
+				counters.childEvaluations++;
 			if(cell < 0 || factor.valueAt(logicalCell) == Double.POSITIVE_INFINITY)
 				return PreciseCost.POSITIVE_INFINITY;
 			long lowSum = low + (factor.lowValues == null ? 0L : (long)factor.lowValues[cell]);
@@ -2824,6 +3078,8 @@ public final class ExactCategoricalSolver {
 			if(high > mask)
 				throw new IllegalArgumentException("EXACT_VE_DYADIC_WORD_OVERFLOW");
 			low = lowSum & mask;
+			if(costPruning != null && costPruning.exceeds(high, low, index + 1, best.high, best.low))
+				return null;
 		}
 		return new PreciseCost(high, low, 0L);
 	}
@@ -3682,6 +3938,8 @@ public final class ExactCategoricalSolver {
 	}
 
 	private static long saturatedMultiply(long left, long right) {
+		if(left == 0L || right == 0L)
+			return 0L;
 		return left > Long.MAX_VALUE / right ? Long.MAX_VALUE : left * right;
 	}
 
@@ -3766,11 +4024,19 @@ public final class ExactCategoricalSolver {
 	/** Base-2^53 integer words, never double-double residues or individually rounded costs. */
 	private static PreciseCost dyadicSum(List<DenseFactor> factors, int[] global,
 		int[] baseCells, int[] valueStrides, int value) {
+		return dyadicSum(factors, global, baseCells, valueStrides, value, null, null, null);
+	}
+
+	private static PreciseCost dyadicSum(List<DenseFactor> factors, int[] global,
+		int[] baseCells, int[] valueStrides, int value, CostPruning costPruning,
+		PreciseCost best, BoundaryMergeCounters counters) {
 		final long mask = (1L << 53) - 1;
 		long high = 0;
 		long low = 0;
 		for(int index = 0; index < factors.size(); index++) {
 			DenseFactor factor = factors.get(index);
+			if(counters != null)
+				counters.childEvaluations++;
 			int cell = factor.summedCell(global, baseCells, valueStrides, index, value);
 			int logicalCell = baseCells == null ? factor.cell(global)
 				: baseCells[index] + value * valueStrides[index];
@@ -3782,6 +4048,8 @@ public final class ExactCategoricalSolver {
 			if(high > mask)
 				throw new IllegalArgumentException("EXACT_VE_DYADIC_WORD_OVERFLOW");
 			low = lowSum & mask;
+			if(costPruning != null && costPruning.exceeds(high, low, index + 1, best.high, best.low))
+				return null;
 		}
 		return new PreciseCost(high, low, 0L);
 	}
@@ -3795,11 +4063,19 @@ public final class ExactCategoricalSolver {
 	/** The optional indexes are solve-local and follow exactly the factor list's order. */
 	private static PreciseCost preciseSum(List<DenseFactor> factors, int[] global,
 		int[] baseCells, int[] valueStrides, int value) {
+		return preciseSum(factors, global, baseCells, valueStrides, value, null, null, null);
+	}
+
+	private static PreciseCost preciseSum(List<DenseFactor> factors, int[] global,
+		int[] baseCells, int[] valueStrides, int value, CostPruning costPruning,
+		PreciseCost best, BoundaryMergeCounters counters) {
 		double high = 0d;
 		double low = 0d;
 		long tie = 0L;
 		for(int index = 0; index < factors.size(); index++) {
 			DenseFactor factor = factors.get(index);
+			if(counters != null)
+				counters.childEvaluations++;
 			int cell = factor.summedCell(global, baseCells, valueStrides, index, value);
 			if(cell < 0)
 				return PreciseCost.POSITIVE_INFINITY;
@@ -3835,6 +4111,8 @@ public final class ExactCategoricalSolver {
 				high = normalizedHigh;
 			}
 			tie = addTieCost(tie, valueTie);
+			if(costPruning != null && costPruning.exceeds(high, low, index + 1, best.high, best.low))
+				return null;
 		}
 		return new PreciseCost(high, low, tie);
 	}
@@ -3865,6 +4143,11 @@ public final class ExactCategoricalSolver {
 	/** Sparse-only path; certified-zero runs retain their exact original arithmetic positions. */
 	private static PreciseCost preciseSumKnownZeros(List<DenseFactor> factors, int[] global,
 		int[] knownZeroTokens) {
+		return preciseSumKnownZeros(factors, global, knownZeroTokens, null, null, null);
+	}
+
+	private static PreciseCost preciseSumKnownZeros(List<DenseFactor> factors, int[] global,
+		int[] knownZeroTokens, CostPruning costPruning, PreciseCost best, BoundaryMergeCounters counters) {
 		double high = 0d;
 		double low = 0d;
 		long tie = 0L;
@@ -3883,6 +4166,8 @@ public final class ExactCategoricalSolver {
 			}
 			int index = token;
 			DenseFactor factor = factors.get(index);
+			if(counters != null)
+				counters.childEvaluations++;
 			int cell = factor.summedCell(global, null, null, index, 0);
 			if(cell < 0)
 				return PreciseCost.POSITIVE_INFINITY;
@@ -3916,6 +4201,9 @@ public final class ExactCategoricalSolver {
 				high = normalizedHigh;
 			}
 			tie = addTieCost(tie, valueTie);
+			// index is the original factor position, not the compressed token offset.
+			if(costPruning != null && costPruning.exceeds(high, low, index + 1, best.high, best.low))
+				return null;
 		}
 		return new PreciseCost(high, low, tie);
 	}

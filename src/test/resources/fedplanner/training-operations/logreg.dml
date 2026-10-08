@@ -1,0 +1,16 @@
+# Global sizes for compile-time stamping in the experiment harness.
+N = 50000
+D = 2100
+
+X = federated(addresses=list("worker1:8001/data/P2P2D_features.data"), ranges=list(list(0, 0), list(50000, 2100)))
+Y = federated(addresses=list("worker1:8001/data/P2P2D_labels.data"), ranges=list(list(0, 0), list(50000, 1)))
+
+Y = (Y < 0) + 1
+
+m = multiLogReg(
+  X=X, Y=Y,
+  verbose=FALSE, maxi=30, maxii=5, tol=1e-9, icpt=0,
+  numclasses=2, numrows=N, numcols=D
+)
+
+write(m, "outputs/logreg.res", format= "csv")

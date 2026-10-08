@@ -113,6 +113,16 @@ def valid_receipt(cell, phase, parsed):
 	}
 
 
+def campaign_manifest(timeout_seconds=None, **identity):
+	"""Small valid manifest fixture bound to one supported timeout policy."""
+	policy = {"compile": timeout_seconds, "runtime": timeout_seconds}
+	return {
+		"remote_root": "/remote",
+		"identity": {"jar_sha256": "a" * 64, "timeout_seconds": policy, **identity},
+		"measurement": {"timeout_seconds": dict(policy)},
+	}
+
+
 class MatrixContractTest(unittest.TestCase):
 	def test_measured_profile_provider_is_a_frozen_external_dependency(self):
 		source = Path(CAMPAIGN.__file__).read_text()
@@ -257,6 +267,43 @@ class StepLmBuiltinSyncContractTest(unittest.TestCase):
 
 
 class UnlimitedWorkloadContractTest(unittest.TestCase):
+	def _execute_failed_cell(self, phase, timeout_seconds):
+		directory = tempfile.TemporaryDirectory()
+		self.addCleanup(directory.cleanup)
+		root = Path(directory.name)
+		node = SimpleNamespace(host="so007")
+		spec = SimpleNamespace(coordinator=node, workers=[],
+			container_name=lambda selected: "test-coordinator")
+		base = SimpleNamespace(parse_manifest=lambda value: spec,
+			prepare_remote_directories=lambda *args: None,
+			prepare_cost_profile=mock.Mock(return_value={"profile_sha256": "p" * 64,
+				"_runtime": {"cache_hit": True, "preparation_seconds": 0.25}}),
+			build_plan=lambda *args: None,
+			capture_network_snapshot=lambda *args: {},
+			validate_network_quality=lambda *args: {"valid": True})
+		cleanup = mock.Mock(return_value={"resolved": True})
+		campaign = SimpleNamespace(
+			bounded_pilot_lifecycle=lambda *args, **kwargs: {
+				"mounts": [], "coordinator": {"environment": {}}, "workers": []},
+			remote_resource_preflight=lambda *args: {"passed": True},
+			_strict_experiment_cleanup=cleanup)
+		renderer = SimpleNamespace(render=lambda cell: {"source": "print(1);"})
+		# Stale caller fields cannot override the immutable manifest policy.
+		args = SimpleNamespace(stage=Path("/stage"), compile_timeout=900,
+			runtime_timeout=3600)
+		with mock.patch.object(CAMPAIGN, "run", return_value=""), \
+				mock.patch.object(CAMPAIGN, "ssh", side_effect=lambda host, argv, **kw:
+					"null" if "receipt.json" in " ".join(map(str, argv)) else ""), \
+				mock.patch.object(CAMPAIGN.lifecycle, "execute_start"), \
+				mock.patch.object(CAMPAIGN, "capture_container_health", return_value={
+					"state": {"OOMKilled": False}, "oom_events": []}), \
+				mock.patch.object(CAMPAIGN.subprocess, "run",
+					return_value=SimpleNamespace(returncode=1)) as process, \
+				mock.patch("sys.stdout", new=io.StringIO()):
+			result = CAMPAIGN.execute_cell(root, campaign_manifest(timeout_seconds),
+				CAMPAIGN.matrix()[0], phase, args, campaign, base, renderer)
+		return result, process, cleanup, base, spec
+
 	def test_cli_has_no_compile_or_runtime_deadline_options(self):
 		parse_args = CAMPAIGN.argparse.ArgumentParser.parse_args
 
@@ -320,17 +367,20 @@ class UnlimitedWorkloadContractTest(unittest.TestCase):
 								CAMPAIGN.initialize(root, stage)
 
 	def test_gate_requires_explicit_unlimited_attempt_provenance(self):
-		for timeout in ("missing", 60, 900, 3600):
-			passed = {row["id"]: {"status": "passed", "timeout_seconds": None}
-				for row in CAMPAIGN.matrix()}
-			row = passed[CAMPAIGN.matrix()[0]["id"]]
-			if timeout == "missing":
-				del row["timeout_seconds"]
-			else:
-				row["timeout_seconds"] = timeout
-			with self.subTest(timeout=timeout), \
-					mock.patch.object(CAMPAIGN, "latest", return_value=passed):
-				self.assertFalse(CAMPAIGN.compile_gate(Path("unused")))
+		with tempfile.TemporaryDirectory() as directory:
+			root = Path(directory)
+			CAMPAIGN.dump(root / "manifest.json", campaign_manifest())
+			for timeout in ("missing", 60, 900, 3600):
+				passed = {row["id"]: {"status": "passed", "timeout_seconds": None}
+					for row in CAMPAIGN.matrix()}
+				row = passed[CAMPAIGN.matrix()[0]["id"]]
+				if timeout == "missing":
+					del row["timeout_seconds"]
+				else:
+					row["timeout_seconds"] = timeout
+				with self.subTest(timeout=timeout), \
+						mock.patch.object(CAMPAIGN, "latest", return_value=passed):
+					self.assertFalse(CAMPAIGN.compile_gate(root))
 
 	def test_comparison_csv_records_timeout_without_fabricating_success_timing(self):
 		cell = CAMPAIGN.matrix()[0]
@@ -349,40 +399,8 @@ class UnlimitedWorkloadContractTest(unittest.TestCase):
 
 	def test_actual_commands_have_no_deadline_and_failure_still_runs_exact_cleanup(self):
 		for phase in ("compile", "runtime"):
-			with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
-				root = Path(directory)
-				node = SimpleNamespace(host="so007")
-				spec = SimpleNamespace(coordinator=node, workers=[],
-					container_name=lambda selected: "test-coordinator")
-				base = SimpleNamespace(parse_manifest=lambda value: spec,
-					prepare_remote_directories=lambda *args: None,
-					prepare_cost_profile=mock.Mock(return_value={"profile_sha256": "p" * 64,
-						"_runtime": {"cache_hit": True, "preparation_seconds": 0.25}}),
-					build_plan=lambda *args: None,
-					capture_network_snapshot=lambda *args: {},
-					validate_network_quality=lambda *args: {"valid": True})
-				cleanup = mock.Mock(return_value={"resolved": True})
-				campaign = SimpleNamespace(
-					bounded_pilot_lifecycle=lambda *args, **kwargs: {
-						"mounts": [], "coordinator": {"environment": {}}, "workers": []},
-					remote_resource_preflight=lambda *args: {"passed": True},
-					_strict_experiment_cleanup=cleanup)
-				renderer = SimpleNamespace(render=lambda cell: {"source": "print(1);"})
-				# Stale caller fields cannot accidentally revive any finite budget.
-				args = SimpleNamespace(stage=Path("/stage"), compile_timeout=900,
-					runtime_timeout=3600)
-				with mock.patch.object(CAMPAIGN, "run", return_value=""), \
-						mock.patch.object(CAMPAIGN, "ssh", side_effect=lambda host, argv, **kw:
-							"null" if "receipt.json" in " ".join(map(str, argv)) else ""), \
-						mock.patch.object(CAMPAIGN.lifecycle, "execute_start"), \
-						mock.patch.object(CAMPAIGN, "capture_container_health", return_value={
-							"state": {"OOMKilled": False}, "oom_events": []}), \
-						mock.patch.object(CAMPAIGN.subprocess, "run",
-							return_value=SimpleNamespace(returncode=1)) as process, \
-						mock.patch("sys.stdout", new=io.StringIO()):
-					result = CAMPAIGN.execute_cell(root, {
-						"remote_root": "/remote", "identity": {"jar_sha256": "a" * 64}},
-						CAMPAIGN.matrix()[0], phase, args, campaign, base, renderer)
+			with self.subTest(phase=phase):
+				result, process, cleanup, base, spec = self._execute_failed_cell(phase, None)
 				self.assertIsNone(result["timeout_seconds"])
 				base.prepare_cost_profile.assert_called_once()
 				self.assertEqual("a" * 64, base.prepare_cost_profile.call_args.kwargs["jar_sha256"])
@@ -398,6 +416,35 @@ class UnlimitedWorkloadContractTest(unittest.TestCase):
 				self.assertNotIn("timeout", command)
 				self.assertNotIn("--kill-after=30s", command)
 				self.assertIsNone(process.call_args.kwargs.get("timeout"))
+
+	def test_performance_watchdog_wraps_exact_command_and_failure_still_cleans_up(self):
+		for phase in ("compile", "runtime"):
+			with self.subTest(phase=phase):
+				result, process, cleanup, _, spec = self._execute_failed_cell(phase, 60)
+				self.assertEqual(60, result["timeout_seconds"])
+				self.assertEqual("failed", result["status"])
+				self.assertTrue(result["cleanup_resolved"])
+				cleanup.assert_called_once_with(mock.ANY, spec)
+				command = CAMPAIGN.shlex.split(process.call_args.args[0][-1])
+				self.assertEqual(["docker", "exec", "test-coordinator", "timeout",
+					"--signal=TERM", "--kill-after=30s", "60", "java"], command[:8])
+				self.assertEqual(150, process.call_args.kwargs["timeout"])
+
+	def test_frozen_timeout_policy_rejects_missing_mixed_and_arbitrary_values(self):
+		invalid = (
+			{},
+			{"identity": {"timeout_seconds": {"compile": None, "runtime": None}}},
+			{"identity": {"timeout_seconds": {"compile": 60, "runtime": 60}},
+				"measurement": {"timeout_seconds": {"compile": None, "runtime": None}}},
+			campaign_manifest(61),
+			{"identity": {"timeout_seconds": {"compile": None, "runtime": None,
+				"extra": None}}, "measurement": {"timeout_seconds": {
+					"compile": None, "runtime": None, "extra": None}}},
+		)
+		for manifest in invalid:
+			with self.subTest(manifest=manifest), self.assertRaisesRegex(
+					RuntimeError, "timeout policy is missing, unsupported, or inconsistent"):
+				CAMPAIGN.frozen_timeout_policy(manifest)
 
 	def test_federated_request_read_deadline_is_disabled_for_both_phases(self):
 		for phase in ("compile", "runtime"):
@@ -425,8 +472,7 @@ class ProfileFailureContractTest(unittest.TestCase):
 					mock.patch.object(CAMPAIGN.lifecycle, "execute_start") as start, \
 					mock.patch.object(CAMPAIGN.subprocess, "run") as process, \
 					mock.patch("sys.stdout", new=io.StringIO()):
-				result = CAMPAIGN.execute_cell(root, {"remote_root": "/remote",
-					"identity": {"jar_sha256": "a" * 64}}, CAMPAIGN.matrix()[0], "runtime",
+				result = CAMPAIGN.execute_cell(root, campaign_manifest(), CAMPAIGN.matrix()[0], "runtime",
 					SimpleNamespace(stage=Path("/stage")), campaign, base, renderer)
 			self.assertEqual("failed", result["status"])
 			self.assertIn("profiling failed", result["errors"])
@@ -522,6 +568,12 @@ class GateAndResumeContractTest(unittest.TestCase):
 		renderer = SimpleNamespace(Renderer=lambda stage: object())
 		with tempfile.TemporaryDirectory() as directory:
 			root = Path(directory).resolve()
+			stage = root / "stage"
+			jar = stage / "systemds/target/SystemDS.jar"
+			jar.parent.mkdir(parents=True)
+			jar.write_bytes(b"candidate")
+			(stage / "W1357_STAGE.json").write_text("{}")
+			manifest = campaign_manifest(jar_sha256=CAMPAIGN.sha(jar))
 			lane = root / "runtime.lock"
 			lane.touch()
 			base = SimpleNamespace(RUNTIME_LANE=lane)
@@ -530,19 +582,21 @@ class GateAndResumeContractTest(unittest.TestCase):
 				events.append(("execute", args[-1]))
 				return {"status": "passed", "cleanup_resolved": True}
 
-			def prepare_bound(root_arg, stage, selected, gate, *, direct_runtime=False):
-				self.assertFalse(direct_runtime)
+			def prepare_bound(root_arg, stage_arg, attempt, *, selector):
+				self.assertEqual(stage, stage_arg)
+				self.assertEqual("p2:P2_PREP", selector)
+				self.assertTrue(attempt.startswith("main-p2_prep-"))
 				with lane.open("a+") as contender:
 					with self.assertRaises(BlockingIOError):
 						fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
 				events.append(("physical-lane-held", True))
-				events.append(("prepare", gate))
-				return prepare(root, selected, gate)
+				events.append(("prepare", True))
+				return prepare(root, cell, True)
 
 			patches = (
 				mock.patch.object(CAMPAIGN, "dependencies",
 					return_value=(campaign, base, renderer)),
-				mock.patch.object(CAMPAIGN, "initialize", return_value={}),
+				mock.patch.object(CAMPAIGN, "initialize", return_value=manifest),
 				mock.patch.object(CAMPAIGN, "compile_gate", return_value=True),
 				mock.patch.object(CAMPAIGN, "publish_overlay", return_value="VERIFIED"),
 				mock.patch.object(CAMPAIGN, "latest", return_value={}),
@@ -550,8 +604,8 @@ class GateAndResumeContractTest(unittest.TestCase):
 				mock.patch.object(CAMPAIGN, "execute_cell", side_effect=execute),
 				mock.patch.object(CAMPAIGN.runtime_compare, "pin_reference",
 					return_value={}),
-				mock.patch.object(CAMPAIGN.runtime_compare,
-					"prepare_workload_reference", side_effect=prepare_bound),
+				mock.patch.object(CAMPAIGN.current_reference, "prepare",
+					side_effect=prepare_bound),
 				mock.patch.object(CAMPAIGN, "summarize", return_value={
 					"compile_gate": True,
 					"compile": {"passed": 896, "failed": 0, "pending": 0},
@@ -561,8 +615,8 @@ class GateAndResumeContractTest(unittest.TestCase):
 			with patches[0], patches[1], patches[2], patches[3], patches[4], \
 					patches[5], patches[6], patches[7], patches[8], patches[9]:
 				try:
-					outcome = CAMPAIGN.main(["--root", str(root), "--phase", "runtime",
-						"--max-cells", "1"])
+					outcome = CAMPAIGN.main(["--root", str(root), "--stage", str(stage),
+						"--phase", "runtime", "--max-cells", "1"])
 				except Exception as error:
 					error.handoff_events = events
 					raise
@@ -571,12 +625,27 @@ class GateAndResumeContractTest(unittest.TestCase):
 	def test_compile_gate_requires_every_latest_cell_to_pass(self):
 		passed = {row["id"]: {"status": "passed", "timeout_seconds": None}
 			for row in CAMPAIGN.matrix()}
-		with mock.patch.object(CAMPAIGN, "latest", return_value=passed):
-			self.assertTrue(CAMPAIGN.compile_gate(Path("unused")))
-		failed = dict(passed)
-		failed[CAMPAIGN.matrix()[0]["id"]] = {"status": "failed"}
-		with mock.patch.object(CAMPAIGN, "latest", return_value=failed):
-			self.assertFalse(CAMPAIGN.compile_gate(Path("unused")))
+		with tempfile.TemporaryDirectory() as directory:
+			root = Path(directory)
+			CAMPAIGN.dump(root / "manifest.json", campaign_manifest())
+			with mock.patch.object(CAMPAIGN, "latest", return_value=passed):
+				self.assertTrue(CAMPAIGN.compile_gate(root))
+			failed = dict(passed)
+			failed[CAMPAIGN.matrix()[0]["id"]] = {"status": "failed"}
+			with mock.patch.object(CAMPAIGN, "latest", return_value=failed):
+				self.assertFalse(CAMPAIGN.compile_gate(root))
+
+	def test_compile_gate_accepts_only_attempts_from_its_frozen_watchdog_policy(self):
+		with tempfile.TemporaryDirectory() as directory:
+			root = Path(directory)
+			CAMPAIGN.dump(root / "manifest.json", campaign_manifest(60))
+			passed = {row["id"]: {"status": "passed", "timeout_seconds": 60}
+				for row in CAMPAIGN.matrix()}
+			with mock.patch.object(CAMPAIGN, "latest", return_value=passed):
+				self.assertTrue(CAMPAIGN.compile_gate(root))
+			passed[CAMPAIGN.matrix()[0]["id"]]["timeout_seconds"] = None
+			with mock.patch.object(CAMPAIGN, "latest", return_value=passed):
+				self.assertFalse(CAMPAIGN.compile_gate(root))
 
 	def test_latest_attempt_wins_without_erasing_failed_evidence(self):
 		cell = CAMPAIGN.matrix()[0]
@@ -754,10 +823,8 @@ class LifecycleIntegrationTest(unittest.TestCase):
 				mock.patch.object(CAMPAIGN, "ssh", return_value=""):
 			root = Path(directory)
 			with mock.patch("sys.stdout", new=io.StringIO()):
-				result = CAMPAIGN.execute_cell(root, {
-					"remote_root": "/remote/campaign",
-					"identity": {"jar_sha256": "a" * 64},
-				}, cell, "compile", args, campaign, base, renderer)
+				result = CAMPAIGN.execute_cell(root,
+					campaign_manifest(), cell, "compile", args, campaign, base, renderer)
 
 		self.assertEqual("failed", result["status"])
 		self.assertTrue(result["cleanup_resolved"])

@@ -259,6 +259,9 @@ def _load_workload_pin(reference_manifest: Path) -> tuple[
 		pin = json.loads(_safe_local_file(pin_path, "workload reference pin"))
 	except (UnicodeDecodeError, json.JSONDecodeError) as exc:
 		raise RuntimeComparisonError("workload reference pin is invalid") from exc
+	if isinstance(pin, dict) and pin.get("schema") == "cofee-w1357-current-workload-reference-pin/v1":
+		import matrix_current_reference
+		return matrix_current_reference.load(reference_manifest)
 	if (not isinstance(pin, dict) or pin.get("schema") != WORKLOAD_REFERENCE_PIN_SCHEMA
 			or pin.get("source_host") != REFERENCE_HOST
 			or pin.get("workload_selector") != P2_SELECTOR
@@ -470,7 +473,8 @@ def compare(campaign: Any, cell: dict[str, Any], attempt: str, stage: Path,
 				candidate_schema = json.loads(candidate_pin.read_bytes()).get("schema")
 			except (UnicodeDecodeError, json.JSONDecodeError, AttributeError) as exc:
 				raise RuntimeComparisonError("reference pin receipt is invalid") from exc
-			if candidate_schema == WORKLOAD_REFERENCE_PIN_SCHEMA:
+			if candidate_schema in {WORKLOAD_REFERENCE_PIN_SCHEMA,
+					"cofee-w1357-current-workload-reference-pin/v1"}:
 				result_bytes, plan_bytes, manifest, _, workload_pin = _load_workload_pin(
 					Path(reference_manifest))
 			else:
@@ -479,6 +483,11 @@ def compare(campaign: Any, cell: dict[str, Any], attempt: str, stage: Path,
 			result_bytes, plan_bytes, manifest, _ = _load_reference(reference_manifest)
 	else:
 		result_bytes, plan_bytes, manifest, _ = _load_reference(None)
+	if workload_pin and workload_pin.get("schema") == "cofee-w1357-current-workload-reference-pin/v1":
+		if (workload_pin["expected"]["stage_seal_sha256"] != _sha256_file(stage / "W1357_STAGE.json")
+				or workload_pin["expected"]["jar_sha256"] != _sha256_file(stage / "systemds/target/SystemDS.jar")
+				or workload_pin.get("workload_selector") != f"{cell.get('suite')}:{cell.get('workload')}"):
+			raise RuntimeComparisonError("current reference not bound to actual workload/stage/JAR")
 	source = _reference_source(workload_pin)
 	result_sha = source["result_manifest"]["sha256"]
 	plan_sha = source["generation_plan"]["sha256"]
@@ -499,6 +508,28 @@ def compare(campaign: Any, cell: dict[str, Any], attempt: str, stage: Path,
 			"scratch_attempt": attempt,
 			"reference_source": source,
 		})
+		if workload_pin and workload_pin.get("schema") == "cofee-w1357-current-workload-reference-pin/v1":
+			# Only engine/stage identity changes; the frozen numerical policies do not.
+			reference_identity = {
+				"stage_seal_sha256": workload_pin["expected"]["stage_seal_sha256"],
+				"systemds_jar_sha256": workload_pin["expected"]["jar_sha256"],
+			}
+			contract_bytes = campaign.comparison_contract(reference_identity)
+			request["identity"].update(reference_identity)
+			request["identity"]["contract_sha256"] = _sha256_bytes(contract_bytes)
+			plan["reference_identity"] = reference_identity
+		else:
+			# Historical binary/semantic references retain their authenticated decoder
+			# JAR. This post-timer helper is not the current runtime execution engine.
+			reference_plan = json.loads(plan_bytes)
+			if reference_plan.get("stage_root"):
+				decoder_stage = Path(reference_plan["stage_root"])
+				if not decoder_stage.is_absolute() or ".." in decoder_stage.parts:
+					raise RuntimeComparisonError("unsafe authenticated reference decoder stage")
+				plan["create_argv"] = [
+					f"type=bind,src={decoder_stage / 'systemds'},dst=/opt/systemds,readonly"
+					if item.startswith("type=bind,src=") and ",dst=/opt/systemds,readonly" in item else item
+					for item in plan["create_argv"]]
 		plan["request"] = request
 		plan["reference_manifest_sha256"] = result_sha
 		plan["reference_generation_plan_sha256"] = plan_sha

@@ -182,6 +182,49 @@ public final class OracleFacade {
       return new DecisionEvidence(caps, effectiveHint.proof());
     }
 
+    /**
+     * Streaming exact-rule path for operations without a determinant rectangle.
+     * The caller supplies a fresh occurrence/tuple-exact hint AFTER privacy filtering.
+     * Only immutable complete evidence is shared; no rule evaluation or legal tuple
+     * is skipped and no mapped input or UNKNOWN shape substitutes for exact authority.
+     */
+    public ExactRuleDecision prepareExactRuleDecision(
+        java.util.function.Function<List<FType>,ShapeHint> hintFactory) {
+      return new ExactRuleDecision(Objects.requireNonNull(hintFactory, "hintFactory"));
+    }
+
+    public final class ExactRuleDecision {
+      private static final int MAX_EVIDENCE = 256;
+      private final java.util.function.Function<List<FType>,ShapeHint> hintFactory;
+      private final Map<ExactEvidenceKey,DecisionEvidence> evidence = new LinkedHashMap<>();
+      private long calls, reused, overflow;
+
+      private ExactRuleDecision(java.util.function.Function<List<FType>,ShapeHint> hintFactory) {
+        this.hintFactory = hintFactory;
+      }
+
+      public DecisionEvidence decide(List<FType> inputs) {
+        DecisionEvidence result = decideWithEvidence(inputs,
+            Objects.requireNonNull(hintFactory.apply(inputs), "exact shape hint"));
+        calls++;
+        ExactEvidenceKey key = ExactEvidenceKey.of(result);
+        DecisionEvidence prior = evidence.get(key);
+        if(prior != null) {
+          reused++;
+          return prior;
+        }
+        if(evidence.size() < MAX_EVIDENCE)
+          evidence.put(key, result);
+        else
+          overflow++;
+        return result;
+      }
+
+      public ExactRuleDiagnostics diagnostics() {
+        return new ExactRuleDiagnostics(calls, reused, evidence.size(), overflow);
+      }
+    }
+
     public RulesApi.PartialTruth partialFedFeasibility(RulesApi.PartialInputs inputs,
         ShapeHint hint) {
       Objects.requireNonNull(inputs, "inputs");
@@ -354,6 +397,23 @@ public final class OracleFacade {
     /** Shares this prepared operation signature without extending its node-build lifetime. */
     public PreparedProfile prepareProfile() {
       return new PreparedProfile(hop, signature);
+    }
+  }
+
+  public record ExactRuleDiagnostics(long oracleCalls, long reusedEvidence,
+      int retainedEvidence, long overflowEvidence) { }
+
+  private record ExactDecisionNote(RulesApi.ReasonCode code, String message) { }
+  private record ExactEvidenceKey(OpCategory category, String opcode,
+      org.apache.sysds.common.Types.ExecType exec, FederatedOutput placement, FType output,
+      RulesApi.ReasonCode reason, String detail, List<ExactDecisionNote> notes,
+      RulesApi.ShapeProof proof) {
+    private static ExactEvidenceKey of(DecisionEvidence evidence) {
+      RulesApi.OpCaps caps = evidence.caps();
+      return new ExactEvidenceKey(caps.category(), caps.opcode(), caps.exec(), caps.placement(),
+          caps.foutFType().orElse(null), caps.reason(), caps.detail().orElse(""),
+          caps.notes().stream().map(note -> new ExactDecisionNote(note.code(), note.message())).toList(),
+          evidence.shapeProof());
     }
   }
 

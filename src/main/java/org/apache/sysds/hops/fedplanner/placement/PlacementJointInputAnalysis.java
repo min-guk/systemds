@@ -161,6 +161,7 @@ public final class PlacementJointInputAnalysis {
 	}
 
 	private static final class Environment implements Comparable<Environment> {
+		private static final int ORDERING_PREFIX_LENGTH = 96;
 		private static final PlacementAnalysis.NormalizedText EMPTY_TEXT =
 			PlacementAnalysis.NormalizedText.literal("");
 		private final Map<String,Definition> values;
@@ -169,6 +170,7 @@ public final class PlacementJointInputAnalysis {
 		private final PlacementAnalysis.NormalizedText valuesText;
 		private final PlacementAnalysis.NormalizedText readSourcesText;
 		private final PlacementAnalysis.NormalizedText orderingText;
+		private final String orderingPrefix;
 		private final int hashCode;
 		private volatile String stableKey;
 
@@ -192,6 +194,7 @@ public final class PlacementJointInputAnalysis {
 				? readSourcesText(this.readSources, definitionKey) : retainedReadSourcesText;
 			orderingText = new PlacementAnalysis.NormalizedTextBuilder()
 				.append(valuesText).append("|reads=").append(readSourcesText).build();
+			orderingPrefix = orderingPrefix(this.values, this.readSources, definitionKey);
 			hashCode = 31 * this.values.hashCode() + this.readSources.hashCode();
 		}
 		Map<String,Definition> values() { return values; }
@@ -217,7 +220,27 @@ public final class PlacementJointInputAnalysis {
 				: new Environment(values, Map.of(), definitionKey, true, valuesText, EMPTY_TEXT);
 		}
 		@Override public int compareTo(Environment that) {
-			return this == that ? 0 : orderingText.compareTo(that.orderingText);
+			if(this == that)
+				return 0;
+			int prefixOrder = orderingPrefix.compareTo(that.orderingPrefix);
+			if(prefixOrder != 0)
+				return prefixOrder;
+			if(orderingText.length() < ORDERING_PREFIX_LENGTH
+				&& that.orderingText.length() < ORDERING_PREFIX_LENGTH)
+				return 0;
+			return orderingText.compareTo(that.orderingText);
+		}
+		int compareCanonical(Environment that,
+			Comparator<PlacementAnalysis.NormalizedText> canonicalOrder) {
+			if(this == that)
+				return 0;
+			int prefixOrder = orderingPrefix.compareTo(that.orderingPrefix);
+			if(prefixOrder != 0)
+				return prefixOrder;
+			if(orderingText.length() < ORDERING_PREFIX_LENGTH
+				&& that.orderingText.length() < ORDERING_PREFIX_LENGTH)
+				return 0;
+			return canonicalOrder.compare(orderingText, that.orderingText);
 		}
 		String stableKey() {
 			String key = stableKey;
@@ -266,6 +289,43 @@ public final class PlacementJointInputAnalysis {
 				firstRead = false;
 			}
 			return key.build();
+		}
+
+		private static String orderingPrefix(Map<String,Definition> values,
+			Map<Integer,Definition> readSources, Function<Definition,String> definitionKey) {
+			StringBuilder prefix = new StringBuilder(ORDERING_PREFIX_LENGTH);
+			boolean first = true;
+			for(Map.Entry<String,Definition> entry : values.entrySet()) {
+				if(!first)
+					appendPrefix(prefix, ";");
+				appendPrefix(prefix, entry.getKey());
+				appendPrefix(prefix, "=");
+				if(prefix.length() < ORDERING_PREFIX_LENGTH)
+					appendPrefix(prefix, definitionKey.apply(entry.getValue()));
+				first = false;
+				if(prefix.length() == ORDERING_PREFIX_LENGTH)
+					return prefix.toString();
+			}
+			appendPrefix(prefix, "|reads=");
+			boolean firstRead = true;
+			for(Map.Entry<Integer,Definition> entry : readSources.entrySet()) {
+				if(!firstRead)
+					appendPrefix(prefix, ";");
+				appendPrefix(prefix, entry.getKey().toString());
+				appendPrefix(prefix, "=>");
+				if(prefix.length() < ORDERING_PREFIX_LENGTH)
+					appendPrefix(prefix, definitionKey.apply(entry.getValue()));
+				firstRead = false;
+				if(prefix.length() == ORDERING_PREFIX_LENGTH)
+					break;
+			}
+			return prefix.toString();
+		}
+
+		private static void appendPrefix(StringBuilder prefix, String value) {
+			int remaining = ORDERING_PREFIX_LENGTH - prefix.length();
+			if(remaining > 0)
+				prefix.append(value, 0, Math.min(remaining, value.length()));
 		}
 
 		private static <K,V> Map<K,V> immutableSortedCopy(Map<K,V> source) {
@@ -318,7 +378,7 @@ public final class PlacementJointInputAnalysis {
 	private final Comparator<PlacementAnalysis.NormalizedText> normalizedTextOrder =
 		PlacementAnalysis.normalizedTextComparator();
 	private final Comparator<Environment> environmentOrder = (left, right) -> left == right ? 0
-		: normalizedTextOrder.compare(left.orderingText, right.orderingText);
+		: left.compareCanonical(right, normalizedTextOrder);
 	private Set<String> trackedVariables = Set.of();
 	private AnalysisSlice recentSlice;
 	private Map<Set<String>,List<List<Integer>>> consumerReadsBySlice;
@@ -783,8 +843,15 @@ public final class PlacementJointInputAnalysis {
 	}
 
 	private Set<Environment> union(Set<Environment> left, Set<Environment> right) {
-		TreeSet<Environment> result = mutableOrderedCopy(left);
-		result.addAll(right);
+		Set<Environment> orderedLeft = ordered(left);
+		Set<Environment> orderedRight = ordered(right);
+		if(orderedLeft == orderedRight || orderedRight.isEmpty()
+			|| orderedLeft.containsAll(orderedRight))
+			return orderedLeft;
+		if(orderedLeft.isEmpty())
+			return orderedRight;
+		TreeSet<Environment> result = mutableOrderedCopy(orderedLeft);
+		result.addAll(orderedRight);
 		return freezeOwned(result);
 	}
 
@@ -794,6 +861,14 @@ public final class PlacementJointInputAnalysis {
 	}
 
 	private Set<Environment> nextBlock(Set<Environment> values) {
+		boolean hasObservations = false;
+		for(Environment value : values)
+			if(!value.readSources().isEmpty()) {
+				hasObservations = true;
+				break;
+			}
+		if(!hasObservations)
+			return ordered(values);
 		TreeSet<Environment> result = newEnvironmentSet();
 		for(Environment value : values)
 			result.add(value.nextBlock());

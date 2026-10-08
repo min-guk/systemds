@@ -78,6 +78,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopK
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
@@ -180,12 +182,69 @@ final class NativePlacementContinuity {
 	private final Map<CandidateRealizationReference,FixedValueMapPool> fixedValueMapPools =
 		new java.util.HashMap<>();
 	private final Set<CandidateRealizationReference> unresolvedFixedValueMaps = new java.util.HashSet<>();
+	// Only local immutable rows are shared. A query's representative anchor still
+	// depends on its historical BFS/sweep order, so cached results are not graph leaves.
+	// Reference equality is structural, while candidate fact lookup owns exact Hop
+	// identities. Do not let an equal foreign owner poison or borrow a decoded row.
+	private final Map<CompiledHopKey,Map<CandidateRealizationReference,FixedPoolNode>> fixedPoolNodes =
+		new IdentityHashMap<>();
+	private final FixedPoolWork fixedPoolWork;
+
+	record FixedPoolWorkSnapshot(long decodedRows, long activations, long groundingEdgeVisits,
+		long geometryVisits, long inexactEdgeVisits) { }
+
+	private static final class FixedPoolWork {
+		private long decodedRows;
+		private long activations;
+		private long groundingEdgeVisits;
+		private long geometryVisits;
+		private long inexactEdgeVisits;
+		private FixedPoolWorkSnapshot snapshot() {
+			return new FixedPoolWorkSnapshot(decodedRows, activations, groundingEdgeVisits,
+				geometryVisits, inexactEdgeVisits);
+		}
+	}
+
+	/** Diagnostic-only work counts; no collector is created on the default/unmeasured path. */
+	FixedPoolWorkSnapshot fixedPoolWorkSnapshot() {
+		return fixedPoolWork == null ? new FixedPoolWorkSnapshot(0, 0, 0, 0, 0) : fixedPoolWork.snapshot();
+	}
 
 	record FixedValueMapPool(DurableAnchorKey pool, boolean exactLayout,
 		boolean exactPhysicalLayout) { }
 	private record FixedPoolClause(FixedValueMapPool leaf,
 		List<CandidateRealizationReference> sources) { }
 	private record FixedPoolNode(List<FixedPoolClause> clauses) { }
+	private record FixedPoolUse(int owner, int clause, int position) { }
+
+	private static final class FixedPoolGrounding {
+		private final FixedValueMapPool[] clauses;
+		private final int[] firstSources;
+		private final List<FixedPoolUse> consumers = new ArrayList<>();
+		private int missingClauses;
+		private FixedValueMapPool endpoints;
+		private FixedValueMapPool selected;
+
+		private FixedPoolGrounding(int clauseCount) {
+			clauses = new FixedValueMapPool[clauseCount];
+			firstSources = new int[clauseCount];
+			java.util.Arrays.fill(firstSources, Integer.MAX_VALUE);
+			missingClauses = clauseCount;
+		}
+
+		private boolean accept(int clause, int position, FixedValueMapPool pool) {
+			if(endpoints != null && !sameFixedEndpoints(endpoints, pool))
+				return false;
+			endpoints = pool;
+			if(clauses[clause] == null)
+				missingClauses--;
+			if(position < firstSources[clause]) {
+				clauses[clause] = pool;
+				firstSources[clause] = position;
+			}
+			return true;
+		}
+	}
 
 	record RevisionComparisonSnapshot(long hintedOwnersBypassed, long ownersCompared,
 		long continuityProjectionsCompared) {
@@ -294,6 +353,7 @@ final class NativePlacementContinuity {
 		edgesByConsumer = structuralContext.edgesByConsumer;
 		occurrenceComponents = structuralContext.occurrenceComponents;
 		this.metrics = metrics;
+		fixedPoolWork = metrics == null ? null : new FixedPoolWork();
 		int observedQueryLimit = Math.max(0,
 			Integer.getInteger("sysds.fedplanner.metrics.maxExactContexts", 4096));
 		observedQueries = metrics == null ? null
@@ -1947,8 +2007,10 @@ final class NativePlacementContinuity {
 			List<NativeContinuityProof> proofs = new ArrayList<>(entry.templates.size());
 			PlacementAnalysis.NormalizedTextContext textContext =
 				new PlacementAnalysis.NormalizedTextContext();
+			// Root equality is invariant across every template in this immutable result.
+			boolean sameRoot = entry.root.equals(source);
 			for(CandidateSupportTemplate template : entry.templates) {
-				List<CandidateRealizationInputBinding> bindings = entry.root.equals(source)
+				List<CandidateRealizationInputBinding> bindings = sameRoot
 					? template.immediateBindings : rebindTemplateRoot(
 						template.immediateBindings, entry.root, source);
 				proofs.add(new NativeContinuityProof(externalSeed, template.outputWorkerPoolWitness,
@@ -2815,7 +2877,8 @@ final class NativePlacementContinuity {
 						seen.add(overlayRows.get(priorIndex).defaultEdge);
 				}
 				List<CandidateProofDependency> dependencies =
-					overlayDependencies(row.dependencies, fixed, fixedHandles);
+					overlayDependencies(row.dependencies, row.defaultAlternative.dependencies,
+						fixed, fixedHandles);
 				alternative = new SelectedCandidateProof(row.reference,
 					dependencies, row.directGround, witness);
 				edge = ContinuityEdgeKey.ofEffective(row.reference, row.directGround, dependencies);
@@ -3308,16 +3371,36 @@ final class NativePlacementContinuity {
 		List<CandidateDependencySkeleton> skeletons,
 		Map<CompiledHopKey,CandidateRealizationReference> fixed,
 		Map<CompiledHopKey,Integer> fixedHandles) {
-		List<CandidateProofDependency> dependencies = new ArrayList<>(skeletons.size());
-		for(CandidateDependencySkeleton skeleton : skeletons) {
+		return overlayDependencies(skeletons, null, fixed, fixedHandles);
+	}
+
+	private List<CandidateProofDependency> overlayDependencies(
+		List<CandidateDependencySkeleton> skeletons, List<CandidateProofDependency> defaults,
+		Map<CompiledHopKey,CandidateRealizationReference> fixed,
+		Map<CompiledHopKey,Integer> fixedHandles) {
+		// A cached topology owns immutable default dependencies. An overlay changes
+		// only identity-pinned owners; leave every other dependency/state shared.
+		List<CandidateProofDependency> dependencies = defaults == null
+			? new ArrayList<>(skeletons.size()) : null;
+		for(int index = 0; index < skeletons.size(); index++) {
+			CandidateDependencySkeleton skeleton = skeletons.get(index);
 			boolean queryPinned = fixed.containsKey(skeleton.key);
+			if(defaults != null && !queryPinned)
+				continue;
 			CandidateRealizationReference pinned = queryPinned
 				? fixed.get(skeleton.key) : skeleton.clausePinned;
 			int handle = queryPinned ? fixedHandles.get(skeleton.key) : skeleton.clausePinnedHandle;
-			dependencies.add(new CandidateProofDependency(skeleton.key, pinned,
-				handle, skeleton.witness, skeleton.inputPosition, queryPinned));
+			CandidateProofDependency dependency = new CandidateProofDependency(skeleton.key, pinned,
+				handle, skeleton.witness, skeleton.inputPosition, queryPinned);
+			if(defaults == null)
+				dependencies.add(dependency);
+			else {
+				if(dependencies == null)
+					dependencies = new ArrayList<>(defaults);
+				dependencies.set(index, dependency);
+			}
 		}
-		return dependencies;
+		return dependencies == null ? defaults : dependencies;
 	}
 
 	private List<CandidateRealizationReference> requiredInputSupport(
@@ -3366,118 +3449,156 @@ final class NativePlacementContinuity {
 			CandidateRealizationReference current = pending.removeFirst();
 			if(graph.containsKey(current))
 				continue;
-			CandidateEmissionRealization realization = candidateRealization(current);
-			if(realization == null || realization.supportClauses().isEmpty())
+			FixedPoolNode node = fixedPoolNodes.computeIfAbsent(
+				current.rule().parentOccurrence(), ignored -> new java.util.HashMap<>())
+				.computeIfAbsent(current, this::decodeFixedPoolNode);
+			if(node.clauses().isEmpty())
 				return null;
-			List<FixedPoolClause> clauses = new ArrayList<>();
-			for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
-				DurableAnchorKey nativePool = realization.nativeWorkerPoolResidencyForOwnedClause(clause);
-				if(nativePool != null) {
-					boolean exactLayout =
-						realization.nativeWorkerPoolLayoutExactForOwnedClause(clause);
-					clauses.add(new FixedPoolClause(new FixedValueMapPool(nativePool,
-						exactLayout, exactLayout), List.of()));
-					continue;
-				}
-				if(realization.key().layoutKind() != PlacementIdentity.PlacementLayoutKind.VALUE_MAP
-					|| clause.inputBindings().isEmpty())
-					return null;
-				List<CandidateRealizationReference> sources = new ArrayList<>();
-				for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
-					if(binding.kind() == CandidateInputBindingKind.RELOCATION)
-						return null;
-					sources.add(binding.source());
-					pending.add(binding.source());
-				}
-				clauses.add(new FixedPoolClause(null, List.copyOf(sources)));
-			}
-			graph.put(current, new FixedPoolNode(List.copyOf(clauses)));
+			graph.put(current, node);
+			for(FixedPoolClause clause : node.clauses())
+				pending.addAll(clause.sources());
 		}
 
-		Map<CandidateRealizationReference,FixedValueMapPool> resolved = new java.util.HashMap<>();
-		boolean changed;
-		do {
-			changed = false;
-			for(Map.Entry<CandidateRealizationReference,FixedPoolNode> entry : graph.entrySet()) {
-				FixedValueMapPool common = null;
-				boolean complete = true;
-				for(FixedPoolClause clause : entry.getValue().clauses()) {
-					FixedValueMapPool clausePool = clause.leaf();
-					for(CandidateRealizationReference source : clause.sources()) {
-						FixedValueMapPool sourcePool = resolved.get(source);
-						if(sourcePool == null)
-							continue;
-						if(clausePool != null && !sameFixedEndpoints(clausePool, sourcePool))
-							return null;
-						clausePool = mergeFixedPools(clausePool, sourcePool);
-					}
-					if(clausePool == null) {
-						complete = false;
-						continue;
-					}
-					if(common != null && !sameFixedEndpoints(common, clausePool))
-						return null;
-					common = mergeFixedPools(common, clausePool);
-				}
-				if(complete && common != null) {
-					FixedValueMapPool prior = resolved.putIfAbsent(entry.getKey(), common);
-					if(prior != null && !sameFixedEndpoints(prior, common))
-						return null;
-					changed |= prior == null;
+		List<CandidateRealizationReference> references = new ArrayList<>(graph.keySet());
+		List<FixedPoolNode> rows = new ArrayList<>(graph.values());
+		int size = rows.size();
+		Map<CandidateRealizationReference,Integer> ids = new java.util.HashMap<>();
+		FixedPoolGrounding[] work = new FixedPoolGrounding[size];
+		for(int owner = 0; owner < size; owner++) {
+			ids.put(references.get(owner), owner);
+			work[owner] = new FixedPoolGrounding(rows.get(owner).clauses().size());
+		}
+		// The priority is the old full-scan position: round * size + BFS ordinal.
+		// A FIFO/leaf-first queue would change the first-grounded representative.
+		java.util.PriorityQueue<Long> ready = new java.util.PriorityQueue<>();
+		for(int owner = 0; owner < size; owner++) {
+			List<FixedPoolClause> clauses = rows.get(owner).clauses();
+			for(int clauseIndex = 0; clauseIndex < clauses.size(); clauseIndex++) {
+				FixedPoolClause clause = clauses.get(clauseIndex);
+				if(clause.leaf() != null && !work[owner].accept(clauseIndex, -1, clause.leaf()))
+					return null;
+				for(int position = 0; position < clause.sources().size(); position++)
+					work[ids.get(clause.sources().get(position))].consumers.add(
+						new FixedPoolUse(owner, clauseIndex, position));
+			}
+			if(work[owner].missingClauses == 0)
+				ready.add((long) owner);
+		}
+		int grounded = 0;
+		while(!ready.isEmpty()) {
+			long activation = ready.remove();
+			if(fixedPoolWork != null)
+				fixedPoolWork.activations++;
+			int source = (int) (activation % size);
+			FixedPoolGrounding node = work[source];
+			node.selected = node.clauses[0];
+			// The old final stable sweep compares prior/common even on singleton
+			// leaves. PART/OTHER or empty endpoints must not gain authority here.
+			if(!sameFixedEndpoints(node.selected, node.selected))
+				return null;
+			grounded++;
+			for(FixedPoolUse use : node.consumers) {
+				if(fixedPoolWork != null)
+					fixedPoolWork.groundingEdgeVisits++;
+				FixedPoolGrounding consumer = work[use.owner()];
+				boolean wasIncomplete = consumer.missingClauses != 0;
+				if(!consumer.accept(use.clause(), use.position(), node.selected))
+					return null;
+				if(wasIncomplete && consumer.missingClauses == 0) {
+					long round = activation / size + (use.owner() <= source ? 1 : 0);
+					ready.add(round * size + use.owner());
 				}
 			}
 		}
-		while(changed);
-		if(resolved.size() != graph.size())
+		// A provisionally grounded parent cannot hide an ungrounded reachable SCC.
+		if(grounded != size)
 			return null;
 
-		// Pool grounding is a finite fixed point. Partition-layout exactness and
-		// complete physical geometry are separate conjunctions over every reachable
-		// leaf, and both propagate false independently of traversal order.
-		Set<CandidateRealizationReference> inexact = new java.util.HashSet<>();
-		Set<CandidateRealizationReference> physicallyInexact = new java.util.HashSet<>();
-		do {
-			changed = false;
-			for(Map.Entry<CandidateRealizationReference,FixedPoolNode> entry : graph.entrySet()) {
-				boolean exact = true;
-				boolean physicallyExact = true;
-				DurableAnchorKey representative = null;
-				for(FixedPoolClause clause : entry.getValue().clauses()) {
-					if(clause.leaf() != null) {
-						exact &= clause.leaf().exactLayout();
-						physicallyExact &= clause.leaf().exactPhysicalLayout();
-						if(representative != null && !PlacementIdentity.samePhysicalWorkerPool(
-							representative, clause.leaf().pool()))
-							exact = false;
-						if(representative != null && !PlacementIdentity.samePhysicalLayout(
-							representative, clause.leaf().pool()))
-							physicallyExact = false;
-						representative = representative == null ? clause.leaf().pool() : representative;
-					}
-					for(CandidateRealizationReference source : clause.sources()) {
-						exact &= !inexact.contains(source);
-						physicallyExact &= !physicallyInexact.contains(source);
-						DurableAnchorKey sourcePool = resolved.get(source).pool();
-						if(representative != null
-							&& !PlacementIdentity.samePhysicalWorkerPool(representative, sourcePool))
-							exact = false;
-						if(representative != null
-							&& !PlacementIdentity.samePhysicalLayout(representative, sourcePool))
-							physicallyExact = false;
-						representative = representative == null ? sourcePool : representative;
-					}
+		// Inspect local geometry once, then propagate the two independent false
+		// bits only to consumers whose inputs changed. Never rescan all clauses.
+		int[] inexact = new int[size];
+		boolean[] queued = new boolean[size];
+		java.util.ArrayDeque<Integer> changed = new java.util.ArrayDeque<>();
+		for(int owner = 0; owner < size; owner++) {
+			DurableAnchorKey representative = null;
+			for(FixedPoolClause clause : rows.get(owner).clauses()) {
+				if(clause.leaf() != null) {
+					if(fixedPoolWork != null)
+						fixedPoolWork.geometryVisits++;
+					FixedValueMapPool leaf = clause.leaf();
+					inexact[owner] |= (leaf.exactLayout() ? 0 : 1)
+						| (leaf.exactPhysicalLayout() ? 0 : 2)
+						| fixedPoolGeometryDifference(representative, leaf.pool());
+					representative = representative == null ? leaf.pool() : representative;
 				}
-				if(!exact)
-					changed |= inexact.add(entry.getKey());
-				if(!physicallyExact)
-					changed |= physicallyInexact.add(entry.getKey());
+				for(CandidateRealizationReference source : clause.sources()) {
+					if(fixedPoolWork != null)
+						fixedPoolWork.geometryVisits++;
+					DurableAnchorKey pool = work[ids.get(source)].selected.pool();
+					inexact[owner] |= fixedPoolGeometryDifference(representative, pool);
+					representative = representative == null ? pool : representative;
+				}
+			}
+			if(inexact[owner] != 0) {
+				changed.add(owner);
+				queued[owner] = true;
 			}
 		}
-		while(changed);
-		for(Map.Entry<CandidateRealizationReference,FixedValueMapPool> entry : resolved.entrySet())
-			fixedValueMapPools.put(entry.getKey(), new FixedValueMapPool(entry.getValue().pool(),
-				!inexact.contains(entry.getKey()), !physicallyInexact.contains(entry.getKey())));
+		while(!changed.isEmpty()) {
+			int source = changed.removeFirst();
+			queued[source] = false;
+			for(FixedPoolUse use : work[source].consumers) {
+				if(fixedPoolWork != null)
+					fixedPoolWork.inexactEdgeVisits++;
+				int owner = use.owner();
+				int combined = inexact[owner] | inexact[source];
+				if(combined != inexact[owner]) {
+					inexact[owner] = combined;
+					if(!queued[owner]) {
+						changed.add(owner);
+						queued[owner] = true;
+					}
+				}
+			}
+		}
+		for(int owner = 0; owner < size; owner++)
+			fixedValueMapPools.put(references.get(owner), new FixedValueMapPool(
+				work[owner].selected.pool(), (inexact[owner] & 1) == 0, (inexact[owner] & 2) == 0));
 		return fixedValueMapPools.get(root);
+	}
+
+	private FixedPoolNode decodeFixedPoolNode(CandidateRealizationReference reference) {
+		if(fixedPoolWork != null)
+			fixedPoolWork.decodedRows++;
+		CandidateEmissionRealization realization = candidateRealization(reference);
+		if(realization == null)
+			return new FixedPoolNode(List.of());
+		List<FixedPoolClause> clauses = new ArrayList<>();
+		for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+			DurableAnchorKey nativePool = realization.nativeWorkerPoolResidencyForOwnedClause(clause);
+			if(nativePool != null) {
+				boolean exact = realization.nativeWorkerPoolLayoutExactForOwnedClause(clause);
+				clauses.add(new FixedPoolClause(new FixedValueMapPool(nativePool, exact, exact), List.of()));
+				continue;
+			}
+			if(realization.key().layoutKind() != PlacementIdentity.PlacementLayoutKind.VALUE_MAP
+				|| clause.inputBindings().isEmpty())
+				return new FixedPoolNode(List.of());
+			List<CandidateRealizationReference> sources = new ArrayList<>();
+			for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
+				if(binding.kind() == CandidateInputBindingKind.RELOCATION)
+					return new FixedPoolNode(List.of());
+				sources.add(binding.source());
+			}
+			clauses.add(new FixedPoolClause(null, List.copyOf(sources)));
+		}
+		return new FixedPoolNode(List.copyOf(clauses));
+	}
+
+	private static int fixedPoolGeometryDifference(DurableAnchorKey representative, DurableAnchorKey pool) {
+		return representative == null ? 0
+			: (PlacementIdentity.samePhysicalWorkerPool(representative, pool) ? 0 : 1)
+				| (PlacementIdentity.samePhysicalLayout(representative, pool) ? 0 : 2);
 	}
 
 	private CandidateEmissionRealization candidateRealization(CandidateRealizationReference reference) {
@@ -3495,14 +3616,6 @@ final class NativePlacementContinuity {
 	private static boolean sameFixedEndpoints(FixedValueMapPool left, FixedValueMapPool right) {
 		return left.pool().fType() == right.pool().fType()
 			&& PlacementIdentity.samePhysicalWorkerEndpoints(left.pool(), right.pool());
-	}
-
-	private static FixedValueMapPool mergeFixedPools(FixedValueMapPool left,
-		FixedValueMapPool right) {
-		if(left == null)
-			return right;
-		return new FixedValueMapPool(left.pool(), left.exactLayout() && right.exactLayout(),
-			left.exactPhysicalLayout() && right.exactPhysicalLayout());
 	}
 
 	private int candidateHandle(CandidateRealizationReference reference) {
@@ -3673,6 +3786,20 @@ final class NativePlacementContinuity {
 		List<CandidateRealizationInputBinding> immediateBindings() { return immediateBindings; }
 		private PlacementAnalysis.NormalizedText normalizedSignatureText() {
 			return normalizedSignatureText;
+		}
+		PlacementProofKey continuityProofKey(CompiledHopKey owner) {
+			String cached = normalizedSignature;
+			if(cached == null)
+				cached = PlacementIdentity.cachedSignature(this);
+			if(cached != null)
+				return new PlacementProofKey(
+					PlacementProofKind.NATIVE_CONTINUITY, owner, normalizedSignature());
+			PlacementProofKey key = PlacementProofKey.fromNormalizedText(
+				PlacementProofKind.NATIVE_CONTINUITY, owner, normalizedSignatureText());
+			// The factory materialized the rope; retain that exact String on the proof
+			// and release its full binding/reference structure as before.
+			normalizedSignature();
+			return key;
 		}
 		private int normalizedSignatureLength() { return normalizedSignatureText.length(); }
 		String normalizedSignature() {

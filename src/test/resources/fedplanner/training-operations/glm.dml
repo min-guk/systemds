@@ -1,0 +1,17 @@
+X = federated(addresses=list("worker1:8001/data/P2P2D_features.data"), ranges=list(list(0, 0), list(50000, 2100)))
+Y = federated(addresses=list("worker1:8001/data/P2P2D_labels.data"), ranges=list(list(0, 0), list(50000, 1)))
+
+# The frozen synthetic response is continuous.  A mean threshold yields a
+# deterministic, approximately balanced binary target via a privacy-permitted
+# aggregate instead of treating only the single maximum row as positive.
+threshold = mean(Y)
+Y = (Y > threshold) * 1
+
+beta = glm(
+  X=X, Y=Y,
+  dfam=2, vpow=0.0, link=2, lpow=1.0, yneg=0.0,
+  icpt=0, disp=0.0, reg=0.0, tol=1e-6, moi=20, mii=5,
+  verbose=FALSE
+)
+
+write(beta, "outputs/glm.res", format="csv")

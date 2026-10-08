@@ -43,6 +43,7 @@ import static org.apache.sysds.hops.fedplanner.placement.PlacementCandidateGener
 import static org.apache.sysds.hops.fedplanner.placement.PlacementCandidateGenerator.isAggregateBinaryVectorInput;
 import static org.apache.sysds.hops.fedplanner.placement.PlacementCandidateGenerator.isLegalTransient;
 import static org.apache.sysds.hops.fedplanner.placement.PlacementCandidateGenerator.isVector;
+import org.apache.sysds.hops.fedplanner.placement.SearchSpaceMetrics.DirectWork;
 import org.apache.sysds.hops.fedplanner.placement.PlacementClosureDiagnostics.CompositionRecurrenceTracker;
 import org.apache.sysds.hops.fedplanner.placement.PlacementClosureDiagnostics.CompositionRecurrenceObservation;
 import org.apache.sysds.hops.fedplanner.placement.PlacementClosureDiagnostics.ExportDeltaDiagnostics;
@@ -4558,6 +4559,44 @@ final class PlacementRelationClosure {
 	private record DirectRuleBinding(List<DirectInputBinding> presentInputs,
 		List<DirectInputBinding> requiredInputs, List<DurableAnchorKey> baseSeeds) { }
 
+	/** Query index for one immutable proof binding list; each bucket preserves list order. */
+	private static final class DirectInputLookup {
+		private static final int MAX_RETAINED_BINDINGS = 65_536;
+		private final Map<Integer,IdentityHashMap<CompiledHopKey,
+			Map<FType,List<CandidateRealizationInputBinding>>>> bindings = new HashMap<>();
+
+		private DirectInputLookup(List<CandidateRealizationInputBinding> candidates) {
+			for(CandidateRealizationInputBinding candidate : candidates)
+				bindings.computeIfAbsent(candidate.inputPosition(), ignored -> new IdentityHashMap<>())
+					.computeIfAbsent(candidate.source().rule().parentOccurrence(), ignored ->
+						new HashMap<>())
+					.computeIfAbsent(candidate.source().realization().emissionState()
+						.placementState().fType(), ignored -> new ArrayList<>()).add(candidate);
+		}
+
+		private CandidateRealizationInputBinding firstExecutable(int position,
+			CompiledHopKey source, FType type, DirectSourceIndex sources,
+			SearchSpaceMetrics metrics) {
+			List<CandidateRealizationInputBinding> candidates = candidates(position, source, type);
+			for(CandidateRealizationInputBinding candidate : candidates) {
+				if(metrics != null)
+					metrics.recordDirectWork(DirectWork.BINDING_CANDIDATES_EXAMINED);
+				if(sources.executable(candidate.source()))
+					return candidate;
+			}
+			return null;
+		}
+
+		private List<CandidateRealizationInputBinding> candidates(int position,
+			CompiledHopKey source, FType type) {
+			Map<CompiledHopKey,Map<FType,List<CandidateRealizationInputBinding>>> byOwner =
+				bindings.get(position);
+			Map<FType,List<CandidateRealizationInputBinding>> byType =
+				byOwner == null ? null : byOwner.get(source);
+			return byType == null ? List.of() : byType.getOrDefault(type, List.of());
+		}
+	}
+
 	/** The per-owner source rows are private to one synchronous direct-closure loop. */
 	private static final class DirectSourceIndex {
 		private record SourceRow(List<CandidateRealizationReference> nativeReferences,
@@ -4906,6 +4945,9 @@ final class PlacementRelationClosure {
 		DirectSourceSeedProjection sourceSeeds =
 			new DirectSourceSeedProjection(nodesByKey, sources, continuity);
 		Map<CandidateEmissionRealization,Boolean> exactSourceLayouts = new IdentityHashMap<>();
+		Map<List<CandidateRealizationInputBinding>,DirectInputLookup> directInputLookups =
+			new IdentityHashMap<>();
+		int retainedDirectInputBindings = 0;
 		List<CandidateRuleFact> rebound = new ArrayList<>(facts.size());
 		Map<CompiledHopKey,Set<CompiledHopKey>> dependencyOccurrences = new IdentityHashMap<>();
 		Set<CompiledHopKey> incompleteDependencyOccurrences =
@@ -4913,13 +4955,17 @@ final class PlacementRelationClosure {
 		if(dirtyOccurrences != null && complexityMetrics != null)
 			complexityMetrics.recordIncrementalPass();
 		for(CandidateRuleFact fact : facts) {
+			if(complexityMetrics != null)
+				complexityMetrics.recordDirectWork(DirectWork.FACT_VISITS);
 			CompiledHopKey factOccurrence = fact.key().parentOccurrence();
 			Set<CompiledHopKey> factDependencies = dependencyOccurrences.computeIfAbsent(
 				factOccurrence, ignored -> Collections.newSetFromMap(new IdentityHashMap<>()));
 			factDependencies.add(factOccurrence);
 			if(dirtyOccurrences != null && !dirtyOccurrences.contains(fact.key().parentOccurrence())) {
-				if(complexityMetrics != null)
+				if(complexityMetrics != null) {
 					complexityMetrics.recordIncrementalFact(false);
+					complexityMetrics.recordDirectWork(DirectWork.FACTS_SKIPPED_CLEAN);
+				}
 				rebound.add(fact);
 				continue;
 			}
@@ -4933,6 +4979,8 @@ final class PlacementRelationClosure {
 			if(fact.status() != CandidateEvaluationStatus.AVAILABLE
 				|| factOwner instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTREAD
 				|| fact.key().orderedInputs().stream().noneMatch(CandidateInputState::present)) {
+				if(complexityMetrics != null)
+					complexityMetrics.recordDirectWork(DirectWork.FACTS_SKIPPED_INELIGIBLE);
 				rebound.add(fact);
 				continue;
 			}
@@ -4942,6 +4990,8 @@ final class PlacementRelationClosure {
 			List<CandidateEmissionFact> emissions = new ArrayList<>();
 			boolean unchangedEmissions = true;
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				if(complexityMetrics != null)
+					complexityMetrics.recordDirectWork(DirectWork.EMISSION_VISITS);
 				CandidateEmissionFact templateEmission = templateByKey.get(new DirectTemplateKey(
 					fact.key(), emission.emissionState(), emission.derivedFoutAction()));
 				if(complexityMetrics != null)
@@ -4960,6 +5010,8 @@ final class PlacementRelationClosure {
 							realization.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE
 								&& realization.supportClauses().stream().noneMatch(
 									clause -> !clause.inputBindings().isEmpty())))) {
+					if(complexityMetrics != null)
+						complexityMetrics.recordDirectWork(DirectWork.EMISSIONS_REUSED);
 					emissions.add(emission);
 					continue;
 				}
@@ -5061,6 +5113,8 @@ final class PlacementRelationClosure {
 					boolean dynamicOutputLayout = NativePlacementContinuity.recomputesNativePartitionRanges(
 						owner, outputState.fType());
 					Set<DirectNativeSeedKey> requestedNativeRelations = new HashSet<>();
+					if(complexityMetrics != null)
+						complexityMetrics.recordDirectWork(DirectWork.SEEDS_BEFORE_DEDUP, seeds.size());
 					for(DurableAnchorKey seed : seeds.stream().distinct().sorted().toList()) {
 						DurableAnchorKey outputAnchor = dynamicOutputLayout ? null : transposeChangesPartitionAxis(
 							owner, seed.fType(), outputState.fType())
@@ -5081,8 +5135,13 @@ final class PlacementRelationClosure {
 						// Equal layout and exact pinned output ask the same execution relation.
 						// Keep distinct dynamic output references and all source bindings.
 						if(!requestedNativeRelations.add(new DirectNativeSeedKey(
-							seed.fType(), seed.partitions(), output)))
+							seed.fType(), seed.partitions(), output))) {
+							if(complexityMetrics != null)
+								complexityMetrics.recordDirectWork(DirectWork.SEED_RELATIONS_DUPLICATE);
 							continue;
+						}
+						if(complexityMetrics != null)
+							complexityMetrics.recordDirectWork(DirectWork.SEED_RELATIONS_REQUESTED);
 						NativePlacementContinuity.CandidateSupportResult supportResult;
 						SearchSpaceMetrics.PhaseToken proofStarted = complexityMetrics == null ? null
 							: complexityMetrics.startPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CALL);
@@ -5098,79 +5157,121 @@ final class PlacementRelationClosure {
 							if(complexityMetrics != null)
 								complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CALL, proofStarted);
 						}
+						SearchSpaceMetrics.PhaseToken consumeStarted = complexityMetrics == null ? null
+							: complexityMetrics.startPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CONSUMPTION);
+						try {
 							factDependencies.addAll(supportResult.dependencyOccurrences());
 							if(readsIncompleteDirectMetadata(
 								supportResult.dependencyOccurrences(), metadataSensitiveOwners))
 								incompleteDependencyOccurrences.add(factOccurrence);
-						for(NativePlacementContinuity.NativeContinuityProof proof : supportResult.proofs()) {
-							// Native proofs already own an immutable canonical list. Retain its marker and
-							// cached hash rather than forcing every output clause to sort the bindings again.
-							List<CandidateRealizationInputBinding> bindings = proof.immediateBindings();
-							boolean complete = true;
 							List<DirectInputBinding> requiredInputs = ruleBinding.requiredInputs();
 							if(requiredInputs == null)
 								requiredInputs = ruleBinding.presentInputs().stream().filter(input -> {
 									Hop sourceHop = input.sourceKey() == null ? null : origins.get(input.sourceKey());
 									return sourceHop != null && isPlacementDataShape(shapes, sourceHop);
 								}).toList();
-							for(DirectInputBinding input : requiredInputs) {
-								int inputPosition = input.position();
-								CompiledHopKey sourceOccurrence = input.sourceKey();
-								CandidateRealizationInputBinding binding = bindings.stream()
-									.filter(candidate -> candidate.inputPosition() == inputPosition
-										&& candidate.source().rule().parentOccurrence() == sourceOccurrence
-										&& candidate.source().realization().emissionState().placementState().fType()
-											== input.fType()
-										&& sources.executable(candidate.source()))
-									.findFirst().orElse(null);
-								if(binding == null) {
-									complete = false;
-									break;
+							for(NativePlacementContinuity.NativeContinuityProof proof : supportResult.proofs()) {
+								if(complexityMetrics != null)
+									complexityMetrics.recordDirectWork(DirectWork.PROOFS_CONSUMED);
+								// Native proofs already own an immutable canonical list. Retain its marker and
+								// cached hash rather than forcing every output clause to sort the bindings again.
+								List<CandidateRealizationInputBinding> bindings = proof.immediateBindings();
+								boolean complete = true;
+								// Small proof lists dominate training workloads: a short linear scan is
+								// cheaper than allocating nested maps. Index only multi-input wide rows.
+								DirectInputLookup lookup = null;
+								if(bindings.size() >= 8 && requiredInputs.size() >= 4) {
+									lookup = directInputLookups.get(bindings);
+									if(lookup == null) {
+										lookup = new DirectInputLookup(bindings);
+										if(bindings.size() <= DirectInputLookup.MAX_RETAINED_BINDINGS
+											- retainedDirectInputBindings) {
+											directInputLookups.put(bindings, lookup);
+											retainedDirectInputBindings += bindings.size();
+										}
+									}
+								}
+								for(DirectInputBinding input : requiredInputs) {
+									if(complexityMetrics != null)
+										complexityMetrics.recordDirectWork(DirectWork.REQUIRED_INPUT_CHECKS);
+									int inputPosition = input.position();
+									CompiledHopKey sourceOccurrence = input.sourceKey();
+									CandidateRealizationInputBinding binding = null;
+									if(lookup != null)
+										binding = lookup.firstExecutable(inputPosition, sourceOccurrence,
+											input.fType(), sources, complexityMetrics);
+									else
+										for(CandidateRealizationInputBinding candidate : bindings) {
+											if(complexityMetrics != null)
+												complexityMetrics.recordDirectWork(DirectWork.BINDING_CANDIDATES_EXAMINED);
+											if(candidate.inputPosition() == inputPosition
+												&& candidate.source().rule().parentOccurrence() == sourceOccurrence
+												&& candidate.source().realization().emissionState().placementState().fType()
+													== input.fType() && sources.executable(candidate.source())) {
+												binding = candidate;
+												break;
+											}
+										}
+									if(binding == null) {
+										if(complexityMetrics != null)
+											complexityMetrics.recordDirectWork(DirectWork.INCOMPLETE_PROOFS);
+										complete = false;
+										break;
+									}
+								}
+								if(complete) {
+									boolean directInputsExact = bindings.stream().allMatch(binding -> {
+										if(binding.kind() != CandidateInputBindingKind.DIRECT)
+											return true;
+										CandidateEmissionRealization source = sources.nativeRealization(binding.source());
+										if(complexityMetrics != null) {
+											complexityMetrics.recordDirectWork(DirectWork.LAYOUT_CHECKS);
+											if(source != null && exactSourceLayouts.containsKey(source))
+												complexityMetrics.recordDirectWork(DirectWork.LAYOUT_CACHE_HITS);
+										}
+										return source != null
+											&& exactSourceLayouts.computeIfAbsent(source,
+												CandidateEmissionRealization::allOwnedSupportClausesHaveExactNativeLayout);
+									});
+									if(recomputeNative) {
+										bound.add(directNativePublication(proof, fact.key().parentOccurrence(),
+											emission.emissionState(), outputAnchor, nativeLineage,
+											directInputsExact));
+										continue;
+									}
+									PlacementProofKey continuityProof = new PlacementProofKey(
+										PlacementProofKind.NATIVE_CONTINUITY, fact.key().parentOccurrence(),
+										proof.normalizedSignature());
+									if(outputAnchor != null && proof.exactPartitionRanges() && directInputsExact)
+										for(CandidateRealizationSupportClause clause : realization.supportClauses())
+											bound.add(CandidateEmissionRealization.durable(emission.emissionState(), outputAnchor,
+												appendProof(clause.proofDependencies(), continuityProof), bindings));
+									else {
+										DurableAnchorKey outputPool = proof.outputWorkerPoolWitness();
+										// The continuity witness retains only the partition axis; its other
+										// extent is a placeholder. Publish the complete proved output map
+										// when available, including for selected VALUE_MAP inputs.
+										if(proof.exactPartitionRanges() && outputAnchor != null)
+											outputPool = normalizedNativeLayout(outputPool.placementId(), outputAnchor);
+										// One generation query can prove multiple layouts and precision
+										// classes. Only equivalent output authority may share a receipt.
+										String publicationLineage = nativeLineage
+											+ "|output-layout=" + nativeCompatibilityLayout(outputPool)
+											+ "|exact=" + proof.exactPartitionRanges();
+										// Keep the proved output FType and worker endpoints even when the
+										// runtime recomputes partition extents or changes the partition axis.
+										bound.add(proof.exactPartitionRanges()
+											? CandidateEmissionRealization.nativeLineage(emission.emissionState(),
+												publicationLineage, outputPool, List.of(continuityProof), bindings)
+											: CandidateEmissionRealization.nativeLineageDynamicLayout(emission.emissionState(),
+												publicationLineage, outputPool, List.of(continuityProof), bindings));
+									}
 								}
 							}
-							if(complete) {
-								boolean directInputsExact = bindings.stream().allMatch(binding -> {
-									if(binding.kind() != CandidateInputBindingKind.DIRECT)
-										return true;
-									CandidateEmissionRealization source = sources.nativeRealization(binding.source());
-									return source != null
-										&& exactSourceLayouts.computeIfAbsent(source,
-											CandidateEmissionRealization::allOwnedSupportClausesHaveExactNativeLayout);
-								});
-								if(recomputeNative) {
-									bound.add(directNativePublication(proof, fact.key().parentOccurrence(),
-										emission.emissionState(), outputAnchor, nativeLineage,
-										directInputsExact));
-									continue;
-								}
-								PlacementProofKey continuityProof = new PlacementProofKey(
-									PlacementProofKind.NATIVE_CONTINUITY, fact.key().parentOccurrence(),
-									proof.normalizedSignature());
-								if(outputAnchor != null && proof.exactPartitionRanges() && directInputsExact)
-									for(CandidateRealizationSupportClause clause : realization.supportClauses())
-										bound.add(CandidateEmissionRealization.durable(emission.emissionState(), outputAnchor,
-											appendProof(clause.proofDependencies(), continuityProof), bindings));
-								else {
-									DurableAnchorKey outputPool = proof.outputWorkerPoolWitness();
-									// The continuity witness retains only the partition axis; its other
-									// extent is a placeholder. Publish the complete proved output map
-									// when available, including for selected VALUE_MAP inputs.
-									if(proof.exactPartitionRanges() && outputAnchor != null)
-										outputPool = normalizedNativeLayout(outputPool.placementId(), outputAnchor);
-									// One generation query can prove multiple layouts and precision
-									// classes. Only equivalent output authority may share a receipt.
-									String publicationLineage = nativeLineage
-										+ "|output-layout=" + nativeCompatibilityLayout(outputPool)
-										+ "|exact=" + proof.exactPartitionRanges();
-									// Keep the proved output FType and worker endpoints even when the
-									// runtime recomputes partition extents or changes the partition axis.
-									bound.add(proof.exactPartitionRanges()
-										? CandidateEmissionRealization.nativeLineage(emission.emissionState(),
-											publicationLineage, outputPool, List.of(continuityProof), bindings)
-										: CandidateEmissionRealization.nativeLineageDynamicLayout(emission.emissionState(),
-											publicationLineage, outputPool, List.of(continuityProof), bindings));
-								}
-							}
+						}
+						finally {
+							if(complexityMetrics != null)
+								complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CONSUMPTION, consumeStarted);
 						}
 					}
 					// Keep a generic lineage only as staging authority when no exact direct
@@ -5184,15 +5285,27 @@ final class PlacementRelationClosure {
 					else
 						realizations.addAll(bound);
 				}
-				if(grounded != null && grounded.containsExact(realizations)) {
-					emissions.add(emission);
-					continue;
+				SearchSpaceMetrics.PhaseToken emissionStarted = complexityMetrics == null ? null
+					: complexityMetrics.startPhase(SearchSpaceMetrics.Phase.DIRECT_EMISSION_CANONICALIZATION);
+				try {
+					if(grounded != null && grounded.containsExact(realizations)) {
+						if(complexityMetrics != null)
+							complexityMetrics.recordDirectWork(DirectWork.EMISSIONS_REUSED);
+						emissions.add(emission);
+						continue;
+					}
+					CandidateEmissionFact reboundEmission = new CandidateEmissionFact(
+						emission.emissionState(), emission.executionFType(),
+						emission.derivedFoutAction(), realizations);
+					emissions.add(reboundEmission);
+					unchangedEmissions = false;
+					if(complexityMetrics != null)
+						complexityMetrics.recordDirectWork(DirectWork.EMISSIONS_REBUILT);
 				}
-				CandidateEmissionFact reboundEmission = new CandidateEmissionFact(
-					emission.emissionState(), emission.executionFType(),
-					emission.derivedFoutAction(), realizations);
-				emissions.add(reboundEmission);
-				unchangedEmissions = false;
+				finally {
+					if(complexityMetrics != null)
+						complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.DIRECT_EMISSION_CANONICALIZATION, emissionStarted);
+				}
 			}
 			rebound.add(unchangedEmissions ? fact : new CandidateRuleFact(fact.key(), fact.status(),
 				fact.capability(), fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
@@ -5226,14 +5339,18 @@ final class PlacementRelationClosure {
 		NativePlacementContinuity.NativeContinuityProof proof, CompiledHopKey owner,
 		PlacementEmissionState emissionState, DurableAnchorKey outputAnchor,
 		String nativeLineage, boolean directInputsExact) {
+		if(complexityMetrics != null)
+			complexityMetrics.recordDirectWork(DirectWork.MEMOIZED_NATIVE_PUBLICATION_REQUESTS);
 		DirectNativePublicationKey key = new DirectNativePublicationKey(proof, owner, emissionState,
 			outputAnchor, nativeLineage, directInputsExact, proof.exactPartitionRanges());
 		CandidateEmissionRealization cached = directNativePublicationMemo.get(key);
-		if(cached != null)
+		if(cached != null) {
+			if(complexityMetrics != null)
+				complexityMetrics.recordDirectWork(DirectWork.MEMOIZED_NATIVE_PUBLICATION_CACHE_HITS);
 			return cached.key().emissionState() == emissionState ? cached
 				: PlacementSupportRelations.rebindRealization(cached, emissionState);
-		PlacementProofKey continuityProof = new PlacementProofKey(
-			PlacementProofKind.NATIVE_CONTINUITY, owner, proof.normalizedSignature());
+		}
+		PlacementProofKey continuityProof = proof.continuityProofKey(owner);
 		List<CandidateRealizationInputBinding> bindings = proof.immediateBindings();
 		CandidateEmissionRealization publication;
 		if(outputAnchor != null && proof.exactPartitionRanges() && directInputsExact)
@@ -5280,6 +5397,8 @@ final class PlacementRelationClosure {
 	private record GroundedNativePreparation(List<CandidateEmissionRealization> retained,
 		Map<PlacementIdentity.PlacementRealizationKey,
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause>> prior,
+		IdentityHashMap<PlacementIdentity.PlacementRealizationKey,
+			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause>> priorByIdentity,
 		boolean hasStaging, boolean hasConflictingEqualAuthority) {
 		private boolean containsExact(List<CandidateEmissionRealization> realizations) {
 			if(hasStaging || hasConflictingEqualAuthority)
@@ -5292,7 +5411,9 @@ final class PlacementRelationClosure {
 			for(int index = retained.size(); index < realizations.size(); index++) {
 				CandidateEmissionRealization realization = realizations.get(index);
 				Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> clauses =
-					prior.get(realization.key());
+					priorByIdentity.get(realization.key());
+				if(clauses == null)
+					clauses = prior.get(realization.key());
 				if(clauses == null)
 					return false;
 				for(CandidateRealizationSupportClause candidate : realization.supportClauses()) {
@@ -5311,12 +5432,16 @@ final class PlacementRelationClosure {
 		Map<PlacementIdentity.PlacementRealizationKey,
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause>> prior =
 			new HashMap<>();
+		IdentityHashMap<PlacementIdentity.PlacementRealizationKey,
+			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause>> priorByIdentity =
+			new IdentityHashMap<>();
 		boolean hasStaging = false;
 		boolean hasConflictingEqualAuthority = false;
 		for(CandidateEmissionRealization candidate : emission.realizations()) {
 			List<CandidateRealizationSupportClause> grounded = new ArrayList<>();
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> clauses =
 				prior.computeIfAbsent(candidate.key(), ignored -> new HashMap<>());
+			priorByIdentity.put(candidate.key(), clauses);
 			for(CandidateRealizationSupportClause clause : candidate.supportClauses()) {
 				if(clause.inputBindings().isEmpty()) {
 					hasStaging = true;
@@ -5332,7 +5457,7 @@ final class PlacementRelationClosure {
 					: CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
 						candidate.key(), grounded));
 		}
-		return new GroundedNativePreparation(List.copyOf(retained), prior,
+		return new GroundedNativePreparation(List.copyOf(retained), prior, priorByIdentity,
 			hasStaging, hasConflictingEqualAuthority);
 	}
 

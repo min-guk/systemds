@@ -1477,6 +1477,7 @@ public final class PlacementAnalysis {
 		private final boolean nativeWorkerPoolLayoutExact;
 		private final IndexedSupportClauses indexedRelation;
 		private final int indexedRowOrdinal;
+		private final int hash;
 
 		public CandidateRealizationSupportClause(List<PlacementProofKey> proofDependencies,
 			List<CandidateRealizationInputBinding> inputBindings) {
@@ -1503,6 +1504,8 @@ public final class PlacementAnalysis {
 			this.nativeWorkerPoolLayoutExact = nativeWorkerPoolLayoutExact;
 			indexedRelation = null;
 			indexedRowOrdinal = -1;
+			hash = supportClauseHash(this.proofDependencies, this.inputBindings,
+				this.nativeWorkerPoolWitness, this.nativeWorkerPoolLayoutExact);
 		}
 
 		private CandidateRealizationSupportClause(IndexedSupportClauses relation, int row) {
@@ -1514,6 +1517,8 @@ public final class PlacementAnalysis {
 			inputBindings = relation.bindingsAt(row);
 			nativeWorkerPoolWitness = relation.witnessAt(row);
 			nativeWorkerPoolLayoutExact = relation.layoutExactAt(row);
+			hash = supportClauseHash(proofDependencies, inputBindings,
+				nativeWorkerPoolWitness, nativeWorkerPoolLayoutExact);
 		}
 
 		static CandidateRealizationSupportClause indexed(IndexedSupportClauses relation, int row) {
@@ -1540,13 +1545,16 @@ public final class PlacementAnalysis {
 				&& proofDependencies.equals(that.proofDependencies)
 				&& inputBindings.equals(that.inputBindings);
 		}
-		@Override public int hashCode() {
+		private static int supportClauseHash(List<PlacementProofKey> proofs,
+			List<CandidateRealizationInputBinding> bindings,
+			DurableAnchorKey witness, boolean layoutExact) {
 			// Preserve the former record hash, also used by Cartesian list hashing.
-			int hash = proofDependencies.hashCode();
-			hash = 31 * hash + inputBindings.hashCode();
-			hash = 31 * hash + Objects.hashCode(nativeWorkerPoolWitness);
-			return 31 * hash + Boolean.hashCode(nativeWorkerPoolLayoutExact);
+			int result = proofs.hashCode();
+			result = 31 * result + bindings.hashCode();
+			result = 31 * result + Objects.hashCode(witness);
+			return 31 * result + Boolean.hashCode(layoutExact);
 		}
+		@Override public int hashCode() { return hash; }
 		@Override public String toString() {
 			return "CandidateRealizationSupportClause[proofDependencies=" + proofDependencies
 				+ ", inputBindings=" + inputBindings + ", nativeWorkerPoolWitness=" + nativeWorkerPoolWitness

@@ -198,24 +198,14 @@ final class PlacementCandidateGenerator {
 			throw oracleRuntimeFailure("oracle execution relation", key.normalizedSignature(),
 				hop, inputDomains, e);
 		}
+		CandidateHeaders headers = new CandidateHeaders(complexityMetrics);
 		java.util.function.BiConsumer<List<FType>,DecisionEvidence> processCombination = (inputs, relationEvidence) -> {
-			CandidateRuleKey candidateKey = new CandidateRuleKey(key, candidateInputStates(inputs));
-			ruleKeys.add(candidateKey);
 			Set<CandidateEmissionFact> exactEmissionFacts = new LinkedHashSet<>();
 			OpCaps caps;
 			DecisionEvidence evidence;
 			boolean shapeDependent;
 			try {
-				if(relationEvidence != null)
-					evidence = relationEvidence;
-				else {
-					if(complexityMetrics != null)
-						complexityMetrics.recordCandidateOracleCall();
-					evidence = preparedOracle.decideWithEvidence(inputs,
-						exactShapeHint(hop, shape, inputShapeFacts,
-							singlePartitions.fullInputHint(hop, inputAnchorOwners, inputAnchors,
-								exactCandidateSinglePartitions, inputs)));
-				}
+				evidence = Objects.requireNonNull(relationEvidence, "exact rule evidence");
 				caps = evidence.caps();
 				shapeDependent = evidence.shapeDependent();
 			}
@@ -224,6 +214,9 @@ final class PlacementCandidateGenerator {
 			}
 			if(caps.reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR)
 				throw oracleReportedRuleError(key.normalizedSignature(), hop, inputs, caps);
+			// Exact rule evaluation (and failure propagation) precedes candidate allocation.
+			CandidateRuleKey candidateKey = new CandidateRuleKey(key, candidateInputStates(inputs));
+			ruleKeys.add(candidateKey);
 			if(legal.contains(cp) && allowsEmission(privacy, hop, caps, inputs, cp, false, null))
 				exactEmissionFacts.add(candidateEmissionFact(exactLegalState(legal, cp), false, null));
 			ExactRightIndexRuntimeFact exactRightIndex = exactRightIndexRuntimeFact(
@@ -302,10 +295,15 @@ final class PlacementCandidateGenerator {
 					}
 			}
 			ruleFacts.add(candidateRuleFact(hop, candidateKey, inputShapeFacts, inputs, caps,
-				evidence, exactRightIndex, exactEmissionFacts, privacy, preparedProfile));
+				evidence, exactRightIndex, exactEmissionFacts, privacy, preparedProfile, headers));
 		};
 		java.math.BigInteger executionRegionTuples = java.math.BigInteger.ZERO;
 		if(executionRelation != null) {
+			// Route diagnostics count execution-relation, MRV, and Cartesian selection once per
+			// generator invocation. CP_FAMILY is counted separately for every published family.
+			if(complexityMetrics != null)
+				complexityMetrics.recordCandidateRoute(
+					SearchSpaceMetrics.CandidateRoute.EXECUTION_RELATION, hop.getOpString());
 			Set<OracleFacade.ExecutionRegion> familyRegions =
 				Collections.newSetFromMap(new java.util.IdentityHashMap<>());
 			if(supportsCpRuleFamily(hop, privacy))
@@ -318,6 +316,9 @@ final class PlacementCandidateGenerator {
 					if(isCpRuleFamilyEvidence(evidence)) {
 						cpRuleFamiliesByParent.computeIfAbsent(key, ignored -> new ArrayList<>())
 							.add(cpRuleFamily(key, cp, inputDomains, region, evidence));
+						if(complexityMetrics != null)
+							complexityMetrics.recordCandidateRoute(
+								SearchSpaceMetrics.CandidateRoute.CP_FAMILY, hop.getOpString());
 						familyRegions.add(region);
 						executionRegionTuples = executionRegionTuples.add(regionTuples);
 					}
@@ -326,9 +327,34 @@ final class PlacementCandidateGenerator {
 				executionRelation, familyRegions, processCombination, complexityMetrics)
 					.add(executionRegionTuples);
 		}
-		else
-			forEachInputCombination(inputDomains, privacy, preparedOracle,
-				inputs -> processCombination.accept(inputs, null), complexityMetrics);
+		else {
+			if(complexityMetrics != null)
+				complexityMetrics.recordCandidateRoute(usesMrvFallback(privacy, preparedOracle)
+					? SearchSpaceMetrics.CandidateRoute.MRV
+					: SearchSpaceMetrics.CandidateRoute.CARTESIAN, hop.getOpString());
+			if(complexityMetrics != null)
+				complexityMetrics.recordCandidateRoute(
+					SearchSpaceMetrics.CandidateRoute.EXACT_RULE_RESIDUAL, hop.getOpString());
+			var exactRule = preparedOracle.prepareExactRuleDecision(inputs ->
+				exactShapeHint(hop, shape, inputShapeFacts,
+					singlePartitions.fullInputHint(hop, inputAnchorOwners, inputAnchors,
+						exactCandidateSinglePartitions, inputs)));
+			forEachInputCombination(inputDomains, privacy, preparedOracle, inputs -> {
+				DecisionEvidence evidence;
+				try {
+					if(complexityMetrics != null)
+						complexityMetrics.recordCandidateOracleCall();
+					evidence = exactRule.decide(inputs);
+				}
+				catch(RuntimeException failure) {
+					throw oracleRuntimeFailure("oracle decision", key.normalizedSignature(),
+						hop, inputs, failure);
+				}
+				processCombination.accept(inputs, evidence);
+			}, complexityMetrics);
+			if(complexityMetrics != null)
+				complexityMetrics.recordExactRule(exactRule.diagnostics());
+		}
 		if(executionRelation != null && complexityMetrics != null) {
 			complexityMetrics.recordExecutionRelation(executionRelation.regions().size(),
 				executionRelation.oracleEvaluations());
@@ -486,28 +512,36 @@ final class PlacementCandidateGenerator {
 	private CandidateRuleFact candidateRuleFact(Hop hop, CandidateRuleKey key,
 		List<NodeShapeFact> inputShapeFacts, List<FType> inputs, OpCaps caps, DecisionEvidence evidence,
 		ExactRightIndexRuntimeFact exactRightIndex, Set<CandidateEmissionFact> exactEmissionFacts,
-		GenerationPrivacy privacy, PreparedProfile preparedProfile) {
-		List<CandidateRuleNote> notes = caps.notes().stream()
-			.map(note -> new CandidateRuleNote(note.code(), note.message())).toList();
-		FType nativeFoutFType = exactRightIndex == null
-			? caps.foutFType().orElse(null) : exactRightIndex.outputFType();
-		CandidateCapabilityFact capability = new CandidateCapabilityFact(caps.category(), caps.opcode(), caps.exec(),
-			caps.placement(), nativeFoutFType, caps.reason(), caps.detail().orElse(""), notes);
-		var proof = evidence.shapeProof();
-		Map<String,String> consultedFacts = new LinkedHashMap<>(proof.consultedFacts());
-		List<String> requiredFacts = new ArrayList<>(proof.requiredFacts());
-		if(exactRightIndex != null) {
-			consultedFacts.put("rightIndex.literalBounds", exactRightIndex.literalBounds());
-			consultedFacts.put("rightIndex.inputAnchor", exactRightIndex.inputAnchor());
-			consultedFacts.put("rightIndex.filteredPartitions",
-				Integer.toString(exactRightIndex.filteredPartitions()));
-			consultedFacts.put("rightIndex.runtimeOutputFType", exactRightIndex.outputFType().name());
-			requiredFacts.add("rightIndex.literalBounds");
-			requiredFacts.add("rightIndex.inputAnchor");
-			requiredFacts.add("rightIndex.filteredPartitions");
+		GenerationPrivacy privacy, PreparedProfile preparedProfile, CandidateHeaders headers) {
+		CandidateHeader header = exactRightIndex == null ? headers.find(evidence) : null;
+		if(header == null) {
+			List<CandidateRuleNote> notes = caps.notes().stream()
+				.map(note -> new CandidateRuleNote(note.code(), note.message())).toList();
+			FType nativeFoutFType = exactRightIndex == null
+				? caps.foutFType().orElse(null) : exactRightIndex.outputFType();
+			CandidateCapabilityFact capability = new CandidateCapabilityFact(caps.category(), caps.opcode(), caps.exec(),
+				caps.placement(), nativeFoutFType, caps.reason(), caps.detail().orElse(""), notes);
+			var proof = evidence.shapeProof();
+			Map<String,String> consultedFacts = new LinkedHashMap<>(proof.consultedFacts());
+			List<String> requiredFacts = new ArrayList<>(proof.requiredFacts());
+			if(exactRightIndex != null) {
+				consultedFacts.put("rightIndex.literalBounds", exactRightIndex.literalBounds());
+				consultedFacts.put("rightIndex.inputAnchor", exactRightIndex.inputAnchor());
+				consultedFacts.put("rightIndex.filteredPartitions",
+					Integer.toString(exactRightIndex.filteredPartitions()));
+				consultedFacts.put("rightIndex.runtimeOutputFType", exactRightIndex.outputFType().name());
+				requiredFacts.add("rightIndex.literalBounds");
+				requiredFacts.add("rightIndex.inputAnchor");
+				requiredFacts.add("rightIndex.filteredPartitions");
+			}
+			CandidateShapeProofFact shapeProof = new CandidateShapeProofFact(consultedFacts,
+				requiredFacts, new ArrayList<>(proof.missingRequiredFacts()));
+			header = headers.remember(evidence, new CandidateHeader(capability, shapeProof),
+				exactRightIndex == null);
 		}
-		CandidateShapeProofFact shapeProof = new CandidateShapeProofFact(consultedFacts,
-			requiredFacts, new ArrayList<>(proof.missingRequiredFacts()));
+		CandidateCapabilityFact capability = header.capability();
+		CandidateShapeProofFact shapeProof = header.shapeProof();
+		var proof = evidence.shapeProof();
 		List<List<FType>> profileInputs = profileInputDomains(inputShapeFacts, inputs);
 		// This native replica matmul requires an actually local LHS. Expanding that
 		// exact absence into every matrix FType loses its BROADCAST output profile.
@@ -540,6 +574,7 @@ final class PlacementCandidateGenerator {
 			throw oracleRuntimeFailure("candidate profile", key.parentOccurrence().normalizedSignature(), hop,
 				profileInputs, e);
 		}
+		profile = headers.profile(profile);
 		CandidateEvaluationStatus status = profile.available() ? CandidateEvaluationStatus.AVAILABLE
 			: CandidateEvaluationStatus.PROFILE_ERROR;
 		if(status == CandidateEvaluationStatus.AVAILABLE && exactEmissionFacts.isEmpty() && privacy != null)
@@ -548,6 +583,48 @@ final class PlacementCandidateGenerator {
 		return new CandidateRuleFact(key, status, capability, shapeProof, profile,
 			status == CandidateEvaluationStatus.AVAILABLE ? List.copyOf(exactEmissionFacts) : List.of(),
 			profile.evaluationFailure());
+	}
+
+	private record CandidateHeader(CandidateCapabilityFact capability, CandidateShapeProofFact shapeProof) { }
+
+	/** Build-local value compression only; never shares candidate keys, support or owner authority. */
+	private static final class CandidateHeaders {
+		private static final int LIMIT = 256;
+		private final Map<DecisionEvidence,CandidateHeader> byEvidence = new java.util.IdentityHashMap<>();
+		private final Map<CandidateHeader,CandidateHeader> headers = new java.util.HashMap<>();
+		private final Map<CandidateProfileFact,CandidateProfileFact> profiles = new java.util.HashMap<>();
+		private final SearchSpaceMetrics metrics;
+		private CandidateHeaders(SearchSpaceMetrics metrics) { this.metrics = metrics; }
+		private CandidateHeader find(DecisionEvidence evidence) {
+			CandidateHeader prior = byEvidence.get(evidence);
+			if(prior != null && metrics != null)
+				metrics.recordCandidateHeader(true);
+			return prior;
+		}
+		private CandidateHeader remember(DecisionEvidence evidence, CandidateHeader header,
+			boolean evidenceComplete) {
+			CandidateHeader prior = headers.get(header);
+			if(metrics != null)
+				metrics.recordCandidateHeader(prior != null);
+			if(prior == null) {
+				prior = header;
+				if(headers.size() < LIMIT)
+					headers.put(header, header);
+			}
+			if(evidenceComplete && byEvidence.size() < LIMIT)
+				byEvidence.put(evidence, prior);
+			return prior;
+		}
+		private CandidateProfileFact profile(CandidateProfileFact profile) {
+			CandidateProfileFact prior = profiles.get(profile);
+			if(metrics != null)
+				metrics.recordCandidateProfile(prior != null);
+			if(prior != null)
+				return prior;
+			if(profiles.size() < LIMIT)
+				profiles.put(profile, profile);
+			return profile;
+		}
 	}
 
 	private FTypeProfile inferProfile(String queryScope, PreparedProfile preparedProfile,
@@ -823,14 +900,19 @@ final class PlacementCandidateGenerator {
 	static void forEachInputCombination(List<List<FType>> domains, GenerationPrivacy privacy,
 		OracleFacade.PreparedDecision preparedOracle,
 		java.util.function.Consumer<List<FType>> consumer, SearchSpaceMetrics metrics) {
-		if(privacy == null || privacy.protectedPayloadPositions().isEmpty()
-			|| !preparedOracle.supportsPartialFedFeasibility()) {
+		if(!usesMrvFallback(privacy, preparedOracle)) {
 			enumerateInputCombinations(domains, privacy, new ArrayList<>(), consumer, metrics);
 			return;
 		}
 		List<FType> assignment = new ArrayList<>(Collections.nCopies(domains.size(), null));
 		enumerateInputCombinationsMrv(domains, privacy, preparedOracle, assignment,
 			new boolean[domains.size()], 0, false, consumer, metrics);
+	}
+
+	private static boolean usesMrvFallback(GenerationPrivacy privacy,
+		OracleFacade.PreparedDecision preparedOracle) {
+		return privacy != null && !privacy.protectedPayloadPositions().isEmpty()
+			&& preparedOracle.supportsPartialFedFeasibility();
 	}
 
 	/**

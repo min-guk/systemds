@@ -1,0 +1,15 @@
+X = federated(addresses=list("worker1:8001/data/P2P2D_features.data"), ranges=list(list(0, 0), list(50000, 2100)))
+
+[U, V] = als(
+  X=X,
+  rank=10,
+  regType="L2",
+  reg=0.000001,
+  maxi=10,
+  check=FALSE,
+  thr=0.0001,
+  seed=2026072701,
+  verbose=FALSE
+)
+
+write(V, "outputs/als.res", format="csv")

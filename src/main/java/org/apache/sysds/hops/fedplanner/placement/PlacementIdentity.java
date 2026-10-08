@@ -469,12 +469,47 @@ public final class PlacementIdentity {
 		CONTROL_FLOW
 	}
 
-	public record PlacementProofKey(PlacementProofKind kind, CompiledHopKey owner,
-		String authoritySignature) implements Comparable<PlacementProofKey> {
-		public PlacementProofKey {
-			Objects.requireNonNull(kind, "kind");
-			authoritySignature = requireText(authoritySignature, "authoritySignature");
+	public static final class PlacementProofKey implements Comparable<PlacementProofKey> {
+		private final PlacementProofKind kind;
+		private final CompiledHopKey owner;
+		private final String authoritySignature;
+		private final int hash;
+
+		public PlacementProofKey(PlacementProofKind kind, CompiledHopKey owner,
+			String authoritySignature) {
+			this.kind = Objects.requireNonNull(kind, "kind");
+			this.owner = owner;
+			this.authoritySignature = requireText(authoritySignature, "authoritySignature");
+			hash = proofHash(kind, owner, this.authoritySignature.hashCode());
 		}
+
+		private PlacementProofKey(PlacementProofKind kind, CompiledHopKey owner,
+			String authoritySignature, int authorityHash) {
+			this.kind = Objects.requireNonNull(kind, "kind");
+			this.owner = owner;
+			this.authoritySignature = requireText(authoritySignature, "authoritySignature");
+			hash = proofHash(kind, owner, authorityHash);
+		}
+
+		static PlacementProofKey fromNormalizedText(PlacementProofKind kind,
+			CompiledHopKey owner, PlacementAnalysis.NormalizedText authority) {
+			Objects.requireNonNull(kind, "kind");
+			Objects.requireNonNull(authority, "authoritySignature");
+			int authorityHash = authority.hashCode();
+			return new PlacementProofKey(kind, owner, authority.materialize(), authorityHash);
+		}
+
+		private static int proofHash(PlacementProofKind kind, CompiledHopKey owner,
+			int authorityHash) {
+			// Match java.lang.runtime.ObjectMethods' generated record hash exactly.
+			int result = kind.hashCode();
+			result = 31 * result + Objects.hashCode(owner);
+			return 31 * result + authorityHash;
+		}
+
+		public PlacementProofKind kind() { return kind; }
+		public CompiledHopKey owner() { return owner; }
+		public String authoritySignature() { return authoritySignature; }
 
 		public String normalizedSignature() {
 			String cached = cachedSignature(this);
@@ -485,6 +520,16 @@ public final class PlacementIdentity {
 
 		@Override public int compareTo(PlacementProofKey that) {
 			return PlacementAnalysis.compareCanonicalOrdering(this, that);
+		}
+		@Override public boolean equals(Object other) {
+			return this == other || other instanceof PlacementProofKey that
+				&& kind == that.kind && Objects.equals(owner, that.owner)
+				&& authoritySignature.equals(that.authoritySignature);
+		}
+		@Override public int hashCode() { return hash; }
+		@Override public String toString() {
+			return "PlacementProofKey[kind=" + kind + ", owner=" + owner
+				+ ", authoritySignature=" + authoritySignature + ']';
 		}
 	}
 

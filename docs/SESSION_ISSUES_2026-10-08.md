@@ -226,3 +226,150 @@
 - **측정/재현**: `experiments/factorized-plan-space-20261008/`의 `verify.py`, compile/test 명령·로그·SHA256, `runtime-comparison.json`, baseline/after-v2 runtime 명령·모니터링. 전체 engine/runtime은 `/grid/3/cofee-lm-sweep-mchoi-20260914/factorized-plan-space-20261008/`. Commit/push 없음.
 - **잔여 이슈**: 일반 FED rule family, 혼합 source/action의 일반 support selector, 모든 joint/함수 경계의 압축 소비는 아직 완료되지 않았다. Clause-sensitive 소비자와 일반 indexed fallback의 Alternative 전개가 남는다. 전체 end-to-end 목표 완료로 보고하지 않는다.
 - **잠재 회귀 위험/감지**: Family 적용 조건을 넓히면서 shape/profile/privacy의 공통성을 가정하거나 source identity를 지우면 의미가 달라질 수 있다. 전수 rule 비교·source/action/proof identity·Local/Exact objective raw bits·Docker protected/joint 음성 사례로 감지한다. Sparse factor의 holes, canonical tie, 조건부 source 의존성을 빠뜨리는 위험은 dense parity와 boundary/reduced 회귀로 확인한다.
+
+## Native VALUE_MAP 증명의 반복 전체 순회 — 수정/검증 중
+
+- **증상**: 동일 main276 기반 canonical LogReg W1의 기본 planner/cache 설정 진단에서 컴파일이 약49분 동안 완료되지 않았다. main-thread dump는 `fixedValueMapPool → resolveFixedValueMapGraph`의 endpoint 비교를 가리킨다. 단일 stack sample이 전체 시간 비중을 증명하지는 않는다.
+- **환경**: 별도 source worktree, main276 기준. 같은 Docker/입력/자원/고정 cost profile, production DMLScript CLI, compile_only. timeout 없이 실행하던 진단을 이번 수정 진행을 위해 controller SIGINT로 수동 중단했다. W3는 시작하지 않았고 해당 컨테이너 정리/8개 stage lease 해제를 확인했다.
+- **원인**: 쿼리마다 도달 가능한 VALUE_MAP graph를 만들고, grounding과 두 종류의 geometry exactness를 각각 전체 graph 반복 순회로 구했다. alias chain에서는 한 pass에 일부 노드만 바뀌는데도 모든 clause/source를 다시 읽는다.
+- **해결**: 같은 resolver revision 안에서 불변 local row를 공유하고, reverse dependency를 따라 변경만 전파한다. grounding queue는 기존 `(sweep round, BFS ordinal)` 순서를 보존하므로 최초로 선택되는 실제 anchor가 바뀌지 않는다. partition exactness와 full-geometry exactness는 서로 다른 bit로 전파한다.
+- **적용 원칙**: oracle/runtime/후보/비용 규칙은 변경하지 않았다. 모든 reachable node의 grounding, 모든 clause의 동일 worker endpoint, PART/OTHER의 증명 불가, revision 경계 및 기존 cache 의미를 유지한다. 임의 FIFO나 이미 계산한 하위 pool을 leaf로 치환하는 단축은 anchor 선택을 바꿀 수 있어 사용하지 않았다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/placement/NativePlacementContinuity.java`, `src/test/java/org/apache/sysds/hops/fedplanner/placement/NativeFixedPoolWorklistTest.java`.
+- **검증**: production 수정 전 신규8+기존13=21 tests PASS. 수정 후 같은21 PASS. 관련30개 suite의 JUnit240 tests PASS, 기존 ignore3. 신규 테스트는 고정 seed80개 순환 graph를 과거 BFS/전체 순회 oracle과 비교하며 pool 객체 값, 두 exactness flag, 질의 순서/cache, revision 변경, 늦게 grounding되는 anchor를 포함한다. 추가된 결정론적 작업량 테스트3개를 포함해 신규11 tests, offline Maven package47 tests PASS/BUILD SUCCESS. 101-node/102-edge dynamic diamond에서 decoding101, activation101, grounding102, geometry103, false 전파102회를 확인했다. 실제 Docker control은 후속 기록한다.
+- **잔여 이슈**: 이것은 공통 분석의 첫 번째 독립 개선이다. `enumerateImmediateSupports`의 조합 생성과 ExactPhysicalModel의 clause/input-authority 곱은 아직 변경하지 않았다. 이를 제거하려면 관계 표현·물리 변수·공동 비용·선택 receipt를 함께 이관해야 하며, 단순 lazy list를 완성으로 간주하지 않는다. 20초 달성 여부는 아직 미확인이다.
+- **잠재 회귀 위험/감지**: round/BFS 순서 차이로 anchor가 바뀌거나, 별도 선택 가능 clause의 미grounding cycle을 잘못 허용할 위험. frozen oracle 및 명시적인 R->[A,B], A->X, B=b, X=a 테스트로 탐지한다. revision을 넘어 공유되는 transitive 결과는 추가하지 않았다.
+- **계획/근거**: `/grid/3/cofee-lm-sweep-mchoi-20260914/factored-support-20261008/PLAN.md`, `evidence/`; 이전 중단 진단은 `../logreg-production-default-20261008T1225Z/STOP_RESULT.md`.
+
+### 별도 owner 객체 사이의 decoded-row cache 오염 — 수정
+
+- **증상/원인**: 초기 변경의 구조 동등성 기준 cache가 동일 값이지만 다른 객체인 CompiledHopKey의 증명 실패/성공을 공유할 수 있었다. 원래 candidate-fact 조회는 owner identity 기준이며, 원래 내부 BFS는 다른 질의의 결과 cache를 참조하지 않았으므로 새 회귀였다.
+- **해결**: decoded-row cache를 exact owner identity별로 나누고 그 내부에서만 reference 구조 동등성을 재사용한다. 기존 outer 결과 cache 의미는 변경하지 않는다.
+- **검증**: foreign C 질의 뒤 canonical R->C가 실패하는 regression은 원본 main PASS / 수정 전 후보 FAIL을 먼저 확인했다. 역방향(정상 C의 cache가 foreign C에 권한을 빌려주는 경우)도 함께 검사한다. 최종 테스트는 신규12개, fixed-pool 관련25개 PASS이며 fresh offline Maven package48개 PASS/BUILD SUCCESS다. 최종 source hash는 6838409912094496101dad1aeb18827994574512a3e0254389e5b030c27b634f다.
+- **원칙/위험**: worker endpoint가 같아도 분석의 owner identity를 공유하는 것은 아니다. 구조 cache key가 identity-owned 권한 경계를 넘지 않도록 검사하며 두 방향 회귀 테스트로 재발을 탐지한다.
+
+### 최종 검증/성능 상태
+
+- 최종 fresh offline Maven package48 PASS/BUILD SUCCESS, fixed-pool25 PASS.195builtin byte 일치, production delta는 NativePlacementContinuity.java 하나다. 독립 리뷰 최종 APPROVE.
+- LogReg LAN DP-local W1/W3는 같은 DML/XML에서 각각 성능검증60초 watchdog rc124로 공통 분석 미완료. process wall61.021/60.919초는 완료 시간이 아니다.20초 목표 미달, 전체 compile 개선율 미확인.
+- bounded JFR1회에서 canonical text comparison top784/3818 samples, native witness equality386, string hash347, identity-map clear269; pruning 포함684, proof graph 생성 포함333. 이번 fixed-pool 경로는9 samples로 앞60초의 주된 비용을 해결한 것은 아니다. 단일 late stack에 대한 최적화와 전체 병목 해결을 구별한다.
+- 정식2회/진단1회 모두 cleanup과 stage lease 해제 완료. Runtime 미실행, commit/push 없음.
+- 다음 구현 범위는 공통 support 관계와 physical/DP 변수 표현을 연결한 factorization이다. 현행 support products/ExactPhysicalModel expansion은 남아 있으며 완료로 보고하지 않는다.
+- 보고서: `docs/FEDPLANNER_SHARED_SUPPORT_PROGRESS_2026-10-08_KO.md`. benchmark harness3파일은 baseline에서 byte-identical로 가져온 것이고 이번 수정에서 evaluator 정책을 바꾸지 않았다.
+
+
+## origin/main fetch 및 작업 브랜치 병합 — 완료
+
+- **상태/환경**: `refactor/factored-support-20261008`에서 `origin/main`을 fetch하고 `276f958efc → e468797556` fast-forward 병합했다.
+- **문제/원인**: 기존 미커밋 변경을 임시 stash한 뒤 복원할 때, 양쪽에서 같은 세션 문서 끝에 추가한 기록이 충돌했다. 코드 충돌은 없었다.
+- **해결/수정 파일**: 이 문서의 upstream 추가 기록과 기존 로컬 추가 기록을 모두 보존했다. 다른 기존 수정 파일과 미추적 파일은 원본 bytes 그대로 복원했다.
+- **검증 방법**: HEAD와 fetch한 commit 일치, unmerged index 없음, 기존 6개 비문서 파일 SHA256 일치, 이 문서의 양쪽 추가분 포함, `git diff --check` 확인. 빌드/테스트는 이번 Git 동기화 요청에서 실행하지 않았다.
+- **잔여 이슈/잠재 회귀 위험**: 새 upstream 코드와 기존 미커밋 구현의 실행 호환성은 후속 테스트가 필요하다. 기존 pruning 계획은 이전 HEAD 기준이므로 구현 착수 전 새 factorization과 대조한다.
+- **의사결정 근거**: 합법성/oracle/runtime 규칙은 별도 수정하지 않고 요청된 upstream 동기화와 기존 작업 보존만 수행했다.
+- **복구 자료**: `/home/mchoi/.omx/merge-backups/dp-origin-main-20261008-kjzf2hm8`에 원본 파일, patch, manifest와 stash OID를 보존했다.
+
+## Local/Global 인증 비용 pruning 확대 — 구현 및 한정 검증 완료
+
+- **문제/원인**: Local support/quotient 및 Global dense/sparse/dyadic 합산은 같은 separator 상태에서 이미 확보한 best를 이용한 인증 비용 cutoff가 빠져 있었다. 다른 boundary 상태를 현재 비용만으로 삭제하면 exact message/lower/witness 계약이 깨지므로 같은 상태의 계산 생략만 추가했다.
+- **해결/수정 파일**: `ExactCategoricalSolver.java`에 인증된 prefix와 suffix-minimum 하한을 적용했다. Local cached minimum을 재사용하고 Global은 bucket의 저장 row를 scan한다. Local compact row의 stored/logical index 혼용도 수정했다. 신규 `CertifiedCostPruningParityTest`, `CertifiedCostPruningWorkTest`가 exact/lower/모든 elimination message/witness와 실제 child read 감소를 검사한다.
+- **앞단 합법성**: 최신 `e468797556`의 rule-directed/MRV/option-level support를 조사해 재사용했다. 이미 생성 전에 차단되는 불법 후보 guard를 중복 추가하지 않았고, discovery의 late support와 joint 관계는 보존했다. 합법 상태의 비용 동등성 압축을 불법성으로 재분류하지 않았다.
+- **검증**: 변경 전 230 fixed-seed 모델 behavior lock 통과. 변경 후 32 suites **270 tests PASS**, Maven package 성공, 마지막 동일 270개 재실행도 성공했다. 신규 19개 중 결정론적 fixture는 Local/Global suffix-only cut과 read 감소를 확인한다. 독립 최종 code review APPROVE, `git diff --check` 통과.
+- **기존 실패**: 변경 전부터 존재한 `ReferenceProductPrefixPruningTest` 2건과 `CandidatePrivacyInputPruningTest` 5건은 변경 후에도 같은 method에서 실패한다. MRV 방문 기대와 current-domain pruning certificate/audit provenance 계약의 문제로 분리했으며 테스트를 완화/비활성화하지 않았다. 저장소 전체 테스트가 모두 green이라는 주장은 하지 않는다.
+- **Docker 검증/성능**: 공식 `run_LAN_docker.sh --cost-runtime-validation`, 동일 pinned image/worker 2/CPU 4/RAM 8 GiB/input/cost/probe에서 5쌍 + 재측정 5쌍을 실행했다. 총 **120/120 workload PASS**, objective certificate/assignment/action/numeric output 동일, runtime fallback/repair 0. 첫 측정 aggregate compile median +5.19%로 gate에 걸렸으나 추가 5쌍에서 +1.07%, 재측정 모든 case가 +5% 이내여서 지속 회귀는 재현되지 않았다. 범용 속도 향상 보장은 하지 않는다.
+- **실행 환경 이슈**: snap Docker가 `/grid` bind source를 읽지 못해 최초 container가 애플리케이션 실행 전 실패했다. 원본 bytes를 자체 `/home` stage에 배치해 해결했고, 20개 성공 run은 SHA256 대조 후 grid로 보존했다. live container 참조가 없음을 확인한 뒤 자체 stage만 정리했다.
+- **잠재 위험/잔여 범위**: suffix 준비 scan이 작은 bucket에서는 절약한 read보다 클 수 있다. 큰 standalone DP-Global/LogReg 전체 runtime·peak memory는 미측정이다. 음수/residue/불충분한 인증/Local lower 불일치/Global tie callback에는 새 cutoff를 적용하지 않는다. whole-plan incumbent로 boundary cell을 삭제하는 기법은 별도 계약 설계가 필요하다.
+- **기존 작업 보존**: 이전 continuity/benchmark scripts/진행 문서/테스트는 원본 bytes 그대로 유지했다. 이 세션 문서는 기존 내용 뒤에만 추가했다. 새 의존성/공개 옵션/runtime fallback/commit/push는 없다.
+- **상세 결과/재현**: `docs/DP_PRUNING_PARITY_2026-10-08_KO.md`, `/grid/3/cofee-lm-sweep-mchoi-20260914/dp-pruning-parity-20261008/`의 baseline, candidate, evidence, docker-pairs, docker-recheck.
+
+## pruning 후속 독립 재검증 — 수정 필요, 코드 미변경
+
+- **증상/원인 1 (HIGH)**: 선택적 Local/Global suffix bound 배열 할당 실패가 기존 정확한 계산으로 복귀하지 않고 `ResourceExhaustedException`으로 종료한다. solver `:2345,:2382–2384`가 승인 계획 P3.6의 자원 부족 시 최적화 미적용 경로를 구현하지 않았다.
+- **증상/원인 2 (MEDIUM)**: factor가 없는 합법 변수의 빈 bucket에서 새 counters 계산이 `saturatedMultiply`의 분모 0을 만든다 (`:2507,:3914`). counters 없는 production 경로는 정상이다.
+- **검증/재현**: 선택적 할당에만 실패를 주입했을 때 LEGACY는 10을 반환하고 SUFFIX는 Local/Global 모두 실패했다. isolated-variable 계측에서도 `/ by zero`를 재현했다. 별도 3 tests / 3 failures. 실제 heap 고갈 측정이 아닌 오류 경로 주입임을 구분한다.
+- **추가 긍정 증거**: 핵심 270 tests 재통과, default SUFFIX lower/infinity/overflow replay 14 tests PASS, raw LEGACY↔SUFFIX 및 subnormal/near-max/105-bit 경계 replay 16 tests PASS. Global 20,000 모델 및 Local 30,000 생성 시도의 유효 모델에서 수치/선택 차이를 찾지 못했다.
+- **확장 테스트 한계**: 완료된 178 suites / 958 tests 중 24건 실패·오류. 그중 21개는 변경 전 binary에서도 같은 method가 실패했고, 1건은 test JVM 임시 경로를 grid로 바꿔 디스크 부족을 해소한 후 PASS. 나머지 2건의 timeout 비교는 미확인이다. 별도 Cartesian universe 열거 1 suite는 180초 초과 후 자기 JVM만 중단했으며 통과로 보고하지 않는다.
+- **해결 방향/잔여 버그**: 이번 요청은 검증이므로 코드 수정 없이 재현 증거와 필요한 수정 범위를 기록했다. optional bound 준비에서만 자원 예외를 처리하고, 곱셈의 0 인자를 처리하며 영구 회귀 테스트를 추가해야 한다. 비용 검증/산술 오류를 넓게 삼키지 않는다.
+- **현재 판정/원칙**: code-reviewer REQUEST CHANGES, architect WATCH. 이전 APPROVE는 최신 판정으로 대체한다. 합법성/oracle/runtime 규칙 변경이나 runtime fallback 없이 최적화 경계만 바로잡아야 한다.
+- **수정 파일/증거**: 문서 3개만 갱신했다. 상세 `docs/DP_PRUNING_VERIFICATION_2026-10-08_KO.md`, 증거 root `.../dp-pruning-parity-20261008/verification-20261008T2020/`. 기존 Docker 120회 기록은 SHA256 및 현재 byte-identical solver와의 대응만 재감사했으며 새 Docker 실행/성능측정은 아니다.
+
+
+## pruning 선택적 자원 경계·빈 bucket 수정 및 실제 planning 측정 — 수정 승인 / 성능 효과 미확인
+
+- **상태**: correctness 수정 승인. 독립 code-reviewer APPROVE, architect 최종 CLEAR. 실제 LogReg/GLM 속도 개선은 확인하지 못했다.
+- **증상/원인**: SUFFIX용 Local/Global bound 배열 할당 실패가 전체 exact 계산을 중단했고, 빈 factor bucket의 신규 counter 곱셈이 0으로 나눴다.
+- **해결/의사결정 근거**: 선택적 `allocateDoubles` 호출에서만 `ResourceExhaustedException`을 처리해 해당 bound 최적화를 생략한다. 기존 exact 합산을 재사용하고 skipped bucket/준비시간을 계측한다. Global 두 번째 low-word 할당도 포함한다. 곱셈의 0 인자는 즉시 0으로 반환한다. 합법성/oracle/runtime 규칙과 공개 ablation 의미는 변경하지 않았다. Runtime fallback이 아니다.
+- **수정 파일**: `ExactCategoricalSolver.java`, 신규 `CertifiedCostPruningFailureTest.java`, 보강 `CertifiedCostPruningWorkTest.java`; 이전 보고서 2개에 최신 판정 링크, 상세 `DP_PRUNING_REPAIR_2026-10-08_KO.md`.
+- **실패 재현/검증**: 수정 전 8개 중 5개 실패. 수정 후 raw LEGACY↔SUFFIX high/low/choices/lower/witness, subnormal/near-max/105-bit 및 Local lower≠exact/nonabsorbing-infinity/overflow를 영구 검사한다. 최종 fresh Maven package **33 suites / 283 tests PASS**, 실패/오류/skip 0, BUILD SUCCESS. 필수 할당·validation·산술 오류가 계속 전파됨도 검사한다. 전체 저장소 green 주장은 아니다.
+- **실제 Docker 조건/결과**: 공식 `run_LAN_docker.sh --function-boundary-compare`만 사용. 동결 pre-pruning/fixed JAR 전체 추출 classes, 동일 pinned image/비용/입력/4CPU quota/16GiB/10GiB heap, 실제 LogReg·GLM X50000×128 PRIVATE_AGGREGATE W1, Local/Global 각각 A/B 직렬 총8회. 모두 공통 분석 `analysis_begin` 뒤 60초 watchdog 미완료, 완료 receipt 없음, 관찰 OOM 0. 완료 시간·개선율을 산출하지 않는다. 61.29–61.63초 supervisor wall에는 진단/cleanup이 포함된다.
+- **진단/잔여 이슈**: 이미지에 jcmd가 없어 별도 official candidate 진단1회에서 SIGQUIT로 stack을 수집했다. 공통 `PlacementRelationClosure` direct-native realization binding에서 관찰됐으며 단일 stack을 전체 CPU profile로 해석하지 않는다. 비용 DP 전 공통 분석이 완료되지 않아 SUFFIX의 실제 workload 효과를 판단할 수 없었다. W3/runtime/production cut 횟수도 미검증이다.
+- **환경/보존**: snap Docker의 grid bind 불가와 root disk 부족은 자체 tmpfs stage로 대응했다. 두 JAR 차이는 solver class family뿐임을 독립 검증. 원본 명령/log/cgroup samples/hashes 및 전체 stage tar는 `/grid/3/cofee-lm-sweep-mchoi-20260914/dp-pruning-repair-20261008/`에 보존했다. own container9개 부재 확인 후 own tmpfs만 정리했고 다른 장기 실행 작업은 건드리지 않았다. 기존 unrelated dirty6파일 보존, commit/push 없음.
+- **잠재 회귀 위험/감지**: 광범위한 예외 catch로 비용 오류를 숨기지 않도록 failure propagation 테스트를 유지한다. 주입 테스트가 임의 실제 OOM 복구를 보장하지 않으며, suffix scan 준비 비용도 workload별 재측정이 필요하다. 고정 receipt가 있는 완료 run끼리만 시간·memory 효과를 비교한다.
+
+## 공통 Placement 분석 세부 계측 — 계측/병목 확인 완료, 실제 DP 성능은 미측정
+
+- **상태/문제 정의**: LogReg/GLM full compile이 DP 전 공통 분석에서 60초 watchdog에 걸려, pruning 개선 효과를 평가할 수 없었다. timeout을 늘리는 대신 direct binding/candidate/support/합법성 관계의 비용과 반복을 분리했다.
+- **환경/재현**: 공식 `run_LAN_docker.sh --function-boundary-compare`만 사용. 실제 `multiLogReg(maxi30,maxii5)`/`glm(moi20,mii5)`, X50000×128 PRIVATE_AGGREGATE W1, 같은 image/cost/input/4CPU/16GiB/10GiB heap. 기존 계측2회, 새 v1 계측2회, 상세 계측 OFF JFR2회, 최종 v2 계측2회, 총8회. JFR55초/watchdog60초 유지. root/grid snap 제약은 자체 tmpfs stage로만 대응했다.
+- **변경/해결 방법**: `SearchSpaceMetrics.java`의 기존 opt-in collector에 direct proof consumption/emission canonicalization phase, 사건·cache counters, 실제 candidate route, explicit/factorized relocation 분리를 추가했다. `PlacementRelationClosure.java`, `PlacementCandidateGenerator.java`의 실제 경로에 null-gated 관측만 붙였다. 기본 생산 collector=null, semantic predicate/owner identity/Oracle/DP/runtime 의미 그대로다. 경로 선택용 기존 MRV guard는 순수 helper로만 추출했다.
+- **계측 정확성 문제와 해결**: (1) raw opcode label에 변수명/상수값이 들어가 64칸 table이 조기 포화됐다. 진단 label suffix만 제거하고 overflow와 독립적인 fixed route totals를 추가했다. 최종 overflow0. (2) publication counter는 전체 publication이 아니라 memoized native 경로였으므로 명칭을 `MEMOIZED_NATIVE_*`로 바로잡았다. (3) 기존 signature observer의 hashing이 LogReg 계측 ON main sample18.83%를 차지했다. OFF/JFR 대조에서는0이며 생산 병목 우선순위를 다시 판단했다. (4) JFR의 5-frame 제한은 recording이 아닌 export default여서 execution sample을 depth64로 재분석했다.
+- **실제 관측/원인**: 최종 LogReg55.082초 snapshot의 direct binding inclusive43.670초(79.3%), proof consumption self15.309초; proof 소비2,336,957회, input 검사4,177,602회. OFF/JFR에서는 direct binding80.31%, support-clause hash22.32%, containsExact21.43%의 main sample. GLM53.521초 snapshot의 CFG replay self23.348초(43.6%); OFF/JFR canonical comparison52.20%. 비중은 서로 다른 부분 관측이며 더하거나 속도 개선율로 환산하지 않는다. 시간/할당에는 계측 비용이 포함되고 할당 bytes는 live heap/객체 수가 아니다.
+- **기존 최적화 적용**: 최종 후보 route는 Cartesian1501/4338, execution relation/CP family/MRV0/0이다. 주로 quaternary에 한정된 rule-directed 최적화가 이번 경로에 사용되지 않았으며 direct support는 별도 ordinal-prefix 열거다. 최종 snapshot에는 relocation0이지만 v1GLM의 더 늦은57.503초 snapshot에 compact product50개/logical188/explicit236084가 관측돼 실제 제한된 적용은 확인했다. 두 cutoff를 섞지 않는다.
+- **검증/수정 파일**: 새 `SearchSpaceFineGrainedMetricsTest.java`, `CandidateRouteMetricsTest.java`로 bounded counts, reset/live output, 실제 route 및 off/on analysis fingerprint/candidate facts parity를 검사했다. 최종 fresh Maven package **40 suites / 346 tests PASS**, 실패/오류/skip0, BUILD SUCCESS. 이전 pruning numerical/failure/parity도 포함한다. 단독 테스트의 vector module 누락 및 테스트의 route 순서 가정은 수정 후 재실행했고 실패 로그도 보존했다. 독립 code-reviewer APPROVE, architect CLEAR. 전체 저장소 테스트 green 주장은 아니다.
+- **artifact audit 문제와 해결**: v2 final manifest가 v1의 ZIP diff 목록을 재사용한 것을 독립 verifier가 발견했다. 실제182entries로 재계산하고 v1목록138entries는 별도 보존했다. 3개 계측 family 외에 기존 solver45class가 debug 재컴파일로 byte차이가 난다. solver source는 작업 전 SHA와 동일하다. javap에서 v2의 추가 mask local을 처음 accumulator로 오독한 것도 바로잡았다. high/low는0이며 차이는 mask local/slot 이동 및 debug metadata다. 최종 Maven 산출물 SHA `5d52d5ecbf5a5bfac236f18a46089e23423050601b4a5691015fce5f794fee42`로 테스트·진단 provenance를 기록했다.
+- **잔여 이슈/잠재 위험**: 8회 모두 common analysis 미완료/완료 receipt 없음. 따라서 실제 Local/Global SUFFIX cut·DP시간·전체 속도 향상은 미측정이고 다음 과제로 남긴다. 계측의 observer effect, 장시간 후 counter overflow, table의 per-opcode detail 손실 가능성이 있다. partial event count를 distinct semantic 중복으로 해석하면 잘못이다. collector-disabled JFR 대조와 exact full-context identity/parity tests로 잘못된 최적화 결론을 방지한다.
+- **다음 개선/의사결정 근거**: GLM ordered environment 재사용/긴 canonical compare 회피, LogReg immutable support/proof hash 및 exact membership 비용을 우선 줄인다. 이번 턴에는 의미 변경 최적화를 구현하지 않았다. runtime fallback/정책 완화/합법 후보 임의 삭제/timeout 확대 없이 측정과 증거 기반 우선순위만 확정했다.
+- **증거/보존**: 상세 `docs/PLACEMENT_ANALYSIS_PROFILE_2026-10-08_KO.md`; `/grid/3/cofee-lm-sweep-mchoi-20260914/placement-analysis-profile-20261008`의 원본 logs/JFR/commands/manifests, 독립 분석, tests. 자체 container8개 부재 확인; stage 전체 tar와 SHA, 5371개 sealed file의 archive/live hash를 독립 대조한 후 own stage만 정리 완료했다. 최종 독립 evidence audit PASS (bounded scope). 기존 dirty 작업을 보존하고 이 문서는 append-only 갱신했다. commit/push 없음.
+
+## Placement 병목 최적화와 training 연산 전수 경로 확장 — 구현/통합 검증 완료, Docker 측정 진행
+
+- **증상/원인**: 기존 LogReg는 immutable support/proof hash·exact membership, GLM은 canonical environment 비교와 ordered-set 재구축에 많은 비용을 썼다. topology cache hit 뒤에도 overlay 객체와 input lookup 작업이 남았고, 기존 determinant 경로는 weighted quaternary에 한정됐다.
+- **해결/의사결정 근거**: immutable hash 캐시·identity fast path, 작은 binding 선형 검색/큰 다중 입력에만 bounded index, exact 96-character canonical prefix/변경 없는 ordered-set 재사용, 불변 proof dependency overlay 공유를 적용했다. 전역 합법성/oracle 판단 자체는 완화하지 않았다.
+- **후보 생성**: 증명한 13 rule family의 determinant 선언을 추가했다. 나머지는 privacy를 통과한 각 tuple에 fresh exact ShapeHint로 forward rule을 실행하는 exact residual 경로를 사용하며, 완전히 같은 caps/ordered notes/full ShapeProof와 candidate header/profile만 build-local 최대256개로 공유한다. cache 포화는 공유만 중단하며 candidate나 평가를 삭제하지 않는다. right-index anchor/bounds 증거는 identity shortcut을 우회한다. profile inference/예외 전파를 생략하지 않는다.
+- **검토 중 발견/수정**: direct input lookup을 작은 proof마다 eager nested-map으로 만들면 회귀할 수 있었다. binding>=8 && requiredInput>=4에만 proof당 한 번 만들고 retained binding65536개로 제한했다. 처음 inventory의 CP_ONLY 분류는 대표 tuple 표본만으로 과도한 주장이므로 제거하고 relation32/exact residual56으로 수정했다. CP-only 관측은 비권위 표본 부가 정보로만 보존한다.
+- **수정 파일**: PlacementAnalysis, PlacementIdentity, PlacementRelationClosure, PlacementJointInputAnalysis, NativePlacementContinuity, PlacementCandidateGenerator, SearchSpaceMetrics, Rulesets, OracleFacade; 신규6개 테스트 및 기존2개 계측 테스트 보강; training DML10종/연산 inventory resources.
+- **검증**: fresh Maven package 69 suites/563 tests, failure/error/skip0, BUILD SUCCESS. hash/owner identity/collision/zero-hash, canonical legacy differential, overlay, determinant parity, fresh exact residual/full proof/포화, 실제 generator header/profile identity sharing, 계측 reset/live 검증 포함. 독립 code-reviewer APPROVE/architect CLEAR. ML10 fixed DML의 함수·제어 predicate 포함 constructed9717+rewritten3192=12909 occurrences/88 family route 검사.
+- **남은 검증/잠재 위험**: 고차 arity는 first-two 7x7 및 나머지 축 perturbation 표본이지 전체 Cartesian 검증이 아니다. inventory는 HOP rewrite까지만 실행하며 ML10 전체 placement closure/runtime privacy 성공 증거가 아니다. residual tuple 열거/forward calls 자체는 줄이지 않으며 모든 연산의 support product factorization을 주장하지 않는다. PlacementProofKey는 accessor/equals/hash/toString 계약을 유지하지만 reflection상 record가 아닌 class다. 96-char prefix는 환경당 메모리 tradeoff다.
+- **성능/환경**: 공식 run_LAN_docker.sh의 같은 pinned image/cost/입력/4CPU/16GiB/10GiB heap/60초 watchdog으로 동결 baseline/candidate 비교 진행. 완료 전 speedup/Local·Global DP cut 수치를 주장하지 않는다. root disk/snap grid mount 제약은 자체 tmpfs stage로 대응하며 unrelated workload는 건드리지 않는다.
+- **증거**: /grid/3/cofee-lm-sweep-mchoi-20260914/placement-optimization-20261008; PLAN.md, before-manifest.json, evidence/maven-package.log, evidence/artifact-manifest.json. 기존 dirty 파일 보존; 신규 의존성/runtime fallback/privacy 완화/timeout 증가는 없다.
+
+### Placement 최종 Docker 측정 및 한계
+
+- **측정 완료**: 공식 Docker baseline OFF/JFR2회 + candidate OFF/JFR2회 + candidate ON/JFR2회, 총6회. 동일60초 watchdog,55초 JFR. 모두 공통 analysis_begin 이후 미완료/receipt없음/OOM관측0; 자체 container6개 부재 확인.
+- **실제 적용**: 마지막 detailed snapshot의 determinant route LogReg651/GLM1600, exact residual850/3091. evidence재사용804/2569, header808/2583, profile795/2907. MRV/CP-family는 여전히0이다. residual route와 Cartesian counter는 겹치므로 합산하지 않는다.
+- **Collector OFF JFR**: LogReg3482→3199 main samples에서 support hash22.95%→0%관측, proof hash21.37%→0%관측, containsExact22.17%→0.13%. GLM3725→3204 samples에서 joint-input 아래 canonical comparison48.97%→35.46%. inclusive 중첩·부분 진행 표본이며 전체 speedup으로 환산하지 않는다. 첫 분석기의 canonical category가 존재하지 않는 class명을 사용해0으로 나온 것을 실제 CanonicalTextComparison.compare + joint-input caller 조건으로 수정했고 초기결과도 별도 보존했다.
+- **남은 병목/위험**: LogReg direct binding78.02%와 문자열 hash/정규화/graph materialization, GLM canonical fallback이 남는다. sampled cgroup peak LogReg5.903→8.699GB, GLM5.597→5.085GB로 완료 동일작업 비교가 아니며 memory개선은 주장하지 않는다. 전체시간·Local/Global DP효과와 ML10 전체 runtime 성공은 미확인이다.
+- **최종 검증/보존**:69suites563tests PASS/BUILD SUCCESS, source reviewer APPROVE/architect CLEAR. 독립 verifier가 626개 frozen source,69 XML,10DML 원본bytes, per-run tree/image/input/cost 및 기존dirty 보존을 대조했다. detailed 결과는 PLACEMENT_OPTIMIZATION_2026-10-08_KO.md와 placement-optimization-20261008 artifact에 기록했다.
+
+### JFR 기반 proof authority 중복 hash 추가 제거 — lifecycle 회귀 수정 후 재검증
+
+- **문제 정의/증상**: v1의 기존 hashCode frame은 사라졌지만 freshly materialized authority String의 첫 hash 계산이 PlacementProofKey 생성자로 이동해 LogReg JFR의 약18%를 차지했다. “hash frame0=총hash비용0”은 잘못된 해석이다.
+- **해결/의사결정 근거**: immutable NormalizedText의 정확한 Java String hash를 사용하는 package-private type-safe factory를 추가하고 directNativePublication에만 연결했다. 임의 raw hash를 받는 외부 API는 없고 기존 String 생성자/hash/equals 계약은 유지한다. materialization 자체는 유지한다.
+- **통합에서 발견/수정한 회귀**: factory에서 text만 materialize하면 기존 proof.normalizedSignature()의 object-local/global signature cache 및 structural rope release를 우회했다. 실제 directNativePublication regression이 수정 전 실패함을 확인하고 factory 직후 기존 normalization을 호출해 같은 String 재사용·rope release를 복원했다. 두 번째 flatten은 발생하지 않는다.
+- **수정 파일/검증**: PlacementIdentity, PlacementRelationClosure, NativePlacementContinuity(accessor visibility/comment), LogRegHashMembershipOptimizationTest. empty/blank/zero/collision/Unicode/unpaired surrogate/long segmented string legacy parity와 실제 publication lifecycle 테스트; isolated affected169PASS. fresh Maven/Docker 및 독립 재검토 진행.
+- **잔여/잠재 위험**: 이미 literal로 바뀐 descriptor의 모든 hash를 제거했다고 주장하지 않는다. cached text hash의 exact UTF-16 계약과 publication 후 rope release를 영구 테스트로 감지한다. v1 source/JAR/69suite563test/JFR/report는 candidate-v1와 기존 run 디렉터리에 보존해 최종 후보와 섞지 않는다.
+
+### Authority hash v2의 warm-cache 문자열 중복 — 독립 설계 검토에서 차단
+
+- **증상/원인**: cold factory 경로는 정확했지만 이미 정규화된 proof의 literal(A)를 materialize하면 새 String B를 만들고, 뒤의 normalizedSignature()는 기존 A를 반환해 key가 B를 추가 보유했다. 생성자 structural signature cache hit에도 발생한다. 수치/합법성 차이가 아니라 메모리 회귀다.
+- **조치**: architect WATCH를 최신 판정으로 채택했다. v2의 LogReg 진단은60초 종료 후 보존했고 진행 중인 자체 GLM container/supervisor만 중단해 aborted-review.json으로 기록했다. v2를 최종 성능 결과로 채택하지 않는다.
+- **해결 방향/검증**: proof-local helper에서 기존 String이 있는 경로는 기존 String constructor를 유지하고, 진짜 cold structural text에만 exact cached hash factory를 사용한다. cold/warm/constructor-cache-hit 실제 publication의 동일 String identity와 rope release를 회귀 테스트로 검사한다. fresh package/Docker 재실행 전 source review를 갱신한다.
+- **보존/위험**: candidate-v2에 JAR/source/70suite571tests/manifest를 보존했고 candidate-v2-jfr에 완료·중단 원본로그를 보존했다. transient peak와 누수를 동일시하지 않는다. 추가 캐시·rawhash authority·runtime fallback은 도입하지 않는다.
+
+### Placement 최종 v3 승인/측정 — 70 suites / 573 tests PASS
+
+- **최종 수정/검증**: proof-local helper는 cold 경로에만 segmented hash를 사용하고 warm/structural-cache-hit에는 기존 String identity를 유지한다. 실제 publication 3경로 회귀 테스트와 fresh 70 suites / 573 tests가 failure/error/skip 0으로 통과했다. BUILD SUCCESS 23:10:26, source 재검토 APPROVE / architect CLEAR.
+- **최종 Docker 결과**: baseline 2회 + 최종 v3 OFF/JFR 2회 + ON/JFR 2회를 primary 6회로 비교했다. v1 추가 4회와 제외된 v2의 완료 1회/검토 중단 1회도 별도로 보존했다(총 12개 container). Primary는 모두 60초 watchdog에 걸렸고, 공통 분석 미완료/receipt 없음/OOM 관측 0이다. 최종 JAR SHA는 5368fb9e56752215b7d98a033ee7d7a0110315b727960dab0868f58f3e8de466이다.
+- **최종 수치**: OFF/JFR LogReg의 main samples는 3,482→3,130이다. Support/proof hash는 22.95%/21.37%→각 0% 관측, containsExact는 22.17%→0.06%, direct binding은 79.67%→73.64%다. 최종 proof-key 생성자는 0.42%, StringLatin1 hash는 2.24%다. GLM은 3,725→3,183 samples이며 joint canonical은 48.97%→45.52%다. v1에서 더 낮았던 GLM 표본을 최종 값으로 대체하지 않았다.
+- **실제 새 경로**: 최종 detailed snapshot은 LogReg 55.043초 / GLM 57.438초다. Determinant 651/1,600회, residual 850/3,091회, evidence 재사용 804/2,569회, header 재사용 808/2,583회, profile 재사용 795/2,907회다. Residual은 tuple 열거/forward 평가를 유지하고 불변 payload만 공유한다.
+- **남은 위험/범위**: Sampled cgroup peak는 LogReg 5.903→6.161 GB / GLM 5.597→5.679 GB다. 모두 미완료 상태에서 서로 다른 진행 지점을 관측한 단일 A/B이므로 시간·memory 개선율을 확정하지 않는다. Direct binding, proof materialization, NativePoolWitness 비교, canonical fallback이 남는다. 실제 DP cut과 전체 ML10 runtime/privacy 성공은 미검증이다.
+- **보존**: Primary/이력별 source/JAR/class-tree/input/image/cost seals를 분리했다. Archive는 498,288,640 bytes이며 SHA는 1f08d7a67fbb28b6588f08f832a8323ec81afb3f253e743b12627cffcbef7ab4다. 기존 dirty 소스를 보존했다. 신규 dependency, runtime fallback, timeout 증가, commit/push는 없다.
+
+- **최종 독립 artifact 감사/정리**: verifier PASS. Frozen source 626개, 70 XML/573 tests, 버전별 JAR↔class tree, baseline→v3 ZIP 차이 321개(의도한 9개 outer class family만), 12개 실행 출처, archive의 sealed 파일 19,597개/JFR 12개를 대조했다. 누락/불일치 0이다. 자체 container 12개가 없음을 재확인하고 검증된 자체 tmpfs stage만 삭제했다. Source 변경 없이 문서와 cleanup evidence만 갱신했다.
+
+## Publication prerequisite — campaign fixture contracts (해결)
+
+- **문제/증상**: origin/main 게시 전 추가 Python 검증에서 campaign 32개 중 1 failure/6 errors. 기존 fixture가 manifest-bound timeout 및 current-reference 계약을 반영하지 않았다.
+- **원인/해결**: production 정책을 완화하지 않고 테스트 fixture의 identity/measurement timeout 정책, compile gate manifest, P2 current-reference lease/hash를 현재 계약에 맞췄다. 고정 60초/무제한 정책의 명령 차이와 잘못된 정책·reference 변조 거부를 추가 검증했다.
+- **수정 파일**: `scripts/fedplanner/tests/test_run_matrix_campaign.py`, `scripts/fedplanner/tests/test_matrix_current_reference.py`.
+- **검증**: publication root 재실행에서 runtime 8 + reference 3 + campaign 35 = **46 tests PASS**. 기존 Java artifact manifest의 source hash 626개는 동일하며 70 suites/573 tests 검증 대상과 일치한다. 증거: `/grid/3/cofee-lm-sweep-mchoi-20260914/placement-bottleneck-drive-20261008/evidence/publication-*-verified.log`.
+- **잔여 이슈**: full LogReg/GLM common analysis 60초 timeout은 아직 해결되지 않았다. 게시 후 별도 bottleneck 측정/개선 대상으로 유지한다.
+- **잠재 회귀/감지**: mocked runner 검증은 실제 Docker 성능 검증을 대신하지 않는다. frozen `OPERATION_OCCURRENCES.tsv`의 literal 끝 공백 107행은 의미 있는 데이터이므로 보존한다.
+- **의사결정 근거**: oracle/runtime/planner 합법성 및 timeout 정책은 변경하지 않고 테스트 계약만 수정했다.

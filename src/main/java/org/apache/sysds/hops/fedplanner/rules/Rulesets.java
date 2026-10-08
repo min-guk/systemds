@@ -157,6 +157,13 @@ public final class Rulesets {
         : Optional.empty();
   }
 
+  private static Optional<RulesApi.ShapeIndependentDecision> primaryDecisionAtLeast(
+      OpSig sig, int minimumArity) {
+    return sig != null && sig.arity() >= minimumArity
+        ? Optional.of(new RulesApi.ShapeIndependentDecision(Set.of(0)))
+        : Optional.empty();
+  }
+
   private static boolean axisKnown(FType axis, ShapeHint hint) {
     if (axis == null || hint == null)
       return false;
@@ -1012,6 +1019,9 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return primaryDecisionAtLeast(sig, 1);
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -1045,6 +1055,9 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return primaryDecisionAtLeast(sig, 1);
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -1418,6 +1431,9 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return primaryDecision(sig, 1);
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -1568,6 +1584,18 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.REORG; }
     @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      if (!supports(sig))
+        return Optional.empty();
+      if (ReOrgOp.ROLL.toString().equals(normalizedOpcode(sig))) {
+        if (sig.arity() == 1 || sig.arity() == 2
+            && sig.inputKind(1) == OpSig.InputKind.SCALAR)
+          return Optional.of(new RulesApi.ShapeIndependentDecision(Set.of(0)));
+        return Optional.empty();
+      }
+      return primaryDecision(sig, 1);
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -1802,6 +1830,9 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.REORG; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return primaryDecisionAtLeast(sig, 1);
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -2157,6 +2188,9 @@ public final class Rulesets {
   public static final class PlacementAliasRule extends BaseRule {
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return Set.of(OpOp1._PLACEMENT.toString()); }
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return primaryDecision(sig, 1);
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -2189,6 +2223,9 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return primaryDecisionAtLeast(sig, 2);
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -2595,6 +2632,9 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.AGG_UNARY; }
     @Override public Set<String> opcodes() { return Set.of(); }
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return primaryDecisionAtLeast(sig, 1);
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -2691,6 +2731,13 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.AGG_UNARY; }
     @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      if (sig == null || sig.arity() < 1 || sig.arity() > 2)
+        return Optional.empty();
+      return Optional.of(new RulesApi.ShapeIndependentDecision(
+          sig.arity() == 1 ? Set.of(0) : Set.of(0, 1)));
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -4246,6 +4293,10 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return sig == null ? Optional.empty()
+          : Optional.of(new RulesApi.ShapeIndependentDecision(Set.of()));
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -4508,6 +4559,10 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return sig == null ? Optional.empty()
+          : Optional.of(new RulesApi.ShapeIndependentDecision(Set.of()));
+    }
 
     @Override
     public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
@@ -4753,6 +4808,9 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return primaryDecisionAtLeast(sig, 1);
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -4858,6 +4916,13 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      if (sig == null)
+        return Optional.empty();
+      return Optional.of(new RulesApi.ShapeIndependentDecision(
+          sig.arity() == 0 ? Set.of() : Set.of(0)));
+    }
 
     @Override
     public boolean supports(OpSig sig) {
