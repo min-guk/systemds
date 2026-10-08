@@ -1,0 +1,15 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+....E...
+Time: 0.215
+There was 1 failure:
+1) mostConstrainedInputIsChosenBeforeIndependentHundredWayDomain(org.apache.sysds.hops.fedplanner.placement.RelocationBindingPrefixPruningTest)
+java.lang.AssertionError: fixed last input narrows the middle input before independent branching expected:<103> but was:<301>
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.failNotEquals(Assert.java:835)
+	at org.junit.Assert.assertEquals(Assert.java:647)
+	at org.apache.sysds.hops.fedplanner.placement.RelocationBindingPrefixPruningTest.mostConstrainedInputIsChosenBeforeIndependentHundredWayDomain(RelocationBindingPrefixPruningTest.java:52)
+
+FAILURES!!!
+Tests run: 7,  Failures: 1
+

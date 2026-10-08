@@ -405,6 +405,72 @@ public final class RulesApi {
   // Oracle (per-op)
   public interface FedOracle {
     OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint);
+
+    /**
+     * Positions that completely determine {@link #caps} without consulting ShapeHint.
+     * For equal values at these positions, every completion must return equivalent
+     * capabilities and an empty shape proof. The default declines this optimization.
+     */
+    default Optional<ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return Optional.empty();
+    }
+
+    default boolean supportsPartialFedFeasibility() {
+      return false;
+    }
+
+    /**
+     * Conservative feasibility check for a partially assigned input tuple.
+     * ABSENT_LOCAL is an assigned {@code null}; unassigned positions are identified
+     * only by {@link PartialInputs#isAssigned(int)}.
+     */
+    default PartialTruth partialFedFeasibility(OpSig sig, PartialInputs inputs, ShapeHint hint) {
+      return PartialTruth.UNKNOWN;
+    }
+  }
+
+  public record ShapeIndependentDecision(Set<Integer> determinantPositions) {
+    public ShapeIndependentDecision {
+      determinantPositions = Collections.unmodifiableSet(
+          new java.util.TreeSet<>(Objects.requireNonNull(
+              determinantPositions, "determinantPositions")));
+      for(int position : determinantPositions)
+        if(position < 0)
+          throw new IllegalArgumentException("Negative determinant position: " + position);
+    }
+  }
+
+  public enum PartialTruth {
+    /** This partial rule imposes no further restriction on any completion of this prefix. */
+    FEASIBLE,
+    /** No completion of this prefix can produce a FED decision. */
+    INFEASIBLE,
+    /** Later input assignments may still change partial FED feasibility. */
+    UNKNOWN
+  }
+
+  /** Immutable, position-preserving partial input assignment. */
+  public record PartialInputs(List<FType> values, Set<Integer> assignedPositions) {
+    public PartialInputs {
+      values = Collections.unmodifiableList(new ArrayList<>(Objects.requireNonNull(values, "values")));
+      assignedPositions = Collections.unmodifiableSet(
+          new java.util.TreeSet<>(Objects.requireNonNull(assignedPositions, "assignedPositions")));
+      for (int position : assignedPositions)
+        if (position < 0 || position >= values.size())
+          throw new IllegalArgumentException("Partial input position out of range: " + position);
+    }
+
+    public boolean isAssigned(int position) {
+      return assignedPositions.contains(position);
+    }
+
+    public FType valueAt(int position) {
+      return position >= 0 && position < values.size() ? values.get(position) : null;
+    }
+
+    public boolean isComplete() {
+      return assignedPositions.size() == values.size();
+    }
   }
 
   // Rule contracts

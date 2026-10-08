@@ -22,12 +22,14 @@ import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
@@ -41,6 +43,55 @@ public class EarlyPrivacyGenerationWorkTest {
 	private static final String FEDERATED_SOURCE =
 		"A=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
 			+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));\n";
+
+	@Test
+	public void fusedGeneratorBoundaryRejectsProtectedAbsenceBeforeCandidateAllocation() {
+		List<List<FType>> unmasked = List.of(
+			java.util.Arrays.asList(null, FType.ROW),
+			java.util.Arrays.asList(null, FType.BROADCAST),
+			List.of(FType.COL));
+		var privacy = new PlacementCandidateGenerator.GenerationPrivacy(
+			Privacy.PRIVATE_AGGREGATE, Set.of(0, 1));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		List<List<FType>> allocatedCandidates = new java.util.ArrayList<>();
+
+		PlacementCandidateGenerator.forEachInputCombination(
+			unmasked, privacy, allocatedCandidates::add, metrics);
+
+		Assert.assertEquals("only the all-present protected tuple reaches key/fact allocation",
+			List.of(List.of(FType.ROW, FType.BROADCAST, FType.COL)), allocatedCandidates);
+		Assert.assertEquals("one accepted tuple corresponds to one possible Oracle call", 1,
+			metrics.snapshot().inputLeaves());
+		Assert.assertEquals("three illegal Cartesian tuples are rejected before allocation", 3,
+			4 - allocatedCandidates.size());
+		Assert.assertEquals("generator reports Oracle calls and key/fact allocations avoided",
+			java.math.BigInteger.valueOf(3),
+			metrics.privacyPruningSnapshot().generatorCombinationsRejected());
+	}
+
+	@Test
+	public void fusedInputGateDoesNotGuessOutputPrivacyOrAggregateExceptions() {
+		List<List<FType>> domains = List.of(
+			java.util.Arrays.asList(null, FType.ROW),
+			java.util.Arrays.asList(null, FType.BROADCAST));
+		List<List<FType>> expectedProtectedInputs = List.of(
+			java.util.Arrays.asList(FType.ROW, null),
+			List.of(FType.ROW, FType.BROADCAST));
+		for(Privacy outputPrivacy : List.of(Privacy.PRIVATE, Privacy.PRIVATE_AGGREGATE,
+			Privacy.PRIVATE_AGGREGATE_TO_PUBLIC, Privacy.PUBLIC)) {
+			List<List<FType>> accepted = new java.util.ArrayList<>();
+			PlacementCandidateGenerator.forEachInputCombination(domains,
+				new PlacementCandidateGenerator.GenerationPrivacy(outputPrivacy, Set.of(0)),
+				accepted::add, null);
+			Assert.assertEquals("input fusion only enforces certified payload residency; output policy stays post-Oracle",
+				expectedProtectedInputs, accepted);
+		}
+
+		List<List<FType>> unknown = new java.util.ArrayList<>();
+		PlacementCandidateGenerator.forEachInputCombination(domains, null, unknown::add, null);
+		Assert.assertEquals("unknown privacy remains conservative and retains the whole input product",
+			4, unknown.size());
+	}
 
 	@Test
 	public void sameBlockPrivacyPruningAvoidsTuplesAndExpansionWithoutChangingLegalSpace()

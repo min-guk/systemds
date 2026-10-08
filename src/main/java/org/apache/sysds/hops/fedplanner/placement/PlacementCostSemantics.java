@@ -126,8 +126,10 @@ public final class PlacementCostSemantics {
 					: new AnchorPartition(source.get(i).workerId(), List.of(0L, begin), List.of(rows, end)));
 			}
 		}
-		return new DurableAnchorKey("materialized-output:" + owner.normalizedSignature(),
-			outputType, partitions);
+		// Value/producer authority belongs to the action and source reference. The
+		// upload target itself depends only on its actual endpoints and geometry.
+		return PlacementIdentity.canonicalPhysicalLayout(new DurableAnchorKey(
+			"materialized-output", outputType, partitions));
 	}
 
 	/** Keep worker/range pairs together in the order used by fed_fout and FED result binding. */

@@ -40,6 +40,8 @@ import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.PartialInputs;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.PartialTruth;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
@@ -135,6 +137,24 @@ public final class Rulesets {
 
   private static boolean isFederatedLike(FType t) {
     return t == FType.ROW || t == FType.COL || t == FType.FULL || t == FType.PART;
+  }
+
+  private static PartialTruth primaryFeasibility(PartialInputs inputs, int arity,
+      Set<FType> allowed) {
+    if (inputs == null || inputs.values().size() != arity)
+      return PartialTruth.INFEASIBLE;
+    if (!inputs.isAssigned(0))
+      return PartialTruth.UNKNOWN;
+    FType primary = inputs.valueAt(0);
+    return primary != null && allowed.contains(primary)
+        ? PartialTruth.FEASIBLE : PartialTruth.INFEASIBLE;
+  }
+
+  private static Optional<RulesApi.ShapeIndependentDecision> primaryDecision(
+      OpSig sig, int expectedArity) {
+    return sig != null && sig.arity() == expectedArity
+        ? Optional.of(new RulesApi.ShapeIndependentDecision(Set.of(0)))
+        : Optional.empty();
   }
 
   private static boolean axisKnown(FType axis, ShapeHint hint) {
@@ -839,6 +859,10 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.QUATERNARY; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public boolean supportsPartialFedFeasibility() { return true; }
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return primaryDecision(sig, EXPECTED_ARITY);
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -847,6 +871,11 @@ public final class Rulesets {
 
     @Override public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
       return FTypeProfile.empty();
+    }
+
+    @Override
+    public PartialTruth partialFedFeasibility(OpSig sig, PartialInputs inputs, ShapeHint hint) {
+      return primaryFeasibility(inputs, EXPECTED_ARITY, Set.of(FType.ROW, FType.COL));
     }
 
     @Override
@@ -882,6 +911,10 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.QUATERNARY; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public boolean supportsPartialFedFeasibility() { return true; }
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return primaryDecision(sig, EXPECTED_ARITY);
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -890,6 +923,12 @@ public final class Rulesets {
 
     @Override public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
       return FTypeProfile.empty();
+    }
+
+    @Override
+    public PartialTruth partialFedFeasibility(OpSig sig, PartialInputs inputs, ShapeHint hint) {
+      return primaryFeasibility(inputs, EXPECTED_ARITY,
+          Set.of(FType.ROW, FType.COL, FType.FULL, FType.PART));
     }
 
     @Override
@@ -915,6 +954,10 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.QUATERNARY; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public boolean supportsPartialFedFeasibility() { return true; }
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return primaryDecision(sig, EXPECTED_ARITY);
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -924,6 +967,15 @@ public final class Rulesets {
     @Override
     public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
       return primaryLikeProfile(inFTypeCandidates);
+    }
+
+    @Override
+    public PartialTruth partialFedFeasibility(OpSig sig, PartialInputs inputs, ShapeHint hint) {
+      PartialTruth primary = primaryFeasibility(inputs, EXPECTED_ARITY,
+          Set.of(FType.ROW, FType.COL));
+      if (primary != PartialTruth.FEASIBLE)
+        return primary;
+      return Guard.eval(sig).isFail() ? PartialTruth.INFEASIBLE : PartialTruth.FEASIBLE;
     }
 
     @Override
@@ -1238,6 +1290,10 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.QUATERNARY; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public boolean supportsPartialFedFeasibility() { return true; }
+    @Override public Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      return primaryDecision(sig, EXPECTED_ARITY);
+    }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -1269,6 +1325,24 @@ public final class Rulesets {
       if (primary.contains(FType.FULL))
         outputs.add(FType.FULL);
       return profileOf(outputs);
+    }
+
+    @Override
+    public PartialTruth partialFedFeasibility(OpSig sig, PartialInputs inputs, ShapeHint hint) {
+      PartialTruth primary = primaryFeasibility(inputs, EXPECTED_ARITY,
+          Set.of(FType.ROW, FType.COL, FType.FULL));
+      if (primary != PartialTruth.FEASIBLE)
+        return primary;
+      Integer baseType = parseBaseType(attrValue(sig, ATTR_WDIVMM_BASE_TYPE));
+      if (baseType == null || !isBasicBaseType(baseType)
+          && !isLeftBaseType(baseType) && !isRightBaseType(baseType))
+        return PartialTruth.INFEASIBLE;
+      FType x = inputs.valueAt(0);
+      boolean guarded = x == FType.FULL || isBasicBaseType(baseType)
+          || isLeftBaseType(baseType) && x == FType.COL
+          || isRightBaseType(baseType) && x == FType.ROW;
+      return guarded && Guard.eval(sig).isFail()
+          ? PartialTruth.INFEASIBLE : PartialTruth.FEASIBLE;
     }
 
     @Override
@@ -1785,6 +1859,7 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.INDEXING; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public boolean supportsPartialFedFeasibility() { return true; }
 
     @Override
     public boolean supports(OpSig sig) {
@@ -1808,6 +1883,25 @@ public final class Rulesets {
       if (mainInput.contains(FType.FULL))
         outs.add(FType.FULL);
       return profileOf(outs);
+    }
+
+    @Override
+    public PartialTruth partialFedFeasibility(OpSig sig, PartialInputs inputs, ShapeHint hint) {
+      if(inputs == null || inputs.values().isEmpty())
+        return PartialTruth.INFEASIBLE;
+      if(inputs.isAssigned(0) && !isFederatedLike(inputs.valueAt(0)))
+        return PartialTruth.INFEASIBLE;
+      for(int position = 1; position < inputs.values().size(); position++)
+        if(inputs.isAssigned(position) && isFederatedLike(inputs.valueAt(position)))
+          return PartialTruth.INFEASIBLE;
+      if(!inputs.isAssigned(0))
+        return PartialTruth.UNKNOWN;
+      for(int position = 1; position < inputs.values().size(); position++)
+        if(!inputs.isAssigned(position)
+            && (sig.inputKind(position) == OpSig.InputKind.MATRIX
+                || sig.inputKind(position) == OpSig.InputKind.FRAME))
+          return PartialTruth.UNKNOWN;
+      return PartialTruth.FEASIBLE;
     }
 
     @Override

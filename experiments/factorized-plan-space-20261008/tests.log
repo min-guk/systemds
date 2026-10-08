@@ -1,0 +1,22 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+.................................................................OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+.....................................................I..I..I...............................................................................................................................................................EXACT_COST_FINGERPRINT_STREAMING_EVIDENCE|facts=12|legacyAggregateCharacters=11009
+..............JOINT_ALIAS_SOLVER_EVIDENCE|exactScenarios=4|regionalBlocks=4|oldCacheHits=20|newCacheHits=21
+.JOINT_ALIAS_PROJECTION_EVIDENCE|oldCells=11520|newCells=5760|assignments=11520|supportFinite=1920|referenceSupportFinite=1920|invalidPredicateDifferences=680|partialCertificates=5760
+.JOINT_ALIAS_REJECTION_EVIDENCE|factors=160
+.DERIVED_ANCHOR_PARTIAL_EVIDENCE|factors=4|logicalLeaves=144|certifiedLeaves=140
+......JOINT_ALIAS_WORK|uniqueReachable=22|expansions=22
+.....EARLY_PRIVACY_WORK|baselineOracle=29|earlyOracle=26|baselineLeaves=29|earlyLeaves=26|avoidedTuples=2|emissionsSuppressed=11|emissionAllocationsAvoided=11|privacyTransferVisits=24|supportIndexedRealizations=156|supportIndexedClauses=192|supportQueueVisits=0
+.....................................................................EXACT_AUTHORITY_PRUNING_EVIDENCE|legacyAlternatives=22|optimizedAlternatives=19|removed=3|legacyFactorCells=46|optimizedFactorCells=27
+.EXACT_SIGNATURE_SHARING_EVIDENCE|eagerRelocations=SignatureRepresentation[uniqueLiteralCharacters=3669, uniqueLiteralUtf8Bytes=3669, uniqueLiterals=1, canonicalTexts=1, literalReferences=1]|lazyRelocations=SignatureRepresentation[uniqueLiteralCharacters=2389, uniqueLiteralUtf8Bytes=2389, uniqueLiterals=46, canonicalTexts=16, literalReferences=65]
+...EXACT_HARD_FACTORIZATION_EVIDENCE|HardFactorizationStatistics[canonicalFactors=1617, factorizedFactors=116, canonicalCells=197299029, encodedCells=16082536, auxiliaryVariables=232, canonicalCellsOverflow=false, encodedCellsOverflow=false, realizationSupportFactors=71, realizationSupportCanonicalCells=98532838, realizationSupportEncodedCells=3557251, inputAuthorityFactors=45, inputAuthorityCanonicalCells=98115010, inputAuthorityEncodedCells=11874104]
+.................CP_FAMILY_GENERATION_WORK|explicitFacts=2401|retainedExactFacts=686|familyHeaders=5|familyLogicalTuples=1715|before=ExecutionRelationSnapshot[relations=1, regions=7, oracleCalls=6, logicalTuples=2401]|after=ExecutionRelationSnapshot[relations=1, regions=7, oracleCalls=6, logicalTuples=2401]
+........FactorizedCostParity localBits=4619578633137411850 fedBits=4620698875363191685 optimumBits=4611695455012105748
+.IndexedPipelineWork admitted=4 cartesian=6 materialized=0
+...FactorizedPipelineWork logicalClauses=10000 consumerAlternatives=2 ownedRepresentatives=2 selectedBindings=2
+..........................................................
+Time: 124.047
+
+OK (469 tests)
+

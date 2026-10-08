@@ -1,0 +1,1 @@
+RESULT engine=OLD domain=4000 logicalRows=16000000 legalRows=3 reportedRetainedRows=16000000 supportRows=3 reportedMaterializedRows=16004001 reportedMaximumRows=16000000 medianWallMs=1.621 medianAllocatedBytes=130048 objectiveBits=0 assignment=7,11 warmups=5 repeats=9

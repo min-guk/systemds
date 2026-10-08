@@ -34,6 +34,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegio
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
@@ -288,6 +289,178 @@ public class PlacementSupportDeletionWorklistTest {
 		Assert.assertEquals(facts, first.facts());
 	}
 
+	@Test
+	public void factorizedHundredByHundredNoOpDoesNotMaterializeClauses() {
+		CandidateRuleKey consumer = rule("factorized-large-consumer");
+		List<CandidateRuleFact> facts = new ArrayList<>();
+		List<CandidateRealizationInputBinding> left = new ArrayList<>();
+		List<CandidateRealizationInputBinding> right = new ArrayList<>();
+		for(int index = 0; index < 200; index++) {
+			CandidateRuleKey sourceRule = rule("factorized-large-source-" + index);
+			CandidateEmissionRealization source = durable("factorized-large-source-" + index);
+			facts.add(fact(sourceRule, ROW, List.of(source)));
+			CandidateRealizationInputBinding binding = CandidateRealizationInputBinding.direct(
+				index < 100 ? 0 : 1, ref(sourceRule, source));
+			(index < 100 ? left : right).add(binding);
+		}
+		CandidateEmissionRealization product = CandidateEmissionRealization.factorized(
+			CandidateEmissionRealization.local(LOCAL).key(), List.of(), List.of(left, right), null, true);
+		FactorizedSupportClauses relation = (FactorizedSupportClauses)product.supportClauses();
+		facts.add(fact(consumer, LOCAL, List.of(product)));
+
+		PlacementSupportRelations.WorklistResult result = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPointWithWork(facts, null, null, null);
+
+		Assert.assertEquals(10_000, relation.size());
+		Assert.assertEquals(0, relation.materializedClauseCount());
+		Assert.assertSame(facts.get(facts.size() - 1), result.facts().get(facts.size() - 1));
+		Assert.assertEquals("factor-level reverse index counts dependency options", 200,
+			result.work().reverseIncidences());
+		Assert.assertTrue(PlacementSupportRelations.projectRelocationActionsToExecutableSupports(
+			result.facts(), List.of()).isEmpty());
+		PlacementSupportRelations.verifyPublishedRelocationRealizations(result.facts(), List.of());
+		Assert.assertEquals(0, relation.materializedClauseCount());
+	}
+
+	@Test
+	public void factorizedActionRestrictionPreservesProofAndNativeWitness() {
+		CandidateRuleKey sourceRule = rule("factorized-action-source");
+		CandidateRuleKey consumer = rule("factorized-action-consumer");
+		CandidateEmissionRealization source = durable("factorized-action-source");
+		CandidateRealizationReference sourceRef = ref(sourceRule, source);
+		NeutralPlacementGraph.RelocationAction live = action(
+			"factorized-action-live", consumer, 0, ROW.placementState());
+		RelocationActionKey expired = action(
+			"factorized-action-expired", consumer, 0, ROW.placementState()).key();
+		DurableAnchorKey witness = anchor("factorized-native-witness");
+		PlacementProofKey proof = new PlacementProofKey(
+			PlacementProofKind.NATIVE_CONTINUITY, consumer.parentOccurrence(), "factorized-proof");
+		CandidateEmissionRealization product = CandidateEmissionRealization.factorized(
+			PlacementIdentity.PlacementRealizationKey.nativeLineage(ROW, "factorized-native"),
+			List.of(proof), List.of(List.of(
+				CandidateRealizationInputBinding.relocation(0, sourceRef, expired),
+				CandidateRealizationInputBinding.relocation(0, sourceRef, live.key()))), witness, false);
+		FactorizedSupportClauses original = (FactorizedSupportClauses)product.supportClauses();
+		List<CandidateRuleFact> facts = List.of(fact(sourceRule, ROW, List.of(source)),
+			fact(consumer, ROW, List.of(product)));
+
+		List<CandidateRuleFact> result = fixed(facts, Map.of(live.key(), live), null, null);
+		CandidateEmissionRealization retained = result.get(1).allowedEmissionFacts().get(0)
+			.realizations().get(0);
+		FactorizedSupportClauses restricted = (FactorizedSupportClauses)retained.supportClauses();
+
+		Assert.assertEquals(0, original.materializedClauseCount());
+		Assert.assertEquals(1, restricted.size());
+		Assert.assertEquals(0, restricted.materializedClauseCount());
+		Assert.assertSame(proof, restricted.proofs().get(0));
+		Assert.assertSame(witness, restricted.nativeWorkerPoolWitness());
+		Assert.assertFalse(restricted.nativeWorkerPoolLayoutExact());
+		Assert.assertSame(live.key(), restricted.factors().get(0).get(0).relocationAction());
+
+		CandidateEmissionRealization explicit = new CandidateEmissionRealization(product.key(), List.of(
+			new CandidateRealizationSupportClause(List.of(proof), List.of(
+				CandidateRealizationInputBinding.relocation(0, sourceRef, expired)), witness, false),
+			new CandidateRealizationSupportClause(List.of(proof), List.of(
+				CandidateRealizationInputBinding.relocation(0, sourceRef, live.key())), witness, false)));
+		List<CandidateRuleFact> explicitResult = fixed(List.of(fact(sourceRule, ROW, List.of(source)),
+			fact(consumer, ROW, List.of(explicit))), Map.of(live.key(), live), null, null);
+		CandidateRealizationSupportClause explicitSurvivor = explicitResult.get(1).allowedEmissionFacts()
+			.get(0).realizations().get(0).supportClauses().get(0);
+		Assert.assertEquals(explicitSurvivor.inputBindings(), restricted.factors().get(0));
+		Assert.assertEquals(explicitSurvivor.proofDependencies(), restricted.proofs());
+		Assert.assertSame(explicitSurvivor.nativeWorkerPoolWitness(),
+			restricted.nativeWorkerPoolWitness());
+	}
+
+	@Test
+	public void factorizedQueuedDeletionRetainsTheNonemptyRemainder() {
+		CandidateRuleKey missing = rule("partial-missing"), middle = rule("partial-middle");
+		CandidateRuleKey live = rule("partial-live"), right = rule("partial-right");
+		CandidateRuleKey consumer = rule("partial-consumer");
+		CandidateEmissionRealization source = CandidateEmissionRealization.local(LOCAL);
+		CandidateEmissionRealization invalid = dependent(middle, ref(missing, source));
+		CandidateRealizationInputBinding expired = CandidateRealizationInputBinding.direct(0, ref(middle, invalid));
+		CandidateRealizationInputBinding retained = CandidateRealizationInputBinding.direct(0, ref(live, source));
+		CandidateRealizationInputBinding rhs = CandidateRealizationInputBinding.direct(1, ref(right, source));
+		PlacementProofKey proof = new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
+			consumer.parentOccurrence(), "partial-proof");
+		CandidateEmissionRealization product = CandidateEmissionRealization.factorized(source.key(),
+			List.of(proof), List.of(List.of(expired, retained), List.of(rhs)), null, true);
+		List<CandidateRuleFact> facts = List.of(fact(middle, LOCAL, List.of(invalid)),
+			fact(live, LOCAL, List.of(source)), fact(right, LOCAL, List.of(source)),
+			fact(consumer, LOCAL, List.of(product)));
+		List<CandidateRuleFact> actual = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPoint(facts, null, null, null);
+		CandidateEmissionRealization survivor = actual.get(3).allowedEmissionFacts().get(0).realizations().get(0);
+		FactorizedSupportClauses remaining = (FactorizedSupportClauses)survivor.supportClauses();
+		Assert.assertEquals(1, remaining.size());
+		Assert.assertSame(proof, remaining.proofs().get(0));
+		Assert.assertSame(retained, remaining.factors().get(0).get(0));
+		Assert.assertSame(rhs, remaining.factors().get(1).get(0));
+		Assert.assertEquals(0, remaining.materializedClauseCount());
+		Assert.assertEquals(0, ((FactorizedSupportClauses)product.supportClauses()).materializedClauseCount());
+		CandidateEmissionRealization explicit = new CandidateEmissionRealization(source.key(), List.of(
+			new CandidateRealizationSupportClause(List.of(proof), List.of(expired, rhs)),
+			new CandidateRealizationSupportClause(List.of(proof), List.of(retained, rhs))));
+		List<CandidateRuleFact> explicitFacts = new ArrayList<>(facts);
+		explicitFacts.set(3, fact(consumer, LOCAL, List.of(explicit)));
+			Assert.assertTrue("factorized survivors equal the explicit deletion fixed point",
+				actual.equals(PlacementSupportRelations.pruneUnsupportedRealizationsToFixedPoint(
+					explicitFacts, null, null, null)));
+		Assert.assertEquals(0, remaining.materializedClauseCount());
+	}
+
+	@Test
+	public void factorizedMissingSourceCascadesWithoutMaterializingProduct() {
+		CandidateRuleKey missing = rule("factorized-cascade-missing");
+		CandidateRuleKey middle = rule("factorized-cascade-middle");
+		CandidateRuleKey tail = rule("factorized-cascade-tail");
+		CandidateEmissionRealization missingRealization = CandidateEmissionRealization.local(LOCAL);
+		CandidateEmissionRealization middleProduct = CandidateEmissionRealization.factorized(
+			CandidateEmissionRealization.local(LOCAL).key(), List.of(), List.of(List.of(
+				CandidateRealizationInputBinding.direct(0, ref(missing, missingRealization)))), null, true);
+		CandidateEmissionRealization tailProduct = CandidateEmissionRealization.factorized(
+			CandidateEmissionRealization.local(LOCAL).key(), List.of(), List.of(List.of(
+				CandidateRealizationInputBinding.direct(0, ref(middle, middleProduct)))), null, true);
+		FactorizedSupportClauses middleRelation =
+			(FactorizedSupportClauses)middleProduct.supportClauses();
+		FactorizedSupportClauses tailRelation = (FactorizedSupportClauses)tailProduct.supportClauses();
+		List<CandidateRuleFact> facts = List.of(fact(middle, LOCAL, List.of(middleProduct)),
+			fact(tail, LOCAL, List.of(tailProduct)));
+
+		List<CandidateRuleFact> result = fixed(facts, null, null, null);
+
+		Assert.assertTrue(result.stream()
+			.allMatch(fact -> fact.status() == CandidateEvaluationStatus.PROFILE_ERROR));
+		Assert.assertEquals(0, middleRelation.materializedClauseCount());
+		Assert.assertEquals(0, tailRelation.materializedClauseCount());
+	}
+
+	@Test
+	public void factorizedSupportedCycleSurvivesWithoutMaterializingClauses() {
+		CandidateRuleKey leftRule = rule("factorized-cycle-left");
+		CandidateRuleKey rightRule = rule("factorized-cycle-right");
+		CandidateEmissionRealization leftIdentity = CandidateEmissionRealization.local(LOCAL);
+		CandidateEmissionRealization rightIdentity = CandidateEmissionRealization.local(LOCAL);
+		CandidateEmissionRealization left = CandidateEmissionRealization.factorized(
+			leftIdentity.key(), List.of(), List.of(List.of(CandidateRealizationInputBinding.direct(
+				0, ref(rightRule, rightIdentity)))), null, true);
+		CandidateEmissionRealization right = CandidateEmissionRealization.factorized(
+			rightIdentity.key(), List.of(), List.of(List.of(CandidateRealizationInputBinding.direct(
+				0, ref(leftRule, leftIdentity)))), null, true);
+		FactorizedSupportClauses leftRelation = (FactorizedSupportClauses)left.supportClauses();
+		FactorizedSupportClauses rightRelation = (FactorizedSupportClauses)right.supportClauses();
+		List<CandidateRuleFact> facts = List.of(fact(leftRule, LOCAL, List.of(left)),
+			fact(rightRule, LOCAL, List.of(right)));
+
+		List<CandidateRuleFact> result = fixed(facts, null, null, null);
+
+		Assert.assertSame(facts.get(0), result.get(0));
+		Assert.assertSame(facts.get(1), result.get(1));
+		Assert.assertEquals(0, leftRelation.materializedClauseCount());
+		Assert.assertEquals(0, rightRelation.materializedClauseCount());
+	}
+
 	private static long workMetric(Object work, String name) throws Exception {
 		try {
 			return ((Number) work.getClass().getDeclaredMethod(name).invoke(work)).longValue();
@@ -372,12 +545,17 @@ public class PlacementSupportDeletionWorklistTest {
 
 	private static NeutralPlacementGraph.RelocationAction action(
 		String id, CandidateRuleKey consumer, int position) {
+		return action(id, consumer, position, LOCAL.placementState());
+	}
+
+	private static NeutralPlacementGraph.RelocationAction action(
+		String id, CandidateRuleKey consumer, int position, PlacementState target) {
 		ValueVersionKey sourceVersion = new ValueVersionKey("worklist", "source",
 			consumer.parentOccurrence().controlRegion(), 0, VersionKind.ORDINARY, List.of());
-		RelocationActionKey key = new RelocationActionKey(sourceVersion, LOCAL.placementState(),
+		RelocationActionKey key = new RelocationActionKey(sourceVersion, target,
 			FType.ROW, anchor(id), "root", List.of(consumer.parentOccurrence()));
 		ObligationKey obligation = new ObligationKey(consumer.parentOccurrence(), position,
-			sourceVersion, LOCAL.placementState(), key, "root");
+			sourceVersion, target, key, "root");
 		return new NeutralPlacementGraph.RelocationAction(key, List.of(obligation));
 	}
 

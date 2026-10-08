@@ -1,0 +1,14 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+.E.
+Time: 3.961
+There was 1 failure:
+1) realizationSupportCachingPreservesEveryHardFactorCell(org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalRealizationSupportFactorCacheTest)
+org.junit.ComparisonFailure: expected:<[982ec0a922e1d52f88b9520d2663ff3f4c2f8f6dda9ac25837242099004feb]01> but was:<[2043b2217fe4532be30143237fdaace59ce84374c19606e4f6a40c38272c7c]01>
+	at org.junit.Assert.assertEquals(Assert.java:117)
+	at org.junit.Assert.assertEquals(Assert.java:146)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalRealizationSupportFactorCacheTest.realizationSupportCachingPreservesEveryHardFactorCell(ExactPhysicalRealizationSupportFactorCacheTest.java:113)
+
+FAILURES!!!
+Tests run: 2,  Failures: 1
+

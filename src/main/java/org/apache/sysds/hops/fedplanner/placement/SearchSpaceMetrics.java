@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -148,13 +149,37 @@ public final class SearchSpaceMetrics {
 		supportQueueVisits += work.queueVisits();
 	}
 	private long candidateOracleCalls;
+	private long executionRelations;
+	private long executionRegions;
+	private long executionRelationOracleCalls;
+	private java.math.BigInteger executionRegionTuples = java.math.BigInteger.ZERO;
 	private long preparedProfileQueries;
 	private long preparedProfileHits;
 	private long privacyEmissionsSuppressed;
 	private long privacyMaskedDomains;
 	private java.math.BigInteger privacyAvoidedTuples = java.math.BigInteger.ZERO;
+	private java.math.BigInteger privacyGeneratorCombinationsRejected = java.math.BigInteger.ZERO;
 
 	void recordCandidateOracleCall() { candidateOracleCalls++; }
+	void recordExecutionRelation(int regions, int evaluations) {
+		if(regions < 0 || evaluations < 0)
+			throw new IllegalArgumentException("Negative execution relation metrics");
+		executionRelations++;
+		executionRegions += regions;
+		executionRelationOracleCalls += evaluations;
+		candidateOracleCalls += evaluations;
+	}
+	void recordExecutionRegionTuples(java.math.BigInteger logical) {
+		if(logical.signum() < 0)
+			throw new IllegalArgumentException("Negative execution region cardinality");
+		executionRegionTuples = executionRegionTuples.add(logical);
+	}
+	public record ExecutionRelationSnapshot(long relations, long regions, long oracleCalls,
+		java.math.BigInteger logicalTuples) { }
+	public ExecutionRelationSnapshot executionRelationSnapshot() {
+		return new ExecutionRelationSnapshot(executionRelations, executionRegions,
+			executionRelationOracleCalls, executionRegionTuples);
+	}
 	void recordPreparedProfileQuery(boolean reused) {
 		preparedProfileQueries++;
 		if(reused)
@@ -170,11 +195,15 @@ public final class SearchSpaceMetrics {
 		privacyMaskedDomains++;
 		privacyAvoidedTuples = privacyAvoidedTuples.add(avoided);
 	}
+	void recordPrivacyGeneratorCombinationRejection(java.math.BigInteger rejected) {
+		privacyGeneratorCombinationsRejected = privacyGeneratorCombinationsRejected.add(rejected);
+	}
 	public record PrivacyPruningSnapshot(long oracleCalls, long emissionsSuppressed,
-		long maskedDomains, java.math.BigInteger avoidedTuples) { }
+		long maskedDomains, java.math.BigInteger avoidedTuples,
+		java.math.BigInteger generatorCombinationsRejected) { }
 	public PrivacyPruningSnapshot privacyPruningSnapshot() {
 		return new PrivacyPruningSnapshot(candidateOracleCalls, privacyEmissionsSuppressed,
-			privacyMaskedDomains, privacyAvoidedTuples);
+			privacyMaskedDomains, privacyAvoidedTuples, privacyGeneratorCombinationsRejected);
 	}
 
 	private long inputPrefixes;
@@ -218,6 +247,7 @@ public final class SearchSpaceMetrics {
 	private long realizationMergeUniqueClauses;
 	private long realizationMergeDuplicateClauses;
 	private long realizationMergeReusedRealizations;
+	private DuplicateMergeDiagnostics duplicateMergeDiagnostics;
 	private long topologyExpansionBuilds;
 	private long topologyExpansionHits;
 	private long topologyRowsBuilt;
@@ -259,6 +289,8 @@ public final class SearchSpaceMetrics {
 		if(!phaseStack.isEmpty())
 			throw new IllegalStateException("SEARCH_SPACE_PHASE_RESET_WHILE_ACTIVE");
 		candidateOracleCalls = preparedProfileQueries = preparedProfileHits = 0;
+		executionRelations = executionRegions = executionRelationOracleCalls = 0;
+		executionRegionTuples = java.math.BigInteger.ZERO;
 		privacyEmissionsSuppressed = privacyMaskedDomains = 0;
 		privacyAvoidedTuples = java.math.BigInteger.ZERO;
 		privacyEmissionAllocationsAvoided = privacyTransferVisits = relocationConflictPrefixes = 0;
@@ -296,6 +328,8 @@ public final class SearchSpaceMetrics {
 		canonicalSortCalls = canonicalSortElements = canonicalOrderingKeys = canonicalComparisons = 0;
 		realizationMergeInputs = realizationMergeUniqueClauses = realizationMergeDuplicateClauses = 0;
 		realizationMergeReusedRealizations = 0;
+		if(duplicateMergeDiagnostics != null)
+			duplicateMergeDiagnostics.reset();
 		topologyExpansionBuilds = topologyExpansionHits = topologyRowsBuilt = topologyRowsCollapsed = 0;
 		topologyOverlayEvaluations = topologyOverlayRowsCollapsed = topologyRevisionEntriesReused = 0;
 		structuralHandleLookups = structuralHandlesCreated = 0;
@@ -550,6 +584,15 @@ public final class SearchSpaceMetrics {
 		relocationLeaves++;
 		relocationPeakPendingAssignments = Math.max(relocationPeakPendingAssignments, 1);
 	}
+	void recordFactorizedRelocationProduct(long logicalLeaves, long logicalPrefixes, int depth) {
+		if(logicalLeaves < 0 || logicalPrefixes < 0)
+			throw new IllegalArgumentException("Negative factorized relocation metrics");
+		relocationPrefixes = saturatedAdd(relocationPrefixes, logicalPrefixes);
+		relocationLeaves = saturatedAdd(relocationLeaves, logicalLeaves);
+		relocationPeakDepth = Math.max(relocationPeakDepth, depth);
+		if(logicalLeaves > 0)
+			relocationPeakPendingAssignments = Math.max(relocationPeakPendingAssignments, 1);
+	}
 	void recordInputPrefix(int depth) {
 		inputPrefixes++;
 		inputPeakDepth = Math.max(inputPeakDepth, depth);
@@ -642,7 +685,312 @@ public final class SearchSpaceMetrics {
 		else
 			realizationMergeDuplicateClauses++;
 	}
+	void recordRealizationMergeClauses(long unique, long duplicate) {
+		if(unique < 0 || duplicate < 0)
+			throw new IllegalArgumentException("Realization merge clause counts must be non-negative");
+		realizationMergeUniqueClauses = saturatedAdd(realizationMergeUniqueClauses, unique);
+		realizationMergeDuplicateClauses = saturatedAdd(realizationMergeDuplicateClauses, duplicate);
+	}
+	private static long saturatedAdd(long current, long delta) {
+		return delta > Long.MAX_VALUE - current ? Long.MAX_VALUE : current + delta;
+	}
 	void recordRealizationMergeReuse() { realizationMergeReusedRealizations++; }
+
+	/**
+	 * Enables bounded duplicate-merge provenance diagnostics for this collector.
+	 * Aggregate classification remains complete; {@code traceLimit} bounds only retained examples.
+	 * This is intentionally opt-in because resolving call sites requires stack walking.
+	 */
+	public SearchSpaceMetrics enableDuplicateMergeDiagnostics(int traceLimit) {
+		duplicateMergeDiagnostics = new DuplicateMergeDiagnostics(Math.max(0, traceLimit));
+		return this;
+	}
+
+	void recordDuplicateMergeDiagnostics(String mergeShape, int inputRealizations,
+		long immutableListReplayClauses, long sharedClauseReplayClauses,
+		long equalDistinctClauseClauses, DuplicateProvenanceCounts provenance,
+		boolean reusedRealization) {
+		if(duplicateMergeDiagnostics == null)
+			return;
+		duplicateMergeDiagnostics.record(mergeShape, inputRealizations,
+			immutableListReplayClauses, sharedClauseReplayClauses,
+			equalDistinctClauseClauses, provenance, reusedRealization);
+	}
+
+	public DuplicateMergeDiagnosticsSnapshot duplicateMergeDiagnosticsSnapshot() {
+		return duplicateMergeDiagnostics == null ? DuplicateMergeDiagnosticsSnapshot.DISABLED
+			: duplicateMergeDiagnostics.snapshot(realizationMergeDuplicateClauses);
+	}
+	boolean hasDuplicateMergeDiagnostics() { return duplicateMergeDiagnostics != null; }
+
+	DuplicateMergeOriginScope beginDuplicateMergeOrigin(long revision, String phase, String route) {
+		return duplicateMergeDiagnostics == null ? DuplicateMergeOriginScope.NOOP
+			: duplicateMergeDiagnostics.beginOrigin(revision, phase, route, false);
+	}
+
+	DuplicateMergeOriginScope beginDuplicateMergeBatchOrigin(long revision, String phase, String route) {
+		return duplicateMergeDiagnostics == null ? DuplicateMergeOriginScope.NOOP
+			: duplicateMergeDiagnostics.beginOrigin(revision, phase, route, true);
+	}
+
+	void recordDuplicateMergeClauseOrigins(
+		List<PlacementAnalysis.CandidateRealizationSupportClause> clauses) {
+		if(duplicateMergeDiagnostics != null)
+			duplicateMergeDiagnostics.recordClauseOrigins(clauses);
+	}
+
+	DuplicateClauseProvenance classifyDuplicateClause(
+		PlacementAnalysis.CandidateRealizationSupportClause retained,
+		PlacementAnalysis.CandidateRealizationSupportClause duplicate) {
+		return duplicateMergeDiagnostics == null ? DuplicateClauseProvenance.UNRESOLVED
+			: duplicateMergeDiagnostics.classify(retained, duplicate);
+	}
+
+	public enum DuplicateClauseProvenance {
+		SAME_BATCH,
+		SAME_ROUTE_SAME_REVISION,
+		CROSS_ROUTE,
+		UNCHANGED_REVISION_REPLAY,
+		UNRESOLVED
+	}
+
+	static final class DuplicateMergeOriginScope implements AutoCloseable {
+		private static final DuplicateMergeOriginScope NOOP = new DuplicateMergeOriginScope(null, null);
+		private final DuplicateMergeDiagnostics owner;
+		private final DuplicateMergeOrigin origin;
+		private boolean closed;
+		private DuplicateMergeOriginScope(DuplicateMergeDiagnostics owner, DuplicateMergeOrigin origin) {
+			this.owner = owner;
+			this.origin = origin;
+		}
+		@Override public void close() {
+			if(owner == null || closed)
+				return;
+			closed = true;
+			owner.endOrigin(origin);
+		}
+	}
+
+	public record DuplicateProvenanceCounts(long sameBatchClauses,
+		long sameRouteSameRevisionClauses, long crossRouteClauses,
+		long unchangedRevisionReplayClauses, long unresolvedClauses) {
+		static final DuplicateProvenanceCounts EMPTY =
+			new DuplicateProvenanceCounts(0, 0, 0, 0, 0);
+		long total() {
+			return sameBatchClauses + sameRouteSameRevisionClauses + crossRouteClauses
+				+ unchangedRevisionReplayClauses + unresolvedClauses;
+		}
+	}
+
+	public record DuplicateMergeTrace(String callSite, String mergeShape, int inputRealizations,
+		long duplicateClauses, long immutableListReplayClauses,
+		long sharedClauseReplayClauses, long equalDistinctClauseClauses,
+		long sameBatchClauses, long sameRouteSameRevisionClauses,
+		long crossRouteClauses, long unchangedRevisionReplayClauses,
+		long provenanceUnresolvedClauses, boolean reusedRealization) { }
+
+	public record DuplicateMergeDiagnosticsSnapshot(boolean enabled,
+		long observedDuplicateClauses, long legacyDuplicateClauses,
+		long immutableListReplayClauses, long sharedClauseReplayClauses,
+		long equalDistinctClauseClauses, long sameBatchClauses,
+		long sameRouteSameRevisionClauses, long crossRouteClauses,
+		long unchangedRevisionReplayClauses, long provenanceUnresolvedClauses,
+		long originEntries, long originEntryOverflows,
+		long droppedTraceEvents, long unretainedOriginTransitionClauses,
+		List<DuplicateOriginTransition> originTransitions,
+		List<DuplicateMergeTrace> traces) {
+		private static final DuplicateMergeDiagnosticsSnapshot DISABLED =
+			new DuplicateMergeDiagnosticsSnapshot(false, 0, 0, 0, 0, 0,
+				0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), List.of());
+	}
+
+	public record DuplicateOriginTransition(long fromRevision, String fromPhase, String fromRoute,
+		long toRevision, String toPhase, String toRoute,
+		DuplicateClauseProvenance classification, long duplicateClauses) { }
+
+	private static final class DuplicateMergeDiagnostics {
+		private final int traceLimit;
+		private final int originLimit;
+		private final List<DuplicateMergeTrace> traces = new ArrayList<>();
+		private final ArrayDeque<DuplicateMergeOrigin> origins = new ArrayDeque<>();
+		private final Map<PlacementAnalysis.CandidateRealizationSupportClause,
+			DuplicateMergeOrigin> clauseOrigins = new IdentityHashMap<>();
+		private final Map<DuplicateOriginTransitionKey,Long> originTransitions = new LinkedHashMap<>();
+		private long immutableListReplayClauses;
+		private long sharedClauseReplayClauses;
+		private long equalDistinctClauseClauses;
+		private long sameBatchClauses;
+		private long sameRouteSameRevisionClauses;
+		private long crossRouteClauses;
+		private long unchangedRevisionReplayClauses;
+		private long unresolvedClauses;
+		private long originEntryOverflows;
+		private long unretainedOriginTransitionClauses;
+		private long droppedTraceEvents;
+		private long nextBatch;
+
+		private DuplicateMergeDiagnostics(int traceLimit) {
+			this.traceLimit = traceLimit;
+			this.originLimit = Math.max(1024,
+				(int) Math.min(1_000_000L, Math.max(1L, traceLimit) * 64L));
+		}
+
+		private void reset() {
+			traces.clear();
+			origins.clear();
+			clauseOrigins.clear();
+			originTransitions.clear();
+			immutableListReplayClauses = 0;
+			sharedClauseReplayClauses = 0;
+			equalDistinctClauseClauses = 0;
+			sameBatchClauses = 0;
+			sameRouteSameRevisionClauses = 0;
+			crossRouteClauses = 0;
+			unchangedRevisionReplayClauses = 0;
+			unresolvedClauses = 0;
+			originEntryOverflows = 0;
+			unretainedOriginTransitionClauses = 0;
+			droppedTraceEvents = 0;
+			nextBatch = 0;
+		}
+
+		private DuplicateMergeOriginScope beginOrigin(long revision, String phase, String route,
+			boolean exactBatch) {
+			DuplicateMergeOrigin origin = new DuplicateMergeOrigin(revision,
+				java.util.Objects.requireNonNull(phase, "duplicate merge phase"),
+				java.util.Objects.requireNonNull(route, "duplicate merge route"), ++nextBatch, exactBatch);
+			origins.push(origin);
+			return new DuplicateMergeOriginScope(this, origin);
+		}
+
+		private void endOrigin(DuplicateMergeOrigin origin) {
+			if(origins.peek() != origin)
+				throw new IllegalStateException("DUPLICATE_MERGE_ORIGIN_SCOPE_ORDER");
+			origins.pop();
+		}
+
+		private void recordClauseOrigins(
+			List<PlacementAnalysis.CandidateRealizationSupportClause> clauses) {
+			DuplicateMergeOrigin origin = origins.peek();
+			if(origin == null)
+				return;
+			for(PlacementAnalysis.CandidateRealizationSupportClause clause : clauses) {
+				if(clauseOrigins.containsKey(clause))
+					continue;
+				if(clauseOrigins.size() >= originLimit) {
+					originEntryOverflows++;
+					continue;
+				}
+				clauseOrigins.put(clause, origin);
+			}
+		}
+
+		private DuplicateClauseProvenance classify(
+			PlacementAnalysis.CandidateRealizationSupportClause retained,
+			PlacementAnalysis.CandidateRealizationSupportClause duplicate) {
+			DuplicateMergeOrigin left = clauseOrigins.get(retained);
+			DuplicateMergeOrigin right = clauseOrigins.get(duplicate);
+			DuplicateClauseProvenance result;
+			if(left == null || right == null)
+				result = DuplicateClauseProvenance.UNRESOLVED;
+			else if(left.exactBatch() && right.exactBatch() && left.batch() == right.batch())
+				result = DuplicateClauseProvenance.SAME_BATCH;
+			else if(left.revision() != right.revision())
+				result = DuplicateClauseProvenance.UNCHANGED_REVISION_REPLAY;
+			else if(!left.phase().equals(right.phase()) || !left.route().equals(right.route()))
+				result = DuplicateClauseProvenance.CROSS_ROUTE;
+			else
+				result = DuplicateClauseProvenance.SAME_ROUTE_SAME_REVISION;
+			recordOriginTransition(left, right, result);
+			return result;
+		}
+
+		private void recordOriginTransition(DuplicateMergeOrigin left,
+			DuplicateMergeOrigin right, DuplicateClauseProvenance classification) {
+			DuplicateOriginTransitionKey key = new DuplicateOriginTransitionKey(left, right, classification);
+			Long prior = originTransitions.get(key);
+			if(prior != null) {
+				originTransitions.put(key, prior + 1);
+				return;
+			}
+			if(originTransitions.size() >= Math.max(16, traceLimit * 2L)) {
+				unretainedOriginTransitionClauses++;
+				return;
+			}
+			originTransitions.put(key, 1L);
+		}
+
+		private void record(String mergeShape, int inputRealizations,
+			long immutableListReplay, long sharedClauseReplay,
+			long equalDistinctClause, DuplicateProvenanceCounts provenance,
+			boolean reusedRealization) {
+			long duplicates = Math.addExact(Math.addExact(immutableListReplay, sharedClauseReplay),
+				equalDistinctClause);
+			if(duplicates == 0)
+				return;
+			if(provenance.total() != equalDistinctClause)
+				throw new IllegalArgumentException("DUPLICATE_MERGE_PROVENANCE_COUNT_MISMATCH");
+			immutableListReplayClauses += immutableListReplay;
+			sharedClauseReplayClauses += sharedClauseReplay;
+			equalDistinctClauseClauses += equalDistinctClause;
+			sameBatchClauses += provenance.sameBatchClauses();
+			sameRouteSameRevisionClauses += provenance.sameRouteSameRevisionClauses();
+			crossRouteClauses += provenance.crossRouteClauses();
+			unchangedRevisionReplayClauses += provenance.unchangedRevisionReplayClauses();
+			unresolvedClauses += provenance.unresolvedClauses();
+			if(traces.size() >= traceLimit) {
+				droppedTraceEvents++;
+				return;
+			}
+			traces.add(new DuplicateMergeTrace(resolveCallSite(), mergeShape, inputRealizations,
+				duplicates, immutableListReplay, sharedClauseReplay, equalDistinctClause,
+				provenance.sameBatchClauses(), provenance.sameRouteSameRevisionClauses(),
+				provenance.crossRouteClauses(), provenance.unchangedRevisionReplayClauses(),
+				provenance.unresolvedClauses(), reusedRealization));
+		}
+
+		private DuplicateMergeDiagnosticsSnapshot snapshot(long legacyDuplicateClauses) {
+			long observed = immutableListReplayClauses + sharedClauseReplayClauses
+				+ equalDistinctClauseClauses;
+			List<DuplicateOriginTransition> transitions = originTransitions.entrySet().stream()
+				.map(entry -> entry.getKey().snapshot(entry.getValue())).toList();
+			return new DuplicateMergeDiagnosticsSnapshot(true, observed, legacyDuplicateClauses,
+				immutableListReplayClauses, sharedClauseReplayClauses,
+				equalDistinctClauseClauses, sameBatchClauses,
+				sameRouteSameRevisionClauses, crossRouteClauses,
+				unchangedRevisionReplayClauses, unresolvedClauses,
+				clauseOrigins.size(), originEntryOverflows,
+				droppedTraceEvents, unretainedOriginTransitionClauses,
+				transitions, List.copyOf(traces));
+		}
+
+		private static String resolveCallSite() {
+			return StackWalker.getInstance().walk(frames -> frames
+				.filter(frame -> !frame.getClassName().equals(SearchSpaceMetrics.class.getName())
+					&& !frame.getClassName().startsWith(SearchSpaceMetrics.class.getName() + "$"))
+				.filter(frame -> !frame.getClassName().startsWith(PlacementAnalysis.class.getName() + "$"))
+				.filter(frame -> !frame.getClassName().startsWith("java."))
+				.findFirst()
+				.map(frame -> frame.getClassName() + "#" + frame.getMethodName()
+					+ ":" + frame.getLineNumber())
+				.orElse("unresolved"));
+		}
+	}
+
+	private record DuplicateMergeOrigin(long revision, String phase, String route,
+		long batch, boolean exactBatch) { }
+	private record DuplicateOriginTransitionKey(DuplicateMergeOrigin from,
+		DuplicateMergeOrigin to, DuplicateClauseProvenance classification) {
+		private DuplicateOriginTransition snapshot(long duplicateClauses) {
+			return new DuplicateOriginTransition(
+				from == null ? Long.MIN_VALUE : from.revision(),
+				from == null ? "unresolved" : from.phase(),
+				from == null ? "unresolved" : from.route(),
+				to == null ? Long.MIN_VALUE : to.revision(),
+				to == null ? "unresolved" : to.phase(),
+				to == null ? "unresolved" : to.route(), classification, duplicateClauses);
+		}
+	}
 	void recordTopologyExpansion(boolean cacheHit, long rows) {
 		if(cacheHit)
 			topologyExpansionHits++;

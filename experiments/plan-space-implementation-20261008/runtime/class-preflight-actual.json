@@ -1,0 +1,105 @@
+{
+  "actual": {
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver$SparseAccumulator.class": {
+      "actualSha256": "f3c8935c124b19ae1afff28c127d3ab24d3400cfb64195462e9d88b644407d09",
+      "exists": true,
+      "expectedSha256": "f3c8935c124b19ae1afff28c127d3ab24d3400cfb64195462e9d88b644407d09",
+      "matched": true,
+      "size": 6915
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.class": {
+      "actualSha256": "deeb921f982f7046063dda298d9fb8a23c59bd2036ed593ae573f8124893b606",
+      "exists": true,
+      "expectedSha256": "deeb921f982f7046063dda298d9fb8a23c59bd2036ed593ae573f8124893b606",
+      "matched": true,
+      "size": 123537
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactFiniteSupportJoin.class": {
+      "actualSha256": "84a2b98bb4a22de269013c5d0d24a70d241eb6a3dc7ae03677dd7ac66a0bd967",
+      "exists": true,
+      "expectedSha256": "84a2b98bb4a22de269013c5d0d24a70d241eb6a3dc7ae03677dd7ac66a0bd967",
+      "matched": true,
+      "size": 15560
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.class": {
+      "actualSha256": "4b796430abf7922a5da3742961d82c00efebb598b8d82372efa5db8506a433a6",
+      "exists": true,
+      "expectedSha256": "4b796430abf7922a5da3742961d82c00efebb598b8d82372efa5db8506a433a6",
+      "matched": true,
+      "size": 263345
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.class": {
+      "actualSha256": "59c04584437113bb923b4b0ab6622c6cbac2455f16aff771f0490117aefd3617",
+      "exists": true,
+      "expectedSha256": "59c04584437113bb923b4b0ab6622c6cbac2455f16aff771f0490117aefd3617",
+      "matched": true,
+      "size": 178237
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalOptimizer.class": {
+      "actualSha256": "f9c88c321ec33d33a1fab5db1b87e88d75effe15909a9815622a6d3beee51017",
+      "exists": true,
+      "expectedSha256": "f9c88c321ec33d33a1fab5db1b87e88d75effe15909a9815622a6d3beee51017",
+      "matched": true,
+      "size": 19091
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolver.class": {
+      "actualSha256": "b4f61265713379089a9251211099e8831912300767a810c7f28857008b3d1301",
+      "exists": true,
+      "expectedSha256": "b4f61265713379089a9251211099e8831912300767a810c7f28857008b3d1301",
+      "matched": true,
+      "size": 67798
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalSharedSourceEncoding.class": {
+      "actualSha256": "a66d5ad005c8b491086cb0d73b91e152905b3b7e29f2e2835522359110787444",
+      "exists": true,
+      "expectedSha256": "a66d5ad005c8b491086cb0d73b91e152905b3b7e29f2e2835522359110787444",
+      "matched": true,
+      "size": 95647
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.class": {
+      "actualSha256": "6dddae1d6e1282072f83dacebd7dc4026bbd70c4b9e5f8583bf40aa288d536ad",
+      "exists": true,
+      "expectedSha256": "6dddae1d6e1282072f83dacebd7dc4026bbd70c4b9e5f8583bf40aa288d536ad",
+      "matched": true,
+      "size": 41544
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.class": {
+      "actualSha256": "8efd4526c78f4fa5e03e9342e7a7a47e34b4d5e18e684e251c65800cdad72932",
+      "exists": true,
+      "expectedSha256": "8efd4526c78f4fa5e03e9342e7a7a47e34b4d5e18e684e251c65800cdad72932",
+      "matched": true,
+      "size": 35033
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.class": {
+      "actualSha256": "ed48f7f5dd7bd041855dc53b928068812218173398664ac875afa1a8e47b2440",
+      "exists": true,
+      "expectedSha256": "ed48f7f5dd7bd041855dc53b928068812218173398664ac875afa1a8e47b2440",
+      "matched": true,
+      "size": 154810
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class": {
+      "actualSha256": "c027715f554a2dec93ba71cb7ef520a78fe5d872dfc8d8eab58efa276d8b3f12",
+      "exists": true,
+      "expectedSha256": "c027715f554a2dec93ba71cb7ef520a78fe5d872dfc8d8eab58efa276d8b3f12",
+      "matched": true,
+      "size": 587690
+    },
+    "/engine/classes/org/apache/sysds/runtime/controlprogram/context/ExecutionContext.class": {
+      "actualSha256": "414a3e404011c10d7ebd3d4b6d43e262497bdec71dec7766f2f16a492d084556",
+      "exists": true,
+      "expectedSha256": "414a3e404011c10d7ebd3d4b6d43e262497bdec71dec7766f2f16a492d084556",
+      "matched": true,
+      "size": 47497
+    },
+    "/engine/test-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointBoundaryPhysicalModelProofTest.class": {
+      "actualSha256": "7bf1a80c4b9df9b07c256bc5fb69f5099e19015564b7a614304e82162f6847e2",
+      "exists": true,
+      "expectedSha256": "7bf1a80c4b9df9b07c256bc5fb69f5099e19015564b7a614304e82162f6847e2",
+      "matched": true,
+      "size": 33632
+    }
+  },
+  "expectedCount": 14,
+  "schema": "systemds-joint-boundary-class-preflight-v1",
+  "status": "PASSED"
+}

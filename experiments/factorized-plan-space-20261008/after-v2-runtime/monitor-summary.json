@@ -1,0 +1,9 @@
+{
+  "returnCode": 0,
+  "elapsedSeconds": 55.522,
+  "requestedPostSampleSleepSeconds": 0.2,
+  "effectiveMeanSampleIntervalSeconds": 2.005,
+  "sampleCount": 23,
+  "peakSampledContainerMemoryBytes": 891184742,
+  "scope": "whole one-container harness; sampled Docker cgroup memory usage"
+}

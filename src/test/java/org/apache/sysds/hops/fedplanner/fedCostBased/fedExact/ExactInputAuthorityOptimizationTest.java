@@ -96,10 +96,10 @@ public class ExactInputAuthorityOptimizationTest {
 					actual.executionRule(), actual.executionEmission(), actual.durableAnchor(),
 					actual.relocationAction(), actual.derivedFoutAction(), actual.orderedInputs(),
 					actual.inputAuthorities(), actual.realization(), actual.supportClause(),
-					actual.signature());
+					actual.compactSupport(), actual.signature());
 				Assert.assertEquals(copy, actual);
-				Assert.assertEquals(legacyAlternativeHash(actual), actual.hashCode());
-				Assert.assertEquals(legacyAlternativeToString(actual), actual.toString());
+				Assert.assertEquals(expectedAlternativeHash(actual), actual.hashCode());
+				Assert.assertEquals(expectedAlternativeToString(actual), actual.toString());
 				List<String> chunks = new java.util.ArrayList<>();
 				actual.appendSignature(chunks::add);
 				Assert.assertEquals(actual.signature(), String.join("", chunks));
@@ -195,11 +195,13 @@ public class ExactInputAuthorityOptimizationTest {
 		ExactPhysicalModel.Alternative execution) throws Exception {
 		var method = java.util.Arrays.stream(ExactPhysicalModel.class.getDeclaredMethods())
 			.filter(candidate -> candidate.getName().equals("nonCandidate"))
-			.max(java.util.Comparator.comparingInt(candidate -> candidate.getParameterTypes().length))
+			.filter(candidate -> candidate.getParameterCount() == 11)
+			.findFirst()
 			.orElseThrow();
 		method.setAccessible(true);
 		var candidate = java.util.Arrays.stream(ExactPhysicalModel.class.getDeclaredMethods())
 			.filter(candidateMethod -> candidateMethod.getName().equals("candidate"))
+			.filter(candidateMethod -> candidateMethod.getParameterCount() == 9)
 			.findFirst().orElseThrow();
 		candidate.setAccessible(true);
 		Class<?> contextClass = candidate.getParameterTypes()[candidate.getParameterCount() - 1];
@@ -376,7 +378,7 @@ public class ExactInputAuthorityOptimizationTest {
 			value.blockAssignments());
 	}
 
-	private static int legacyAlternativeHash(ExactPhysicalModel.Alternative value) {
+	private static int expectedAlternativeHash(ExactPhysicalModel.Alternative value) {
 		int hash = java.util.Objects.hashCode(value.decision());
 		hash = 31 * hash + java.util.Objects.hashCode(value.state());
 		hash = 31 * hash + java.util.Objects.hashCode(value.authorityKind());
@@ -391,10 +393,11 @@ public class ExactInputAuthorityOptimizationTest {
 		hash = 31 * hash + java.util.Objects.hashCode(value.inputAuthorities());
 		hash = 31 * hash + java.util.Objects.hashCode(value.realization());
 		hash = 31 * hash + java.util.Objects.hashCode(value.supportClause());
+		hash = 31 * hash + java.util.Objects.hashCode(value.compactSupport());
 		return 31 * hash + value.signature().hashCode();
 	}
 
-	private static String legacyAlternativeToString(ExactPhysicalModel.Alternative value) {
+	private static String expectedAlternativeToString(ExactPhysicalModel.Alternative value) {
 		return "Alternative[decision=" + value.decision() + ", state=" + value.state()
 			+ ", authorityKind=" + value.authorityKind() + ", candidateRule=" + value.candidateRule()
 			+ ", candidateEmission=" + value.candidateEmission() + ", executionRule="
@@ -403,7 +406,9 @@ public class ExactInputAuthorityOptimizationTest {
 			+ value.relocationAction() + ", derivedFoutAction=" + value.derivedFoutAction()
 			+ ", orderedInputs=" + value.orderedInputs() + ", inputAuthorities="
 			+ value.inputAuthorities() + ", realization=" + value.realization()
-			+ ", supportClause=" + value.supportClause() + ", signature=" + value.signature() + "]";
+			+ ", supportClause=" + value.supportClause() + ", compactSupport="
+			+ (value.compactSupport() == null ? "-" : value.compactSupport().logicalClauseCount())
+			+ ", signature=" + value.signature() + "]";
 	}
 
 	@Test

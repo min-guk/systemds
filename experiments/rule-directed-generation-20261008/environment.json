@@ -1,0 +1,38 @@
+{
+  "artifactInventoryDigests": {
+    "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+    "mainClasses": "ab4a85a6adda34a37c175626048049e230f1beb8987287e1eb15be0cb47678c8",
+    "mainSources": "8ad619b09a4d2afe547f5cea850d97ceb493b55593ee2075b4b8158ef747f1d2",
+    "testClasses": "f0a0c6882fc8ac48c4dd7a921f7453ab2c96ba5c4af63db15181859011116a54",
+    "testSources": "d42292445d0022350a07d40908e0d3e3fe303dc6ee6d85f9cd4fbb1e1000936e"
+  },
+  "dockerImage": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "fixtureSha256": {
+    "config": {
+      "sha256": "0593f01a6400b1f69b53f16fa07eaf0df46dc12fe5ec74cbddbf71c4c5f6f0a7"
+    },
+    "joint_correlated_aa": {
+      "cp": "56fbadb0cbe8b427ccc2b127c261605f803ee3ea70a91b89e054e285055cd55a",
+      "fed": "2243648c4b6e57269ffe0649c4c9461a4b01ec17dceadcb0d7e8acc2cb7ff1b0"
+    },
+    "joint_function_calls": {
+      "cp": "69b708f02aef8f45ad0e91bf2333cce2d65d3604e7c720d18fcf308cb6be4635",
+      "fed": "47ef015019acf1c618fb3d5cd03a33dad70e1f32542ba59d5b991d356f523d08"
+    }
+  },
+  "frozenEngineRoot": "/grid/3/cofee-lm-sweep-mchoi-20260914/legal-combination-ids-20261008/engine",
+  "recordedAtUtc": "2026-10-08T16:41:54.769284+00:00",
+  "repositoryHead": "276f958efc91477e3d0e8a2a492929455dd77227",
+  "runId": "baseline-local-canonical-v1",
+  "runPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/rule-directed-generation-20261008/verification/runtime/baseline-local-canonical-v1",
+  "runnerPath": "/home/mchoi/w1357-structural-grounding-20261006/scripts/fedplanner/run_LAN_docker.sh",
+  "schema": "fedplanner-rule-directed-baseline-environment-v1",
+  "sourceSha256": {
+    "dispatch": "5bbc9edfcf050114c31764634dc8856005f9cf2335907fcc084b83436b48df64",
+    "runner": "ecaf0614c89619ba9fbb1c698bde848b3a91e55f5773aee92a2f0e52d05e695a"
+  },
+  "unrelatedContainersBeforeRun": [
+    "codex-function-boundary-b-logreg_w1-12979b5d265b",
+    "codex-function-boundary-b-logreg_w1-de315e3f9582"
+  ]
+}

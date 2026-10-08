@@ -1,0 +1,90 @@
+{
+  "status": "PASSED_WITH_DOCUMENTED_BASELINE_FAILURES",
+  "productionSourceHashMatches": true,
+  "changedMainSourcesCompiled": 17,
+  "targetedJUnit": {
+    "uniqueTestsPassed": 375,
+    "existingIgnored": 3,
+    "initialBatch": {
+      "run": 371,
+      "passed": 369,
+      "failed": 2,
+      "log": "tests.log"
+    },
+    "repairedTestAdapterSuite": {
+      "run": 9,
+      "passed": 9,
+      "log": "authority-tests.log",
+      "reason": "Alternative gained compactSupport record component and private factories gained overloads; reflection and record-contract assertions updated."
+    },
+    "pipelineAdditionalTests": {
+      "run": 4,
+      "passed": 4,
+      "log": "pipeline-tests.log"
+    }
+  },
+  "pipeline": {
+    "logicalClauses": 10000,
+    "axisOptions": [
+      100,
+      100
+    ],
+    "productConsumerAlternatives": 1,
+    "wholeConsumerDomain": 2,
+    "clausesAfterAnalysis": 0,
+    "maxClausesThroughModelCostLocal": 1,
+    "clausesAfterNonrepresentativeSelection": 2,
+    "smallExplicitParity": {
+      "shape": [
+        2,
+        3
+      ],
+      "allRows": 6,
+      "hardFactors": "finite",
+      "canonicalCostRawBits": "equal",
+      "receiptsAndActions": "equal"
+    },
+    "sourceDependentCostBits": {
+      "local": 4619578633137411850,
+      "fed": 4620698875363191685,
+      "optimum": 4611695455012105748
+    }
+  },
+  "docker": {
+    "status": "PASSED",
+    "classPreflightPassed": true,
+    "modelProofPassed": true,
+    "noFedRuntimeConversion": true
+  },
+  "knownBaselineFailures": [
+    {
+      "suites": [
+        "CandidatePrivacyInputPruningTest",
+        "SharedPrivacyPlacementAnalysisContractTest"
+      ],
+      "failureCount": 6,
+      "reason": "Missing pre-existing pruning certificates",
+      "evidence": "baseline-privacy-certificate-failures.log"
+    },
+    {
+      "suite": "ExactPhysicalRealizationSupportFactorCacheTest",
+      "failureCount": 1,
+      "reason": "Stale hard-factor truth golden; reproduced on pre-task engine"
+    },
+    {
+      "suite": "ExactPhysicalModelCertificateTest",
+      "failureCount": 1,
+      "reason": "PCA derived-candidate certificate; reproduced on pre-task engine"
+    },
+    {
+      "suite": "ExactNativeLocalAnchorFanoutCostTest",
+      "failureCount": 1,
+      "reason": "Stale structure golden; baseline and current both 71bb4eb6866315a243d7c653e6155b695be8c52a2e61c424b541c6445b2ab3b0"
+    }
+  ],
+  "scopeLimits": [
+    "No full Maven build/test",
+    "Only eligible independent relocation products compacted in DP",
+    "No large-workload wall-clock speedup claim"
+  ]
+}

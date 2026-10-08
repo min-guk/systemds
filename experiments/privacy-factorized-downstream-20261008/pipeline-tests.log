@@ -1,0 +1,9 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+.FactorizedCostParity localBits=4619578633137411850 fedBits=4620698875363191685 optimumBits=4611695455012105748
+..FactorizedPipelineWork logicalClauses=10000 consumerAlternatives=2 ownedRepresentatives=2 selectedBindings=2
+.
+Time: 4.023
+
+OK (4 tests)
+

@@ -1,0 +1,6 @@
+{
+  "baseline": "/grid/3/cofee-lm-sweep-mchoi-20260914/rule-directed-generation-20261008/engine",
+  "workspace": "/home/mchoi/w1357-structural-grounding-20261006",
+  "engine": "/grid/3/cofee-lm-sweep-mchoi-20260914/factorized-plan-space-20261008/engine",
+  "note": "Baseline includes previous rule-directed generation optimizations; git HEAD is not the baseline."
+}

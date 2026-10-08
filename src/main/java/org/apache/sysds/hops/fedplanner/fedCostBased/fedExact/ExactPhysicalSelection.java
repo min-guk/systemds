@@ -177,8 +177,8 @@ final class ExactPhysicalSelection {
 
 		// No new placement/map decision is permitted after the objective was solved.
 		// Every active candidate owner must have supplied its exact selected receipt.
-		return CandidateSelections.resolveAndValidate(analysis,
-			analysis.graph().relocationActions(), selected, exact.values());
+		return CandidateSelections.resolveAndValidateSelected(
+			analysis, analysis.graph(), selected, exact.values());
 	}
 
 	private static List<RelocationChoiceReceipt> exactRelocationChoices(

@@ -61,6 +61,57 @@ import org.junit.Test;
 
 public class ExactPhysicalSemanticDagFingerprintTest {
 	@Test
+	public void factorizedFingerprintBindsEveryAxisWithoutMaterializingProduct() throws Exception {
+		CandidateEmissionRealization product = factorizedFingerprintFixture(100, "source");
+		CandidateEmissionFact emission = new CandidateEmissionFact(
+			product.key().emissionState(), null, null, List.of(product));
+		Assert.assertEquals(10_000, product.supportClauses().size());
+		Assert.assertEquals(0, materializedClauses(product));
+		String fingerprint = ExactPhysicalCostModel.physicalCandidateFactsDagFingerprintForTest(
+			List.of(fact("factorized", List.of(emission))));
+		Assert.assertEquals("fingerprinting must consume axes, not Cartesian support clauses",
+			0, materializedClauses(product));
+		CandidateEmissionRealization equal = factorizedFingerprintFixture(100, "source");
+		CandidateEmissionRealization changed = factorizedFingerprintFixture(100, "changed-source");
+		Assert.assertEquals(fingerprint, ExactPhysicalCostModel.physicalCandidateFactsDagFingerprintForTest(
+			List.of(fact("factorized", List.of(new CandidateEmissionFact(
+				equal.key().emissionState(), null, null, List.of(equal)))))));
+		Assert.assertNotEquals(fingerprint, ExactPhysicalCostModel.physicalCandidateFactsDagFingerprintForTest(
+			List.of(fact("factorized", List.of(new CandidateEmissionFact(
+				changed.key().emissionState(), null, null, List.of(changed)))))));
+		Assert.assertEquals(0, materializedClauses(equal));
+		Assert.assertEquals(0, materializedClauses(changed));
+	}
+
+	private static CandidateEmissionRealization factorizedFingerprintFixture(int width, String prefix)
+		throws Exception {
+		PlacementEmissionState emission = new PlacementEmissionState(
+			new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false), false);
+		var local = CandidateEmissionRealization.local(emission);
+		List<List<CandidateRealizationInputBinding>> factors = new ArrayList<>();
+		for(int input = 0; input < 2; input++) {
+			List<CandidateRealizationInputBinding> options = new ArrayList<>();
+			for(int option = 0; option < width; option++) {
+				var source = CandidateRealizationReference.of(new CandidateRuleKey(
+					key(prefix + '-' + input + '-' + option), List.of()), local);
+				options.add(CandidateRealizationInputBinding.direct(input, source));
+			}
+			factors.add(options);
+		}
+		var factory = CandidateEmissionRealization.class.getDeclaredMethod("factorized",
+			org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey.class,
+			List.class, List.class, DurableAnchorKey.class, boolean.class);
+		factory.setAccessible(true);
+		return (CandidateEmissionRealization)factory.invoke(null, local.key(), List.of(), factors, null, true);
+	}
+
+	private static int materializedClauses(CandidateEmissionRealization realization) throws Exception {
+		var method = realization.supportClauses().getClass().getDeclaredMethod("materializedClauseCount");
+		method.setAccessible(true);
+		return (int)method.invoke(realization.supportClauses());
+	}
+
+	@Test
 	public void schemaMatchesIndependentOracleAndFieldsRemainBound() {
 		CandidateRuleFact first = fact("detail-Aa", emissions());
 		CandidateRuleFact equalCopy = fact("detail-Aa", emissions());
@@ -68,7 +119,7 @@ public class ExactPhysicalSemanticDagFingerprintTest {
 			List.of(first, first));
 		String recomputedNoMemo = ExactPhysicalCostModel.physicalCandidateFactsDagFingerprintForTest(
 			List.of(first, equalCopy));
-		Assert.assertTrue(shared, shared.startsWith("physical-semantic-dag-v2:"));
+		Assert.assertTrue(shared, shared.startsWith("physical-semantic-dag-v3:"));
 		Assert.assertEquals("identity memo must not enter semantic bytes", shared, recomputedNoMemo);
 		Assert.assertEquals("independent traversal must define the same schema bytes", shared,
 			IndependentPhysicalSemanticDagOracle.candidates(List.of(first, equalCopy)));

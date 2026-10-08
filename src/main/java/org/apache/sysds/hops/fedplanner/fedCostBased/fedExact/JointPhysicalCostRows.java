@@ -151,22 +151,22 @@ final class JointPhysicalCostRows {
 		// reference cannot borrow an earlier analysis-owned realization.
 		if(active.contains(reference) || completed.contains(reference))
 			return true; // Anchors must still be found outside the cycle.
+		if(source.key().layoutKind() != PlacementLayoutKind.VALUE_MAP) {
+			DurableAnchorKey pool = uniformConcretePool(source);
+			if(pool == null) return false;
+			pools.add(pool);
+			completed.add(reference);
+			return true;
+		}
 		active.add(reference);
 		try {
 			for(var clause : source.supportClauses()) {
-				if(source.key().layoutKind() != PlacementLayoutKind.VALUE_MAP) {
-					var pool = source.provenWorkerPool(clause);
-					if(pool == null || !source.nativeWorkerPoolLayoutExact(clause)) return false;
-					pools.add(pool);
-				}
-				else {
-					if(clause.inputBindings().isEmpty()) return false;
-					for(var binding : clause.inputBindings()) {
-						if(binding.relocationAction() != null)
-							pools.add(binding.relocationAction().durableAnchor());
-						else if(!collectExactMapChoices(binding.source(), active, completed, pools))
-							return false;
-					}
+				if(clause.inputBindings().isEmpty()) return false;
+				for(var binding : clause.inputBindings()) {
+					if(binding.relocationAction() != null)
+						pools.add(binding.relocationAction().durableAnchor());
+					else if(!collectExactMapChoices(binding.source(), active, completed, pools))
+						return false;
 				}
 			}
 			completed.add(reference);
@@ -205,6 +205,14 @@ final class JointPhysicalCostRows {
 			// skips. Only fully expanded references enter the query-local completion set.
 			if(visiting.contains(binding.source()) || completed.contains(binding.source()))
 				continue;
+			if(source.key().layoutKind() != PlacementLayoutKind.VALUE_MAP) {
+				DurableAnchorKey uniform = uniformConcretePool(source);
+				if(uniform != null) {
+					result.add(uniform);
+					completed.add(binding.source());
+					continue;
+				}
+			}
 			visiting.add(binding.source());
 			try {
 				for(var support : source.supportClauses())
@@ -264,15 +272,24 @@ final class JointPhysicalCostRows {
 				Map.of(input.reader(), input.source()), Set.of(input.source()))).toList())).toList();
 	}
 
+	/** Concrete realization construction proves one common map across every support. */
+	private static DurableAnchorKey uniformConcretePool(
+		PlacementAnalysis.CandidateEmissionRealization realization) {
+		if(realization.anchor() != null) return realization.anchor();
+		var product = realization.factorizedSupportProduct().orElse(null);
+		if(product != null)
+			return product.nativeWorkerPoolLayoutExact() ? product.nativeWorkerPoolWitness() : null;
+		var clause = realization.supportClauses().get(0);
+		return realization.nativeWorkerPoolLayoutExact(clause) ? realization.provenWorkerPool(clause) : null;
+	}
+
 	private List<Value> values(CandidateRealizationReference reference,
 		Map<CompiledHopKey,ExactPhysicalModel.Alternative> selected, Set<CompiledHopKey> visiting) {
 		var realization = analysis.requireExactCandidateRealization(reference);
-		if(realization.key().layoutKind() != PlacementLayoutKind.VALUE_MAP
-			&& realization.supportClauses().stream().allMatch(realization::nativeWorkerPoolLayoutExact)) {
-			var pool = realization.provenWorkerPool(realization.supportClauses().get(0));
+		if(realization.key().layoutKind() != PlacementLayoutKind.VALUE_MAP) {
+			var pool = uniformConcretePool(realization);
 			return pool == null ? List.of() : List.of(new Value(pool, Map.of(), Set.of()));
 		}
-		if(realization.key().layoutKind() != PlacementLayoutKind.VALUE_MAP) return List.of();
 		CompiledHopKey key = reference.rule().parentOccurrence();
 		var alternative = selected.get(key);
 		if(alternative == null || alternative.realization() != realization || !visiting.add(key))

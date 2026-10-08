@@ -41,7 +41,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRea
 
 /** Test-only schema traversal intentionally independent of production memoization and encoding. */
 final class IndependentPhysicalSemanticDagOracle {
-	static final String SCHEMA = "physical-semantic-dag-v2";
+	static final String SCHEMA = "physical-semantic-dag-v3";
 	private static final byte[] ABSENT = {(byte)0};
 	static String candidates(List<CandidateRuleFact> facts) {
 		IndependentPhysicalSemanticDagOracle oracle = new IndependentPhysicalSemanticDagOracle();
@@ -115,8 +115,24 @@ final class IndependentPhysicalSemanticDagOracle {
 		return digest("candidate-realization", node -> {
 			node.child("key", realizationKey(realization.key()));
 			node.integer("clauses", realization.supportClauses().size());
-			for(CandidateRealizationSupportClause clause : realization.supportClauses())
-				node.child("clause", clause(clause));
+			var product = realization.factorizedSupportProduct().orElse(null);
+			if(product == null) {
+				for(CandidateRealizationSupportClause clause : realization.supportClauses())
+					node.child("clause", clause(clause));
+			}
+			else {
+				node.text("supportEncoding", "INDEPENDENT_PRODUCT_V1");
+				node.integer("proofs", product.proofDependencies().size());
+				product.proofDependencies().forEach(value -> node.child("proof", proof(value)));
+				node.nullableText("nativePool", product.nativeWorkerPoolWitness() == null ? null
+					: product.nativeWorkerPoolWitness().normalizedSignature());
+				node.bool("nativePoolLayoutExact", product.nativeWorkerPoolLayoutExact());
+				node.integer("axes", product.factors().size());
+				product.factors().forEach(axis -> {
+					node.integer("options", axis.size());
+					axis.forEach(value -> node.child("binding", binding(value)));
+				});
+			}
 		});
 	}
 
@@ -212,6 +228,8 @@ final class IndependentPhysicalSemanticDagOracle {
 				: realization(alternative.realization()));
 			node.nullableChild("supportClause", alternative.supportClause() == null ? null
 				: clause(alternative.supportClause()));
+			if(alternative.compactSupport() != null)
+				node.text("supportSelection", "PRODUCER_MEMBERSHIP_V1");
 			String recipe = canonicalRecipe(alternative);
 			boolean canonical = recipe != null
 				&& NormalizedText.literal(recipe).equals(alternative.normalizedSignature());
@@ -239,7 +257,8 @@ final class IndependentPhysicalSemanticDagOracle {
 				+ (alternative.derivedFoutAction() == null ? "-"
 					: alternative.derivedFoutAction().normalizedSignature())
 				+ "|inputs=" + alternative.inputAuthorities().stream()
-					.map(IndependentPhysicalSemanticDagOracle::authoritySignature).toList();
+					.map(IndependentPhysicalSemanticDagOracle::authoritySignature).toList()
+				+ compactSignature(alternative);
 		}
 		if(alternative.candidateRule() != null || alternative.candidateEmission() != null
 			|| alternative.derivedFoutAction() != null
@@ -260,7 +279,17 @@ final class IndependentPhysicalSemanticDagOracle {
 			+ "|clause=" + (alternative.supportClause() == null ? "-"
 				: alternative.supportClause().normalizedSignature())
 			+ "|inputs=" + alternative.inputAuthorities().stream()
-				.map(IndependentPhysicalSemanticDagOracle::authoritySignature).toList();
+				.map(IndependentPhysicalSemanticDagOracle::authoritySignature).toList()
+				+ compactSignature(alternative);
+	}
+
+	private static String compactSignature(Alternative alternative) {
+		if(alternative.compactSupport() == null) return "";
+		return "|compactSupport=" + alternative.compactSupport().axes().stream().map(axis ->
+			axis.inputPosition() + ":" + axis.sourceOwner().normalizedSignature() + ":"
+				+ axis.kind().name() + ":" + (axis.relocationAction() == null ? "-"
+					: axis.relocationAction().normalizedSignature()) + ":options="
+				+ axis.options().stream().map(option -> option.binding().normalizedSignature()).toList()).toList();
 	}
 
 	private static String authoritySignature(InputAuthority authority) {

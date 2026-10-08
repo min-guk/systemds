@@ -305,6 +305,11 @@ final class ExactPhysicalSharedSourceEncoding {
 		for(int ordinal = 0; ordinal < decisions.size(); ordinal++)
 			if(surface.variables().get(ordinal) != decisions.get(ordinal))
 				throw new IllegalArgumentException("EXACT_SHARED_SOURCE_DECISION_PREFIX_MISMATCH");
+		if(model.domains().stream().flatMap(domain -> domain.alternatives().stream())
+			.anyMatch(alternative -> alternative.compactSupport() != null))
+			return legacy(model, surface, surface.exactSolverVariables(),
+				legacyFactorList(model, surface, extraHardFactors),
+				"COMPACT_SUPPORT_REQUIRES_NATIVE_MEMBERSHIP_FACTORS");
 
 		List<ExactCategoricalSolver.Variable> legacyVariables = surface.exactSolverVariables();
 		List<ExactCategoricalSolver.Factor> legacyFactors = new ArrayList<>(
@@ -329,6 +334,17 @@ final class ExactPhysicalSharedSourceEncoding {
 			return legacy(model, surface, legacyVariables, legacyFactors,
 				"TRANSFORM_ARITHMETIC_OVERFLOW");
 		}
+	}
+
+	private static List<ExactCategoricalSolver.Factor> legacyFactorList(ExactPhysicalModel model,
+		PhysicalCostSurface surface, List<ExactCategoricalSolver.Factor> extraHardFactors) {
+		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>(
+			model.exactSolverHardFactors().size() + surface.exactSolverFactors().size()
+				+ extraHardFactors.size());
+		factors.addAll(model.exactSolverHardFactors());
+		factors.addAll(surface.exactSolverFactors());
+		factors.addAll(extraHardFactors);
+		return factors;
 	}
 
 	static Encoding prepareWithoutProjectedLinksForTest(ExactPhysicalModel model,

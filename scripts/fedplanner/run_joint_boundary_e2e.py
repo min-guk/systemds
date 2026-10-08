@@ -91,6 +91,7 @@ class Case:
     expected_failure: str = ""
     training: bool = False
     requires_loss_progress: bool = False
+    required_weighted_kernels: tuple[str, ...] = ()
     default_selected: bool = True
 
 
@@ -126,6 +127,13 @@ def cases() -> tuple[Case, ...]:
              requires_loss_progress=True, default_selected=False),
         Case("ml_lm_gd", "ml_lm_gd", training=True,
              requires_loss_progress=True, default_selected=False),
+        Case("weighted_quaternary_with_private_aggregate",
+             "weighted_quaternary_with_private_aggregate",
+             required_weighted_kernels=("wsloss", "wcemm"),
+             default_selected=False),
+        Case("weighted_quaternary_protected_row", "weighted_quaternary_protected_row",
+             required_weighted_kernels=("wsloss", "wcemm"),
+             default_selected=False),
     )
 
 
@@ -440,6 +448,30 @@ def program(case: Case, federated: bool) -> str:
         return prefix + (
             "m=l2svm(X=X,Y=Y,verbose=FALSE,epsilon=1e-12,maxIterations=3,maxii=3);\n"
             + fingerprint("m"))
+    if case.kind == "weighted_quaternary_with_private_aggregate":
+        weighted_x = ("X_WEIGHTED=X_PUBLIC;\n" if not federated else
+                      f'X_WEIGHTED=federated(addresses=list("localhost:{WORKER_PORT}'
+                      '//evidence/data/X_PUBLIC.csv"),ranges=list(list(0,0),list(8,3)));\n')
+        return prefix + local_read("U_WEIGHTED") + local_read("V_WEIGHTED") + (
+            weighted_x + "U=U_WEIGHTED;V=V_WEIGHTED;\n"
+            "Loss=as.matrix(sum((X_WEIGHTED-(U%*%t(V)))^2));\n"
+            "CrossEntropy=as.matrix(sum(X_WEIGHTED*log(U%*%t(V))));\n"
+            "ProtectedAggregate=as.matrix(sum(X));\n"
+            "Z=rbind(Loss,CrossEntropy,ProtectedAggregate);\n"
+            + fingerprint("Z"))
+    if case.kind == "weighted_quaternary_protected_row":
+        protected_x = (local_read("X_PUBLIC") + "X_PROTECTED=X_PUBLIC;\n"
+                       if not federated else
+                       f'X_PROTECTED=federated(addresses=list("localhost:{POOL_A_PORT}'
+                       '//evidence/data/X_TOP.csv","localhost:'
+                       f'{POOL_B_PORT}//evidence/data/X_BOTTOM.csv"),ranges=list('
+                       'list(0,0),list(4,3),list(4,0),list(8,3)));\n')
+        return protected_x + local_read("U_WEIGHTED") + local_read("V_WEIGHTED") + (
+            "U=U_WEIGHTED;V=V_WEIGHTED;\n"
+            "Loss=as.matrix(sum((X_PROTECTED-(U%*%t(V)))^2));\n"
+            "CrossEntropy=as.matrix(sum(X_PROTECTED*log(U%*%t(V))));\n"
+            "Z=rbind(Loss,CrossEntropy);\n"
+            + fingerprint("Z"))
     if case.kind == "branch_upload":
         return prefix + (
             "flag=sum(X)>0;\n"
@@ -495,6 +527,14 @@ def write_inputs(run: Path, selected: tuple[Case, ...] | None = None) -> dict[st
         "X_PUBLIC": ("\n".join(",".join(map(str, row)) for row in x) + "\n", 8, 3, "public"),
     }
     selected_cases = selected if selected is not None else default_cases()
+    if any(case.kind in {"weighted_quaternary_with_private_aggregate",
+                         "weighted_quaternary_protected_row"} for case in selected_cases):
+        weighted_u = tuple((1.0 + row / 10.0, 0.5 + row / 20.0) for row in range(8))
+        weighted_v = ((0.7, 1.1), (1.2, 0.8), (0.9, 1.3))
+        for name, values in (("U_WEIGHTED", weighted_u), ("V_WEIGHTED", weighted_v)):
+            payload = "\n".join(",".join(f"{value:.17g}" for value in row)
+                                for row in values) + "\n"
+            texts[name] = (payload, len(values), len(values[0]), "public")
     if any(case.training for case in selected_cases):
         ml_x = tuple(tuple(
             ((row + 3) * (col + 5) % 29 - 14) / 7.0
@@ -520,7 +560,8 @@ def write_inputs(run: Path, selected: tuple[Case, ...] | None = None) -> dict[st
         y_payload = "\n".join(f"{value:.17g}" for value in steplm_y) + "\n"
         texts["X_STEPLM_PUBLIC"] = (x_payload, 20, 5, "public")
         texts["Y_STEPLM_PUBLIC"] = (y_payload, 20, 1, "public")
-    if any(case.kind == "dynamic_reverse" for case in selected_cases):
+    if any(case.kind in {"dynamic_reverse", "weighted_quaternary_protected_row"}
+           for case in selected_cases):
         for name, values in (("X_TOP", x[:4]), ("X_BOTTOM", x[4:])):
             payload = "\n".join(",".join(map(str, row)) for row in values) + "\n"
             texts[name] = (payload, 4, 3, "private-aggregate")
@@ -886,6 +927,21 @@ def runtime_statistics(text: str) -> dict[str, float]:
     return {names[name]: float(value) for name, value in STATISTIC.findall(text)}
 
 
+def weighted_kernel_evidence(text: str, audit_rows: list[dict],
+                             opcodes: tuple[str, ...]) -> dict[str, dict[str, bool]]:
+    evidence: dict[str, dict[str, bool]] = {}
+    for opcode in opcodes:
+        runtime = bool(re.search(
+            rf"(?m)^\s*\d+\s+(?:fed_)?{re.escape(opcode)}\s+", text))
+        candidate = any(
+            opcode in str(row.get("opcode", "")).lower()
+            and row.get("publishedRule", {}).get("status") == "AVAILABLE"
+            for row in audit_rows)
+        evidence[opcode] = {"runtimeHeavyHitter": runtime,
+                            "availableCandidateAudit": candidate}
+    return evidence
+
+
 def read_rc(path: Path) -> int | None:
     try:
         return int(path.read_text(encoding="utf-8").strip())
@@ -1014,6 +1070,8 @@ def evaluate(run: Path, container_returncode: int,
         if case.requires_action_evidence:
             required_action_cases[case.name] = bool(actions)
         text = fed_log.read_text(encoding="utf-8", errors="replace") if fed_log.is_file() else ""
+        weighted_kernels = weighted_kernel_evidence(
+            text, audit_rows, case.required_weighted_kernels)
         fed_no_relocation = (bool(re.search(
             r"(?m)^\[PlannerRuntimeAudit\].*opcode=\+ .*plannedTarget=FED/FOUT.*actual=FED/FOUT", text))
             and not re.search(r"(?i)stage=RELOCATE|opcode=fed_refed|plannedTarget=SYNTHETIC/REFED", text))
@@ -1086,6 +1144,8 @@ def evaluate(run: Path, container_returncode: int,
                            loss_progress and loss_progress["decreased"]))
                       and trace_complete
                       and bool(proof_evidence["passed"])
+                      and all(item["runtimeHeavyHitter"] and item["availableCandidateAudit"]
+                              for item in weighted_kernels.values())
                       and (not case.requires_fed_no_relocation or fed_no_relocation))
             result = {"case": case.name, "expected": "success", "passed": passed,
                       "cpReturncode": cp_rc, "fedReturncode": fed_rc,
@@ -1093,6 +1153,7 @@ def evaluate(run: Path, container_returncode: int,
                       "auditSchemas": schemas, "auditRows": len(audit_rows),
                       "auditErrors": audit_errors, "actionDiagnostics": actions,
                       "runtimeAuditViolations": audit_violations,
+                      "requiredWeightedKernels": weighted_kernels,
                       "modelComparison": model_comparison,
                       "selectionComparison": selection_comparison,
                       "jfrProfile": jfr_evidence,

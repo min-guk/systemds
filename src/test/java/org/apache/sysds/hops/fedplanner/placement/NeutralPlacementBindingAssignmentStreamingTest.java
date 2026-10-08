@@ -24,7 +24,7 @@ public class NeutralPlacementBindingAssignmentStreamingTest {
 		new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false), false);
 
 	@Test
-	public void streamedLeavesMatchIndependentNestedLoopOrderAndDoNotAliasTraversalBuffer() {
+	public void streamedLeavesUseSmallestDomainOrderAndDoNotAliasTraversalBuffer() {
 		List<List<CandidateRealizationInputBinding>> choices = List.of(
 			bindings(0, "a", 2), bindings(1, "b", 3), bindings(2, "c", 2));
 		List<List<CandidateRealizationInputBinding>> actual = new ArrayList<>();
@@ -34,8 +34,8 @@ public class NeutralPlacementBindingAssignmentStreamingTest {
 
 		List<List<CandidateRealizationInputBinding>> expected = new ArrayList<>();
 		for(CandidateRealizationInputBinding a : choices.get(0))
-			for(CandidateRealizationInputBinding b : choices.get(1))
-				for(CandidateRealizationInputBinding c : choices.get(2))
+			for(CandidateRealizationInputBinding c : choices.get(2))
+				for(CandidateRealizationInputBinding b : choices.get(1))
 					expected.add(List.of(a, b, c));
 		Assert.assertEquals(expected, actual);
 		Assert.assertEquals(12, actual.size());

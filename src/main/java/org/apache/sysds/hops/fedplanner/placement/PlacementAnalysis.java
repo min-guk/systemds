@@ -44,6 +44,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopK
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationSupportKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
@@ -1276,11 +1277,17 @@ public final class PlacementAnalysis {
 
 		public CandidateRuleDomain(String analysisFingerprint, List<CandidateRuleKey> ruleKeys,
 			List<CandidateConsumerProfileKey> consumerKeys) {
-			this(analysisFingerprint, ruleKeys, consumerKeys, List.of());
+			this(analysisFingerprint, ruleKeys, consumerKeys, List.of(), List.of());
 		}
 
 		CandidateRuleDomain(String analysisFingerprint, List<CandidateRuleKey> ruleKeys,
 			List<CandidateConsumerProfileKey> consumerKeys, List<CandidatePrivacyInputPruning> pruning) {
+			this(analysisFingerprint, ruleKeys, consumerKeys, pruning, List.of());
+		}
+
+		CandidateRuleDomain(String analysisFingerprint, List<CandidateRuleKey> ruleKeys,
+			List<CandidateConsumerProfileKey> consumerKeys, List<CandidatePrivacyInputPruning> pruning,
+			List<CpRuleFamily> cpFamilies) {
 			if(analysisFingerprint == null || analysisFingerprint.isBlank())
 				throw new IllegalArgumentException("Candidate domain fingerprint must not be blank");
 			this.analysisFingerprint = analysisFingerprint;
@@ -1289,6 +1296,8 @@ public final class PlacementAnalysis {
 			Map<CompiledHopKey,Boolean> parents = new IdentityHashMap<>();
 			for(CandidateRuleKey key : orderedRuleKeys)
 				parents.put(key.parentOccurrence(), Boolean.TRUE);
+			for(CpRuleFamily family : cpFamilies)
+				parents.put(Objects.requireNonNull(family, "CP rule family").parent(), Boolean.TRUE);
 			privacyPrunedInputs = List.copyOf(pruning);
 			Map<CompiledHopKey,CandidatePrivacyInputPruning> byParent = new IdentityHashMap<>();
 			for(CandidatePrivacyInputPruning evidence : privacyPrunedInputs) {
@@ -1460,10 +1469,15 @@ public final class PlacementAnalysis {
 	}
 
 	/** One conjunctive proof/input-support route for an exact physical realization. */
-	public record CandidateRealizationSupportClause(List<PlacementProofKey> proofDependencies,
-		List<CandidateRealizationInputBinding> inputBindings,
-		DurableAnchorKey nativeWorkerPoolWitness, boolean nativeWorkerPoolLayoutExact)
+	public static final class CandidateRealizationSupportClause
 		implements Comparable<CandidateRealizationSupportClause> {
+		private final List<PlacementProofKey> proofDependencies;
+		private final List<CandidateRealizationInputBinding> inputBindings;
+		private final DurableAnchorKey nativeWorkerPoolWitness;
+		private final boolean nativeWorkerPoolLayoutExact;
+		private final IndexedSupportClauses indexedRelation;
+		private final int indexedRowOrdinal;
+
 		public CandidateRealizationSupportClause(List<PlacementProofKey> proofDependencies,
 			List<CandidateRealizationInputBinding> inputBindings) {
 			this(proofDependencies, inputBindings, null, true);
@@ -1473,9 +1487,11 @@ public final class PlacementAnalysis {
 			DurableAnchorKey nativeWorkerPoolWitness) {
 			this(proofDependencies, inputBindings, nativeWorkerPoolWitness, true);
 		}
-		public CandidateRealizationSupportClause {
-			proofDependencies = canonicalComparableList(proofDependencies, "realization proof dependency");
-			inputBindings = canonicalComparableList(inputBindings, "realization input binding");
+		public CandidateRealizationSupportClause(List<PlacementProofKey> proofDependencies,
+			List<CandidateRealizationInputBinding> inputBindings,
+			DurableAnchorKey nativeWorkerPoolWitness, boolean nativeWorkerPoolLayoutExact) {
+			this.proofDependencies = canonicalComparableList(proofDependencies, "realization proof dependency");
+			this.inputBindings = canonicalComparableList(inputBindings, "realization input binding");
 			if(nativeWorkerPoolWitness == null && !nativeWorkerPoolLayoutExact)
 				throw new IllegalArgumentException("Dynamic native layout requires a worker-pool witness");
 			if(nativeWorkerPoolWitness != null && proofDependencies.stream().noneMatch(proof ->
@@ -1483,6 +1499,58 @@ public final class PlacementAnalysis {
 					&& proof.owner() != null))
 				throw new IllegalArgumentException(
 					"Native worker-pool witness requires owned native-continuity proof");
+			this.nativeWorkerPoolWitness = nativeWorkerPoolWitness;
+			this.nativeWorkerPoolLayoutExact = nativeWorkerPoolLayoutExact;
+			indexedRelation = null;
+			indexedRowOrdinal = -1;
+		}
+
+		private CandidateRealizationSupportClause(IndexedSupportClauses relation, int row) {
+			indexedRelation = Objects.requireNonNull(relation, "indexed support relation");
+			indexedRowOrdinal = Objects.checkIndex(row, relation.size());
+			// The immutable relation only admits previously constructed legal rows.
+			// Keep dictionary-backed views, never recreate or revalidate their tuples.
+			proofDependencies = relation.proofsAt(row);
+			inputBindings = relation.bindingsAt(row);
+			nativeWorkerPoolWitness = relation.witnessAt(row);
+			nativeWorkerPoolLayoutExact = relation.layoutExactAt(row);
+		}
+
+		static CandidateRealizationSupportClause indexed(IndexedSupportClauses relation, int row) {
+			return new CandidateRealizationSupportClause(relation, row);
+		}
+		IndexedSupportClauses indexedRelation() { return indexedRelation; }
+		int indexedRowOrdinal() { return indexedRowOrdinal; }
+		public boolean isIndexed() { return indexedRelation != null; }
+		/** Relation-scoped full-combination ID, including proof and native-pool metadata. */
+		public java.math.BigInteger indexedCombinationId() {
+			if(indexedRelation == null)
+				throw new IllegalStateException("Support clause is not indexed");
+			return indexedRelation.combinationIdAt(indexedRowOrdinal);
+		}
+		public List<PlacementProofKey> proofDependencies() { return proofDependencies; }
+		public List<CandidateRealizationInputBinding> inputBindings() { return inputBindings; }
+		public DurableAnchorKey nativeWorkerPoolWitness() { return nativeWorkerPoolWitness; }
+		public boolean nativeWorkerPoolLayoutExact() { return nativeWorkerPoolLayoutExact; }
+
+		@Override public boolean equals(Object other) {
+			return this == other || other instanceof CandidateRealizationSupportClause that
+				&& nativeWorkerPoolLayoutExact == that.nativeWorkerPoolLayoutExact
+				&& Objects.equals(nativeWorkerPoolWitness, that.nativeWorkerPoolWitness)
+				&& proofDependencies.equals(that.proofDependencies)
+				&& inputBindings.equals(that.inputBindings);
+		}
+		@Override public int hashCode() {
+			// Preserve the former record hash, also used by Cartesian list hashing.
+			int hash = proofDependencies.hashCode();
+			hash = 31 * hash + inputBindings.hashCode();
+			hash = 31 * hash + Objects.hashCode(nativeWorkerPoolWitness);
+			return 31 * hash + Boolean.hashCode(nativeWorkerPoolLayoutExact);
+		}
+		@Override public String toString() {
+			return "CandidateRealizationSupportClause[proofDependencies=" + proofDependencies
+				+ ", inputBindings=" + inputBindings + ", nativeWorkerPoolWitness=" + nativeWorkerPoolWitness
+				+ ", nativeWorkerPoolLayoutExact=" + nativeWorkerPoolLayoutExact + "]";
 		}
 		public List<CandidateRealizationReference> requiredInputSupport() {
 			List<CandidateRealizationReference> cached =
@@ -1507,6 +1575,133 @@ public final class PlacementAnalysis {
 		}
 	}
 
+	/** One independent source choice in an exact Cartesian support axis. */
+	public record IndependentSupportOption(CandidateRealizationSupportKey supportKey,
+		CandidateRealizationInputBinding binding) {
+		public IndependentSupportOption {
+			Objects.requireNonNull(supportKey, "independent support key");
+			Objects.requireNonNull(binding, "independent support binding");
+		}
+	}
+
+	/** An exact support axis whose physical authority is invariant across its options. */
+	public record IndependentSupportAxis(int inputPosition, CompiledHopKey sourceOwner,
+		PlacementIdentity.CandidateInputBindingKind kind,
+		PlacementIdentity.RelocationActionKey relocationAction,
+		List<IndependentSupportOption> options) {
+		public IndependentSupportAxis {
+			if(inputPosition < 0)
+				throw new IllegalArgumentException("Independent support position must be nonnegative");
+			Objects.requireNonNull(sourceOwner, "independent support source owner");
+			Objects.requireNonNull(kind, "independent support binding kind");
+			if((kind == PlacementIdentity.CandidateInputBindingKind.RELOCATION)
+				!= (relocationAction != null))
+				throw new IllegalArgumentException(
+					"Only relocation support axes carry a relocation action");
+			options = List.copyOf(options);
+			if(options.isEmpty())
+				throw new IllegalArgumentException("Independent support axis must not be empty");
+			DurableAnchorKey directAnchor = kind == PlacementIdentity.CandidateInputBindingKind.DIRECT
+				? options.get(0).binding().source().realization().durableAnchor() : null;
+			if(kind == PlacementIdentity.CandidateInputBindingKind.DIRECT && directAnchor == null)
+				throw new IllegalArgumentException("Direct support axis requires durable source layouts");
+			for(IndependentSupportOption option : options) {
+				CandidateRealizationInputBinding binding = option.binding();
+				if(binding.inputPosition() != inputPosition
+					|| binding.source().rule().parentOccurrence() != sourceOwner
+					|| binding.kind() != kind
+					|| binding.relocationAction() != relocationAction
+					|| !option.supportKey().equals(
+						CandidateSelections.requiredInputSupportIdentity(binding.source())))
+					throw new IllegalArgumentException(
+						"Independent support option differs from its axis authority");
+				if(directAnchor != null && (binding.source().realization().durableAnchor() == null
+					|| !PlacementIdentity.samePhysicalLayout(directAnchor,
+						binding.source().realization().durableAnchor())))
+					throw new IllegalArgumentException(
+						"Direct support axis mixes physical source layouts");
+			}
+		}
+
+		/** Exact layout delivered by every option on this independent axis. */
+		public DurableAnchorKey deliveredAnchor() {
+			return relocationAction != null ? relocationAction.durableAnchor()
+				: options.get(0).binding().source().realization().durableAnchor();
+		}
+	}
+
+	/** Non-enumerating storage view of every factorized support relation. */
+	public static final class FactorizedSupportProduct {
+		private final FactorizedSupportClauses relation;
+
+		FactorizedSupportProduct(FactorizedSupportClauses relation) {
+			this.relation = Objects.requireNonNull(relation, "factorized support relation");
+		}
+
+		public List<PlacementProofKey> proofDependencies() { return relation.proofs(); }
+		public List<List<CandidateRealizationInputBinding>> factors() {
+			return relation.factors();
+		}
+		public DurableAnchorKey nativeWorkerPoolWitness() {
+			return relation.nativeWorkerPoolWitness();
+		}
+		public boolean nativeWorkerPoolLayoutExact() {
+			return relation.nativeWorkerPoolLayoutExact();
+		}
+		public int logicalClauseCount() { return relation.size(); }
+	}
+
+	/**
+	 * Public immutable projection of an exact independent support product. The
+	 * backing relation remains the identity authority for the selected clause.
+	 */
+	public static final class IndependentSupportProduct {
+		private final FactorizedSupportClauses relation;
+		private final List<IndependentSupportAxis> axes;
+
+		IndependentSupportProduct(FactorizedSupportClauses relation,
+			List<IndependentSupportAxis> axes) {
+			this.relation = Objects.requireNonNull(relation, "independent support relation");
+			this.axes = List.copyOf(axes);
+		}
+
+		public List<IndependentSupportAxis> axes() { return axes; }
+		public List<PlacementProofKey> proofDependencies() { return relation.proofs(); }
+		public DurableAnchorKey nativeWorkerPoolWitness() {
+			return relation.nativeWorkerPoolWitness();
+		}
+		public boolean nativeWorkerPoolLayoutExact() {
+			return relation.nativeWorkerPoolLayoutExact();
+		}
+		public int logicalClauseCount() { return relation.size(); }
+		public CandidateRealizationSupportClause representativeClause() { return relation.get(0); }
+
+		public CandidateRealizationSupportClause select(
+			java.util.function.Function<CompiledHopKey,CandidateRealizationSupportKey> selected) {
+			Objects.requireNonNull(selected, "selected support lookup");
+			List<CandidateRealizationInputBinding> bindings = new ArrayList<>(axes.size());
+			for(IndependentSupportAxis axis : axes) {
+				CandidateRealizationSupportKey key = selected.apply(axis.sourceOwner());
+				IndependentSupportOption match = null;
+				for(IndependentSupportOption option : axis.options())
+					if(option.supportKey().equals(key)) {
+						if(match != null)
+							throw new IllegalArgumentException(
+								"Selected support key is ambiguous within an independent axis");
+						match = option;
+					}
+				if(match == null)
+					throw new IllegalArgumentException(
+						"Selected producer does not satisfy an independent support axis");
+				bindings.add(match.binding());
+			}
+			int ordinal = relation.ordinalOfBindings(bindings);
+			if(ordinal < 0)
+				throw new IllegalStateException("Independent support selection is outside its relation");
+			return relation.get(ordinal);
+		}
+	}
+
 	/** One exact physical layout with alternative executable support clauses. */
 	public record CandidateEmissionRealization(PlacementRealizationKey key,
 		List<CandidateRealizationSupportClause> supportClauses)
@@ -1517,29 +1712,101 @@ public final class PlacementAnalysis {
 		}
 		public CandidateEmissionRealization {
 			Objects.requireNonNull(key, "key");
-			supportClauses = canonicalComparableList(
-				supportClauses, "realization support clause", true);
+			supportClauses = supportClauses instanceof FactorizedSupportClauses
+				|| supportClauses instanceof IndexedSupportClauses
+				? Objects.requireNonNull(supportClauses, "realization support clauses")
+				: canonicalComparableList(supportClauses, "realization support clause", true);
 			if(supportClauses.isEmpty())
 				throw new IllegalArgumentException("Candidate realization requires support authority");
-			for(CandidateRealizationSupportClause clause : supportClauses)
-				if(clause.nativeWorkerPoolWitness() != null
-					&& (key.layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
-						|| key.emissionState().placementState().fType()
-							!= clause.nativeWorkerPoolWitness().fType()))
+			SearchSpaceMetrics metrics = PlacementIdentity.activeMetrics();
+			if(metrics != null && !(supportClauses instanceof FactorizedSupportClauses)
+				&& !(supportClauses instanceof IndexedSupportClauses))
+				metrics.recordDuplicateMergeClauseOrigins(supportClauses);
+			if(supportClauses instanceof FactorizedSupportClauses factorized) {
+				DurableAnchorKey witness = factorized.nativeWorkerPoolWitness();
+				if(witness != null && (key.layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
+					|| key.emissionState().placementState().fType() != witness.fType()))
 					throw new IllegalArgumentException(
 						"Native worker-pool witness and realization layout differ");
-			DurableAnchorKey nativeWitness = supportClauses.get(0).nativeWorkerPoolWitness();
-			boolean nativeLayoutExact = supportClauses.get(0).nativeWorkerPoolLayoutExact();
-			for(CandidateRealizationSupportClause clause : supportClauses) {
-				DurableAnchorKey candidate = clause.nativeWorkerPoolWitness();
-				if((nativeWitness == null) != (candidate == null)
-					|| nativeWitness != null && (nativeLayoutExact != clause.nativeWorkerPoolLayoutExact()
-						|| !(nativeLayoutExact
-							? PlacementIdentity.samePhysicalLayout(nativeWitness, candidate)
-							: PlacementIdentity.samePhysicalWorkerEndpoints(nativeWitness, candidate))))
-					throw new IllegalArgumentException(
-						"One realization cannot mix unproven or physically distinct native worker pools");
 			}
+			else if(supportClauses instanceof IndexedSupportClauses indexed)
+				indexed.validateRealizationKey(key);
+			else {
+				for(CandidateRealizationSupportClause clause : supportClauses)
+					if(clause.nativeWorkerPoolWitness() != null
+						&& (key.layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
+							|| key.emissionState().placementState().fType()
+								!= clause.nativeWorkerPoolWitness().fType()))
+						throw new IllegalArgumentException(
+							"Native worker-pool witness and realization layout differ");
+				DurableAnchorKey nativeWitness = supportClauses.get(0).nativeWorkerPoolWitness();
+				boolean nativeLayoutExact = supportClauses.get(0).nativeWorkerPoolLayoutExact();
+				for(CandidateRealizationSupportClause clause : supportClauses) {
+					DurableAnchorKey candidate = clause.nativeWorkerPoolWitness();
+					if((nativeWitness == null) != (candidate == null)
+						|| nativeWitness != null && (nativeLayoutExact != clause.nativeWorkerPoolLayoutExact()
+							|| !(nativeLayoutExact
+								? PlacementIdentity.samePhysicalLayout(nativeWitness, candidate)
+								: PlacementIdentity.samePhysicalWorkerEndpoints(nativeWitness, candidate))))
+						throw new IllegalArgumentException(
+							"One realization cannot mix unproven or physically distinct native worker pools");
+				}
+			}
+		}
+
+		/** Exact Cartesian support with uniform proof and native-pool authority. */
+		static CandidateEmissionRealization factorized(PlacementRealizationKey key,
+			List<PlacementProofKey> proofs,
+			List<List<CandidateRealizationInputBinding>> independentInputChoices,
+			DurableAnchorKey nativeWorkerPoolWitness, boolean nativeWorkerPoolLayoutExact) {
+			return new CandidateEmissionRealization(key, FactorizedSupportClauses.of(proofs,
+				independentInputChoices, nativeWorkerPoolWitness, nativeWorkerPoolLayoutExact));
+		}
+
+		/** Compresses only a complete rectangular relation; correlated holes remain explicit. */
+		static Optional<CandidateEmissionRealization> tryFactorize(
+			PlacementRealizationKey key, List<CandidateRealizationSupportClause> supportClauses) {
+			return FactorizedSupportClauses.fromExplicitIfRectangular(supportClauses)
+				.map(factorized -> new CandidateEmissionRealization(key, factorized));
+		}
+
+		/** Exact independent product view when every axis has invariant relocation authority. */
+		public Optional<IndependentSupportProduct> independentSupportProduct() {
+			return key.layoutKind() != PlacementIdentity.PlacementLayoutKind.VALUE_MAP
+				&& supportClauses instanceof FactorizedSupportClauses factorized
+				? factorized.independentRelocationProduct() : Optional.empty();
+		}
+
+		/** Storage-level factor view; unlike independentSupportProduct this has no DP eligibility claim. */
+		public Optional<FactorizedSupportProduct> factorizedSupportProduct() {
+			return supportClauses instanceof FactorizedSupportClauses factorized
+				? Optional.of(new FactorizedSupportProduct(factorized)) : Optional.empty();
+		}
+
+		/** Freeze already admitted whole tuples as legal IDs without enumerating a product. */
+		public CandidateEmissionRealization withIndexedSupport() {
+			if(supportClauses instanceof IndexedSupportClauses
+				|| supportClauses instanceof FactorizedSupportClauses)
+				return this;
+			return new CandidateEmissionRealization(key,
+				IndexedSupportClauses.fromCanonical(supportClauses));
+		}
+		public boolean indexedSupport() { return supportClauses instanceof IndexedSupportClauses; }
+		/** Resolve an admitted whole-combination ID within this immutable relation only. */
+		public CandidateRealizationSupportClause supportClauseForCombinationId(java.math.BigInteger id) {
+			Objects.requireNonNull(id, "support combination ID");
+			if(!(supportClauses instanceof IndexedSupportClauses indexed))
+				throw new IllegalStateException("Realization support is not indexed");
+			int ordinal = indexed.ordinalOfCombinationId(id);
+			if(ordinal < 0)
+				throw new IllegalArgumentException("Combination ID is outside the admitted support relation");
+			return indexed.get(ordinal);
+		}
+		/** Full stored tuples, excluding dictionary-backed ID handles and unexpanded products. */
+		public int fullyMaterializedSupportClauseCount() {
+			return supportClauses instanceof IndexedSupportClauses ? 0
+				: supportClauses instanceof FactorizedSupportClauses factorized
+					? factorized.materializedClauseCount() : supportClauses.size();
 		}
 
 		/**
@@ -1646,8 +1913,12 @@ public final class PlacementAnalysis {
 			return supportClauseIdentityOrdinal(clause) >= 0;
 		}
 		int supportClauseIdentityOrdinal(CandidateRealizationSupportClause clause) {
+			if(supportClauses instanceof IndexedSupportClauses indexed)
+				return indexed.firstIdentityOrdinal(clause);
 			if(supportClauses instanceof SharedCanonicalList<?> shared)
 				return shared.firstIdentityOrdinal(clause);
+			if(supportClauses instanceof FactorizedSupportClauses factorized)
+				return factorized.firstIdentityOrdinal(clause);
 			for(int index = 0; index < supportClauses.size(); index++)
 				if(supportClauses.get(index) == clause)
 					return index;
@@ -1655,9 +1926,14 @@ public final class PlacementAnalysis {
 		}
 		/** Linear bulk query used instead of repeating the public identity guard for every owned clause. */
 		boolean allOwnedSupportClausesHaveExactNativeLayout() {
-			return key.layoutKind() != PlacementLayoutKind.VALUE_MAP && (key.durableAnchor() != null
-				|| supportClauses.stream().allMatch(
-					CandidateRealizationSupportClause::nativeWorkerPoolLayoutExact));
+			if(key.layoutKind() == PlacementLayoutKind.VALUE_MAP)
+				return false;
+			if(key.durableAnchor() != null)
+				return true;
+			if(supportClauses instanceof FactorizedSupportClauses factorized)
+				return factorized.nativeWorkerPoolLayoutExact();
+			return supportClauses.stream().allMatch(
+				CandidateRealizationSupportClause::nativeWorkerPoolLayoutExact);
 		}
 		/**
 		 * Package-internal fast path; the caller must obtain {@code clause} by iterating
@@ -1764,17 +2040,59 @@ public final class PlacementAnalysis {
 				}
 				List<CandidateRealizationSupportClause> leftClauses = left.supportClauses();
 				List<CandidateRealizationSupportClause> rightClauses = right.supportClauses();
-				if(leftClauses == rightClauses || leftClauses.equals(rightClauses)) {
+				if(supportClauseListsEqual(leftClauses, rightClauses)) {
 					if(metrics != null) {
 						metrics.recordRealizationMergeInput();
 						metrics.recordRealizationMergeInput();
-						for(int index = 0; index < leftClauses.size(); index++) {
-							metrics.recordRealizationMergeClause(true);
-							metrics.recordRealizationMergeClause(false);
-						}
+						metrics.recordRealizationMergeClauses(leftClauses.size(), leftClauses.size());
 						metrics.recordRealizationMergeReuse();
+						if(metrics.hasDuplicateMergeDiagnostics()) {
+							long immutableReplay = leftClauses == rightClauses ? leftClauses.size() : 0;
+							long sharedReplay = 0;
+							long[] provenance = new long[SearchSpaceMetrics.DuplicateClauseProvenance.values().length];
+							if(leftClauses != rightClauses)
+								for(int index = 0; index < leftClauses.size(); index++)
+									if(leftClauses.get(index) == rightClauses.get(index))
+										sharedReplay++;
+									else
+										recordDuplicateProvenance(metrics, leftClauses.get(index),
+											rightClauses.get(index), provenance);
+							metrics.recordDuplicateMergeDiagnostics("TWO_EQUAL_LISTS", 2,
+								immutableReplay, sharedReplay,
+								leftClauses.size() - immutableReplay - sharedReplay,
+								duplicateProvenanceCounts(provenance), true);
+						}
 					}
-					return List.of(left);
+					return List.of(leftClauses instanceof FactorizedSupportClauses ? left
+						: rightClauses instanceof FactorizedSupportClauses ? right : left);
+				}
+				if((metrics == null || !metrics.hasDuplicateMergeDiagnostics())
+					&& leftClauses instanceof FactorizedSupportClauses leftFactorized
+					&& rightClauses instanceof FactorizedSupportClauses rightFactorized) {
+					Optional<FactorizedSupportClauses> factorizedUnion =
+						leftFactorized.oneAxisUnion(rightFactorized);
+					if(factorizedUnion.isPresent()) {
+						FactorizedSupportClauses union = factorizedUnion.get();
+						long uniqueClauses = union.size();
+						long duplicateClauses = (long)leftClauses.size()
+							+ rightClauses.size() - uniqueClauses;
+						if(metrics != null) {
+							metrics.recordRealizationMergeInput();
+							metrics.recordRealizationMergeInput();
+							metrics.recordRealizationMergeClauses(uniqueClauses, duplicateClauses);
+						}
+						if(union.equals(leftFactorized)) {
+							if(metrics != null)
+								metrics.recordRealizationMergeReuse();
+							return List.of(left);
+						}
+						if(union.equals(rightFactorized)) {
+							if(metrics != null)
+								metrics.recordRealizationMergeReuse();
+							return List.of(right);
+						}
+						return List.of(new CandidateEmissionRealization(left.key(), union));
+					}
 				}
 
 				List<CanonicalText> leftOrderingKeys = retainedCanonicalOrderingKeys(leftClauses);
@@ -1793,6 +2111,10 @@ public final class PlacementAnalysis {
 				boolean rightAdded = false;
 				boolean ambiguousOrderingTie = false;
 				int uniqueClauses = 0, duplicateClauses = 0, comparisons = 0;
+				int sharedDuplicateClauses = 0, equalDistinctDuplicateClauses = 0;
+				boolean diagnoseDuplicates = metrics != null && metrics.hasDuplicateMergeDiagnostics();
+				long[] duplicateProvenance = diagnoseDuplicates
+					? new long[SearchSpaceMetrics.DuplicateClauseProvenance.values().length] : null;
 				int leftIndex = 0, rightIndex = 0;
 				CanonicalTextComparison comparison = new CanonicalTextComparison();
 				while(leftIndex < leftClauses.size() && rightIndex < rightClauses.size()) {
@@ -1823,6 +2145,16 @@ public final class PlacementAnalysis {
 						rightIndex++;
 						uniqueClauses++;
 						duplicateClauses++;
+						if(diagnoseDuplicates) {
+							if(leftClause == rightClause)
+								sharedDuplicateClauses++;
+							else
+							{
+								equalDistinctDuplicateClauses++;
+								recordDuplicateProvenance(metrics, leftClause, rightClause,
+									duplicateProvenance);
+							}
+						}
 					}
 					else {
 						// A comparator tie is not semantic identity. Advancing both cursors
@@ -1853,6 +2185,10 @@ public final class PlacementAnalysis {
 						metrics.recordRealizationMergeClause(true);
 					for(int index = 0; index < duplicateClauses; index++)
 						metrics.recordRealizationMergeClause(false);
+					if(diagnoseDuplicates)
+						metrics.recordDuplicateMergeDiagnostics("TWO_SORTED_UNION", 2, 0,
+							sharedDuplicateClauses, equalDistinctDuplicateClauses,
+							duplicateProvenanceCounts(duplicateProvenance), !rightAdded);
 				}
 				if(!ambiguousOrderingTie && !rightAdded) {
 					if(metrics != null)
@@ -1884,6 +2220,21 @@ public final class PlacementAnalysis {
 					merged.add(mergeRealizationGroup(group, metrics));
 			}
 			return canonicalRealizationList(merged);
+		}
+
+		private static boolean supportClauseListsEqual(
+			List<CandidateRealizationSupportClause> left,
+			List<CandidateRealizationSupportClause> right) {
+			if(left == right)
+				return true;
+			if(left instanceof FactorizedSupportClauses leftFactorized
+				&& right instanceof FactorizedSupportClauses rightFactorized)
+				return leftFactorized.sameExactAuthority(rightFactorized);
+			if(left instanceof FactorizedSupportClauses factorized)
+				return factorized.equals(right);
+			if(right instanceof FactorizedSupportClauses factorized)
+				return factorized.equals(left);
+			return left.equals(right);
 		}
 
 		/** Typed boundary for final realization ordering; specialized by Gate B after behavior RED. */
@@ -1935,17 +2286,44 @@ public final class PlacementAnalysis {
 
 		private static CandidateEmissionRealization mergeRealizationGroup(
 			List<CandidateEmissionRealization> group, SearchSpaceMetrics metrics) {
+			CandidateEmissionRealization factorized = mergeFactorizedRealizationGroup(group, metrics);
+			if(factorized != null)
+				return factorized;
 			CandidateEmissionRealization first = group.get(0);
 			List<CandidateRealizationSupportClause> firstClauses = first.supportClauses();
 			boolean allEqual = true;
 			for(int index = 1; index < group.size() && allEqual; index++)
-				allEqual = firstClauses.equals(group.get(index).supportClauses());
+				allEqual = supportClauseListsEqual(
+					firstClauses, group.get(index).supportClauses());
 			if(allEqual) {
 				if(metrics != null) {
 					for(int groupIndex = 0; groupIndex < group.size(); groupIndex++)
 						for(int clauseIndex = 0; clauseIndex < firstClauses.size(); clauseIndex++)
 							metrics.recordRealizationMergeClause(groupIndex == 0);
 					metrics.recordRealizationMergeReuse();
+					if(metrics.hasDuplicateMergeDiagnostics()) {
+						long immutableReplay = 0, sharedReplay = 0, equalDistinct = 0;
+						long[] provenance = new long[SearchSpaceMetrics.DuplicateClauseProvenance.values().length];
+						for(int groupIndex = 1; groupIndex < group.size(); groupIndex++) {
+							List<CandidateRealizationSupportClause> clauses =
+								group.get(groupIndex).supportClauses();
+							if(clauses == firstClauses)
+								immutableReplay += clauses.size();
+							else
+								for(int clauseIndex = 0; clauseIndex < clauses.size(); clauseIndex++)
+									if(clauses.get(clauseIndex) == firstClauses.get(clauseIndex))
+										sharedReplay++;
+									else
+									{
+										equalDistinct++;
+										recordDuplicateProvenance(metrics, firstClauses.get(clauseIndex),
+											clauses.get(clauseIndex), provenance);
+									}
+						}
+						metrics.recordDuplicateMergeDiagnostics("K_EQUAL_LISTS", group.size(),
+							immutableReplay, sharedReplay, equalDistinct,
+							duplicateProvenanceCounts(provenance), true);
+					}
 				}
 				return first;
 			}
@@ -1969,6 +2347,11 @@ public final class PlacementAnalysis {
 
 			MergedClauseRuns mergedRuns = mergeCanonicalClauseRuns(
 				clausesByGroup, keysByGroup, totalClauses, metrics);
+			if(metrics != null && metrics.hasDuplicateMergeDiagnostics())
+				metrics.recordDuplicateMergeDiagnostics("K_CANONICAL_UNION", group.size(),
+					mergedRuns.immutableListReplayClauses(), mergedRuns.sharedClauseReplayClauses(),
+					mergedRuns.equalDistinctClauseClauses(), mergedRuns.provenance(),
+					firstClauses.equals(mergedRuns.clauses()));
 			List<CandidateRealizationSupportClause> union = mergedRuns.clauses();
 			List<CanonicalText> unionKeys = mergedRuns.keys();
 			if(firstClauses.equals(union)) {
@@ -1980,11 +2363,54 @@ public final class PlacementAnalysis {
 				new SharedCanonicalList<>(List.copyOf(union), List.copyOf(unionKeys)));
 		}
 
+		private static CandidateEmissionRealization mergeFactorizedRealizationGroup(
+			List<CandidateEmissionRealization> group, SearchSpaceMetrics metrics) {
+			if(metrics != null && metrics.hasDuplicateMergeDiagnostics())
+				return null;
+			List<FactorizedSupportClauses> pending = new ArrayList<>(group.size());
+			long inputClauses = 0;
+			for(CandidateEmissionRealization realization : group) {
+				if(!(realization.supportClauses() instanceof FactorizedSupportClauses clauses))
+					return null;
+				pending.add(clauses);
+				inputClauses += clauses.size();
+			}
+			while(pending.size() > 1) {
+				boolean combined = false;
+				for(int left = 0; left < pending.size() && !combined; left++)
+					for(int right = left + 1; right < pending.size(); right++) {
+						Optional<FactorizedSupportClauses> union =
+							pending.get(left).oneAxisUnion(pending.get(right));
+						if(union.isEmpty())
+							continue;
+						pending.set(left, union.get());
+						pending.remove(right);
+						combined = true;
+						break;
+					}
+				if(!combined)
+					return null;
+			}
+			FactorizedSupportClauses union = pending.get(0);
+			if(metrics != null)
+				metrics.recordRealizationMergeClauses(
+					union.size(), inputClauses - union.size());
+			for(CandidateEmissionRealization realization : group)
+				if(union.equals(realization.supportClauses())) {
+					if(metrics != null)
+						metrics.recordRealizationMergeReuse();
+					return realization;
+				}
+			return new CandidateEmissionRealization(group.get(0).key(), union);
+		}
+
 		private record ClauseRunEntry(CandidateRealizationSupportClause clause,
 			CanonicalText key) { }
 
 		private record MergedClauseRuns(List<CandidateRealizationSupportClause> clauses,
-			List<CanonicalText> keys) { }
+			List<CanonicalText> keys, long immutableListReplayClauses,
+			long sharedClauseReplayClauses, long equalDistinctClauseClauses,
+			SearchSpaceMetrics.DuplicateProvenanceCounts provenance) { }
 
 		/** Stable exact union; remove identical authorities before comparing their ordering text. */
 		private static MergedClauseRuns mergeCanonicalClauseRuns(
@@ -1995,18 +2421,41 @@ public final class PlacementAnalysis {
 			Set<CandidateRealizationSupportClause> seenIdentities =
 				Collections.newSetFromMap(new IdentityHashMap<>());
 			Set<CandidateRealizationSupportClause> seenAuthorities = new java.util.HashSet<>();
-			for(int group = 0; group < clausesByGroup.size(); group++)
+			boolean diagnoseDuplicates = metrics != null && metrics.hasDuplicateMergeDiagnostics();
+			Set<List<CandidateRealizationSupportClause>> seenLists = diagnoseDuplicates
+				? Collections.newSetFromMap(new IdentityHashMap<>()) : null;
+			long immutableListReplay = 0, sharedClauseReplay = 0, equalDistinct = 0;
+			long[] provenance = diagnoseDuplicates
+				? new long[SearchSpaceMetrics.DuplicateClauseProvenance.values().length] : null;
+			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> firstAuthorities =
+				diagnoseDuplicates ? new java.util.HashMap<>() : null;
+			for(int group = 0; group < clausesByGroup.size(); group++) {
+				boolean repeatedList = diagnoseDuplicates && !seenLists.add(clausesByGroup.get(group));
 				for(int position = 0; position < clausesByGroup.get(group).size(); position++) {
 					CandidateRealizationSupportClause clause = clausesByGroup.get(group).get(position);
 					// Shared immutable clauses avoid another structural hash. Equal distinct
 					// authorities still use full equality, retaining the first descriptor.
 					boolean uniqueIdentity = seenIdentities.add(clause);
 					boolean unique = uniqueIdentity && seenAuthorities.add(clause);
+					CandidateRealizationSupportClause retained = diagnoseDuplicates && uniqueIdentity
+						? firstAuthorities.putIfAbsent(clause, clause) : null;
 					if(metrics != null)
 						metrics.recordRealizationMergeClause(unique);
+					if(diagnoseDuplicates && !unique) {
+						if(repeatedList)
+							immutableListReplay++;
+						else if(!uniqueIdentity)
+							sharedClauseReplay++;
+						else
+						{
+							equalDistinct++;
+							recordDuplicateProvenance(metrics, retained, clause, provenance);
+						}
+					}
 					if(unique)
 						ordered.add(new ClauseRunEntry(clause, keysByGroup.get(group).get(position)));
 				}
+			}
 			// Full immutable clause equality implies equal canonical text. Deduplication
 			// therefore keeps the same first authority and descriptor as the stable sort
 			// followed by equality checks. Hash collisions still require full equality.
@@ -2022,7 +2471,26 @@ public final class PlacementAnalysis {
 			}
 			if(metrics != null)
 				metrics.recordCanonicalSort(union.size());
-			return new MergedClauseRuns(List.copyOf(union), List.copyOf(unionKeys));
+			return new MergedClauseRuns(List.copyOf(union), List.copyOf(unionKeys),
+				immutableListReplay, sharedClauseReplay, equalDistinct,
+				diagnoseDuplicates ? duplicateProvenanceCounts(provenance)
+					: SearchSpaceMetrics.DuplicateProvenanceCounts.EMPTY);
+		}
+
+		private static void recordDuplicateProvenance(SearchSpaceMetrics metrics,
+			CandidateRealizationSupportClause retained, CandidateRealizationSupportClause duplicate,
+			long[] counts) {
+			counts[metrics.classifyDuplicateClause(retained, duplicate).ordinal()]++;
+		}
+
+		private static SearchSpaceMetrics.DuplicateProvenanceCounts duplicateProvenanceCounts(
+			long[] counts) {
+			return new SearchSpaceMetrics.DuplicateProvenanceCounts(
+				counts[SearchSpaceMetrics.DuplicateClauseProvenance.SAME_BATCH.ordinal()],
+				counts[SearchSpaceMetrics.DuplicateClauseProvenance.SAME_ROUTE_SAME_REVISION.ordinal()],
+				counts[SearchSpaceMetrics.DuplicateClauseProvenance.CROSS_ROUTE.ordinal()],
+				counts[SearchSpaceMetrics.DuplicateClauseProvenance.UNCHANGED_REVISION_REPLAY.ordinal()],
+				counts[SearchSpaceMetrics.DuplicateClauseProvenance.UNRESOLVED.ordinal()]);
 		}
 
 		private static int compareCanonicalText(
@@ -2119,8 +2587,15 @@ public final class PlacementAnalysis {
 		private final Map<CompiledHopKey,List<CandidateRuleFact>> factsByParent;
 		private final Map<CandidateRuleKey,RealizationIndex> realizationsByRule;
 		private final CandidateRuleDomain domain;
+		private final List<CpRuleFamily> cpFamilies;
+		private final Map<CompiledHopKey,List<CpRuleFamily>> cpFamiliesByParent;
 
 		public CandidateRuleFacts(CandidateRuleDomain domain, List<CandidateRuleFact> facts) {
+			this(domain, facts, List.of());
+		}
+
+		CandidateRuleFacts(CandidateRuleDomain domain, List<CandidateRuleFact> facts,
+			List<CpRuleFamily> cpFamilies) {
 			this.domain = Objects.requireNonNull(domain, "domain");
 			Objects.requireNonNull(facts, "facts");
 			if(facts.size() != domain.orderedRuleKeys().size())
@@ -2157,9 +2632,43 @@ public final class PlacementAnalysis {
 			parentIndex.replaceAll((ignored, parentFacts) -> List.copyOf(parentFacts));
 			factsByParent = Collections.unmodifiableMap(parentIndex);
 			realizationsByRule = Collections.unmodifiableMap(realizationIndex);
+			this.cpFamilies = List.copyOf(Objects.requireNonNull(cpFamilies, "CP rule families"));
+			Map<CompiledHopKey,List<CpRuleFamily>> familyIndex = new IdentityHashMap<>();
+			for(CpRuleFamily family : this.cpFamilies) {
+				if(!domain.containsExactParent(family.parent()))
+					throw new IllegalArgumentException("CP rule family parent is outside candidate domain");
+				familyIndex.computeIfAbsent(family.parent(), ignored -> new ArrayList<>()).add(family);
+			}
+			for(List<CpRuleFamily> families : familyIndex.values())
+				for(int left = 0; left < families.size(); left++)
+					for(int right = left + 1; right < families.size(); right++)
+						if(overlap(families.get(left), families.get(right)))
+							throw new IllegalArgumentException("Overlapping CP rule families for one parent");
+			for(CandidateRuleFact explicit : orderedFacts)
+				for(CpRuleFamily family : familyIndex.getOrDefault(
+					explicit.key().parentOccurrence(), List.of()))
+					if(family.contains(explicit.key().orderedInputs()))
+						throw new IllegalArgumentException(
+							"Explicit candidate row overlaps a CP rule family");
+			familyIndex.replaceAll((ignored, families) -> List.copyOf(families));
+			cpFamiliesByParent = Collections.unmodifiableMap(familyIndex);
+		}
+
+		private static boolean overlap(CpRuleFamily left, CpRuleFamily right) {
+			if(left.axes().size() != right.axes().size())
+				return false;
+			for(int position = 0; position < left.axes().size(); position++)
+				if(left.axes().get(position).stream().noneMatch(right.axes().get(position)::contains))
+					return false;
+			return true;
 		}
 
 		public List<CandidateRuleFact> orderedFacts() { return orderedFacts; }
+		public List<CpRuleFamily> cpFamilies() { return cpFamilies; }
+		public List<CpRuleFamily> cpFamiliesForParent(CompiledHopKey parentOccurrence) {
+			return parentOccurrence == null ? List.of()
+				: cpFamiliesByParent.getOrDefault(parentOccurrence, List.of());
+		}
 
 		/** Exact candidate rows for one analysis-owned parent in canonical domain order. */
 		public List<CandidateRuleFact> orderedFactsForParent(CompiledHopKey parentOccurrence) {
@@ -2180,6 +2689,18 @@ public final class PlacementAnalysis {
 				if(input == null)
 					throw new CandidateRuleLookupException(CandidateLookupFailure.PRESENT_NULL,
 						"Present-null cannot be a candidate input state");
+			CandidateRuleFact explicit = factsByKey.get(new CandidateRuleKey(parentOccurrence, orderedInputs));
+			if(explicit != null)
+				return explicit;
+			CpRuleFamily matching = null;
+			for(CpRuleFamily family : cpFamiliesForParent(parentOccurrence))
+				if(family.contains(orderedInputs)) {
+					if(matching != null)
+						throw new IllegalArgumentException("Exact inputs match multiple CP rule families");
+					matching = family;
+				}
+			if(matching != null)
+				return matching.requireExact(orderedInputs);
 			return requireExact(new CandidateRuleKey(parentOccurrence, orderedInputs));
 		}
 
@@ -2187,6 +2708,17 @@ public final class PlacementAnalysis {
 			CompiledHopKey parentOccurrence = requested.parentOccurrence();
 			List<CandidateInputState> orderedInputs = requested.orderedInputs();
 			CandidateRuleFact fact = factsByKey.get(requested);
+			if(fact == null) {
+				CpRuleFamily matching = null;
+				for(CpRuleFamily family : cpFamiliesForParent(parentOccurrence))
+					if(family.contains(orderedInputs)) {
+						if(matching != null)
+							throw new IllegalArgumentException("Exact inputs match multiple CP rule families");
+						matching = family;
+					}
+				if(matching != null)
+					return matching.requireExact(orderedInputs);
+			}
 			if(fact == null) {
 				if(domain.privacyRejects(parentOccurrence, orderedInputs))
 					throw new CandidateRuleLookupException(CandidateLookupFailure.PRIVACY_EXCLUDED,
@@ -2219,7 +2751,9 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException(
 					"Transient compatibility references an unavailable candidate row");
 			RealizationIndex index = realizationsByRule.get(fact.key());
-			IndexedRealization indexed = index.realizations().get(reference.realization());
+			IndexedRealization indexed = index == null
+				? indexRealizations(fact).realizations().get(reference.realization())
+				: index.realizations().get(reference.realization());
 			int matches = indexed == null ? 0 : indexed.matches();
 			if(matches != 1)
 				throw new IllegalArgumentException(
@@ -2229,6 +2763,18 @@ public final class PlacementAnalysis {
 							.flatMap(emission -> emission.realizations().stream())
 							.map(CandidateEmissionRealization::normalizedSignature).toList());
 			return indexed.realization();
+		}
+
+		private static RealizationIndex indexRealizations(CandidateRuleFact fact) {
+			Map<PlacementRealizationKey,IndexedRealization> indexed = new java.util.HashMap<>();
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+				for(CandidateEmissionRealization realization : emission.realizations()) {
+					IndexedRealization prior = indexed.get(realization.key());
+					indexed.put(realization.key(), prior == null
+						? new IndexedRealization(realization, 1)
+						: new IndexedRealization(prior.realization(), Math.incrementExact(prior.matches())));
+				}
+			return new RealizationIndex(Collections.unmodifiableMap(indexed));
 		}
 
 		private static boolean sameMultiplicity(List<CandidateInputState> left, List<CandidateInputState> right) {
@@ -2272,8 +2818,16 @@ public final class PlacementAnalysis {
 			private final List<CandidateRealizationSupportClause> clauses;
 			private final SearchSpaceMetrics metrics;
 			private Map<CandidateRealizationSupportClause,CandidateSelectionReceipt> receipts;
+			private Map<CandidateRealizationSupportClause,Integer> factorizedRanks;
+			private FactorizedRankIndex factorizedRankIndex;
 			private int rankBase = -1;
 			private int[] clauseRanks;
+			private void resetRanks() {
+				rankBase = -1;
+				clauseRanks = null;
+				factorizedRanks = null;
+				factorizedRankIndex = null;
+			}
 
 			private ReceiptGroup(CandidateRuleKey rule, CandidateEmissionFact emission,
 				CandidateEmissionRealization realization, SearchSpaceMetrics metrics) {
@@ -2314,7 +2868,119 @@ public final class PlacementAnalysis {
 					return clauseRanks[index];
 				if(rankBase < 0)
 					throw new IllegalStateException("Canonical candidate receipt group has no structural rank");
+				if(clauses instanceof FactorizedSupportClauses factorized) {
+					synchronized(this) {
+						if(factorizedRanks == null)
+							factorizedRanks = new IdentityHashMap<>();
+						Integer current = factorizedRanks.get(clause);
+						if(current == null) {
+							if(factorizedRankIndex == null)
+								factorizedRankIndex = FactorizedRankIndex.create(factorized, clause);
+							current = Math.addExact(rankBase,
+								factorizedRankIndex.canonicalRank(clause));
+							factorizedRanks.put(clause, current);
+						}
+						return current;
+					}
+				}
 				return Math.addExact(rankBase, index);
+			}
+
+			/** Immutable exact rank index shared by all lazy receipt requests in one group. */
+			private static final class FactorizedRankIndex {
+				private final List<List<CandidateRealizationInputBinding>> factors;
+				private final List<List<CanonicalText>> optionKeys;
+				private final List<Map<Integer,Integer>> suffixCounts;
+				private final int fixedLength;
+
+				private FactorizedRankIndex(List<List<CandidateRealizationInputBinding>> factors,
+					List<List<CanonicalText>> optionKeys, List<Map<Integer,Integer>> suffixCounts,
+					int fixedLength) {
+					this.factors = factors;
+					this.optionKeys = optionKeys;
+					this.suffixCounts = suffixCounts;
+					this.fixedLength = fixedLength;
+				}
+
+				private static FactorizedRankIndex create(FactorizedSupportClauses factorized,
+					CandidateRealizationSupportClause selected) {
+					List<List<CandidateRealizationInputBinding>> factors = factorized.factors();
+					CanonicalTextContext context = new CanonicalTextContext();
+					List<List<CanonicalText>> optionKeys = new ArrayList<>(factors.size());
+					int selectedBindingLength = 0;
+					for(int axis = 0; axis < factors.size(); axis++) {
+						List<CanonicalText> keys = new ArrayList<>(factors.get(axis).size());
+						for(CandidateRealizationInputBinding option : factors.get(axis))
+							keys.add(canonicalOrderingKey(option, context));
+						optionKeys.add(List.copyOf(keys));
+						int selectedOption = factors.get(axis).indexOf(selected.inputBindings().get(axis));
+						if(selectedOption < 0)
+							throw new IllegalArgumentException(
+								"Factorized receipt clause contains a foreign input binding");
+						selectedBindingLength = Math.addExact(selectedBindingLength,
+							keys.get(selectedOption).length);
+					}
+					int fixedLength = Math.subtractExact(
+						canonicalOrderingKey(selected, context).length, selectedBindingLength);
+					List<List<CanonicalText>> immutableKeys = List.copyOf(optionKeys);
+					return new FactorizedRankIndex(factors, immutableKeys,
+						factorizedSuffixLengthCounts(immutableKeys), fixedLength);
+				}
+
+				/** Exact length-prefix then lexical rank without expanding the Cartesian relation. */
+				private int canonicalRank(CandidateRealizationSupportClause selected) {
+					int selectedBindingLength = 0;
+					int[] selectedOptions = new int[factors.size()];
+					for(int axis = 0; axis < factors.size(); axis++) {
+						List<CandidateRealizationInputBinding> options = factors.get(axis);
+						List<CanonicalText> keys = optionKeys.get(axis);
+						CandidateRealizationInputBinding binding = selected.inputBindings().get(axis);
+						int selectedOption = options.indexOf(binding);
+						if(selectedOption < 0)
+							throw new IllegalArgumentException(
+								"Factorized receipt clause contains a foreign input binding");
+						selectedOptions[axis] = selectedOption;
+						selectedBindingLength = Math.addExact(selectedBindingLength,
+							keys.get(selectedOption).length);
+					}
+
+					int clauseLength = Math.addExact(fixedLength, selectedBindingLength);
+					Map<Integer,Integer> allLengths = suffixCounts.get(0);
+					int rank = 0;
+					for(Map.Entry<Integer,Integer> entry : allLengths.entrySet())
+						if(compareLengthPrefixes(Math.addExact(fixedLength, entry.getKey()), clauseLength) < 0)
+							rank = Math.addExact(rank, entry.getValue());
+
+					int prefixLength = 0;
+					for(int axis = 0; axis < factors.size(); axis++) {
+						List<CanonicalText> keys = optionKeys.get(axis);
+						for(int option = 0; option < selectedOptions[axis]; option++) {
+							int requiredSuffixLength = selectedBindingLength - prefixLength
+								- keys.get(option).length;
+							rank = Math.addExact(rank,
+								suffixCounts.get(axis + 1).getOrDefault(requiredSuffixLength, 0));
+						}
+						prefixLength = Math.addExact(prefixLength,
+							keys.get(selectedOptions[axis]).length);
+					}
+					return rank;
+				}
+			}
+
+			private static List<Map<Integer,Integer>> factorizedSuffixLengthCounts(
+				List<List<CanonicalText>> optionKeys) {
+				List<Map<Integer,Integer>> suffix = new ArrayList<>(
+					Collections.nCopies(optionKeys.size() + 1, null));
+				suffix.set(optionKeys.size(), Map.of(0, 1));
+				for(int axis = optionKeys.size() - 1; axis >= 0; axis--) {
+					Map<Integer,Integer> counts = new java.util.HashMap<>();
+					for(CanonicalText option : optionKeys.get(axis))
+						for(Map.Entry<Integer,Integer> tail : suffix.get(axis + 1).entrySet())
+							counts.merge(Math.addExact(option.length, tail.getKey()),
+								tail.getValue(), Math::addExact);
+					suffix.set(axis, counts);
+				}
+				return suffix;
 			}
 
 			private int assignCanonicalRanks(int firstRank) {
@@ -2322,6 +2988,12 @@ public final class PlacementAnalysis {
 				if(size == 1) {
 					rankBase = firstRank;
 					return Math.incrementExact(firstRank);
+				}
+				// Rank requested clauses algebraically; tied group identities still use
+				// the exact interleaved legacy path in CandidateReceiptDomain.ensureRanks.
+				if(clauses instanceof FactorizedSupportClauses) {
+					rankBase = firstRank;
+					return Math.addExact(firstRank, size);
 				}
 				int[] order = new int[size];
 				int[] work = new int[size];
@@ -2355,10 +3027,12 @@ public final class PlacementAnalysis {
 		private final Map<CandidateRuleKey,
 			Map<CandidateEmissionFact,Map<CandidateEmissionRealization,ReceiptGroup>>> groupsByIdentity;
 		private final List<ReceiptGroup> groups;
+		private final CandidateRuleFacts facts;
 		private final SearchSpaceMetrics metrics;
 		private volatile boolean ranksInitialized;
 
 		private CandidateReceiptDomain(CandidateRuleFacts facts) {
+			this.facts = facts;
 			Map<CandidateRuleKey,Map<CandidateEmissionFact,
 				Map<CandidateEmissionRealization,ReceiptGroup>>> indexed = new IdentityHashMap<>();
 			List<ReceiptGroup> allGroups = new ArrayList<>();
@@ -2379,8 +3053,30 @@ public final class PlacementAnalysis {
 				}
 				indexed.put(fact.key(), Collections.unmodifiableMap(byEmission));
 			}
-			groups = List.copyOf(allGroups);
-			groupsByIdentity = Collections.unmodifiableMap(indexed);
+			groups = allGroups;
+			groupsByIdentity = indexed;
+		}
+
+		private synchronized void registerFamilyFact(CandidateRuleFact fact) {
+			if(groupsByIdentity.containsKey(fact.key()))
+				return;
+			Map<CandidateEmissionFact,Map<CandidateEmissionRealization,ReceiptGroup>> byEmission =
+				new IdentityHashMap<>();
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				Map<CandidateEmissionRealization,ReceiptGroup> byRealization = new IdentityHashMap<>();
+				for(CandidateEmissionRealization realization : emission.realizations()) {
+					ReceiptGroup group = new ReceiptGroup(fact.key(), emission, realization, metrics);
+					byRealization.put(realization, group);
+					groups.add(group);
+					if(metrics != null)
+						metrics.recordReceiptRelationSlots(realization.supportClauses().size());
+				}
+				byEmission.put(emission, byRealization);
+			}
+			groupsByIdentity.put(fact.key(), byEmission);
+			for(ReceiptGroup group : groups)
+				group.resetRanks();
+			ranksInitialized = false;
 		}
 
 		private synchronized void ensureRanks() {
@@ -2489,10 +3185,16 @@ public final class PlacementAnalysis {
 			return (char) ('0' + value / divisor % 10);
 		}
 
-		private ReceiptGroup requireGroup(CandidateRuleKey rule,
+		private synchronized ReceiptGroup requireGroup(CandidateRuleKey rule,
 			CandidateEmissionFact emission, CandidateEmissionRealization realization) {
 			Map<CandidateEmissionFact,Map<CandidateEmissionRealization,ReceiptGroup>> byEmission =
 				groupsByIdentity.get(rule);
+			if(byEmission == null) {
+				CandidateRuleFact exact = facts.requireExact(rule.parentOccurrence(), rule.orderedInputs());
+				if(exact.key() == rule)
+					registerFamilyFact(exact);
+				byEmission = groupsByIdentity.get(rule);
+			}
 			Map<CandidateEmissionRealization,ReceiptGroup> byRealization =
 				byEmission == null ? null : byEmission.get(emission);
 			ReceiptGroup group = byRealization == null ? null : byRealization.get(realization);
@@ -2528,9 +3230,9 @@ public final class PlacementAnalysis {
 		}
 
 		private int rank(CandidateSelectionReceipt receipt) {
+			ReceiptGroup group = requireGroup(receipt.rule(), receipt.emission(), receipt.realization());
 			ensureRanks();
-			return requireGroup(receipt.rule(), receipt.emission(), receipt.realization())
-				.rank(receipt.supportClause());
+			return group.rank(receipt.supportClause());
 		}
 
 		private List<CandidateSelectionReceipt> canonicalize(
@@ -3472,7 +4174,7 @@ public final class PlacementAnalysis {
 			heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts, candidateConsumerDomainKeys,
 			candidateConsumerProfileFacts, detachedConsumerProfileFacts, compiledInputEdges, logicalTransientInputs,
 			privacyFacts, candidatePrivacyClosureEvidence, logicalInlinedFunctionInputs, programMutationGuard,
-			privacyPrunedInputs, jointInputAnalysis, false);
+			privacyPrunedInputs, jointInputAnalysis, false, List.of());
 	}
 
 	/** Publish the canonical fingerprint directly, without a discarded preliminary digest. */
@@ -3494,7 +4196,29 @@ public final class PlacementAnalysis {
 			heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts, candidateConsumerDomainKeys,
 			candidateConsumerProfileFacts, detachedConsumerProfileFacts, compiledInputEdges, logicalTransientInputs,
 			privacyFacts, candidatePrivacyClosureEvidence, logicalInlinedFunctionInputs, programMutationGuard,
-			privacyPrunedInputs, jointInputAnalysis, true);
+			privacyPrunedInputs, jointInputAnalysis, true, List.of());
+	}
+
+	/** Canonical construction with non-enumerated scalar CP rule families. */
+	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		List<StatementBlock> topLevelStatementBlocks, DMLProgram programOwner,
+		PlacementShapeFacts shapeFacts,
+		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
+		List<CandidateRuleFact> candidateRuleFacts,
+		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts,
+		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts,
+		List<CompiledInputEdgeFact> compiledInputEdges,
+		List<LogicalTransientInputFact> logicalTransientInputs, PlacementPrivacyFacts privacyFacts,
+		CandidatePrivacyClosureEvidence candidatePrivacyClosureEvidence,
+		List<LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputs,
+		Runnable programMutationGuard, List<CandidatePrivacyInputPruning> privacyPrunedInputs,
+		PlacementJointInputAnalysis jointInputAnalysis, List<CpRuleFamily> cpRuleFamilies) {
+		this(graph, occurrences, topLevelStatementBlocks, programOwner, shapeFacts, null,
+			heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts, candidateConsumerDomainKeys,
+			candidateConsumerProfileFacts, detachedConsumerProfileFacts, compiledInputEdges, logicalTransientInputs,
+			privacyFacts, candidatePrivacyClosureEvidence, logicalInlinedFunctionInputs, programMutationGuard,
+			privacyPrunedInputs, jointInputAnalysis, true, cpRuleFamilies);
 	}
 
 	private PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
@@ -3510,7 +4234,8 @@ public final class PlacementAnalysis {
 		CandidatePrivacyClosureEvidence candidatePrivacyClosureEvidence,
 		List<LogicalInlinedFunctionInputFact> logicalInlinedFunctionInputs,
 		Runnable programMutationGuard, List<CandidatePrivacyInputPruning> privacyPrunedInputs,
-		PlacementJointInputAnalysis jointInputAnalysis, boolean canonicalFingerprint) {
+		PlacementJointInputAnalysis jointInputAnalysis, boolean canonicalFingerprint,
+		List<CpRuleFamily> cpRuleFamilies) {
 		this.graph = Objects.requireNonNull(graph, "graph");
 		this.privacyFacts = Objects.requireNonNull(privacyFacts, "privacyFacts");
 		this.candidatePrivacyClosureEvidence = Optional.ofNullable(candidatePrivacyClosureEvidence);
@@ -3565,13 +4290,27 @@ public final class PlacementAnalysis {
 		this.analysisFingerprint = canonicalFingerprint ? canonicalAnalysisFingerprint()
 			: canonicalizeSuppliedAnalysisFingerprint(analysisFingerprint);
 		this.heuristicPolicyFacts = Objects.requireNonNull(heuristicPolicyFacts, "heuristicPolicyFacts");
+		for(CpRuleFamily family : Objects.requireNonNull(cpRuleFamilies, "CP rule families")) {
+			if(!ownedKeys.containsKey(Objects.requireNonNull(family, "CP rule family").parent()))
+				throw new IllegalArgumentException("CP rule family parent is not analysis-owned");
+			PlacementState state = family.emission().emissionState().placementState();
+			NeutralPlacementGraph.Node owner = graph.node(family.parent()).orElseThrow();
+			if(owner.legalAlternatives().stream().noneMatch(legal -> legal == state)
+				|| state.execType() != ExecType.CP || state.output() != FederatedOutput.LOUT
+				|| state.fType() != null || family.capability().nativeExec() != ExecType.CP
+				|| family.capability().nativeOutput() != FederatedOutput.LOUT
+				|| family.capability().nativeFoutFType() != null
+				|| !family.profile().available() || !family.profile().producerOutputs().isEmpty())
+				throw new IllegalArgumentException("CP rule family header is not graph-owned scalar CP/LOUT");
+		}
 		this.candidateRuleDomain = new CandidateRuleDomain(this.analysisFingerprint, candidateRuleDomainKeys,
-			candidateConsumerDomainKeys, privacyPrunedInputs);
+			candidateConsumerDomainKeys, privacyPrunedInputs, cpRuleFamilies);
 		Map<CompiledHopKey,Boolean> analysisKeysByIdentity = this.occurrenceKeysByIdentity;
 		for(CandidateRuleKey key : this.candidateRuleDomain.orderedRuleKeys())
 			if(!analysisKeysByIdentity.containsKey(key.parentOccurrence()))
 				throw new IllegalArgumentException("Candidate domain parent is not analysis-owned");
-		this.candidateRuleFacts = new CandidateRuleFacts(this.candidateRuleDomain, candidateRuleFacts);
+		this.candidateRuleFacts = new CandidateRuleFacts(
+			this.candidateRuleDomain, candidateRuleFacts, cpRuleFamilies);
 		this.candidateReceiptDomain = new CandidateReceiptDomain(this.candidateRuleFacts);
 		for(var action : graph.derivedFoutMaterializationActions())
 			for(var authority : action.nativeAnchorAuthorities()) {
@@ -3856,60 +4595,84 @@ public final class PlacementAnalysis {
 		for(CandidateRuleFact fact : candidateRuleFacts.orderedFacts())
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
 				for(CandidateEmissionRealization realization : emission.realizations()) {
+					if(realization.supportClauses() instanceof IndexedSupportClauses indexed) {
+						if(realization.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE
+							&& indexed.hasMissingNativeWitness())
+							throw new IllegalArgumentException(
+								"Published native lineage lacks exact worker-pool authority");
+						for(CandidateRealizationInputBinding binding : indexed.uniqueBindings())
+							validateCandidateRealizationBinding(fact, binding);
+						continue;
+					}
+					FactorizedSupportProduct product = realization.factorizedSupportProduct().orElse(null);
+					if(product != null) {
+						if(realization.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE
+							&& product.nativeWorkerPoolWitness() == null)
+							throw new IllegalArgumentException(
+								"Published native lineage lacks exact worker-pool authority");
+						for(List<CandidateRealizationInputBinding> factor : product.factors())
+							for(CandidateRealizationInputBinding binding : factor)
+								validateCandidateRealizationBinding(fact, binding);
+						continue;
+					}
 					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 						if(realization.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE
 							&& clause.nativeWorkerPoolWitness() == null)
 							throw new IllegalArgumentException(
 								"Published native lineage lacks exact worker-pool authority");
-						for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
-							CandidateEmissionRealization source = requireReferencedRealization(binding.source());
-							// Logical transient bindings select a reaching boundary realization. They
-							// are provenance dependencies rather than physical Hop input positions;
-							// synthetic function-return aliases therefore legitimately have no
-							// ordered physical input row to validate here.
-							if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.LOGICAL_TRANSIENT)
-								continue;
-							if(binding.inputPosition() >= fact.key().orderedInputs().size())
-								throw new IllegalArgumentException("Candidate realization input binding position differs");
-							CandidateInputState rowInput = fact.key().orderedInputs().get(binding.inputPosition());
-							FType effectiveType = binding.kind() == PlacementIdentity.CandidateInputBindingKind.RELOCATION
-								? binding.relocationAction().materializationFType()
-								: source.placementState().output() == FederatedOutput.FOUT
-									? source.placementState().fType() : null;
-							CandidateInputState expectedInput = effectiveType == null
-								? CandidateInputState.absentLocal() : CandidateInputState.present(effectiveType);
-							if(!rowInput.equals(expectedInput))
-								throw new IllegalArgumentException("Candidate realization binding and oracle input row differs: rule="
-									+ fact.key().normalizedSignature() + ", position=" + binding.inputPosition()
-									+ ", expected=" + expectedInput + ", binding=" + binding);
-							if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.DIRECT) {
-								CompiledInputEdgeFact physical = inputEdgesByConsumerIdentity
-									.getOrDefault(fact.key().parentOccurrence(), Map.of()).get(binding.inputPosition());
-								if(physical == null || physical.producer() != binding.source().rule().parentOccurrence())
-									throw new IllegalArgumentException("DIRECT realization binding lacks its exact physical edge");
-							}
-							if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.RELOCATION) {
-								RelocationActionKey action = binding.relocationAction();
-								boolean graphOwned = graph.relocationActions().stream()
-									.anyMatch(candidate -> candidate.key() == action);
-								boolean consumerCompatible = action.compatibleConsumers()
-									.contains(fact.key().parentOccurrence());
-								ValueVersionKey actualSource = graph.node(
-									binding.source().rule().parentOccurrence()).orElseThrow().valueVersion();
-								boolean sourceCompatible = action.sourceValueVersion().equals(actualSource);
-								if(!graphOwned || !consumerCompatible || !sourceCompatible)
-									throw new IllegalArgumentException(
-										"Candidate realization relocation binding lacks exact graph authority: graphOwned="
-											+ graphOwned + ", consumerCompatible=" + consumerCompatible
-											+ ", sourceCompatible=" + sourceCompatible + ", action="
-											+ action.normalizedSignature() + ", consumer="
-											+ fact.key().parentOccurrence().normalizedSignature() + ", source="
-											+ binding.source().normalizedSignature() + ", actualSourceValue="
-											+ actualSource.normalizedSignature());
-							}
-						}
+						for(CandidateRealizationInputBinding binding : clause.inputBindings())
+							validateCandidateRealizationBinding(fact, binding);
 					}
 				}
+	}
+
+	private void validateCandidateRealizationBinding(CandidateRuleFact fact,
+		CandidateRealizationInputBinding binding) {
+		CandidateEmissionRealization source = requireReferencedRealization(binding.source());
+		// Logical transient bindings select a reaching boundary realization. They
+		// are provenance dependencies rather than physical Hop input positions;
+		// synthetic function-return aliases therefore legitimately have no
+		// ordered physical input row to validate here.
+		if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.LOGICAL_TRANSIENT)
+			return;
+		if(binding.inputPosition() >= fact.key().orderedInputs().size())
+			throw new IllegalArgumentException("Candidate realization input binding position differs");
+		CandidateInputState rowInput = fact.key().orderedInputs().get(binding.inputPosition());
+		FType effectiveType = binding.kind() == PlacementIdentity.CandidateInputBindingKind.RELOCATION
+			? binding.relocationAction().materializationFType()
+			: source.placementState().output() == FederatedOutput.FOUT
+				? source.placementState().fType() : null;
+		CandidateInputState expectedInput = effectiveType == null
+			? CandidateInputState.absentLocal() : CandidateInputState.present(effectiveType);
+		if(!rowInput.equals(expectedInput))
+			throw new IllegalArgumentException("Candidate realization binding and oracle input row differs: rule="
+				+ fact.key().normalizedSignature() + ", position=" + binding.inputPosition()
+				+ ", expected=" + expectedInput + ", binding=" + binding);
+		if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.DIRECT) {
+			CompiledInputEdgeFact physical = inputEdgesByConsumerIdentity
+				.getOrDefault(fact.key().parentOccurrence(), Map.of()).get(binding.inputPosition());
+			if(physical == null || physical.producer() != binding.source().rule().parentOccurrence())
+				throw new IllegalArgumentException("DIRECT realization binding lacks its exact physical edge");
+		}
+		if(binding.kind() == PlacementIdentity.CandidateInputBindingKind.RELOCATION) {
+			RelocationActionKey action = binding.relocationAction();
+			boolean graphOwned = graph.relocationActions().stream()
+				.anyMatch(candidate -> candidate.key() == action);
+			boolean consumerCompatible = action.compatibleConsumers()
+				.contains(fact.key().parentOccurrence());
+			ValueVersionKey actualSource = graph.node(
+				binding.source().rule().parentOccurrence()).orElseThrow().valueVersion();
+			boolean sourceCompatible = action.sourceValueVersion().equals(actualSource);
+			if(!graphOwned || !consumerCompatible || !sourceCompatible)
+				throw new IllegalArgumentException(
+					"Candidate realization relocation binding lacks exact graph authority: graphOwned="
+						+ graphOwned + ", consumerCompatible=" + consumerCompatible
+						+ ", sourceCompatible=" + sourceCompatible + ", action="
+						+ action.normalizedSignature() + ", consumer="
+						+ fact.key().parentOccurrence().normalizedSignature() + ", source="
+						+ binding.source().normalizedSignature() + ", actualSourceValue="
+						+ actualSource.normalizedSignature());
+		}
 	}
 
 	private static void validateTransientRealizationTuple(NeutralPlacementGraph.Node owner,

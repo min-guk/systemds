@@ -114,6 +114,111 @@ public class RelocationProductMemoTest {
 	}
 
 	@Test
+	public void changedChoicesReuseCurrentClausesAndEnumerateOnlyFirstAddedSlices() throws Exception {
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder(null, metrics);
+		CandidateEmissionFact emission = new CandidateEmissionFact(TARGET_EMISSION, FType.ROW);
+		DurableAnchorKey output = anchor("output", 4);
+		CompiledHopKey otherSource = key("other-source");
+		CandidateRealizationInputBinding first = relocationBinding(0, SOURCE, relocationAction("pool-a"));
+		CandidateRealizationInputBinding second = relocationBinding(0, SOURCE, relocationAction("pool-b"));
+		CandidateRealizationInputBinding addedFirst = relocationBinding(
+			0, SOURCE, relocationAction("pool-added-first"));
+		CandidateRealizationInputBinding third = relocationBinding(
+			1, otherSource, relocationAction("pool-c"));
+		CandidateRealizationInputBinding addedSecond = relocationBinding(
+			1, otherSource, relocationAction("pool-added-second"));
+		Map<Object,Object> previous = new HashMap<>();
+		product(builder, OWNER, emission, List.of(List.of(first, second), List.of(third)),
+			output, false, null, previous);
+		Object relationClosure = PlacementBuilderTestAccess.relationClosure(builder);
+		Field cache = PlacementRelationClosure.class.getDeclaredField("relocationProducts");
+		cache.setAccessible(true);
+		cache.set(relationClosure, previous);
+		Map<Object,Object> current = new HashMap<>();
+
+		long beforeExpansion = metrics.snapshot().relocationLeaves();
+		List<List<CandidateRealizationInputBinding>> expandedChoices = List.of(
+			List.of(first, second, addedFirst), List.of(third, addedSecond));
+		List<CandidateEmissionRealization> expanded = product(builder, OWNER, emission,
+			expandedChoices, output, false, null, current);
+		Assert.assertEquals(cold(emission, expandedChoices, output, false, null), expanded);
+		Assert.assertEquals("only the four disjoint first-added slices are new",
+			4, metrics.snapshot().relocationLeaves() - beforeExpansion);
+
+		long beforeDeletion = metrics.snapshot().relocationLeaves();
+		List<List<CandidateRealizationInputBinding>> reducedChoices =
+			List.of(List.of(second, addedFirst), List.of(addedSecond));
+		Assert.assertEquals(cold(emission, reducedChoices, output, false, null),
+			product(builder, OWNER, emission, reducedChoices, output, false, null, current));
+		Assert.assertEquals("deletion only filters retained clauses", beforeDeletion,
+			metrics.snapshot().relocationLeaves());
+
+		CandidateRealizationInputBinding foreignAction = relocationBinding(
+			0, SOURCE, relocationAction("pool-b"));
+		List<List<CandidateRealizationInputBinding>> replacement = List.of(List.of(foreignAction));
+		long beforeReplacement = metrics.snapshot().relocationLeaves();
+		Assert.assertEquals(cold(emission, replacement, output, false, null),
+			product(builder, OWNER, emission, replacement, output, false, null, current));
+		Assert.assertEquals("equal-valued foreign action authority is a new binding", 1,
+			metrics.snapshot().relocationLeaves() - beforeReplacement);
+
+		List<List<CandidateRealizationInputBinding>> empty = List.of(List.of());
+		long beforeEmpty = metrics.snapshot().relocationLeaves();
+		Assert.assertEquals(cold(emission, empty, output, false, null),
+			product(builder, OWNER, emission, empty, output, false, null, current));
+		Assert.assertEquals("empty choices remove stale clauses without enumeration", beforeEmpty,
+			metrics.snapshot().relocationLeaves());
+
+		CandidateRealizationInputBinding foreignOwner = relocationBinding(
+			0, key("source"), foreignAction.relocationAction());
+		List<List<CandidateRealizationInputBinding>> foreignOwnerChoices = List.of(List.of(foreignOwner));
+		long beforeForeignOwner = metrics.snapshot().relocationLeaves();
+		Assert.assertEquals(cold(emission, foreignOwnerChoices, output, false, null),
+			product(builder, OWNER, emission, foreignOwnerChoices, output, false, null, current));
+		Assert.assertEquals("equal-valued foreign source ownership is a new binding", 1,
+			metrics.snapshot().relocationLeaves() - beforeForeignOwner);
+	}
+
+	@Test
+	public void deltaSlicesPreserveRepeatedOwnerSourceConflictPruning() throws Exception {
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder(null, metrics);
+		CandidateEmissionFact emission = new CandidateEmissionFact(TARGET_EMISSION, FType.ROW);
+		DurableAnchorKey output = anchor("output", 4);
+		CandidateEmissionRealization local = CandidateEmissionRealization.local(SOURCE_EMISSION);
+		PlacementEmissionState alternateSourceEmission = new PlacementEmissionState(
+			new PlacementState(ExecType.FED, FederatedOutput.LOUT, FType.COL, false), false);
+		CandidateEmissionRealization alternate = CandidateEmissionRealization.local(alternateSourceEmission);
+		CandidateRealizationInputBinding localFirst = relocationBinding(
+			0, SOURCE, local, relocationAction("pool-local-first"));
+		CandidateRealizationInputBinding alternateFirst = relocationBinding(
+			0, SOURCE, alternate, relocationAction("pool-alternate-first"));
+		CandidateRealizationInputBinding localSecond = relocationBinding(
+			1, SOURCE, local, relocationAction("pool-local-second"));
+		CandidateRealizationInputBinding alternateSecond = relocationBinding(
+			1, SOURCE, alternate, relocationAction("pool-alternate-second"));
+		Map<Object,Object> previous = new HashMap<>();
+		product(builder, OWNER, emission, List.of(List.of(localFirst), List.of(localSecond)),
+			output, false, null, previous);
+		Object relationClosure = PlacementBuilderTestAccess.relationClosure(builder);
+		Field cache = PlacementRelationClosure.class.getDeclaredField("relocationProducts");
+		cache.setAccessible(true);
+		cache.set(relationClosure, previous);
+		Map<Object,Object> current = new HashMap<>();
+		List<List<CandidateRealizationInputBinding>> expanded = List.of(
+			List.of(localFirst, alternateFirst), List.of(localSecond, alternateSecond));
+		long before = metrics.snapshot().relocationLeaves();
+		List<CandidateEmissionRealization> delta = product(builder, OWNER, emission,
+			expanded, output, false, null, current);
+
+		Assert.assertEquals(cold(emission, expanded, output, false, null), delta);
+		Assert.assertEquals("only the compatible durable/durable assignment is newly emitted",
+			1, metrics.snapshot().relocationLeaves() - before);
+		Assert.assertEquals(2, delta.get(0).supportClauses().size());
+	}
+
+	@Test
 	public void ownerAndOutputBranchIdentityCannotAlias() throws Exception {
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder(null, metrics);
@@ -280,10 +385,20 @@ public class RelocationProductMemoTest {
 
 	private static CandidateRealizationInputBinding relocationBinding(
 		CompiledHopKey sourceOwner, RelocationActionKey action) {
-		CandidateRuleKey rule = sourceOwner == SOURCE ? SOURCE_RULE : new CandidateRuleKey(sourceOwner, List.of());
+		return relocationBinding(0, sourceOwner, action);
+	}
+
+	private static CandidateRealizationInputBinding relocationBinding(
+		int inputPosition, CompiledHopKey sourceOwner, RelocationActionKey action) {
 		CandidateEmissionRealization source = CandidateEmissionRealization.local(SOURCE_EMISSION);
+		return relocationBinding(inputPosition, sourceOwner, source, action);
+	}
+
+	private static CandidateRealizationInputBinding relocationBinding(int inputPosition,
+		CompiledHopKey sourceOwner, CandidateEmissionRealization source, RelocationActionKey action) {
+		CandidateRuleKey rule = sourceOwner == SOURCE ? SOURCE_RULE : new CandidateRuleKey(sourceOwner, List.of());
 		CandidateRealizationReference reference = CandidateRealizationReference.of(rule, source);
-		return CandidateRealizationInputBinding.relocation(0, reference, action);
+		return CandidateRealizationInputBinding.relocation(inputPosition, reference, action);
 	}
 
 	private static RelocationActionKey relocationAction(String poolId) {

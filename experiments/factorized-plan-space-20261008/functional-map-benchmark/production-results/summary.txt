@@ -1,0 +1,4 @@
+PRODUCTION_RESULT engine=OLD fixture=flat-private variables=55 factors=159 logicalFactorCells=941012 frozenFactors=159 finiteSupportFactors=-1 buildWallMs=153.477 buildAllocatedBytes=42488904 medianFreezeWallMs=943.393 medianFreezeAllocatedBytes=1139970328 warmups=1 repeats=3
+peakRssKb=644100 elapsedSeconds=8.23
+PRODUCTION_RESULT engine=NEW fixture=flat-private variables=55 factors=159 logicalFactorCells=941012 frozenFactors=159 finiteSupportFactors=5 buildWallMs=162.407 buildAllocatedBytes=42704952 medianFreezeWallMs=626.424 medianFreezeAllocatedBytes=1139967392 warmups=1 repeats=3
+peakRssKb=624256 elapsedSeconds=7.42

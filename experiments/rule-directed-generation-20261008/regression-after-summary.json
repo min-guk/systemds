@@ -1,0 +1,57 @@
+{
+  "cases": [
+    {
+      "canonicalProofPassed": true,
+      "case": "joint_correlated_aa",
+      "cpFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 140.0,
+        "ROWS": 8.0,
+        "SUM": 54.0
+      },
+      "expected": "success",
+      "fedFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 140.0,
+        "ROWS": 8.0,
+        "SUM": 54.0
+      },
+      "passed": true,
+      "rejectionDiagnostic": null
+    },
+    {
+      "canonicalProofPassed": true,
+      "case": "joint_function_calls",
+      "cpFingerprint": {
+        "CALL_C": 54.0,
+        "CALL_D": 132.0,
+        "COLS": 1.0,
+        "NORM2": 20340.0,
+        "ROWS": 2.0,
+        "SUM": 186.0
+      },
+      "expected": "success",
+      "fedFingerprint": {
+        "CALL_C": 54.0,
+        "CALL_D": 132.0,
+        "COLS": 1.0,
+        "NORM2": 20340.0,
+        "ROWS": 2.0,
+        "SUM": 186.0
+      },
+      "passed": true,
+      "rejectionDiagnostic": null
+    },
+    {
+      "canonicalProofPassed": null,
+      "case": "joint_independent_private_ab_negative",
+      "cpFingerprint": null,
+      "expected": "infeasible_private_tuple",
+      "fedFingerprint": null,
+      "passed": true,
+      "rejectionDiagnostic": true
+    }
+  ],
+  "schema": "fedplanner-rule-directed-regression-after-v1",
+  "status": "PASSED"
+}

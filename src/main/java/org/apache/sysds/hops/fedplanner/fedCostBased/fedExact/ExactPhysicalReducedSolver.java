@@ -829,6 +829,33 @@ final class ExactPhysicalReducedSolver {
 			: null;
 		if(functional != null)
 			return functional;
+		if(source.isFiniteSupport()) {
+			int[] sourceCells = source.finiteSupportCells();
+			int[] projected = new int[sourceCells.length];
+			int projectedCount = 0;
+			int[] coordinates = new int[scope.length];
+			for(int sourceCell : sourceCells) {
+				int remaining = sourceCell;
+				boolean retained = true;
+				for(int axis = scope.length - 1; axis >= 0; axis--) {
+					int domain = frozen.domainSize(scope[axis]);
+					int sourceValue = remaining % domain;
+					remaining /= domain;
+					coordinates[axis] = Arrays.binarySearch(
+						representatives[scope[axis]], sourceValue);
+					retained &= coordinates[axis] >= 0;
+				}
+				if(retained) {
+					int reducedCell = 0;
+					for(int axis = 0; axis < scope.length; axis++)
+						reducedCell = reducedCell * reducedScope.get(axis).domainSize()
+							+ coordinates[axis];
+					projected[projectedCount++] = reducedCell;
+				}
+			}
+			return ExactCategoricalSolver.Factor.finiteSupport(reducedScope,
+				Arrays.copyOf(projected, projectedCount));
+		}
 		int cells = reducedScope.stream().mapToInt(
 			ExactCategoricalSolver.Variable::domainSize).reduce(1, Math::multiplyExact);
 		ExactCategoricalSolver.HardTable hard = source.isHardTable()
@@ -988,6 +1015,9 @@ final class ExactPhysicalReducedSolver {
 		ExactCategoricalSolver.FunctionalMap mapping = frozen.factor(factor).functionalMapping();
 		if(mapping != null)
 			return reviseFunctionalSupport(mapping, scope, active, removals);
+		ExactCategoricalSolver.Factor frozenFactor = frozen.factor(factor);
+		if(frozenFactor.isFiniteSupport() && scope.length <= 2)
+			return reviseFiniteSupport(frozenFactor.finiteSupportCells(), scope, active, removals);
 		boolean changed = false;
 		if(scope.length == 1) {
 			for(int value=0; value<active[scope[0]].length; value++)
@@ -1025,6 +1055,37 @@ final class ExactPhysicalReducedSolver {
 				}
 			}
 		}
+		return changed;
+	}
+
+	private static boolean reviseFiniteSupport(int[] cells, int[] scope,
+		boolean[][] active, int[] removals) {
+		boolean[][] supported = new boolean[scope.length][];
+		for(int axis = 0; axis < scope.length; axis++)
+			supported[axis] = new boolean[active[scope[axis]].length];
+		int[] coordinates = new int[scope.length];
+		for(int cell : cells) {
+			int remaining = cell;
+			boolean activeCell = true;
+			for(int axis = scope.length - 1; axis >= 0; axis--) {
+				int domain = active[scope[axis]].length;
+				coordinates[axis] = remaining % domain;
+				remaining /= domain;
+				activeCell &= active[scope[axis]][coordinates[axis]];
+			}
+			if(activeCell)
+				for(int axis = 0; axis < scope.length; axis++)
+					supported[axis][coordinates[axis]] = true;
+		}
+		boolean changed = false;
+		for(int axis = 0; axis < scope.length; axis++)
+			for(int value = 0; value < active[scope[axis]].length; value++)
+				if(active[scope[axis]][value] && !supported[axis][value]) {
+					active[scope[axis]][value] = false;
+					if(removals != null)
+						removals[scope[axis]]++;
+					changed = true;
+				}
 		return changed;
 	}
 
@@ -1265,6 +1326,10 @@ final class ExactPhysicalReducedSolver {
 					== activeFunctionalTarget(mapping, right, targets);
 			}
 		}
+		ExactCategoricalSolver.Factor factor = frozen.factor(observation.factor);
+		if(position == 0 && factor.isFiniteSupport())
+			return finiteSupportObservationsEqual(factor.finiteSupportCells(), observation,
+				left, right, active);
 		if(position == observation.scope.length) {
 			int stride = observation.strides[observation.variablePosition];
 			long leftBits = Double.doubleToRawLongBits(
@@ -1283,6 +1348,49 @@ final class ExactPhysicalReducedSolver {
 					position + 1, cell + value * stride))
 				return false;
 		return true;
+	}
+
+	private static boolean finiteSupportObservationsEqual(int[] cells,
+		ObservationTraversal observation, int left, int right, boolean[][] active) {
+		int leftIndex = 0;
+		int rightIndex = 0;
+		while(true) {
+			long leftNext = nextFiniteProjection(cells,leftIndex,observation,left,active);
+			long rightNext = nextFiniteProjection(cells,rightIndex,observation,right,active);
+			if(leftNext == -1L || rightNext == -1L)
+				return leftNext == rightNext;
+			if((int)leftNext != (int)rightNext)
+				return false;
+			leftIndex = (int)(leftNext >>> 32);
+			rightIndex = (int)(rightNext >>> 32);
+		}
+	}
+
+	private static long nextFiniteProjection(int[] cells, int start,
+		ObservationTraversal observation, int selected, boolean[][] active) {
+		int axis = observation.variablePosition;
+		int stride = observation.strides[axis];
+		int domain = active[observation.scope[axis]].length;
+		for(int index = start; index < cells.length; index++) {
+			int cell = cells[index];
+			if((cell / stride) % domain != selected)
+				continue;
+			int remaining = cell;
+			boolean activeCell = true;
+			for(int position = observation.scope.length - 1; position >= 0; position--) {
+				int scopedVariable = observation.scope[position];
+				int scopedDomain = active[scopedVariable].length;
+				int value = remaining % scopedDomain;
+				remaining /= scopedDomain;
+				if(position != axis)
+					activeCell &= active[scopedVariable][value];
+			}
+			if(activeCell) {
+				int coordinate = (cell / (domain * stride)) * stride + cell % stride;
+				return ((long)(index + 1) << 32) | (coordinate & 0xffffffffL);
+			}
+		}
+		return -1L;
 	}
 
 	private static ObservationHashes compileObservationHashes(
@@ -1334,6 +1442,9 @@ final class ExactPhysicalReducedSolver {
 				ExactCategoricalSolver.FunctionalMap mapping = frozenFactor.functionalMapping();
 				if(mapping != null)
 					compileFunctionalObservations(mapping,scope,active,quotientVariableCount,hashes);
+				else if(frozenFactor.isFiniteSupport())
+					compileFiniteSupportObservations(frozenFactor.finiteSupportCells(),scope,active,
+						quotientVariableCount,hashes);
 				else if(frozenFactor.isHardTable()
 					&& preferSparseHardObservations(frozenFactor.hardTable(),scope,active))
 					compileHardObservations(frozenFactor.hardTable(),scope,active,
@@ -1344,6 +1455,40 @@ final class ExactPhysicalReducedSolver {
 			}
 		}
 		return hashes;
+	}
+
+	private static void compileFiniteSupportObservations(int[] cells, int[] scope,
+		boolean[][] active, int quotientVariableCount, ObservationHashes hashes) {
+		int logicalCells = 1;
+		for(int variable : scope)
+			logicalCells = Math.multiplyExact(logicalCells, active[variable].length);
+		for(int cell : cells) {
+			int remaining = cell;
+			boolean activeCell = true;
+			for(int position = scope.length - 1; position >= 0; position--) {
+				int domain = active[scope[position]].length;
+				int value = remaining % domain;
+				remaining /= domain;
+				hashes.coordinates[position] = value;
+				activeCell &= active[scope[position]][value];
+			}
+			if(!activeCell)
+				continue;
+			hashes.hardExceptions++;
+			for(int axis = 0, stride = logicalCells; axis < scope.length; axis++) {
+				int domain = active[scope[axis]].length;
+				stride /= domain;
+				int variable = scope[axis];
+				if(variable < quotientVariableCount) {
+					long coordinate = (long)(cell / (domain * stride)) * stride + cell % stride;
+					long token = coordinate << 1;
+					int value = hashes.coordinates[axis];
+					hashes.first[variable][value] = mix(hashes.first[variable][value],token);
+					hashes.second[variable][value] = mix(hashes.second[variable][value],
+						Long.rotateLeft(token,23));
+				}
+			}
+		}
 	}
 
 	/** Choose one representation for the complete factor occurrence, without changing its domain. */

@@ -1,0 +1,2 @@
+Initial failed assertion expanded 10,000 clauses in its diagnostic text. Full log archived at /grid/3/cofee-lm-sweep-mchoi-20260914/factorized-plan-space-20261008/source-inventory-initial-fail.log.gz
+Two failures fixed: preserve factorized prior object; use NATIVE_LINEAGE fixture for native witness.

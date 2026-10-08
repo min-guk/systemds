@@ -152,11 +152,24 @@ public final class OracleFacade {
     private final Hop hop;
     private final OpSig signature;
     private final java.util.function.BiFunction<List<FType>,ShapeHint,RulesApi.OpCaps> decision;
+    private final java.util.function.BiFunction<RulesApi.PartialInputs,ShapeHint,
+        RulesApi.PartialTruth> partialDecision;
+    private final boolean partialDecisionSupported;
+    private final ShapeHint.DiagnosticSnapshot partialShape;
+    private final Optional<RulesApi.ShapeIndependentDecision> shapeIndependentDecision;
+    private long partialRequests;
+    private long partialEvaluations;
 
     private PreparedDecision(Hop hop) {
       this.hop = hop;
       signature = buildSignature(hop);
       decision = oracle.prepare(signature);
+      partialDecision = oracle.preparePartial(signature);
+      partialDecisionSupported = oracle.supportsPartial(signature);
+      shapeIndependentDecision = oracle.shapeIndependentDecision(signature);
+      // Current partial kernels are shape-independent. A fixed unknown hint prevents
+      // prefix probing from borrowing registry-derived or tuple-derived shape authority.
+      partialShape = new ShapeHint(-1, -1, -1).diagnosticSnapshot();
     }
 
     public DecisionEvidence decideWithEvidence(List<FTypes.FType> inFTypes, ShapeHint hint) {
@@ -169,9 +182,204 @@ public final class OracleFacade {
       return new DecisionEvidence(caps, effectiveHint.proof());
     }
 
+    public RulesApi.PartialTruth partialFedFeasibility(RulesApi.PartialInputs inputs,
+        ShapeHint hint) {
+      Objects.requireNonNull(inputs, "inputs");
+      List<FType> mapped = mapFederatedTypes(hop, inputs.values());
+      RulesApi.PartialInputs mappedInputs = new RulesApi.PartialInputs(
+          mapped, inputs.assignedPositions());
+      ShapeHint effectiveHint = hint != null ? hint : shapeHint(partialShape);
+      partialRequests++;
+      partialEvaluations++;
+      return partialDecision.apply(mappedInputs, effectiveHint);
+    }
+
+    public boolean supportsPartialFedFeasibility() {
+      return partialDecisionSupported;
+    }
+
+    public PartialDecisionDiagnostics partialDecisionDiagnostics() {
+      return new PartialDecisionDiagnostics(partialRequests, partialEvaluations);
+    }
+
+    /**
+     * Builds a snapshot-local disjoint rectangle relation by evaluating the
+     * existing forward caps rule only over its declared determinant positions.
+     */
+    public Optional<ExecutionRelation> prepareExecutionRelation(
+        List<List<FTypes.FType>> runtimeDomains) {
+      if(shapeIndependentDecision.isEmpty() || runtimeDomains == null
+          || runtimeDomains.size() != signature.arity())
+        return Optional.empty();
+      List<Integer> determinants = List.copyOf(
+          shapeIndependentDecision.get().determinantPositions());
+      if(determinants.stream().anyMatch(position -> position >= runtimeDomains.size()))
+        return Optional.empty();
+      for(List<FType> domain : runtimeDomains)
+        if(domain == null)
+          return Optional.empty();
+      if(runtimeDomains.stream().anyMatch(List::isEmpty))
+        return Optional.of(new ExecutionRelation(runtimeDomains.size(), determinants,
+            List.of()));
+
+      List<List<MappedOptionGroup>> groups = new ArrayList<>(determinants.size());
+      for(int position : determinants)
+        groups.add(mappedOptionGroups(position, runtimeDomains.get(position)));
+      List<FType> representative = new ArrayList<>(runtimeDomains.size());
+      for(int position = 0; position < runtimeDomains.size(); position++)
+        representative.add(mapInputType(position, runtimeDomains.get(position).get(0)));
+      List<ExecutionRegionSeed> regions = new ArrayList<>();
+      buildExecutionRegions(runtimeDomains, determinants, groups, 0, representative,
+          new ArrayList<>(), regions);
+      return Optional.of(new ExecutionRelation(runtimeDomains.size(), determinants,
+          regions));
+    }
+
+    private void buildExecutionRegions(List<List<FType>> runtimeDomains,
+        List<Integer> determinants, List<List<MappedOptionGroup>> groups, int offset,
+        List<FType> representative, List<MappedOptionGroup> selected,
+        List<ExecutionRegionSeed> regions) {
+      if(offset < determinants.size()) {
+        int position = determinants.get(offset);
+        for(MappedOptionGroup group : groups.get(offset)) {
+          FType prior = representative.set(position, group.mappedType());
+          selected.add(group);
+          try {
+            buildExecutionRegions(runtimeDomains, determinants, groups, offset + 1,
+                representative, selected, regions);
+          }
+          finally {
+            selected.remove(selected.size() - 1);
+            representative.set(position, prior);
+          }
+        }
+        return;
+      }
+      List<List<Integer>> allowedOrdinals = new ArrayList<>(runtimeDomains.size());
+      for(List<FType> domain : runtimeDomains) {
+        List<Integer> all = new ArrayList<>(domain.size());
+        for(int ordinal = 0; ordinal < domain.size(); ordinal++)
+          all.add(ordinal);
+        allowedOrdinals.add(Collections.unmodifiableList(all));
+      }
+      List<FType> keyValues = new ArrayList<>(determinants.size());
+      for(int determinantIndex = 0; determinantIndex < determinants.size(); determinantIndex++) {
+        MappedOptionGroup group = selected.get(determinantIndex);
+        allowedOrdinals.set(determinants.get(determinantIndex), group.optionOrdinals());
+        keyValues.add(group.mappedType());
+      }
+      DecisionKey key = new DecisionKey(keyValues);
+      regions.add(new ExecutionRegionSeed(allowedOrdinals, key,
+          Collections.unmodifiableList(new ArrayList<>(representative))));
+    }
+
+    private List<MappedOptionGroup> mappedOptionGroups(int position, List<FType> domain) {
+      List<MappedOptionGroup> groups = new ArrayList<>(domain.size());
+      // Keep one rectangle per original ordinal so relation traversal preserves
+      // input-domain order even when distinct runtime values map to the same rule value.
+      for(int ordinal = 0; ordinal < domain.size(); ordinal++)
+        groups.add(new MappedOptionGroup(mapInputType(position, domain.get(ordinal)),
+            List.of(ordinal)));
+      return Collections.unmodifiableList(groups);
+    }
+
+    private FType mapInputType(int position, FType runtimeType) {
+      Hop input = hop.getInput() != null && position < hop.getInput().size()
+          ? hop.getInput().get(position) : null;
+      return mapFederatedType(hop, position, runtimeType, input);
+    }
+
+    public final class ExecutionRelation {
+      private final int arity;
+      private final List<Integer> determinantPositions;
+      private final List<ExecutionRegionSeed> regionSeeds;
+      private final Map<DecisionKey,ExecutionRegionSeed> seedByKey;
+      private final Map<DecisionKey,DecisionEvidence> evidenceByKey = new LinkedHashMap<>();
+      private List<ExecutionRegion> exposedRegions;
+      private int oracleEvaluations;
+
+      private ExecutionRelation(int arity, List<Integer> determinantPositions,
+          List<ExecutionRegionSeed> regionSeeds) {
+        this.arity = arity;
+        this.determinantPositions = List.copyOf(determinantPositions);
+        this.regionSeeds = List.copyOf(regionSeeds);
+        Map<DecisionKey,ExecutionRegionSeed> indexed = new LinkedHashMap<>();
+        for(ExecutionRegionSeed seed : regionSeeds)
+          indexed.put(seed.key(), seed);
+        seedByKey = Collections.unmodifiableMap(indexed);
+      }
+
+      public List<ExecutionRegion> regions() {
+        if(exposedRegions == null) {
+          List<ExecutionRegion> result = new ArrayList<>(regionSeeds.size());
+          for(ExecutionRegionSeed seed : regionSeeds)
+            result.add(new ExecutionRegion(seed.allowedOptionOrdinals(), () -> evidence(seed)));
+          exposedRegions = Collections.unmodifiableList(result);
+        }
+        return exposedRegions;
+      }
+      public int oracleEvaluations() { return oracleEvaluations; }
+
+      public DecisionEvidence evidenceFor(List<FType> runtimeInputs) {
+        if(runtimeInputs == null || runtimeInputs.size() != arity)
+          throw new IllegalArgumentException("Execution relation input arity mismatch");
+        List<FType> keyValues = new ArrayList<>(determinantPositions.size());
+        for(int position : determinantPositions)
+          keyValues.add(mapInputType(position, runtimeInputs.get(position)));
+        ExecutionRegionSeed seed = seedByKey.get(new DecisionKey(keyValues));
+        if(seed == null)
+          throw new IllegalArgumentException("Input is outside prepared execution relation: "
+              + runtimeInputs);
+        return evidence(seed);
+      }
+
+      private DecisionEvidence evidence(ExecutionRegionSeed seed) {
+        DecisionEvidence prior = evidenceByKey.get(seed.key());
+        if(prior != null)
+          return prior;
+        ShapeHint hint = shapeHint(partialShape);
+        RulesApi.OpCaps caps = normalizeConcreteOutputPlacement(hop,
+            decision.apply(seed.representative(), hint));
+        DecisionEvidence evidence = new DecisionEvidence(caps, hint.proof());
+        if(!evidence.shapeProof().requiredFacts().isEmpty())
+          throw new IllegalStateException("Shape-independent rule consulted ShapeHint"
+              + "|opcode=" + signature.opcode() + "|determinants=" + determinantPositions
+              + "|proof=" + evidence.shapeProof());
+        oracleEvaluations++;
+        evidenceByKey.put(seed.key(), evidence);
+        return evidence;
+      }
+    }
+
     /** Shares this prepared operation signature without extending its node-build lifetime. */
     public PreparedProfile prepareProfile() {
       return new PreparedProfile(hop, signature);
+    }
+  }
+
+  public record PartialDecisionDiagnostics(long requests, long evaluations) { }
+  public static final class ExecutionRegion {
+    private final List<List<Integer>> allowedOptionOrdinals;
+    private final java.util.function.Supplier<DecisionEvidence> evidence;
+
+    private ExecutionRegion(List<List<Integer>> allowedOptionOrdinals,
+        java.util.function.Supplier<DecisionEvidence> evidence) {
+      List<List<Integer>> snapshot = new ArrayList<>(allowedOptionOrdinals.size());
+      for(List<Integer> ordinals : allowedOptionOrdinals)
+        snapshot.add(List.copyOf(ordinals));
+      this.allowedOptionOrdinals = List.copyOf(snapshot);
+      this.evidence = Objects.requireNonNull(evidence, "evidence");
+    }
+
+    public List<List<Integer>> allowedOptionOrdinals() { return allowedOptionOrdinals; }
+    public DecisionEvidence evidence() { return evidence.get(); }
+  }
+  private record MappedOptionGroup(FType mappedType, List<Integer> optionOrdinals) { }
+  private record ExecutionRegionSeed(List<List<Integer>> allowedOptionOrdinals,
+      DecisionKey key, List<FType> representative) { }
+  private record DecisionKey(List<FType> values) {
+    private DecisionKey {
+      values = Collections.unmodifiableList(new ArrayList<>(values));
     }
   }
 

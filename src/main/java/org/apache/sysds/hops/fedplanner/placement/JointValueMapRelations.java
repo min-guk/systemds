@@ -702,7 +702,13 @@ public final class JointValueMapRelations {
 			boolean complete = true;
 			try {
 				var realization = analysis.requireExactCandidateRealization(reference);
-				for(var clause : realization.supportClauses()) {
+				if(realization.key().layoutKind() != PlacementIdentity.PlacementLayoutKind.VALUE_MAP) {
+					// The realization constructor proves a common witness/exactness for all
+					// clauses. A concrete map query does not depend on source choices.
+					common = uniformConcretePool(realization);
+					complete = common != null;
+				}
+				else for(var clause : realization.supportClauses()) {
 					DurableAnchorKey pool = exactPool(realization, clause);
 					if(pool == null && realization.key().layoutKind()
 						== PlacementIdentity.PlacementLayoutKind.VALUE_MAP
@@ -786,7 +792,13 @@ public final class JointValueMapRelations {
 			boolean complete = true;
 			try {
 				var realization = analysis.requireExactCandidateRealization(query.reference());
-				for(var clause : realization.supportClauses()) {
+				if(realization.key().layoutKind() != PlacementIdentity.PlacementLayoutKind.VALUE_MAP) {
+					// The realization constructor proves a common witness/exactness for all
+					// clauses. A concrete map query does not depend on source choices.
+					common = uniformConcretePool(realization);
+					complete = common != null;
+				}
+				else for(var clause : realization.supportClauses()) {
 					DurableAnchorKey pool = exactPool(realization, clause);
 					if(pool == null && realization.key().layoutKind() == PlacementIdentity.PlacementLayoutKind.VALUE_MAP) {
 						for(var reference : sources(clause, query)) {
@@ -809,6 +821,15 @@ public final class JointValueMapRelations {
 			DurableAnchorKey result = complete ? common : null;
 			invariantPools.put(query, java.util.Optional.ofNullable(result));
 			return result;
+		}
+
+		private static DurableAnchorKey uniformConcretePool(
+			PlacementAnalysis.CandidateEmissionRealization realization) {
+			if(realization.anchor() != null) return realization.anchor();
+			var product = realization.factorizedSupportProduct().orElse(null);
+			if(product != null)
+				return product.nativeWorkerPoolLayoutExact() ? product.nativeWorkerPoolWitness() : null;
+			return exactPool(realization, realization.supportClauses().get(0));
 		}
 
 		private static DurableAnchorKey exactPool(PlacementAnalysis.CandidateEmissionRealization realization,

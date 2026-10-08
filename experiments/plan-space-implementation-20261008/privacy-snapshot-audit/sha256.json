@@ -1,0 +1,10 @@
+{
+  "baseline-control.txt": "21f99b5cd1532ea3a803b76529184c238c0f0b31892bd85946f7a535dfb552d3",
+  "baseline-metadata.txt": "d5d6a770a1a979338ca1c15f7a104b03d985a8eec574720f06009b1eb91ee141",
+  "baseline-protected.txt": "09e2e4069fefd2f280f137b7c042182cc6a7e2e994169aca9ccc9c4c77e23ea2",
+  "baseline-unknown.txt": "ff0e870b4afd1d7ebb1708ea4b0c21fa99345dd369d91d1b8f5a65d2e68451b7",
+  "current-control.txt": "7dd95e34ce780eeb8827fa54124261c41cc54e3024587e8f5d0ca89216c011c0",
+  "current-metadata.txt": "e253bd1b358fb8405e7f524f16363d6922168619a487a6840cce84874474853c",
+  "current-protected.txt": "0f90bc4e6bf13f4fed913348ca7ae62b3cb716abb5921afd7d1c5e9f6ac3f59d",
+  "current-unknown.txt": "63d9530b79c54a1e6c01e295cf2e9ef945581ef0802ddd93324cc5a757385d7b"
+}

@@ -255,7 +255,8 @@ public class FEDFoutInstruction extends FEDInstruction {
 		FType materializeType = broadcastOut ? FType.FULL : outTypeHint;
 
 		FType cacheMapType = FEDLocalMaterializeUtil.normalizeReplicatedMapType(materializeType, mapType, numWorkers);
-		String layoutSig = FederationUtils.deriveMaterializedLayoutSignature(anchorMap, cacheMapType, rlen, clen);
+		String layoutSig = materializedLayoutSignature(
+			anchorMap, materializeType, cacheMapType, rlen, clen);
 		if (DEBUG_KMEANS) {
 			System.out.println("[DBG-KMEANS] fed_fout cachekey in=" + _input.getName()
 				+ " inputKey=" + inputKey
@@ -306,5 +307,15 @@ public class FEDFoutInstruction extends FEDInstruction {
 				+ " reuseFed=false"
 				+ " inst=" + instString);
 		}
+	}
+
+	static String materializedLayoutSignature(FederationMap anchorMap, FType materializeType,
+		FType mapType, long rlen, long clen) {
+		boolean preservesAnchorLayout = materializeType == anchorMap.getType()
+			&& anchorMap.getMaxIndexInRange(0) == rlen
+			&& anchorMap.getMaxIndexInRange(1) == clen;
+		if(preservesAnchorLayout)
+			return FederationUtils.deriveFedLayoutSignature(anchorMap);
+		return FederationUtils.deriveMaterializedLayoutSignature(anchorMap, mapType, rlen, clen);
 	}
 }

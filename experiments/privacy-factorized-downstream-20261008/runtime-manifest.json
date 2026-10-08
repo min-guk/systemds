@@ -1,0 +1,237 @@
+{
+  "artifactFileCounts": {
+    "dependencies": 316,
+    "mainClasses": 4510,
+    "mainSources": 1657,
+    "testClasses": 3025,
+    "testSources": 2041
+  },
+  "artifactInventoryDigests": {
+    "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+    "mainClasses": "3f521cc4544e34aec6f83dcfd699c3ac6e4f660cf817136a62a70c8bbfd47635",
+    "mainSources": "1da36ed3b43585ac9269a1abfeefdbfc23204ee8ca0ecd0b02b80f888b6a2691",
+    "testClasses": "254213cf78e3b55770e4dd593cbbfa69873b832a6c2356a1262d635cdbd98362",
+    "testSources": "f1ab4244e758bcb20dc67d5ba05489acd407916ad8748ebc4fce5d4b73d279a1"
+  },
+  "buildReady": true,
+  "canonicalProofRequested": false,
+  "canonicalProofRequired": false,
+  "caseTimeoutSeconds": 80,
+  "classPreflightExpected": {
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver$SparseAccumulator.class": {
+      "hostPath": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver$SparseAccumulator.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver$SparseAccumulator.class",
+      "sha256": "f3c8935c124b19ae1afff28c127d3ab24d3400cfb64195462e9d88b644407d09",
+      "size": 6915
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.class": {
+      "hostPath": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.class",
+      "sha256": "deeb921f982f7046063dda298d9fb8a23c59bd2036ed593ae573f8124893b606",
+      "size": 123537
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactFiniteSupportJoin.class": {
+      "hostPath": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactFiniteSupportJoin.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactFiniteSupportJoin.class",
+      "sha256": "84a2b98bb4a22de269013c5d0d24a70d241eb6a3dc7ae03677dd7ac66a0bd967",
+      "size": 15560
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.class": {
+      "hostPath": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.class",
+      "sha256": "50192c29c1461560d13efee010dd051f9922d4ecf16cc145d2402d683f519907",
+      "size": 219039
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.class": {
+      "hostPath": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.class",
+      "sha256": "7d591c706f0633c7902f464240fe082df5c008a9ecbf5a41143ee1da9c5bfe56",
+      "size": 162973
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalOptimizer.class": {
+      "hostPath": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalOptimizer.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalOptimizer.class",
+      "sha256": "f9c88c321ec33d33a1fab5db1b87e88d75effe15909a9815622a6d3beee51017",
+      "size": 19091
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolver.class": {
+      "hostPath": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolver.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolver.class",
+      "sha256": "b4f61265713379089a9251211099e8831912300767a810c7f28857008b3d1301",
+      "size": 67798
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalSharedSourceEncoding.class": {
+      "hostPath": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalSharedSourceEncoding.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalSharedSourceEncoding.class",
+      "sha256": "0d1c2a19e90244c48c8215a0d74703d21cc88447ce7f1c913bfa740cff4eb231",
+      "size": 75635
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.class": {
+      "hostPath": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.class",
+      "sha256": "7136f71b8e4cdf9bdc37ba6fcea2a99204dcdc6f396fb17921d5ce40ad132a88",
+      "size": 34566
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.class": {
+      "hostPath": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.class",
+      "sha256": "a34d7377fb3cef55f77ef827918c8b92aee56427244321718bd56886799a0700",
+      "size": 28643
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.class": {
+      "hostPath": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.class",
+      "sha256": "f48c7f8bba802d6a31969615d74aeb3cae9af0dff748cba05857d7d3b89d200a",
+      "size": 155829
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class": {
+      "hostPath": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class",
+      "sha256": "c027715f554a2dec93ba71cb7ef520a78fe5d872dfc8d8eab58efa276d8b3f12",
+      "size": 587690
+    },
+    "/engine/classes/org/apache/sysds/runtime/controlprogram/context/ExecutionContext.class": {
+      "hostPath": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/runtime/controlprogram/context/ExecutionContext.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/runtime/controlprogram/context/ExecutionContext.class",
+      "sha256": "414a3e404011c10d7ebd3d4b6d43e262497bdec71dec7766f2f16a492d084556",
+      "size": 47497
+    },
+    "/engine/test-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointBoundaryPhysicalModelProofTest.class": {
+      "hostPath": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/test-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointBoundaryPhysicalModelProofTest.class",
+      "kind": "test",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointBoundaryPhysicalModelProofTest.class",
+      "sha256": "7bf1a80c4b9df9b07c256bc5fb69f5099e19015564b7a614304e82162f6847e2",
+      "size": 33632
+    }
+  },
+  "classes": "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/classes",
+  "configuredPlanner": "compile_cost_based",
+  "container": "systemds-joint-boundary-6b59662ce5c84961",
+  "containerScriptSha256": "1053132e26d6d47c7f84edea063c8e2335365da3cb1e63623a5f34fb24a1eacc",
+  "containerStage": "/dev/shm/mchoi-privacy-factorized-20261008/final-dp",
+  "debugFedreq": false,
+  "dependencies": "/home/mchoi/w1357-stage-main276-20261008T1025Z/systemds/target/lib",
+  "dockerArgv": [
+    "docker",
+    "run",
+    "--rm",
+    "--pull",
+    "never",
+    "--network",
+    "none",
+    "--name",
+    "systemds-joint-boundary-6b59662ce5c84961",
+    "--cpus",
+    "4",
+    "--memory",
+    "8g",
+    "--user",
+    "10041:5500",
+    "--volume",
+    "/dev/shm/mchoi-privacy-factorized-20261008/final-dp:/evidence:rw",
+    "--volume",
+    "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/main-classes:/engine/classes:ro",
+    "--volume",
+    "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/test-classes:/engine/test-classes:ro",
+    "--volume",
+    "/dev/shm/mchoi-privacy-factorized-20261008/final-dp/frozen-inputs/dependencies:/deps:ro",
+    "--entrypoint",
+    "bash",
+    "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "/evidence/container-run.sh"
+  ],
+  "dryRun": false,
+  "expectedNormalizedPlanner": "DP-LocalConflict",
+  "fixtureSha256": {
+    "config": {
+      "sha256": "0593f01a6400b1f69b53f16fa07eaf0df46dc12fe5ec74cbddbf71c4c5f6f0a7"
+    },
+    "joint_branch_upload": {
+      "cp": "6287a82688703593f7f368adebee9872a80f92d40f4fbf7b6ce13f608d8628b8",
+      "fed": "327df812201ec9e9634fd7d3e8aa5637f565a3ff11fa122f4084c2a8ed6ec09d"
+    },
+    "joint_correlated_aa": {
+      "cp": "56fbadb0cbe8b427ccc2b127c261605f803ee3ea70a91b89e054e285055cd55a",
+      "fed": "2243648c4b6e57269ffe0649c4c9461a4b01ec17dceadcb0d7e8acc2cb7ff1b0"
+    },
+    "joint_function_calls": {
+      "cp": "69b708f02aef8f45ad0e91bf2333cce2d65d3604e7c720d18fcf308cb6be4635",
+      "fed": "47ef015019acf1c618fb3d5cd03a33dad70e1f32542ba59d5b991d356f523d08"
+    },
+    "joint_independent_private_ab_negative": {
+      "cp": "3ddbb0035a1bfb6ed582f96ff8dbb5b2ef4685152a63c3598bb2bc84a79998de",
+      "fed": "144078fd1e0d600152453ed6456bc3e646f21e7c78b38b00d1b8ccb87cb99b92"
+    }
+  },
+  "frozenClasses": "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/runtime/final-dp/frozen-inputs/main-classes",
+  "frozenDependencies": "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/runtime/final-dp/frozen-inputs/dependencies",
+  "frozenDispatchSource": "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/runtime/final-dp/dispatch-source.sh",
+  "frozenMainSources": "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/runtime/final-dp/frozen-inputs/main-sources",
+  "frozenRunnerSource": "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/runtime/final-dp/runner-source.py",
+  "frozenTestClasses": "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/runtime/final-dp/frozen-inputs/test-classes",
+  "frozenTestSources": "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/runtime/final-dp/frozen-inputs/test-sources",
+  "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "inputSha256": {
+    "data/A1.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/A1.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/A1_PUBLIC.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/A1_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/A2.csv": "a11192eae9705cdb946acb6bf07e42f1c2f57ecc33305de2da75bdc69bdb1dbd",
+    "data/A2.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/A2_PUBLIC.csv": "a11192eae9705cdb946acb6bf07e42f1c2f57ecc33305de2da75bdc69bdb1dbd",
+    "data/A2_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/B1.csv": "971f6c320a133932fc5223d98bd16171e1089e780c2c3e9c9e800b90d9c68618",
+    "data/B1.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/B1_PUBLIC.csv": "971f6c320a133932fc5223d98bd16171e1089e780c2c3e9c9e800b90d9c68618",
+    "data/B1_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/B2.csv": "9d3f6405691b679e1cd1ea3f9f5bf4d7b5a40d4179308bf42afa7dc2c1d8b6b6",
+    "data/B2.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/B2_PUBLIC.csv": "9d3f6405691b679e1cd1ea3f9f5bf4d7b5a40d4179308bf42afa7dc2c1d8b6b6",
+    "data/B2_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/X.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/X.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/X_PUBLIC.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/X_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9"
+  },
+  "jfrProfile": {
+    "durationSeconds": 79,
+    "enabled": false,
+    "files": {},
+    "recordProfile": false,
+    "scope": "fed-coordinator-only",
+    "settings": "profile",
+    "stackDepth": 256
+  },
+  "mainSources": "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/main/java",
+  "modelProofClass": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointBoundaryPhysicalModelProofTest",
+  "network": "none (worker and coordinator use container loopback)",
+  "noFedRuntimeConversion": true,
+  "planner": "local",
+  "requestedCases": [
+    "joint_branch_upload",
+    "joint_correlated_aa",
+    "joint_function_calls",
+    "joint_independent_private_ab_negative"
+  ],
+  "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/runtime/final-dp",
+  "schema": "systemds-joint-boundary-e2e-input-v1",
+  "sourceSha256": {
+    "dispatch": "5bbc9edfcf050114c31764634dc8856005f9cf2335907fcc084b83436b48df64",
+    "runner": "ecaf0614c89619ba9fbb1c698bde848b3a91e55f5773aee92a2f0e52d05e695a"
+  },
+  "testClasses": "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/test-classes",
+  "testSources": "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java"
+}

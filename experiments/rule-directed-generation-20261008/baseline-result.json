@@ -1,0 +1,182 @@
+{
+  "cases": [
+    {
+      "analysisFingerprint": "4010709e436427bce9aa08454fdef6408a2e7844ed3e4983cf49a58644a67c8e",
+      "candidatePlanning": {
+        "analysisNanos": 1811922886,
+        "applicationNanos": 21963712,
+        "calls": 1,
+        "commonPreparationNanos": 6180859,
+        "conversionNanos": 70578847,
+        "costSurfaceNanos": 96502057,
+        "diagnosticsNanos": 24205,
+        "exactPhaseCalls": 1,
+        "finalVerificationNanos": 1382443,
+        "modelNanos": 89132767,
+        "optimizerNanos": 106497565,
+        "otherPlanningNanos": 1528526,
+        "plannerSetupNanos": 2758535,
+        "receiptHandoffNanos": 147536,
+        "registrationNanos": 3244252,
+        "schema": "candidate-e2e-v1",
+        "selectionNanos": 29206627,
+        "totalNanos": 2241070817
+      },
+      "candidateWork": {
+        "analysisFingerprints": [
+          "4010709e436427bce9aa08454fdef6408a2e7844ed3e4983cf49a58644a67c8e"
+        ],
+        "auditRows": 90,
+        "availableRules": 63,
+        "prePrivacyStates": 159,
+        "publishedExclusions": 61,
+        "publishedStates": 63,
+        "semantics": "published candidate-space audit; does not include internal oracle call counts",
+        "uniqueHopIds": 63
+      },
+      "canonicalObjectiveBits": "4616190174613901149",
+      "canonicalObjectiveMillis": 4.0004943238198765,
+      "case": "joint_correlated_aa",
+      "coordinatorGcCount": 12,
+      "coordinatorGcMillis": 80,
+      "coordinatorMemoryReceipt": {
+        "heapCommittedBytesAtObservation": 176160768,
+        "heapMaxBytes": 3221225472,
+        "heapUsedBytesAtObservation": 81798328,
+        "peakSemantics": "sum of per-pool high-water marks; not a simultaneous total-heap observation",
+        "sumOfHeapPoolPeakUsedBytes": 159200064
+      },
+      "costSurfaceFingerprint": "physical-semantic-dag-v3:7e83119a90135dd7b3536d3322b48ce1f7c407f35e14d40ef112d69cbdd312f7",
+      "fedCompilationSeconds": 2.816938,
+      "jfrHeap": {
+        "eventCount": 26,
+        "maxObservedHeapCommittedBytes": 222298112,
+        "maxObservedHeapUsedBytes": 150696960,
+        "semantics": "maximum at GC heap-summary event boundaries; coordinator JVM only"
+      },
+      "modelCounts": {
+        "canonicalCostFactorCount": 255,
+        "decisionCount": 63,
+        "exactSolverAuxiliaryVariableCount": 24,
+        "exactSolverFactorCount": 255,
+        "exactSolverVariableCount": 87,
+        "hardFactorCount": 170,
+        "totalAlternativeCount": 277
+      },
+      "normalizedPlanFingerprint": "ed3a3577e9adb71ec430b340d164e0459b47cfdf40aa8e2001ab27ca508330f2",
+      "objectiveMatchesCertificate": true,
+      "outputFingerprint": {
+        "COLS": 3.0,
+        "NORM2": 140.0,
+        "ROWS": 8.0,
+        "SUM": 54.0
+      },
+      "outputMatchesCp": true,
+      "passed": true
+    },
+    {
+      "analysisFingerprint": "3438935fff163aa8e75588987c079adbe49c16652a3a81de36bd64c5b748ff60",
+      "candidatePlanning": {
+        "analysisNanos": 1837468984,
+        "applicationNanos": 20991656,
+        "calls": 1,
+        "commonPreparationNanos": 7627263,
+        "conversionNanos": 72128412,
+        "costSurfaceNanos": 119135272,
+        "diagnosticsNanos": 18084,
+        "exactPhaseCalls": 1,
+        "finalVerificationNanos": 1098452,
+        "modelNanos": 82694426,
+        "optimizerNanos": 106321677,
+        "otherPlanningNanos": 1476239,
+        "plannerSetupNanos": 2500803,
+        "receiptHandoffNanos": 142205,
+        "registrationNanos": 2569172,
+        "schema": "candidate-e2e-v1",
+        "selectionNanos": 23995509,
+        "totalNanos": 2278168154
+      },
+      "candidateWork": {
+        "analysisFingerprints": [
+          "3438935fff163aa8e75588987c079adbe49c16652a3a81de36bd64c5b748ff60"
+        ],
+        "auditRows": 108,
+        "availableRules": 80,
+        "prePrivacyStates": 178,
+        "publishedExclusions": 62,
+        "publishedStates": 80,
+        "semantics": "published candidate-space audit; does not include internal oracle call counts",
+        "uniqueHopIds": 80
+      },
+      "canonicalObjectiveBits": "4616190251562770105",
+      "canonicalObjectiveMillis": 4.0005626681447035,
+      "case": "joint_function_calls",
+      "coordinatorGcCount": 13,
+      "coordinatorGcMillis": 99,
+      "coordinatorMemoryReceipt": {
+        "heapCommittedBytesAtObservation": 161480704,
+        "heapMaxBytes": 3221225472,
+        "heapUsedBytesAtObservation": 116800528,
+        "peakSemantics": "sum of per-pool high-water marks; not a simultaneous total-heap observation",
+        "sumOfHeapPoolPeakUsedBytes": 133089352
+      },
+      "costSurfaceFingerprint": "physical-semantic-dag-v3:48b0aae86e89370905d402dcbaef7291de732c84085c59479ce90707b5c9ed94",
+      "fedCompilationSeconds": 3.025952,
+      "jfrHeap": {
+        "eventCount": 28,
+        "maxObservedHeapCommittedBytes": 174063616,
+        "maxObservedHeapUsedBytes": 129196064,
+        "semantics": "maximum at GC heap-summary event boundaries; coordinator JVM only"
+      },
+      "modelCounts": {
+        "canonicalCostFactorCount": 333,
+        "decisionCount": 92,
+        "exactSolverAuxiliaryVariableCount": 28,
+        "exactSolverFactorCount": 345,
+        "exactSolverVariableCount": 120,
+        "hardFactorCount": 224,
+        "totalAlternativeCount": 270
+      },
+      "normalizedPlanFingerprint": "0ce9cf23021ef4a372be1753a5dec986291f23dc911010e3b424de7f9d3c8aa5",
+      "objectiveMatchesCertificate": true,
+      "outputFingerprint": {
+        "CALL_C": 54.0,
+        "CALL_D": 132.0,
+        "COLS": 1.0,
+        "NORM2": 20340.0,
+        "ROWS": 2.0,
+        "SUM": 186.0
+      },
+      "outputMatchesCp": true,
+      "passed": true
+    }
+  ],
+  "configuredPlanner": "compile_cost_based",
+  "engineInventoryDigests": {
+    "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+    "mainClasses": "ab4a85a6adda34a37c175626048049e230f1beb8987287e1eb15be0cb47678c8",
+    "mainSources": "8ad619b09a4d2afe547f5cea850d97ceb493b55593ee2075b4b8158ef747f1d2",
+    "testClasses": "f0a0c6882fc8ac48c4dd7a921f7453ab2c96ba5c4af63db15181859011116a54",
+    "testSources": "d42292445d0022350a07d40908e0d3e3fe303dc6ee6d85f9cd4fbb1e1000936e"
+  },
+  "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "planner": "DP-LocalConflict",
+  "runtimeHarness": {
+    "containerMemoryLimitBytes": 8589934592,
+    "coordinatorHeapLimitBytes": 3221225472,
+    "cpus": 4,
+    "network": "none (worker and coordinator use container loopback)",
+    "profileJfr": true
+  },
+  "schema": "fedplanner-rule-directed-baseline-v1",
+  "status": "PASSED",
+  "wholeRun": {
+    "effectiveMeanSampleIntervalSeconds": 2.005,
+    "elapsedSeconds": 37.015,
+    "peakSampledContainerMemoryBytes": 882900992,
+    "requestedPostSampleSleepSeconds": 0.2,
+    "returnCode": 0,
+    "sampleCount": 15,
+    "scope": "whole one-container harness; sampled Docker cgroup memory usage"
+  }
+}

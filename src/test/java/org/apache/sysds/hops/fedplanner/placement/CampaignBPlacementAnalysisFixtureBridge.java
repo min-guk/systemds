@@ -19,6 +19,10 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPol
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
@@ -58,6 +62,40 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 	}
 
 	public static long constructionCount() { return CONSTRUCTIONS.get(); }
+
+	public static CandidateEmissionRealization factorizedRealization(PlacementRealizationKey key,
+		List<PlacementProofKey> proofs,
+		List<List<CandidateRealizationInputBinding>> independentInputChoices) {
+		return CandidateEmissionRealization.factorized(
+			key, proofs, independentInputChoices, null, true);
+	}
+
+	public static int materializedFactorizedClauseCount(CandidateEmissionRealization realization) {
+		return ((FactorizedSupportClauses) realization.supportClauses()).materializedClauseCount();
+	}
+
+	public static CandidateEmissionRealization indexedRealization(
+		CandidateEmissionRealization explicitRealization) {
+		return explicitRealization.withIndexedSupport();
+	}
+
+	public static PlacementAnalysis withCandidateFacts(PlacementAnalysis source,
+		org.apache.sysds.parser.DMLProgram programOwner, List<CandidateRuleFact> facts) {
+		CONSTRUCTIONS.incrementAndGet();
+		java.util.IdentityHashMap<CompiledHopKey,Boolean> owners = new java.util.IdentityHashMap<>();
+		facts.forEach(fact -> owners.put(fact.key().parentOccurrence(), Boolean.TRUE));
+		return new PlacementAnalysis(source.graph(), source.occurrences(), source.topLevelStatementBlocks(),
+			programOwner, copiedShapeFacts(source, source.occurrences()), source.analysisFingerprint(),
+			source.heuristicPolicyFacts(), facts.stream().map(CandidateRuleFact::key).toList(), facts,
+			source.candidateRuleDomain().orderedConsumerKeys().stream().filter(key ->
+				owners.containsKey(key.consumerOccurrence())).toList(),
+			source.candidateConsumerProfileFacts().orderedFacts().stream().filter(fact ->
+				owners.containsKey(fact.key().consumerOccurrence())).toList(),
+			source.detachedConsumerProfileFacts().orderedFacts().stream().filter(fact ->
+				owners.containsKey(fact.key().producerOccurrence())).toList(),
+			source.compiledInputEdgesInCanonicalOrder(), source.logicalTransientInputsInCanonicalOrder(),
+			source.privacyFactAuthority(), null);
+	}
 
 	/** Reorders only the immutable occurrence projection while retaining the exact owner, graph, and policy facts. */
 	public static PlacementAnalysis withProjectionOrder(PlacementAnalysis source,

@@ -22,12 +22,19 @@ package org.apache.sysds.hops.fedplanner.placement;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 
+import java.lang.reflect.Method;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -39,6 +46,39 @@ import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.junit.Test;
 
 public class MaterializedOutputLayoutTest {
+	@Test
+	public void samePhysicalUploadDoesNotDependOnSeedFilesOrProducerName() {
+		DurableAnchorKey a = new DurableAnchorKey("source-A", FType.ROW, List.of(
+			partition("localhost:19001/A1", 0, 0, 4, 2),
+			partition("localhost:19002/A2", 4, 0, 8, 2)));
+		DurableAnchorKey b = new DurableAnchorKey("source-B", FType.ROW, List.of(
+			partition("localhost:19001/B1", 0, 0, 4, 2),
+			partition("localhost:19002/B2", 4, 0, 8, 2)));
+		CompiledHopKey otherOwner = new CompiledHopKey("program", "main", "call", "rc",
+			owner().controlRegion(), "other", "other");
+		DurableAnchorKey first = output(a, FType.BROADCAST, 1, 2);
+		DurableAnchorKey second = PlacementCostSemantics.materializedOutputAnchor(
+			b, FType.BROADCAST, shape(1, 2), otherOwner);
+		assertEquals("target layout must not inherit source file or owner provenance", first, second);
+		assertRanges(first, new long[][][] {{{0, 0}, {1, 2}}, {{0, 0}, {1, 2}}});
+	}
+
+	@Test
+	public void physicalUploadIdentityPreservesPartitionBoundariesAndWorkerAssignment() {
+		DurableAnchorKey splitThree = anchor(FType.ROW,
+			partition("localhost:19001", 0, 0, 3, 2),
+			partition("localhost:19002", 3, 0, 8, 2));
+		DurableAnchorKey splitFour = anchor(FType.ROW,
+			partition("localhost:19001", 0, 0, 4, 2),
+			partition("localhost:19002", 4, 0, 8, 2));
+		DurableAnchorKey reversed = anchor(FType.ROW,
+			partition("localhost:19002", 0, 0, 3, 2),
+			partition("localhost:19001", 3, 0, 8, 2));
+		assertNotEquals(output(splitThree, FType.ROW, 8, 2), output(splitFour, FType.ROW, 8, 2));
+		assertNotEquals(output(splitThree, FType.ROW, 8, 2), output(reversed, FType.ROW, 8, 2));
+		assertNotEquals(output(splitFour, FType.ROW, 8, 2), output(splitFour, FType.COL, 8, 2));
+	}
+
 	@Test
 	public void runtimeAnchorKeyRoundTripsCompleteUnevenRowAndColRanges() {
 		assertRuntimeRanges(anchor(FType.ROW,
@@ -84,6 +124,37 @@ public class MaterializedOutputLayoutTest {
 	}
 
 	@Test
+	public void relocationDiscoveryDistinguishesUnknownFromKnownImpossibleLayouts() throws Exception {
+		DurableAnchorKey twoWorkers = anchor(FType.ROW,
+			partition("localhost:19001", 0, 0, 3, 5),
+			partition("localhost:19002", 3, 0, 10, 5));
+		CompiledHopKey producer = owner();
+		CompiledHopKey consumer = new CompiledHopKey("program", "main", "call", "rc",
+			producer.controlRegion(), "consumer", "consumer");
+		CompiledInputEdgeFact edge = new CompiledInputEdgeFact(producer, consumer, 0);
+		Map<CompiledHopKey,Hop> origins = new IdentityHashMap<>();
+		Map<Hop,NodeShapeFact> shapes = new IdentityHashMap<>();
+		origins.put(producer, null);
+
+		shapes.put(null, shape(-1, 5));
+		assertSame("unknown output geometry must retain symbolic relocation evidence", twoWorkers,
+			relocationTargetLayout(twoWorkers, FType.ROW, edge, origins, shapes));
+
+		shapes.put(null, shape(1, 5));
+		assertNull("one known row cannot be materialized across two ROW workers",
+			relocationTargetLayout(twoWorkers, FType.ROW, edge, origins, shapes));
+		assertNull("FULL cannot be materialized across a multi-worker target",
+			relocationTargetLayout(twoWorkers, FType.FULL, edge, origins, shapes));
+
+		DurableAnchorKey malformed = anchor(FType.ROW,
+			partition("localhost:19001", 0, 0, 3, 5),
+			partition("localhost:19002", 4, 0, 10, 5));
+		shapes.put(null, shape(10, 5));
+		assertNull("known target-sized gaps cannot become graph relocation authority",
+			relocationTargetLayout(malformed, FType.ROW, edge, origins, shapes));
+	}
+
+	@Test
 	public void materializationPreservesWorkerRangePairsWhenWorkerNamesSortBackwards() {
 		DurableAnchorKey reversed = anchor(FType.ROW,
 			partition("localhost:19002", 0, 0, 3, 5),
@@ -123,6 +194,15 @@ public class MaterializedOutputLayoutTest {
 
 	private static DurableAnchorKey output(DurableAnchorKey seed, FType type, long rows, long cols) {
 		return PlacementCostSemantics.materializedOutputAnchor(seed, type, shape(rows, cols), owner());
+	}
+
+	private static DurableAnchorKey relocationTargetLayout(DurableAnchorKey seed, FType type,
+		CompiledInputEdgeFact input, Map<CompiledHopKey,Hop> origins,
+		Map<Hop,NodeShapeFact> shapes) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod("relocationTargetLayout",
+			DurableAnchorKey.class, FType.class, CompiledInputEdgeFact.class, Map.class, Map.class);
+		method.setAccessible(true);
+		return (DurableAnchorKey) method.invoke(null, seed, type, input, origins, shapes);
 	}
 
 	private static NodeShapeFact shape(long rows, long cols) {

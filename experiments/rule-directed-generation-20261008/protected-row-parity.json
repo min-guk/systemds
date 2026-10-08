@@ -1,0 +1,78 @@
+{
+  "after": {
+    "analysisFingerprint": "429d97df2bd40266cac66cf313be3f005726c8f18461f6959b5a9d44c9959dac",
+    "canonicalObjectiveBits": "4611719720386145812",
+    "costSurfaceFingerprint": "physical-semantic-dag-v3:2f7e27c855078a8dd49256d8ef87ab11e1020bf12ba45fb994cc2263eafa6e6a",
+    "modelCounts": {
+      "canonicalCostFactorCount": 204,
+      "decisionCount": 50,
+      "exactSolverAuxiliaryVariableCount": 0,
+      "exactSolverFactorCount": 204,
+      "exactSolverVariableCount": 50,
+      "hardFactorCount": 65,
+      "totalAlternativeCount": 52
+    },
+    "normalizedPlanFingerprint": "58fd22dbc6b5c93bad583339513da8b00657ac64b3ee50217daa854e5213ea32",
+    "outputFingerprint": {
+      "COLS": 1.0,
+      "NORM2": 1568.5994704947973,
+      "ROWS": 2.0,
+      "SUM": 54.25458714239826
+    },
+    "requiredWeightedKernels": {
+      "wcemm": {
+        "availableCandidateAudit": true,
+        "runtimeHeavyHitter": true
+      },
+      "wsloss": {
+        "availableCandidateAudit": true,
+        "runtimeHeavyHitter": true
+      }
+    }
+  },
+  "afterPassed": true,
+  "baseline": {
+    "analysisFingerprint": "429d97df2bd40266cac66cf313be3f005726c8f18461f6959b5a9d44c9959dac",
+    "canonicalObjectiveBits": "4611719720386145812",
+    "costSurfaceFingerprint": "physical-semantic-dag-v3:2f7e27c855078a8dd49256d8ef87ab11e1020bf12ba45fb994cc2263eafa6e6a",
+    "modelCounts": {
+      "canonicalCostFactorCount": 204,
+      "decisionCount": 50,
+      "exactSolverAuxiliaryVariableCount": 0,
+      "exactSolverFactorCount": 204,
+      "exactSolverVariableCount": 50,
+      "hardFactorCount": 65,
+      "totalAlternativeCount": 52
+    },
+    "normalizedPlanFingerprint": "58fd22dbc6b5c93bad583339513da8b00657ac64b3ee50217daa854e5213ea32",
+    "outputFingerprint": {
+      "COLS": 1.0,
+      "NORM2": 1568.5994704947973,
+      "ROWS": 2.0,
+      "SUM": 54.25458714239826
+    },
+    "requiredWeightedKernels": {
+      "wcemm": {
+        "availableCandidateAudit": true,
+        "runtimeHeavyHitter": true
+      },
+      "wsloss": {
+        "availableCandidateAudit": true,
+        "runtimeHeavyHitter": true
+      }
+    }
+  },
+  "baselinePassed": true,
+  "fixture": "weighted_quaternary_protected_row",
+  "inputLayout": "ROW: two 4x3 PRIVATE_AGGREGATE_TO_PUBLIC shards",
+  "parity": {
+    "analysisFingerprint": true,
+    "canonicalObjectiveBits": true,
+    "costSurfaceFingerprint": true,
+    "modelCounts": true,
+    "normalizedPlanFingerprint": true,
+    "outputFingerprint": true,
+    "requiredWeightedKernels": true
+  },
+  "schema": "fedplanner-protected-weighted-row-parity-v1"
+}

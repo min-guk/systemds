@@ -1,0 +1,36 @@
+{
+  "status": "PASSED",
+  "compiled_sources": {
+    "main": 22,
+    "tests": 20
+  },
+  "workspace_matches_frozen_hashes": true,
+  "junit_passed": 440,
+  "junit_ignored": 3,
+  "full_maven_suite": false,
+  "harness_python_passed": 37,
+  "weighted_docker_runs_passed": 6,
+  "joint_function_privacy_regression_cases_passed": 3,
+  "wsigmoid_controlled_work": {
+    "legal_tuples_before": 18,
+    "legal_tuples_after": 18,
+    "complete_oracle_before": 18,
+    "complete_oracle_after": 5,
+    "partial_oracle_before": 11,
+    "partial_oracle_after": 0
+  },
+  "closure_authority_check": {
+    "logical_combinations": 10000,
+    "retained_factor_options": 200,
+    "clauses_created_before": 10000,
+    "clauses_created_after": 0
+  },
+  "direct_support": {
+    "logical_options": 16,
+    "materialized_after_at_most": 2,
+    "objective_bits_optimum_receipt_parity": true
+  },
+  "wall_clock_conclusion": "Overlapping three-run ranges; no conclusive end-to-end candidate-generation speedup.",
+  "protected_row_weighted_docker_runs_passed": 2,
+  "document_links_and_diff_check": "PASSED"
+}

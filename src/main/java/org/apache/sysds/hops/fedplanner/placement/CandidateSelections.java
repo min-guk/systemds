@@ -1035,6 +1035,22 @@ public final class CandidateSelections {
 					result.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(base);
 			}
 		}
+		for(CpRuleFamily family : analysis.candidateRuleFacts().cpFamilies()) {
+			PlacementState selected = assignment.get(family.parent());
+			if(selected == null || !family.emission().emissionState().placementState().equals(selected))
+				continue;
+			CandidateRuleFact fact = family.canonicalMember();
+			activeConsumers.put(family.parent(), Boolean.TRUE);
+			for(CandidateSelectionReceipt base : analysis.canonicalCandidateReceipts(
+				fact.key(), family.emission())) {
+				activeRows.computeIfAbsent(family.parent(), ignored -> new ArrayList<>()).add(base);
+				if(foutMaterializationActionReachable(authorityGraph, fact, base, assignment,
+					allowUnassignedDerivedFoutOwner)
+					&& receiptReachable(analysis, actionUniverse, assignment, base,
+						allowUnassignedDerivedFoutOwner))
+					result.computeIfAbsent(family.parent(), ignored -> new ArrayList<>()).add(base);
+			}
+		}
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> ordered = canonicalize
 			? new LinkedHashMap<>() : new IdentityHashMap<>();
 		authorityGraph.decisionNodes().stream().map(NeutralPlacementGraph.Node::key).forEach(key -> {
@@ -1724,10 +1740,12 @@ public final class CandidateSelections {
 			if(selected.put(consumer, receipt) != null)
 				throw new IllegalArgumentException("Candidate consumer has multiple selected rows: "
 					+ consumer.normalizedSignature());
-			if(feasible.getOrDefault(consumer, List.of()).stream().noneMatch(candidate ->
+			boolean canonicalFeasible = feasible.getOrDefault(consumer, List.of()).stream().anyMatch(candidate ->
 				candidate.rule() == receipt.rule() && candidate.emission() == receipt.emission()
 					&& candidate.realization() == receipt.realization()
-					&& candidate.supportClause() == receipt.supportClause()))
+					&& candidate.supportClause() == receipt.supportClause());
+			if(!canonicalFeasible && !familySelectionReachable(analysis, authorityGraph,
+				actionUniverse, assignment, receipt))
 				throw new IllegalArgumentException("Candidate selection is foreign, inactive, or unreachable: "
 					+ receipt.normalizedSignature() + " feasible=" + feasible.getOrDefault(consumer, List.of())
 						.stream().map(CandidateSelectionReceipt::normalizedSignature).toList()
@@ -1742,6 +1760,37 @@ public final class CandidateSelections {
 		List<CandidateSelectionReceipt> canonical = analysis.canonicalCandidateReceipts(selected.values());
 		validateJointValueMapSelections(analysis, assignment, canonical);
 		return canonical;
+	}
+
+	private static boolean familySelectionReachable(PlacementAnalysis analysis,
+		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
+		Map<CompiledHopKey,PlacementState> assignment, CandidateSelectionReceipt receipt) {
+		CompiledHopKey consumer = receipt.rule().parentOccurrence();
+		CpRuleFamily family = null;
+		for(CpRuleFamily candidate : analysis.candidateRuleFacts().cpFamiliesForParent(consumer))
+			if(candidate.contains(receipt.rule().orderedInputs())) {
+				if(family != null)
+					return false;
+				family = candidate;
+			}
+		if(family == null || !family.emission().emissionState().placementState()
+			.equals(assignment.get(consumer)))
+			return false;
+		CandidateRuleFact fact;
+		try {
+			fact = analysis.candidateRuleFacts().requireExact(consumer,
+				receipt.rule().orderedInputs());
+		}
+		catch(IllegalArgumentException ex) {
+			return false;
+		}
+		boolean exactOwned = fact.key() == receipt.rule()
+			&& fact.allowedEmissionFacts().stream().anyMatch(emission -> emission == receipt.emission()
+				&& emission.realizations().stream().anyMatch(realization -> realization == receipt.realization()
+					&& realization.ownsSupportClauseIdentity(receipt.supportClause())));
+		return exactOwned
+			&& foutMaterializationActionReachable(authorityGraph, fact, receipt, assignment, false)
+			&& receiptReachable(analysis, actionUniverse, assignment, receipt, false, false);
 	}
 
 	static List<CandidateSelectionReceipt> resolveAndValidatePartial(PlacementAnalysis analysis,
@@ -1776,6 +1825,10 @@ public final class CandidateSelections {
 			if(fact.status() == CandidateEvaluationStatus.AVAILABLE && fact.allowedEmissionFacts().stream()
 				.anyMatch(emission -> emission.emissionState().placementState().equals(assignment.get(fact.key().parentOccurrence()))))
 				expected.add(fact.key().parentOccurrence());
+		for(CpRuleFamily family : analysis.candidateRuleFacts().cpFamilies())
+			if(family.emission().emissionState().placementState()
+				.equals(assignment.get(family.parent())))
+				expected.add(family.parent());
 		Set<CompiledHopKey> actual = Collections.newSetFromMap(new IdentityHashMap<>());
 		resolved.forEach(receipt -> actual.add(receipt.rule().parentOccurrence()));
 		if(!expected.equals(actual))
@@ -1812,7 +1865,7 @@ public final class CandidateSelections {
 				&& fact.status() == CandidateEvaluationStatus.AVAILABLE
 				&& fact.allowedEmissionFacts().stream().anyMatch(emission -> emission == receipt.emission()
 					&& emission.realizations().stream().anyMatch(realization -> realization == receipt.realization()
-						&& realization.supportClauses().stream().anyMatch(clause -> clause == receipt.supportClause())))
+						&& realization.ownsSupportClauseIdentity(receipt.supportClause())))
 				&& selectedState != null
 				&& receipt.emission().emissionState().placementState().equals(selectedState);
 			boolean reachable = exactOwnedRow

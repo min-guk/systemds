@@ -1,0 +1,11 @@
+{
+  "build_success": true,
+  "production_source_unchanged": true,
+  "source_inputs": 2384,
+  "origin_main": "276f958efc91477e3d0e8a2a492929455dd77227",
+  "builtin_jar_byte_matches": 195,
+  "jar_sha256": "2ece4ec7ce5e6866ad10563c454bdc7cd0191ab17268c12a62433f42b5e0eb61",
+  "jar": "/grid/3/cofee-lm-sweep-mchoi-20260914/main-20s-20261008T1025Z/source/target/systemds-3.4.0-SNAPSHOT.jar",
+  "tests_executed": false,
+  "verified_at": "2026-10-08T10:21:05.237401+00:00"
+}

@@ -49,7 +49,8 @@ class JointBoundaryE2ETest(unittest.TestCase):
                           "l2svm_protected_y_negative", "ml_logreg", "ml_l2svm",
                           "ml_lm", "ml_steplm", "ml_steplm_local_matrix",
                           "ml_logreg_gd", "ml_l2svm_gd",
-                          "ml_lm_gd"},
+                          "ml_lm_gd", "weighted_quaternary_with_private_aggregate",
+                          "weighted_quaternary_protected_row"},
                          set(by_name))
         self.assertEqual("private", by_name["l2svm_protected_y_negative"].y_privacy)
         self.assertFalse(by_name["l2svm_protected_y_negative"].expected_success)
@@ -66,6 +67,65 @@ class JointBoundaryE2ETest(unittest.TestCase):
                           "ml_steplm_local_matrix",
                           "ml_logreg_gd", "ml_l2svm_gd", "ml_lm_gd"}
                          & {case.name for case in runner.default_cases()})
+
+    def test_weighted_fixture_keeps_separate_private_aggregate_and_kernel_evidence(self):
+        case = next(case for case in runner.cases()
+                    if case.name == "weighted_quaternary_with_private_aggregate")
+        self.assertFalse(case.default_selected)
+        self.assertNotIn(case, runner.default_cases())
+        self.assertEqual(("wsloss", "wcemm"), case.required_weighted_kernels)
+        cp_script = runner.program(case, False)
+        fed_script = runner.program(case, True)
+        for script in (cp_script, fed_script):
+            self.assertIn("Loss=as.matrix(sum((X_WEIGHTED-(U%*%t(V)))^2))", script)
+            self.assertIn("CrossEntropy=as.matrix(sum(X_WEIGHTED*log(U%*%t(V))))", script)
+            self.assertIn("ProtectedAggregate=as.matrix(sum(X))", script)
+            self.assertIn('read("/evidence/data/U_WEIGHTED.csv"', script)
+            self.assertIn('read("/evidence/data/V_WEIGHTED.csv"', script)
+        self.assertIn('read("/evidence/data/X_PUBLIC.csv"', cp_script)
+        self.assertIn("localhost:13000//evidence/data/X.csv", fed_script)
+        self.assertIn("localhost:13000//evidence/data/X_PUBLIC.csv", fed_script)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner.write_inputs(root, (case,))
+            x_metadata = json.loads((root / "data/X.csv.mtd").read_text())
+            u_metadata = json.loads((root / "data/U_WEIGHTED.csv.mtd").read_text())
+            v_metadata = json.loads((root / "data/V_WEIGHTED.csv.mtd").read_text())
+            self.assertEqual("private-aggregate", x_metadata["privacy"])
+            self.assertNotIn("privacy", u_metadata)
+            self.assertNotIn("privacy", v_metadata)
+            self.assertEqual((8, 2), (u_metadata["rows"], u_metadata["cols"]))
+            self.assertEqual((3, 2), (v_metadata["rows"], v_metadata["cols"]))
+        log = ("Heavy hitter instructions:\n  #  Instruction  Time(s)  Count\n"
+               "  1  fed_wcemm  0.100  1\n  2  wsloss  0.050  1\n")
+        audits = [
+            {"opcode": "wsloss", "publishedRule": {"status": "AVAILABLE"}},
+            {"opcode": "wcemm", "publishedRule": {"status": "AVAILABLE"}},
+        ]
+        self.assertEqual({
+            "wsloss": {"runtimeHeavyHitter": True, "availableCandidateAudit": True},
+            "wcemm": {"runtimeHeavyHitter": True, "availableCandidateAudit": True},
+        }, runner.weighted_kernel_evidence(log, audits, case.required_weighted_kernels))
+
+    def test_protected_weighted_probe_uses_two_private_row_shards(self):
+        case = next(case for case in runner.cases()
+                    if case.name == "weighted_quaternary_protected_row")
+        self.assertFalse(case.default_selected)
+        self.assertEqual(("wsloss", "wcemm"), case.required_weighted_kernels)
+        fed_script = runner.program(case, True)
+        self.assertIn("X_PROTECTED=federated", fed_script)
+        self.assertIn("localhost:13001//evidence/data/X_TOP.csv", fed_script)
+        self.assertIn("localhost:13002//evidence/data/X_BOTTOM.csv", fed_script)
+        self.assertIn("list(0,0),list(4,3),list(4,0),list(8,3)", fed_script)
+        self.assertIn("Loss=as.matrix(sum((X_PROTECTED-(U%*%t(V)))^2))", fed_script)
+        self.assertNotIn("//evidence/data/X.csv", fed_script)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner.write_inputs(root, (case,))
+            for name in ("X_TOP", "X_BOTTOM"):
+                metadata = json.loads((root / f"data/{name}.csv.mtd").read_text())
+                self.assertEqual((4, 3, "private-aggregate"),
+                                 (metadata["rows"], metadata["cols"], metadata["privacy"]))
 
     def test_ml_training_programs_use_three_protected_shards_and_write_full_model(self):
         by_name = {case.name: case for case in runner.cases()}

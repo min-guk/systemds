@@ -1,0 +1,36 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+.E.E.E.E..E..E................
+Time: 3.712
+There were 6 failures:
+1) certificateOwnsImmutableCopiesOfDomainsAndAuthorities(org.apache.sysds.hops.fedplanner.placement.CandidatePrivacyInputPruningTest)
+java.util.NoSuchElementException: No value present
+	at java.base/java.util.Optional.orElseThrow(Optional.java:377)
+	at org.apache.sysds.hops.fedplanner.placement.CandidatePrivacyInputPruningTest.certificateOwnsImmutableCopiesOfDomainsAndAuthorities(CandidatePrivacyInputPruningTest.java:122)
+2) auditWritesCompactPruningSidecarWithoutExpandingRejectedTuples(org.apache.sysds.hops.fedplanner.placement.CandidatePrivacyInputPruningTest)
+java.util.NoSuchElementException: No value present
+	at java.base/java.util.Optional.orElseThrow(Optional.java:377)
+	at org.apache.sysds.hops.fedplanner.placement.CandidatePrivacyInputPruningTest.auditWritesCompactPruningSidecarWithoutExpandingRejectedTuples(CandidatePrivacyInputPruningTest.java:226)
+3) certificatePartitionsTheOriginalCartesianDomainAndPreservesSurvivorOrder(org.apache.sysds.hops.fedplanner.placement.CandidatePrivacyInputPruningTest)
+java.lang.AssertionError: protected payload fixture must publish compact input rejection evidence
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertFalse(Assert.java:65)
+	at org.apache.sysds.hops.fedplanner.placement.CandidatePrivacyInputPruningTest.certificatePartitionsTheOriginalCartesianDomainAndPreservesSurvivorOrder(CandidatePrivacyInputPruningTest.java:69)
+4) validationRejectsCertificateThatOmitsOneProtectedPayloadPosition(org.apache.sysds.hops.fedplanner.placement.CandidatePrivacyInputPruningTest)
+java.util.NoSuchElementException: No value present
+	at java.base/java.util.Optional.orElseThrow(Optional.java:377)
+	at org.apache.sysds.hops.fedplanner.placement.CandidatePrivacyInputPruningTest.validationRejectsCertificateThatOmitsOneProtectedPayloadPosition(CandidatePrivacyInputPruningTest.java:188)
+5) validationRejectsForeignAndStaleOccurrenceValueAuthorities(org.apache.sysds.hops.fedplanner.placement.CandidatePrivacyInputPruningTest)
+java.util.NoSuchElementException: No value present
+	at java.base/java.util.Optional.orElseThrow(Optional.java:377)
+	at org.apache.sysds.hops.fedplanner.placement.CandidatePrivacyInputPruningTest.validationRejectsForeignAndStaleOccurrenceValueAuthorities(CandidatePrivacyInputPruningTest.java:147)
+6) privateDataClosesOneExactOccurrenceDomainBeforeSelection(org.apache.sysds.hops.fedplanner.placement.SharedPrivacyPlacementAnalysisContractTest)
+java.lang.AssertionError: privacy-denied rows or compact omitted-tuple certificates must remain auditable
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.apache.sysds.hops.fedplanner.placement.SharedPrivacyPlacementAnalysisContractTest.privateDataClosesOneExactOccurrenceDomainBeforeSelection(SharedPrivacyPlacementAnalysisContractTest.java:204)
+
+FAILURES!!!
+Tests run: 24,  Failures: 6
+

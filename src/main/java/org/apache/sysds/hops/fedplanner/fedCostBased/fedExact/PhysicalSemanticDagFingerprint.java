@@ -28,6 +28,7 @@ import java.util.function.Supplier;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.Alternative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.InputAuthority;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
+import org.apache.sysds.hops.fedplanner.placement.CpRuleFamily;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
@@ -44,7 +45,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRea
 
 /** Invocation-local, identity-memoized semantic DAG hashes for physical authority subgraphs. */
 final class PhysicalSemanticDagFingerprint {
-	static final String SCHEMA = "physical-semantic-dag-v2";
+	static final String SCHEMA = "physical-semantic-dag-v3";
 	private static final byte[] ABSENT = {(byte)0};
 	private static final int TEXT_BUFFER_BYTES = 1024;
 	private static final long LITERAL_BYTE_MEMO_MAX_ESTIMATED_BYTES = 64L * 1024 * 1024;
@@ -189,12 +190,68 @@ final class PhysicalSemanticDagFingerprint {
 		}));
 	}
 
+	private byte[] cpRuleFamily(CpRuleFamily family) {
+		return memoized(family, () -> digest("cp-rule-family", node -> {
+			node.text("parent", family.parent().normalizedSignature());
+			node.integer("axes", family.axes().size());
+			for(List<CandidateInputState> axis : family.axes()) {
+				node.integer("axisSize", axis.size());
+				for(CandidateInputState input : axis)
+					node.text("axisInput", input.normalizedSignature());
+			}
+			CandidateCapabilityFact capability = family.capability();
+			node.text("category", capability.category().name());
+			node.text("opcode", capability.opcode());
+			node.text("nativeExec", capability.nativeExec().name());
+			node.text("nativeOutput", capability.nativeOutput().name());
+			node.nullableText("nativeFoutFType", capability.nativeFoutFType() == null
+				? null : capability.nativeFoutFType().name());
+			node.text("reasonCode", capability.reasonCode().name());
+			node.text("detail", capability.detail());
+			node.integer("notes", capability.notes().size());
+			capability.notes().forEach(note -> {
+				node.text("noteCode", note.code().name());
+				node.text("noteMessage", note.message());
+			});
+			node.integer("consultedFacts", family.shapeProof().consultedFacts().size());
+			for(Map.Entry<String,String> entry : family.shapeProof().consultedFacts().entrySet()) {
+				node.text("consultedKey", entry.getKey());
+				node.nullableText("consultedValue", entry.getValue());
+			}
+			texts(node, "requiredFact", family.shapeProof().requiredFacts());
+			texts(node, "missingFact", family.shapeProof().missingRequiredFacts());
+			node.integer("producerOutputs", family.profile().producerOutputs().size());
+			family.profile().producerOutputs().forEach(value -> node.text("producerOutput", value.name()));
+			node.text("profileFailure", family.profile().evaluationFailure());
+			node.child("emission", emission(family.emission()));
+		}));
+	}
+
 	private byte[] realization(CandidateEmissionRealization realization) {
 		return memoized(realization, () -> digest("candidate-realization", node -> {
 			node.child("key", realizationKey(realization.key()));
 			node.integer("clauses", realization.supportClauses().size());
-			for(CandidateRealizationSupportClause clause : realization.supportClauses())
-				node.child("clause", clause(clause));
+			var product = realization.factorizedSupportProduct().orElse(null);
+			if(product != null) {
+				// Frame the stored relation itself. Expanding clauses here defeats
+				// factorized model construction before the optimizer even starts.
+				node.text("supportEncoding", "INDEPENDENT_PRODUCT_V1");
+				node.integer("proofs", product.proofDependencies().size());
+				for(PlacementProofKey proof : product.proofDependencies())
+					node.child("proof", proof(proof));
+				node.nullableText("nativePool", product.nativeWorkerPoolWitness() == null ? null
+					: product.nativeWorkerPoolWitness().normalizedSignature());
+				node.bool("nativePoolLayoutExact", product.nativeWorkerPoolLayoutExact());
+				node.integer("axes", product.factors().size());
+				for(var axis : product.factors()) {
+					node.integer("options", axis.size());
+					for(CandidateRealizationInputBinding option : axis)
+						node.child("binding", binding(option));
+				}
+			}
+			else
+				for(CandidateRealizationSupportClause clause : realization.supportClauses())
+					node.child("clause", clause(clause));
 		}));
 	}
 
@@ -294,6 +351,8 @@ final class PhysicalSemanticDagFingerprint {
 				: relocationActionSignature(alternative.relocationAction()));
 			node.nullableText("derivedFoutAction", alternative.derivedFoutAction() == null ? null
 				: alternative.derivedFoutAction().normalizedSignature());
+			if(alternative.cpRuleFamily() != null)
+				node.child("cpRuleFamily", cpRuleFamily(alternative.cpRuleFamily()));
 			node.integer("orderedInputs", alternative.orderedInputs().size());
 			for(CandidateInputState input : alternative.orderedInputs()) {
 				node.text("inputPresence", input.presence().name());
@@ -306,6 +365,8 @@ final class PhysicalSemanticDagFingerprint {
 				: realization(alternative.realization()));
 			node.nullableChild("supportClause", alternative.supportClause() == null ? null
 				: clause(alternative.supportClause()));
+			if(alternative.compactSupport() != null)
+				node.text("supportSelection", "PRODUCER_MEMBERSHIP_V1");
 			node.text("signatureEncoding", canonical ? "CANONICAL_RECIPE" : "RAW_UTF16");
 			if(canonical)
 				node.text("signatureRecipe", alternative.captured() ? "CAPTURED_V1" : "NONCAPTURED_V1");

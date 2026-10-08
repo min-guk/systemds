@@ -1,0 +1,1 @@
+PRODUCTION_RESULT engine=OLD fixture=flat-private variables=55 factors=159 logicalFactorCells=941012 frozenFactors=159 finiteSupportFactors=-1 buildWallMs=153.477 buildAllocatedBytes=42488904 medianFreezeWallMs=943.393 medianFreezeAllocatedBytes=1139970328 warmups=1 repeats=3

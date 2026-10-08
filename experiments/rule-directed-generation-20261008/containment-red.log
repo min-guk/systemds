@@ -1,0 +1,13 @@
+JUnit version 4.13.1
+...........E....
+Time: 0.283
+There was 1 failure:
+1) containedMultiAxisRectangleMergesWithoutExpansion(org.apache.sysds.hops.fedplanner.placement.FactorizedSupportClausesTest)
+java.lang.AssertionError: containment must preserve a rectangle
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.apache.sysds.hops.fedplanner.placement.FactorizedSupportClausesTest.containedMultiAxisRectangleMergesWithoutExpansion(FactorizedSupportClausesTest.java:54)
+
+FAILURES!!!
+Tests run: 15,  Failures: 1
+

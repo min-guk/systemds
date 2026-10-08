@@ -1,0 +1,12 @@
+JUnit version 4.13.1
+......E......
+Time: 0.262
+There was 1 failure:
+1) sourcePoolInventoryReadsUniformMetadataWithoutExpandingSupport(org.apache.sysds.hops.fedplanner.placement.RelocationFactorizedProductTest)
+java.lang.NoSuchMethodException: org.apache.sysds.hops.fedplanner.placement.PlacementRelationClosure.relocationSourceOptions(org.apache.sysds.hops.fedplanner.placement.PlacementIdentity$CandidateRealizationReference,org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis$CandidateEmissionRealization,org.apache.sysds.hops.fedplanner.placement.PlacementIdentity$ValueVersionKey)
+	at java.base/java.lang.Class.getDeclaredMethod(Class.java:2677)
+	at org.apache.sysds.hops.fedplanner.placement.RelocationFactorizedProductTest.sourcePoolInventoryReadsUniformMetadataWithoutExpandingSupport(RelocationFactorizedProductTest.java:64)
+
+FAILURES!!!
+Tests run: 12,  Failures: 1
+

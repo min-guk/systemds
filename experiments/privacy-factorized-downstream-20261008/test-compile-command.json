@@ -1,0 +1,22 @@
+[
+  "javac",
+  "-J-Xmx3g",
+  "-cp",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/classes:/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/test-classes:/home/mchoi/w1357-stage-main276-20261008T1025Z/systemds/target/lib/*",
+  "-d",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/test-classes",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactNativeLocalAnchorFanoutCostTest.java",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalSemanticDagFingerprintTest.java",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IndependentPhysicalSemanticDagOracle.java",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/hops/fedplanner/placement/CampaignBPlacementAnalysisFixtureBridge.java",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/hops/fedplanner/placement/DuplicateMergeDiagnosticsTest.java",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/hops/fedplanner/placement/EarlyPrivacyGenerationWorkTest.java",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/hops/fedplanner/placement/EarlyPrivacyPruningLegalSpaceParityTest.java",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/hops/fedplanner/placement/FactorizedCandidateReceiptRankTest.java",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/hops/fedplanner/placement/FactorizedSupportClausesTest.java",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/hops/fedplanner/placement/MaterializedOutputLayoutTest.java",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/hops/fedplanner/placement/RelocationBindingPrefixPruningTest.java",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/hops/fedplanner/placement/RelocationFactorizedProductTest.java",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/hops/fedplanner/placement/RelocationProductMemoTest.java",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/runtime/instructions/fed/FEDFoutLayoutSignatureTest.java"
+]

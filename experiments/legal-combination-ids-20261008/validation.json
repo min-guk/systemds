@@ -1,0 +1,28 @@
+{
+  "status": "PASSED",
+  "production_sources_compiled": 22,
+  "test_sources_compiled": 19,
+  "junit_passed": 426,
+  "junit_ignored": 3,
+  "full_maven_suite": false,
+  "docker_cases_passed": 4,
+  "physical_mrv": {
+    "prefix_before": 301,
+    "prefix_after": 103,
+    "legal_results_before": 100,
+    "legal_results_after": 100
+  },
+  "partial_oracle_wsigmoid": {
+    "privacy_masked_cartesian_leaves": 45,
+    "surviving_leaves": 18,
+    "partial_evaluations": 11
+  },
+  "indexed_pipeline": {
+    "cartesian_slots": 6,
+    "admitted_ids": 4,
+    "full_tuple_objects_retained": 0,
+    "lightweight_handles_retained": true
+  },
+  "runtime_directory": "/grid/3/cofee-lm-sweep-mchoi-20260914/legal-combination-ids-20261008/runtime/final-dp",
+  "frozen_engine": "/grid/3/cofee-lm-sweep-mchoi-20260914/legal-combination-ids-20261008/engine"
+}

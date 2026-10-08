@@ -1,0 +1,9 @@
+{
+  "projection": "rule/state/output layout/source binding/actual transfer; excludes opaque proof signatures",
+  "baselineRows": 70,
+  "optimizedRows": 70,
+  "onlyBaseline": 0,
+  "onlyOptimized": 0,
+  "sameRules": true,
+  "equalProjectedRelations": true
+}

@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
@@ -187,8 +188,20 @@ final class PlacementSupportRelations {
 					// has no authority in the current domain; keep every supported alternative
 					// and let the surrounding fixed point regenerate bindings, never remap
 					// an expired reference merely because another map has equal geometry.
+					FactorizedSupportClauses factorized = realization.supportClauses()
+						instanceof FactorizedSupportClauses relation ? relation : null;
+					Optional<FactorizedSupportClauses> restrictedFactorized = Optional.empty();
 					List<CandidateRealizationSupportClause> clauses = new ArrayList<>();
-					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+					if(factorized != null) {
+						restrictedFactorized = factorized.restrictBindings(binding ->
+							currentReferences.contains(binding.source())
+								&& (actions == null || binding.kind() != CandidateInputBindingKind.RELOCATION
+									|| supportsRelocationBinding(actions.get(binding.relocationAction()),
+										fact.key(), emission.emissionState(), binding)));
+						if(collectWork && restrictedFactorized.isPresent())
+							reverseIncidences += restrictedFactorized.get().retainedFactorOptionCount();
+					}
+					else for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 						boolean supported = true;
 						if(collectWork)
 							distinctSources.clear();
@@ -207,10 +220,17 @@ final class PlacementSupportRelations {
 								reverseIncidences += distinctSources.size();
 						}
 					}
-					if(logicalSupported && !clauses.isEmpty())
-						realizations.add(clauses.size() == realization.supportClauses().size()
-							? realization : CandidateEmissionRealization
-								.fromAlreadyCanonicalSupportClauses(realization.key(), clauses));
+					if(logicalSupported && (factorized != null ? restrictedFactorized.isPresent() : !clauses.isEmpty())) {
+						if(factorized != null) {
+							FactorizedSupportClauses retained = restrictedFactorized.orElseThrow();
+							realizations.add(retained == factorized ? realization
+								: new CandidateEmissionRealization(realization.key(), retained));
+						}
+						else
+							realizations.add(clauses.size() == realization.supportClauses().size()
+								? realization : CandidateEmissionRealization
+									.fromAlreadyCanonicalSupportClauses(realization.key(), clauses));
+					}
 					else {
 						removedInitiallyExecutable = true;
 						if(collectWork)
@@ -362,7 +382,24 @@ final class PlacementSupportRelations {
 		for(FixedPointRealization slot : realizations) {
 			if(!slot.live)
 				continue;
-			for(CandidateRealizationSupportClause clause : slot.realization.supportClauses()) {
+			if(slot.realization.supportClauses() instanceof FactorizedSupportClauses factorized) {
+				FactorizedFixedPointSupport support = new FactorizedFixedPointSupport(slot, factorized);
+				slot.factorizedSupport = support;
+				for(int axis = 0; axis < factorized.factors().size(); axis++)
+					for(CandidateRealizationInputBinding binding : factorized.factors().get(axis)) {
+						boolean actionSupported = actions == null
+							|| binding.kind() != CandidateInputBindingKind.RELOCATION
+							|| supportsRelocationBinding(actions.get(binding.relocationAction()),
+								slot.fact.key(), slot.emission.emissionState(), binding);
+						FixedPointReference source = references.get(binding.source());
+						if(!actionSupported || source == null || source.liveSlots == 0)
+							continue;
+						FactorizedFixedPointOption option = support.add(axis, binding);
+						source.dependentFactorOptions.add(option);
+						reverseIncidences++;
+					}
+			}
+			else for(CandidateRealizationSupportClause clause : slot.realization.supportClauses()) {
 				boolean actionSupported = clause.inputBindings().stream().allMatch(binding ->
 					actions == null || binding.kind() != CandidateInputBindingKind.RELOCATION
 						|| supportsRelocationBinding(actions.get(binding.relocationAction()),
@@ -417,7 +454,7 @@ final class PlacementSupportRelations {
 
 		ArrayDeque<FixedPointRealization> deletions = new ArrayDeque<>();
 		for(FixedPointRealization slot : realizations)
-			if(slot.live && (slot.liveClauses == 0 || slot.unsupportedLogicalRequirements > 0))
+			if(slot.live && (!slot.hasLivePhysicalSupport() || slot.unsupportedLogicalRequirements > 0))
 				scheduleDeletion(slot, deletions);
 		long queueVisits = 0;
 		long invalidatedClauses = 0;
@@ -436,6 +473,12 @@ final class PlacementSupportRelations {
 					invalidatedClauses++;
 					if(--dependent.owner.liveClauses == 0)
 						scheduleDeletion(dependent.owner, deletions);
+				}
+			for(FactorizedFixedPointOption option : reference.dependentFactorOptions)
+				if(option.live) {
+					invalidatedClauses += option.owner.invalidate(option);
+					if(!option.owner.hasLiveProduct())
+						scheduleDeletion(option.owner.realization, deletions);
 				}
 			for(FixedPointLogicalRequirement requirement : reference.logicalRequirements)
 				if(requirement.liveSources > 0 && --requirement.liveSources == 0) {
@@ -457,11 +500,18 @@ final class PlacementSupportRelations {
 				for(FixedPointRealization slot : indexedEmission.realizations) {
 					if(!slot.live)
 						continue;
-					List<CandidateRealizationSupportClause> clauses = slot.clauses.stream()
-						.filter(candidate -> candidate.live).map(candidate -> candidate.clause).toList();
-					survivors.add(clauses.size() == slot.realization.supportClauses().size()
-						? slot.realization : CandidateEmissionRealization
-							.fromAlreadyCanonicalSupportClauses(slot.realization.key(), clauses));
+					if(slot.factorizedSupport != null) {
+						FactorizedSupportClauses restricted = slot.factorizedSupport.restricted();
+						survivors.add(restricted == slot.factorizedSupport.original
+							? slot.realization : new CandidateEmissionRealization(slot.realization.key(), restricted));
+					}
+					else {
+						List<CandidateRealizationSupportClause> clauses = slot.clauses.stream()
+							.filter(candidate -> candidate.live).map(candidate -> candidate.clause).toList();
+						survivors.add(clauses.size() == slot.realization.supportClauses().size()
+							? slot.realization : CandidateEmissionRealization
+								.fromAlreadyCanonicalSupportClauses(slot.realization.key(), clauses));
+					}
 				}
 				if(!survivors.isEmpty()) {
 					boolean unchanged = survivors.size() == indexedEmission.emission.realizations().size();
@@ -550,6 +600,7 @@ final class PlacementSupportRelations {
 		private final CandidateEmissionRealization realization;
 		private final FixedPointReference reference;
 		private final List<FixedPointClause> clauses = new ArrayList<>();
+		private FactorizedFixedPointSupport factorizedSupport;
 		private boolean live;
 		private boolean deletionScheduled;
 		private int liveClauses;
@@ -562,15 +613,73 @@ final class PlacementSupportRelations {
 			this.reference = reference;
 			this.live = live;
 		}
+		private boolean hasLivePhysicalSupport() {
+			return factorizedSupport != null ? factorizedSupport.hasLiveProduct() : liveClauses > 0;
+		}
 	}
 
 	private static final class FixedPointReference {
 		private final CandidateRealizationReference reference;
 		private final List<FixedPointClause> dependentClauses = new ArrayList<>();
+		private final List<FactorizedFixedPointOption> dependentFactorOptions = new ArrayList<>();
 		private final List<FixedPointLogicalRequirement> logicalRequirements = new ArrayList<>();
 		private int liveSlots;
 		private FixedPointReference(CandidateRealizationReference reference) {
 			this.reference = reference;
+		}
+	}
+
+	private static final class FactorizedFixedPointSupport {
+		private final FixedPointRealization realization;
+		private final FactorizedSupportClauses original;
+		private final List<Integer> liveByAxis;
+		private final Map<CandidateRealizationInputBinding,FactorizedFixedPointOption> options =
+			new IdentityHashMap<>();
+		private FactorizedFixedPointSupport(FixedPointRealization realization,
+			FactorizedSupportClauses original) {
+			this.realization = realization;
+			this.original = original;
+			liveByAxis = new ArrayList<>(java.util.Collections.nCopies(original.factors().size(), 0));
+		}
+		private FactorizedFixedPointOption add(int axis, CandidateRealizationInputBinding binding) {
+			FactorizedFixedPointOption option = new FactorizedFixedPointOption(this, axis, binding);
+			options.put(binding, option);
+			liveByAxis.set(axis, liveByAxis.get(axis) + 1);
+			return option;
+		}
+		private boolean hasLiveProduct() {
+			return liveByAxis.stream().allMatch(count -> count > 0);
+		}
+		private long invalidate(FactorizedFixedPointOption option) {
+			option.live = false;
+			int axisCount = liveByAxis.get(option.axis);
+			long removed = 1;
+			for(int axis = 0; axis < liveByAxis.size(); axis++)
+				if(axis != option.axis)
+					removed *= liveByAxis.get(axis);
+			liveByAxis.set(option.axis, axisCount - 1);
+			return removed;
+		}
+		private FactorizedSupportClauses restricted() {
+			return original.restrictBindings(binding -> {
+				FactorizedFixedPointOption option = options.get(binding);
+				return option != null && option.live;
+			}).orElseThrow(() -> new IllegalStateException(
+				"Live factorized realization has an empty support axis"));
+		}
+	}
+
+	private static final class FactorizedFixedPointOption {
+		private final FactorizedFixedPointSupport owner;
+		private final int axis;
+		@SuppressWarnings("unused")
+		private final CandidateRealizationInputBinding binding;
+		private boolean live = true;
+		private FactorizedFixedPointOption(FactorizedFixedPointSupport owner, int axis,
+			CandidateRealizationInputBinding binding) {
+			this.owner = owner;
+			this.axis = axis;
+			this.binding = binding;
 		}
 	}
 
@@ -634,10 +743,10 @@ final class PlacementSupportRelations {
 			if(fact.status() == CandidateEvaluationStatus.AVAILABLE)
 				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
 					for(CandidateEmissionRealization realization : emission.realizations())
-						for(CandidateRealizationSupportClause clause : realization.supportClauses())
-							for(CandidateRealizationInputBinding binding : clause.inputBindings())
-								if(binding.kind() == CandidateInputBindingKind.RELOCATION)
-									usedActions.add(binding.relocationAction());
+						forEachSupportBinding(realization, binding -> {
+							if(binding.kind() == CandidateInputBindingKind.RELOCATION)
+								usedActions.add(binding.relocationAction());
+						});
 		List<NeutralPlacementGraph.RelocationAction> executable = actions.stream()
 			.filter(action -> !action.directSourcePlacements().isEmpty() || usedActions.contains(action.key()))
 			.toList();
@@ -663,10 +772,9 @@ final class PlacementSupportRelations {
 				continue;
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
 				for(CandidateEmissionRealization realization : emission.realizations())
-					for(CandidateRealizationSupportClause clause : realization.supportClauses())
-						for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
+					forEachSupportBinding(realization, binding -> {
 							if(binding.kind() != CandidateInputBindingKind.RELOCATION)
-								continue;
+								return;
 							NeutralPlacementGraph.RelocationAction action = byKey.get(binding.relocationAction());
 							if(action == null || !liveSources.contains(binding.source())
 								|| action.obligations().stream().noneMatch(obligation ->
@@ -678,11 +786,23 @@ final class PlacementSupportRelations {
 									+ (action != null) + "|sourceLive=" + liveSources.contains(binding.source())
 									+ "|owner=" + fact.key().parentOccurrence().normalizedSignature());
 							usedActions.add(action.key());
-						}
+					});
 		}
 		for(NeutralPlacementGraph.RelocationAction action : actions)
 			if(action.directSourcePlacements().isEmpty() && !usedActions.contains(action.key()))
 				throw new IllegalStateException("Final publication has an unbound relocation action");
+	}
+
+	/** Universal binding checks and action unions distribute over each product axis. */
+	private static void forEachSupportBinding(CandidateEmissionRealization realization,
+		java.util.function.Consumer<CandidateRealizationInputBinding> consumer) {
+		if(realization.supportClauses() instanceof FactorizedSupportClauses product) {
+			for(List<CandidateRealizationInputBinding> axis : product.factors())
+				axis.forEach(consumer);
+		}
+		else
+			for(CandidateRealizationSupportClause clause : realization.supportClauses())
+				clause.inputBindings().forEach(consumer);
 	}
 
 	/** Removes selectable FOUT states that have no final executable candidate realization authority. */
@@ -835,9 +955,12 @@ final class PlacementSupportRelations {
 
 	static boolean executableSourceRealization(CandidateRuleKey rule,
 		CandidateEmissionRealization realization) {
-		return realization.key().layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
-			|| realization.supportClauses().stream()
-				.allMatch(clause -> clause.nativeWorkerPoolWitness() != null);
+		if(realization.key().layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE)
+			return true;
+		if(realization.supportClauses() instanceof FactorizedSupportClauses factorized)
+			return factorized.nativeWorkerPoolWitness() != null;
+		return realization.supportClauses().stream()
+			.allMatch(clause -> clause.nativeWorkerPoolWitness() != null);
 	}
 
 	/** All privacy and source-support checks have run; reuse only an identical immutable row. */

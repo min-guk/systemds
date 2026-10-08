@@ -1,0 +1,232 @@
+{
+  "artifactFileCounts": {
+    "dependencies": 316,
+    "mainClasses": 4506,
+    "mainSources": 1657,
+    "testClasses": 3025,
+    "testSources": 2041
+  },
+  "artifactInventoryDigests": {
+    "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+    "mainClasses": "fef42fe724bf3d8f7a8da55b195440e68cb79e4eaca98af7bd6f6201bbc00894",
+    "mainSources": "34dc7c8293a18bed324336938f48db59a2cc97cd898bd87fa73b3639ca9de7f6",
+    "testClasses": "254213cf78e3b55770e4dd593cbbfa69873b832a6c2356a1262d635cdbd98362",
+    "testSources": "f1ab4244e758bcb20dc67d5ba05489acd407916ad8748ebc4fce5d4b73d279a1"
+  },
+  "buildReady": true,
+  "canonicalProofRequested": false,
+  "canonicalProofRequired": false,
+  "caseTimeoutSeconds": 80,
+  "classPreflightExpected": {
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver$SparseAccumulator.class": {
+      "hostPath": "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver$SparseAccumulator.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver$SparseAccumulator.class",
+      "sha256": "f3c8935c124b19ae1afff28c127d3ab24d3400cfb64195462e9d88b644407d09",
+      "size": 6915
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.class": {
+      "hostPath": "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactCategoricalSolver.class",
+      "sha256": "deeb921f982f7046063dda298d9fb8a23c59bd2036ed593ae573f8124893b606",
+      "size": 123537
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactFiniteSupportJoin.class": {
+      "hostPath": "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactFiniteSupportJoin.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactFiniteSupportJoin.class",
+      "sha256": "84a2b98bb4a22de269013c5d0d24a70d241eb6a3dc7ae03677dd7ac66a0bd967",
+      "size": 15560
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.class": {
+      "hostPath": "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.class",
+      "sha256": "4b796430abf7922a5da3742961d82c00efebb598b8d82372efa5db8506a433a6",
+      "size": 263345
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.class": {
+      "hostPath": "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.class",
+      "sha256": "59c04584437113bb923b4b0ab6622c6cbac2455f16aff771f0490117aefd3617",
+      "size": 178237
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalOptimizer.class": {
+      "hostPath": "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalOptimizer.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalOptimizer.class",
+      "sha256": "f9c88c321ec33d33a1fab5db1b87e88d75effe15909a9815622a6d3beee51017",
+      "size": 19091
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolver.class": {
+      "hostPath": "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolver.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalReducedSolver.class",
+      "sha256": "b4f61265713379089a9251211099e8831912300767a810c7f28857008b3d1301",
+      "size": 67798
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalSharedSourceEncoding.class": {
+      "hostPath": "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalSharedSourceEncoding.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalSharedSourceEncoding.class",
+      "sha256": "a66d5ad005c8b491086cb0d73b91e152905b3b7e29f2e2835522359110787444",
+      "size": 95647
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.class": {
+      "hostPath": "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.class",
+      "sha256": "6dddae1d6e1282072f83dacebd7dc4026bbd70c4b9e5f8583bf40aa288d536ad",
+      "size": 41544
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.class": {
+      "hostPath": "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.class",
+      "sha256": "8efd4526c78f4fa5e03e9342e7a7a47e34b4d5e18e684e251c65800cdad72932",
+      "size": 35033
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.class": {
+      "hostPath": "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.class",
+      "sha256": "ed48f7f5dd7bd041855dc53b928068812218173398664ac875afa1a8e47b2440",
+      "size": 154810
+    },
+    "/engine/classes/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class": {
+      "hostPath": "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.class",
+      "sha256": "c027715f554a2dec93ba71cb7ef520a78fe5d872dfc8d8eab58efa276d8b3f12",
+      "size": 587690
+    },
+    "/engine/classes/org/apache/sysds/runtime/controlprogram/context/ExecutionContext.class": {
+      "hostPath": "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/main-classes/org/apache/sysds/runtime/controlprogram/context/ExecutionContext.class",
+      "kind": "main",
+      "relativePath": "org/apache/sysds/runtime/controlprogram/context/ExecutionContext.class",
+      "sha256": "414a3e404011c10d7ebd3d4b6d43e262497bdec71dec7766f2f16a492d084556",
+      "size": 47497
+    },
+    "/engine/test-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointBoundaryPhysicalModelProofTest.class": {
+      "hostPath": "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/test-classes/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointBoundaryPhysicalModelProofTest.class",
+      "kind": "test",
+      "relativePath": "org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointBoundaryPhysicalModelProofTest.class",
+      "sha256": "7bf1a80c4b9df9b07c256bc5fb69f5099e19015564b7a614304e82162f6847e2",
+      "size": 33632
+    }
+  },
+  "classes": "/grid/3/cofee-lm-sweep-mchoi-20260914/plan-space-implementation-20261008/final-verified/engine/classes",
+  "configuredPlanner": "compile_cost_based",
+  "container": "systemds-joint-boundary-341065d985014c78",
+  "containerScriptSha256": "196e12b78086f71d1b3c1966e3c744709777464e8b5f895255094f5062737ea8",
+  "containerStage": "/dev/shm/mchoi-plan-space-20261008/final-dp",
+  "debugFedreq": false,
+  "dependencies": "/home/mchoi/w1357-stage-main276-20261008T1025Z/systemds/target/lib",
+  "dockerArgv": [
+    "docker",
+    "run",
+    "--rm",
+    "--pull",
+    "never",
+    "--network",
+    "none",
+    "--name",
+    "systemds-joint-boundary-341065d985014c78",
+    "--cpus",
+    "4",
+    "--memory",
+    "8g",
+    "--user",
+    "10041:5500",
+    "--volume",
+    "/dev/shm/mchoi-plan-space-20261008/final-dp:/evidence:rw",
+    "--volume",
+    "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/main-classes:/engine/classes:ro",
+    "--volume",
+    "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/test-classes:/engine/test-classes:ro",
+    "--volume",
+    "/dev/shm/mchoi-plan-space-20261008/final-dp/frozen-inputs/dependencies:/deps:ro",
+    "--entrypoint",
+    "bash",
+    "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "/evidence/container-run.sh"
+  ],
+  "dryRun": false,
+  "expectedNormalizedPlanner": "DP-LocalConflict",
+  "fixtureSha256": {
+    "config": {
+      "sha256": "0593f01a6400b1f69b53f16fa07eaf0df46dc12fe5ec74cbddbf71c4c5f6f0a7"
+    },
+    "joint_branch_upload": {
+      "cp": "6287a82688703593f7f368adebee9872a80f92d40f4fbf7b6ce13f608d8628b8",
+      "fed": "327df812201ec9e9634fd7d3e8aa5637f565a3ff11fa122f4084c2a8ed6ec09d"
+    },
+    "joint_correlated_aa": {
+      "cp": "56fbadb0cbe8b427ccc2b127c261605f803ee3ea70a91b89e054e285055cd55a",
+      "fed": "2243648c4b6e57269ffe0649c4c9461a4b01ec17dceadcb0d7e8acc2cb7ff1b0"
+    },
+    "joint_function_calls": {
+      "cp": "69b708f02aef8f45ad0e91bf2333cce2d65d3604e7c720d18fcf308cb6be4635",
+      "fed": "47ef015019acf1c618fb3d5cd03a33dad70e1f32542ba59d5b991d356f523d08"
+    }
+  },
+  "frozenClasses": "/grid/3/cofee-lm-sweep-mchoi-20260914/plan-space-implementation-20261008/runtime/final-dp/frozen-inputs/main-classes",
+  "frozenDependencies": "/grid/3/cofee-lm-sweep-mchoi-20260914/plan-space-implementation-20261008/runtime/final-dp/frozen-inputs/dependencies",
+  "frozenDispatchSource": "/grid/3/cofee-lm-sweep-mchoi-20260914/plan-space-implementation-20261008/runtime/final-dp/dispatch-source.sh",
+  "frozenMainSources": "/grid/3/cofee-lm-sweep-mchoi-20260914/plan-space-implementation-20261008/runtime/final-dp/frozen-inputs/main-sources",
+  "frozenRunnerSource": "/grid/3/cofee-lm-sweep-mchoi-20260914/plan-space-implementation-20261008/runtime/final-dp/runner-source.py",
+  "frozenTestClasses": "/grid/3/cofee-lm-sweep-mchoi-20260914/plan-space-implementation-20261008/runtime/final-dp/frozen-inputs/test-classes",
+  "frozenTestSources": "/grid/3/cofee-lm-sweep-mchoi-20260914/plan-space-implementation-20261008/runtime/final-dp/frozen-inputs/test-sources",
+  "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "inputSha256": {
+    "data/A1.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/A1.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/A1_PUBLIC.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/A1_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/A2.csv": "a11192eae9705cdb946acb6bf07e42f1c2f57ecc33305de2da75bdc69bdb1dbd",
+    "data/A2.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/A2_PUBLIC.csv": "a11192eae9705cdb946acb6bf07e42f1c2f57ecc33305de2da75bdc69bdb1dbd",
+    "data/A2_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/B1.csv": "971f6c320a133932fc5223d98bd16171e1089e780c2c3e9c9e800b90d9c68618",
+    "data/B1.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/B1_PUBLIC.csv": "971f6c320a133932fc5223d98bd16171e1089e780c2c3e9c9e800b90d9c68618",
+    "data/B1_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/B2.csv": "9d3f6405691b679e1cd1ea3f9f5bf4d7b5a40d4179308bf42afa7dc2c1d8b6b6",
+    "data/B2.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/B2_PUBLIC.csv": "9d3f6405691b679e1cd1ea3f9f5bf4d7b5a40d4179308bf42afa7dc2c1d8b6b6",
+    "data/B2_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9",
+    "data/X.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/X.csv.mtd": "00927ec74b2ff884148ebc3662bcc2731b6cd84a2fa8eb4e4f457e3245f2e5e0",
+    "data/X_PUBLIC.csv": "8d964f179aea81c1c12fbc630748ce3dab747edb5c925b5414d6200cb1d5490f",
+    "data/X_PUBLIC.csv.mtd": "18a324e242e9054389583f0b5c150444b013d7a921cd2bb894e1c552f8ce81c9"
+  },
+  "jfrProfile": {
+    "durationSeconds": 79,
+    "enabled": false,
+    "files": {},
+    "recordProfile": false,
+    "scope": "fed-coordinator-only",
+    "settings": "profile",
+    "stackDepth": 256
+  },
+  "mainSources": "/grid/3/cofee-lm-sweep-mchoi-20260914/plan-space-implementation-20261008/final-verified/engine/src/main/java",
+  "modelProofClass": "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.JointBoundaryPhysicalModelProofTest",
+  "network": "none (worker and coordinator use container loopback)",
+  "noFedRuntimeConversion": true,
+  "planner": "local",
+  "requestedCases": [
+    "joint_branch_upload",
+    "joint_correlated_aa",
+    "joint_function_calls"
+  ],
+  "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/plan-space-implementation-20261008/runtime/final-dp",
+  "schema": "systemds-joint-boundary-e2e-input-v1",
+  "sourceSha256": {
+    "dispatch": "5bbc9edfcf050114c31764634dc8856005f9cf2335907fcc084b83436b48df64",
+    "runner": "ecaf0614c89619ba9fbb1c698bde848b3a91e55f5773aee92a2f0e52d05e695a"
+  },
+  "testClasses": "/grid/3/cofee-lm-sweep-mchoi-20260914/plan-space-implementation-20261008/final-verified/engine/test-classes",
+  "testSources": "/grid/3/cofee-lm-sweep-mchoi-20260914/plan-space-implementation-20261008/final-verified/engine/src/test/java"
+}

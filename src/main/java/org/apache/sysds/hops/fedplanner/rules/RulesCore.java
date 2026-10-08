@@ -33,9 +33,12 @@ import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.PartialInputs;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.PartialTruth;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.Rule;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeIndependentDecision;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /**
@@ -338,12 +341,66 @@ public final class RulesCore {
       return (inputs, hint) -> cpDefault(sig, ReasonCode.NO_RULE);
     }
 
+    /** Resolve conservative partial-input dispatch once for a fixed signature. */
+    public java.util.function.BiFunction<PartialInputs,ShapeHint,PartialTruth> preparePartial(OpSig sig) {
+      Optional<Rule> exact = reg.byOpcode(sig.opcode());
+      if (exact.isPresent()) {
+        Rule rule = exact.get();
+        return (inputs, hint) -> safePartial(rule, sig, inputs, hint);
+      }
+      for (Rule rule : reg.ofCategory(sig.category()))
+        if (rule.supports(sig))
+          return (inputs, hint) -> safePartial(rule, sig, inputs, hint);
+      return (inputs, hint) -> PartialTruth.UNKNOWN;
+    }
+
+    public boolean supportsPartial(OpSig sig) {
+      Optional<Rule> exact = reg.byOpcode(sig.opcode());
+      if(exact.isPresent())
+        return exact.get().supportsPartialFedFeasibility();
+      for(Rule rule : reg.ofCategory(sig.category()))
+        if(rule.supports(sig))
+          return rule.supportsPartialFedFeasibility();
+      return false;
+    }
+
+    public Optional<ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
+      Optional<Rule> exact = reg.byOpcode(sig.opcode());
+      if(exact.isPresent())
+        return safeShapeIndependentDecision(exact.get(), sig);
+      for(Rule rule : reg.ofCategory(sig.category()))
+        if(rule.supports(sig))
+          return safeShapeIndependentDecision(rule, sig);
+      return Optional.empty();
+    }
+
     private static OpCaps safeCaps(Rule rule, OpSig sig, List<FType> inFTypes, ShapeHint hint, ReasonCode fallbackReason) {
       try {
         OpCaps caps = rule.caps(sig, inFTypes, hint);
         return (caps == null) ? cpDefault(sig, fallbackReason) : caps;
       } catch (RuntimeException ex) {
         throw ruleFailure("caps", rule, sig, inFTypes, hint, ex);
+      }
+    }
+
+    private static PartialTruth safePartial(Rule rule, OpSig sig, PartialInputs inputs, ShapeHint hint) {
+      try {
+        PartialTruth truth = rule.partialFedFeasibility(sig, inputs, hint);
+        return truth == null ? PartialTruth.UNKNOWN : truth;
+      }
+      catch(RuntimeException ex) {
+        throw ruleFailure("partialFedFeasibility", rule, sig, inputs, hint, ex);
+      }
+    }
+
+    private static Optional<ShapeIndependentDecision> safeShapeIndependentDecision(
+        Rule rule, OpSig sig) {
+      try {
+        Optional<ShapeIndependentDecision> decision = rule.shapeIndependentDecision(sig);
+        return decision == null ? Optional.empty() : decision;
+      }
+      catch(RuntimeException ex) {
+        throw ruleFailure("shapeIndependentDecision", rule, sig, List.of(), null, ex);
       }
     }
   }

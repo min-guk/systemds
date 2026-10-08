@@ -1,0 +1,22 @@
+{
+  "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactFactorizedSupportPipelineTest.java": "6a014e7777654dcce36e0243ce8afd35732e2a952828d1572bb1b3ef20e00652",
+  "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactInputAuthorityOptimizationTest.java": "5a981836f974849bc2700a5f8fb1615c600eb65f5b66f0e4e19b8b4172f42975",
+  "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactNativeLocalAnchorFanoutCostTest.java": "beeee02d2f9b2933a91793bd131637a3797c18ce3faa0fd47948473e51a7981a",
+  "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalSemanticDagFingerprintTest.java": "d2f42a1cbd40225db4191204536b102c6393b270a775951686807ea85f911ffa",
+  "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/IndependentPhysicalSemanticDagOracle.java": "40acf17c0a4490481ec9a2fec62f267d0540a3ef96484c459856378eb3827326",
+  "src/test/java/org/apache/sysds/hops/fedplanner/placement/CampaignBPlacementAnalysisFixtureBridge.java": "fbdb108df3feaf7401f38ec2eefec0dd512382fdf168b08e40489f8b234a1f03",
+  "src/test/java/org/apache/sysds/hops/fedplanner/placement/DuplicateMergeDiagnosticsTest.java": "f7ad8871d4a01883fc56a837e167045e7eb6347f07bac7c00a02d5dbb2ee5aaa",
+  "src/test/java/org/apache/sysds/hops/fedplanner/placement/EarlyPrivacyGenerationWorkTest.java": "42ff87bdc70d0d91a280739ddbe588cfd481de421f510fd6626dd60e1d396f53",
+  "src/test/java/org/apache/sysds/hops/fedplanner/placement/EarlyPrivacyPruningLegalSpaceParityTest.java": "17088dcacbf24ba93f91945cefba5d85fc62d3d862ce1fabdac23759bb4e81a9",
+  "src/test/java/org/apache/sysds/hops/fedplanner/placement/FactorizedCandidateReceiptRankTest.java": "3a28ef9b16b7ec04261060f1c47c7d6d40b5cd50fbd9c0e235035bc3e72197a2",
+  "src/test/java/org/apache/sysds/hops/fedplanner/placement/FactorizedSupportClausesTest.java": "f453def2d331940faa790ad775f446bff131fb768a8c787eda9cb3349639fb35",
+  "src/test/java/org/apache/sysds/hops/fedplanner/placement/IndexedSupportClausesTest.java": "a0fafb10e60bc61b10b7ecc577b575fb8b9fe54bd6acdbc910eb47495c669d8c",
+  "src/test/java/org/apache/sysds/hops/fedplanner/placement/MaterializedOutputLayoutTest.java": "49d5050d3f1de73f66c688a97104d6085f0c895c9a46e11f3826e6d9c579fccb",
+  "src/test/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementBindingAssignmentStreamingTest.java": "54cb6d52b35f25749493743115d854a3a9ff7bb410a5e82b1c5ad48c6598f435",
+  "src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementCandidateGeneratorMrvTest.java": "ce90afd639ca7cdc6f92e8bd42233be6cca9b981f572ee5c58c118daf9cd4016",
+  "src/test/java/org/apache/sysds/hops/fedplanner/placement/RelocationBindingPrefixPruningTest.java": "c52c177a2e504cef7081dc616ca1dd9690588820e3f978e8751269e5b4060894",
+  "src/test/java/org/apache/sysds/hops/fedplanner/placement/RelocationFactorizedProductTest.java": "f59103912e4a548a029b2218f1a7fd8c4a5047cfe9351a342875b1177ee931c8",
+  "src/test/java/org/apache/sysds/hops/fedplanner/placement/RelocationProductMemoTest.java": "088a1d5c7cb6c2db0a7487fce03a3342e26ecaf44c351a033d44bd7b7303e563",
+  "src/test/java/org/apache/sysds/runtime/instructions/fed/FEDFoutLayoutSignatureTest.java": "9a6afedde3da48adf24fd4c2acbf99c3ea9ab5c1ca04fabaeff000c2b463f4a6",
+  "src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/DirectFactorizedSupportPipelineTest.java": "ac9b9188d7690dac9300b8ea8a176e3f8295c53731f3b1402c10e01da8871a84"
+}

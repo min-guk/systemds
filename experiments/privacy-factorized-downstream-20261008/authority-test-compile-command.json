@@ -1,0 +1,8 @@
+[
+  "javac",
+  "-cp",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/classes:/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/test-classes:/home/mchoi/w1357-stage-main276-20261008T1025Z/systemds/target/lib/*",
+  "-d",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/test-classes",
+  "/grid/3/cofee-lm-sweep-mchoi-20260914/privacy-factorized-downstream-20261008/final/engine/src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactInputAuthorityOptimizationTest.java"
+]

@@ -1,0 +1,21 @@
+{
+  "scope": "CP rule family, factor-level closure, production sparse realization-support factors; general FED/joint end-to-end factorization remains incomplete",
+  "compiledSources": {
+    "main": 27,
+    "tests": 27
+  },
+  "workspaceAndFrozenSha256Match": true,
+  "junitPassed": 469,
+  "previouslyIgnored": 3,
+  "pythonHarnessPassed": 37,
+  "dockerBaselineCasesPassed": 5,
+  "dockerAfterCasesPassed": 5,
+  "successfulRuntimeCasesWithExactSelectionAndCostParity": 4,
+  "expectedPrivacyRejectionCases": 1,
+  "gitDiffCheck": true,
+  "pythonSyntax": true,
+  "documentationRelativeLinks": true,
+  "knownBaselineFailure": "ExactPhysicalRealizationSupportFactorCacheTest hardcoded fingerprint; original test fails on both old and new engine",
+  "performanceCaveat": "Docker measurements are one run per case; no end-to-end memory reduction demonstrated; host microbenchmarks are diagnostic only",
+  "lastSourceChange": "Apache license comments only after 469-test run; all 27 main and 27 test sources recompiled successfully"
+}

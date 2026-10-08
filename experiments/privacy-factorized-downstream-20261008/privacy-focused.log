@@ -1,0 +1,8 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+.EARLY_PRIVACY_WORK|baselineOracle=29|earlyOracle=26|baselineLeaves=29|earlyLeaves=26|avoidedTuples=2|emissionsSuppressed=11|emissionAllocationsAvoided=11|privacyTransferVisits=24|supportIndexedRealizations=156|supportIndexedClauses=192|supportQueueVisits=0
+..........
+Time: 4.612
+
+OK (11 tests)
+

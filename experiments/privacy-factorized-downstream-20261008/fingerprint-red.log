@@ -1,0 +1,14 @@
+JUnit version 4.13.1
+....E....
+Time: 0.663
+There was 1 failure:
+1) factorizedFingerprintBindsEveryAxisWithoutMaterializingProduct(org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalSemanticDagFingerprintTest)
+java.lang.AssertionError: fingerprinting must consume axes, not Cartesian support clauses expected:<0> but was:<10000>
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.failNotEquals(Assert.java:835)
+	at org.junit.Assert.assertEquals(Assert.java:647)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalSemanticDagFingerprintTest.factorizedFingerprintBindsEveryAxisWithoutMaterializingProduct(ExactPhysicalSemanticDagFingerprintTest.java:72)
+
+FAILURES!!!
+Tests run: 8,  Failures: 1
+

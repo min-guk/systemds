@@ -1,0 +1,38 @@
+{
+  "private": {
+    "rules": 23,
+    "realizations": 25,
+    "supports": 32,
+    "allReferencesResolved": true,
+    "workerEndpointPools": [
+      [
+        "localhost:5234",
+        "localhost:5235"
+      ]
+    ],
+    "absInputReferences": [
+      "S20",
+      "S21"
+    ]
+  },
+  "aggregated": {
+    "rules": 29,
+    "realizations": 48,
+    "supports": 184,
+    "allReferencesResolved": true,
+    "workerEndpointPools": [
+      [
+        "localhost:5234",
+        "localhost:5235"
+      ]
+    ],
+    "S37": {
+      "bindingsPerInput": [
+        5,
+        5
+      ],
+      "supportCount": 25,
+      "equalsFullCartesianProduct": true
+    }
+  }
+}

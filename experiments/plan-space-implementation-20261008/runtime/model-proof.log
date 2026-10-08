@@ -1,0 +1,8 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+.26/10/08 14:42:38 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+.........
+Time: 8.511
+
+OK (10 tests)
+

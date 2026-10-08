@@ -683,6 +683,26 @@ public final class PlacementIdentity {
 	}
 
 	/**
+	 * Complete runtime layout identity, independent of the value that supplied its
+	 * metadata. Keep endpoint/range pairs and multiplicity; stripping source file
+	 * paths must never turn two different partitions or values into one value.
+	 * Opaque/partial layouts retain their original authority until it can be proved.
+	 */
+	public static DurableAnchorKey canonicalPhysicalLayout(DurableAnchorKey anchor) {
+		Objects.requireNonNull(anchor, "anchor");
+		if(anchor.fType() == FType.PART || anchor.fType() == FType.OTHER)
+			return anchor;
+		List<AnchorPartition> partitions = new ArrayList<>(anchor.partitions().size());
+		for(AnchorPartition partition : anchor.partitions()) {
+			String worker = FederationUtils.canonicalFederatedWorkerAddress(partition.workerId());
+			if(worker == null)
+				return anchor;
+			partitions.add(new AnchorPartition(worker, partition.begin(), partition.end()));
+		}
+		return new DurableAnchorKey("physical-layout", anchor.fType(), partitions);
+	}
+
+	/**
 	 * Returns whether two durable anchors describe the same runtime worker-pool layout.
 	 * The placement id names the value that supplied the metadata, not a different physical
 	 * pool. ROW/COL compare the partitioned axis, while FULL/BROADCAST compare the worker

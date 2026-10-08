@@ -1,0 +1,23 @@
+{
+  "baseline": {
+    "samplesMillis": [
+      1419.823567,
+      1244.445899,
+      1051.351787
+    ],
+    "medianMillis": 1244.445899,
+    "minimumMillis": 1051.351787,
+    "maximumMillis": 1419.823567
+  },
+  "optimized": {
+    "samplesMillis": [
+      1021.915518,
+      1143.792077,
+      1188.195892
+    ],
+    "medianMillis": 1143.792077,
+    "minimumMillis": 1021.915518,
+    "maximumMillis": 1188.195892
+  },
+  "medianReductionPercent": 8.08824409971397
+}

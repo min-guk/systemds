@@ -1,0 +1,4 @@
+RESULT engine=OLD domain=4000 logicalRows=16000000 legalRows=3 reportedRetainedRows=16000000 supportRows=3 reportedMaterializedRows=16004001 reportedMaximumRows=16000000 medianWallMs=1.621 medianAllocatedBytes=130048 objectiveBits=0 assignment=7,11 warmups=5 repeats=9
+peakRssKb=53336 elapsedSeconds=0.21
+RESULT engine=NEW domain=4000 logicalRows=16000000 legalRows=3 reportedRetainedRows=3 supportRows=3 reportedMaterializedRows=4004 reportedMaximumRows=4000 medianWallMs=1.783 medianAllocatedBytes=130672 objectiveBits=0 assignment=7,11 warmups=5 repeats=9
+peakRssKb=51732 elapsedSeconds=0.22

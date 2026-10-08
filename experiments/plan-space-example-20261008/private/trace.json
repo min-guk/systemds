@@ -1,0 +1,1757 @@
+{
+  "script": "# Two complete ROW inputs on the same two workers. Privacy supplied by the probe.\nA \u003d federated(addresses\u003dlist(\"localhost:5234/A1\", \"localhost:5235/A2\"),\n    ranges\u003dlist(list(0,0),list(4,2),list(4,0),list(8,2)));\nB \u003d federated(addresses\u003dlist(\"localhost:5234/B1\", \"localhost:5235/B2\"),\n    ranges\u003dlist(list(0,0),list(4,2),list(4,0),list(8,2)));\nU \u003d A * 2;\nV \u003d B * 3;\nC \u003d U * V;\nD \u003d abs(C);\nprint(sum(D));\n",
+  "privacy": "PRIVATE_AGGREGATE",
+  "mode": "production-common-analysis/hermetic-source-metadata",
+  "analysisMillis": 858.722434,
+  "hops": [
+    {
+      "id": "H1",
+      "hopId": 92,
+      "name": "parsertemp29",
+      "op": "ua(+RC)",
+      "line": 10,
+      "dataType": "SCALAR",
+      "rows": 0,
+      "cols": 0,
+      "inputHopIds": [
+        91
+      ]
+    },
+    {
+      "id": "H2",
+      "hopId": 91,
+      "name": "D",
+      "op": "u(abs)",
+      "line": 9,
+      "dataType": "MATRIX",
+      "rows": 8,
+      "cols": 2,
+      "inputHopIds": [
+        98
+      ]
+    },
+    {
+      "id": "H3",
+      "hopId": 98,
+      "name": "A",
+      "op": "m(mult)",
+      "line": 2,
+      "dataType": "MATRIX",
+      "rows": 8,
+      "cols": 2,
+      "inputHopIds": [
+        42,
+        85,
+        88,
+        28
+      ]
+    },
+    {
+      "id": "H4",
+      "hopId": 42,
+      "name": "A",
+      "op": "Fed A",
+      "line": 2,
+      "dataType": "MATRIX",
+      "rows": 8,
+      "cols": 2,
+      "inputHopIds": [
+        4,
+        40,
+        41
+      ]
+    },
+    {
+      "id": "H5",
+      "hopId": 85,
+      "name": "B",
+      "op": "Fed B",
+      "line": 4,
+      "dataType": "MATRIX",
+      "rows": 8,
+      "cols": 2,
+      "inputHopIds": [
+        47,
+        40,
+        41
+      ]
+    },
+    {
+      "id": "H6",
+      "hopId": 88,
+      "name": "3",
+      "op": "LiteralOp 3",
+      "line": 7,
+      "dataType": "SCALAR",
+      "rows": 0,
+      "cols": 0,
+      "inputHopIds": []
+    },
+    {
+      "id": "H7",
+      "hopId": 4,
+      "name": "parsertemp6",
+      "op": "m(list)",
+      "line": 2,
+      "dataType": "LIST",
+      "rows": 2,
+      "cols": 1,
+      "inputHopIds": [
+        2,
+        3
+      ]
+    },
+    {
+      "id": "H8",
+      "hopId": 40,
+      "name": "parsertemp11",
+      "op": "m(list)",
+      "line": 2,
+      "dataType": "LIST",
+      "rows": 4,
+      "cols": 1,
+      "inputHopIds": [
+        24,
+        29,
+        34,
+        39
+      ]
+    },
+    {
+      "id": "H9",
+      "hopId": 41,
+      "name": "matrix",
+      "op": "LiteralOp matrix",
+      "line": 2,
+      "dataType": "SCALAR",
+      "rows": 0,
+      "cols": 0,
+      "inputHopIds": []
+    },
+    {
+      "id": "H10",
+      "hopId": 47,
+      "name": "parsertemp18",
+      "op": "m(list)",
+      "line": 4,
+      "dataType": "LIST",
+      "rows": 2,
+      "cols": 1,
+      "inputHopIds": [
+        45,
+        46
+      ]
+    },
+    {
+      "id": "H11",
+      "hopId": 2,
+      "name": "localhost:5234/A1",
+      "op": "LiteralOp localhost:5234/A1",
+      "line": 2,
+      "dataType": "SCALAR",
+      "rows": 0,
+      "cols": 0,
+      "inputHopIds": []
+    },
+    {
+      "id": "H12",
+      "hopId": 3,
+      "name": "localhost:5235/A2",
+      "op": "LiteralOp localhost:5235/A2",
+      "line": 2,
+      "dataType": "SCALAR",
+      "rows": 0,
+      "cols": 0,
+      "inputHopIds": []
+    },
+    {
+      "id": "H13",
+      "hopId": 24,
+      "name": "parsertemp7",
+      "op": "m(list)",
+      "line": 3,
+      "dataType": "LIST",
+      "rows": 2,
+      "cols": 1,
+      "inputHopIds": [
+        22,
+        22
+      ]
+    },
+    {
+      "id": "H14",
+      "hopId": 29,
+      "name": "parsertemp8",
+      "op": "m(list)",
+      "line": 3,
+      "dataType": "LIST",
+      "rows": 2,
+      "cols": 1,
+      "inputHopIds": [
+        27,
+        28
+      ]
+    },
+    {
+      "id": "H15",
+      "hopId": 34,
+      "name": "parsertemp9",
+      "op": "m(list)",
+      "line": 3,
+      "dataType": "LIST",
+      "rows": 2,
+      "cols": 1,
+      "inputHopIds": [
+        27,
+        22
+      ]
+    },
+    {
+      "id": "H16",
+      "hopId": 39,
+      "name": "parsertemp10",
+      "op": "m(list)",
+      "line": 3,
+      "dataType": "LIST",
+      "rows": 2,
+      "cols": 1,
+      "inputHopIds": [
+        37,
+        28
+      ]
+    },
+    {
+      "id": "H17",
+      "hopId": 45,
+      "name": "localhost:5234/B1",
+      "op": "LiteralOp localhost:5234/B1",
+      "line": 4,
+      "dataType": "SCALAR",
+      "rows": 0,
+      "cols": 0,
+      "inputHopIds": []
+    },
+    {
+      "id": "H18",
+      "hopId": 46,
+      "name": "localhost:5235/B2",
+      "op": "LiteralOp localhost:5235/B2",
+      "line": 4,
+      "dataType": "SCALAR",
+      "rows": 0,
+      "cols": 0,
+      "inputHopIds": []
+    },
+    {
+      "id": "H19",
+      "hopId": 22,
+      "name": "0",
+      "op": "LiteralOp 0",
+      "line": 3,
+      "dataType": "SCALAR",
+      "rows": 0,
+      "cols": 0,
+      "inputHopIds": []
+    },
+    {
+      "id": "H20",
+      "hopId": 27,
+      "name": "4",
+      "op": "LiteralOp 4",
+      "line": 3,
+      "dataType": "SCALAR",
+      "rows": 0,
+      "cols": 0,
+      "inputHopIds": []
+    },
+    {
+      "id": "H21",
+      "hopId": 28,
+      "name": "2",
+      "op": "LiteralOp 2",
+      "line": 3,
+      "dataType": "SCALAR",
+      "rows": 0,
+      "cols": 0,
+      "inputHopIds": []
+    },
+    {
+      "id": "H22",
+      "hopId": 37,
+      "name": "8",
+      "op": "LiteralOp 8",
+      "line": 3,
+      "dataType": "SCALAR",
+      "rows": 0,
+      "cols": 0,
+      "inputHopIds": []
+    },
+    {
+      "id": "H23",
+      "hopId": 93,
+      "name": "parsertemp29",
+      "op": "u(print)",
+      "line": 10,
+      "dataType": "SCALAR",
+      "rows": -1,
+      "cols": -1,
+      "inputHopIds": [
+        92
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "id": "R1",
+      "owner": "H11",
+      "inputTypes": [],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R2",
+      "owner": "H12",
+      "inputTypes": [],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R3",
+      "owner": "H7",
+      "inputTypes": [
+        "ABSENT_LOCAL:-",
+        "ABSENT_LOCAL:-"
+      ],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R4",
+      "owner": "H19",
+      "inputTypes": [],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R5",
+      "owner": "H13",
+      "inputTypes": [
+        "ABSENT_LOCAL:-",
+        "ABSENT_LOCAL:-"
+      ],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R6",
+      "owner": "H20",
+      "inputTypes": [],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R7",
+      "owner": "H21",
+      "inputTypes": [],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R8",
+      "owner": "H14",
+      "inputTypes": [
+        "ABSENT_LOCAL:-",
+        "ABSENT_LOCAL:-"
+      ],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R9",
+      "owner": "H15",
+      "inputTypes": [
+        "ABSENT_LOCAL:-",
+        "ABSENT_LOCAL:-"
+      ],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R10",
+      "owner": "H22",
+      "inputTypes": [],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R11",
+      "owner": "H16",
+      "inputTypes": [
+        "ABSENT_LOCAL:-",
+        "ABSENT_LOCAL:-"
+      ],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R12",
+      "owner": "H8",
+      "inputTypes": [
+        "ABSENT_LOCAL:-",
+        "ABSENT_LOCAL:-",
+        "ABSENT_LOCAL:-",
+        "ABSENT_LOCAL:-"
+      ],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R13",
+      "owner": "H9",
+      "inputTypes": [],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R14",
+      "owner": "H4",
+      "inputTypes": [
+        "ABSENT_LOCAL:-",
+        "ABSENT_LOCAL:-",
+        "ABSENT_LOCAL:-"
+      ],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R15",
+      "owner": "H17",
+      "inputTypes": [],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R16",
+      "owner": "H18",
+      "inputTypes": [],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R17",
+      "owner": "H10",
+      "inputTypes": [
+        "ABSENT_LOCAL:-",
+        "ABSENT_LOCAL:-"
+      ],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R18",
+      "owner": "H5",
+      "inputTypes": [
+        "ABSENT_LOCAL:-",
+        "ABSENT_LOCAL:-",
+        "ABSENT_LOCAL:-"
+      ],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R19",
+      "owner": "H6",
+      "inputTypes": [],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R20",
+      "owner": "H3",
+      "inputTypes": [
+        "PRESENT:ROW",
+        "PRESENT:ROW",
+        "ABSENT_LOCAL:-",
+        "ABSENT_LOCAL:-"
+      ],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R21",
+      "owner": "H2",
+      "inputTypes": [
+        "PRESENT:ROW"
+      ],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R22",
+      "owner": "H1",
+      "inputTypes": [
+        "PRESENT:ROW"
+      ],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    },
+    {
+      "id": "R23",
+      "owner": "H23",
+      "inputTypes": [
+        "ABSENT_LOCAL:-"
+      ],
+      "status": "AVAILABLE",
+      "failure": "",
+      "emissions": 1
+    }
+  ],
+  "realizations": [
+    {
+      "id": "S1",
+      "rule": "R1",
+      "owner": "H11",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S2",
+      "rule": "R2",
+      "owner": "H12",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S3",
+      "rule": "R3",
+      "owner": "H7",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S4",
+      "rule": "R4",
+      "owner": "H19",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S5",
+      "rule": "R5",
+      "owner": "H13",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S6",
+      "rule": "R6",
+      "owner": "H20",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S7",
+      "rule": "R7",
+      "owner": "H21",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S8",
+      "rule": "R8",
+      "owner": "H14",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S9",
+      "rule": "R9",
+      "owner": "H15",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S10",
+      "rule": "R10",
+      "owner": "H22",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S11",
+      "rule": "R11",
+      "owner": "H16",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S12",
+      "rule": "R12",
+      "owner": "H8",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S13",
+      "rule": "R13",
+      "owner": "H9",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S14",
+      "rule": "R14",
+      "owner": "H4",
+      "state": "FED/FOUT/ROW/SHAPE_INDEPENDENT",
+      "layout": "DURABLE_MAP",
+      "anchor": {
+        "fType": "ROW",
+        "partitions": [
+          {
+            "worker": "localhost:5234/A1",
+            "begin": [
+              0,
+              0
+            ],
+            "end": [
+              4,
+              2
+            ]
+          },
+          {
+            "worker": "localhost:5235/A2",
+            "begin": [
+              4,
+              0
+            ],
+            "end": [
+              8,
+              2
+            ]
+          }
+        ]
+      },
+      "executionFType": "ROW",
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [
+            "P1"
+          ],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S15",
+      "rule": "R15",
+      "owner": "H17",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S16",
+      "rule": "R16",
+      "owner": "H18",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S17",
+      "rule": "R17",
+      "owner": "H10",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S18",
+      "rule": "R18",
+      "owner": "H5",
+      "state": "FED/FOUT/ROW/SHAPE_INDEPENDENT",
+      "layout": "DURABLE_MAP",
+      "anchor": {
+        "fType": "ROW",
+        "partitions": [
+          {
+            "worker": "localhost:5234/B1",
+            "begin": [
+              0,
+              0
+            ],
+            "end": [
+              4,
+              2
+            ]
+          },
+          {
+            "worker": "localhost:5235/B2",
+            "begin": [
+              4,
+              0
+            ],
+            "end": [
+              8,
+              2
+            ]
+          }
+        ]
+      },
+      "executionFType": "ROW",
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [
+            "P2"
+          ],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S19",
+      "rule": "R19",
+      "owner": "H6",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S20",
+      "rule": "R20",
+      "owner": "H3",
+      "state": "FED/FOUT/ROW/SHAPE_INDEPENDENT",
+      "layout": "DURABLE_MAP",
+      "anchor": {
+        "fType": "ROW",
+        "partitions": [
+          {
+            "worker": "localhost:5234/A1",
+            "begin": [
+              0,
+              0
+            ],
+            "end": [
+              4,
+              2
+            ]
+          },
+          {
+            "worker": "localhost:5235/A2",
+            "begin": [
+              4,
+              0
+            ],
+            "end": [
+              8,
+              2
+            ]
+          }
+        ]
+      },
+      "executionFType": "ROW",
+      "derivedOutputMaterialization": false,
+      "supportCount": 2,
+      "uniqueBindingsPerInput": {
+        "0": 1,
+        "1": 2
+      },
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [
+            {
+              "input": 0,
+              "source": "S14",
+              "kind": "DIRECT",
+              "action": null
+            },
+            {
+              "input": 1,
+              "source": "S18",
+              "kind": "DIRECT",
+              "action": null
+            }
+          ],
+          "proofIds": [
+            "P3"
+          ],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        },
+        {
+          "id": "C2",
+          "bindings": [
+            {
+              "input": 0,
+              "source": "S14",
+              "kind": "DIRECT",
+              "action": null
+            },
+            {
+              "input": 1,
+              "source": "S18",
+              "kind": "RELOCATION",
+              "action": "A1"
+            }
+          ],
+          "proofIds": [
+            "P4"
+          ],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S21",
+      "rule": "R20",
+      "owner": "H3",
+      "state": "FED/FOUT/ROW/SHAPE_INDEPENDENT",
+      "layout": "DURABLE_MAP",
+      "anchor": {
+        "fType": "ROW",
+        "partitions": [
+          {
+            "worker": "localhost:5234/B1",
+            "begin": [
+              0,
+              0
+            ],
+            "end": [
+              4,
+              2
+            ]
+          },
+          {
+            "worker": "localhost:5235/B2",
+            "begin": [
+              4,
+              0
+            ],
+            "end": [
+              8,
+              2
+            ]
+          }
+        ]
+      },
+      "executionFType": "ROW",
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {
+        "0": 1,
+        "1": 1
+      },
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [
+            {
+              "input": 0,
+              "source": "S14",
+              "kind": "DIRECT",
+              "action": null
+            },
+            {
+              "input": 1,
+              "source": "S18",
+              "kind": "DIRECT",
+              "action": null
+            }
+          ],
+          "proofIds": [
+            "P5"
+          ],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S22",
+      "rule": "R21",
+      "owner": "H2",
+      "state": "FED/FOUT/ROW/SHAPE_INDEPENDENT",
+      "layout": "DURABLE_MAP",
+      "anchor": {
+        "fType": "ROW",
+        "partitions": [
+          {
+            "worker": "localhost:5234/A1",
+            "begin": [
+              0,
+              0
+            ],
+            "end": [
+              4,
+              2
+            ]
+          },
+          {
+            "worker": "localhost:5235/A2",
+            "begin": [
+              4,
+              0
+            ],
+            "end": [
+              8,
+              2
+            ]
+          }
+        ]
+      },
+      "executionFType": "ROW",
+      "derivedOutputMaterialization": false,
+      "supportCount": 3,
+      "uniqueBindingsPerInput": {
+        "0": 3
+      },
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [
+            {
+              "input": 0,
+              "source": "S20",
+              "kind": "DIRECT",
+              "action": null
+            }
+          ],
+          "proofIds": [
+            "P6"
+          ],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        },
+        {
+          "id": "C2",
+          "bindings": [
+            {
+              "input": 0,
+              "source": "S21",
+              "kind": "DIRECT",
+              "action": null
+            }
+          ],
+          "proofIds": [
+            "P7"
+          ],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        },
+        {
+          "id": "C3",
+          "bindings": [
+            {
+              "input": 0,
+              "source": "S21",
+              "kind": "RELOCATION",
+              "action": "A2"
+            }
+          ],
+          "proofIds": [
+            "P8"
+          ],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S23",
+      "rule": "R21",
+      "owner": "H2",
+      "state": "FED/FOUT/ROW/SHAPE_INDEPENDENT",
+      "layout": "DURABLE_MAP",
+      "anchor": {
+        "fType": "ROW",
+        "partitions": [
+          {
+            "worker": "localhost:5234/B1",
+            "begin": [
+              0,
+              0
+            ],
+            "end": [
+              4,
+              2
+            ]
+          },
+          {
+            "worker": "localhost:5235/B2",
+            "begin": [
+              4,
+              0
+            ],
+            "end": [
+              8,
+              2
+            ]
+          }
+        ]
+      },
+      "executionFType": "ROW",
+      "derivedOutputMaterialization": false,
+      "supportCount": 2,
+      "uniqueBindingsPerInput": {
+        "0": 2
+      },
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [
+            {
+              "input": 0,
+              "source": "S20",
+              "kind": "DIRECT",
+              "action": null
+            }
+          ],
+          "proofIds": [
+            "P9"
+          ],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        },
+        {
+          "id": "C2",
+          "bindings": [
+            {
+              "input": 0,
+              "source": "S21",
+              "kind": "DIRECT",
+              "action": null
+            }
+          ],
+          "proofIds": [
+            "P10"
+          ],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S24",
+      "rule": "R22",
+      "owner": "H1",
+      "state": "FED/LOUT/ROW/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": "ROW",
+      "derivedOutputMaterialization": false,
+      "supportCount": 4,
+      "uniqueBindingsPerInput": {
+        "0": 3
+      },
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [
+            {
+              "input": 0,
+              "source": "S23",
+              "kind": "RELOCATION",
+              "action": "A3"
+            }
+          ],
+          "proofIds": [
+            "P11"
+          ],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        },
+        {
+          "id": "C2",
+          "bindings": [
+            {
+              "input": 0,
+              "source": "S22",
+              "kind": "DIRECT",
+              "action": null
+            }
+          ],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        },
+        {
+          "id": "C3",
+          "bindings": [
+            {
+              "input": 0,
+              "source": "S23",
+              "kind": "DIRECT",
+              "action": null
+            }
+          ],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        },
+        {
+          "id": "C4",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    },
+    {
+      "id": "S25",
+      "rule": "R23",
+      "owner": "H23",
+      "state": "CP/LOUT/-/SHAPE_INDEPENDENT",
+      "layout": "LOCAL",
+      "anchor": null,
+      "executionFType": null,
+      "derivedOutputMaterialization": false,
+      "supportCount": 1,
+      "uniqueBindingsPerInput": {},
+      "supports": [
+        {
+          "id": "C1",
+          "bindings": [],
+          "proofIds": [],
+          "nativePool": null,
+          "nativeLayoutExact": true
+        }
+      ]
+    }
+  ],
+  "inputBindingRelocations": [
+    {
+      "id": "A1",
+      "sourceVariable": "B",
+      "target": "FED/FOUT/ROW/SHAPE_INDEPENDENT",
+      "anchor": {
+        "fType": "ROW",
+        "partitions": [
+          {
+            "worker": "localhost:5234/A1",
+            "begin": [
+              0,
+              0
+            ],
+            "end": [
+              4,
+              2
+            ]
+          },
+          {
+            "worker": "localhost:5235/A2",
+            "begin": [
+              4,
+              0
+            ],
+            "end": [
+              8,
+              2
+            ]
+          }
+        ]
+      },
+      "consumers": [
+        "H3"
+      ]
+    },
+    {
+      "id": "A2",
+      "sourceVariable": "value-19",
+      "target": "FED/FOUT/ROW/SHAPE_INDEPENDENT",
+      "anchor": {
+        "fType": "ROW",
+        "partitions": [
+          {
+            "worker": "localhost:5234/A1",
+            "begin": [
+              0,
+              0
+            ],
+            "end": [
+              4,
+              2
+            ]
+          },
+          {
+            "worker": "localhost:5235/A2",
+            "begin": [
+              4,
+              0
+            ],
+            "end": [
+              8,
+              2
+            ]
+          }
+        ]
+      },
+      "consumers": [
+        "H2"
+      ]
+    },
+    {
+      "id": "A3",
+      "sourceVariable": "value-20",
+      "target": "FED/LOUT/ROW/SHAPE_INDEPENDENT",
+      "anchor": {
+        "fType": "ROW",
+        "partitions": [
+          {
+            "worker": "localhost:5234/A1",
+            "begin": [
+              0,
+              0
+            ],
+            "end": [
+              4,
+              2
+            ]
+          },
+          {
+            "worker": "localhost:5235/A2",
+            "begin": [
+              4,
+              0
+            ],
+            "end": [
+              8,
+              2
+            ]
+          }
+        ]
+      },
+      "consumers": [
+        "H1"
+      ]
+    }
+  ],
+  "proofs": [
+    {
+      "id": "P1",
+      "kind": "DURABLE_ANCHOR",
+      "owner": "H4",
+      "signature": "14:DURABLE_ANCHOR|295:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|38:root-0/input-0/input-0/input-0/input-0|45:null:2:0:org.apache.sysds.hops.DataOp:Fed A:A|110:10:fed-init:A|3:ROW|87:40:17:localhost:5234/A1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/A2|7:1:4,1:0|7:1:8,1:2"
+    },
+    {
+      "id": "P2",
+      "kind": "DURABLE_ANCHOR",
+      "owner": "H5",
+      "signature": "14:DURABLE_ANCHOR|295:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|38:root-0/input-0/input-0/input-0/input-1|45:null:4:0:org.apache.sysds.hops.DataOp:Fed B:B|110:10:fed-init:B|3:ROW|87:40:17:localhost:5234/B1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/B2|7:1:4,1:0|7:1:8,1:2"
+    },
+    {
+      "id": "P3",
+      "kind": "NATIVE_CONTINUITY",
+      "owner": "H3",
+      "signature": "17:NATIVE_CONTINUITY|289:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|30:root-0/input-0/input-0/input-0|47:null:2:0:org.apache.sysds.hops.NaryOp:m(mult):A|1700:10:fed-init:A|3:ROW|87:40:17:localhost:5234/A1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/A2|7:1:4,1:0|7:1:8,1:2|outputPool\u003d309:native-proof-output:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|30:root-0/input-0/input-0/input-0|47:null:2:0:org.apache.sysds.hops.NaryOp:m(mult):A|3:ROW|81:37:14:localhost:5234|7:1:0,1:0|7:1:4,1:1,37:14:localhost:5235|7:1:4,1:0|7:1:8,1:1|partitionRanges\u003dexact|bindings\u003d[1:0|548:351:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|38:root-0/input-0/input-0/input-0/input-0|45:null:2:0:org.apache.sysds.hops.DataOp:Fed A:A|inputs\u003d[ABSENT_LOCAL:-, ABSENT_LOCAL:-, ABSENT_LOCAL:-]|188:51:FED/FOUT/ROW/SHAPE_INDEPENDENT|derivedFedFout\u003dfalse|11:DURABLE_MAP|110:10:fed-init:A|3:ROW|87:40:17:localhost:5234/A1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/A2|7:1:4,1:0|7:1:8,1:2|1:-|6:DIRECT|1:-, 1:1|548:351:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|38:root-0/input-0/input-0/input-0/input-1|45:null:4:0:org.apache.sysds.hops.DataOp:Fed B:B|inputs\u003d[ABSENT_LOCAL:-, ABSENT_LOCAL:-, ABSENT_LOCAL:-]|188:51:FED/FOUT/ROW/SHAPE_INDEPENDENT|derivedFedFout\u003dfalse|11:DURABLE_MAP|110:10:fed-init:B|3:ROW|87:40:17:localhost:5234/B1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/B2|7:1:4,1:0|7:1:8,1:2|1:-|6:DIRECT|1:-]"
+    },
+    {
+      "id": "P4",
+      "kind": "NATIVE_CONTINUITY",
+      "owner": "H3",
+      "signature": "17:NATIVE_CONTINUITY|289:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|30:root-0/input-0/input-0/input-0|47:null:2:0:org.apache.sysds.hops.NaryOp:m(mult):A|892:relocation:314:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|1:B|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|1:0|8:ORDINARY|113:34:input-0:value-16#0@main/0:ORDINARY,34:input-1:value-11#0@main/0:ORDINARY,34:input-2:value-12#0@main/0:ORDINARY|30:FED/FOUT/ROW/SHAPE_INDEPENDENT|3:ROW|110:10:fed-init:A|3:ROW|87:40:17:localhost:5234/A1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/A2|7:1:4,1:0|7:1:8,1:2|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|293:289:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|30:root-0/input-0/input-0/input-0|47:null:2:0:org.apache.sysds.hops.NaryOp:m(mult):A"
+    },
+    {
+      "id": "P5",
+      "kind": "NATIVE_CONTINUITY",
+      "owner": "H3",
+      "signature": "17:NATIVE_CONTINUITY|289:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|30:root-0/input-0/input-0/input-0|47:null:2:0:org.apache.sysds.hops.NaryOp:m(mult):A|1700:10:fed-init:B|3:ROW|87:40:17:localhost:5234/B1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/B2|7:1:4,1:0|7:1:8,1:2|outputPool\u003d309:native-proof-output:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|30:root-0/input-0/input-0/input-0|47:null:2:0:org.apache.sysds.hops.NaryOp:m(mult):A|3:ROW|81:37:14:localhost:5234|7:1:0,1:0|7:1:4,1:1,37:14:localhost:5235|7:1:4,1:0|7:1:8,1:1|partitionRanges\u003dexact|bindings\u003d[1:0|548:351:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|38:root-0/input-0/input-0/input-0/input-0|45:null:2:0:org.apache.sysds.hops.DataOp:Fed A:A|inputs\u003d[ABSENT_LOCAL:-, ABSENT_LOCAL:-, ABSENT_LOCAL:-]|188:51:FED/FOUT/ROW/SHAPE_INDEPENDENT|derivedFedFout\u003dfalse|11:DURABLE_MAP|110:10:fed-init:A|3:ROW|87:40:17:localhost:5234/A1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/A2|7:1:4,1:0|7:1:8,1:2|1:-|6:DIRECT|1:-, 1:1|548:351:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|38:root-0/input-0/input-0/input-0/input-1|45:null:4:0:org.apache.sysds.hops.DataOp:Fed B:B|inputs\u003d[ABSENT_LOCAL:-, ABSENT_LOCAL:-, ABSENT_LOCAL:-]|188:51:FED/FOUT/ROW/SHAPE_INDEPENDENT|derivedFedFout\u003dfalse|11:DURABLE_MAP|110:10:fed-init:B|3:ROW|87:40:17:localhost:5234/B1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/B2|7:1:4,1:0|7:1:8,1:2|1:-|6:DIRECT|1:-]"
+    },
+    {
+      "id": "P6",
+      "kind": "NATIVE_CONTINUITY",
+      "owner": "H2",
+      "signature": "17:NATIVE_CONTINUITY|281:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|22:root-0/input-0/input-0|47:null:9:0:org.apache.sysds.hops.UnaryOp:u(abs):D|1419:10:fed-init:A|3:ROW|87:40:17:localhost:5234/A1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/A2|7:1:4,1:0|7:1:8,1:2|outputPool\u003d301:native-proof-output:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|22:root-0/input-0/input-0|47:null:9:0:org.apache.sysds.hops.UnaryOp:u(abs):D|3:ROW|81:37:14:localhost:5234|7:1:0,1:0|7:1:4,1:1,37:14:localhost:5235|7:1:4,1:0|7:1:8,1:1|partitionRanges\u003dexact|bindings\u003d[1:0|846:355:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|30:root-0/input-0/input-0/input-0|47:null:2:0:org.apache.sysds.hops.NaryOp:m(mult):A|inputs\u003d[PRESENT:ROW, PRESENT:ROW, ABSENT_LOCAL:-, ABSENT_LOCAL:-]|482:51:FED/FOUT/ROW/SHAPE_INDEPENDENT|derivedFedFout\u003dfalse|11:DURABLE_MAP|404:303:native-output:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|30:root-0/input-0/input-0/input-0|47:null:2:0:org.apache.sysds.hops.NaryOp:m(mult):A|3:ROW|87:40:17:localhost:5234/A1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/A2|7:1:4,1:0|7:1:8,1:2|1:-|6:DIRECT|1:-]"
+    },
+    {
+      "id": "P7",
+      "kind": "NATIVE_CONTINUITY",
+      "owner": "H2",
+      "signature": "17:NATIVE_CONTINUITY|281:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|22:root-0/input-0/input-0|47:null:9:0:org.apache.sysds.hops.UnaryOp:u(abs):D|1419:10:fed-init:A|3:ROW|87:40:17:localhost:5234/A1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/A2|7:1:4,1:0|7:1:8,1:2|outputPool\u003d301:native-proof-output:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|22:root-0/input-0/input-0|47:null:9:0:org.apache.sysds.hops.UnaryOp:u(abs):D|3:ROW|81:37:14:localhost:5234|7:1:0,1:0|7:1:4,1:1,37:14:localhost:5235|7:1:4,1:0|7:1:8,1:1|partitionRanges\u003dexact|bindings\u003d[1:0|846:355:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|30:root-0/input-0/input-0/input-0|47:null:2:0:org.apache.sysds.hops.NaryOp:m(mult):A|inputs\u003d[PRESENT:ROW, PRESENT:ROW, ABSENT_LOCAL:-, ABSENT_LOCAL:-]|482:51:FED/FOUT/ROW/SHAPE_INDEPENDENT|derivedFedFout\u003dfalse|11:DURABLE_MAP|404:303:native-output:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|30:root-0/input-0/input-0/input-0|47:null:2:0:org.apache.sysds.hops.NaryOp:m(mult):A|3:ROW|87:40:17:localhost:5234/B1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/B2|7:1:4,1:0|7:1:8,1:2|1:-|6:DIRECT|1:-]"
+    },
+    {
+      "id": "P8",
+      "kind": "NATIVE_CONTINUITY",
+      "owner": "H2",
+      "signature": "17:NATIVE_CONTINUITY|281:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|22:root-0/input-0/input-0|47:null:9:0:org.apache.sysds.hops.UnaryOp:u(abs):D|914:relocation:344:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|8:value-19|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|1:0|8:ORDINARY|136:27:input-0:A#0@main/0:ORDINARY,27:input-1:B#0@main/0:ORDINARY,34:input-2:value-18#0@main/0:ORDINARY,33:input-3:value-6#0@main/0:ORDINARY|30:FED/FOUT/ROW/SHAPE_INDEPENDENT|3:ROW|110:10:fed-init:A|3:ROW|87:40:17:localhost:5234/A1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/A2|7:1:4,1:0|7:1:8,1:2|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|285:281:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|22:root-0/input-0/input-0|47:null:9:0:org.apache.sysds.hops.UnaryOp:u(abs):D"
+    },
+    {
+      "id": "P9",
+      "kind": "NATIVE_CONTINUITY",
+      "owner": "H2",
+      "signature": "17:NATIVE_CONTINUITY|281:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|22:root-0/input-0/input-0|47:null:9:0:org.apache.sysds.hops.UnaryOp:u(abs):D|1419:10:fed-init:B|3:ROW|87:40:17:localhost:5234/B1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/B2|7:1:4,1:0|7:1:8,1:2|outputPool\u003d301:native-proof-output:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|22:root-0/input-0/input-0|47:null:9:0:org.apache.sysds.hops.UnaryOp:u(abs):D|3:ROW|81:37:14:localhost:5234|7:1:0,1:0|7:1:4,1:1,37:14:localhost:5235|7:1:4,1:0|7:1:8,1:1|partitionRanges\u003dexact|bindings\u003d[1:0|846:355:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|30:root-0/input-0/input-0/input-0|47:null:2:0:org.apache.sysds.hops.NaryOp:m(mult):A|inputs\u003d[PRESENT:ROW, PRESENT:ROW, ABSENT_LOCAL:-, ABSENT_LOCAL:-]|482:51:FED/FOUT/ROW/SHAPE_INDEPENDENT|derivedFedFout\u003dfalse|11:DURABLE_MAP|404:303:native-output:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|30:root-0/input-0/input-0/input-0|47:null:2:0:org.apache.sysds.hops.NaryOp:m(mult):A|3:ROW|87:40:17:localhost:5234/A1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/A2|7:1:4,1:0|7:1:8,1:2|1:-|6:DIRECT|1:-]"
+    },
+    {
+      "id": "P10",
+      "kind": "NATIVE_CONTINUITY",
+      "owner": "H2",
+      "signature": "17:NATIVE_CONTINUITY|281:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|22:root-0/input-0/input-0|47:null:9:0:org.apache.sysds.hops.UnaryOp:u(abs):D|1419:10:fed-init:B|3:ROW|87:40:17:localhost:5234/B1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/B2|7:1:4,1:0|7:1:8,1:2|outputPool\u003d301:native-proof-output:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|22:root-0/input-0/input-0|47:null:9:0:org.apache.sysds.hops.UnaryOp:u(abs):D|3:ROW|81:37:14:localhost:5234|7:1:0,1:0|7:1:4,1:1,37:14:localhost:5235|7:1:4,1:0|7:1:8,1:1|partitionRanges\u003dexact|bindings\u003d[1:0|846:355:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|30:root-0/input-0/input-0/input-0|47:null:2:0:org.apache.sysds.hops.NaryOp:m(mult):A|inputs\u003d[PRESENT:ROW, PRESENT:ROW, ABSENT_LOCAL:-, ABSENT_LOCAL:-]|482:51:FED/FOUT/ROW/SHAPE_INDEPENDENT|derivedFedFout\u003dfalse|11:DURABLE_MAP|404:303:native-output:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|30:root-0/input-0/input-0/input-0|47:null:2:0:org.apache.sysds.hops.NaryOp:m(mult):A|3:ROW|87:40:17:localhost:5234/B1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/B2|7:1:4,1:0|7:1:8,1:2|1:-|6:DIRECT|1:-]"
+    },
+    {
+      "id": "P11",
+      "kind": "NATIVE_CONTINUITY",
+      "owner": "H1",
+      "signature": "17:NATIVE_CONTINUITY|290:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|14:root-0/input-0|64:null:10:6:org.apache.sysds.hops.AggUnaryOp:ua(+RC):compiler-temp|823:relocation:244:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|8:value-20|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|1:0|8:ORDINARY|37:34:input-0:value-19#0@main/0:ORDINARY|30:FED/LOUT/ROW/SHAPE_INDEPENDENT|3:ROW|110:10:fed-init:A|3:ROW|87:40:17:localhost:5234/A1|7:1:0,1:0|7:1:4,1:2,40:17:localhost:5235/A2|7:1:4,1:0|7:1:8,1:2|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|294:290:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|6:main/0|8:compiled|105:64:4bc8cecde77e99a5ff33efea4c163f11a9698b347843aba2dbc1450abb1c0bc2|4:main|8:6:main/0|6:main/0|8:compiled|14:root-0/input-0|64:null:10:6:org.apache.sysds.hops.AggUnaryOp:ua(+RC):compiler-temp"
+    }
+  ],
+  "fixedPointPasses": [
+    {
+      "phase": "cfg-refinement",
+      "pass": 0,
+      "stable": true,
+      "nodes": 23,
+      "candidates": 0,
+      "actions": 0
+    },
+    {
+      "phase": "function-boundary",
+      "pass": 0,
+      "stable": false,
+      "nodes": 23,
+      "candidates": 23,
+      "actions": 0
+    },
+    {
+      "phase": "function-boundary",
+      "pass": 1,
+      "stable": true,
+      "nodes": 23,
+      "candidates": 23,
+      "actions": 0
+    },
+    {
+      "phase": "semantic",
+      "pass": 0,
+      "stable": false,
+      "nodes": 23,
+      "candidates": 23,
+      "actions": 4
+    },
+    {
+      "phase": "publication",
+      "pass": 0,
+      "stable": false,
+      "nodes": 23,
+      "candidates": 23,
+      "actions": 4
+    },
+    {
+      "phase": "semantic",
+      "pass": 1,
+      "stable": false,
+      "nodes": 23,
+      "candidates": 23,
+      "actions": 4
+    },
+    {
+      "phase": "publication",
+      "pass": 1,
+      "stable": false,
+      "nodes": 23,
+      "candidates": 23,
+      "actions": 4
+    },
+    {
+      "phase": "semantic",
+      "pass": 2,
+      "stable": true,
+      "nodes": 23,
+      "candidates": 23,
+      "actions": 4
+    },
+    {
+      "phase": "publication",
+      "pass": 2,
+      "stable": true,
+      "nodes": 23,
+      "candidates": 23,
+      "actions": 4
+    }
+  ],
+  "cumulativeWorkCounters": {
+    "fixedPointPasses": 9,
+    "cfgRefinementPasses": 1,
+    "functionBoundaryPasses": 2,
+    "semanticPasses": 3,
+    "publicationPasses": 3,
+    "directClosurePasses": 120,
+    "directClosureStablePasses": 116,
+    "directClosureFullPasses": 15,
+    "proofQueries": 36,
+    "exactContextUniqueQueries": 36,
+    "exactContextRepeatedQueries": 0,
+    "exactContextOverflowQueries": 0,
+    "proofGraphsBuilt": 36,
+    "proofStatesBuilt": 82,
+    "proofAlternativesBuilt": 110,
+    "proofDependencyEdgesBuilt": 56,
+    "acyclicProofGraphs": 36,
+    "cyclicProofGraphs": 0,
+    "acyclicAlternativesRemoved": 0,
+    "proofRowsExamined": 148,
+    "deadStatesQueued": 0,
+    "dependencyNotifications": 0,
+    "alternativesRemoved": 0,
+    "ownerCompactionElementsScanned": 110,
+    "sccInvocations": 0,
+    "sccStatesScanned": 0,
+    "sccAlternativesScanned": 0,
+    "sccEdgesScanned": 0,
+    "sccMaxRefinementDepth": 0,
+    "supportPrefixes": 64,
+    "supportConflictPrefixes": 0,
+    "contradictoryClausePins": 0,
+    "supportLeaves": 38,
+    "uniqueProofs": 38,
+    "duplicateProofs": 0,
+    "supportProductDescriptorsExpanded": 28,
+    "supportProductDescriptorsReused": 0,
+    "relocationPrefixes": 12,
+    "relocationLeaves": 8,
+    "relocationPeakDepth": 2,
+    "relocationPeakPendingAssignments": 1,
+    "inputPrefixes": 60,
+    "inputLeaves": 27,
+    "inputPeakDepth": 4,
+    "templateLookups": 58,
+    "templateLookupCandidatesExamined": 58,
+    "incrementalPasses": 120,
+    "incrementalFactsRecomputed": 49,
+    "incrementalFactsReused": 2411,
+    "memoHits": 38,
+    "memoMisses": 30,
+    "memoEvictions": 0,
+    "memoEntries": 4,
+    "memoRetainedProofs": 6,
+    "memoRetainedEstimatedBytes": 20136,
+    "supportMemoHits": 24,
+    "supportMemoMisses": 36,
+    "supportMemoEvictions": 0,
+    "supportMemoEntries": 8,
+    "supportMemoRetainedTemplates": 8,
+    "supportMemoRetainedEstimatedBytes": 960,
+    "supportMemoRevisionEntriesReused": 152,
+    "factorizedClauses": 32,
+    "factorizedProofObjectsReused": 0,
+    "factorizedBindingObjectsReused": 5,
+    "factorizedProofListsReused": 20,
+    "factorizedBindingListsReused": 23,
+    "signatureIdentityCacheHits": 10418,
+    "signatureStructuralCacheHits": 597,
+    "signatureCacheMisses": 184,
+    "signatureSerializations": 160,
+    "signatureSerializedChars": 75209,
+    "canonicalSortCalls": 50,
+    "canonicalSortElements": 110,
+    "canonicalOrderingKeys": 50,
+    "canonicalComparisons": 88,
+    "realizationMergeInputs": 189,
+    "realizationMergeUniqueClauses": 154,
+    "realizationMergeDuplicateClauses": 62,
+    "realizationMergeReusedRealizations": 66,
+    "topologyExpansionBuilds": 18,
+    "topologyExpansionHits": 10,
+    "topologyRowsBuilt": 18,
+    "topologyRowsCollapsed": 2,
+    "topologyOverlayEvaluations": 64,
+    "topologyOverlayRowsCollapsed": 0,
+    "topologyRevisionEntriesReused": 76,
+    "structuralHandleLookups": 474,
+    "structuralHandlesCreated": 6,
+    "structuralHandleIdentityHits": 440,
+    "structuralHandleStructuralHits": 28,
+    "receiptRelationSlots": 32,
+    "candidateReceiptsCreated": 0,
+    "receiptRankKeyChars": 0,
+    "structuralArenaOverflows": 0,
+    "topologyCacheEvictions": 0,
+    "topologyCacheBypasses": 0,
+    "topologyCacheEntries": 4,
+    "topologyCacheRetainedRows": 4,
+    "contextObserverHashCollisions": 0,
+    "candidateOracleCalls": 27,
+    "preparedProfileQueries": 174,
+    "preparedProfileHits": 4,
+    "privacyEmissionsSuppressed": 10,
+    "privacyEmissionAllocationsAvoided": 10,
+    "privacyMaskedDomains": 4,
+    "privacyAvoidedTuples": 4,
+    "privacyTransferVisits": 23,
+    "relocationConflictPrefixes": 0,
+    "supportDeletionEpochs": 6,
+    "supportIndexedRealizations": 150,
+    "supportIndexedClauses": 192,
+    "supportReverseIncidences": 84,
+    "supportQueueVisits": 0
+  }
+}

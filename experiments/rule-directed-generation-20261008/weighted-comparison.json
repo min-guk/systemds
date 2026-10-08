@@ -1,0 +1,80 @@
+{
+  "after": "/grid/3/cofee-lm-sweep-mchoi-20260914/rule-directed-generation-20261008/verification/weighted-after-3runs.json",
+  "baseline": "/grid/3/cofee-lm-sweep-mchoi-20260914/rule-directed-generation-20261008/verification/weighted-baseline-3runs.json",
+  "correctness": {
+    "afterStable": {
+      "allPassed": true,
+      "analysisFingerprint": true,
+      "costFingerprint": true,
+      "objectiveBits": true,
+      "outputFingerprint": true,
+      "planFingerprint": true,
+      "weightedEvidence": true
+    },
+    "analysisFingerprintPreserved": true,
+    "baselineStable": {
+      "allPassed": true,
+      "analysisFingerprint": true,
+      "costFingerprint": true,
+      "objectiveBits": true,
+      "outputFingerprint": true,
+      "planFingerprint": true,
+      "weightedEvidence": true
+    },
+    "costFingerprintPreserved": true,
+    "objectiveBitsPreserved": true,
+    "outputFingerprintPreserved": true,
+    "planFingerprintPreserved": true,
+    "weightedEvidencePreserved": true
+  },
+  "fixture": "weighted_quaternary_with_private_aggregate",
+  "medianDeltas": {
+    "analysisSeconds": {
+      "afterMedian": 0.926258115,
+      "baselineMedian": 0.922606831,
+      "delta": 0.0036512840000000324,
+      "percent": 0.3957573125751068
+    },
+    "compileSeconds": {
+      "afterMedian": 1.888799,
+      "baselineMedian": 2.225791,
+      "delta": -0.3369920000000002,
+      "percent": -15.140325394432818
+    },
+    "containerMemoryBytes": {
+      "afterMedian": 821139865,
+      "baselineMedian": 790836019,
+      "delta": 30303846,
+      "percent": 3.831874784651146
+    },
+    "jfrHeapBytes": {
+      "afterMedian": 69934728,
+      "baselineMedian": 82662912,
+      "delta": -12728184,
+      "percent": -15.397696127617666
+    },
+    "planningSeconds": {
+      "afterMedian": 1.221275566,
+      "baselineMedian": 1.613484956,
+      "delta": -0.3922093899999999,
+      "percent": -24.30821487002448
+    }
+  },
+  "schema": "fedplanner-rule-directed-weighted-comparison-v1",
+  "structural": {
+    "after": {
+      "alternatives": 58,
+      "auditRows": 53,
+      "decisions": 53,
+      "prePrivacyStates": 55,
+      "publishedStates": 54
+    },
+    "baseline": {
+      "alternatives": 58,
+      "auditRows": 53,
+      "decisions": 53,
+      "prePrivacyStates": 55,
+      "publishedStates": 54
+    }
+  }
+}

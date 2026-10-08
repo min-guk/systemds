@@ -202,6 +202,10 @@ final class PlacementRelationClosure {
 		directNativePublicationMemo.clear();
 		logicalTransientReplayFacts.clear();
 		relocationProducts = Map.of();
+		indexedCurrentRelocationProducts = Map.of();
+		currentRelocationProductsByScope = Map.of();
+		indexedPreviousRelocationProducts = Map.of();
+		previousRelocationProductsByScope = Map.of();
 		nodes = null;
 		values = null;
 		keysByBlock = null;
@@ -276,6 +280,14 @@ final class PlacementRelationClosure {
 	private final Map<CandidateRuleKey,LogicalTransientReplayFactMemo> logicalTransientReplayFacts =
 		new java.util.HashMap<>();
 	private Map<RelocationProductKey,List<CandidateEmissionRealization>> relocationProducts = Map.of();
+	private Map<RelocationProductKey,List<CandidateEmissionRealization>>
+		indexedCurrentRelocationProducts = Map.of();
+	private Map<RelocationProductScopeKey,List<PriorRelocationProduct>>
+		currentRelocationProductsByScope = Map.of();
+	private Map<RelocationProductKey,List<CandidateEmissionRealization>>
+		indexedPreviousRelocationProducts = Map.of();
+	private Map<RelocationProductScopeKey,List<PriorRelocationProduct>>
+		previousRelocationProductsByScope = Map.of();
 	private long relocationProductHits;
 	private long relocationProductMisses;
 	private long relocationProductAvoidedLeaves;
@@ -420,6 +432,12 @@ final class PlacementRelationClosure {
 	private List<LogicalTransientInputFact> transientBindings;
 	private List<NeutralPlacementGraph.RelocationAction> relocations;
 
+	private SearchSpaceMetrics.DuplicateMergeOriginScope duplicateMergeOrigin(
+		long revision, String phase, String route) {
+		return complexityMetrics == null ? null
+			: complexityMetrics.beginDuplicateMergeOrigin(revision, phase, route);
+	}
+
 
 	// Read-only compiler facts used by each transfer.
 	private PlacementProgramFacts programFacts;
@@ -470,15 +488,27 @@ final class PlacementRelationClosure {
 		compiledShapeFactsByHop = programFacts.compiledShapeFactsByHop();
 		preliminaryAbstractFacts = programFacts.preliminaryAbstractFacts();
 		singlePartitions = programFacts.initialSinglePartitions();
-		seedLocalAlternatives();
-		closeBoundaryStructure(program);
-		closeFunctionBoundaryRelations();
+		try(SearchSpaceMetrics.DuplicateMergeOriginScope ignored = duplicateMergeOrigin(
+			-4, "initialization", "seed-local-alternatives")) {
+			seedLocalAlternatives();
+		}
+		try(SearchSpaceMetrics.DuplicateMergeOriginScope ignored = duplicateMergeOrigin(
+			-3, "initialization", "boundary-structure")) {
+			closeBoundaryStructure(program);
+		}
+		try(SearchSpaceMetrics.DuplicateMergeOriginScope ignored = duplicateMergeOrigin(
+			-2, "initialization", "function-boundary")) {
+			closeFunctionBoundaryRelations();
+		}
 		// Early CFG replay runs before synthetic call-site boundary nodes exist.
 		// Re-project logical tuples once those canonical FUNCTION_INPUT/OUTPUT keys
 		// have been appended; a cached pre-boundary miss is not a physical result.
 		jointValueMapRelations = null;
 		valueMapDependencyReadOrdinals = null;
-		closePrivacyRelations();
+		try(SearchSpaceMetrics.DuplicateMergeOriginScope ignored = duplicateMergeOrigin(
+			-1, "initialization", "privacy-relations")) {
+			closePrivacyRelations();
+		}
 		closePlacementAndFeasibility();
 		return publish(program, fcallSizes);
 	}
@@ -1038,20 +1068,26 @@ final class PlacementRelationClosure {
 			if(exportDiagnostics != null)
 				exportDiagnostics.phase(pass, "function-boundaries", nodes, ruleFacts);
 			if(!physicalDirty.isEmpty()) {
-				ClosureUpdate physical = closePhysicalDependencies(occurrences,
-					new ClosureUpdate(nodes, ruleKeys, ruleFacts,
-						transientBindings, List.copyOf(physicalDirty)),
-					shapeFactsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
-					cfg, compiledInputEdges, origins, compiledShapeFactsByHop);
-				ClosureUpdate materializationReplay = closeWorkerPoolMaterializationDependencies(occurrences,
-					physical.nodes(), physical.domainKeys(), physical.facts(), physical.logicalInputs(),
-					compiledInputEdges, constraints, origins, shapeFactsByHop, compiledShapeFactsByHop,
-					preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
-				applyUpdate(materializationReplay);
+				try(SearchSpaceMetrics.DuplicateMergeOriginScope ignored = duplicateMergeOrigin(
+					pass, "semantic", "physical-materialization")) {
+					ClosureUpdate physical = closePhysicalDependencies(occurrences,
+						new ClosureUpdate(nodes, ruleKeys, ruleFacts,
+							transientBindings, List.copyOf(physicalDirty)),
+						shapeFactsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
+						cfg, compiledInputEdges, origins, compiledShapeFactsByHop);
+					ClosureUpdate materializationReplay = closeWorkerPoolMaterializationDependencies(occurrences,
+						physical.nodes(), physical.domainKeys(), physical.facts(), physical.logicalInputs(),
+						compiledInputEdges, constraints, origins, shapeFactsByHop, compiledShapeFactsByHop,
+						preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock, cfg);
+					applyUpdate(materializationReplay);
+				}
 			}
 			if(exportDiagnostics != null)
 				exportDiagnostics.phase(pass, "physical-materialization", nodes, ruleFacts);
-			closeExactDirectValueMapDependencies(directFrontier);
+			try(SearchSpaceMetrics.DuplicateMergeOriginScope ignored = duplicateMergeOrigin(
+				pass, "semantic", "direct-pre-cfg")) {
+				closeExactDirectValueMapDependencies(directFrontier);
+			}
 			transientBindings = bindExactLogicalTransientSourceStates(transientBindings, ruleFacts);
 			if(exportDiagnostics != null) {
 				exportDiagnostics.logicalDelta(pass, "pre-cfg", diagnosticLogical, transientBindings);
@@ -1060,20 +1096,29 @@ final class PlacementRelationClosure {
 			relocations = canonicalRelocationActions(relocations(compiledInputEdges, ruleFacts,
 				nodes, transientBindings, constraints, origins, scopes, shapeFactsByHop, compiledShapeFactsByHop,
 				privacyFacts.asMap()), relocations);
-			ruleFacts = bindRelocationCandidateRealizations(ruleFacts, nodes,
-				compiledInputEdges, relocations, origins, shapeFactsByHop);
+			try(SearchSpaceMetrics.DuplicateMergeOriginScope ignored = duplicateMergeOrigin(
+				pass, "semantic", "relocation-pre-cfg")) {
+				ruleFacts = bindRelocationCandidateRealizations(ruleFacts, nodes,
+					compiledInputEdges, relocations, origins, shapeFactsByHop);
+			}
 			if(exportDiagnostics != null)
 				exportDiagnostics.phase(pass, "exact-relocation-bind", nodes, ruleFacts);
 
-			ClosureUpdate grounded = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
-				shapeFactsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
-				ruleKeys, ruleFacts, transientBindings, cfgReplayBaseline,
-				origins, constraints, compiledInputEdges, compiledShapeFactsByHop, relocations, loopSeedLedger);
-			applyUpdate(grounded);
+			try(SearchSpaceMetrics.DuplicateMergeOriginScope ignored = duplicateMergeOrigin(
+				pass, "semantic", "cfg-grounding")) {
+				ClosureUpdate grounded = closeCfgTransientCandidateDependencies(occurrences, nodes, cfg,
+					shapeFactsByHop, preliminaryAbstractFacts.shapes(), singlePartitions, ordinalsByBlock,
+					ruleKeys, ruleFacts, transientBindings, cfgReplayBaseline,
+					origins, constraints, compiledInputEdges, compiledShapeFactsByHop, relocations, loopSeedLedger);
+				applyUpdate(grounded);
+			}
 			// Boundary closure and direct grounding can replace one another's exact
 			// realization references without changing coarse placement. Complete
 			// their coupled transfer before support pruning observes either midpoint.
-			closeExactDirectValueMapDependencies(directFrontier);
+			try(SearchSpaceMetrics.DuplicateMergeOriginScope ignored = duplicateMergeOrigin(
+				pass, "semantic", "direct-post-cfg")) {
+				closeExactDirectValueMapDependencies(directFrontier);
+			}
 			List<LogicalTransientInputFact> completeLogicalTransientInputs = transientBindings;
 			if(exportDiagnostics != null) {
 				exportDiagnostics.logicalDelta(pass, "cfg-grounded", diagnosticLogical, transientBindings);
@@ -1122,8 +1167,11 @@ final class PlacementRelationClosure {
 			// Final action authority can be narrower than the pre-privacy midpoint.
 			// Rebind before withdrawing expired clauses, so valid replacement actions
 			// remain available instead of being lost with an obsolete sibling.
-			ruleFacts = bindRelocationCandidateRealizations(ruleFacts, nodes,
-				compiledInputEdges, publishedActions, origins, shapeFactsByHop);
+			try(SearchSpaceMetrics.DuplicateMergeOriginScope ignored = duplicateMergeOrigin(
+				pass, "semantic", "relocation-final")) {
+				ruleFacts = bindRelocationCandidateRealizations(ruleFacts, nodes,
+					compiledInputEdges, publishedActions, origins, shapeFactsByHop);
+			}
 			if(exportDiagnostics != null)
 				exportDiagnostics.phase(pass, "final-action-bind", nodes, ruleFacts);
 			Map<RelocationActionKey,NeutralPlacementGraph.RelocationAction> finalActionIndex = new LinkedHashMap<>();
@@ -1575,41 +1623,8 @@ final class PlacementRelationClosure {
 	static void enumerateReferenceProducts(List<List<CandidateRealizationReference>> choices,
 		int input, List<CandidateRealizationReference> product,
 		List<List<CandidateRealizationReference>> products) {
-		Map<CompiledHopKey,CandidateRealizationReference> selected = new IdentityHashMap<>();
-		for(CandidateRealizationReference reference : product) {
-			CandidateRealizationReference prior = selected.putIfAbsent(
-				reference.rule().parentOccurrence(), reference);
-			if(prior != null && !prior.equals(reference))
-				return;
-		}
-		enumerateReferenceProducts(choices, input, product, selected, products);
-	}
-
-	private static void enumerateReferenceProducts(List<List<CandidateRealizationReference>> choices,
-		int input, List<CandidateRealizationReference> product,
-		Map<CompiledHopKey,CandidateRealizationReference> selected,
-		List<List<CandidateRealizationReference>> products) {
-		if(input == choices.size()) {
-			products.add(List.copyOf(product));
-			return;
-		}
-		for(CandidateRealizationReference choice : choices.get(input)) {
-			CompiledHopKey owner = choice.rule().parentOccurrence();
-			CandidateRealizationReference prior = selected.get(owner);
-			if(prior != null && !prior.equals(choice))
-				continue;
-			if(prior == null)
-				selected.put(owner, choice);
-			product.add(choice);
-			try {
-				enumerateReferenceProducts(choices, input + 1, product, selected, products);
-			}
-			finally {
-				product.remove(product.size() - 1);
-				if(prior == null)
-					selected.remove(owner);
-			}
-		}
+		enumerateSourceAssignments(choices, input, product,
+			java.util.function.Function.identity(), products::add, null);
 	}
 
 	/** Publish stable graph-owned authority without generating or repairing candidates. */
@@ -1689,6 +1704,21 @@ final class PlacementRelationClosure {
 		ProgramStructureGuard programStructureGuard =
 			new ProgramStructureGuard(program,
 				PlacementGraphFingerprint.captureProgramAuthority(program));
+		// Scalar CP families have no physical output map or ancestor binding clauses.
+		// Keep their latest generation snapshot separate from exact rows, and bind
+		// the header to the same final graph-owned state as explicit emissions.
+		List<CpRuleFamily> cpFamilies = new ArrayList<>();
+		for(CpRuleFamily family : candidateGenerator.cpRuleFamilies()) {
+			Node owner = graph.node(family.parent()).orElseThrow();
+			if(privacyFacts.requirePrivacy(family.parent()) != Privacy.PUBLIC
+				|| generationPrivacyProjection.protectedPayloadInputs().containsKey(family.parent()))
+				continue;
+			PlacementState cpState = owner.legalAlternatives().stream()
+				.filter(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT)
+				.findFirst().orElse(null);
+			if(cpState != null)
+				cpFamilies.add(family.withEmissionState(cpState));
+		}
 		analysis = new PlacementAnalysis(graph, projections, topLevelStatementBlocks, program, shapeFacts,
 			heuristicPolicyFacts, ruleKeys, ruleFacts,
 			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
@@ -1697,7 +1727,7 @@ final class PlacementRelationClosure {
 				? new CandidatePrivacyClosureEvidence(candidatePrivacyEvidence) : null,
 			functionExpansion.logicalInlinedFunctionInputs(), programStructureGuard,
 			nodes.stream().map(node -> privacyInputPruning.get(node.key())).filter(Objects::nonNull).toList(),
-			jointInputAnalysis);
+			jointInputAnalysis, cpFamilies);
 		PlannerCandidateSpaceAudit.record(analysis, prePrivacyNodes, prePrivacyCandidateRuleFacts);
 		}
 		finally {
@@ -5701,6 +5731,12 @@ final class PlacementRelationClosure {
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
 				List<CandidateEmissionRealization> realizations = new ArrayList<>();
 				for(CandidateEmissionRealization realization : emission.realizations()) {
+					// Preserve an existing exact product or frozen legal-ID relation.
+					// Expanding either just to intern its tuples defeats its storage contract.
+					if(realization.factorizedSupportProduct().isPresent() || realization.indexedSupport()) {
+						realizations.add(realization);
+						continue;
+					}
 					List<CandidateRealizationSupportClause> clauses = new ArrayList<>();
 					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 						List<PlacementProofKey> proofs = new ArrayList<>(clause.proofDependencies().size());
@@ -5764,8 +5800,12 @@ final class PlacementRelationClosure {
 					boolean unchanged = clauses.size() == realization.supportClauses().size();
 					for(int index = 0; unchanged && index < clauses.size(); index++)
 						unchanged = clauses.get(index) == realization.supportClauses().get(index);
-					realizations.add(unchanged ? realization : CandidateEmissionRealization
-						.fromAlreadyCanonicalSupportClauses(realization.key(), clauses));
+					CandidateEmissionRealization canonical = unchanged ? realization : CandidateEmissionRealization
+						.fromAlreadyCanonicalSupportClauses(realization.key(), clauses);
+					// These are the already admitted whole tuples, including correlated holes,
+					// mixed delivery modes and joint/value-map proofs. Store only their IDs;
+					// do not infer any additional combination from per-input projections.
+					realizations.add(clauses.size() > 1 ? canonical.withIndexedSupport() : canonical);
 				}
 				boolean unchanged = realizations.size() == emission.realizations().size();
 				for(int index = 0; unchanged && index < realizations.size(); index++)
@@ -9960,17 +10000,39 @@ final class PlacementRelationClosure {
 				continue;
 			// An action may change without changing its output map. Exact current
 			// action ownership is required even for tentative support retention.
-			List<CandidateRealizationSupportClause> owned = prior.supportClauses().stream()
-				.filter(clause -> clause.proofDependencies().contains(proof)).toList();
+			List<CandidateRealizationSupportClause> owned =
+				prior.supportClauses() instanceof FactorizedSupportClauses product
+					? product.proofs().contains(proof) ? product : List.of()
+					: prior.supportClauses().stream()
+						.filter(clause -> clause.proofDependencies().contains(proof)).toList();
 			if(!owned.isEmpty())
-				normalized.add(CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
-					prior.key(), owned));
+				normalized.add(owned == prior.supportClauses() ? prior
+					: CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(prior.key(), owned));
 		}
 		return normalized;
 	}
 
+	/** Source availability depends on the pool, not on a choice of its ancestor support. */
 	private record ExactRealizationOption(CandidateRealizationReference reference,
-		CandidateRealizationSupportClause clause, ValueVersionKey valueVersion) { }
+		DurableAnchorKey nativeWorkerPoolWitness, boolean nativeWorkerPoolLayoutExact,
+		ValueVersionKey valueVersion) {
+		private ExactRealizationOption(CandidateRealizationReference reference,
+			CandidateRealizationSupportClause clause, ValueVersionKey valueVersion) {
+			this(reference, clause.nativeWorkerPoolWitness(), clause.nativeWorkerPoolLayoutExact(), valueVersion);
+		}
+	}
+
+	private static List<ExactRealizationOption> relocationSourceOptions(
+		CandidateRealizationReference reference, CandidateEmissionRealization realization,
+		ValueVersionKey valueVersion) {
+		if(realization.supportClauses() instanceof FactorizedSupportClauses product)
+			return List.of(new ExactRealizationOption(reference, product.nativeWorkerPoolWitness(),
+				product.nativeWorkerPoolLayoutExact(), valueVersion));
+		Set<ExactRealizationOption> options = new LinkedHashSet<>();
+		for(CandidateRealizationSupportClause clause : realization.supportClauses())
+			options.add(new ExactRealizationOption(reference, clause, valueVersion));
+		return List.copyOf(options);
+	}
 	private static final class ExactRelocationSourceInventory {
 		private final Map<CompiledHopKey,List<Integer>> slots = new IdentityHashMap<>();
 		private final Map<CompiledHopKey,Node> nodes;
@@ -10000,10 +10062,9 @@ final class PlacementRelationClosure {
 					for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
 						for(CandidateEmissionRealization realization : emission.realizations())
 							if(executableSourceRealization(fact.key(), realization))
-								for(CandidateRealizationSupportClause clause : realization.supportClauses())
-									options.add(new ExactRealizationOption(
-										CandidateRealizationReference.of(fact.key(), realization), clause,
-										node.valueVersion()));
+								options.addAll(relocationSourceOptions(
+									CandidateRealizationReference.of(fact.key(), realization), realization,
+									node.valueVersion()));
 				}
 			List<ExactRealizationOption> canonical = distinctRelocationSourceOptions(options);
 			cached.put(owner, canonical);
@@ -10051,10 +10112,28 @@ final class PlacementRelationClosure {
 					key, RelocationActionKey::normalizedSignature)));
 		}
 
+		private void adoptRelocationProof(RelocationActionKey action, PlacementProofKey proof) {
+			if(proof.kind() != PlacementProofKind.NATIVE_CONTINUITY || proof.owner() != owner)
+				throw new IllegalArgumentException("Relocation proof belongs to a different owner or kind");
+			String signature = relocationSignatures.computeIfAbsent(
+				action, RelocationActionKey::normalizedSignature);
+			if(!proof.authoritySignature().equals("relocation:" + signature))
+				throw new IllegalArgumentException("Relocation proof and action authority differ");
+			relocationProofs.putIfAbsent(action, proof);
+		}
+
 		private PlacementProofKey derivedFoutProof(DerivedFoutMaterializationActionKey action) {
 			return derivedFoutProofs.computeIfAbsent(action, key -> new PlacementProofKey(
 				PlacementProofKind.DURABLE_ANCHOR, owner,
 				"derived-fout:" + key.normalizedSignature()));
+		}
+
+		private void adoptDerivedFoutProof(DerivedFoutMaterializationActionKey action,
+			PlacementProofKey proof) {
+			if(proof.kind() != PlacementProofKind.DURABLE_ANCHOR || proof.owner() != owner
+				|| !proof.authoritySignature().equals("derived-fout:" + action.normalizedSignature()))
+				throw new IllegalArgumentException("Derived FOUT proof and action authority differ");
+			derivedFoutProofs.putIfAbsent(action, proof);
 		}
 	}
 	private record RelocationConsumerActions(List<NeutralPlacementGraph.RelocationAction> actions,
@@ -10183,10 +10262,10 @@ final class PlacementRelationClosure {
 						int inputPosition = position;
 						List<CandidateRealizationInputBinding> bindings = new ArrayList<>();
 						bindings.addAll(sourceOptions.stream().filter(option -> {
-								DurableAnchorKey pool = candidatePool(option, nativeContinuity);
 								if(option.reference().realization().emissionState().placementState().fType()
 									!= input.fType())
 									return false;
+								DurableAnchorKey pool = candidatePool(option, nativeContinuity);
 								if(pool != null) {
 									if(directRelocationPoolMatch(pool, targetPool, input.fType()))
 										return true;
@@ -10197,7 +10276,7 @@ final class PlacementRelationClosure {
 									}
 									return false;
 								}
-								DurableAnchorKey residency = option.clause().nativeWorkerPoolWitness();
+								DurableAnchorKey residency = option.nativeWorkerPoolWitness();
 								DurableAnchorKey targetResidency = nativeResidencyWitness(
 									targetPool, input.fType(), fact.key().parentOccurrence());
 								boolean endpointDirect = endpointOnlyDirectLoutInput(owner, fact, emission)
@@ -10210,18 +10289,21 @@ final class PlacementRelationClosure {
 						for(NeutralPlacementGraph.RelocationAction action : consumerActions) {
 							// The action output, not the consumer output, must satisfy this exact oracle input row.
 							if(action.key().materializationFType() != input.fType()
-								|| !directRelocationPoolMatch(action.key().durableAnchor(), targetPool,
-									action.key().materializationFType())
 								|| !action.key().sourceValueVersion().equals(producerNode.valueVersion())
 								|| action.obligations().stream().noneMatch(obligation ->
 									obligation.consumer() == fact.key().parentOccurrence()
 										&& obligation.inputPosition() == inputPosition
 										&& obligation.requiredPlacement().equals(
-											emission.emissionState().placementState())))
+											emission.emissionState().placementState()))
+								|| !directRelocationPoolMatch(action.key().durableAnchor(), targetPool,
+									action.key().materializationFType()))
 								continue;
 							bindings.addAll(sourceOptions.stream().filter(option -> {
 								DurableAnchorKey pool = relocationCandidatePool(option.reference(),
-									option.clause(), nativeContinuity);
+									option.nativeWorkerPoolWitness(), option.nativeWorkerPoolLayoutExact(),
+									nativeContinuity);
+								// Endpoint-equivalent layouts are not interchangeable support authority:
+								// closure may later remove/replay the direct source while this action remains.
 								return pool == null || !PlacementIdentity.samePhysicalLayout(
 									pool, action.key().durableAnchor());
 							}).map(option -> CandidateRealizationInputBinding.relocation(
@@ -10329,33 +10411,56 @@ final class PlacementRelationClosure {
 			for(int realizationIndex = 0; realizationIndex < oldEmission.realizations().size(); realizationIndex++) {
 				CandidateEmissionRealization oldRealization = oldEmission.realizations().get(realizationIndex);
 				CandidateEmissionRealization newRealization = newEmission.realizations().get(realizationIndex);
+				if(oldRealization.supportClauses() instanceof FactorizedSupportClauses oldProduct
+					&& newRealization.supportClauses() instanceof FactorizedSupportClauses newProduct) {
+					// Structural equality above proves matching ordered axes. Check each
+					// binding's original authority once instead of materializing its
+					// repeated occurrence in every Cartesian clause.
+					for(int axis = 0; axis < oldProduct.factors().size(); axis++)
+						if(!sameRelocationBindingAuthority(oldProduct.factors().get(axis),
+							newProduct.factors().get(axis), currentActionKeys))
+							return false;
+					continue;
+				}
 				for(int clauseIndex = 0; clauseIndex < oldRealization.supportClauses().size(); clauseIndex++) {
 					List<CandidateRealizationInputBinding> oldBindings =
 						oldRealization.supportClauses().get(clauseIndex).inputBindings();
 					List<CandidateRealizationInputBinding> newBindings =
 						newRealization.supportClauses().get(clauseIndex).inputBindings();
-					for(int bindingIndex = 0; bindingIndex < oldBindings.size(); bindingIndex++) {
-						CandidateRealizationInputBinding oldBinding = oldBindings.get(bindingIndex);
-						CandidateRealizationInputBinding newBinding = newBindings.get(bindingIndex);
-						if(oldBinding.source().rule().parentOccurrence()
-							!= newBinding.source().rule().parentOccurrence())
-							return false;
-						if(oldBinding.kind() == CandidateInputBindingKind.RELOCATION
-							&& (oldBinding.relocationAction() != newBinding.relocationAction()
-								|| !currentActionKeys.contains(oldBinding.relocationAction())))
-							return false;
-					}
+					if(!sameRelocationBindingAuthority(oldBindings, newBindings, currentActionKeys))
+						return false;
 				}
 			}
 		}
 		return true;
 	}
 
-	private record RelocationProductKey(IdentityListKey<CompiledHopKey> owner,
+	/** Called only after structural equality; preserve exact owner/action authority. */
+	private static boolean sameRelocationBindingAuthority(List<CandidateRealizationInputBinding> current,
+		List<CandidateRealizationInputBinding> rebound, Set<RelocationActionKey> currentActionKeys) {
+		for(int index = 0; index < current.size(); index++) {
+			CandidateRealizationInputBinding oldBinding = current.get(index);
+			CandidateRealizationInputBinding newBinding = rebound.get(index);
+			if(oldBinding.source().rule().parentOccurrence() != newBinding.source().rule().parentOccurrence())
+				return false;
+			if(oldBinding.kind() == CandidateInputBindingKind.RELOCATION
+				&& (oldBinding.relocationAction() != newBinding.relocationAction()
+					|| !currentActionKeys.contains(oldBinding.relocationAction())))
+				return false;
+		}
+		return true;
+	}
+
+	private record RelocationProductScopeKey(IdentityListKey<CompiledHopKey> owner,
 		PlacementEmissionState emission, FType executionFType, DerivedFoutMaterializationActionKey action,
 		List<PlacementRealizationKey> derivedOutputs, DurableAnchorKey outputAnchor,
-		boolean recomputesRanges, DurableAnchorKey dynamicOutputPool,
+		boolean recomputesRanges, DurableAnchorKey dynamicOutputPool) { }
+
+	private record RelocationProductKey(RelocationProductScopeKey scope,
 		List<List<FactorizedBindingKey>> choices) { }
+
+	private record PriorRelocationProduct(RelocationProductKey key,
+		List<CandidateEmissionRealization> product, int overlap) { }
 
 	private List<CandidateEmissionRealization> relocationBindingProduct(CompiledHopKey owner,
 		CandidateEmissionFact emission, List<List<CandidateRealizationInputBinding>> choices,
@@ -10372,19 +10477,27 @@ final class PlacementRelationClosure {
 		RelocationProofScope relocationProofScope) {
 		// Discovery has already rebuilt every current source/action choice. Only
 		// the pure generated product is reused; carried clauses are merged afresh.
-		RelocationProductKey key = new RelocationProductKey(new IdentityListKey<>(List.of(owner)),
+		RelocationProductScopeKey scope = new RelocationProductScopeKey(
+			new IdentityListKey<>(List.of(owner)),
 			emission.emissionState(), emission.executionFType(), emission.derivedFoutAction(),
 			emission.derivedFoutAction() == null ? List.of() : emission.realizations().stream()
 				.map(CandidateEmissionRealization::key)
 				.filter(output -> output.layoutKind() == PlacementLayoutKind.DURABLE_MAP).toList(),
-			outputAnchor, recomputesRanges, dynamicOutputPool, choices.stream()
-				.map(options -> options.stream().map(FactorizedBindingKey::new).toList()).toList());
+			outputAnchor, recomputesRanges, dynamicOutputPool);
+		List<List<FactorizedBindingKey>> choiceKeys = choices.stream()
+			.map(options -> options.stream().map(FactorizedBindingKey::new).toList()).toList();
+		RelocationProductKey key = new RelocationProductKey(scope, choiceKeys);
+		ensureRelocationProductIndexes(currentProducts);
 		List<CandidateEmissionRealization> product = currentProducts.get(key);
 		if(product == null)
 			product = relocationProducts.get(key);
 		if(product == null) {
-			product = generateRelocationBindingProduct(owner, emission, choices, outputAnchor,
-				recomputesRanges, dynamicOutputPool, complexityMetrics, relocationProofScope);
+			PriorRelocationProduct prior = priorRelocationProduct(scope, choiceKeys);
+			product = prior == null ? generateRelocationBindingProduct(owner, emission, choices, outputAnchor,
+				recomputesRanges, dynamicOutputPool, complexityMetrics, relocationProofScope)
+				: generateRelocationBindingProductDelta(owner, emission, choices, choiceKeys,
+					prior, outputAnchor, recomputesRanges, dynamicOutputPool,
+					complexityMetrics, relocationProofScope);
 			if(complexityMetrics != null)
 				relocationProductMisses++;
 		}
@@ -10395,7 +10508,156 @@ final class PlacementRelationClosure {
 				? Long.MAX_VALUE : relocationProductAvoidedLeaves + leaves;
 		}
 		currentProducts.put(key, product);
+		indexRelocationProduct(currentRelocationProductsByScope, key, product);
 		return product;
+	}
+
+	private void ensureRelocationProductIndexes(
+		Map<RelocationProductKey,List<CandidateEmissionRealization>> currentProducts) {
+		if(indexedCurrentRelocationProducts != currentProducts) {
+			indexedCurrentRelocationProducts = currentProducts;
+			currentRelocationProductsByScope = relocationProductScopeIndex(currentProducts);
+		}
+		if(indexedPreviousRelocationProducts != relocationProducts) {
+			indexedPreviousRelocationProducts = relocationProducts;
+			previousRelocationProductsByScope = relocationProductScopeIndex(relocationProducts);
+		}
+	}
+
+	private static Map<RelocationProductScopeKey,List<PriorRelocationProduct>> relocationProductScopeIndex(
+		Map<RelocationProductKey,List<CandidateEmissionRealization>> products) {
+		Map<RelocationProductScopeKey,List<PriorRelocationProduct>> indexed = new java.util.HashMap<>();
+		for(var entry : products.entrySet())
+			indexRelocationProduct(indexed, entry.getKey(), entry.getValue());
+		return indexed;
+	}
+
+	private static void indexRelocationProduct(
+		Map<RelocationProductScopeKey,List<PriorRelocationProduct>> index,
+		RelocationProductKey key, List<CandidateEmissionRealization> product) {
+		List<PriorRelocationProduct> scoped = index.computeIfAbsent(
+			key.scope(), ignored -> new ArrayList<>());
+		for(int candidate = 0; candidate < scoped.size(); candidate++)
+			if(scoped.get(candidate).key().equals(key)) {
+				scoped.set(candidate, new PriorRelocationProduct(key, product, 0));
+				return;
+			}
+		scoped.add(new PriorRelocationProduct(key, product, 0));
+	}
+
+	private PriorRelocationProduct priorRelocationProduct(RelocationProductScopeKey scope,
+		List<List<FactorizedBindingKey>> choices) {
+		PriorRelocationProduct best = null;
+		for(Map<RelocationProductScopeKey,List<PriorRelocationProduct>> products
+			: List.of(currentRelocationProductsByScope, previousRelocationProductsByScope))
+			for(PriorRelocationProduct indexed : products.getOrDefault(scope, List.of())) {
+				RelocationProductKey candidate = indexed.key();
+				if(candidate.choices().size() != choices.size())
+					continue;
+				int overlap = relocationChoiceOverlap(candidate.choices(), choices);
+				if(best == null || overlap > best.overlap())
+					best = new PriorRelocationProduct(candidate, indexed.product(), overlap);
+			}
+		return best;
+	}
+
+	private static int relocationChoiceOverlap(List<List<FactorizedBindingKey>> prior,
+		List<List<FactorizedBindingKey>> current) {
+		int overlap = 0;
+		for(int ordinal = 0; ordinal < current.size(); ordinal++) {
+			Set<FactorizedBindingKey> priorOptions = new java.util.HashSet<>(prior.get(ordinal));
+			for(FactorizedBindingKey option : current.get(ordinal))
+				if(priorOptions.contains(option))
+					overlap++;
+		}
+		return overlap;
+	}
+
+	private static List<CandidateEmissionRealization> generateRelocationBindingProductDelta(
+		CompiledHopKey owner, CandidateEmissionFact emission,
+		List<List<CandidateRealizationInputBinding>> choices,
+		List<List<FactorizedBindingKey>> choiceKeys, PriorRelocationProduct prior,
+		DurableAnchorKey outputAnchor, boolean recomputesRanges, DurableAnchorKey dynamicOutputPool,
+		SearchSpaceMetrics metrics, RelocationProofScope relocationProofScope) {
+		Set<FactorizedBindingKey> currentBindings = new java.util.HashSet<>();
+		for(List<FactorizedBindingKey> options : choiceKeys)
+			currentBindings.addAll(options);
+		List<CandidateEmissionRealization> combined = new ArrayList<>();
+		for(CandidateEmissionRealization realization : prior.product()) {
+			if(realization.supportClauses() instanceof FactorizedSupportClauses factorized) {
+				adoptFactorizedProofs(factorized, relocationProofScope.owner(owner),
+					emission.derivedFoutAction());
+				factorized.restrictBindings(binding ->
+					currentBindings.contains(new FactorizedBindingKey(binding)))
+					.ifPresent(retained -> combined.add(
+						new CandidateEmissionRealization(realization.key(), retained)));
+				continue;
+			}
+			List<CandidateRealizationSupportClause> retained = realization.supportClauses().stream()
+				.filter(clause -> clause.inputBindings().stream()
+					.allMatch(binding -> currentBindings.contains(new FactorizedBindingKey(binding))))
+				.toList();
+			if(!retained.isEmpty())
+				combined.add(CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
+					realization.key(), retained));
+		}
+		List<List<FactorizedBindingKey>> priorChoices = prior.key().choices();
+		List<List<CandidateRealizationInputBinding>> retainedChoices = new ArrayList<>(choices.size());
+		List<List<CandidateRealizationInputBinding>> addedChoices = new ArrayList<>(choices.size());
+		for(int ordinal = 0; ordinal < choices.size(); ordinal++) {
+			Set<FactorizedBindingKey> priorOptions = new java.util.HashSet<>(priorChoices.get(ordinal));
+			List<CandidateRealizationInputBinding> retained = new ArrayList<>();
+			List<CandidateRealizationInputBinding> added = new ArrayList<>();
+			for(CandidateRealizationInputBinding binding : choices.get(ordinal)) {
+				if(priorOptions.contains(new FactorizedBindingKey(binding)))
+					retained.add(binding);
+				else
+					added.add(binding);
+			}
+			retainedChoices.add(List.copyOf(retained));
+			addedChoices.add(List.copyOf(added));
+		}
+		for(int pivot = 0; pivot < choices.size(); pivot++) {
+			if(addedChoices.get(pivot).isEmpty())
+				continue;
+			// Partition the delta by the first newly added choice. Earlier inputs
+			// stay in the old intersection, the pivot is new, and later inputs are
+			// unrestricted. These slices are disjoint and cover every new tuple.
+			List<List<CandidateRealizationInputBinding>> slice = new ArrayList<>(choices.size());
+			for(int ordinal = 0; ordinal < choices.size(); ordinal++)
+				slice.add(ordinal < pivot ? retainedChoices.get(ordinal)
+					: ordinal == pivot ? addedChoices.get(ordinal) : choices.get(ordinal));
+			combined.addAll(generateRelocationBindingProduct(owner, emission, List.copyOf(slice),
+				outputAnchor, recomputesRanges, dynamicOutputPool, metrics, relocationProofScope, true));
+		}
+		return combined.isEmpty() ? List.of() : new CandidateEmissionFact(emission.emissionState(),
+			emission.executionFType(), emission.derivedFoutAction(), combined).realizations();
+	}
+
+	private static void adoptFactorizedProofs(FactorizedSupportClauses clauses,
+		OwnerRelocationProofScope ownerProofs,
+		DerivedFoutMaterializationActionKey derivedFoutAction) {
+		if(derivedFoutAction != null) {
+			String derivedAuthority = "derived-fout:" + derivedFoutAction.normalizedSignature();
+			clauses.proofs().stream()
+				.filter(proof -> proof.kind() == PlacementProofKind.DURABLE_ANCHOR
+					&& proof.owner() == ownerProofs.owner
+					&& proof.authoritySignature().equals(derivedAuthority))
+				.findFirst().ifPresent(proof ->
+					ownerProofs.adoptDerivedFoutProof(derivedFoutAction, proof));
+		}
+		for(List<CandidateRealizationInputBinding> factor : clauses.factors())
+			for(CandidateRealizationInputBinding binding : factor) {
+				RelocationActionKey action = binding.relocationAction();
+				if(action == null)
+					continue;
+				String authority = "relocation:" + action.normalizedSignature();
+				clauses.proofs().stream()
+					.filter(proof -> proof.kind() == PlacementProofKind.NATIVE_CONTINUITY
+						&& proof.owner() == ownerProofs.owner
+						&& proof.authoritySignature().equals(authority))
+					.findFirst().ifPresent(proof -> ownerProofs.adoptRelocationProof(action, proof));
+			}
 	}
 
 	private static long relocationProductSize(List<List<CandidateRealizationInputBinding>> choices) {
@@ -10410,6 +10672,21 @@ final class PlacementRelationClosure {
 		return size;
 	}
 
+	private static long relocationProductPrefixCount(
+		List<List<CandidateRealizationInputBinding>> choices) {
+		long prefixes = 1;
+		long levelSize = 1;
+		for(List<CandidateRealizationInputBinding> options : choices) {
+			if(options.isEmpty())
+				break;
+			levelSize = levelSize > Long.MAX_VALUE / options.size()
+				? Long.MAX_VALUE : levelSize * options.size();
+			prefixes = prefixes > Long.MAX_VALUE - levelSize
+				? Long.MAX_VALUE : prefixes + levelSize;
+		}
+		return prefixes;
+	}
+
 	private static List<CandidateEmissionRealization> generateRelocationBindingProduct(CompiledHopKey owner,
 		CandidateEmissionFact emission, List<List<CandidateRealizationInputBinding>> choices,
 		DurableAnchorKey outputAnchor, boolean recomputesRanges, DurableAnchorKey dynamicOutputPool,
@@ -10422,8 +10699,26 @@ final class PlacementRelationClosure {
 		CandidateEmissionFact emission, List<List<CandidateRealizationInputBinding>> choices,
 		DurableAnchorKey outputAnchor, boolean recomputesRanges, DurableAnchorKey dynamicOutputPool,
 		SearchSpaceMetrics metrics, RelocationProofScope relocationProofScope) {
-		List<CandidateEmissionRealization> generated = new ArrayList<>();
+		return generateRelocationBindingProduct(owner, emission, choices, outputAnchor,
+			recomputesRanges, dynamicOutputPool, metrics, relocationProofScope, false);
+	}
+
+	private static List<CandidateEmissionRealization> generateRelocationBindingProduct(CompiledHopKey owner,
+		CandidateEmissionFact emission, List<List<CandidateRealizationInputBinding>> choices,
+		DurableAnchorKey outputAnchor, boolean recomputesRanges, DurableAnchorKey dynamicOutputPool,
+		SearchSpaceMetrics metrics, RelocationProofScope relocationProofScope,
+		boolean factorizeSingleton) {
 		OwnerRelocationProofScope ownerProofs = relocationProofScope.owner(owner);
+		Optional<List<CandidateEmissionRealization>> factorized = factorizedRelocationBindingProduct(
+			owner, emission, choices, outputAnchor, recomputesRanges, dynamicOutputPool,
+			ownerProofs, factorizeSingleton);
+		if(factorized.isPresent()) {
+			if(metrics != null)
+				metrics.recordFactorizedRelocationProduct(relocationProductSize(choices),
+					relocationProductPrefixCount(choices), choices.size());
+			return factorized.get();
+		}
+		List<CandidateEmissionRealization> generated = new ArrayList<>();
 		enumerateBindingAssignments(choices, 0, new ArrayList<>(), assignment -> {
 			List<PlacementProofKey> proofs = assignment.stream()
 				.filter(binding -> binding.kind() == CandidateInputBindingKind.RELOCATION)
@@ -10450,6 +10745,86 @@ final class PlacementRelationClosure {
 		}, metrics);
 		return generated.isEmpty() ? List.of() : new CandidateEmissionFact(emission.emissionState(),
 			emission.executionFType(), emission.derivedFoutAction(), generated).realizations();
+	}
+
+	/**
+	 * Publishes an exact rectangular relation only when every input axis has one
+	 * uniform direct/relocation action and no source owner can correlate two axes.
+	 * Mixed action groups retain the enumerated path because their proof sets are
+	 * tuple-dependent and cannot be represented by one uniform-proof rectangle.
+	 */
+	private static Optional<List<CandidateEmissionRealization>> factorizedRelocationBindingProduct(
+		CompiledHopKey owner, CandidateEmissionFact emission,
+		List<List<CandidateRealizationInputBinding>> choices,
+		DurableAnchorKey outputAnchor, boolean recomputesRanges,
+		DurableAnchorKey dynamicOutputPool, OwnerRelocationProofScope ownerProofs,
+		boolean factorizeSingleton) {
+		if(choices.isEmpty())
+			return Optional.of(List.of());
+		List<List<CandidateRealizationInputBinding>> factors = new ArrayList<>(choices.size());
+		Set<CompiledHopKey> priorOwners = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(List<CandidateRealizationInputBinding> axis : choices) {
+			if(axis.isEmpty())
+				return Optional.of(List.of());
+			CandidateInputBindingKind kind = axis.get(0).kind();
+			RelocationActionKey action = axis.get(0).relocationAction();
+			Set<CompiledHopKey> axisOwners = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(CandidateRealizationInputBinding binding : axis) {
+				if(binding.kind() != kind || binding.relocationAction() != action)
+					return Optional.empty();
+				axisOwners.add(binding.source().rule().parentOccurrence());
+			}
+			for(CompiledHopKey axisOwner : axisOwners)
+				if(!priorOwners.add(axisOwner))
+					return Optional.empty();
+			factors.add(axis);
+		}
+		List<CandidateRealizationInputBinding> representative = factors.stream()
+			.map(axis -> axis.get(0)).toList();
+		if(!factorizeSingleton && relocationProductSize(factors) == 1)
+			return Optional.empty();
+		List<PlacementProofKey> proofs = representative.stream()
+			.filter(binding -> binding.kind() == CandidateInputBindingKind.RELOCATION)
+			.map(CandidateRealizationInputBinding::relocationAction).distinct()
+			.sorted(ownerProofs.relocationOrder)
+			.map(ownerProofs::relocationProof).toList();
+		try {
+			if(emission.derivedFoutAction() != null) {
+				List<CandidateEmissionRealization> outputs = emission.realizations().stream()
+					.filter(output -> output.key().layoutKind() == PlacementLayoutKind.DURABLE_MAP).toList();
+				if(outputs.size() != 1)
+					return Optional.empty();
+				List<PlacementProofKey> derivedProofs = canonicalDerivedFoutProofs(
+					emission.derivedFoutAction(), representative, ownerProofs);
+				return Optional.of(List.of(CandidateEmissionRealization.factorized(
+					outputs.get(0).key(), derivedProofs, factors, null, true)));
+			}
+			PlacementState state = emission.emissionState().placementState();
+			if(proofs.isEmpty() && !(state.execType() == ExecType.FED
+				&& state.output() == FederatedOutput.LOUT))
+				return Optional.of(List.of());
+			if(state.output() == FederatedOutput.LOUT)
+				return Optional.of(List.of(CandidateEmissionRealization.factorized(
+					PlacementRealizationKey.local(emission.emissionState()), proofs,
+					factors, null, true)));
+			if(outputAnchor != null)
+				return Optional.of(List.of(CandidateEmissionRealization.factorized(
+					PlacementRealizationKey.durable(emission.emissionState(), outputAnchor),
+					proofs, factors, null, true)));
+			if(!proofs.isEmpty() && recomputesRanges && dynamicOutputPool != null) {
+				PlacementRealizationKey key = PlacementRealizationKey.nativeLineage(
+					emission.emissionState(), "relocation-native:" + owner.normalizedSignature()
+						+ "|pool=" + dynamicOutputPool.normalizedSignature());
+				return Optional.of(List.of(CandidateEmissionRealization.factorized(
+					key, proofs, factors, dynamicOutputPool, false)));
+			}
+			return Optional.of(List.of());
+		}
+		catch(IllegalArgumentException unsupportedFactorization) {
+			// Integer List capacity, canonical-axis, or correlation guards retain
+			// the exact pre-existing enumerated construction below.
+			return Optional.empty();
+		}
 	}
 
 	private static List<CandidateEmissionRealization> canonicalDerivedFoutRealizations(
@@ -10519,10 +10894,9 @@ final class PlacementRelationClosure {
 		List<ExactRealizationOption> options, NativePlacementContinuity nativeContinuity) {
 		Map<RelocationSourceOptionKey,ExactRealizationOption> distinct = new LinkedHashMap<>();
 		for(ExactRealizationOption option : options) {
-			CandidateRealizationSupportClause clause = option.clause();
 			RelocationSourceOptionKey key = new RelocationSourceOptionKey(option.reference(),
-				candidatePool(option, nativeContinuity), clause.nativeWorkerPoolWitness(),
-				clause.nativeWorkerPoolLayoutExact());
+				candidatePool(option, nativeContinuity), option.nativeWorkerPoolWitness(),
+				option.nativeWorkerPoolLayoutExact());
 			distinct.putIfAbsent(key, option);
 		}
 		return List.copyOf(distinct.values());
@@ -10536,13 +10910,20 @@ final class PlacementRelationClosure {
 
 	private static DurableAnchorKey candidatePool(ExactRealizationOption option,
 		NativePlacementContinuity nativeContinuity) {
-		return directCandidatePool(option.reference(), option.clause(), nativeContinuity);
+		return directCandidatePool(option.reference(), option.nativeWorkerPoolWitness(),
+			option.nativeWorkerPoolLayoutExact(), nativeContinuity);
 	}
 
 	/** Worker-pool direct binding follows the partition-layout identity predicate. */
 	static DurableAnchorKey directCandidatePool(CandidateRealizationReference reference,
 		CandidateRealizationSupportClause clause, NativePlacementContinuity nativeContinuity) {
-		DurableAnchorKey literal = literalCandidatePool(reference, clause);
+		return directCandidatePool(reference, clause.nativeWorkerPoolWitness(),
+			clause.nativeWorkerPoolLayoutExact(), nativeContinuity);
+	}
+
+	private static DurableAnchorKey directCandidatePool(CandidateRealizationReference reference,
+		DurableAnchorKey witness, boolean layoutExact, NativePlacementContinuity nativeContinuity) {
+		DurableAnchorKey literal = literalCandidatePool(reference, witness, layoutExact);
 		if(literal != null || nativeContinuity == null
 			|| reference.realization().layoutKind() != PlacementLayoutKind.VALUE_MAP)
 			return literal;
@@ -10558,7 +10939,13 @@ final class PlacementRelationClosure {
 	 */
 	static DurableAnchorKey relocationCandidatePool(CandidateRealizationReference reference,
 		CandidateRealizationSupportClause clause, NativePlacementContinuity nativeContinuity) {
-		DurableAnchorKey literal = literalCandidatePool(reference, clause);
+		return relocationCandidatePool(reference, clause.nativeWorkerPoolWitness(),
+			clause.nativeWorkerPoolLayoutExact(), nativeContinuity);
+	}
+
+	private static DurableAnchorKey relocationCandidatePool(CandidateRealizationReference reference,
+		DurableAnchorKey witness, boolean layoutExact, NativePlacementContinuity nativeContinuity) {
+		DurableAnchorKey literal = literalCandidatePool(reference, witness, layoutExact);
 		if(literal != null || nativeContinuity == null
 			|| reference.realization().layoutKind() != PlacementLayoutKind.VALUE_MAP)
 			return literal;
@@ -10568,13 +10955,12 @@ final class PlacementRelationClosure {
 	}
 
 	private static DurableAnchorKey literalCandidatePool(CandidateRealizationReference reference,
-		CandidateRealizationSupportClause clause) {
+		DurableAnchorKey witness, boolean layoutExact) {
 		DurableAnchorKey anchor = reference.realization().durableAnchor();
 		if(anchor != null)
 			return anchor;
-		if(clause.nativeWorkerPoolLayoutExact()
-			&& clause.nativeWorkerPoolWitness() != null)
-			return clause.nativeWorkerPoolWitness();
+		if(layoutExact && witness != null)
+			return witness;
 		return null;
 	}
 
@@ -10608,52 +10994,129 @@ final class PlacementRelationClosure {
 		int ordinal, List<CandidateRealizationInputBinding> current,
 		java.util.function.Consumer<List<CandidateRealizationInputBinding>> consumer,
 		SearchSpaceMetrics metrics) {
-		Map<CompiledHopKey,CandidateRealizationReference> selected = new IdentityHashMap<>();
-		for(CandidateRealizationInputBinding binding : current) {
-			CandidateRealizationReference prior = selected.putIfAbsent(
-				binding.source().rule().parentOccurrence(), binding.source());
-			if(prior != null && !prior.equals(binding.source()))
-				return;
-		}
-		enumerateBindingAssignments(choices, ordinal, current, selected, consumer, metrics);
+		enumerateSourceAssignments(choices, ordinal, current,
+			CandidateRealizationInputBinding::source, consumer, metrics);
 	}
 
-	private static void enumerateBindingAssignments(List<List<CandidateRealizationInputBinding>> choices,
-		int ordinal, List<CandidateRealizationInputBinding> current,
-		Map<CompiledHopKey,CandidateRealizationReference> selected,
-		java.util.function.Consumer<List<CandidateRealizationInputBinding>> consumer,
-		SearchSpaceMetrics metrics) {
+	/**
+	 * Forward-check the exact shared-owner constraint, then branch on the smallest
+	 * remaining domain. Selection order may change; emitted input positions never do.
+	 * Pool/privacy filters are applied by the callers before these physical domains
+	 * are constructed. This constraint does not infer compatibility across owners.
+	 */
+	private static <T> void enumerateSourceAssignments(List<List<T>> choices,
+		int ordinal, List<T> prefix,
+		java.util.function.Function<T,CandidateRealizationReference> sourceOf,
+		java.util.function.Consumer<List<T>> consumer, SearchSpaceMetrics metrics) {
+		if(ordinal < 0 || ordinal > choices.size() || prefix.size() != ordinal)
+			throw new IllegalArgumentException("Source assignment prefix and position differ");
+		List<T> assignment = new ArrayList<>(Collections.nCopies(choices.size(), null));
+		Map<CompiledHopKey,CandidateRealizationReference> selected = new IdentityHashMap<>();
+		for(int position = 0; position < ordinal; position++) {
+			T value = prefix.get(position);
+			CandidateRealizationReference source = sourceOf.apply(value);
+			CandidateRealizationReference prior = selected.putIfAbsent(
+				source.rule().parentOccurrence(), source);
+			if(prior != null && !prior.equals(source))
+				return;
+			assignment.set(position, value);
+		}
+		List<List<T>> remaining = new ArrayList<>(choices);
+		Map<CompiledHopKey,List<Integer>> dependentDomains = new IdentityHashMap<>();
+		for(int position = ordinal; position < choices.size(); position++) {
+			Set<CompiledHopKey> owners = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(T option : choices.get(position))
+				owners.add(sourceOf.apply(option).rule().parentOccurrence());
+			for(CompiledHopKey owner : owners)
+				dependentDomains.computeIfAbsent(owner, ignored -> new ArrayList<>()).add(position);
+		}
+		for(int position = 0; position < ordinal; position++)
+			remaining.set(position, null);
+		for(CandidateRealizationReference source : selected.values()) {
+			remaining = filterSourceDomains(remaining, source, sourceOf, dependentDomains, metrics);
+			if(remaining == null)
+				return;
+		}
+		enumerateSmallestSourceDomain(remaining, assignment, ordinal, sourceOf, dependentDomains, consumer, metrics);
+	}
+
+	private static <T> void enumerateSmallestSourceDomain(List<List<T>> remaining,
+		List<T> assignment, int depth,
+		java.util.function.Function<T,CandidateRealizationReference> sourceOf,
+		Map<CompiledHopKey,List<Integer>> dependentDomains,
+		java.util.function.Consumer<List<T>> consumer, SearchSpaceMetrics metrics) {
 		if(metrics != null)
-			metrics.recordRelocationPrefix(ordinal);
-		if(ordinal == choices.size()) {
+			metrics.recordRelocationPrefix(depth);
+		int next = -1;
+		for(int position = 0; position < remaining.size(); position++) {
+			List<T> domain = remaining.get(position);
+			if(domain == null)
+				continue;
+			if(domain.isEmpty())
+				return;
+			if(next < 0 || domain.size() < remaining.get(next).size())
+				next = position;
+		}
+		if(next < 0) {
 			if(metrics != null)
 				metrics.recordRelocationLeaf();
-			consumer.accept(List.copyOf(current));
+			consumer.accept(List.copyOf(assignment));
 			return;
 		}
-		for(CandidateRealizationInputBinding binding : choices.get(ordinal)) {
-			CompiledHopKey owner = binding.source().rule().parentOccurrence();
-			CandidateRealizationReference prior = selected.get(owner);
-			// One physical decision owner selects one exact source realization. This
-			// is the same hard constraint used by NativePlacementContinuity and Exact,
-			// independent of cross-owner worker endpoint or partition geometry.
-			if(prior != null && !prior.equals(binding.source())) {
-				if(metrics != null)
-					metrics.recordRelocationConflictPrefix();
+		List<List<T>> rest = new ArrayList<>(remaining);
+		rest.set(next, null);
+		for(T option : remaining.get(next)) {
+			// Filter by cheap exact source identity before recursing or allocating a leaf.
+			List<List<T>> narrowed = filterSourceDomains(rest, sourceOf.apply(option),
+				sourceOf, dependentDomains, metrics);
+			if(narrowed == null)
 				continue;
-			}
-			if(prior == null)
-				selected.put(owner, binding.source());
-			current.add(binding);
+			assignment.set(next, option);
 			try {
-				enumerateBindingAssignments(choices, ordinal + 1, current, selected, consumer, metrics);
+				enumerateSmallestSourceDomain(narrowed, assignment, depth + 1,
+					sourceOf, dependentDomains, consumer, metrics);
 			}
 			finally {
-				current.remove(current.size() - 1);
-				if(prior == null)
-					selected.remove(owner);
+				assignment.set(next, null);
 			}
 		}
+	}
+
+	/** Copy only domains changed by this source choice; null denotes an assigned axis. */
+	private static <T> List<List<T>> filterSourceDomains(List<List<T>> remaining,
+		CandidateRealizationReference selected,
+		java.util.function.Function<T,CandidateRealizationReference> sourceOf,
+		Map<CompiledHopKey,List<Integer>> dependentDomains,
+		SearchSpaceMetrics metrics) {
+		List<List<T>> narrowed = remaining;
+		for(int position : dependentDomains.getOrDefault(selected.rule().parentOccurrence(), List.of())) {
+			List<T> domain = remaining.get(position);
+			if(domain == null)
+				continue;
+			List<T> retained = null;
+			for(int option = 0; option < domain.size(); option++) {
+				T value = domain.get(option);
+				CandidateRealizationReference source = sourceOf.apply(value);
+				boolean compatible = source.rule().parentOccurrence() != selected.rule().parentOccurrence()
+					|| source.equals(selected);
+				if(!compatible) {
+					if(retained == null)
+						retained = new ArrayList<>(domain.subList(0, option));
+					if(metrics != null)
+						metrics.recordRelocationConflictPrefix();
+				}
+				else if(retained != null)
+					retained.add(value);
+			}
+			if(retained != null) {
+				if(retained.isEmpty())
+					return null;
+				if(narrowed == remaining)
+					narrowed = new ArrayList<>(remaining);
+				narrowed.set(position, List.copyOf(retained));
+			}
+		}
+		return narrowed;
 	}
 
 	private static List<CandidateRuleFact> bindExactCandidateEmissionRealizations(
@@ -11818,8 +12281,12 @@ final class PlacementRelationClosure {
 						|| seed.materializationFType() == FType.PART
 						|| seed.materializationFType() == FType.OTHER)
 						continue;
+					DurableAnchorKey targetLayout = relocationTargetLayout(anchor,
+						seed.materializationFType(), matrixEdges.get(seed.position()), origins, shapeFactsByHop);
+					if(targetLayout == null)
+						continue;
 					RelocationGroup group = new RelocationGroup(seed.source(), target,
-						seed.materializationFType(), anchor, scope);
+						seed.materializationFType(), targetLayout, scope);
 					InputUse use = new InputUse(seed.consumer(), seed.position(), scope);
 					uses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
 					directUses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
@@ -11828,14 +12295,31 @@ final class PlacementRelationClosure {
 				List<PostMaterializationCandidate> materializedCandidates = exactPostMaterializationCandidates(fact,
 					seed.position(), candidateFactsByConsumer.getOrDefault(consumer.key(), List.of()), consumer);
 				for(PostMaterializationCandidate materialized : materializedCandidates) {
+					DurableAnchorKey targetLayout = relocationTargetLayout(anchor,
+						materialized.materializationFType(), matrixEdges.get(seed.position()), origins, shapeFactsByHop);
+					if(targetLayout == null)
+						continue;
 					RelocationGroup group = new RelocationGroup(seed.source(), materialized.target(),
-						materialized.materializationFType(), anchor, scope);
+						materialized.materializationFType(), targetLayout, scope);
 					InputUse use = new InputUse(seed.consumer(), seed.position(), scope);
 					uses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
 					directUses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
 				}
 			}
 		}
+	}
+
+	private static DurableAnchorKey relocationTargetLayout(DurableAnchorKey seed, FType type,
+		CompiledInputEdgeFact input, Map<CompiledHopKey,Hop> origins, Map<Hop,NodeShapeFact> shapes) {
+		if(input == null)
+			return seed;
+		NodeShapeFact shape = shapes.get(origins.get(input.producer()));
+		// Unknown shapes retain the existing symbolic evidence, never guessed ranges.
+		if(shape == null || !shape.knownPositiveMatrix())
+			return seed;
+		// A known shape with no runtime materialization layout is impossible (for example,
+		// fewer ROW/COL cells than workers or FULL on a multi-worker pool).
+		return PlacementCostSemantics.materializedOutputAnchor(seed, type, shape, input.producer());
 	}
 
 	private static List<PlacementState> directSourcePlacements(RelocationGroup group,

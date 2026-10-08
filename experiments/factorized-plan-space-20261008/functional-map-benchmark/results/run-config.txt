@@ -1,0 +1,5 @@
+domain=4000
+warmups=5
+repeats=9
+oldEngine=/grid/3/cofee-lm-sweep-mchoi-20260914/rule-directed-generation-20261008/engine
+newEngine=/grid/3/cofee-lm-sweep-mchoi-20260914/factorized-plan-space-20261008/engine

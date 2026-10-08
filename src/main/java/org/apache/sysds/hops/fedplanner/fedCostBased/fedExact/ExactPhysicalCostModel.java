@@ -1381,7 +1381,16 @@ public final class ExactPhysicalCostModel {
 			CandidateInputState state = alternative.orderedInputs().get(position);
 			FType type = state.present() ? state.fType() : null;
 			InputLayout input = new InputLayout(type, List.of(), false);
-			if(type != null && alternative.supportClause() != null) {
+			if(type != null && alternative.compactSupport() != null) {
+				// A compact axis has one relocation action for every source option.
+				// Its target ranges, not a representative producer, price the kernel.
+				for(var axis : alternative.compactSupport().axes())
+					if(axis.inputPosition() == position) {
+						input = cache.anchor(type, axis.deliveredAnchor());
+						break;
+					}
+			}
+			else if(type != null && alternative.supportClause() != null) {
 				for(var binding : alternative.supportClause().inputBindings()) {
 					if(binding.inputPosition() != position)
 						continue;
@@ -1496,6 +1505,10 @@ public final class ExactPhysicalCostModel {
 					return anchor(type, source.anchor());
 				// The realization constructor already proves all clauses agree on the
 				// witness layout/exactness. Dynamic witnesses authorize endpoints only.
+				var product = source.factorizedSupportProduct().orElse(null);
+				if(product != null)
+					return product.nativeWorkerPoolWitness() != null && product.nativeWorkerPoolLayoutExact()
+						? anchor(type, product.nativeWorkerPoolWitness()) : new InputLayout(type, List.of(), false);
 				var clause = source.supportClauses().get(0);
 				return clause.nativeWorkerPoolWitness() != null && clause.nativeWorkerPoolLayoutExact()
 					? anchor(type, clause.nativeWorkerPoolWitness()) : new InputLayout(type, List.of(), false);
@@ -3019,6 +3032,10 @@ public final class ExactPhysicalCostModel {
 		Hop owner = analysis.hop(alternative.decision()).orElse(null);
 		if(owner instanceof org.apache.sysds.hops.QuaternaryOp q
 			&& q.getOp() == org.apache.sysds.common.Types.OpOp4.WDIVMM && alternative.supportClause() != null) {
+			if(alternative.compactSupport() != null)
+				for(var axis : alternative.compactSupport().axes())
+					if(axis.inputPosition() == 0)
+						return physicalWorkerCounts.count(axis.deliveredAnchor());
 			for(var binding : alternative.supportClause().inputBindings()) {
 				if(binding.inputPosition() != 0) continue;
 				if(binding.relocationAction() != null)
@@ -3029,6 +3046,8 @@ public final class ExactPhysicalCostModel {
 					if(anchors.size() == 1) return physicalWorkerCounts.count(anchors.get(0));
 				}
 				var weights = analysis.requireExactCandidateRealization(binding.source());
+				Integer uniform = uniformRealizationWorkerCount(weights, physicalWorkerCounts);
+				if(uniform != null && uniform > 0) return uniform;
 				Set<Integer> counts = new LinkedHashSet<>();
 				for(var clause : weights.supportClauses())
 					counts.add(realizationWorkerCount(analysis, weights, clause, new LinkedHashSet<>(), physicalWorkerCounts));
@@ -3051,6 +3070,12 @@ public final class ExactPhysicalCostModel {
 			CandidateEmissionFact emission = alternative.captured()
 				? alternative.candidateEmission() : alternative.executionEmission();
 			boolean derivedFout = emission != null && emission.emissionState().derivedFedFout();
+			if(alternative.compactSupport() != null) {
+				int exact = !derivedFout && alternative.realization().anchor() != null
+					? physicalWorkerCounts.count(alternative.realization().anchor())
+					: compactSupportWorkerCount(alternative.compactSupport(), physicalWorkerCounts);
+				return exact > 0 ? exact : Math.max(1, fallbackWorkers);
+			}
 			Integer cached = executionWorkerCounts.get(
 				alternative.realization(), alternative.supportClause(), derivedFout);
 			int exact = cached == null ? (derivedFout
@@ -3077,6 +3102,12 @@ public final class ExactPhysicalCostModel {
 		PhysicalWorkerCounts physicalWorkerCounts) {
 		if(alternative.durableAnchor() != null)
 			return physicalWorkerCounts.count(alternative.durableAnchor());
+		if(alternative.compactSupport() != null) {
+			int exact = alternative.realization().anchor() != null
+				? physicalWorkerCounts.count(alternative.realization().anchor())
+				: compactSupportWorkerCount(alternative.compactSupport(), physicalWorkerCounts);
+			return exact > 0 ? exact : Math.max(1, fallbackWorkers);
+		}
 		Integer cached = physicalWorkerCounts.rootExact(alternative);
 		int exact;
 		if(cached != null)
@@ -3101,6 +3132,31 @@ public final class ExactPhysicalCostModel {
 			analysis, selectedClause, visiting, physicalWorkerCounts);
 	}
 
+	/** All source choices on an eligible axis have the same delivered geometry. */
+	private static int compactSupportWorkerCount(PlacementAnalysis.IndependentSupportProduct product,
+		PhysicalWorkerCounts physicalWorkerCounts) {
+		if(product.nativeWorkerPoolWitness() != null)
+			return physicalWorkerCounts.count(product.nativeWorkerPoolWitness());
+		Set<Integer> counts = new LinkedHashSet<>();
+		for(var axis : product.axes())
+			counts.add(physicalWorkerCounts.count(axis.deliveredAnchor()));
+		return counts.size() == 1 ? counts.iterator().next() : 0;
+	}
+
+	/** Null means that this proof cannot replace inspection of the explicit relation. */
+	private static Integer uniformRealizationWorkerCount(
+		PlacementAnalysis.CandidateEmissionRealization realization, PhysicalWorkerCounts physicalWorkerCounts) {
+		if(realization.anchor() != null)
+			return physicalWorkerCounts.count(realization.anchor());
+		var product = realization.factorizedSupportProduct().orElse(null);
+		if(product == null)
+			return null;
+		if(product.nativeWorkerPoolWitness() != null)
+			return physicalWorkerCounts.count(product.nativeWorkerPoolWitness());
+		var independent = realization.independentSupportProduct().orElse(null);
+		return independent == null ? null : compactSupportWorkerCount(independent, physicalWorkerCounts);
+	}
+
 	private static int realizationSupportWorkerCount(PlacementAnalysis analysis,
 		PlacementAnalysis.CandidateRealizationSupportClause selectedClause,
 		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference> visiting,
@@ -3117,6 +3173,13 @@ public final class ExactPhysicalCostModel {
 				|| !visiting.add(binding.source()))
 				continue;
 			var source = analysis.requireExactCandidateRealization(binding.source());
+			Integer uniform = uniformRealizationWorkerCount(source, physicalWorkerCounts);
+			if(uniform != null) {
+				visiting.remove(binding.source());
+				if(uniform > 0)
+					counts.add(uniform);
+				continue;
+			}
 			Set<Integer> sourceCounts = new LinkedHashSet<>();
 			for(var clause : source.supportClauses())
 				sourceCounts.add(realizationWorkerCount(

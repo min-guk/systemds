@@ -105,7 +105,7 @@ public class ExactCanonicalAlternativeFingerprintTest {
 		EnumSet<AuthorityKind> seen = EnumSet.noneOf(AuthorityKind.class);
 		boolean derived = false;
 		boolean relocation = false;
-		for(String id : List.of("B-11", "B-21", "B-22", "RELOCATION", "LOOP")) {
+		for(String id : List.of("B-11", "B-21", "B-22", "RELOCATION", "LOOP", "WEIGHTED")) {
 			for(var domain : model(id).domains()) {
 				for(Alternative alternative : domain.alternatives()) {
 					seen.add(alternative.authorityKind());
@@ -128,7 +128,7 @@ public class ExactCanonicalAlternativeFingerprintTest {
 		}
 		Alternative base = firstAlternative(model("B-11"));
 		for(AuthorityKind kind : AuthorityKind.values()) {
-			if(kind == AuthorityKind.CAPTURED_RULE)
+			if(kind == AuthorityKind.CAPTURED_RULE || kind == AuthorityKind.CP_RULE_FAMILY)
 				continue;
 			Alternative placeholder = new Alternative(base.decision(), base.state(), kind,
 				null, null, null, null, null, null, null, List.of(), List.of(), null, null, "placeholder");
@@ -257,8 +257,25 @@ public class ExactCanonicalAlternativeFingerprintTest {
 	private static ExactPhysicalModel model(String id) throws Exception {
 		DMLProgram program = "RELOCATION".equals(id) ? relocationFixture()
 			: "LOOP".equals(id) ? loopFixture()
+			: "WEIGHTED".equals(id) ? weightedFixture()
 			: CampaignBG014HermeticPlannerFixtureFactory.compile(id);
 		return ExactPhysicalModel.build(new NeutralPlacementGraphBuilder().buildAnalysis(program));
+	}
+
+	private static DMLProgram weightedFixture() throws Exception {
+		String script = "X=federated(addresses=list(\"localhost:1234/X\"),"
+			+ "ranges=list(list(0,0),list(8,4)));U=matrix(1,rows=8,cols=2);"
+			+ "V=matrix(1,rows=4,cols=2);W=matrix(1,rows=8,cols=4);"
+			+ "sl=sum(W*(X-U%*%t(V))^2);print(sl);";
+		DMLProgram program = ParserFactory.createParser().parse(
+			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PUBLIC);
+		return program;
 	}
 
 	private static DMLProgram loopFixture() throws Exception {
@@ -304,7 +321,7 @@ public class ExactCanonicalAlternativeFingerprintTest {
 		return new Alternative(a.decision(), a.state(), a.authorityKind(), a.candidateRule(),
 			a.candidateEmission(), a.executionRule(), a.executionEmission(), a.durableAnchor(),
 			a.relocationAction(), a.derivedFoutAction(), a.orderedInputs(), a.inputAuthorities(),
-			a.realization(), a.supportClause(), signature);
+			a.realization(), a.supportClause(), a.compactSupport(), a.cpRuleFamily(), signature);
 	}
 
 	private static Alternative canonicalized(Alternative alternative) {
@@ -318,6 +335,9 @@ public class ExactCanonicalAlternativeFingerprintTest {
 				+ (input.expectedFType() == null ? "-" : input.expectedFType()) + ":"
 				+ (input.sourceDecision() == null ? "-" : input.sourceDecision().normalizedSignature()) + ":"
 				+ (input.relocationAction() == null ? "-" : input.relocationAction().normalizedSignature()));
+		if(a.authorityKind() == AuthorityKind.CP_RULE_FAMILY)
+			return "CP_RULE_FAMILY|" + a.state().normalizedSignature() + "|family="
+				+ a.cpRuleFamily().normalizedSignature();
 		if(a.authorityKind() == AuthorityKind.CAPTURED_RULE)
 			return "CAPTURED|" + a.state().normalizedSignature() + "|rule="
 				+ a.candidateRule().key().normalizedSignature() + "|emission="

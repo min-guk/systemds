@@ -1,0 +1,2 @@
+# Keep reproducible sources and evidence; compiled benchmark classes are local.
+*.class

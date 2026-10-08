@@ -1,0 +1,38 @@
+[
+  {
+    "iteration": 1,
+    "kind": "baseline",
+    "analysisMillis": 1419.823567,
+    "output": "/home/mchoi/plan-space-implementation-20261008/paired-1-baseline"
+  },
+  {
+    "iteration": 1,
+    "kind": "optimized",
+    "analysisMillis": 1021.915518,
+    "output": "/home/mchoi/plan-space-implementation-20261008/paired-1-optimized"
+  },
+  {
+    "iteration": 2,
+    "kind": "optimized",
+    "analysisMillis": 1143.792077,
+    "output": "/home/mchoi/plan-space-implementation-20261008/paired-2-optimized"
+  },
+  {
+    "iteration": 2,
+    "kind": "baseline",
+    "analysisMillis": 1244.445899,
+    "output": "/home/mchoi/plan-space-implementation-20261008/paired-2-baseline"
+  },
+  {
+    "iteration": 3,
+    "kind": "baseline",
+    "analysisMillis": 1051.351787,
+    "output": "/home/mchoi/plan-space-implementation-20261008/paired-3-baseline"
+  },
+  {
+    "iteration": 3,
+    "kind": "optimized",
+    "analysisMillis": 1188.195892,
+    "output": "/home/mchoi/plan-space-implementation-20261008/paired-3-optimized"
+  }
+]

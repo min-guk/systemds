@@ -1,0 +1,149 @@
+{
+  "aggregate": {
+    "analysisSeconds": {
+      "max": 1.05946809,
+      "median": 0.926258115,
+      "min": 0.782085056
+    },
+    "compileSeconds": {
+      "max": 2.172761,
+      "median": 1.888799,
+      "min": 1.631315
+    },
+    "containerMemoryBytes": {
+      "max": 844208537,
+      "median": 821139865,
+      "min": 715967692
+    },
+    "jfrHeapBytes": {
+      "max": 82745344,
+      "median": 69934728,
+      "min": 67907392
+    },
+    "planningSeconds": {
+      "max": 1.42937814,
+      "median": 1.221275566,
+      "min": 1.084147396
+    }
+  },
+  "fixture": "weighted_quaternary_with_private_aggregate",
+  "runs": [
+    {
+      "alternatives": 58,
+      "analysisFingerprint": "eac58934985d6ad6e2ec1ecf5bca7355e84cbad8c14be7a358de369abffb37f4",
+      "analysisSeconds": 0.926258115,
+      "auditRows": 53,
+      "compileSeconds": 1.888799,
+      "containerMemoryBytes": 821139865,
+      "costFingerprint": "physical-semantic-dag-v3:b99cd5292c9ac49d564887c4a4d10697785c1aaa6e196954075555397f5e7133",
+      "decisions": 53,
+      "jfrHeapBytes": 67907392,
+      "objectiveBits": "4611690365098708173",
+      "objectiveMillis": 2.001930309832096,
+      "outputFingerprint": {
+        "COLS": 1.0,
+        "NORM2": 2468.599470494797,
+        "ROWS": 3.0,
+        "SUM": 84.25458714239825
+      },
+      "planFingerprint": "4635a2b6db06dfae4bb2467bddde9aa41505b38b76e99e72362abe1d669cb76b",
+      "planningSeconds": 1.221275566,
+      "prePrivacyStates": 55,
+      "publishedStates": 54,
+      "run": 1,
+      "status": "PASSED",
+      "weightedKernelEvidence": {
+        "wcemm": {
+          "availableCandidateAudit": true,
+          "runtimeHeavyHitter": true
+        },
+        "wsloss": {
+          "availableCandidateAudit": true,
+          "runtimeHeavyHitter": true
+        }
+      }
+    },
+    {
+      "alternatives": 58,
+      "analysisFingerprint": "eac58934985d6ad6e2ec1ecf5bca7355e84cbad8c14be7a358de369abffb37f4",
+      "analysisSeconds": 0.782085056,
+      "auditRows": 53,
+      "compileSeconds": 1.631315,
+      "containerMemoryBytes": 844208537,
+      "costFingerprint": "physical-semantic-dag-v3:b99cd5292c9ac49d564887c4a4d10697785c1aaa6e196954075555397f5e7133",
+      "decisions": 53,
+      "jfrHeapBytes": 69934728,
+      "objectiveBits": "4611690365098708173",
+      "objectiveMillis": 2.001930309832096,
+      "outputFingerprint": {
+        "COLS": 1.0,
+        "NORM2": 2468.599470494797,
+        "ROWS": 3.0,
+        "SUM": 84.25458714239825
+      },
+      "planFingerprint": "4635a2b6db06dfae4bb2467bddde9aa41505b38b76e99e72362abe1d669cb76b",
+      "planningSeconds": 1.084147396,
+      "prePrivacyStates": 55,
+      "publishedStates": 54,
+      "run": 2,
+      "status": "PASSED",
+      "weightedKernelEvidence": {
+        "wcemm": {
+          "availableCandidateAudit": true,
+          "runtimeHeavyHitter": true
+        },
+        "wsloss": {
+          "availableCandidateAudit": true,
+          "runtimeHeavyHitter": true
+        }
+      }
+    },
+    {
+      "alternatives": 58,
+      "analysisFingerprint": "eac58934985d6ad6e2ec1ecf5bca7355e84cbad8c14be7a358de369abffb37f4",
+      "analysisSeconds": 1.05946809,
+      "auditRows": 53,
+      "compileSeconds": 2.172761,
+      "containerMemoryBytes": 715967692,
+      "costFingerprint": "physical-semantic-dag-v3:b99cd5292c9ac49d564887c4a4d10697785c1aaa6e196954075555397f5e7133",
+      "decisions": 53,
+      "jfrHeapBytes": 82745344,
+      "objectiveBits": "4611690365098708173",
+      "objectiveMillis": 2.001930309832096,
+      "outputFingerprint": {
+        "COLS": 1.0,
+        "NORM2": 2468.599470494797,
+        "ROWS": 3.0,
+        "SUM": 84.25458714239825
+      },
+      "planFingerprint": "4635a2b6db06dfae4bb2467bddde9aa41505b38b76e99e72362abe1d669cb76b",
+      "planningSeconds": 1.42937814,
+      "prePrivacyStates": 55,
+      "publishedStates": 54,
+      "run": 3,
+      "status": "PASSED",
+      "weightedKernelEvidence": {
+        "wcemm": {
+          "availableCandidateAudit": true,
+          "runtimeHeavyHitter": true
+        },
+        "wsloss": {
+          "availableCandidateAudit": true,
+          "runtimeHeavyHitter": true
+        }
+      }
+    }
+  ],
+  "schema": "fedplanner-weighted-private-aggregate-repeats-v1",
+  "separatePrivacyBranch": "PRIVATE_AGGREGATE_TO_PUBLIC",
+  "stable": {
+    "allPassed": true,
+    "analysisFingerprint": true,
+    "costFingerprint": true,
+    "objectiveBits": true,
+    "outputFingerprint": true,
+    "planFingerprint": true,
+    "weightedEvidence": true
+  },
+  "weightedOperandPrivacy": "PUBLIC"
+}

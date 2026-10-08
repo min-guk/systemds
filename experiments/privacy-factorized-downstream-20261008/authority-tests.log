@@ -1,0 +1,10 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+....EXACT_AUTHORITY_PRUNING_EVIDENCE|legacyAlternatives=22|optimizedAlternatives=19|removed=3|legacyFactorCells=46|optimizedFactorCells=27
+.EXACT_SIGNATURE_SHARING_EVIDENCE|eagerRelocations=SignatureRepresentation[uniqueLiteralCharacters=3669, uniqueLiteralUtf8Bytes=3669, uniqueLiterals=1, canonicalTexts=1, literalReferences=1]|lazyRelocations=SignatureRepresentation[uniqueLiteralCharacters=2389, uniqueLiteralUtf8Bytes=2389, uniqueLiterals=46, canonicalTexts=16, literalReferences=65]
+...EXACT_HARD_FACTORIZATION_EVIDENCE|HardFactorizationStatistics[canonicalFactors=1617, factorizedFactors=116, canonicalCells=197299029, encodedCells=16082536, auxiliaryVariables=232, canonicalCellsOverflow=false, encodedCellsOverflow=false, realizationSupportFactors=71, realizationSupportCanonicalCells=98532838, realizationSupportEncodedCells=3557251, inputAuthorityFactors=45, inputAuthorityCanonicalCells=98115010, inputAuthorityEncodedCells=11874104]
+.
+Time: 50.349
+
+OK (9 tests)
+

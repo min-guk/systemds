@@ -6,6 +6,11 @@
 # run_LAN.sh or resumes the unrelated paused all14 performance goal.
 set -euo pipefail
 
+if [[ "${1:-}" == "--plan-space-example" ]]; then
+    shift
+    exec python3 "$(dirname "$0")/run_plan_space_example.py" "$@"
+fi
+
 if [[ "${1:-}" == "--pruning-ablation" ]]; then
     shift
     exec python3 "$(dirname "$0")/run_pruning_ablation.py" "$@"

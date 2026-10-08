@@ -72,18 +72,19 @@ public class EarlyPrivacyPruningLegalSpaceParityTest {
 
 	// Complete legal-space baselines, with audited updates documented below.
 	private static final String PROTECTED_AGGREGATE_GOLDEN =
-		"09e2e4069fefd2f280f137b7c042182cc6a7e2e994169aca9ccc9c4c77e23ea2";
+		"0f90bc4e6bf13f4fed913348ca7ae62b3cb716abb5921afd7d1c5e9f6ac3f59d";
 	// Geometry/precision baselines include the exact native-reader worker-pool
 	// routes restored for function and branch outputs. See the audited tuple delta
 	// and Closure-only ablation in SESSION_ISSUES_2026-10-07.md.
 	private static final String METADATA_AND_HANDLE_GOLDEN =
-		"d5d6a770a1a979338ca1c15f7a104b03d985a8eec574720f06009b1eb91ee141";
+		"e253bd1b358fb8405e7f524f16363d6922168619a487a6840cce84874474853c";
 	private static final String CONTROL_FLOW_GOLDEN =
-		"21f99b5cd1532ea3a803b76529184c238c0f0b31892bd85946f7a535dfb552d3";
-	// 3d0d683c1b changed only colMean's materialization ID and its consumer reference
-	// versus adaebee9cc. Keep exact action identities and support bindings in the digest.
+		"7dd95e34ce780eeb8827fa54124261c41cc54e3024587e8f5d0ca89216c011c0";
+	// Physical upload normalization removes source-file paths from target workers and permits
+	// the exact uploaded realization to be consumed directly on its target layout. Keep exact
+	// action identities and support bindings in the digest.
 	private static final String UNKNOWN_WIDTH_GOLDEN =
-		"ff0e870b4afd1d7ebb1708ea4b0c21fa99345dd369d91d1b8f5a65d2e68451b7";
+		"63d9530b79c54a1e6c01e295cf2e9ef945581ef0802ddd93324cc5a757385d7b";
 
 	@Test
 	public void protectedPayloadAndPublicAggregateKeepTheFullLegalSpace() throws Exception {
@@ -392,9 +393,9 @@ public class EarlyPrivacyPruningLegalSpaceParityTest {
 		Assert.assertEquals("the output identity must name its exact materialization action",
 			"materialized-output:" + digest(action.normalizedSignature()), anchor.placementId());
 		Assert.assertEquals(FType.BROADCAST, anchor.fType());
-		Assert.assertEquals("both workers must receive the complete 1x2 mean", List.of(
-			new AnchorPartition("localhost:1234/X1", List.of(0L, 0L), List.of(1L, 2L)),
-			new AnchorPartition("localhost:1235/X2", List.of(0L, 0L), List.of(1L, 2L))), anchor.partitions());
+		Assert.assertEquals("the physical upload target uses endpoints rather than source file identities", List.of(
+			new AnchorPartition("localhost:1234", List.of(0L, 0L), List.of(1L, 2L)),
+			new AnchorPartition("localhost:1235", List.of(0L, 0L), List.of(1L, 2L))), anchor.partitions());
 		var proof = new PlacementProofKey(PlacementProofKind.DURABLE_ANCHOR, mean,
 			"derived-fout:" + action.normalizedSignature());
 		Assert.assertTrue("every upload support clause must retain the exact action authority",
@@ -411,11 +412,15 @@ public class EarlyPrivacyPruningLegalSpaceParityTest {
 		var expectedSource = CandidateRealizationReference.of(action.candidateRule(), realization);
 		for(var binding : bindings) {
 			Assert.assertEquals("the mean is the right operand of centering", 1, binding.inputPosition());
-			Assert.assertEquals(CandidateInputBindingKind.RELOCATION, binding.kind());
 			Assert.assertEquals("centering must reference the exact uploaded realization",
 				expectedSource, binding.source());
-			Assert.assertEquals(action.producerValueVersion(), binding.relocationAction().sourceValueVersion());
-			Assert.assertEquals(FType.BROADCAST, binding.relocationAction().materializationFType());
+			if(binding.kind() == CandidateInputBindingKind.RELOCATION) {
+				Assert.assertEquals(action.producerValueVersion(), binding.relocationAction().sourceValueVersion());
+				Assert.assertEquals(FType.BROADCAST, binding.relocationAction().materializationFType());
+			}
+			else
+				Assert.assertEquals("the normalized physical target is consumed directly",
+					CandidateInputBindingKind.DIRECT, binding.kind());
 		}
 	}
 

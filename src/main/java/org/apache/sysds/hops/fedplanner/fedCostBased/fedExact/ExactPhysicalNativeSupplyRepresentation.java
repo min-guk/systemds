@@ -70,7 +70,13 @@ final class ExactPhysicalNativeSupplyRepresentation {
 	}
 
 	record SourceProvenance(CompiledHopKey sourceDecision, ValueVersionKey valueVersion,
-		CandidateRealizationReference realization, DurableAnchorKey durableAnchor) { }
+		CandidateRealizationReference realization, DurableAnchorKey durableAnchor,
+		boolean deferredRealization) {
+		SourceProvenance {
+			if(deferredRealization && realization != null)
+				throw new IllegalArgumentException("Deferred supply provenance cannot name one realization");
+		}
+	}
 
 	record TargetLayout(PlacementLayoutKind kind, DurableAnchorKey anchor, String lineage) { }
 
@@ -264,7 +270,9 @@ final class ExactPhysicalNativeSupplyRepresentation {
 					alternative.supportClause(), authority, sourceDecision);
 				ValueVersionKey version = sourceDecision == null ? null
 					: model.analysis().graph().node(sourceDecision).orElseThrow().valueVersion();
-				CandidateRealizationReference reference = binding == null ? null : binding.source();
+				boolean deferredReference = alternative.compactSupport() != null && binding != null;
+				CandidateRealizationReference reference = deferredReference ? null
+					: binding == null ? null : binding.source();
 				RelocationAction relocation = authority.relocationAction();
 				SupplyActionKind actionKind = switch(authority.kind()) {
 					case NATIVE_LOCAL -> SupplyActionKind.NATIVE_LOCAL;
@@ -276,7 +284,7 @@ final class ExactPhysicalNativeSupplyRepresentation {
 					: relocation.key().durableAnchor();
 				supplies.add(new SupplyCandidate(alternative.decision(), SupplyDirection.INPUT,
 					authority.inputPosition(), new SourceProvenance(sourceDecision, version, reference,
-						targetAnchor), actionKind, relocation, target,
+						targetAnchor, deferredReference), actionKind, relocation, target,
 					new TargetLayout(target.output()
 						== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT
 							? PlacementLayoutKind.LOCAL
@@ -288,7 +296,7 @@ final class ExactPhysicalNativeSupplyRepresentation {
 			DerivedFoutMaterializationAction action = alternative.derivedFoutAction();
 			supplies.add(new SupplyCandidate(alternative.decision(), SupplyDirection.OUTPUT, -1,
 				new SourceProvenance(alternative.decision(), action.key().producerValueVersion(), null,
-					null), SupplyActionKind.OUTPUT_MATERIALIZATION, action, action.key().targetPlacement(),
+					null, false), SupplyActionKind.OUTPUT_MATERIALIZATION, action, action.key().targetPlacement(),
 				new TargetLayout(PlacementLayoutKind.DURABLE_MAP,
 					action.key().durableAnchor(), null)));
 		}
@@ -296,7 +304,7 @@ final class ExactPhysicalNativeSupplyRepresentation {
 			RelocationAction action = alternative.relocationAction();
 			supplies.add(new SupplyCandidate(alternative.decision(), SupplyDirection.OUTPUT, -1,
 				new SourceProvenance(null, action.key().sourceValueVersion(), null,
-					action.key().durableAnchor()), SupplyActionKind.RELOCATION, action,
+					action.key().durableAnchor(), false), SupplyActionKind.RELOCATION, action,
 				action.key().targetPlacement(), new TargetLayout(PlacementLayoutKind.DURABLE_MAP,
 					action.key().durableAnchor(), null)));
 		}

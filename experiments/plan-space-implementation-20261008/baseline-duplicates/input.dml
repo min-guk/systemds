@@ -1,0 +1,10 @@
+# PRIVATE_AGGREGATE sources; column sums can leave the source workers.
+A = federated(addresses=list("localhost:5234/A1", "localhost:5235/A2"),
+    ranges=list(list(0,0),list(4,2),list(4,0),list(8,2)));
+B = federated(addresses=list("localhost:5234/B1", "localhost:5235/B2"),
+    ranges=list(list(0,0),list(4,2),list(4,0),list(8,2)));
+U = colSums(A);
+V = colSums(B);
+C = U * V;
+D = abs(C);
+print(sum(D));

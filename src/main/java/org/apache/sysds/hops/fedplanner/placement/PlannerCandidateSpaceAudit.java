@@ -141,6 +141,35 @@ public final class PlannerCandidateSpaceAudit {
 				: publishedView.get("emissions"));
 			rows.add(row);
 		}
+		for(CpRuleFamily family : analysis.candidateRuleFacts().cpFamilies()) {
+			CompiledHopKey occurrence = family.parent();
+			Map<String,Object> row = new LinkedHashMap<>();
+			row.put("schema", "fedplanner-candidate-space-v1");
+			row.put("representation", "FACTORIZED_CP");
+			row.put("pid", ProcessHandle.current().pid());
+			row.put("analysisFingerprint", analysis.analysisFingerprint());
+			row.put("auditContext", auditContext);
+			row.put("auditInvocation", currentAuditInvocation());
+			row.put("occurrenceKeyHash", PlannerRuntimePlacementAudit.shortHash(occurrence.normalizedSignature()));
+			row.put("replayOccurrenceKeyHash", replayOccurrenceHash(occurrence));
+			row.put("semanticReplayOccurrenceKeyHash", semanticReplayOccurrenceHash(occurrence));
+			row.put("occurrence", occurrence.normalizedSignature());
+			row.put("inputAxes", family.axes().stream().map(axis ->
+				axis.stream().map(CandidateInputState::normalizedSignature).toList()).toList());
+			row.put("logicalTuples", family.logicalSize().toString());
+			row.put("ruleSignature", family.normalizedSignature());
+			analysis.hop(occurrence).ifPresent(hop -> addHop(row, hop));
+			row.put("privacy", analysis.requirePrivacy(occurrence).name());
+			row.put("workers", analysis.numWorkers());
+			row.put("prePrivacyNodeStates", states(rawNodes.get(occurrence)));
+			row.put("publishedNodeStates", states(publishedNodes.get(occurrence)));
+			row.put("prePrivacyExclusions", exclusions(rawNodes.get(occurrence)));
+			row.put("publishedExclusions", exclusions(publishedNodes.get(occurrence)));
+			Map<String,Object> published = familyFact(family);
+			row.put("publishedRule", published);
+			row.put("publishedStatesP", published.get("emissions"));
+			rows.add(row);
+		}
 		append(rows);
 		List<Map<String,Object>> pruningRows = new ArrayList<>();
 		for(CandidatePrivacyInputPruning evidence : analysis.candidateRuleDomain().privacyPrunedInputs()) {
@@ -400,6 +429,19 @@ public final class PlannerCandidateSpaceAudit {
 		out.put("producerOutputs", fact.profile().producerOutputs().stream().map(Enum::name).toList());
 		out.put("profileFailure", fact.profile().evaluationFailure());
 		out.put("emissions", emissions(fact.allowedEmissionFacts()));
+		return out;
+	}
+
+	/** Audit the symbolic header; observing the relation must not instantiate a member. */
+	private static Map<String,Object> familyFact(CpRuleFamily family) {
+		Map<String,Object> out = new LinkedHashMap<>();
+		out.put("status", "AVAILABLE");
+		out.put("failureCode", "");
+		out.put("capability", capability(family.capability()));
+		out.put("shapeProof", shapeProof(family.shapeProof()));
+		out.put("producerOutputs", family.profile().producerOutputs().stream().map(Enum::name).toList());
+		out.put("profileFailure", family.profile().evaluationFailure());
+		out.put("emissions", emissions(List.of(family.emission())));
 		return out;
 	}
 

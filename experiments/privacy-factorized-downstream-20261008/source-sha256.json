@@ -1,0 +1,19 @@
+{
+  "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalCostModel.java": "f6fda21d9b3f51176da146bc1b7ab845768a778bf4ca42df34360fc4fac603c0",
+  "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.java": "8056bb06453f350726f6c78e06afc9aac5e181ea82f565e356ec464489091b60",
+  "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalNativeSupplyRepresentation.java": "11c521500b68ae9223f6e1e019ddddf1770b6dd34588f6037f036a7ceade8d09",
+  "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalSelection.java": "85135cb4bdb1d822dc27b06b0d77399fc2f2e0ac4976b378afd4417e121bab09",
+  "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalSharedSourceEncoding.java": "2802514cba1191519799623b7e3aefb859f832cf1c0c82cc59d277532468a7ac",
+  "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/JointPhysicalCostRows.java": "68866b56be3460eaf1c16be6d867a380ac34f48c1cc818529894557f6a956dcc",
+  "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/PhysicalSemanticDagFingerprint.java": "45177ec2f07f42686c5e27f09d6b283ae7d5fe0a4700ff5c1085c2836f9efa01",
+  "src/main/java/org/apache/sysds/hops/fedplanner/placement/CandidateSelections.java": "0130301431a29f0e2c0e921d68701d1a548b8aab60518804d7c0bd06c339f037",
+  "src/main/java/org/apache/sysds/hops/fedplanner/placement/FactorizedSupportClauses.java": "348117c4ad071f527b88deffbd855a40b690c3f9bcf8cbec562c0d9599050325",
+  "src/main/java/org/apache/sysds/hops/fedplanner/placement/JointValueMapRelations.java": "44111e9cdffc3fa3e85f1099955facb0b5ca4117fe59018e7057405faa990ea0",
+  "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.java": "63eac5bea499a725fe990aaeeb9d716ced45a3cffe44cc5c79f982fdd1bb026f",
+  "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementCandidateGenerator.java": "258935d3055616ee915d3dc7c56658b768d80b765325d939ba9350e1dced2c5d",
+  "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementCostSemantics.java": "8c9910668fa96b8d8e3d2a43c2083f4e0dde4844a1e024fe7cc359a580e44c7c",
+  "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementIdentity.java": "745ae7818541e0a0defae21cda7a9834da427392730bf51c63e75786d30c425f",
+  "src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementRelationClosure.java": "97184d55e9e72209c826c576440d3e04826b2067ce8c1f4edca6f9a6c0f931a0",
+  "src/main/java/org/apache/sysds/hops/fedplanner/placement/SearchSpaceMetrics.java": "790d7d3a85ad1d71ca2f691b3c3f9b4ba70c5872ca40261d2c3868fe32942b35",
+  "src/main/java/org/apache/sysds/runtime/instructions/fed/FEDFoutInstruction.java": "e9e921c9ea0e5e58e09ad7ea978640d01595df9f7cafb37e6d49f131ec9c57c0"
+}
