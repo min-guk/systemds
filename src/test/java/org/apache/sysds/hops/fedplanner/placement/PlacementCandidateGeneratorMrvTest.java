@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpData;
@@ -31,6 +32,7 @@ import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.QuaternaryOp;
+import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -42,12 +44,14 @@ import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.AbstractShapeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -200,6 +204,151 @@ public class PlacementCandidateGeneratorMrvTest {
 	}
 
 	@Test
+	public void weightedScalarRulesDeclareExactCandidateHeaderDependencies() {
+		DataOp x = matrix("Xdependencies");
+		DataOp u = matrix("Udependencies");
+		DataOp v = matrix("Vdependencies");
+		List<QuaternaryOp> supported = List.of(
+			new QuaternaryOp("wsloss-dependencies", DataType.SCALAR, ValueType.FP64,
+				OpOp4.WSLOSS, x, u, v, matrix("Wdependencies"), false),
+			new QuaternaryOp("wcemm-dependencies", DataType.SCALAR, ValueType.FP64,
+				OpOp4.WCEMM, x, u, v, new LiteralOp(0.1), 1, false, false));
+		for(QuaternaryOp operation : supported) {
+			var dependencies = facade().prepareDecision(operation)
+				.candidateFamilyDependencies().orElseThrow();
+			Assert.assertEquals(Set.of(0), dependencies.capabilityPositions());
+			Assert.assertTrue(dependencies.profilePositions().isEmpty());
+			Assert.assertEquals(Set.of(0), dependencies.emissionPositions());
+			Assert.assertEquals(Set.of(0), dependencies.allPositions());
+		}
+		QuaternaryOp sigmoid = new QuaternaryOp("wsigmoid-dependencies", DataType.MATRIX,
+			ValueType.FP64, OpOp4.WSIGMOID, x, u, v, false, false);
+		Assert.assertEquals(Set.of(0), facade().prepareDecision(sigmoid)
+			.candidateFamilyDependencies().orElseThrow().allPositions());
+		QuaternaryOp unsupported = new QuaternaryOp("wdivmm-dependencies", DataType.MATRIX,
+			ValueType.FP64, OpOp4.WDIVMM, x, u, v, new LiteralOp(-1L), 1, false, false);
+		Assert.assertTrue(facade().prepareDecision(unsupported)
+			.candidateFamilyDependencies().isEmpty());
+	}
+
+	@Test
+	public void mmFedKeepsExecutionDeterminantsWithoutAdvertisingAnInactiveFamily() {
+		Rulesets.MMFedRule rule = new Rulesets.MMFedRule();
+		OpSig exact = OpSig.of("mapmm", OpCategory.BINARY_MM,
+			Map.of("r_is_vector", "false"), OpSig.InputKind.MATRIX, OpSig.InputKind.MATRIX);
+		Assert.assertEquals(Set.of(0, 1),
+			rule.shapeIndependentDecision(exact).orElseThrow().determinantPositions());
+		Assert.assertTrue(rule.candidateFamilyDependencies(exact).isEmpty());
+
+		OpSig unresolved = OpSig.of("mapmm", OpCategory.BINARY_MM, Map.of(),
+			OpSig.InputKind.MATRIX, OpSig.InputKind.MATRIX);
+		Assert.assertTrue(rule.shapeIndependentDecision(unresolved).isEmpty());
+		Assert.assertTrue(rule.candidateFamilyDependencies(unresolved).isEmpty());
+	}
+
+	@Test
+	public void privateAggregateUnaryKeepsExactRowsWithoutBuildingUnusedRelationHeaders() {
+		UnaryOp hop = new UnaryOp("private-exp", DataType.MATRIX, ValueType.FP64,
+			OpOp1.EXP, matrix("private-X"));
+		List<List<FType>> domains = List.of(Arrays.asList(null, FType.ROW, FType.COL));
+		ControlRegionKey region = new ControlRegionKey("private-unary-relation", "main",
+			List.of("root"), "root", "compiled");
+		CompiledHopKey key = new CompiledHopKey("private-unary-relation", "main", "root",
+			"compiled", region, "exp", "exp");
+		ValueVersionKey value = new ValueVersionKey("private-unary-relation", "X", region, 0,
+			VersionKind.ORDINARY, List.of());
+		NodeShapeFact matrixShape = new NodeShapeFact(DataType.MATRIX, 8, 4);
+		List<NodeShapeFact> inputShapes = List.of(matrixShape);
+		SinglePartitionFacts partitions = new SinglePartitionFacts(hop.getInput(), Map.of(), Set.of());
+		List<CandidateRuleKey> keys = new ArrayList<>();
+		List<CandidateRuleFact> facts = new ArrayList<>();
+		PlacementCandidateGenerator generator = new PlacementCandidateGenerator(facade(), null);
+		OracleFacade.PreparedDecision prepared = facade().prepareDecision(hop);
+		Assert.assertTrue(prepared.candidateFamilyDependencies().isPresent());
+		var preparedRelation = prepared.prepareExecutionRelation(domains).orElseThrow();
+		Assert.assertEquals(2, preparedRelation.regions().stream()
+			.filter(candidate -> candidate.evidence().caps().exec() == ExecType.FED).count());
+
+		generator.buildNode(hop, key, value, List.of(), Arrays.asList((DurableAnchorKey)null),
+			Arrays.asList((CompiledHopKey)null), matrixShape,
+			AbstractShapeFact.fromConcrete(matrixShape), partitions, inputShapes, domains, keys, facts,
+			new PlacementCandidateGenerator.GenerationPrivacy(Privacy.PRIVATE_AGGREGATE, Set.of(0)));
+
+		List<CandidateRuleFact> available = facts.stream()
+			.filter(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE).toList();
+		Assert.assertEquals(2, available.size());
+		Assert.assertTrue("unpublished unary relations must not add runtime header/oracle work",
+			generator.candidateRuleRelations().isEmpty());
+		Assert.assertTrue(available.stream().allMatch(fact ->
+			fact.key().orderedInputs().stream().allMatch(CandidateInputState::present)));
+		for(CandidateRuleFact exact : available) {
+			Assert.assertEquals(1, exact.allowedEmissionFacts().size());
+			Assert.assertEquals(ExecType.FED, exact.allowedEmissionFacts().get(0)
+				.emissionState().placementState().execType());
+			Assert.assertEquals(FederatedOutput.FOUT, exact.allowedEmissionFacts().get(0)
+				.emissionState().placementState().output());
+		}
+	}
+
+	@Test
+	public void buildNodeUsesGeneralRuleMrvWhenNoExecutionRelationCompresses() {
+		RulesCore.RuleRegistry registry = new RulesCore.RuleRegistry();
+		registry.register(new RulesCore.BaseRule() {
+			@Override public OpCategory category() { return OpCategory.OTHER; }
+			@Override public Set<String> opcodes() { return Set.of(OpOp1.EXP.toString()); }
+			@Override public java.util.Optional<org.apache.sysds.hops.fedplanner.rules.RulesApi.DecisionDependencies>
+				decisionDependencies(OpSig sig) {
+				return java.util.Optional.of(
+					new org.apache.sysds.hops.fedplanner.rules.RulesApi.DecisionDependencies(
+						Set.of(0), Set.of(), Set.of()));
+			}
+			@Override public OpCaps caps(OpSig sig, List<FType> inputs, ShapeHint hint) {
+				boolean fed = inputs.get(0) == FType.ROW;
+				var builder = OpCaps.newBuilder().category(sig.category()).opcode(sig.opcode())
+					.exec(fed ? ExecType.FED : ExecType.CP)
+					.placement(fed ? FederatedOutput.FOUT : FederatedOutput.LOUT)
+					.reason(fed ? ReasonCode.OK : ReasonCode.NO_FED_INPUT);
+				if(fed)
+					builder.fout(true, FType.ROW);
+				return builder.build();
+			}
+		});
+		UnaryOp hop = new UnaryOp("general-mrv-exp", DataType.MATRIX, ValueType.FP64,
+			OpOp1.EXP, matrix("general-mrv-X"));
+		List<List<FType>> domains = List.of(Arrays.asList(null, FType.ROW, FType.COL));
+		OracleFacade facade = new OracleFacade(registry);
+		Assert.assertTrue("all varying axes are declared determinants, so eager relation has no compression",
+			facade.prepareDecision(hop).prepareExecutionRelation(domains).isEmpty());
+		ControlRegionKey region = new ControlRegionKey("general-mrv", "main",
+			List.of("root"), "root", "compiled");
+		CompiledHopKey key = new CompiledHopKey("general-mrv", "main", "root",
+			"compiled", region, "exp", "exp");
+		ValueVersionKey value = new ValueVersionKey("general-mrv", "X", region, 0,
+			VersionKind.ORDINARY, List.of());
+		NodeShapeFact shape = new NodeShapeFact(DataType.MATRIX, 8, 4);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		List<CandidateRuleKey> keys = new ArrayList<>();
+		List<CandidateRuleFact> facts = new ArrayList<>();
+		PlacementCandidateGenerator generator = new PlacementCandidateGenerator(facade, metrics);
+
+		generator.buildNode(hop, key, value, List.of(), Arrays.asList((DurableAnchorKey)null),
+			Arrays.asList((CompiledHopKey)null), shape, AbstractShapeFact.fromConcrete(shape),
+			new SinglePartitionFacts(hop.getInput(), Map.of(), Set.of()), List.of(shape),
+			domains, keys, facts, FED_REQUIRED);
+
+		Assert.assertEquals(1, facts.size());
+		Assert.assertEquals(List.of(CandidateInputState.present(FType.ROW)),
+			facts.get(0).key().orderedInputs());
+		Assert.assertEquals(CandidateEvaluationStatus.AVAILABLE, facts.get(0).status());
+		Assert.assertEquals("the surviving leaf reuses early evidence", 2,
+			metrics.snapshot().candidateOracleCalls());
+		var coverage = metrics.generationPruningCoverage();
+		Assert.assertEquals(1, coverage.earlyFeasibilityApplications());
+		Assert.assertTrue(coverage.earlyFeasibilityChecks() > 0);
+		Assert.assertTrue(coverage.earlyFeasibilityCuts() > 0);
+	}
+
+	@Test
 	public void buildNodeFamilyMatchesTheExactPublicGeneratorWithoutAllocatingItsRows() {
 		QuaternaryOp hop = new QuaternaryOp("wsloss-family", DataType.SCALAR, ValueType.FP64,
 			OpOp4.WSLOSS, matrix("XF"), matrix("UF"), matrix("VF"), matrix("WF"), false);
@@ -222,36 +371,92 @@ public class PlacementCandidateGeneratorMrvTest {
 		List<CandidateRuleKey> explicitKeys = new ArrayList<>();
 		List<CandidateRuleFact> explicitFacts = new ArrayList<>();
 		SearchSpaceMetrics explicitMetrics = new SearchSpaceMetrics();
-		PlacementCandidateGenerator explicit = new PlacementCandidateGenerator(facade(), explicitMetrics);
-		explicit.buildNode(hop, key, value, List.of(), inputAnchors, inputOwners, scalar,
-			AbstractShapeFact.fromConcrete(scalar), partitions, inputShapes, domains,
-			explicitKeys, explicitFacts, null);
+		PlacementCandidateGenerator explicit = new PlacementCandidateGenerator(
+			facade(), explicitMetrics, false);
+		PlacementIdentity.beginAnalysisScope(explicitMetrics);
+		try {
+			explicit.buildNode(hop, key, value, List.of(), inputAnchors, inputOwners, scalar,
+				AbstractShapeFact.fromConcrete(scalar), partitions, inputShapes, domains,
+				explicitKeys, explicitFacts, null);
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+		}
 
 		List<CandidateRuleKey> compactKeys = new ArrayList<>();
 		List<CandidateRuleFact> compactFacts = new ArrayList<>();
 		SearchSpaceMetrics compactMetrics = new SearchSpaceMetrics();
 		PlacementCandidateGenerator compact = new PlacementCandidateGenerator(facade(), compactMetrics);
-		compact.buildNode(hop, key, value, List.of(), inputAnchors, inputOwners, scalar,
-			AbstractShapeFact.fromConcrete(scalar), partitions, inputShapes, domains,
-			compactKeys, compactFacts,
-			new PlacementCandidateGenerator.GenerationPrivacy(Privacy.PUBLIC, Set.of()));
+		PlacementIdentity.beginAnalysisScope(compactMetrics);
+		try {
+			compact.buildNode(hop, key, value, List.of(), inputAnchors, inputOwners, scalar,
+				AbstractShapeFact.fromConcrete(scalar), partitions, inputShapes, domains,
+				compactKeys, compactFacts,
+				new PlacementCandidateGenerator.GenerationPrivacy(Privacy.PUBLIC, Set.of()));
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+		}
 		List<CpRuleFamily> families = compact.cpRuleFamilies();
+		List<CandidateRuleRelation> fedRelations = compact.candidateRuleRelations();
 		Assert.assertTrue(families.stream().anyMatch(family ->
 			family.logicalSize().compareTo(java.math.BigInteger.ONE) > 0));
-		Assert.assertEquals("eligible CP rectangles allocate no exact key/fact rows",
-			explicitKeys.size() - families.stream().mapToInt(family -> family.logicalSize().intValueExact()).sum(),
-			compactKeys.size());
+		int deferredTuples = families.stream().mapToInt(
+			family -> family.logicalSize().intValueExact()).sum()
+			+ fedRelations.stream().mapToInt(
+				relation -> relation.logicalSize().intValueExact()).sum();
+		Assert.assertEquals("only headers with exact input support may replace exact key rows",
+			explicitKeys.size() - deferredTuples, compactKeys.size());
+		Assert.assertEquals("only headers with exact input support may replace exact fact rows",
+			explicitFacts.size() - deferredTuples, compactFacts.size());
 		Assert.assertEquals(0, families.stream().mapToInt(CpRuleFamily::materializedMemberCount).sum());
-		System.out.println("CP_FAMILY_GENERATION_WORK|explicitFacts=" + explicitFacts.size()
-			+ "|retainedExactFacts=" + compactFacts.size() + "|familyHeaders=" + families.size()
+		Assert.assertEquals(0, fedRelations.stream()
+			.mapToInt(CandidateRuleRelation::materializedMemberCount).sum());
+		Assert.assertTrue(compactMetrics.objectCreationSnapshot().candidateRuleFacts()
+			< explicitMetrics.objectCreationSnapshot().candidateRuleFacts());
+		Assert.assertEquals("logical tuple metric includes both CP and FED regions",
+			java.math.BigInteger.valueOf(explicitFacts.size()),
+			compactMetrics.executionRelationSnapshot().logicalTuples());
+		long relocationWitnessRows = fedRelations.stream()
+			.flatMap(relation -> relation.regions().stream())
+			.mapToLong(candidateRegion -> {
+				long rows = 1L;
+				for(int left = 0; left < candidateRegion.axes().size(); left++) {
+					long leftDelta = candidateRegion.axes().get(left).size() - 1L;
+					rows += leftDelta;
+					for(int right = left + 1; right < candidateRegion.axes().size(); right++)
+						rows += leftDelta * (candidateRegion.axes().get(right).size() - 1L);
+				}
+				return rows;
+			}).sum();
+		System.out.println("FACTORIZED_GENERATION_WORK|explicitFacts=" + explicitFacts.size()
+			+ "|generatedExplicitFedFacts=" + fedRelations.stream()
+				.map(CandidateRuleRelation::logicalSize)
+				.reduce(java.math.BigInteger.ZERO, java.math.BigInteger::add)
+			+ "|newRetainedExactFacts=" + compactFacts.size()
+			+ "|generationFedFactsAvoided=" + fedRelations.stream()
+				.map(CandidateRuleRelation::logicalSize)
+				.reduce(java.math.BigInteger.ZERO, java.math.BigInteger::add)
+			+ "|familyHeaders=" + families.size()
 			+ "|familyLogicalTuples=" + families.stream().map(CpRuleFamily::logicalSize)
 				.reduce(java.math.BigInteger.ZERO, java.math.BigInteger::add)
+			+ "|fedRelationHeaders=" + fedRelations.stream()
+				.mapToInt(relation -> relation.regions().size()).sum()
+			+ "|fedRelationLogicalTuples=" + fedRelations.stream()
+				.map(CandidateRuleRelation::logicalSize)
+				.reduce(java.math.BigInteger.ZERO, java.math.BigInteger::add)
+			+ "|relocationWitnessRows=" + relocationWitnessRows
+			+ "|explicitCreated=" + explicitMetrics.objectCreationSnapshot()
+			+ "|relationCreated=" + compactMetrics.objectCreationSnapshot()
 			+ "|before=" + explicitMetrics.executionRelationSnapshot()
 			+ "|after=" + compactMetrics.executionRelationSnapshot());
 
 		List<CandidateRuleFact> reconstructed = new ArrayList<>(compactFacts);
 		for(CpRuleFamily family : families)
 			expandFamily(family, 0, new ArrayList<>(), reconstructed);
+		for(CandidateRuleRelation relation : fedRelations)
+			for(CandidateRuleRelation.ConditionalRegion candidateRegion : relation.regions())
+				expandRelation(relation, candidateRegion, 0, new ArrayList<>(), reconstructed);
 		java.util.Comparator<CandidateRuleFact> order = java.util.Comparator.comparing(
 			fact -> fact.key().normalizedSignature());
 		explicitFacts.sort(order);
@@ -266,6 +471,15 @@ public class PlacementCandidateGeneratorMrvTest {
 			Assert.assertEquals(expected.profile(), actual.profile());
 			Assert.assertEquals(expected.allowedEmissionFacts(), actual.allowedEmissionFacts());
 		}
+
+		Assert.assertEquals(1, fedRelations.size());
+		List<CandidateRuleFact> explicitFed = explicitFacts.stream().filter(fact ->
+			fact.capability().nativeExec() == ExecType.FED
+				&& fact.capability().nativeOutput() == FederatedOutput.LOUT).toList();
+		Assert.assertFalse(explicitFed.isEmpty());
+		Assert.assertTrue(compactFacts.stream().noneMatch(explicitFed::contains));
+		Assert.assertEquals(java.math.BigInteger.valueOf(explicitFed.size()),
+			fedRelations.get(0).logicalSize());
 	}
 
 	private static void expandFamily(CpRuleFamily family, int position,
@@ -277,6 +491,20 @@ public class PlacementCandidateGeneratorMrvTest {
 		for(CandidateInputState input : family.axes().get(position)) {
 			inputs.add(input);
 			expandFamily(family, position + 1, inputs, output);
+			inputs.remove(inputs.size() - 1);
+		}
+	}
+
+	private static void expandRelation(CandidateRuleRelation relation,
+		CandidateRuleRelation.ConditionalRegion region, int position,
+		List<CandidateInputState> inputs, List<CandidateRuleFact> output) {
+		if(position == region.axes().size()) {
+			output.add(relation.requireExact(inputs));
+			return;
+		}
+		for(CandidateInputState input : region.axes().get(position)) {
+			inputs.add(input);
+			expandRelation(relation, region, position + 1, inputs, output);
 			inputs.remove(inputs.size() - 1);
 		}
 	}
@@ -533,7 +761,7 @@ public class PlacementCandidateGeneratorMrvTest {
 			Assert.fail("shape-dependent evidence must not enter a shape-independent relation");
 		}
 		catch(IllegalStateException expected) {
-			Assert.assertTrue(expected.getMessage().contains("consulted ShapeHint"));
+			Assert.assertTrue(expected.getMessage().contains("undeclared ShapeHint"));
 		}
 	}
 

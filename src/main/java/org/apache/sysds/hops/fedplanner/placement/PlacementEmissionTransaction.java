@@ -105,12 +105,38 @@ public final class PlacementEmissionTransaction {
 
 	public record ObservabilitySnapshot(long runtimeFallbackCount, long runtimeRepairCount) { }
 
+	/** Test-only commit boundary observer; absent in production execution. */
+	@FunctionalInterface
+	public interface CommitObserverForTesting {
+		void committed(DMLProgram program, NormalizedPlannerResult result,
+			PlacementEmissionReceipt receipt);
+	}
+
+	/** Exact lexical scope for one test-only commit observer. */
+	public interface CommitObserverScopeForTesting extends AutoCloseable {
+		@Override void close();
+	}
+
 	private static final Object LOCK = new Object();
 	private static final Map<DMLProgram, CommittedPlan> COMMITTED = new IdentityHashMap<>();
+	private static final ThreadLocal<CommitObserverForTesting> COMMIT_OBSERVER = new ThreadLocal<>();
 	private static long runtimeFallbackCount;
 	private static long runtimeRepairCount;
 
 	private PlacementEmissionTransaction() { }
+
+	public static CommitObserverScopeForTesting observeCommitsForTesting(
+		CommitObserverForTesting observer) {
+		Objects.requireNonNull(observer, "observer");
+		if(COMMIT_OBSERVER.get() != null)
+			throw new IllegalStateException("A commit observer is already installed on this thread");
+		COMMIT_OBSERVER.set(observer);
+		return () -> {
+			if(COMMIT_OBSERVER.get() != observer)
+				throw new IllegalStateException("Commit observer scope is stale");
+			COMMIT_OBSERVER.remove();
+		};
+	}
 
 	public static PlacementEmissionReceipt emit(DMLProgram program, NormalizedPlannerResult result,
 		FailureInjector failureInjector) {
@@ -154,6 +180,7 @@ public final class PlacementEmissionTransaction {
 				? Collections.unmodifiableMap(new IdentityHashMap<>(currentHopSnapshots)) : existing.baselineHops();
 			RegistrySnapshots baselineRegistries = existing == null
 				? currentRegistrySnapshots : existing.baselineRegistries();
+			PlacementEmissionReceipt committedReceipt;
 			try {
 				if(existing != null) {
 					baselineRegistries.restore();
@@ -167,7 +194,7 @@ public final class PlacementEmissionTransaction {
 				COMMITTED.put(program, new CommittedPlan(receipt, result, baselineHops, baselineRegistries));
 				runtimeAudit.commit();
 				result.analysis().authorizeCommittedProgramStructure();
-				return receipt;
+				committedReceipt = receipt;
 			}
 			catch(RuntimeException | Error failure) {
 				currentRegistrySnapshots.restore();
@@ -178,12 +205,17 @@ public final class PlacementEmissionTransaction {
 				runtimeRepairCount = repairSnapshot;
 				throw failure;
 			}
+			CommitObserverForTesting observer = COMMIT_OBSERVER.get();
+			if(observer != null)
+				observer.committed(program, result, committedReceipt);
+			return committedReceipt;
 		}
 	}
 
 	public static void resetForTesting() {
 		synchronized(LOCK) {
 			COMMITTED.clear();
+			COMMIT_OBSERVER.remove();
 			runtimeFallbackCount = 0;
 			runtimeRepairCount = 0;
 			PlannerRuntimePlacementAudit.resetForTesting();

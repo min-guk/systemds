@@ -29,6 +29,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactPhysicalModel.InputAuthority;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.CpRuleFamily;
+import org.apache.sysds.hops.fedplanner.placement.IndexedSupportClauses;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
@@ -40,6 +41,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRul
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedText;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
 
@@ -249,6 +251,9 @@ final class PhysicalSemanticDagFingerprint {
 						node.child("binding", binding(option));
 				}
 			}
+			else if(realization.supportClauses() instanceof IndexedSupportClauses indexed)
+				for(int row = 0; row < indexed.size(); row++)
+					node.child("clause", clause(indexed, row));
 			else
 				for(CandidateRealizationSupportClause clause : realization.supportClauses())
 					node.child("clause", clause(clause));
@@ -267,6 +272,21 @@ final class PhysicalSemanticDagFingerprint {
 				: clause.nativeWorkerPoolWitness().normalizedSignature());
 			node.bool("nativePoolLayoutExact", clause.nativeWorkerPoolLayoutExact());
 		}));
+	}
+
+	private byte[] clause(IndexedSupportClauses relation, int row) {
+		return digest("support-clause", node -> {
+			List<PlacementProofKey> proofs = relation.proofsAt(row);
+			node.integer("proofs", proofs.size());
+			for(PlacementProofKey proof : proofs)
+				node.child("proof", proof(proof));
+			node.integer("bindings", relation.bindingCountAt(row));
+			for(int axis = 0; axis < relation.bindingCountAt(row); axis++)
+				node.child("binding", binding(relation.bindingAt(row, axis)));
+			DurableAnchorKey witness = relation.witnessAt(row);
+			node.nullableText("nativePool", witness == null ? null : witness.normalizedSignature());
+			node.bool("nativePoolLayoutExact", relation.layoutExactAt(row));
+		});
 	}
 
 	private byte[] proof(PlacementProofKey proof) {
@@ -353,6 +373,12 @@ final class PhysicalSemanticDagFingerprint {
 				: alternative.derivedFoutAction().normalizedSignature());
 			if(alternative.cpRuleFamily() != null)
 				node.child("cpRuleFamily", cpRuleFamily(alternative.cpRuleFamily()));
+			if(alternative.candidateRuleRelation() != null) {
+				node.text("candidateRuleRelation",
+					alternative.candidateRuleRelation().normalizedSignature());
+				node.text("candidateRuleRegion",
+					alternative.candidateRuleRegion().normalizedSignature());
+			}
 			node.integer("orderedInputs", alternative.orderedInputs().size());
 			for(CandidateInputState input : alternative.orderedInputs()) {
 				node.text("inputPresence", input.presence().name());
@@ -369,7 +395,8 @@ final class PhysicalSemanticDagFingerprint {
 				node.text("supportSelection", "PRODUCER_MEMBERSHIP_V1");
 			node.text("signatureEncoding", canonical ? "CANONICAL_RECIPE" : "RAW_UTF16");
 			if(canonical)
-				node.text("signatureRecipe", alternative.captured() ? "CAPTURED_V1" : "NONCAPTURED_V1");
+				node.text("signatureRecipe", alternative.captured() ? "CAPTURED_V1"
+					: alternative.relationFamily() ? "CANDIDATE_RULE_RELATION_V1" : "NONCAPTURED_V1");
 			else
 				node.normalizedText("normalizedSignature", alternative.normalizedSignature());
 		});

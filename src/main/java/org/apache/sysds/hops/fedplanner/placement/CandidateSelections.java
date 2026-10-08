@@ -1051,6 +1051,27 @@ public final class CandidateSelections {
 					result.computeIfAbsent(family.parent(), ignored -> new ArrayList<>()).add(base);
 			}
 		}
+		for(CandidateRuleRelation relation : analysis.candidateRuleFacts().candidateRelations()) {
+			PlacementState selected = assignment.get(relation.parent());
+			if(selected == null)
+				continue;
+			relation.forEachExactMember(fact -> {
+				for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+					if(!emission.emissionState().placementState().equals(selected))
+						continue;
+					activeConsumers.put(relation.parent(), Boolean.TRUE);
+					for(CandidateSelectionReceipt base : analysis.canonicalCandidateReceipts(
+						fact.key(), emission)) {
+						activeRows.computeIfAbsent(relation.parent(), ignored -> new ArrayList<>()).add(base);
+						if(foutMaterializationActionReachable(authorityGraph, fact, base, assignment,
+							allowUnassignedDerivedFoutOwner)
+							&& receiptReachable(analysis, actionUniverse, assignment, base,
+								allowUnassignedDerivedFoutOwner))
+							result.computeIfAbsent(relation.parent(), ignored -> new ArrayList<>()).add(base);
+					}
+				}
+			});
+		}
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> ordered = canonicalize
 			? new LinkedHashMap<>() : new IdentityHashMap<>();
 		authorityGraph.decisionNodes().stream().map(NeutralPlacementGraph.Node::key).forEach(key -> {
@@ -1774,8 +1795,20 @@ public final class CandidateSelections {
 				family = candidate;
 			}
 		if(family == null || !family.emission().emissionState().placementState()
-			.equals(assignment.get(consumer)))
-			return false;
+			.equals(assignment.get(consumer))) {
+			CandidateRuleRelation relation = null;
+			for(CandidateRuleRelation candidate : analysis.candidateRuleFacts()
+				.candidateRelationsForParent(consumer))
+				if(candidate.contains(receipt.rule().orderedInputs())) {
+					if(relation != null)
+						return false;
+					relation = candidate;
+				}
+			if(relation == null || relation.regionFor(receipt.rule().orderedInputs()).orElseThrow()
+				.header().emissions().stream().noneMatch(emission -> emission == receipt.emission()
+					&& emission.emissionState().placementState().equals(assignment.get(consumer))))
+				return false;
+		}
 		CandidateRuleFact fact;
 		try {
 			fact = analysis.candidateRuleFacts().requireExact(consumer,
@@ -1829,6 +1862,11 @@ public final class CandidateSelections {
 			if(family.emission().emissionState().placementState()
 				.equals(assignment.get(family.parent())))
 				expected.add(family.parent());
+		for(CandidateRuleRelation relation : analysis.candidateRuleFacts().candidateRelations())
+			if(relation.regions().stream().flatMap(region -> region.header().emissions().stream())
+				.anyMatch(emission -> emission.emissionState().placementState()
+					.equals(assignment.get(relation.parent()))))
+				expected.add(relation.parent());
 		Set<CompiledHopKey> actual = Collections.newSetFromMap(new IdentityHashMap<>());
 		resolved.forEach(receipt -> actual.add(receipt.rule().parentOccurrence()));
 		if(!expected.equals(actual))

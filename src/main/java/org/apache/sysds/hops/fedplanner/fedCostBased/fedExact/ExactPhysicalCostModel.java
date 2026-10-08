@@ -61,6 +61,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.Prepare
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.ExpectedSparseAssignmentEstimates;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.LatentWdivmmRuntimeTransferBoundary;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.IndexedSupportClauses;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
@@ -68,6 +69,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInpu
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalFunctionInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTransientInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
@@ -504,6 +507,19 @@ public final class ExactPhysicalCostModel {
 	static PhysicalCostSurface physicalCostSurface(PlacementAnalysis analysis,
 		ExactPhysicalModel model, ExactCategoricalSolver.Limits limits,
 		Consumer<ExactCategoricalSolver.Factor> ordinaryEvaluationObserver) {
+		return physicalCostSurface(analysis, model, limits, ordinaryEvaluationObserver, true);
+	}
+
+	static PhysicalCostSurface physicalCostSurfaceWithoutSingletonWorkerProofForTest(
+		PlacementAnalysis analysis, ExactPhysicalModel model) {
+		return physicalCostSurface(analysis, model, ExactPhysicalOptimizer.PRODUCTION_LIMITS,
+			factor -> { }, false);
+	}
+
+	private static PhysicalCostSurface physicalCostSurface(PlacementAnalysis analysis,
+		ExactPhysicalModel model, ExactCategoricalSolver.Limits limits,
+		Consumer<ExactCategoricalSolver.Factor> ordinaryEvaluationObserver,
+		boolean enableSingletonWorkerProof) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(model, "model");
 		Objects.requireNonNull(limits, "limits");
@@ -514,6 +530,16 @@ public final class ExactPhysicalCostModel {
 			throw new IllegalArgumentException("EXACT_GUARDED_FUNCTION_ROOTS_REQUIRED");
 		int workers = workerCount(analysis.graph());
 		PhysicalWorkerCounts physicalWorkerCounts = new PhysicalWorkerCounts();
+		if(enableSingletonWorkerProof)
+			physicalWorkerCounts.certifySingleton(analysis, model, workers);
+		if(enableSingletonWorkerProof && Boolean.getBoolean("sysds.fedplanner.liveMetrics"))
+			System.err.println("COST_WORKER_COUNT_PROOF|certified="
+				+ physicalWorkerCounts.singletonCertified + "|refs="
+				+ physicalWorkerCounts.singletonValidatedReferences + "|anchors="
+				+ physicalWorkerCounts.singletonValidatedAnchors + "|clauses="
+				+ physicalWorkerCounts.singletonVisitedClauses + "|bindings="
+				+ physicalWorkerCounts.singletonVisitedBindings + "|reason="
+				+ physicalWorkerCounts.singletonProofReason);
 		ExpectedSparseAssignmentEstimates sparseAssignments =
 			PlacementCostSemantics.expectedSparseAssignmentEstimates(analysis);
 		List<ExactCategoricalSolver.Factor> factors = new ArrayList<>();
@@ -531,13 +557,13 @@ public final class ExactPhysicalCostModel {
 		for(ExactPhysicalModel.DecisionDomain domain : model.domains()) {
 			domains.put(domain.node().key(), domain);
 			addPhysicalUnaryFactor(analysis, sparseAssignments, domain, workers,
-				frequencies, factors, factorKinds, preparedCosts.get(domain.node().key()),
+				physicalWorkerCounts, frequencies, factors, factorKinds, preparedCosts.get(domain.node().key()),
 				nativeSupply.domain(domain.node().key()));
 		}
 		addJointPhysicalExecutionFactors(analysis, sparseAssignments, model.domains(), domains, frequencies,
 			preparedCosts, factors, factorKinds);
 		addPhysicalFusedKernelFactors(analysis, model.domains(), domains, workers,
-			physicalWorkerCounts, frequencies, preparedCosts, factors, factorKinds);
+			physicalWorkerCounts, frequencies, preparedCosts, factors, factorKinds, factorizations);
 		List<FusedFactorUse> fusedFactors = fusedFactorUses(analysis, model.domains(), domains,
 			preparedCosts, workers, physicalWorkerCounts);
 		addPhysicalFusedFactorUploads(fusedFactors, frequencies, factors, factorKinds);
@@ -550,7 +576,7 @@ public final class ExactPhysicalCostModel {
 			fusedFactors, factors, factorizations, transferKeys, supplySharingGroups,
 			retainedFunctionDownloads, nativeSupply);
 		addPhysicalLatentWdivmmRuntimeInputFactors(analysis, sparseAssignments,
-			model.domains(), domains, workers, frequencies, factors, factorKinds,
+			model.domains(), domains, workers, physicalWorkerCounts, frequencies, factors, factorKinds,
 			factorizations, transferKeys);
 		addPhysicalNativeLocalInputTransferFactors(analysis, sparseAssignments, domains,
 			workers, physicalWorkerCounts, frequencies, latentRuntimeBoundaries, factors, factorizations);
@@ -723,7 +749,8 @@ public final class ExactPhysicalCostModel {
 		Consumer<ExactCategoricalSolver.Factor> ordinaryEvaluationObserver) {
 		List<ExactCategoricalSolver.Factor> complete = new ArrayList<>(hardFactors);
 		complete.addAll(solverCostFactors);
-		ExactCategoricalSolver.validateInputStructure(variables, complete, limits);
+		ExactCategoricalSolver.validateCompressedCostInputStructure(
+			variables, complete, ordinaryFactors, limits);
 		List<ExactCategoricalSolver.Factor> frozen = new ArrayList<>(ordinaryFactors.size());
 		for(ExactCategoricalSolver.Factor factor : ordinaryFactors) {
 			ordinaryEvaluationObserver.accept(factor);
@@ -992,14 +1019,15 @@ public final class ExactPhysicalCostModel {
 		ExactPhysicalModel.DecisionDomain domain, int workers,
 		OccurrenceExecutionFrequencyFacts frequencies,
 		List<ExactCategoricalSolver.Factor> factors) {
-		addPhysicalUnaryFactor(analysis, sparseAssignments, domain, workers, frequencies,
-			factors, new IdentityHashMap<>(),
+		addPhysicalUnaryFactor(analysis, sparseAssignments, domain, workers,
+			new PhysicalWorkerCounts(), frequencies, factors, new IdentityHashMap<>(),
 			PlacementCostSemantics.prepareExecutionCost(analysis, sparseAssignments, domain.node().key()), null);
 	}
 
 	private static void addPhysicalUnaryFactor(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments,
 		ExactPhysicalModel.DecisionDomain domain, int workers,
+		PhysicalWorkerCounts physicalWorkerCounts,
 		OccurrenceExecutionFrequencyFacts frequencies,
 		List<ExactCategoricalSolver.Factor> factors,
 		IdentityHashMap<ExactCategoricalSolver.Factor,String> factorKinds,
@@ -1023,7 +1051,6 @@ public final class ExactPhysicalCostModel {
 		// operand ranges (not proof identities or only W) distinguish skew and slicing;
 		// retain only successfully computed projections, never a cross-build result.
 		Map<FederatedExecutionLayout,FedCostProjection> projections = new LinkedHashMap<>();
-		PhysicalWorkerCounts physicalWorkerCounts = new PhysicalWorkerCounts();
 		ExecutionWorkerCounts executionWorkerCounts = new ExecutionWorkerCounts();
 		InputLayoutCache inputLayouts = new InputLayoutCache();
 		for(int value = 0; value < execution.length; value++) {
@@ -1235,7 +1262,8 @@ public final class ExactPhysicalCostModel {
 		int workers, PhysicalWorkerCounts workerCounts, OccurrenceExecutionFrequencyFacts frequencies,
 		Map<CompiledHopKey,PreparedExecutionCost> preparedCosts,
 		List<ExactCategoricalSolver.Factor> factors,
-		IdentityHashMap<ExactCategoricalSolver.Factor,String> factorKinds) {
+		IdentityHashMap<ExactCategoricalSolver.Factor,String> factorKinds,
+		IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization> factorizations) {
 		InputLayoutCache layouts = new InputLayoutCache();
 		for(var owner : orderedDomains) {
 			PreparedExecutionCost prepared = preparedCosts.get(owner.node().key());
@@ -1273,7 +1301,44 @@ public final class ExactPhysicalCostModel {
 			});
 			factors.add(factor);
 			factorKinds.put(factor, "RUNTIME_FUSED_KERNEL");
+			int[] ownerClasses = fusedKernelOwnerClasses(owner);
+			String key = "exact-fused-kernel-owner|" + owner.node().key().normalizedSignature()
+				+ '|' + weights.node().key().normalizedSignature();
+			SolverFactorization projection = projectFusedKernelOwnerIfBeneficial(key, factor, ownerClasses);
+			if(projection != null)
+				factorizations.put(factor, projection);
 		}
+	}
+
+	/** Total functional observation used only by the fused-kernel monetary table. */
+	private static int[] fusedKernelOwnerClasses(ExactPhysicalModel.DecisionDomain owner) {
+		int[] classes = new int[owner.alternatives().size()];
+		Map<Integer,Integer> classByObservation = new LinkedHashMap<>();
+		for(int index = 0; index < classes.length; index++) {
+			var selected = owner.alternatives().get(index);
+			int observation;
+			if(selected.state().execType() != ExecType.FED)
+				observation = 0;
+			else {
+				var emission = selected.captured() ? selected.candidateEmission() : selected.executionEmission();
+				boolean localResult = selected.state().output() == FederatedOutput.LOUT
+					|| emission != null && emission.emissionState().derivedFedFout();
+				observation = localResult ? 1 : 2;
+			}
+			classes[index] = classByObservation.computeIfAbsent(observation, ignored -> classByObservation.size());
+		}
+		return classes;
+	}
+
+	static SolverFactorization projectFusedKernelOwnerIfBeneficial(String key,
+		ExactCategoricalSolver.Factor canonical, int[] ownerClasses) {
+		if(canonical.scope().size() != 2 || ownerClasses.length != canonical.scope().get(0).domainSize())
+			throw new IllegalArgumentException("EXACT_FUSED_KERNEL_OWNER_PROJECTION_INVALID");
+		int classes = java.util.Arrays.stream(ownerClasses).max().orElseThrow() + 1;
+		long owners = canonical.scope().get(0).domainSize();
+		long weights = canonical.scope().get(1).domainSize();
+		return (long) classes * (owners + weights) < owners * weights
+			? projectNativeLocalSource(key, canonical, ownerClasses) : null;
 	}
 
 	/** One bounded owner/W/factor dependency; U and V never form a joint tensor. */
@@ -2378,7 +2443,8 @@ public final class ExactPhysicalCostModel {
 		ExpectedSparseAssignmentEstimates sparseAssignments,
 		List<ExactPhysicalModel.DecisionDomain> orderedDomains,
 		IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain> domains,
-		int workers, OccurrenceExecutionFrequencyFacts frequencies,
+		int workers, PhysicalWorkerCounts physicalWorkerCounts,
+		OccurrenceExecutionFrequencyFacts frequencies,
 		List<ExactCategoricalSolver.Factor> factors,
 		IdentityHashMap<ExactCategoricalSolver.Factor,String> factorKinds,
 		IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization> factorizations,
@@ -2499,12 +2565,11 @@ public final class ExactPhysicalCostModel {
 						demand.activationWeight(), demand.branchLiterals())));
 			}
 			double[] unitPrices = new double[source.alternatives().size()];
-			PhysicalWorkerCounts sourceCounts = new PhysicalWorkerCounts();
 			for(int index = 0; index < unitPrices.length; index++)
 				unitPrices[index] = cpOwner == null ? 0d : requireCost(PlacementCostSemantics
 					.latentWdivmmCpRuntimeInputMaterializationCost(bytes, cpOwner,
 						source.alternatives().get(index).state(), realizationWorkerCount(
-							analysis, source.alternatives().get(index), workers, sourceCounts)),
+							analysis, source.alternatives().get(index), workers, physicalWorkerCounts)),
 					"EXACT_LATENT_WDIVMM_RUNTIME_INPUT_UNIT_UNPROVEN");
 			addMaterializationActivationFactors("exact-runtime-input|"
 				+ sourceKey.occurrence().normalizedSignature() + '|' + sourceKey.valueVersion().normalizedSignature()
@@ -2962,6 +3027,22 @@ public final class ExactPhysicalCostModel {
 		return factorizations;
 	}
 
+	/** The unfrozen production fused-kernel callbacks are an explicit projection reference for tests. */
+	static IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization>
+		fusedKernelOwnerProjectionsForTest(ExactPhysicalModel model) {
+		var analysis = model.analysis();
+		var domains = new IdentityHashMap<CompiledHopKey,ExactPhysicalModel.DecisionDomain>();
+		for(var domain : model.domains())
+			domains.put(domain.node().key(), domain);
+		var factorizations = new IdentityHashMap<ExactCategoricalSolver.Factor,SolverFactorization>();
+		var factors = new ArrayList<ExactCategoricalSolver.Factor>();
+		addPhysicalFusedKernelFactors(analysis, model.domains(), domains,
+			workerCount(analysis.graph()), new PhysicalWorkerCounts(), analysis.executionFrequencyFacts(),
+			PlacementCostSemantics.prepareExecutionCosts(analysis, null), factors, new IdentityHashMap<>(),
+			factorizations);
+		return factorizations;
+	}
+
 	private static NativeLocalTargetCost nativeLocalTargetCost(PlacementAnalysis analysis,
 		ExpectedSparseAssignmentEstimates sparseAssignments, CompiledInputEdgeFact edge,
 		ExactPhysicalModel.DecisionDomain consumer, Hop consumerHop, Hop producerHop,
@@ -3022,10 +3103,50 @@ public final class ExactPhysicalCostModel {
 			new PhysicalWorkerCounts(), new ExecutionWorkerCounts());
 	}
 
+	static record WorkerCountWorkStatistics(boolean singletonCertified,
+		int sourceAggregateComputations, int singletonBypasses,
+		int singletonValidatedReferences, int singletonValidatedAnchors) { }
+
+	static WorkerCountWorkStatistics workerCountWorkStatisticsForTest(
+		PlacementAnalysis analysis, ExactPhysicalModel model, boolean singletonProof) {
+		int fallbackWorkers = workerCount(analysis.graph());
+		PhysicalWorkerCounts counts = new PhysicalWorkerCounts();
+		if(singletonProof)
+			counts.certifySingleton(analysis, model, fallbackWorkers);
+		ExecutionWorkerCounts executionCounts = new ExecutionWorkerCounts();
+		for(var domain : model.domains())
+			for(var alternative : domain.alternatives()) {
+				realizationWorkerCount(analysis, alternative, fallbackWorkers, counts);
+				executionWorkerCount(analysis, alternative, fallbackWorkers, counts, executionCounts);
+			}
+		return new WorkerCountWorkStatistics(counts.singletonCertified,
+			counts.sourceAggregateComputations, counts.singletonBypasses,
+			counts.singletonValidatedReferences, counts.singletonValidatedAnchors);
+	}
+
+	static boolean singletonWorkerProofForTest(PlacementAnalysis analysis,
+		ExactPhysicalModel model, int fallbackWorkers) {
+		PhysicalWorkerCounts counts = new PhysicalWorkerCounts();
+		counts.certifySingleton(analysis, model, fallbackWorkers);
+		return counts.singletonCertified();
+	}
+
+	static boolean singletonWorkerProofForTest(PlacementAnalysis analysis,
+		ExactPhysicalModel model, int fallbackWorkers, int maxReferences) {
+		PhysicalWorkerCounts counts = new PhysicalWorkerCounts();
+		counts.certifySingleton(analysis, model, fallbackWorkers,
+			new SingletonProofLimits(65_536, maxReferences, 262_144, 1_048_576));
+		return counts.singletonCertified();
+	}
+
 	private static int executionWorkerCount(PlacementAnalysis analysis,
 		ExactPhysicalModel.Alternative alternative, int fallbackWorkers,
 		PhysicalWorkerCounts physicalWorkerCounts,
 		ExecutionWorkerCounts executionWorkerCounts) {
+		if(physicalWorkerCounts.singletonCertified()) {
+			physicalWorkerCounts.recordSingletonBypass();
+			return 1;
+		}
 		// WDivMM dispatches exclusively through W's FederationMap. Remote U/V/MX
 		// are preparation sources, not extra execution workers. A union of their
 		// endpoints would shrink kernel work and inflate broadcasts simultaneously.
@@ -3100,6 +3221,10 @@ public final class ExactPhysicalCostModel {
 	private static int realizationWorkerCount(PlacementAnalysis analysis,
 		ExactPhysicalModel.Alternative alternative, int fallbackWorkers,
 		PhysicalWorkerCounts physicalWorkerCounts) {
+		if(physicalWorkerCounts.singletonCertified()) {
+			physicalWorkerCounts.recordSingletonBypass();
+			return 1;
+		}
 		if(alternative.durableAnchor() != null)
 			return physicalWorkerCounts.count(alternative.durableAnchor());
 		if(alternative.compactSupport() != null) {
@@ -3124,11 +3249,20 @@ public final class ExactPhysicalCostModel {
 	private static int realizationWorkerCount(PlacementAnalysis analysis,
 		PlacementAnalysis.CandidateEmissionRealization realization,
 		PlacementAnalysis.CandidateRealizationSupportClause selectedClause,
-		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference> visiting,
+		Set<CandidateRealizationReference> visiting,
+		PhysicalWorkerCounts physicalWorkerCounts) {
+		return realizationWorkerCountProof(
+			analysis, realization, selectedClause, visiting, physicalWorkerCounts).count();
+	}
+
+	private static WorkerCountProof realizationWorkerCountProof(PlacementAnalysis analysis,
+		PlacementAnalysis.CandidateEmissionRealization realization,
+		PlacementAnalysis.CandidateRealizationSupportClause selectedClause,
+		Set<CandidateRealizationReference> visiting,
 		PhysicalWorkerCounts physicalWorkerCounts) {
 		if(realization.anchor() != null)
-			return physicalWorkerCounts.count(realization.anchor());
-		return realizationSupportWorkerCount(
+			return WorkerCountProof.complete(physicalWorkerCounts.count(realization.anchor()));
+		return realizationSupportWorkerCountProof(
 			analysis, selectedClause, visiting, physicalWorkerCounts);
 	}
 
@@ -3159,19 +3293,32 @@ public final class ExactPhysicalCostModel {
 
 	private static int realizationSupportWorkerCount(PlacementAnalysis analysis,
 		PlacementAnalysis.CandidateRealizationSupportClause selectedClause,
-		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference> visiting,
+		Set<CandidateRealizationReference> visiting,
+		PhysicalWorkerCounts physicalWorkerCounts) {
+		return realizationSupportWorkerCountProof(
+			analysis, selectedClause, visiting, physicalWorkerCounts).count();
+	}
+
+	private static WorkerCountProof realizationSupportWorkerCountProof(PlacementAnalysis analysis,
+		PlacementAnalysis.CandidateRealizationSupportClause selectedClause,
+		Set<CandidateRealizationReference> visiting,
 		PhysicalWorkerCounts physicalWorkerCounts) {
 		if(selectedClause.nativeWorkerPoolWitness() != null)
-			return physicalWorkerCounts.count(selectedClause.nativeWorkerPoolWitness());
+			return WorkerCountProof.complete(
+				physicalWorkerCounts.count(selectedClause.nativeWorkerPoolWitness()));
 		Set<Integer> counts = new LinkedHashSet<>();
+		boolean complete = true;
 		for(var binding : selectedClause.inputBindings()) {
 			if(binding.relocationAction() != null) {
 				counts.add(physicalWorkerCounts.count(binding.relocationAction().durableAnchor()));
 				continue;
 			}
-			if(binding.source().realization().emissionState().placementState().output() != FederatedOutput.FOUT
-				|| !visiting.add(binding.source()))
+			if(binding.source().realization().emissionState().placementState().output() != FederatedOutput.FOUT)
 				continue;
+			if(!visiting.add(binding.source())) {
+				complete = false;
+				continue;
+			}
 			var source = analysis.requireExactCandidateRealization(binding.source());
 			Integer uniform = uniformRealizationWorkerCount(source, physicalWorkerCounts);
 			if(uniform != null) {
@@ -3180,16 +3327,38 @@ public final class ExactPhysicalCostModel {
 					counts.add(uniform);
 				continue;
 			}
-			Set<Integer> sourceCounts = new LinkedHashSet<>();
-			for(var clause : source.supportClauses())
-				sourceCounts.add(realizationWorkerCount(
-					analysis, source, clause, visiting, physicalWorkerCounts));
-			int count = sourceCounts.size() == 1 ? sourceCounts.iterator().next() : 0;
+			WorkerCountProof sourceProof = physicalWorkerCounts.sourceExact(binding.source());
+			if(sourceProof == null) {
+				physicalWorkerCounts.recordSourceAggregateComputation();
+				Set<Integer> sourceCounts = new LinkedHashSet<>();
+				boolean sourceComplete = true;
+				for(var clause : source.supportClauses()) {
+					WorkerCountProof clauseProof = realizationWorkerCountProof(
+						analysis, source, clause, visiting, physicalWorkerCounts);
+					sourceCounts.add(clauseProof.count());
+					sourceComplete &= clauseProof.complete();
+				}
+				sourceProof = new WorkerCountProof(
+					sourceCounts.size() == 1 ? sourceCounts.iterator().next() : 0, sourceComplete);
+				// A completed traversal did not suppress an active edge. Because every
+				// FOUT support edge was inspected, its reachable source graph is acyclic
+				// and this exact (including ambiguous zero) aggregate is context-free.
+				// Cycle-dependent results remain on the explicit path and are never cached.
+				if(sourceComplete)
+					physicalWorkerCounts.rememberSourceExact(binding.source(), sourceProof);
+			}
 			visiting.remove(binding.source());
-			if(count > 0)
-				counts.add(count);
+			complete &= sourceProof.complete();
+			if(sourceProof.count() > 0)
+				counts.add(sourceProof.count());
 		}
-		return counts.size() == 1 ? counts.iterator().next() : 0;
+		return new WorkerCountProof(counts.size() == 1 ? counts.iterator().next() : 0, complete);
+	}
+
+	private record WorkerCountProof(int count, boolean complete) {
+		private static WorkerCountProof complete(int count) {
+			return new WorkerCountProof(count, true);
+		}
 	}
 
 	static int nativeLocalInputWorkerCount(List<ExactPhysicalModel.InputAuthority> authorities,
@@ -3217,12 +3386,276 @@ public final class ExactPhysicalCostModel {
 		return anchor == null ? Math.max(1, fallbackWorkers) : physicalWorkerCounts.count(anchor);
 	}
 
+	private record SingletonProofLimits(int anchors, int references, int clauses, int bindings) { }
+
 	private static final class PhysicalWorkerCounts {
+		private static final int MAX_SOURCE_EXACT_ENTRIES = 4096;
+		private static final SingletonProofLimits SINGLETON_PROOF_LIMITS =
+			new SingletonProofLimits(65_536, 65_536, 262_144, 1_048_576);
 		private final IdentityHashMap<DurableAnchorKey,Integer> byAnchor = new IdentityHashMap<>();
-		// Only completed root proofs are reusable: recursive states depend on the
-		// visiting set, while fallback is applied after this exact-result cache.
+		// Root requests always begin with an empty ancestor path, and fallback is
+		// applied only after this exact-result cache.
 		private final IdentityHashMap<ExactPhysicalModel.Alternative,Integer> exactByRoot =
 			new IdentityHashMap<>();
+		private final IdentityHashMap<CompiledHopKey,Map<CandidateRealizationReference,WorkerCountProof>>
+			exactBySource = new IdentityHashMap<>();
+		private int sourceExactEntries;
+		private int sourceAggregateComputations;
+		private boolean singletonCertified;
+		private int singletonBypasses;
+		private int singletonValidatedReferences;
+		private int singletonValidatedAnchors;
+		private int singletonVisitedClauses;
+		private int singletonVisitedBindings;
+		private String singletonProofReason = "non-singleton-or-budget-or-authority";
+
+		private void certifySingleton(PlacementAnalysis analysis,
+			ExactPhysicalModel model, int fallbackWorkers) {
+			certifySingleton(analysis, model, fallbackWorkers, SINGLETON_PROOF_LIMITS);
+		}
+
+		private void certifySingleton(PlacementAnalysis analysis,
+			ExactPhysicalModel model, int fallbackWorkers, SingletonProofLimits limits) {
+			if(Math.max(1, fallbackWorkers) != 1) {
+				singletonProofReason = "fallback-workers";
+				return;
+			}
+			SingletonProofBudget budget = new SingletonProofBudget(limits);
+			Set<DurableAnchorKey> anchors = Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<PlacementAnalysis.CandidateEmissionRealization> scannedRealizations =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			List<CandidateRealizationReference> pending = new ArrayList<>();
+			IdentityHashMap<CompiledHopKey,Set<CandidateRealizationReference>> queued =
+				new IdentityHashMap<>();
+			for(var node : analysis.graph().nodes())
+				for(DurableAnchorKey anchor : node.anchors())
+					if(!acceptSingletonAnchor(anchor, anchors, budget)) return;
+			for(var action : analysis.graph().relocationActions())
+				if(!acceptSingletonAnchor(action.key().durableAnchor(), anchors, budget)) return;
+			for(var action : analysis.graph().derivedFoutMaterializationActions())
+				if(!acceptSingletonAnchor(action.key().durableAnchor(), anchors, budget)) return;
+			for(var domain : model.domains())
+				for(var alternative : domain.alternatives()) {
+					if(!acceptSingletonAnchor(alternative.durableAnchor(), anchors, budget)
+						|| alternative.relocationAction() != null && !acceptSingletonAnchor(
+							alternative.relocationAction().key().durableAnchor(), anchors, budget)
+						|| alternative.derivedFoutAction() != null && !acceptSingletonAnchor(
+							alternative.derivedFoutAction().key().durableAnchor(), anchors, budget))
+						return;
+					for(var authority : alternative.inputAuthorities())
+						if(authority.relocationAction() != null && !acceptSingletonAnchor(
+							authority.relocationAction().key().durableAnchor(), anchors, budget)) return;
+					CandidateEmissionFact emission = alternative.captured()
+						? alternative.candidateEmission() : alternative.executionEmission();
+					boolean derivedFout = emission != null && emission.emissionState().derivedFedFout();
+					boolean wdivmm = analysis.hop(alternative.decision()).orElse(null)
+						instanceof org.apache.sysds.hops.QuaternaryOp q
+						&& q.getOp() == org.apache.sysds.common.Types.OpOp4.WDIVMM;
+					if(alternative.compactSupport() != null) {
+						if(!scanSingletonProduct(alternative.compactSupport(), anchors,
+							pending, queued, budget)) return;
+						if(wdivmm) {
+							boolean weightsAxis = false;
+							for(var axis : alternative.compactSupport().axes())
+								if(axis.inputPosition() == 0) {
+									weightsAxis = true;
+									if(!acceptSingletonAnchor(axis.deliveredAnchor(), anchors, budget)) return;
+								}
+							if(!weightsAxis)
+								return;
+						}
+						if(alternative.realization() != null)
+							scannedRealizations.add(alternative.realization());
+					}
+					else {
+						if(derivedFout && alternative.supportClause() != null
+							&& !scanSingletonClause(alternative.supportClause(), anchors,
+								pending, queued, budget)) return;
+						if(wdivmm && alternative.supportClause() != null
+							&& !scanSingletonWdivmmSupport(alternative.supportClause(), anchors,
+								pending, queued, budget)) return;
+						if(alternative.realization() != null && !scanSingletonRealization(
+							alternative.realization(), anchors, pending, queued,
+							scannedRealizations, budget)) return;
+					}
+				}
+			for(int next = 0; next < pending.size(); next++) {
+				CandidateRealizationReference reference = pending.get(next);
+				PlacementAnalysis.CandidateEmissionRealization realization;
+				try {
+					realization = analysis.requireExactCandidateRealization(reference);
+				}
+				catch(IllegalArgumentException invalidAuthority) {
+					// This optional eager proof must not make a dormant alternative fail.
+					// The original recursive path retains its exact validation behavior.
+					return;
+				}
+				singletonValidatedReferences++;
+				if(!scanSingletonRealization(realization, anchors, pending, queued,
+					scannedRealizations, budget)) return;
+			}
+			singletonValidatedAnchors = anchors.size();
+			singletonCertified = true;
+			singletonProofReason = "complete";
+		}
+
+		private boolean scanSingletonRealization(
+			PlacementAnalysis.CandidateEmissionRealization realization,
+			Set<DurableAnchorKey> anchors, List<CandidateRealizationReference> pending,
+			IdentityHashMap<CompiledHopKey,Set<CandidateRealizationReference>> queued,
+			Set<PlacementAnalysis.CandidateEmissionRealization> scannedRealizations,
+			SingletonProofBudget budget) {
+			if(!scannedRealizations.add(realization))
+				return true;
+			if(realization.anchor() != null)
+				return acceptSingletonAnchor(realization.anchor(), anchors, budget);
+			var independent = realization.independentSupportProduct().orElse(null);
+			if(independent != null)
+				return scanSingletonProduct(independent, anchors, pending, queued, budget);
+			var factorized = realization.factorizedSupportProduct().orElse(null);
+			if(factorized != null) {
+				if(factorized.nativeWorkerPoolWitness() != null)
+					return acceptSingletonAnchor(
+						factorized.nativeWorkerPoolWitness(), anchors, budget);
+				for(var factor : factorized.factors())
+					for(var binding : factor)
+						if(!scanSingletonBinding(binding, anchors, pending, queued, budget))
+							return false;
+				return true;
+			}
+			if(realization.supportClauses() instanceof IndexedSupportClauses indexed) {
+				if(indexed.size() > budget.remainingClauses())
+					return false;
+				for(int row = 0; row < indexed.size(); row++) {
+					if(!budget.acceptClause())
+						return false;
+					DurableAnchorKey witness = indexed.witnessAt(row);
+					if(witness != null) {
+						if(!acceptSingletonAnchor(witness, anchors, budget)) return false;
+						continue;
+					}
+					if(indexed.bindingCountAt(row) > budget.remainingBindings())
+						return false;
+					for(int axis = 0; axis < indexed.bindingCountAt(row); axis++)
+						if(!scanSingletonBinding(indexed.bindingAt(row, axis), anchors,
+							pending, queued, budget)) return false;
+				}
+				return true;
+			}
+			if(realization.supportClauses().size() > budget.remainingClauses())
+				return false;
+			for(var clause : realization.supportClauses())
+				if(!scanSingletonClause(clause, anchors, pending, queued, budget)) return false;
+			return true;
+		}
+
+		private boolean scanSingletonProduct(PlacementAnalysis.IndependentSupportProduct product,
+			Set<DurableAnchorKey> anchors, List<CandidateRealizationReference> pending,
+			IdentityHashMap<CompiledHopKey,Set<CandidateRealizationReference>> queued,
+			SingletonProofBudget budget) {
+			if(product.nativeWorkerPoolWitness() != null)
+				return acceptSingletonAnchor(product.nativeWorkerPoolWitness(), anchors, budget);
+			for(var axis : product.axes()) {
+				if(!acceptSingletonAnchor(axis.deliveredAnchor(), anchors, budget))
+					return false;
+			}
+			return true;
+		}
+
+		private boolean scanSingletonClause(
+			PlacementAnalysis.CandidateRealizationSupportClause clause,
+			Set<DurableAnchorKey> anchors, List<CandidateRealizationReference> pending,
+			IdentityHashMap<CompiledHopKey,Set<CandidateRealizationReference>> queued,
+			SingletonProofBudget budget) {
+			if(!budget.acceptClause())
+				return false;
+			if(clause.nativeWorkerPoolWitness() != null)
+				return acceptSingletonAnchor(clause.nativeWorkerPoolWitness(), anchors, budget);
+			for(var binding : clause.inputBindings())
+				if(!scanSingletonBinding(binding, anchors, pending, queued, budget)) return false;
+			return true;
+		}
+
+		private boolean scanSingletonWdivmmSupport(
+			PlacementAnalysis.CandidateRealizationSupportClause clause,
+			Set<DurableAnchorKey> anchors, List<CandidateRealizationReference> pending,
+			IdentityHashMap<CompiledHopKey,Set<CandidateRealizationReference>> queued,
+			SingletonProofBudget budget) {
+			for(var binding : clause.inputBindings())
+				if(binding.inputPosition() == 0) {
+					if(!budget.acceptBinding())
+						return false;
+					if(binding.relocationAction() != null)
+						return acceptSingletonAnchor(
+							binding.relocationAction().durableAnchor(), anchors, budget);
+					return enqueueSingletonReference(binding.source(), pending, queued, budget);
+				}
+			return true;
+		}
+
+		private boolean scanSingletonBinding(CandidateRealizationInputBinding binding,
+			Set<DurableAnchorKey> anchors, List<CandidateRealizationReference> pending,
+			IdentityHashMap<CompiledHopKey,Set<CandidateRealizationReference>> queued,
+			SingletonProofBudget budget) {
+			if(!budget.acceptBinding())
+				return false;
+			if(binding.relocationAction() != null)
+				return acceptSingletonAnchor(binding.relocationAction().durableAnchor(), anchors, budget);
+			if(binding.source().realization().emissionState().placementState().output()
+				!= FederatedOutput.FOUT)
+				return true;
+			return enqueueSingletonReference(binding.source(), pending, queued, budget);
+		}
+
+		private boolean enqueueSingletonReference(CandidateRealizationReference source,
+			List<CandidateRealizationReference> pending,
+			IdentityHashMap<CompiledHopKey,Set<CandidateRealizationReference>> queued,
+			SingletonProofBudget budget) {
+			CompiledHopKey owner = source.rule().parentOccurrence();
+			Set<CandidateRealizationReference> ownerQueued = queued.computeIfAbsent(
+				owner, ignored -> new LinkedHashSet<>());
+			if(ownerQueued.add(source)) {
+				if(!budget.acceptReference())
+					return false;
+				pending.add(source);
+			}
+			return true;
+		}
+
+		private boolean acceptSingletonAnchor(DurableAnchorKey anchor,
+			Set<DurableAnchorKey> anchors, SingletonProofBudget budget) {
+			if(anchor == null || anchors.contains(anchor))
+				return true;
+			if(!budget.acceptAnchor())
+				return false;
+			anchors.add(anchor);
+			singletonValidatedAnchors = anchors.size();
+			return count(anchor) == 1;
+		}
+
+		private final class SingletonProofBudget {
+			private final SingletonProofLimits limits;
+			private int anchors;
+			private int references;
+			private int clauses;
+			private int bindings;
+			private SingletonProofBudget(SingletonProofLimits limits) { this.limits = limits; }
+			private boolean acceptAnchor() { return ++anchors <= limits.anchors(); }
+			private boolean acceptReference() { return ++references <= limits.references(); }
+			private boolean acceptClause() {
+				singletonVisitedClauses = ++clauses;
+				return clauses <= limits.clauses();
+			}
+			private boolean acceptBinding() {
+				singletonVisitedBindings = ++bindings;
+				return bindings <= limits.bindings();
+			}
+			private int remainingClauses() { return limits.clauses() - clauses; }
+			private int remainingBindings() { return limits.bindings() - bindings; }
+		}
+
+		private boolean singletonCertified() { return singletonCertified; }
+		private void recordSingletonBypass() { singletonBypasses++; }
 
 		private Integer rootExact(ExactPhysicalModel.Alternative alternative) {
 			return exactByRoot.get(Objects.requireNonNull(alternative, "alternative"));
@@ -3230,6 +3663,31 @@ public final class ExactPhysicalCostModel {
 
 		private void rememberRootExact(ExactPhysicalModel.Alternative alternative, int exact) {
 			exactByRoot.put(Objects.requireNonNull(alternative, "alternative"), exact);
+		}
+
+		private WorkerCountProof sourceExact(
+			CandidateRealizationReference source) {
+			Objects.requireNonNull(source, "source");
+			Map<CandidateRealizationReference,WorkerCountProof> byReference =
+				exactBySource.get(source.rule().parentOccurrence());
+			return byReference == null ? null : byReference.get(source);
+		}
+
+		private void rememberSourceExact(
+			CandidateRealizationReference source,
+			WorkerCountProof proof) {
+			Objects.requireNonNull(source, "source");
+			Objects.requireNonNull(proof, "proof");
+			if(!proof.complete() || sourceExactEntries >= MAX_SOURCE_EXACT_ENTRIES)
+				return;
+			Map<CandidateRealizationReference,WorkerCountProof> byReference = exactBySource.computeIfAbsent(
+				source.rule().parentOccurrence(), ignored -> new LinkedHashMap<>());
+			if(byReference.putIfAbsent(source, proof) == null)
+				sourceExactEntries++;
+		}
+
+		private void recordSourceAggregateComputation() {
+			sourceAggregateComputations++;
 		}
 
 		private int count(DurableAnchorKey anchor) {

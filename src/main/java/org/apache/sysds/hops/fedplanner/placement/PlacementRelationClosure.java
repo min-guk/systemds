@@ -202,6 +202,8 @@ final class PlacementRelationClosure {
 		directComponentSchedules.clear();
 		directNativePublicationMemo.clear();
 		logicalTransientReplayFacts.clear();
+		relationRelocationWitnessSignature = null;
+		relationRelocationWitnesses = List.of();
 		relocationProducts = Map.of();
 		indexedCurrentRelocationProducts = Map.of();
 		currentRelocationProductsByScope = Map.of();
@@ -281,6 +283,8 @@ final class PlacementRelationClosure {
 	private final Map<CandidateRuleKey,LogicalTransientReplayFactMemo> logicalTransientReplayFacts =
 		new java.util.HashMap<>();
 	private Map<RelocationProductKey,List<CandidateEmissionRealization>> relocationProducts = Map.of();
+	private String relationRelocationWitnessSignature;
+	private List<CandidateRuleFact> relationRelocationWitnesses = List.of();
 	private Map<RelocationProductKey,List<CandidateEmissionRealization>>
 		indexedCurrentRelocationProducts = Map.of();
 	private Map<RelocationProductScopeKey,List<PriorRelocationProduct>>
@@ -1106,7 +1110,8 @@ final class PlacementRelationClosure {
 				exportDiagnostics.logicalDelta(pass, "pre-cfg", diagnosticLogical, transientBindings);
 				diagnosticLogical = transientBindings;
 			}
-			relocations = canonicalRelocationActions(relocations(compiledInputEdges, ruleFacts,
+			relocations = canonicalRelocationActions(relocations(compiledInputEdges,
+				relocationDiscoveryFacts(ruleFacts),
 				nodes, transientBindings, constraints, origins, scopes, shapeFactsByHop, compiledShapeFactsByHop,
 				privacyFacts.asMap()), relocations);
 			try(SearchSpaceMetrics.DuplicateMergeOriginScope ignored = duplicateMergeOrigin(
@@ -1175,7 +1180,7 @@ final class PlacementRelationClosure {
 				diagnosticLogical = transientBindings;
 			}
 			List<NeutralPlacementGraph.RelocationAction> publishedActions = canonicalRelocationActions(
-				relocations(compiledInputEdges, ruleFacts, nodes, transientBindings,
+				relocations(compiledInputEdges, relocationDiscoveryFacts(ruleFacts), nodes, transientBindings,
 					constraints, origins, scopes, shapeFactsByHop, compiledShapeFactsByHop, privacyFacts.asMap()), relocations);
 			// Final action authority can be narrower than the pre-privacy midpoint.
 			// Rebind before withdrawing expired clauses, so valid replacement actions
@@ -1211,7 +1216,8 @@ final class PlacementRelationClosure {
 				exportDiagnostics.logicalDelta(pass, "final-bind", diagnosticLogical, transientBindings);
 				exportDiagnostics.logicalDelta(pass, "pass-end", priorLogical, transientBindings);
 			}
-			publishedActions = canonicalRelocationActions(relocations(compiledInputEdges, ruleFacts,
+			publishedActions = canonicalRelocationActions(relocations(compiledInputEdges,
+				relocationDiscoveryFacts(ruleFacts),
 				nodes, transientBindings, constraints, origins, scopes, shapeFactsByHop, compiledShapeFactsByHop,
 				privacyFacts.asMap()), publishedActions);
 			if(exportDiagnostics != null)
@@ -1240,9 +1246,20 @@ final class PlacementRelationClosure {
 				nodes, ruleFacts, transientBindings, publishedActions);
 			relocations = publishedActions;
 			if(stable) {
+				List<CandidateRuleFact> publicationFacts = relocationDiscoveryFacts(ruleFacts);
+				if(publicationFacts.size() != ruleFacts.size()) {
+					publicationFacts = bindRelocationCandidateRealizations(publicationFacts, nodes,
+						compiledInputEdges, relocations, origins, shapeFactsByHop);
+					Map<RelocationActionKey,NeutralPlacementGraph.RelocationAction> publicationActionIndex =
+						new LinkedHashMap<>();
+					for(NeutralPlacementGraph.RelocationAction action : relocations)
+						publicationActionIndex.put(action.key(), action);
+					publicationFacts = pruneSupportWithWork(publicationFacts, publicationActionIndex,
+						completeLogicalTransientInputs, requiredTransientWriters);
+				}
 				relocations = PlacementSupportRelations.projectRelocationActionsToExecutableSupports(
-					ruleFacts, relocations);
-				verifyPublishedRelocationRealizations(ruleFacts, relocations);
+					publicationFacts, relocations);
+				verifyPublishedRelocationRealizations(publicationFacts, relocations);
 				publicationConverged = true;
 				break;
 			}
@@ -1732,6 +1749,34 @@ final class PlacementRelationClosure {
 			if(cpState != null)
 				cpFamilies.add(family.withEmissionState(cpState));
 		}
+		// Close weighted scalar regions directly over the final source/action inventory.
+		// The generator never creates their Cartesian exact rows; each region stores
+		// immutable per-axis binding tables and restores a member only when selected.
+		List<CandidateRuleRelation> candidateRelations = new ArrayList<>();
+		for(CandidateRuleRelation relation : candidateGenerator.candidateRuleRelations()) {
+			boolean deferredScalar = relation.regions().stream().allMatch(region ->
+					(region.header().capability().opcode().equalsIgnoreCase("wsloss")
+						|| region.header().capability().opcode().equalsIgnoreCase("wcemm"))
+						&& region.header().profile().producerOutputs().isEmpty()
+						&& region.header().capability().nativeExec() == ExecType.FED
+						&& region.header().capability().nativeOutput() == FederatedOutput.LOUT
+						&& region.header().shapeProof().requiredFacts().isEmpty()
+						&& region.header().shapeProof().missingRequiredFacts().isEmpty()
+						&& region.header().emissions().stream().allMatch(
+							emission -> emission.derivedFoutAction() == null));
+			if(!deferredScalar)
+				continue;
+			closeWeightedCandidateRelation(relation, ruleFacts, graph)
+				.ifPresent(candidateRelations::add);
+		}
+		if(!candidateRelations.isEmpty()) {
+			ruleFacts = ruleFacts.stream().filter(fact -> candidateRelations.stream()
+				.noneMatch(relation -> relation.parent() == fact.key().parentOccurrence()
+					&& relation.contains(fact.key().orderedInputs()))).toList();
+			ruleKeys = ruleKeys.stream().filter(key -> candidateRelations.stream()
+				.noneMatch(relation -> relation.parent() == key.parentOccurrence()
+					&& relation.contains(key.orderedInputs()))).toList();
+		}
 		analysis = new PlacementAnalysis(graph, projections, topLevelStatementBlocks, program, shapeFacts,
 			heuristicPolicyFacts, ruleKeys, ruleFacts,
 			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
@@ -1740,7 +1785,7 @@ final class PlacementRelationClosure {
 				? new CandidatePrivacyClosureEvidence(candidatePrivacyEvidence) : null,
 			functionExpansion.logicalInlinedFunctionInputs(), programStructureGuard,
 			nodes.stream().map(node -> privacyInputPruning.get(node.key())).filter(Objects::nonNull).toList(),
-			jointInputAnalysis, cpFamilies);
+			jointInputAnalysis, cpFamilies, candidateRelations);
 		PlannerCandidateSpaceAudit.record(analysis, prePrivacyNodes, prePrivacyCandidateRuleFacts);
 		}
 		finally {
@@ -1755,6 +1800,402 @@ final class PlacementRelationClosure {
 		if(!registryBefore.equals(registrySentinel(program)))
 			throw new IllegalStateException("Neutral placement analysis mutated federated refed state");
 		return analysis;
+	}
+
+	private Optional<CandidateRuleRelation> closeWeightedCandidateRelation(
+		CandidateRuleRelation relation, List<CandidateRuleFact> facts, NeutralPlacementGraph graph) {
+		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+		for(Node node : graph.nodes())
+			nodesByKey.put(node.key(), node);
+		Node ownerNode = nodesByKey.get(relation.parent());
+		Hop owner = origins.get(relation.parent());
+		if(ownerNode == null || owner == null)
+			throw new IllegalStateException("Weighted relation has no closed owner: "
+				+ relation.parent().normalizedSignature());
+		Map<CompiledHopKey,Map<Integer,CompiledHopKey>> inputs = new IdentityHashMap<>();
+		for(CompiledInputEdgeFact edge : compiledInputEdges)
+			inputs.computeIfAbsent(edge.consumer(), ignored -> new java.util.TreeMap<>())
+				.put(edge.inputPosition(), edge.producer());
+		Map<CompiledHopKey,List<NeutralPlacementGraph.RelocationAction>> actionsByConsumer =
+			new IdentityHashMap<>();
+		for(NeutralPlacementGraph.RelocationAction action : graph.relocationActions())
+			for(ObligationKey obligation : action.obligations())
+				if(!actionsByConsumer.computeIfAbsent(obligation.consumer(), ignored -> new ArrayList<>())
+					.contains(action))
+					actionsByConsumer.get(obligation.consumer()).add(action);
+		Map<CompiledHopKey,Map<PlacementState,RelocationConsumerActions>> actionIndex =
+			relocationActionsByConsumerPlacement(actionsByConsumer);
+		Map<CandidateRuleKey,Set<PlacementRealizationKey>> ownedRealizations =
+			new IdentityHashMap<>();
+		for(CandidateRuleFact fact : facts) {
+			Set<PlacementRealizationKey> owned = new HashSet<>();
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+				for(CandidateEmissionRealization realization : emission.realizations())
+					owned.add(realization.key());
+			ownedRealizations.put(fact.key(), owned);
+		}
+		Set<RelocationActionKey> ownedActions = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(NeutralPlacementGraph.RelocationAction action : graph.relocationActions())
+			ownedActions.add(action.key());
+		ExactRelocationSourceInventory inventory = new ExactRelocationSourceInventory(facts, nodesByKey);
+		NativePlacementContinuity continuity = new NativePlacementContinuity(
+			nodesByKey, origins, facts, compiledInputEdges, Map.of());
+		List<CandidateRuleRelation.ConditionalRegion> closed = new ArrayList<>();
+		for(CandidateRuleRelation.ConditionalRegion region : relation.regions()) {
+			CandidateRuleFact seed = new CandidateRuleFact(
+				new CandidateRuleKey(relation.parent(), region.canonicalInputs(relation.parent())),
+				CandidateEvaluationStatus.AVAILABLE, region.header().capability(),
+				region.header().shapeProof(), region.header().profile(), region.header().emissions(), "");
+			CandidateRuleFact bound = bindExactCandidateEmissionStates(List.of(seed), graph.nodes()).get(0);
+			CandidateRuleRelation.Header header = new CandidateRuleRelation.Header(
+				bound.capability(), bound.shapeProof(), bound.profile(), bound.allowedEmissionFacts());
+			WeightedMemberEmissions emissions = weightedMemberEmissions(relation.parent(),
+				region.axes(), header.emissions(), inputs, actionIndex, inventory,
+				continuity, nodesByKey, ownedRealizations, ownedActions);
+			closed.add(CandidateRuleRelation.ConditionalRegion.withConditionedEmissions(
+				region.axes(), header, emissions));
+		}
+		return closed.isEmpty() ? Optional.empty()
+			: Optional.of(new CandidateRuleRelation(relation.parent(), closed));
+	}
+
+	private WeightedMemberEmissions weightedMemberEmissions(CompiledHopKey parent,
+		List<List<CandidateInputState>> axes, List<CandidateEmissionFact> emissions,
+		Map<CompiledHopKey,Map<Integer,CompiledHopKey>> inputs,
+		Map<CompiledHopKey,Map<PlacementState,RelocationConsumerActions>> actionIndex,
+		ExactRelocationSourceInventory inventory, NativePlacementContinuity continuity,
+		Map<CompiledHopKey,Node> nodesByKey,
+		Map<CandidateRuleKey,Set<PlacementRealizationKey>> ownedRealizations,
+		Set<RelocationActionKey> ownedActions) {
+		List<WeightedEmissionBindings> closed = new ArrayList<>(emissions.size());
+		for(CandidateEmissionFact emission : emissions) {
+			PlacementState state = emission.emissionState().placementState();
+			if(state.execType() != ExecType.FED || state.output() != FederatedOutput.LOUT) {
+				closed.add(new WeightedEmissionBindings(emission, List.of()));
+				continue;
+			}
+			RelocationConsumerActions consumer = actionIndex.getOrDefault(parent, Map.of()).get(state);
+			if(consumer == null) {
+				closed.add(new WeightedEmissionBindings(emission, List.of()));
+				continue;
+			}
+			List<WeightedTargetBindings> targets = new ArrayList<>();
+			for(DurableAnchorKey targetPool : consumer.targetPools()) {
+				List<Map<CandidateInputState,WeightedStateBindings>> byPosition =
+					new ArrayList<>(axes.size());
+				boolean useful = false;
+				for(int position = 0; position < axes.size(); position++) {
+					CompiledHopKey producer = inputs.getOrDefault(parent, Map.of()).get(position);
+					Hop producerHop = producer == null ? null : origins.get(producer);
+					if(producerHop == null || !isMatrixShape(shapeFactsByHop, producerHop)) {
+						byPosition.add(Map.of());
+						continue;
+					}
+					Node producerNode = nodesByKey.get(producer);
+					if(producerNode == null)
+						throw new IllegalStateException(
+							"Weighted relation input has no closed producer node");
+					List<ExactRealizationOption> sourceOptions = inventory.options(producer).stream()
+						.filter(option -> option.valueVersion().equals(producerNode.valueVersion())).toList();
+					Map<CandidateInputState,WeightedStateBindings> stateBindings =
+						new LinkedHashMap<>();
+					for(CandidateInputState input : axes.get(position)) {
+						if(!input.present()) {
+							stateBindings.put(input, new WeightedStateBindings(List.of(), List.of()));
+							continue;
+						}
+						int inputPosition = position;
+						List<CandidateRealizationInputBinding> bindings = new ArrayList<>();
+						List<CandidateRealizationInputBinding> endpointOnly = new ArrayList<>();
+						bindings.addAll(sourceOptions.stream().filter(option -> {
+							if(option.reference().realization().emissionState().placementState().fType()
+								!= input.fType())
+								return false;
+							DurableAnchorKey pool = candidatePool(option, continuity);
+							return pool != null && directRelocationPoolMatch(pool, targetPool, input.fType());
+						}).map(option -> CandidateRealizationInputBinding.direct(
+							inputPosition, option.reference())).toList());
+						DurableAnchorKey targetResidency = nativeResidencyWitness(
+							targetPool, input.fType(), parent);
+						endpointOnly.addAll(sourceOptions.stream().filter(option -> {
+							if(option.reference().realization().emissionState().placementState().fType()
+								!= input.fType() || candidatePool(option, continuity) != null)
+								return false;
+							DurableAnchorKey residency = option.nativeWorkerPoolWitness();
+							return residency != null && targetResidency != null
+								&& PlacementIdentity.samePhysicalWorkerEndpoints(
+									residency, targetResidency);
+						}).map(option -> CandidateRealizationInputBinding.direct(
+							inputPosition, option.reference())).toList());
+						for(NeutralPlacementGraph.RelocationAction action : consumer.actions()) {
+							if(action.key().materializationFType() != input.fType()
+								|| !action.key().sourceValueVersion().equals(producerNode.valueVersion())
+								|| action.obligations().stream().noneMatch(obligation ->
+									obligation.consumer() == parent
+										&& obligation.inputPosition() == inputPosition
+										&& obligation.requiredPlacement().equals(state))
+								|| !directRelocationPoolMatch(action.key().durableAnchor(), targetPool,
+									action.key().materializationFType()))
+								continue;
+							bindings.addAll(sourceOptions.stream().filter(option -> {
+								DurableAnchorKey pool = relocationCandidatePool(option.reference(),
+									option.nativeWorkerPoolWitness(), option.nativeWorkerPoolLayoutExact(),
+									continuity);
+								return pool == null || !PlacementIdentity.samePhysicalLayout(
+									pool, action.key().durableAnchor());
+							}).map(option -> CandidateRealizationInputBinding.relocation(
+								inputPosition, option.reference(), action.key())).toList());
+						}
+						List<CandidateRealizationInputBinding> canonical = new ArrayList<>(
+							new LinkedHashSet<>(bindings));
+						canonical.sort(PlacementAnalysis
+							.<CandidateRealizationInputBinding>canonicalComparator());
+						List<CandidateRealizationInputBinding> canonicalEndpoint = new ArrayList<>(
+							new LinkedHashSet<>(endpointOnly));
+						canonicalEndpoint.sort(PlacementAnalysis
+							.<CandidateRealizationInputBinding>canonicalComparator());
+						for(CandidateRealizationInputBinding binding : java.util.stream.Stream
+							.concat(canonical.stream(), canonicalEndpoint.stream()).toList()) {
+							Set<PlacementRealizationKey> owned = ownedRealizations.get(
+								binding.source().rule());
+							if(owned == null || !owned.contains(binding.source().realization()))
+								throw new IllegalStateException(
+									"Weighted relation captured a non-owned source realization");
+							if(binding.relocationAction() != null
+								&& !ownedActions.contains(binding.relocationAction()))
+								throw new IllegalStateException(
+									"Weighted relation captured a non-owned relocation action");
+						}
+						stateBindings.put(input, new WeightedStateBindings(
+							List.copyOf(canonical), List.copyOf(canonicalEndpoint)));
+						useful |= !canonical.isEmpty() || !canonicalEndpoint.isEmpty();
+					}
+					byPosition.add(Collections.unmodifiableMap(stateBindings));
+				}
+				if(useful)
+					targets.add(new WeightedTargetBindings(targetPool, List.copyOf(byPosition)));
+			}
+			closed.add(new WeightedEmissionBindings(emission, List.copyOf(targets)));
+		}
+		return new WeightedMemberEmissions(parent, List.copyOf(closed));
+	}
+
+	private record WeightedTargetBindings(DurableAnchorKey targetPool,
+		List<Map<CandidateInputState,WeightedStateBindings>> bindingsByPosition) { }
+
+	private record WeightedStateBindings(List<CandidateRealizationInputBinding> regular,
+		List<CandidateRealizationInputBinding> singlePresentEndpoint) { }
+
+	private record WeightedEmissionBindings(CandidateEmissionFact template,
+		List<WeightedTargetBindings> targets) { }
+
+	private static final class WeightedMemberEmissions implements CandidateRuleRelation.MemberEmissions {
+		private final CompiledHopKey owner;
+		private final List<WeightedEmissionBindings> emissions;
+		private final String signature;
+		private final long storedChoices;
+
+		private WeightedMemberEmissions(CompiledHopKey owner,
+			List<WeightedEmissionBindings> emissions) {
+			this.owner = owner;
+			this.emissions = emissions;
+			long choices = 0;
+			StringBuilder normalized = new StringBuilder("weightedBindings=");
+			for(WeightedEmissionBindings emission : emissions) {
+				normalized.append(emission.template().emissionState().normalizedSignature()).append('[');
+				for(WeightedTargetBindings target : emission.targets()) {
+					normalized.append(target.targetPool().normalizedSignature()).append('{');
+					for(Map<CandidateInputState,WeightedStateBindings> axis
+						: target.bindingsByPosition())
+						for(var entry : axis.entrySet()) {
+							normalized.append(entry.getKey().normalizedSignature()).append('=');
+							for(CandidateRealizationInputBinding binding : entry.getValue().regular())
+								normalized.append(binding.normalizedSignature()).append(',');
+							normalized.append("single[");
+							for(CandidateRealizationInputBinding binding
+								: entry.getValue().singlePresentEndpoint())
+								normalized.append(binding.normalizedSignature()).append(',');
+							normalized.append(']');
+							choices += entry.getValue().regular().size()
+								+ entry.getValue().singlePresentEndpoint().size();
+						}
+					normalized.append('}');
+				}
+				normalized.append(']');
+			}
+			signature = normalized.toString();
+			storedChoices = choices;
+		}
+
+		@Override public List<CandidateEmissionFact> resolve(List<CandidateInputState> inputs) {
+			List<CandidateEmissionFact> resolved = new ArrayList<>();
+			for(WeightedEmissionBindings binding : emissions) {
+				CandidateEmissionFact template = binding.template();
+				if(binding.targets().isEmpty()) {
+					resolved.add(template);
+					continue;
+				}
+				List<CandidateEmissionRealization> realizations = new ArrayList<>();
+				long presentMatrixInputs = 0;
+				for(WeightedTargetBindings target : binding.targets()) {
+					for(int position = 0; position < inputs.size(); position++)
+						if(!target.bindingsByPosition().get(position).isEmpty()
+							&& inputs.get(position).present())
+							presentMatrixInputs++;
+					break;
+				}
+				for(CandidateEmissionRealization realization : template.realizations()) {
+					List<CandidateRealizationSupportClause> nonAction = realization.supportClauses().stream()
+						.filter(clause -> clause.inputBindings().stream().noneMatch(input ->
+							input.kind() == CandidateInputBindingKind.RELOCATION)).toList();
+					if(!nonAction.isEmpty() && (realization.key().layoutKind()
+						!= PlacementLayoutKind.NATIVE_LINEAGE
+						|| nonAction.stream().anyMatch(clause -> clause.nativeWorkerPoolWitness() != null
+							|| !clause.inputBindings().isEmpty())
+						|| inputs.stream().noneMatch(CandidateInputState::present)))
+						realizations.add(CandidateEmissionRealization
+							.fromAlreadyCanonicalSupportClauses(realization.key(), nonAction));
+				}
+				for(WeightedTargetBindings target : binding.targets()) {
+					List<List<CandidateRealizationInputBinding>> choices = new ArrayList<>();
+					boolean complete = true;
+					for(int position = 0; position < inputs.size(); position++) {
+						Map<CandidateInputState,WeightedStateBindings> axis =
+							target.bindingsByPosition().get(position);
+						if(axis.isEmpty() || !inputs.get(position).present())
+							continue;
+						WeightedStateBindings stored = axis.get(inputs.get(position));
+						List<CandidateRealizationInputBinding> options = stored == null ? List.of()
+							: presentMatrixInputs == 1
+								? java.util.stream.Stream.concat(stored.regular().stream(),
+									stored.singlePresentEndpoint().stream()).distinct().sorted().toList()
+								: stored.regular();
+						if(options.isEmpty()) {
+							complete = false;
+							break;
+						}
+						choices.add(options);
+					}
+					if(complete && !choices.isEmpty())
+						realizations.addAll(generateRelocationBindingProduct(owner, template,
+							List.copyOf(choices), null, false, null, null));
+				}
+				if(!realizations.isEmpty())
+					resolved.add(retainUnchangedEmission(template,
+						template.derivedFoutAction(), realizations));
+			}
+			List<CandidateEmissionFact> immutable = List.copyOf(resolved);
+			return immutable;
+		}
+
+		@Override public String normalizedSignature() { return signature; }
+		@Override public long storedChoiceCount() { return storedChoices; }
+	}
+
+	/** Merge equal closed authorities only along one complete Cartesian axis at a time. */
+	private static List<CandidateRuleRelation.ConditionalRegion> compactClosedRelationRegions(
+		List<CandidateRuleFact> facts) {
+		Map<ClosedRelationHeaderKey,ClosedRelationHeaderGroup> groups = new LinkedHashMap<>();
+		for(CandidateRuleFact fact : facts) {
+			ClosedRelationHeaderGroup group = groups.computeIfAbsent(
+				new ClosedRelationHeaderKey(fact), ignored ->
+					new ClosedRelationHeaderGroup(fact, new ArrayList<>()));
+			CandidateRuleFact representative = group.representative();
+			CandidateRuleRelation.Header header = new CandidateRuleRelation.Header(
+				representative.capability(), representative.shapeProof(), representative.profile(),
+				representative.allowedEmissionFacts());
+			group.regions().add(new CandidateRuleRelation.ConditionalRegion(
+				fact.key().orderedInputs().stream().map(List::of).toList(), header));
+		}
+		List<CandidateRuleRelation.ConditionalRegion> compact = new ArrayList<>();
+		for(ClosedRelationHeaderGroup group : groups.values()) {
+			List<CandidateRuleRelation.ConditionalRegion> regions = new ArrayList<>(group.regions());
+			int arity = regions.isEmpty() ? 0 : regions.get(0).axes().size();
+			for(int axis = 0; axis < arity; axis++)
+				regions = mergeClosedRelationAxis(regions, axis);
+			compact.addAll(regions);
+		}
+		return List.copyOf(compact);
+	}
+
+	/** Collect exact rule identities without expanding factorized or indexed support products. */
+	private static Set<CandidateRuleKey> referencedCandidateRules(List<CandidateRuleFact> facts,
+		List<LogicalTransientInputFact> logicalInputs) {
+		Set<CandidateRuleKey> referenced = new HashSet<>();
+		for(CandidateRuleFact fact : facts)
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				if(emission.derivedFoutAction() != null)
+					referenced.add(emission.derivedFoutAction().candidateRule());
+				for(CandidateEmissionRealization realization : emission.realizations())
+					PlacementSupportRelations.forEachSupportBinding(realization,
+						binding -> referenced.add(binding.source().rule()));
+			}
+		for(LogicalTransientInputFact input : logicalInputs)
+			for(var compatibility : input.compatibility()) {
+				referenced.add(compatibility.sourceRealization().rule());
+				referenced.add(compatibility.readerRealization().rule());
+			}
+		return Collections.unmodifiableSet(referenced);
+	}
+
+	private record ClosedRelationHeaderGroup(CandidateRuleFact representative,
+		List<CandidateRuleRelation.ConditionalRegion> regions) { }
+
+	/** Hashable identity key that never expands factorized realization support. */
+	private static final class ClosedRelationHeaderKey {
+		private final CandidateCapabilityFact capability;
+		private final CandidateShapeProofFact shapeProof;
+		private final CandidateProfileFact profile;
+		private final List<CandidateEmissionFact> emissions;
+		private final int hash;
+
+		private ClosedRelationHeaderKey(CandidateRuleFact fact) {
+			capability = fact.capability();
+			shapeProof = fact.shapeProof();
+			profile = fact.profile();
+			emissions = fact.allowedEmissionFacts();
+			int computed = Objects.hash(capability, shapeProof, profile, emissions.size());
+			for(CandidateEmissionFact emission : emissions)
+				computed = 31 * computed + System.identityHashCode(emission);
+			hash = computed;
+		}
+
+		@Override public int hashCode() { return hash; }
+		@Override public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			if(!(other instanceof ClosedRelationHeaderKey that)
+				|| hash != that.hash || !Objects.equals(capability, that.capability)
+				|| !shapeProof.equals(that.shapeProof) || !profile.equals(that.profile)
+				|| emissions.size() != that.emissions.size())
+				return false;
+			for(int index = 0; index < emissions.size(); index++)
+				if(emissions.get(index) != that.emissions.get(index))
+					return false;
+			return true;
+		}
+	}
+
+	private static List<CandidateRuleRelation.ConditionalRegion> mergeClosedRelationAxis(
+		List<CandidateRuleRelation.ConditionalRegion> regions, int axis) {
+		Map<List<List<CandidateInputState>>,List<CandidateRuleRelation.ConditionalRegion>> groups =
+			new LinkedHashMap<>();
+		for(CandidateRuleRelation.ConditionalRegion region : regions) {
+			List<List<CandidateInputState>> otherAxes = new ArrayList<>(region.axes());
+			otherAxes.remove(axis);
+			groups.computeIfAbsent(List.copyOf(otherAxes), ignored -> new ArrayList<>()).add(region);
+		}
+		List<CandidateRuleRelation.ConditionalRegion> merged = new ArrayList<>(groups.size());
+		for(List<CandidateRuleRelation.ConditionalRegion> bucket : groups.values()) {
+			CandidateRuleRelation.ConditionalRegion first = bucket.get(0);
+			List<CandidateInputState> values = bucket.stream().flatMap(region ->
+				region.axes().get(axis).stream()).distinct()
+				.sorted(java.util.Comparator.comparing(CandidateInputState::normalizedSignature)).toList();
+			List<List<CandidateInputState>> axes = new ArrayList<>(first.axes());
+			axes.set(axis, values);
+			merged.add(new CandidateRuleRelation.ConditionalRegion(axes, first.header()));
+		}
+		return List.copyOf(merged);
 	}
 
 
@@ -2093,10 +2534,10 @@ final class PlacementRelationClosure {
 				continue;
 			}
 			CompiledHopKey owner = fact.key().parentOccurrence();
-			// Knowing a value's privacy does not close its physical CFG/function
-			// sources. Preserve provisional loop writers until the ordinary closure;
-			// only complete same-block seeds can be suppressed before that boundary.
-			if(!privacyAuthorityEstablished && !seedPrivacy.containsKey(owner)) {
+			// Structural privacy closes ordinary compiled payload operations, but not
+			// physical CFG/function sources. Preserve provisional loop writers and
+			// synthetic carriers until their later boundary closure establishes authority.
+			if(!generationPrivacyProjectionAvailable(owner) && !seedPrivacy.containsKey(owner)) {
 				filtered.add(fact);
 				continue;
 			}
@@ -2158,51 +2599,103 @@ final class PlacementRelationClosure {
 	}
 
 	private List<List<FType>> privacyMaskedInputDomains(Hop hop, Node consumer, List<List<FType>> domains) {
-		privacyInputPruning.remove(consumer.key());
+		CandidatePrivacyInputPruning prior = privacyInputPruning.remove(consumer.key());
 		// Virtual CFG/formal/prototype inputs use distinct authority. Do not mistake
 		// them for compiled payload operands or prune a temporary bottom domain.
 		if(!earlyPrivacyPruning || isTransientRead(hop) || isTransientWrite(hop) || hop instanceof FunctionOp
 			|| domains.size() != hop.getInput().size())
 			return domains;
-		if(!privacyAuthorityEstablished) {
+		if(!generationPrivacyProjectionAvailable(consumer.key())) {
 			var seed = seedPrivacy.get(consumer.key());
 			return seed == null ? domains : maskInputDomains(seed, domains,
-				seedProtectedInputs.getOrDefault(consumer.key(), Map.of()));
+				seedProtectedInputs.getOrDefault(consumer.key(), Map.of()), prior);
 		}
 		Map<Integer,CompiledHopKey> protectedSources = generationPrivacyProjection.protectedPayloadInputs()
 			.getOrDefault(consumer.key(), Map.of());
 		Map<Integer,PlacementPrivacyFacts.PrivacyFact> sources = new LinkedHashMap<>();
 		protectedSources.forEach((position, source) ->
 			sources.put(position, generationPrivacyAuthority.requireExact(source)));
-		return maskInputDomains(generationPrivacyAuthority.requireExact(consumer.key()), domains, sources);
+		return maskInputDomains(generationPrivacyAuthority.requireExact(consumer.key()), domains, sources, prior);
 	}
 
 	private List<List<FType>> maskInputDomains(PlacementPrivacyFacts.PrivacyFact consumer,
 		List<List<FType>> domains, Map<Integer,PlacementPrivacyFacts.PrivacyFact> sources) {
+		return maskInputDomains(consumer, domains, sources, null);
+	}
+
+	private List<List<FType>> maskInputDomains(PlacementPrivacyFacts.PrivacyFact consumer,
+		List<List<FType>> domains, Map<Integer,PlacementPrivacyFacts.PrivacyFact> sources,
+		CandidatePrivacyInputPruning prior) {
 		if(sources.isEmpty() || domains.stream().anyMatch(List::isEmpty))
 			return domains;
+		if(complexityMetrics != null)
+			complexityMetrics.recordPrivacyInputMaskCheck();
 		CandidatePrivacyInputPruning evidence = new CandidatePrivacyInputPruning(consumer, domains, sources);
-		if(evidence.rejectedTupleCount().signum() == 0 || evidence.generatedTupleCount().signum() == 0)
+		if(evidence.rejectedTupleCount().signum() == 0 || evidence.generatedTupleCount().signum() == 0) {
+			retainEquivalentPriorPrivacyMask(consumer, domains, sources, prior);
 			return domains;
+		}
 		privacyInputPruning.put(consumer.occurrence(), evidence);
 		if(complexityMetrics != null)
 			complexityMetrics.recordPrivacyInputMask(evidence.rejectedTupleCount());
 		return evidence.maskedDomains();
 	}
 
+	private void retainEquivalentPriorPrivacyMask(PlacementPrivacyFacts.PrivacyFact consumer,
+		List<List<FType>> domains, Map<Integer,PlacementPrivacyFacts.PrivacyFact> sources,
+		CandidatePrivacyInputPruning prior) {
+		if(!samePrivacyMaskAuthority(prior, consumer, sources)
+			|| !prior.maskedDomains().equals(domains))
+			return;
+		privacyInputPruning.put(consumer.occurrence(), prior);
+	}
+
+	static boolean samePrivacyMaskAuthority(CandidatePrivacyInputPruning prior,
+		PlacementPrivacyFacts.PrivacyFact consumer,
+		Map<Integer,PlacementPrivacyFacts.PrivacyFact> sources) {
+		return prior != null && prior.consumer() == consumer
+			&& prior.protectedInputs().keySet().equals(sources.keySet())
+			&& prior.protectedInputs().entrySet().stream()
+				.noneMatch(entry -> sources.get(entry.getKey()) != entry.getValue());
+	}
+
 	private PlacementCandidateGenerator.GenerationPrivacy generationPrivacy(CompiledHopKey owner) {
 		if(!earlyPrivacyPruning)
 			return null;
-		if(!privacyAuthorityEstablished) {
+		boolean projectionAvailable = generationPrivacyProjectionAvailable(owner);
+		PlacementCandidateGenerator.GenerationPrivacy privacy;
+		if(!projectionAvailable) {
 			var seed = seedPrivacy.get(owner);
-			return seed == null ? null : new PlacementCandidateGenerator.GenerationPrivacy(seed.privacy(),
+			privacy = seed == null ? null : new PlacementCandidateGenerator.GenerationPrivacy(seed.privacy(),
 				seedProtectedInputs.getOrDefault(owner, Map.of()).keySet());
 		}
-		Privacy privacy = generationPrivacyProjection.effective().get(owner);
-		if(privacy == null)
-			return null;
-		return new PlacementCandidateGenerator.GenerationPrivacy(privacy,
-			generationPrivacyProjection.protectedPayloadInputs().getOrDefault(owner, Map.of()).keySet());
+		else {
+			Privacy effective = generationPrivacyProjection.effective().get(owner);
+			privacy = effective == null ? null : new PlacementCandidateGenerator.GenerationPrivacy(effective,
+				generationPrivacyProjection.protectedPayloadInputs().getOrDefault(owner, Map.of()).keySet());
+		}
+		if(complexityMetrics != null)
+			complexityMetrics.recordGenerationPrivacyLookup(projectionAvailable,
+				privacy != null && !privacy.protectedPayloadPositions().isEmpty());
+		return privacy;
+	}
+
+	/**
+	 * Structural privacy inference is sufficient for regenerating ordinary compiled
+	 * payload operations. Synthetic/function/transient carriers still require the
+	 * later physical privacy fixed point because their source and writer authority
+	 * can change during boundary replay.
+	 */
+	private boolean generationPrivacyProjectionAvailable(CompiledHopKey owner) {
+		if(generationPrivacyAuthority == null || generationPrivacyProjection == null
+			|| !generationPrivacyProjection.effective().containsKey(owner))
+			return false;
+		if(privacyAuthorityEstablished)
+			return true;
+		Hop hop = origins.get(owner);
+		return hop != null && !isTransientRead(hop) && !isTransientWrite(hop)
+			&& !PlacementProgramFacts.isFunctionOutput(hop) && !(hop instanceof FunctionOp)
+			&& !isMultiReturnBuiltinOutputCarrier(hop);
 	}
 
 	private CandidateBase projectFreshBasePrivacy(Node node, List<CandidateRuleKey> keys,
@@ -4838,8 +5331,6 @@ final class PlacementRelationClosure {
 					if(emission.derivedFoutAction() != null)
 						incompleteMetadataOwner = true;
 					for(CandidateEmissionRealization realization : emission.realizations()) {
-						if(realization.key().layoutKind() == PlacementLayoutKind.VALUE_MAP)
-							incompleteMetadataOwner = true;
 						CandidateRealizationReference reference = CandidateRealizationReference.of(
 							fact.key(), realization);
 						if(executableSourceRealization(fact.key(), realization))
@@ -4876,13 +5367,13 @@ final class PlacementRelationClosure {
 			return result(sourceKey, inputType).seeds();
 		}
 
-		private boolean fixedValueMapConsulted(CompiledHopKey sourceKey, FType inputType) {
-			return result(sourceKey, inputType).fixedValueMapConsulted();
+		private Set<CompiledHopKey> dependencyOccurrences(CompiledHopKey sourceKey, FType inputType) {
+			return result(sourceKey, inputType).dependencyOccurrences();
 		}
 
 		private DirectSourceSeedResult result(CompiledHopKey sourceKey, FType inputType) {
 			if(sourceKey == null || inputType == null || !nodesByKey.containsKey(sourceKey))
-				return new DirectSourceSeedResult(List.of(), false);
+				return new DirectSourceSeedResult(List.of(), Set.of());
 			java.util.EnumMap<FType,DirectSourceSeedResult> byType = bySource.computeIfAbsent(
 				sourceKey, ignored -> new java.util.EnumMap<>(FType.class));
 			return byType.computeIfAbsent(inputType, ignored -> compute(sourceKey, inputType));
@@ -4891,7 +5382,9 @@ final class PlacementRelationClosure {
 		private DirectSourceSeedResult compute(CompiledHopKey sourceKey, FType inputType) {
 			Node source = nodesByKey.get(sourceKey);
 			java.util.LinkedHashSet<DurableAnchorKey> seeds = new java.util.LinkedHashSet<>();
-			boolean fixedValueMapConsulted = false;
+			Set<CompiledHopKey> dependencyOccurrences =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			dependencyOccurrences.add(sourceKey);
 			source.anchors().stream().filter(anchor -> anchor.fType() == inputType)
 				.forEach(seeds::add);
 			// Keep the global source-index realization lookup: duplicate structural
@@ -4908,20 +5401,21 @@ final class PlacementRelationClosure {
 					if(pool != null && pool.fType() == inputType)
 						seeds.add(pool);
 				}
-				if(reference.realization().layoutKind() == PlacementLayoutKind.VALUE_MAP)
-					fixedValueMapConsulted = true;
-				NativePlacementContinuity.FixedValueMapPool fixedPool =
-					continuity.fixedValueMapPool(reference);
+				NativePlacementContinuity.FixedValueMapResolution resolution =
+					continuity.fixedValueMapResolution(reference);
+				dependencyOccurrences.addAll(resolution.ownerReads());
+				NativePlacementContinuity.FixedValueMapPool fixedPool = resolution.pool();
 				if(fixedPool != null && fixedPool.pool().fType() == inputType)
 					seeds.add(fixedPool.pool());
 			}
-			return new DirectSourceSeedResult(List.copyOf(seeds), fixedValueMapConsulted);
+			return new DirectSourceSeedResult(List.copyOf(seeds),
+				Collections.unmodifiableSet(dependencyOccurrences));
 		}
 
 		private long clauseVisits() { return clauseVisits; }
 	}
 	private record DirectSourceSeedResult(List<DurableAnchorKey> seeds,
-		boolean fixedValueMapConsulted) { }
+		Set<CompiledHopKey> dependencyOccurrences) { }
 
 	/** Node topology, edges and templates are invariant during each direct closure loop. */
 	private static DirectBindingIndex directBindingIndex(List<CandidateRuleFact> templates,
@@ -5205,15 +5699,8 @@ final class PlacementRelationClosure {
 							// Empty and cached seed queries also read this exact source owner.
 							factDependencies.add(sourceKey);
 							seeds.addAll(sourceSeeds.seeds(sourceKey, input.fType()));
-							// fixedValueMapPool recursively reads VALUE_MAP support metadata.
-							// Mark provisionally; final owner-footprint expansion either
-							// certifies these reads or retains conservative invalidation.
-							if(sourceSeeds.fixedValueMapConsulted(sourceKey, input.fType())) {
-								if(complexityMetrics != null)
-									complexityMetrics.recordDirectWork(
-										DirectWork.INCOMPLETE_SEED_VALUE_MAP_INCIDENCES);
-								incompleteDependencyOccurrences.add(factOccurrence);
-							}
+							factDependencies.addAll(
+								sourceSeeds.dependencyOccurrences(sourceKey, input.fType()));
 						}
 					}
 					boolean dynamicOutputLayout = NativePlacementContinuity.recomputesNativePartitionRanges(
@@ -5464,11 +5951,9 @@ final class PlacementRelationClosure {
 	}
 
 	/**
-	 * Native proof-state receipts do not include metadata owners recursively read by
-	 * VALUE_MAP grounding or derived FOUT action authority. Rows whose proof touches
-	 * one of these owners are provisional until final footprint expansion certifies
-	 * their VALUE_MAP and derived-anchor owner reads. Ambiguous owner identities
-	 * retain conservative invalidation; materialization legality is unchanged.
+	 * Native proof receipts and source-seed projections include exact VALUE_MAP reads.
+	 * The final conservative metadata closure also records derived-anchor owner reads;
+	 * ambiguous identities retain fallback without changing materialization legality.
 	 */
 	private static boolean readsIncompleteDirectMetadata(Set<CompiledHopKey> dependencies,
 		Set<CompiledHopKey> metadataSensitiveOwners) {
@@ -11150,9 +11635,11 @@ final class PlacementRelationClosure {
 
 	/**
 	 * Publishes an exact rectangular relation only when every input axis has one
-	 * uniform direct/relocation action and no source owner can correlate two axes.
+	 * uniform direct/relocation action. Repeated fixed source owners are retained as
+	 * one correlated choice group by {@link FactorizedSupportClauses}; axes that mix
+	 * owners retain the enumerated path when that owner appears on another axis.
 	 * Mixed action groups retain the enumerated path because their proof sets are
-	 * tuple-dependent and cannot be represented by one uniform-proof rectangle.
+	 * tuple-dependent and cannot be represented by one uniform-proof relation.
 	 */
 	private static Optional<List<CandidateEmissionRealization>> factorizedRelocationBindingProduct(
 		CompiledHopKey owner, CandidateEmissionFact emission,
@@ -11163,21 +11650,15 @@ final class PlacementRelationClosure {
 		if(choices.isEmpty())
 			return Optional.of(List.of());
 		List<List<CandidateRealizationInputBinding>> factors = new ArrayList<>(choices.size());
-		Set<CompiledHopKey> priorOwners = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(List<CandidateRealizationInputBinding> axis : choices) {
 			if(axis.isEmpty())
 				return Optional.of(List.of());
 			CandidateInputBindingKind kind = axis.get(0).kind();
 			RelocationActionKey action = axis.get(0).relocationAction();
-			Set<CompiledHopKey> axisOwners = Collections.newSetFromMap(new IdentityHashMap<>());
 			for(CandidateRealizationInputBinding binding : axis) {
 				if(binding.kind() != kind || binding.relocationAction() != action)
 					return Optional.empty();
-				axisOwners.add(binding.source().rule().parentOccurrence());
 			}
-			for(CompiledHopKey axisOwner : axisOwners)
-				if(!priorOwners.add(axisOwner))
-					return Optional.empty();
 			factors.add(axis);
 		}
 		List<CandidateRealizationInputBinding> representative = factors.stream()
@@ -12499,6 +12980,66 @@ final class PlacementRelationClosure {
 			if(metrics != null)
 				metrics.finishPhase(SearchSpaceMetrics.Phase.RELOCATION_DISCOVERY, started);
 		}
+	}
+
+	/**
+	 * Build only the axis witnesses needed by the legacy relocation-action index.
+	 * These rows are not published, interned by the relation, or expanded as a
+	 * Cartesian product. An ABSENT-preferred base row, every single-axis substitution,
+	 * and every pair of substitutions preserve the legacy anchor/materialization join:
+	 * one changed input may supply the target worker pool while the other becomes
+	 * its upload obligation. This bounded pairwise projection avoids assuming that
+	 * input 0 is the anchor and still avoids the full product.
+	 */
+	private List<CandidateRuleFact> relocationDiscoveryFacts(List<CandidateRuleFact> exactFacts) {
+		if(candidateGenerator == null || candidateGenerator.candidateRuleRelations().isEmpty())
+			return exactFacts;
+		String signature = candidateGenerator.candidateRuleRelations().stream()
+			.map(CandidateRuleRelation::normalizedSignature).toList().toString();
+		if(signature.equals(relationRelocationWitnessSignature)) {
+			List<CandidateRuleFact> reused = new ArrayList<>(
+				exactFacts.size() + relationRelocationWitnesses.size());
+			reused.addAll(exactFacts);
+			reused.addAll(relationRelocationWitnesses);
+			return List.copyOf(reused);
+		}
+		Map<CandidateRuleKey,CandidateRuleFact> witnesses = new LinkedHashMap<>();
+		for(CandidateRuleRelation relation : candidateGenerator.candidateRuleRelations())
+			for(CandidateRuleRelation.ConditionalRegion region : relation.regions()) {
+				List<CandidateInputState> base = region.axes().stream().map(axis -> axis.stream()
+					.filter(state -> !state.present()).findFirst().orElse(axis.get(0))).toList();
+				addRelocationWitness(witnesses, relation.parent(), base, region.header());
+				for(int position = 0; position < region.axes().size(); position++)
+					for(CandidateInputState state : region.axes().get(position)) {
+						List<CandidateInputState> inputs = new ArrayList<>(base);
+						inputs.set(position, state);
+						addRelocationWitness(witnesses, relation.parent(), inputs, region.header());
+					}
+				for(int left = 0; left < region.axes().size(); left++)
+					for(int right = left + 1; right < region.axes().size(); right++)
+						for(CandidateInputState leftState : region.axes().get(left))
+							for(CandidateInputState rightState : region.axes().get(right)) {
+								List<CandidateInputState> inputs = new ArrayList<>(base);
+								inputs.set(left, leftState);
+								inputs.set(right, rightState);
+								addRelocationWitness(witnesses, relation.parent(), inputs, region.header());
+							}
+			}
+		if(witnesses.isEmpty())
+			return exactFacts;
+		relationRelocationWitnessSignature = signature;
+		relationRelocationWitnesses = List.copyOf(witnesses.values());
+		List<CandidateRuleFact> result = new ArrayList<>(exactFacts.size() + witnesses.size());
+		result.addAll(exactFacts);
+		result.addAll(relationRelocationWitnesses);
+		return List.copyOf(result);
+	}
+
+	private static void addRelocationWitness(Map<CandidateRuleKey,CandidateRuleFact> witnesses,
+		CompiledHopKey parent, List<CandidateInputState> inputs, CandidateRuleRelation.Header header) {
+		CandidateRuleKey key = new CandidateRuleKey(parent, inputs);
+		witnesses.putIfAbsent(key, new CandidateRuleFact(key, CandidateEvaluationStatus.AVAILABLE,
+			header.capability(), header.shapeProof(), header.profile(), header.emissions(), ""));
 	}
 
 	private static List<NeutralPlacementGraph.RelocationAction> relocationsMeasured(

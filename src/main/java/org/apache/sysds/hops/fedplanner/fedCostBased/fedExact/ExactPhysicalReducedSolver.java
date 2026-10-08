@@ -494,17 +494,24 @@ final class ExactPhysicalReducedSolver {
 	private static Compaction compact(Reduction reduction) {
 		int[] reducedToCompiled = new int[reduction.variableCount()];
 		Arrays.fill(reducedToCompiled, -1);
-		List<ExactCategoricalSolver.Variable> compactVariables = new ArrayList<>();
-		for(int variable = 0; variable < reduction.variableCount(); variable++)
-			if(reduction.variables().get(variable).domainSize() > 1) {
-				reducedToCompiled[variable] = compactVariables.size();
-				compactVariables.add(reduction.variables().get(variable));
-			}
-
+		boolean[] retained = new boolean[reduction.variableCount()];
+		for(int variable = 0; variable < retained.length; variable++)
+			retained[variable] = reduction.variables().get(variable).domainSize() > 1;
 		IdentityHashMap<ExactCategoricalSolver.Variable,Integer> reducedIndexes =
 			new IdentityHashMap<>();
 		for(int variable = 0; variable < reduction.variableCount(); variable++)
 			reducedIndexes.put(reduction.variables().get(variable), variable);
+		for(ExactCategoricalSolver.Factor factor : reduction.factors()) {
+			ExactCategoricalSolver.Variable selector = factor.conditionalSelectorVariable();
+			if(selector != null)
+				retained[reducedIndexes.get(selector)] = true;
+		}
+		List<ExactCategoricalSolver.Variable> compactVariables = new ArrayList<>();
+		for(int variable = 0; variable < reduction.variableCount(); variable++)
+			if(retained[variable]) {
+				reducedToCompiled[variable] = compactVariables.size();
+				compactVariables.add(reduction.variables().get(variable));
+			}
 		List<ExactCategoricalSolver.Factor> compactFactors =
 			new ArrayList<>(reduction.factors().size());
 		for(ExactCategoricalSolver.Factor factor : reduction.factors()) {
@@ -797,6 +804,15 @@ final class ExactPhysicalReducedSolver {
 					}
 				if(identity) {
 					reducedFactors.add(factor);
+					continue;
+				}
+				int[][] scopedSourceValues = new int[scope.length][];
+				for(int axis = 0; axis < scope.length; axis++)
+					scopedSourceValues[axis] = sourceValues[scope[axis]];
+				ExactCategoricalSolver.Factor conditional =
+					factor.projectConditionalSupport(reducedScope, scopedSourceValues);
+				if(conditional != null) {
+					reducedFactors.add(conditional);
 					continue;
 				}
 				ExactCategoricalSolver.Factor functional = scope.length == 2
@@ -1440,7 +1456,10 @@ final class ExactPhysicalReducedSolver {
 			if(relevant) {
 				ExactCategoricalSolver.Factor frozenFactor = frozen.factor(factor);
 				ExactCategoricalSolver.FunctionalMap mapping = frozenFactor.functionalMapping();
-				if(mapping != null)
+				if(frozenFactor.isConditionalSupport())
+					compileConditionalIdentityObservations(scope, active,
+						quotientVariableCount, hashes, factor);
+				else if(mapping != null)
 					compileFunctionalObservations(mapping,scope,active,quotientVariableCount,hashes);
 				else if(frozenFactor.isFiniteSupport())
 					compileFiniteSupportObservations(frozenFactor.finiteSupportCells(),scope,active,
@@ -1455,6 +1474,23 @@ final class ExactPhysicalReducedSolver {
 			}
 		}
 		return hashes;
+	}
+
+	/** Conditional products stay symbolic; conservative singleton observations are exact. */
+	private static void compileConditionalIdentityObservations(int[] scope, boolean[][] active,
+		int quotientVariableCount, ObservationHashes hashes, int factor) {
+		for(int variable : scope) {
+			if(variable >= quotientVariableCount)
+				continue;
+			for(int value = 0; value < active[variable].length; value++) {
+				if(!active[variable][value])
+					continue;
+				hashes.first[variable][value] = mix(hashes.first[variable][value],
+					((long)factor << 32) ^ value ^ 0x5deece66dL);
+				hashes.second[variable][value] = mix(hashes.second[variable][value],
+					((long)factor << 32) ^ value ^ 0xc6a4a7935bd1e995L);
+			}
+		}
 	}
 
 	private static void compileFiniteSupportObservations(int[] cells, int[] scope,

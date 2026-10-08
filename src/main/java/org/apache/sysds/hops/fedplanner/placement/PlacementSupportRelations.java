@@ -385,18 +385,30 @@ final class PlacementSupportRelations {
 			if(slot.realization.supportClauses() instanceof FactorizedSupportClauses factorized) {
 				FactorizedFixedPointSupport support = new FactorizedFixedPointSupport(slot, factorized);
 				slot.factorizedSupport = support;
-				for(int axis = 0; axis < factorized.factors().size(); axis++)
-					for(CandidateRealizationInputBinding binding : factorized.factors().get(axis)) {
-						boolean actionSupported = actions == null
-							|| binding.kind() != CandidateInputBindingKind.RELOCATION
-							|| supportsRelocationBinding(actions.get(binding.relocationAction()),
-								slot.fact.key(), slot.emission.emissionState(), binding);
-						FixedPointReference source = references.get(binding.source());
-						if(!actionSupported || source == null || source.liveSlots == 0)
+				for(int groupIndex = 0; groupIndex < factorized.choiceGroups().size(); groupIndex++)
+					for(List<CandidateRealizationInputBinding> choice :
+						factorized.choiceGroups().get(groupIndex).choices()) {
+						LinkedHashSet<FixedPointReference> sources = new LinkedHashSet<>();
+						boolean supported = true;
+						for(CandidateRealizationInputBinding binding : choice) {
+							boolean actionSupported = actions == null
+								|| binding.kind() != CandidateInputBindingKind.RELOCATION
+								|| supportsRelocationBinding(actions.get(binding.relocationAction()),
+									slot.fact.key(), slot.emission.emissionState(), binding);
+							FixedPointReference source = references.get(binding.source());
+							if(!actionSupported || source == null || source.liveSlots == 0) {
+								supported = false;
+								break;
+							}
+							sources.add(source);
+						}
+						if(!supported)
 							continue;
-						FactorizedFixedPointOption option = support.add(axis, binding);
-						source.dependentFactorOptions.add(option);
-						reverseIncidences++;
+						FactorizedFixedPointOption option = support.add(groupIndex, choice);
+						for(FixedPointReference source : sources) {
+							source.dependentFactorOptions.add(option);
+							reverseIncidences++;
+						}
 					}
 			}
 			else for(CandidateRealizationSupportClause clause : slot.realization.supportClauses()) {
@@ -632,32 +644,35 @@ final class PlacementSupportRelations {
 	private static final class FactorizedFixedPointSupport {
 		private final FixedPointRealization realization;
 		private final FactorizedSupportClauses original;
-		private final List<Integer> liveByAxis;
+		private final List<Integer> liveByGroup;
 		private final Map<CandidateRealizationInputBinding,FactorizedFixedPointOption> options =
 			new IdentityHashMap<>();
 		private FactorizedFixedPointSupport(FixedPointRealization realization,
 			FactorizedSupportClauses original) {
 			this.realization = realization;
 			this.original = original;
-			liveByAxis = new ArrayList<>(java.util.Collections.nCopies(original.factors().size(), 0));
+			liveByGroup = new ArrayList<>(java.util.Collections.nCopies(
+				original.choiceGroups().size(), 0));
 		}
-		private FactorizedFixedPointOption add(int axis, CandidateRealizationInputBinding binding) {
-			FactorizedFixedPointOption option = new FactorizedFixedPointOption(this, axis, binding);
-			options.put(binding, option);
-			liveByAxis.set(axis, liveByAxis.get(axis) + 1);
+		private FactorizedFixedPointOption add(int group,
+			List<CandidateRealizationInputBinding> bindings) {
+			FactorizedFixedPointOption option = new FactorizedFixedPointOption(this, group, bindings);
+			for(CandidateRealizationInputBinding binding : bindings)
+				options.put(binding, option);
+			liveByGroup.set(group, liveByGroup.get(group) + 1);
 			return option;
 		}
 		private boolean hasLiveProduct() {
-			return liveByAxis.stream().allMatch(count -> count > 0);
+			return liveByGroup.stream().allMatch(count -> count > 0);
 		}
 		private long invalidate(FactorizedFixedPointOption option) {
 			option.live = false;
-			int axisCount = liveByAxis.get(option.axis);
+			int groupCount = liveByGroup.get(option.group);
 			long removed = 1;
-			for(int axis = 0; axis < liveByAxis.size(); axis++)
-				if(axis != option.axis)
-					removed *= liveByAxis.get(axis);
-			liveByAxis.set(option.axis, axisCount - 1);
+			for(int group = 0; group < liveByGroup.size(); group++)
+				if(group != option.group)
+					removed *= liveByGroup.get(group);
+			liveByGroup.set(option.group, groupCount - 1);
 			return removed;
 		}
 		private FactorizedSupportClauses restricted() {
@@ -671,15 +686,15 @@ final class PlacementSupportRelations {
 
 	private static final class FactorizedFixedPointOption {
 		private final FactorizedFixedPointSupport owner;
-		private final int axis;
+		private final int group;
 		@SuppressWarnings("unused")
-		private final CandidateRealizationInputBinding binding;
+		private final List<CandidateRealizationInputBinding> bindings;
 		private boolean live = true;
-		private FactorizedFixedPointOption(FactorizedFixedPointSupport owner, int axis,
-			CandidateRealizationInputBinding binding) {
+		private FactorizedFixedPointOption(FactorizedFixedPointSupport owner, int group,
+			List<CandidateRealizationInputBinding> bindings) {
 			this.owner = owner;
-			this.axis = axis;
-			this.binding = binding;
+			this.group = group;
+			this.bindings = bindings;
 		}
 	}
 
@@ -794,12 +809,14 @@ final class PlacementSupportRelations {
 	}
 
 	/** Universal binding checks and action unions distribute over each product axis. */
-	private static void forEachSupportBinding(CandidateEmissionRealization realization,
+	static void forEachSupportBinding(CandidateEmissionRealization realization,
 		java.util.function.Consumer<CandidateRealizationInputBinding> consumer) {
 		if(realization.supportClauses() instanceof FactorizedSupportClauses product) {
 			for(List<CandidateRealizationInputBinding> axis : product.factors())
 				axis.forEach(consumer);
 		}
+		else if(realization.supportClauses() instanceof IndexedSupportClauses indexed)
+			indexed.uniqueBindings().forEach(consumer);
 		else
 			for(CandidateRealizationSupportClause clause : realization.supportClauses())
 				clause.inputBindings().forEach(consumer);

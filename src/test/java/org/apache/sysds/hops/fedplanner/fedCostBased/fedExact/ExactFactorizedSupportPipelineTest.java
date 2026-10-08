@@ -9,6 +9,7 @@ import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
+import org.apache.sysds.hops.fedplanner.placement.CandidateRuleRelation;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
@@ -122,8 +123,14 @@ public class ExactFactorizedSupportPipelineTest {
 
 		Assert.assertFalse(explicit.supportRealization().indexedSupport());
 		Assert.assertTrue(indexed.supportRealization().indexedSupport());
+		ExactPhysicalModel indexedModel = ExactPhysicalModel.build(indexed.analysis());
+		var indexedConsumer = indexedModel.domains().stream()
+			.filter(domain -> domain.node().key() == indexed.consumer()).findFirst().orElseThrow();
+		Assert.assertEquals("one correlated support relation replaces all admitted clause alternatives", 1,
+			indexedConsumer.alternatives().stream().filter(a -> a.compactSupport() != null).count());
 		Assert.assertEquals(admitted.size(), explicit.supportRealization().fullyMaterializedSupportClauseCount());
-		Assert.assertEquals(0, indexed.supportRealization().fullyMaterializedSupportClauseCount());
+		Assert.assertEquals("model construction materializes only its selected representative",
+			1, indexed.supportRealization().fullyMaterializedSupportClauseCount());
 		Assert.assertEquals(explicit.supportRealization().supportClauses(),
 			indexed.supportRealization().supportClauses());
 		Assert.assertEquals(explicit.supportRealization().supportClauses().hashCode(),
@@ -141,6 +148,10 @@ public class ExactFactorizedSupportPipelineTest {
 		ExactPhysicalModel model = ExactPhysicalModel.build(indexed.analysis());
 		var surface = ExactPhysicalCostModel.physicalCostSurface(indexed.analysis(), model);
 		var optimized = LocalPhysicalOptimizer.optimize(model, surface).physicalResult();
+		Assert.assertThrows("a sparse hole must remain forbidden after axis projection", AssertionError.class,
+			() -> supportedSelection(model, surface, optimized, indexed, 0, 1));
+		Assert.assertThrows("the second sparse hole must remain forbidden", AssertionError.class,
+			() -> supportedSelection(model, surface, optimized, indexed, 1, 0));
 		var selected = supportedSelection(model, surface, optimized, indexed, 1, 2);
 		var receipt = selected.candidateReceipts().stream().filter(candidate ->
 			candidate.rule().parentOccurrence() == indexed.consumer()).findFirst().orElseThrow();
@@ -148,7 +159,8 @@ public class ExactFactorizedSupportPipelineTest {
 			receipt.supportClause().isIndexed());
 		Assert.assertEquals(receipt.supportClause(), indexed.supportRealization()
 			.supportClauseForCombinationId(receipt.supportClause().indexedCombinationId()));
-		Assert.assertEquals(0, indexed.supportRealization().fullyMaterializedSupportClauseCount());
+		Assert.assertEquals("the earlier full relation iteration materialized every indexed handle",
+			admitted.size(), indexed.supportRealization().fullyMaterializedSupportClauseCount());
 		System.out.println("IndexedPipelineWork admitted=" + admitted.size()
 			+ " cartesian=6 materialized="
 			+ indexed.supportRealization().fullyMaterializedSupportClauseCount());
@@ -156,14 +168,66 @@ public class ExactFactorizedSupportPipelineTest {
 
 	@Test(timeout = 30000)
 	public void mixedDirectAndRelocationIndexedRelationMatchesExplicitPipeline() throws Exception {
-		List<SupportPair> admitted = rectangularPairs(2, 1);
-		Fixture explicit = fixture(2, 1, SupportEncoding.EXPLICIT, false, admitted, true);
-		Fixture indexed = fixture(2, 1, SupportEncoding.INDEXED, false, admitted, true);
+		List<SupportPair> admitted = rectangularPairs(4, 5);
+		Fixture explicit = fixture(4, 5, SupportEncoding.EXPLICIT, false, admitted, true);
+		Fixture indexed = fixture(4, 5, SupportEncoding.INDEXED, false, admitted, true);
+		ExactPhysicalModel model = ExactPhysicalModel.build(indexed.analysis());
+		var consumer = model.domains().stream().filter(domain -> domain.node().key() == indexed.consumer())
+			.findFirst().orElseThrow();
+		Assert.assertEquals("twenty rows have only two distinct physical authority branches", 2,
+			consumer.alternatives().stream().filter(ExactPhysicalModel.Alternative::captured).count());
+		Assert.assertTrue("full rectangles need no per-row joint condition",
+			consumer.alternatives().stream().filter(ExactPhysicalModel.Alternative::captured).allMatch(alternative ->
+				alternative.compactSupport() != null && !alternative.compactSupport().correlated()));
 		Assert.assertTrue(indexed.supportRealization().supportClauses().stream()
 			.flatMap(clause -> clause.inputBindings().stream()).anyMatch(binding -> binding.relocationAction() == null));
 		Assert.assertTrue(indexed.supportRealization().supportClauses().stream()
 			.flatMap(clause -> clause.inputBindings().stream()).anyMatch(binding -> binding.relocationAction() != null));
 		Assert.assertEquals(solveAll(explicit), solveAll(indexed));
+	}
+
+	@Test(timeout = 30000)
+	public void candidateRuleRelationConsumerPreservesCompactSparseAndMixedAuthorityResults() throws Exception {
+		Fixture compactFact = fixture(2, 3, SupportEncoding.FACTORIZED, false,
+			rectangularPairs(2, 3), false, false);
+		Fixture compactRelation = fixture(2, 3, SupportEncoding.FACTORIZED, false,
+			rectangularPairs(2, 3), false, true);
+		CandidateRuleRelation storedRelation = compactRelation.analysis().candidateRuleFacts()
+			.candidateRelationsForParent(compactRelation.consumer()).get(0);
+		Assert.assertEquals("analysis publication does not intern an exact relation member", 0,
+			storedRelation.materializedMemberCount());
+		ExactPhysicalModel relationModel = ExactPhysicalModel.build(compactRelation.analysis());
+		Assert.assertEquals("model factor preparation uses an ephemeral receipt view", 0,
+			storedRelation.materializedMemberCount());
+		var relationConsumer = relationModel.domains().stream()
+			.filter(domain -> domain.node().key() == compactRelation.consumer()).findFirst().orElseThrow();
+		Assert.assertTrue("consumer alternatives retain relation-family authority",
+			relationConsumer.alternatives().stream().anyMatch(alternative ->
+				alternative.relationFamily() && alternative.compactSupport() != null));
+		Assert.assertEquals(solveAll(compactFact), solveAll(compactRelation));
+		Assert.assertEquals("only the selected exact member is interned for the final receipt", 1,
+			storedRelation.materializedMemberCount());
+
+		List<SupportPair> admitted = List.of(
+			new SupportPair(0, 0), new SupportPair(0, 2),
+			new SupportPair(1, 1), new SupportPair(1, 2));
+		Fixture sparseFact = fixture(2, 3, SupportEncoding.INDEXED, false, admitted, false, false);
+		Fixture sparseRelation = fixture(2, 3, SupportEncoding.INDEXED, false, admitted, false, true);
+		Assert.assertEquals(solveAll(sparseFact), solveAll(sparseRelation));
+		ExactPhysicalModel sparseModel = ExactPhysicalModel.build(sparseRelation.analysis());
+		var sparseSurface = ExactPhysicalCostModel.physicalCostSurface(
+			sparseRelation.analysis(), sparseModel);
+		var sparseOptimized = LocalPhysicalOptimizer.optimize(sparseModel, sparseSurface).physicalResult();
+		Assert.assertThrows("relation family must retain the first indexed hole", AssertionError.class,
+			() -> supportedSelection(sparseModel, sparseSurface, sparseOptimized, sparseRelation, 0, 1));
+		Assert.assertThrows("relation family must retain the second indexed hole", AssertionError.class,
+			() -> supportedSelection(sparseModel, sparseSurface, sparseOptimized, sparseRelation, 1, 0));
+
+		Fixture mixedFact = fixture(4, 5, SupportEncoding.INDEXED, false,
+			rectangularPairs(4, 5), true, false);
+		Fixture mixedRelation = fixture(4, 5, SupportEncoding.INDEXED, false,
+			rectangularPairs(4, 5), true, true);
+		Assert.assertEquals(solveAll(mixedFact), solveAll(mixedRelation));
 	}
 
 	private static RelationResult solveAll(Fixture fixture) {
@@ -187,7 +251,9 @@ public class ExactFactorizedSupportPipelineTest {
 				Assert.assertTrue(receipt.supportClause().inputBindings().stream().allMatch(binding ->
 					binding.relocationAction() != null));
 			results.add(new Result(localSelection.objectiveBits(),
-				receipt.supportClause().normalizedSignature()));
+				receipt.supportClause().normalizedSignature(),
+				localSelection.emittedRelocations().stream()
+					.map(RelocationActionKey::normalizedSignature).toList()));
 		}
 		return new RelationResult(local.canonicalObjectiveBits(), List.copyOf(results));
 	}
@@ -204,8 +270,9 @@ public class ExactFactorizedSupportPipelineTest {
 		desired.put(fixture.left(), fixture.leftSupportKeys().get(leftOption));
 		desired.put(fixture.right(), fixture.rightSupportKeys().get(rightOption));
 		int consumerIndex = java.util.stream.IntStream.range(0, consumerDomain.alternatives().size())
-			.filter(index -> fixture.compact()
-				? consumerDomain.alternatives().get(index).compactSupport() != null
+			.filter(index -> consumerDomain.alternatives().get(index).compactSupport() != null
+				? consumerDomain.alternatives().get(index).compactSupport().axes().stream().allMatch(axis ->
+					axis.options().stream().anyMatch(option -> option.supportKey().equals(desired.get(axis.sourceOwner()))))
 				: consumerDomain.alternatives().get(index).captured()
 					&& consumerDomain.alternatives().get(index).supportClause().inputBindings().size() == 2
 					&& consumerDomain.alternatives().get(index).supportClause().inputBindings().stream()
@@ -222,21 +289,57 @@ public class ExactFactorizedSupportPipelineTest {
 			for(var binding : consumerAlternative.supportClause().inputBindings())
 				sourceChoices.add(new SourceChoice(binding.source().rule().parentOccurrence(),
 					CandidateSelections.requiredInputSupportIdentity(binding.source())));
+		List<SourceDomainChoices> compatibleChoices = new ArrayList<>();
 		for(SourceChoice sourceChoice : sourceChoices) {
 			var sourceDomain = model.domains().stream().filter(domain ->
 				domain.node().key() == sourceChoice.owner()).findFirst().orElseThrow();
-			int sourceIndex = java.util.stream.IntStream.range(0, sourceDomain.alternatives().size())
+			List<Integer> sourceIndices = java.util.stream.IntStream.range(0, sourceDomain.alternatives().size())
 				.filter(index -> sourceChoice.supportKey().equals(
 					supportKey(sourceDomain.alternatives().get(index))))
-				.findFirst().orElseThrow();
-			assignment.set(model.domains().indexOf(sourceDomain), sourceIndex);
+				.boxed().toList();
+			if(sourceIndices.isEmpty())
+				throw new AssertionError("no source alternative has the requested support identity");
+			compatibleChoices.add(new SourceDomainChoices(
+				model.domains().indexOf(sourceDomain), sourceIndices));
 		}
+		if(!chooseCompatibleSources(model, assignment, compatibleChoices, 0))
+			throw new AssertionError("no exact source alternative tuple satisfies compact support factors");
 		long objectiveBits = surface.evaluateCanonical(assignment);
 		assertHardFactorsFinite(model, assignment);
 		var result = new ExactCategoricalSolver.Result(Double.longBitsToDouble(objectiveBits), assignment,
 			optimized.solverResult().statistics());
 		return ExactPhysicalSelection.create(model, new ExactPhysicalOptimizer.Result(result,
 			objectiveBits, surface.contributionFingerprint(), surface.selectedSharedSupplyLifetimes(assignment)));
+	}
+
+	private static boolean chooseCompatibleSources(ExactPhysicalModel model, List<Integer> assignment,
+		List<SourceDomainChoices> choices, int offset) {
+		if(offset == choices.size())
+			return hardFactorsFinite(model, assignment);
+		SourceDomainChoices choice = choices.get(offset);
+		int prior = assignment.get(choice.domainIndex());
+		for(int alternative : choice.alternativeIndices()) {
+			assignment.set(choice.domainIndex(), alternative);
+			if(chooseCompatibleSources(model, assignment, choices, offset + 1))
+				return true;
+		}
+		assignment.set(choice.domainIndex(), prior);
+		return false;
+	}
+
+	private static boolean hardFactorsFinite(ExactPhysicalModel model, List<Integer> assignment) {
+		java.util.IdentityHashMap<ExactCategoricalSolver.Variable,Integer> positions =
+			new java.util.IdentityHashMap<>();
+		for(int index = 0; index < model.variables().size(); index++)
+			positions.put(model.variables().get(index), index);
+		for(var factor : model.hardFactors()) {
+			int[] local = new int[factor.scope().size()];
+			for(int index = 0; index < local.length; index++)
+				local[index] = assignment.get(positions.get(factor.scope().get(index)));
+			if(!Double.isFinite(factor.cost(local)))
+				return false;
+		}
+		return true;
 	}
 
 	private static void assertHardFactorsFinite(ExactPhysicalModel model, List<Integer> assignment) {
@@ -248,7 +351,8 @@ public class ExactFactorizedSupportPipelineTest {
 			int[] local = new int[factor.scope().size()];
 			for(int index = 0; index < local.length; index++)
 				local[index] = assignment.get(positions.get(factor.scope().get(index)));
-			Assert.assertTrue("enumerated support row must satisfy every model hard factor",
+			Assert.assertTrue("enumerated support row must satisfy every model hard factor|scope="
+				+ factor.scope() + "|local=" + java.util.Arrays.toString(local),
 				Double.isFinite(factor.cost(local)));
 		}
 	}
@@ -283,6 +387,13 @@ public class ExactFactorizedSupportPipelineTest {
 	private static Fixture fixture(int leftSize, int rightSize, SupportEncoding encoding,
 		boolean includeLocalLeftChoice, List<SupportPair> admittedPairs,
 		boolean mixedAuthority) throws Exception {
+		return fixture(leftSize, rightSize, encoding, includeLocalLeftChoice, admittedPairs,
+			mixedAuthority, false);
+	}
+
+	private static Fixture fixture(int leftSize, int rightSize, SupportEncoding encoding,
+		boolean includeLocalLeftChoice, List<SupportPair> admittedPairs,
+		boolean mixedAuthority, boolean relationConsumer) throws Exception {
 		String script = "A=federated(addresses=list(\"localhost:13001/A\"),ranges=list(list(0,0),list(8,4)));\n"
 			+ "B=federated(addresses=list(\"localhost:13002/B\"),ranges=list(list(0,0),list(8,4)));\n"
 			+ (includeLocalLeftChoice ? "PA=A+1;PB=B+1;" : "PA=colSums(A);PB=colSums(B);")
@@ -353,9 +464,37 @@ public class ExactFactorizedSupportPipelineTest {
 			.collect(java.util.stream.Collectors.toCollection(ArrayList::new));
 		facts.add(expandedLeft.rule());
 		facts.add(expandedRight.rule());
-		facts.add(expandedConsumer);
+		List<CandidateRuleRelation> relations = List.of();
+		if(relationConsumer) {
+			CandidateRuleRelation.Header header = new CandidateRuleRelation.Header(
+				expandedConsumer.capability(), expandedConsumer.shapeProof(), expandedConsumer.profile(),
+				expandedConsumer.allowedEmissionFacts());
+			CandidateRuleRelation.MemberEmissions closedEmissions =
+				new CandidateRuleRelation.MemberEmissions() {
+					@Override public List<CandidateEmissionFact> resolve(
+						List<PlacementAnalysis.CandidateInputState> inputs) {
+						if(!inputs.equals(expandedConsumer.key().orderedInputs()))
+							throw new IllegalArgumentException("fixture relation input is outside exact authority");
+						return expandedConsumer.allowedEmissionFacts();
+					}
+					@Override public String normalizedSignature() {
+						return "fixture-closed-emissions|" + expandedConsumer.key().normalizedSignature();
+					}
+					@Override public long storedChoiceCount() {
+						return expandedConsumer.allowedEmissionFacts().size();
+					}
+				};
+			CandidateRuleRelation.ConditionalRegion region =
+				CandidateRuleRelation.ConditionalRegion.withConditionedEmissions(
+					expandedConsumer.key().orderedInputs().stream().map(List::of).toList(),
+					header, closedEmissions);
+			relations = List.of(new CandidateRuleRelation(consumer, List.of(region)));
+		}
+		else
+			facts.add(expandedConsumer);
 		facts.sort(java.util.Comparator.comparing(fact -> fact.key().normalizedSignature()));
-		return new Fixture(CampaignBPlacementAnalysisFixtureBridge.withCandidateFacts(base, program, facts),
+		return new Fixture(CampaignBPlacementAnalysisFixtureBridge.withCandidateFacts(
+			base, program, facts, relations),
 			left, right, consumer, realization, encoding == SupportEncoding.FACTORIZED,
 			leftBindings.stream().map(binding ->
 				CandidateSelections.requiredInputSupportIdentity(binding.source())).toList(),
@@ -477,11 +616,13 @@ public class ExactFactorizedSupportPipelineTest {
 		boolean mixedAuthority) { }
 	private enum SupportEncoding { EXPLICIT, FACTORIZED, INDEXED }
 	private record SupportPair(int leftOption, int rightOption) { }
-	private record Result(long objectiveBits, String supportSignature) { }
+	private record Result(long objectiveBits, String supportSignature,
+		List<String> emittedRelocationSignatures) { }
 	private record RelationResult(long optimumBits, List<Result> rows) { }
 	private record RelocationPair(RelocationActionKey left, RelocationActionKey right) { }
 	private record SourceChoice(CompiledHopKey owner,
 		org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationSupportKey supportKey) { }
+	private record SourceDomainChoices(int domainIndex, List<Integer> alternativeIndices) { }
 	private record ExpandedSource(CandidateRuleFact rule,
 		List<CandidateRealizationReference> references) { }
 }

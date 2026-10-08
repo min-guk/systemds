@@ -120,19 +120,46 @@ public class EarlyPrivacyGenerationWorkTest {
 	}
 
 	@Test
-	public void unresolvedControlFlowAuthorityKeepsTheCompleteLegalSpace() throws Exception {
-		String script = "f=function(matrix[double] X) return (matrix[double] Y){Y=X+1;}\n"
-			+ FEDERATED_SOURCE
-			+ "i=1;while(i<=2){if(i>0){D=A+1;}else{D=A-1;}i=i+1;}"
-			+ "C=f(D);print(sum(C));\n";
+	public void fixedControlFlowPrivacyPrunesDescendantGenerationWithoutChangingLegalSpace() throws Exception {
+		String script = controlFlowScript();
 		MeasuredAnalysis baseline = analyze(script, false, true);
 		MeasuredAnalysis early = analyze(script, true, true);
 
 		assertSameLegalSpace(baseline.analysis(), early.analysis());
-		Assert.assertEquals("unresolved TR/CFG authority must not be presented as certified masking", 0,
-			early.metrics().privacyPruningSnapshot().maskedDomains());
-		Assert.assertEquals(java.math.BigInteger.ZERO,
-			early.metrics().privacyPruningSnapshot().avoidedTuples());
+		Assert.assertTrue("fixed privacy must mask ordinary loop/function descendants before full closure",
+			early.metrics().privacyPruningSnapshot().maskedDomains() > 0);
+		Assert.assertTrue("fixed protected positions must avoid illegal descendant tuples",
+			early.metrics().privacyPruningSnapshot().avoidedTuples().signum() > 0);
+		Assert.assertTrue("forbidden descendant tuples must not reach the Oracle",
+			early.metrics().privacyPruningSnapshot().oracleCalls()
+				< baseline.metrics().privacyPruningSnapshot().oracleCalls());
+		printDeterministicWorkEvidence(baseline.metrics(), early.metrics());
+	}
+
+	@Test
+	public void controlFlowGenerationProjectionRespectsPrivateAndPublicPrivacy() throws Exception {
+		for(Privacy privacy : List.of(Privacy.PRIVATE, Privacy.PRIVATE_AGGREGATE, Privacy.PUBLIC)) {
+			MeasuredAnalysis baseline = analyze(controlFlowPayloadScript(), false, true, privacy);
+			MeasuredAnalysis early = analyze(controlFlowPayloadScript(), true, true, privacy);
+			assertSameLegalSpace(baseline.analysis(), early.analysis());
+			var coverage = early.metrics().generationPruningCoverage();
+			Assert.assertTrue("structural privacy projection must reach descendant generation: " + privacy,
+				coverage.privacyProjectionLookups() > 0);
+			if(privacy == Privacy.PUBLIC) {
+				Assert.assertEquals("public projection has no origin-resident payload positions", 0,
+					coverage.privacyProtectedLookups());
+				Assert.assertEquals("public inputs have no protected payload position", 0,
+					early.metrics().privacyPruningSnapshot().maskedDomains());
+				Assert.assertEquals(java.math.BigInteger.ZERO,
+					early.metrics().privacyPruningSnapshot().avoidedTuples());
+			}
+			else {
+				Assert.assertTrue("protected descendants must receive fixed generation authority: " + privacy,
+					coverage.privacyProtectedLookups() > 0);
+				Assert.assertTrue("protected descendant domains must be checked before full closure: " + privacy,
+					coverage.privacyInputMaskChecks() > 0);
+			}
+		}
 	}
 
 	@Test
@@ -174,12 +201,28 @@ public class EarlyPrivacyGenerationWorkTest {
 
 	private static MeasuredAnalysis analyze(String script, boolean earlyPrivacyPruning,
 		boolean collectMetrics) throws Exception {
+		return analyze(script, earlyPrivacyPruning, collectMetrics, Privacy.PRIVATE_AGGREGATE);
+	}
+
+	private static MeasuredAnalysis analyze(String script, boolean earlyPrivacyPruning,
+		boolean collectMetrics, Privacy privacy) throws Exception {
 		DMLProgram program = compile(script);
-		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, Privacy.PRIVATE_AGGREGATE);
+		ProductionShadowFixtureFactory.registerHermeticSourcePrivacy(program, privacy);
 		SearchSpaceMetrics metrics = collectMetrics ? new SearchSpaceMetrics() : null;
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder(null, metrics, true,
 			earlyPrivacyPruning).buildDetachedAnalysis(program);
 		return new MeasuredAnalysis(analysis, metrics);
+	}
+
+	private static String controlFlowScript() {
+		return controlFlowPayloadScript() + "print(sum(C));\n";
+	}
+
+	private static String controlFlowPayloadScript() {
+		return "f=function(matrix[double] X) return (matrix[double] Y){Y=X+1;}\n"
+			+ FEDERATED_SOURCE
+			+ "i=1;while(i<=2){if(i>0){D=A+1;}else{D=A-1;}i=i+1;}"
+			+ "C=f(D);";
 	}
 
 	private static DMLProgram compile(String script) throws Exception {

@@ -67,6 +67,25 @@ public final class ExactCategoricalSolver {
 		}
 	}
 
+	static record ConditionalRegion(int selectorValue, int[][] allowedValuesByAxis) {
+		ConditionalRegion {
+			Objects.requireNonNull(allowedValuesByAxis, "allowedValuesByAxis");
+			int[][] copy = new int[allowedValuesByAxis.length][];
+			for(int axis = 0; axis < copy.length; axis++)
+				copy[axis] = allowedValuesByAxis[axis] == null ? null
+					: allowedValuesByAxis[axis].clone();
+			allowedValuesByAxis = copy;
+		}
+		@Override public int[][] allowedValuesByAxis() {
+			int[][] copy = new int[allowedValuesByAxis.length][];
+			for(int axis = 0; axis < copy.length; axis++)
+				copy[axis] = allowedValuesByAxis[axis] == null ? null
+					: allowedValuesByAxis[axis].clone();
+			return copy;
+		}
+		int[][] ownedAllowedValuesByAxis() { return allowedValuesByAxis; }
+	}
+
 	public static final class Factor {
 		private final List<Variable> scope;
 		private final double[] denseValues;
@@ -117,6 +136,20 @@ public final class ExactCategoricalSolver {
 				Objects.requireNonNull(finiteCells, "finiteCells")));
 		}
 
+		static Factor conditionalSupport(List<Variable> scope, int selectorAxis,
+			List<ConditionalRegion> regions) {
+			int[] constrained = regions.stream().mapToInt(ConditionalRegion::selectorValue)
+				.distinct().sorted().toArray();
+			return conditionalSupport(scope, selectorAxis, constrained, regions);
+		}
+
+		static Factor conditionalSupport(List<Variable> scope, int selectorAxis,
+			int[] constrainedSelectorValues, List<ConditionalRegion> regions) {
+			List<Variable> dimensions = List.copyOf(Objects.requireNonNull(scope, "scope"));
+			return lazy(dimensions, new ConditionalSupport(dimensions, selectorAxis,
+				constrainedSelectorValues, regions));
+		}
+
 		/** Keep the complete hard relation deferred until unary support has reduced its shape. */
 		static Factor functionalMap(Variable source, Variable target, int[] rowToColumn) {
 			Objects.requireNonNull(rowToColumn, "rowToColumn");
@@ -158,10 +191,58 @@ public final class ExactCategoricalSolver {
 				: hardOwned(projectedScope, new HardTable(result));
 		}
 
+		Factor projectConditionalSupport(List<Variable> projectedScope, int[][] sourceValues) {
+			if(!(evaluator instanceof ConditionalSupport support))
+				return null;
+			if(projectedScope.size() != scope.size() || sourceValues.length != scope.size())
+				throw new IllegalArgumentException("EXACT_VE_CONDITIONAL_PROJECTION_SHAPE_INVALID");
+			int[] selectorInverse = new int[scope.get(support.selectorAxis).domainSize()];
+			Arrays.fill(selectorInverse, -1);
+			for(int value = 0; value < sourceValues[support.selectorAxis].length; value++)
+				selectorInverse[sourceValues[support.selectorAxis][value]] = value;
+			List<ConditionalRegion> projected = new ArrayList<>();
+			for(ConditionalRegion region : support.regions) {
+				int selector = selectorInverse[region.selectorValue];
+				if(selector < 0)
+					continue;
+				int[][] allowed = new int[scope.size()][];
+				for(int axis = 0; axis < scope.size(); axis++) {
+					if(axis == support.selectorAxis)
+						continue;
+					int[] values = region.allowedValuesByAxis[axis];
+					int[] mapped = new int[values.length];
+					int count = 0;
+					for(int value : values) {
+						int reduced = Arrays.binarySearch(sourceValues[axis], value);
+						if(reduced >= 0)
+							mapped[count++] = reduced;
+					}
+					allowed[axis] = Arrays.copyOf(mapped, count);
+				}
+				projected.add(new ConditionalRegion(selector, allowed));
+			}
+			int[] constrained = Arrays.stream(support.constrainedSelectorValues)
+				.map(value -> selectorInverse[value]).filter(value -> value >= 0).toArray();
+			return conditionalSupport(projectedScope, support.selectorAxis, constrained, projected);
+		}
+
 		List<Variable> scope() { return scope; }
 		boolean isHardTable() { return hardValues != null; }
 		HardTable hardTable() { return hardValues; }
 		boolean isFiniteSupport() { return evaluator instanceof FiniteSupport; }
+		boolean isConditionalSupport() { return evaluator instanceof ConditionalSupport; }
+		ConditionalSupport conditionalSupport() {
+			return evaluator instanceof ConditionalSupport support ? support : null;
+		}
+		long conditionalStoredValues() {
+			if(!(evaluator instanceof ConditionalSupport support))
+				throw new IllegalStateException("EXACT_VE_FACTOR_NOT_CONDITIONAL_SUPPORT");
+			return support.storedValues();
+		}
+		Variable conditionalSelectorVariable() {
+			return evaluator instanceof ConditionalSupport support
+				? scope.get(support.selectorAxis) : null;
+		}
 		int[] finiteSupportCells() {
 			if(!(evaluator instanceof FiniteSupport support))
 				throw new IllegalStateException("EXACT_VE_FACTOR_NOT_FINITE_SUPPORT");
@@ -174,9 +255,43 @@ public final class ExactCategoricalSolver {
 				return hardOwned(reboundScope, hardValues);
 			if(evaluator instanceof FiniteSupport support)
 				return finiteSupport(reboundScope, support.finiteCells);
+			if(evaluator instanceof ConditionalSupport support) {
+				int[] oldToNew = new int[scope.size()];
+				Arrays.fill(oldToNew, -1);
+				if(reboundScope.size() == scope.size())
+					for(int axis = 0; axis < scope.size(); axis++)
+						oldToNew[axis] = axis;
+				else
+					for(int oldAxis = 0; oldAxis < scope.size(); oldAxis++)
+						oldToNew[oldAxis] = reboundScope.indexOf(scope.get(oldAxis));
+				int selector = oldToNew[support.selectorAxis];
+				if(selector < 0)
+					throw new IllegalArgumentException("EXACT_VE_CONDITIONAL_SELECTOR_REMOVED");
+				List<ConditionalRegion> regions = new ArrayList<>();
+				for(ConditionalRegion region : support.regions) {
+					boolean retained = true;
+					int[][] allowed = new int[reboundScope.size()][];
+					for(int oldAxis = 0; oldAxis < scope.size(); oldAxis++) {
+						if(oldAxis == support.selectorAxis)
+							continue;
+						int newAxis = oldToNew[oldAxis];
+						if(newAxis < 0)
+							retained &= Arrays.binarySearch(
+								region.allowedValuesByAxis[oldAxis], 0) >= 0;
+						else
+							allowed[newAxis] = region.allowedValuesByAxis[oldAxis];
+					}
+					if(retained)
+						regions.add(new ConditionalRegion(region.selectorValue, allowed));
+				}
+				return conditionalSupport(reboundScope, selector,
+					support.constrainedSelectorValues, regions);
+			}
 			throw new IllegalStateException("EXACT_VE_FACTOR_NOT_FROZEN");
 		}
 		double denseCostAt(int cell) {
+			if(evaluator instanceof ConditionalSupport support)
+				return support.costAtCell(cell);
 			if(denseValues == null && hardValues == null && !(evaluator instanceof FiniteSupport))
 				throw new IllegalStateException("EXACT_VE_FACTOR_NOT_DENSE");
 			return evaluator instanceof FiniteSupport support ? support.costAt(cell)
@@ -205,6 +320,176 @@ public final class ExactCategoricalSolver {
 				return PartialTruth.UNKNOWN;
 			return Objects.requireNonNull(partial.partialTruth(values),
 				"EXACT_VE_PARTIAL_TRUTH_NULL");
+		}
+	}
+
+	/** Immutable wildcard-or-union-of-products hard relation. */
+	static final class ConditionalSupport implements PartialHardCostFunction {
+		private final int[] dimensions;
+		private final int[] strides;
+		private final int selectorAxis;
+		private final List<ConditionalRegion> regions;
+		private final boolean[] conditioned;
+		private final int[] constrainedSelectorValues;
+
+		private ConditionalSupport(List<Variable> scope, int selectorAxis,
+			int[] constrainedSelectorValues, List<ConditionalRegion> regions) {
+			if(selectorAxis < 0 || selectorAxis >= scope.size())
+				throw new IllegalArgumentException("EXACT_VE_CONDITIONAL_SELECTOR_INVALID");
+			this.selectorAxis = selectorAxis;
+			dimensions = scope.stream().mapToInt(Variable::domainSize).toArray();
+			strides = new int[dimensions.length];
+			for(int axis = dimensions.length - 1, stride = 1; axis >= 0; axis--) {
+				strides[axis] = stride;
+				stride = Math.multiplyExact(stride, dimensions[axis]);
+			}
+			conditioned = new boolean[dimensions[selectorAxis]];
+			this.constrainedSelectorValues = Objects.requireNonNull(
+				constrainedSelectorValues, "constrainedSelectorValues").clone();
+			int previousSelector = -1;
+			for(int selector : this.constrainedSelectorValues) {
+				if(selector < 0 || selector >= conditioned.length || selector <= previousSelector)
+					throw new IllegalArgumentException("EXACT_VE_CONDITIONAL_SELECTORS_INVALID");
+				conditioned[selector] = true;
+				previousSelector = selector;
+			}
+			List<ConditionalRegion> checked = new ArrayList<>();
+			for(ConditionalRegion supplied : Objects.requireNonNull(regions, "regions")) {
+				ConditionalRegion region = Objects.requireNonNull(supplied, "region");
+				if(region.selectorValue < 0 || region.selectorValue >= dimensions[selectorAxis]
+					|| region.allowedValuesByAxis.length != dimensions.length)
+					throw new IllegalArgumentException("EXACT_VE_CONDITIONAL_REGION_SHAPE_INVALID");
+				int[][] allowed = region.allowedValuesByAxis;
+				if(allowed[selectorAxis] != null && allowed[selectorAxis].length != 0)
+					throw new IllegalArgumentException("EXACT_VE_CONDITIONAL_SELECTOR_VALUES_INVALID");
+				for(int axis = 0; axis < dimensions.length; axis++) {
+					if(axis == selectorAxis)
+						continue;
+					if(allowed[axis] == null)
+						throw new IllegalArgumentException("EXACT_VE_CONDITIONAL_AXIS_VALUES_MISSING");
+					int previous = -1;
+					for(int value : allowed[axis]) {
+						if(value < 0 || value >= dimensions[axis] || value <= previous)
+							throw new IllegalArgumentException("EXACT_VE_CONDITIONAL_AXIS_VALUES_INVALID");
+						previous = value;
+					}
+				}
+				if(!conditioned[region.selectorValue])
+					throw new IllegalArgumentException("EXACT_VE_CONDITIONAL_REGION_SELECTOR_UNDECLARED");
+				checked.add(new ConditionalRegion(region.selectorValue, allowed));
+			}
+			this.regions = List.copyOf(checked);
+		}
+
+		@Override public double cost(int[] values) {
+			validateValues(values);
+			int selector = values[selectorAxis];
+			if(!conditioned[selector])
+				return 0d;
+			for(ConditionalRegion region : regions)
+				if(region.selectorValue == selector && matches(region, values, false))
+					return 0d;
+			return Double.POSITIVE_INFINITY;
+		}
+
+		@Override public PartialTruth partialTruth(int[] values) {
+			if(values.length != dimensions.length)
+				throw new IllegalArgumentException("EXACT_VE_FACTOR_ASSIGNMENT_SIZE_MISMATCH");
+			int selector = values[selectorAxis];
+			if(selector < -1 || selector >= dimensions[selectorAxis])
+				throw new IllegalArgumentException("EXACT_VE_FACTOR_ASSIGNMENT_VALUE_INVALID");
+			if(selector < 0)
+				return PartialTruth.UNKNOWN;
+			if(!conditioned[selector])
+				return PartialTruth.ALL_ZERO;
+			for(ConditionalRegion region : regions)
+				if(region.selectorValue == selector && matches(region, values, true))
+					return PartialTruth.UNKNOWN;
+			return PartialTruth.ALL_FORBIDDEN;
+		}
+
+		private boolean matches(ConditionalRegion region, int[] values, boolean partial) {
+			for(int axis = 0; axis < values.length; axis++) {
+				if(axis == selectorAxis || partial && values[axis] < 0)
+					continue;
+				if(values[axis] < 0 || values[axis] >= dimensions[axis])
+					throw new IllegalArgumentException("EXACT_VE_FACTOR_ASSIGNMENT_VALUE_INVALID");
+				if(Arrays.binarySearch(region.allowedValuesByAxis[axis], values[axis]) < 0)
+					return false;
+			}
+			return true;
+		}
+
+		private void validateValues(int[] values) {
+			if(values.length != dimensions.length)
+				throw new IllegalArgumentException("EXACT_VE_FACTOR_ASSIGNMENT_SIZE_MISMATCH");
+			for(int axis = 0; axis < values.length; axis++)
+				if(values[axis] < 0 || values[axis] >= dimensions[axis])
+					throw new IllegalArgumentException("EXACT_VE_FACTOR_ASSIGNMENT_VALUE_INVALID");
+		}
+
+		private long storedValues() {
+			long result = 0L;
+			for(ConditionalRegion region : regions)
+				for(int axis = 0; axis < dimensions.length; axis++)
+					if(axis != selectorAxis)
+						result = saturatedAdd(result, region.allowedValuesByAxis[axis].length);
+			return result;
+		}
+
+		private double costAtCell(int cell) {
+			int selector = cell / strides[selectorAxis] % dimensions[selectorAxis];
+			if(!conditioned[selector])
+				return 0d;
+			for(ConditionalRegion region : regions) {
+				if(region.selectorValue != selector)
+					continue;
+				boolean match = true;
+				for(int axis = 0; axis < dimensions.length; axis++)
+					if(axis != selectorAxis && Arrays.binarySearch(region.allowedValuesByAxis[axis],
+						cell / strides[axis] % dimensions[axis]) < 0) {
+						match = false;
+						break;
+					}
+				if(match)
+					return 0d;
+			}
+			return Double.POSITIVE_INFINITY;
+		}
+
+		private boolean hasCompletion(int axis, int value) {
+			if(axis < 0 || axis >= dimensions.length || value < 0 || value >= dimensions[axis])
+				return false;
+			if(axis == selectorAxis) {
+				if(!conditioned[value])
+					return true;
+				for(ConditionalRegion region : regions)
+					if(region.selectorValue == value && nonempty(region))
+						return true;
+				return false;
+			}
+			for(boolean selected : conditioned)
+				if(!selected)
+					return true;
+			for(ConditionalRegion region : regions)
+				if(nonempty(region)
+					&& Arrays.binarySearch(region.allowedValuesByAxis[axis], value) >= 0)
+					return true;
+			return false;
+		}
+
+		private boolean feasible() {
+			for(int selector = 0; selector < conditioned.length; selector++)
+				if(hasCompletion(selectorAxis, selector))
+					return true;
+			return false;
+		}
+
+		private boolean nonempty(ConditionalRegion region) {
+			for(int axis = 0; axis < dimensions.length; axis++)
+				if(axis != selectorAxis && region.allowedValuesByAxis[axis].length == 0)
+					return false;
+			return true;
 		}
 	}
 
@@ -572,6 +857,7 @@ public final class ExactCategoricalSolver {
 		private final long logicalCells;
 		private final double[] values;
 		private final HardTable hardValues;
+		private final ConditionalSupport conditionalSupport;
 		private final double[] lowValues;
 		private final double[] lowerValues;
 		private final int[] sparseCells;
@@ -582,7 +868,7 @@ public final class ExactCategoricalSolver {
 		private final int[] unionChoices;
 		private final long retainedCells;
 		private final long assignments;
-		private final ExactFiniteSupportJoin.Relation hardSupport;
+		private final ExactFiniteSupportJoin.SupportRelation hardSupport;
 		private int[][] valueClasses;
 
 		private BoundaryMessage(List<Variable> variables, int[] domains,
@@ -629,7 +915,7 @@ public final class ExactCategoricalSolver {
 			int[][] storageClasses) {
 			this(variables, domains, scope, scopeIndices, values, lowValues, lowerValues,
 				children, unionScope, unionChoices, retainedCells, assignments, hardValues,
-				knownMinimum, knownLowerBound, storageClasses, null);
+				knownMinimum, knownLowerBound, storageClasses, null, null);
 		}
 
 		private BoundaryMessage(List<Variable> variables, int[] domains,
@@ -638,12 +924,32 @@ public final class ExactCategoricalSolver {
 			int[] unionScope, int[] unionChoices, long retainedCells, long assignments,
 			HardTable hardValues, PreciseCost knownMinimum, double knownLowerBound,
 			int[][] storageClasses, int[] sparseCells) {
+			this(variables, domains, scope, scopeIndices, values, lowValues, lowerValues,
+				children, unionScope, unionChoices, retainedCells, assignments, hardValues,
+				knownMinimum, knownLowerBound, storageClasses, sparseCells, null);
+		}
+
+		private BoundaryMessage(List<Variable> variables, int[] domains,
+			List<Variable> scope, int[] scopeIndices, ConditionalSupport conditionalSupport,
+			long retainedCells, long assignments) {
+			this(variables, domains, scope, scopeIndices, null, null, null, List.of(),
+				null, null, retainedCells, assignments, null, null, 0d, null, null,
+				conditionalSupport);
+		}
+
+		private BoundaryMessage(List<Variable> variables, int[] domains,
+			List<Variable> scope, int[] scopeIndices, double[] values, double[] lowValues,
+			double[] lowerValues, List<BoundaryMessage> children,
+			int[] unionScope, int[] unionChoices, long retainedCells, long assignments,
+			HardTable hardValues, PreciseCost knownMinimum, double knownLowerBound,
+			int[][] storageClasses, int[] sparseCells, ConditionalSupport conditionalSupport) {
 			this.variables = variables;
 			this.domains = domains;
 			this.scope = List.copyOf(scope);
 			this.scopeIndices = scopeIndices.clone();
 			this.values = values;
 			this.hardValues = hardValues;
+			this.conditionalSupport = conditionalSupport;
 			this.storageClasses = storageClasses;
 			this.lowValues = lowValues;
 			this.lowerValues = lowerValues;
@@ -653,7 +959,11 @@ public final class ExactCategoricalSolver {
 			this.unionChoices = unionChoices;
 			this.retainedCells = retainedCells;
 			this.assignments = assignments;
-			this.hardSupport = this.sparseCells != null
+			this.hardSupport = conditionalSupport != null
+				? new ExactFiniteSupportJoin.ConditionalProductRelation(scopeIndices,
+					conditionalSupport.selectorAxis, conditionalSupport.dimensions,
+					conditionalSupport.constrainedSelectorValues, conditionalSupport.regions)
+				: this.sparseCells != null
 				? new ExactFiniteSupportJoin.Relation(scopeIndices, this.sparseCells)
 				: hardValues == null
 				? storageClasses == null
@@ -672,14 +982,21 @@ public final class ExactCategoricalSolver {
 				logical = Math.multiplyExact(logical, domain);
 			}
 			logicalCells = logical;
-			int storedCells = hardValues == null ? values.length : hardValues.cells();
+			int storedCells = conditionalSupport != null
+				? Math.toIntExact(conditionalSupport.storedValues())
+				: hardValues == null ? values.length : hardValues.cells();
 			if(this.sparseCells != null && storageClasses != null)
 				throw new IllegalArgumentException("INCREMENTAL_MESSAGE_SPARSE_CLASSES_UNSUPPORTED");
-			if(this.sparseCells == null && stride != storedCells)
+			if(conditionalSupport == null && this.sparseCells == null && stride != storedCells)
 				throw new IllegalArgumentException("INCREMENTAL_MESSAGE_STORAGE_SIZE_MISMATCH");
 			if(this.sparseCells != null && this.sparseCells.length != storedCells)
 				throw new IllegalArgumentException("INCREMENTAL_MESSAGE_SPARSE_SIZE_MISMATCH");
-			if(knownMinimum == null && hardValues != null) {
+			if(knownMinimum == null && conditionalSupport != null) {
+				boolean finite = conditionalSupport.feasible();
+				cachedMinimum = finite ? PreciseCost.ZERO : PreciseCost.POSITIVE_INFINITY;
+				cachedLowerBound = finite ? 0d : Double.POSITIVE_INFINITY;
+			}
+			else if(knownMinimum == null && hardValues != null) {
 				boolean finite = hardValues.finiteCount() > 0;
 				cachedMinimum = finite ? PreciseCost.ZERO : PreciseCost.POSITIVE_INFINITY;
 				cachedLowerBound = finite ? 0d : Double.POSITIVE_INFINITY;
@@ -711,7 +1028,10 @@ public final class ExactCategoricalSolver {
 		long cells() { return logicalCells; }
 		long retainedCells() { return retainedCells; }
 		long assignments() { return assignments; }
-		ExactFiniteSupportJoin.Relation hardSupport() { return hardSupport; }
+		ExactFiniteSupportJoin.Relation hardSupport() {
+			return hardSupport instanceof ExactFiniteSupportJoin.Relation relation ? relation : null;
+		}
+		ExactFiniteSupportJoin.SupportRelation supportRelation() { return hardSupport; }
 
 		double lowerBound() {
 			return cachedLowerBound;
@@ -725,6 +1045,9 @@ public final class ExactCategoricalSolver {
 			int position = marginalPosition(variable);
 			if(value < 0 || value >= variable.domainSize())
 				throw new IllegalArgumentException("INCREMENTAL_MESSAGE_VALUE_INVALID");
+			if(conditionalSupport != null)
+				return conditionalSupport.hasCompletion(position, value)
+					? 0d : Double.POSITIVE_INFINITY;
 			double minimumHigh = Double.POSITIVE_INFINITY;
 			double minimumLow = 0d;
 			int storedValue = storedValue(position, value);
@@ -745,6 +1068,13 @@ public final class ExactCategoricalSolver {
 		/** Computes every value marginal in one table scan; the caller owns the result. */
 		double[] minMarginals(Variable variable) {
 			int position = marginalPosition(variable);
+			if(conditionalSupport != null) {
+				double[] result = new double[variable.domainSize()];
+				for(int value = 0; value < result.length; value++)
+					result[value] = conditionalSupport.hasCompletion(position, value)
+						? 0d : Double.POSITIVE_INFINITY;
+				return result;
+			}
 			double[] minimumHigh = PlannerResourceGuard.allocateDoubles(
 				dimensions[position], "exact-numeric");
 			double[] minimumLow = lowValues == null ? null : new double[dimensions[position]];
@@ -771,6 +1101,8 @@ public final class ExactCategoricalSolver {
 
 		double[] lowerMinMarginals(Variable variable) {
 			int position = marginalPosition(variable);
+			if(conditionalSupport != null)
+				return minMarginals(variable);
 			double[] minima = new double[dimensions[position]];
 			Arrays.fill(minima, Double.POSITIVE_INFINITY);
 			int storedCells = hardValues == null ? values.length : hardValues.cells();
@@ -886,6 +1218,8 @@ public final class ExactCategoricalSolver {
 		}
 
 		private double highAt(int cell) {
+			if(conditionalSupport != null)
+				return conditionalSupport.costAtCell(cell);
 			if(hardValues != null)
 				return hardValues.costAt(cell);
 			int stored = sparseCells == null ? cell : Arrays.binarySearch(sparseCells, cell);
@@ -900,6 +1234,8 @@ public final class ExactCategoricalSolver {
 		}
 
 		private double lowerAt(int cell) {
+			if(conditionalSupport != null)
+				return conditionalSupport.costAtCell(cell);
 			if(hardValues != null)
 				return hardValues.costAt(cell);
 			int stored = sparseCells == null ? cell : Arrays.binarySearch(sparseCells, cell);
@@ -911,6 +1247,9 @@ public final class ExactCategoricalSolver {
 		}
 
 		private int[] valueClasses(int axis) {
+			if(conditionalSupport != null)
+				return java.util.stream.IntStream.range(0,
+					domains[scopeIndices[axis]]).toArray();
 			if(valueClasses == null)
 				valueClasses = new int[scopeIndices.length][];
 			if(valueClasses[axis] == null) {
@@ -1133,6 +1472,8 @@ public final class ExactCategoricalSolver {
 				hardCells = saturatedAdd(hardCells,mapping.finiteCount());
 			else if(materialized.evaluator instanceof FiniteSupport support)
 				hardCells = saturatedAdd(hardCells,support.finiteCells.length);
+			else if(materialized.evaluator instanceof ConditionalSupport support)
+				hardCells = saturatedAdd(hardCells,support.storedValues());
 			else if(materialized.hardValues != null)
 				hardCells = saturatedAdd(hardCells,cells);
 			else
@@ -1156,8 +1497,27 @@ public final class ExactCategoricalSolver {
 	 */
 	static void validateReductionInputStructure(List<Variable> variables, List<Factor> factors,
 		Limits limits) {
+		validateCompressedInputStructure(variables, factors, List.of(), limits, false);
+	}
+
+	/**
+	 * Validates deferred solver factors together with the ordinary factors that will
+	 * be frozen for the cost surface. Solver-only lazy and functional relations may
+	 * retain a conceptual Cartesian product larger than a Java array; every ordinary
+	 * factor must already have an indexable shape. Shared factor identities are counted
+	 * once because the frozen ordinary instance is also reused by the solver.
+	 */
+	static void validateCompressedCostInputStructure(List<Variable> variables,
+		List<Factor> solverFactors, List<Factor> ordinaryFactors, Limits limits) {
+		validateCompressedInputStructure(variables, solverFactors, ordinaryFactors, limits, true);
+	}
+
+	private static void validateCompressedInputStructure(List<Variable> variables,
+		List<Factor> solverFactors, List<Factor> ordinaryFactors, Limits limits,
+		boolean countIndexableDeferredFactors) {
 		Objects.requireNonNull(variables, "variables");
-		Objects.requireNonNull(factors, "factors");
+		Objects.requireNonNull(solverFactors, "solverFactors");
+		Objects.requireNonNull(ordinaryFactors, "ordinaryFactors");
 		Objects.requireNonNull(limits, "limits");
 		List<Variable> canonical = List.copyOf(variables);
 		Map<Variable,Integer> index = new LinkedHashMap<>();
@@ -1167,9 +1527,30 @@ public final class ExactCategoricalSolver {
 			if(index.put(variable, position) != null || keys.put(variable.key(), variable) != null)
 				throw new IllegalArgumentException("EXACT_VE_VARIABLE_DUPLICATE|key=" + variable.key());
 		}
+		Set<Factor> ordinaryIdentities = java.util.Collections.newSetFromMap(
+			new java.util.IdentityHashMap<>());
+		ordinaryIdentities.addAll(ordinaryFactors);
+		java.util.IdentityHashMap<Factor,Integer> unmatchedSolverOccurrences =
+			new java.util.IdentityHashMap<>();
+		List<Factor> factors = new ArrayList<>(solverFactors.size() + ordinaryFactors.size());
+		for(Factor factor : solverFactors) {
+			factors.add(factor);
+			if(factor != null)
+				unmatchedSolverOccurrences.merge(factor, 1, Integer::sum);
+		}
+		for(Factor factor : ordinaryFactors) {
+			Integer unmatched = factor == null ? null : unmatchedSolverOccurrences.get(factor);
+			if(unmatched == null || unmatched == 0)
+				factors.add(factor);
+			else if(unmatched == 1)
+				unmatchedSolverOccurrences.remove(factor);
+			else
+				unmatchedSolverOccurrences.put(factor, unmatched - 1);
+		}
 		long denseCells = 0L;
 		long maximumDenseCells = 0L;
-		for(Factor factor : factors) {
+		for(int factorOrdinal = 0; factorOrdinal < factors.size(); factorOrdinal++) {
+			Factor factor = factors.get(factorOrdinal);
 			Objects.requireNonNull(factor, "factor");
 			Set<Integer> unique = new HashSet<>();
 			long cells = 1L;
@@ -1183,15 +1564,25 @@ public final class ExactCategoricalSolver {
 					cells = Math.min((long)Integer.MAX_VALUE + 1L,
 						cells * canonical.get(variable).domainSize());
 			}
-			if(factor.denseValues != null || factor.hardValues != null
-				|| factor.evaluator instanceof FiniteSupport) {
+			FunctionalMap mapping = factor.functionalMapping();
+			boolean indexedStorage = ordinaryIdentities.contains(factor)
+				|| factor.denseValues != null || factor.hardValues != null
+				|| factor.evaluator instanceof FiniteSupport
+				|| factor.evaluator instanceof ConditionalSupport;
+			if(indexedStorage) {
 				if(cells > Integer.MAX_VALUE)
-					throw new IllegalArgumentException("EXACT_VE_FACTOR_CELL_OVERFLOW");
+					throw new IllegalArgumentException(compressedFactorOverflow(
+						factorOrdinal, factor));
 				if(factor.denseValues != null && factor.denseValues.length != (int)cells
 					|| factor.hardValues != null && factor.hardValues.cells() != (int)cells)
 					throw new IllegalArgumentException("EXACT_VE_DENSE_FACTOR_SIZE_MISMATCH");
-				long stored = factor.evaluator instanceof FiniteSupport support
-					? support.finiteCells.length : cells;
+			}
+			if(indexedStorage || countIndexableDeferredFactors
+				&& (mapping != null || cells <= Integer.MAX_VALUE)) {
+				long stored = mapping != null ? mapping.finiteCount()
+					: factor.evaluator instanceof FiniteSupport support ? support.finiteCells.length
+					: factor.evaluator instanceof ConditionalSupport conditional
+						? conditional.storedValues() : cells;
 				denseCells = checkedAdd(denseCells, stored, "EXACT_VE_MATERIALIZED_CELL_OVERFLOW");
 				maximumDenseCells = Math.max(maximumDenseCells, stored);
 			}
@@ -1210,10 +1601,34 @@ public final class ExactCategoricalSolver {
 					validateCost(value);
 	}
 
+	private static String compressedFactorOverflow(int ordinal, Factor factor) {
+		StringBuilder domains = new StringBuilder("[");
+		int retained = Math.min(8, factor.scope.size());
+		for(int axis = 0; axis < retained; axis++) {
+			if(axis > 0)
+				domains.append(',');
+			domains.append(factor.scope.get(axis).domainSize());
+		}
+		if(factor.scope.size() > retained)
+			domains.append(",...+").append(factor.scope.size() - retained);
+		domains.append(']');
+		String representation = factor.denseValues != null ? "DENSE"
+			: factor.hardValues != null ? factor.hardValues.functional == null
+				? "HARD_TABLE" : "HARD_FUNCTIONAL"
+			: factor.evaluator instanceof FunctionalMap ? "FUNCTIONAL_MAP"
+			: factor.evaluator instanceof FiniteSupport ? "FINITE_SUPPORT"
+			: factor.evaluator instanceof ConditionalSupport ? "CONDITIONAL_SUPPORT"
+			: factor.supportsPartialTruth() ? "PARTIAL_LAZY" : "LAZY";
+		return "EXACT_VE_FACTOR_CELL_OVERFLOW|factor=" + ordinal
+			+ "|arity=" + factor.scope.size() + "|domains=" + domains
+			+ "|representation=" + representation;
+	}
+
 	static Factor freezeValidatedFactor(Factor factor) {
 		Objects.requireNonNull(factor, "factor");
 		if(factor.denseValues != null || factor.hardValues != null
-			|| factor.evaluator instanceof FiniteSupport)
+			|| factor.evaluator instanceof FiniteSupport
+			|| factor.evaluator instanceof ConditionalSupport)
 			return factor;
 		int cells = 1;
 		for(Variable variable : factor.scope)
@@ -1431,8 +1846,8 @@ public final class ExactCategoricalSolver {
 	/**
 	 * Additional Regional numeric storage owned by one leaf. Source-owned dense
 	 * tables are borrowed and remain governed by the exact input limits; this is
-	 * not an estimate or cap for total JVM/model memory. Lazy tables allocate
-	 * solve-local arrays and therefore report their full frozen size.
+	 * not an estimate or cap for total JVM/model memory. Generic lazy tables report
+	 * their frozen size; finite and conditional hard relations report stored support.
 	 */
 	static long boundaryLeafRetainedCells(Factor factor) {
 		Objects.requireNonNull(factor, "factor");
@@ -1441,6 +1856,8 @@ public final class ExactCategoricalSolver {
 			return mapping.finiteCount();
 		if(factor.evaluator instanceof FiniteSupport support)
 			return support.finiteCells.length;
+		if(factor.evaluator instanceof ConditionalSupport support)
+			return support.storedValues();
 		if(factor.denseValues != null || factor.hardValues != null)
 			return 0L;
 		long cells = 1L;
@@ -1472,6 +1889,12 @@ public final class ExactCategoricalSolver {
 		for(int factorIndex = 0; factorIndex < factors.size(); factorIndex++) {
 			Factor factor = factors.get(factorIndex);
 			DenseFactor dense = denseFactors.get(factorIndex);
+			if(dense.conditionalSupport != null) {
+				leaves.add(new BoundaryMessage(input.variables, input.domains,
+					factor.scope, input.scopes.get(factorIndex), dense.conditionalSupport,
+					boundaryLeafRetainedCells(factor), dense.logicalCells()));
+				continue;
+			}
 			if(dense.hardValues == null)
 				for(int cell = 0; cell < dense.storedCells(); cell++)
 					if(dense.storedValue(cell) < 0d)
@@ -1501,6 +1924,8 @@ public final class ExactCategoricalSolver {
 	 */
 	static BoundaryMessage projectSingletons(BoundaryMessage input) {
 		Objects.requireNonNull(input, "input");
+		if(input.conditionalSupport != null)
+			return input;
 		int retainedCount = 0;
 		for(int variable : input.scopeIndices)
 			if(input.domains[variable] > 1)
@@ -1665,9 +2090,9 @@ public final class ExactCategoricalSolver {
 		// prefix is certified exact and finite. Otherwise an earlier addition must
 		// still report overflow, even if the final hard child would be infinite.
 		// The first child's infinity is unconditionally absorbing, as in FiniteRowIndex.
-		List<ExactFiniteSupportJoin.Relation> hardSupports = exactNonnegativeSum
-			? inputMessages.stream().map(BoundaryMessage::hardSupport).filter(Objects::nonNull).toList()
-			: first.hardSupport() == null ? List.of() : List.of(first.hardSupport());
+		List<ExactFiniteSupportJoin.SupportRelation> hardSupports = exactNonnegativeSum
+			? inputMessages.stream().map(BoundaryMessage::supportRelation).filter(Objects::nonNull).toList()
+			: first.supportRelation() == null ? List.of() : List.of(first.supportRelation());
 		boolean localCostCut = localPrefixCuts && inputMessages.size() > 1 && internalCells > 1
 			&& exactNonnegativeSum;
 		CostPruning costPruning = internalCells > 1
@@ -2099,13 +2524,15 @@ public final class ExactCategoricalSolver {
 			return true;
 		}
 
-		ExactFiniteSupportJoin.Relation projectSupport(BoundaryMessage input) {
-			ExactFiniteSupportJoin.Relation support = input.hardSupport();
+		ExactFiniteSupportJoin.SupportRelation projectSupport(BoundaryMessage input) {
+			ExactFiniteSupportJoin.SupportRelation support = input.supportRelation();
 			if(support == null || input.storageClasses != null)
 				return null;
 			if(inputIdentity(input))
 				return support;
-			int[] finite = support.finiteCells();
+			if(!(support instanceof ExactFiniteSupportJoin.Relation explicit))
+				throw new IllegalStateException("REGIONAL_CONDITIONAL_PROJECTION_NONIDENTITY");
+			int[] finite = explicit.finiteCells();
 			int[] projected = PlannerResourceGuard.allocateInts(finite.length,
 				"regional-projected-support-cells");
 			int[] originalStrides = PlannerResourceGuard.allocateInts(input.scopeIndices.length,
@@ -2155,7 +2582,7 @@ public final class ExactCategoricalSolver {
 		if(inputs.size() > (1 << 20))
 			return null;
 		for(BoundaryMessage input : inputs) {
-			if(input.hardValues != null)
+			if(input.hardValues != null || input.conditionalSupport != null)
 				continue;
 			for(int cell = 0; cell < input.values.length; cell++) {
 				double high = input.values[cell];
@@ -2166,11 +2593,11 @@ public final class ExactCategoricalSolver {
 			}
 		}
 		BoundaryProjection projection = new BoundaryProjection(inputs, unionScope);
-		List<ExactFiniteSupportJoin.Relation> relations = new ArrayList<>();
+		List<ExactFiniteSupportJoin.SupportRelation> relations = new ArrayList<>();
 		for(BoundaryMessage input : inputs) {
 			// An uncompressed typed relation already owns its finite logical rows in
 			// ascending order. Reuse them instead of scanning its Cartesian table.
-			ExactFiniteSupportJoin.Relation projectedSupport = projection.projectSupport(input);
+			ExactFiniteSupportJoin.SupportRelation projectedSupport = projection.projectSupport(input);
 			if(projectedSupport != null) {
 				relations.add(projectedSupport);
 				continue;
@@ -2257,7 +2684,7 @@ public final class ExactCategoricalSolver {
 	private static boolean exactNonnegativeBoundarySum(List<BoundaryMessage> inputMessages) {
 		List<double[]> tables = new ArrayList<>(inputMessages.size());
 		for(BoundaryMessage message : inputMessages) {
-			if(message.hardValues != null)
+			if(message.hardValues != null || message.conditionalSupport != null)
 				continue;
 			tables.add(message.values);
 			for(int cell = 0; cell < message.values.length; cell++) {
@@ -2374,7 +2801,9 @@ public final class ExactCategoricalSolver {
 		for(DenseFactor input : inputs) {
 			if(input.tieCosts != null || input.lowValues != null)
 				return false;
-			if(input.hardValues == null)
+			// Conditional hard relations also contain only zero/infinity and have no
+			// numeric table. Certify their monetary factors without unfolding support.
+			if(input.hardValues == null && input.conditionalSupport == null)
 				tables.add(input.values);
 		}
 		ExactDyadicCosts.Certificate proof = ExactDyadicCosts.certifyTables(tables);
@@ -2410,7 +2839,7 @@ public final class ExactCategoricalSolver {
 		if(mode == CostPruningMode.SUFFIX)
 			for(int index = 0; index < inputs.size(); index++) {
 				DenseFactor input = inputs.get(index);
-				if(input.hardValues != null)
+				if(input.hardValues != null || input.conditionalSupport != null)
 					continue; // Typed hard costs are zero or forbidden, including sparse holes.
 				double minimumHigh = Double.POSITIVE_INFINITY;
 				double minimumLow = 0d;
@@ -2535,16 +2964,16 @@ public final class ExactCategoricalSolver {
 					prepared.domains[step.variable]), bucket.size());
 			if(sparseEligible) {
 				BucketProjection projection = new BucketProjection(step, prepared.domains, bucket);
-				List<ExactFiniteSupportJoin.Relation> supports = new ArrayList<>();
+				List<ExactFiniteSupportJoin.SupportRelation> supports = new ArrayList<>();
 				boolean[] knownZeroFactors = dyadic == null ? new boolean[bucket.size()] : null;
 				boolean anyKnownZeroFactor = false;
 				for(int index = 0; index < bucket.size(); index++) {
 					DenseFactor factor = bucket.get(index);
-					int[] finite = factor.projectedFiniteCells(projection);
-					if(finite != null)
-						supports.add(new ExactFiniteSupportJoin.Relation(factor.scope, finite));
+					ExactFiniteSupportJoin.SupportRelation support = factor.projectedSupport(projection);
+					if(support != null)
+						supports.add(support);
 					if(dyadic == null) {
-						knownZeroFactors[index] = (finite != null || factor.allFiniteDense())
+						knownZeroFactors[index] = (support != null || factor.allFiniteDense())
 							&& factor.finiteValuesAreExactPositiveZero();
 						anyKnownZeroFactor |= knownZeroFactors[index];
 					}
@@ -2937,7 +3366,7 @@ public final class ExactCategoricalSolver {
 	}
 
 	private static SparseStep eliminateSparse(Step step, List<DenseFactor> bucket,
-		List<ExactFiniteSupportJoin.Relation> supports, BucketProjection projection,
+		List<ExactFiniteSupportJoin.SupportRelation> supports, BucketProjection projection,
 		int[] knownZeroTokens, long logicalOutputCells, boolean dyadic,
 		StorageBudget storageBudget) {
 		return eliminateSparse(step, bucket, supports, projection, knownZeroTokens,
@@ -2945,13 +3374,13 @@ public final class ExactCategoricalSolver {
 	}
 
 	private static SparseStep eliminateSparse(Step step, List<DenseFactor> bucket,
-		List<ExactFiniteSupportJoin.Relation> supports, BucketProjection projection,
+		List<ExactFiniteSupportJoin.SupportRelation> supports, BucketProjection projection,
 		int[] knownZeroTokens, long logicalOutputCells, boolean dyadic,
 		StorageBudget storageBudget, CostPruning costPruning, BoundaryMergeCounters counters) {
 		int[] domains = projection.domains;
 		int outputCells = checkedCells(step.separator, domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
 		long supportRows = 0L;
-		for(ExactFiniteSupportJoin.Relation relation : supports)
+		for(ExactFiniteSupportJoin.SupportRelation relation : supports)
 			supportRows += relation.size();
 		long started = FederatedPlannerTrace.isEnabled() ? System.nanoTime() : 0L;
 		if(FederatedPlannerTrace.isEnabled())
@@ -3244,7 +3673,9 @@ public final class ExactCategoricalSolver {
 				throw new IllegalArgumentException("EXACT_VE_DENSE_FACTOR_SIZE_MISMATCH");
 			FunctionalMap mapping = factor.functionalMapping();
 			long storedCells = mapping != null ? mapping.finiteCount()
-				: factor.evaluator instanceof FiniteSupport support ? support.finiteCells.length : cells;
+				: factor.evaluator instanceof FiniteSupport support ? support.finiteCells.length
+				: factor.evaluator instanceof ConditionalSupport conditional
+					? conditional.storedValues() : cells;
 			inputCells = checkedAdd(inputCells, storedCells, "EXACT_VE_MATERIALIZED_CELL_OVERFLOW");
 			maximumInputCells = Math.max(maximumInputCells, storedCells);
 			scopes.add(scope);
@@ -3968,6 +4399,8 @@ public final class ExactCategoricalSolver {
 				result.add(new DenseFactor(scope, prepared.domains, zeros, null, null,
 					support.finiteCells));
 			}
+			else if(frozen.evaluator instanceof ConditionalSupport support)
+				result.add(new DenseFactor(scope, prepared.domains, support));
 			else result.add(frozen.hardValues == null
 				? new DenseFactor(scope, prepared.domains, frozen.denseValues, null, null)
 				: new DenseFactor(scope, prepared.domains, frozen.hardValues));
@@ -3985,6 +4418,10 @@ public final class ExactCategoricalSolver {
 		List<DenseFactor> converted = new ArrayList<>(factors.size());
 		ExactDyadicCosts maximum = ExactDyadicCosts.ofWords(0, 0);
 		for(DenseFactor factor : factors) {
+			if(factor.conditionalSupport != null) {
+				converted.add(factor);
+				continue;
+			}
 			if(factor.hardValues != null) {
 				converted.add(factor);
 				continue;
@@ -4540,71 +4977,13 @@ public final class ExactCategoricalSolver {
 		}
 	}
 
-	/** Primitive inverse fibres; absent stored coordinates allocate no per-coordinate objects. */
-	private static final class InverseAxis {
-		private final boolean identity;
-		private final int[] keys;
-		private final int[] heads;
-		private final int[] counts;
-		private final int[] next;
-
-		private InverseAxis(DenseFactor factor, int axis, int[] representatives) {
-			boolean same = representatives.length == factor.dimensions[axis];
-			for(int value = 0; same && value < representatives.length; value++)
-				same = factor.coordinate(axis, representatives[value]) == value;
-			identity = same;
-			if(identity) {
-				keys = heads = counts = next = null;
-				return;
-			}
-			boolean dense = factor.dimensions[axis] <= 2L * representatives.length;
-			int capacity = 2;
-			while(!dense && capacity * 3L / 4 < representatives.length) {
-				if(capacity == 1 << 30) {
-					dense = true;
-					break;
-				}
-				capacity <<= 1;
-			}
-			keys = dense ? null : new int[capacity];
-			if(keys != null)
-				Arrays.fill(keys, -1);
-			heads = new int[dense ? factor.dimensions[axis] : capacity];
-			Arrays.fill(heads, -1);
-			counts = new int[heads.length];
-			next = new int[representatives.length];
-			for(int value = representatives.length - 1; value >= 0; value--) {
-				int coordinate = factor.coordinate(axis, representatives[value]);
-				int slot = slot(coordinate);
-				if(keys != null)
-					keys[slot] = coordinate;
-				next[value] = heads[slot];
-				heads[slot] = value;
-				counts[slot]++;
-			}
-		}
-
-		private int slot(int coordinate) {
-			if(keys == null)
-				return coordinate;
-			int hash = coordinate * 0x9E3779B9;
-			int slot = (hash ^ (hash >>> 16)) & (keys.length - 1);
-			while(keys[slot] != -1 && keys[slot] != coordinate)
-				slot = (slot + 1) & (keys.length - 1);
-			return slot;
-		}
-
-		private int first(int coordinate) { return identity ? coordinate : heads[slot(coordinate)]; }
-		private int size(int coordinate) { return identity ? 1 : counts[slot(coordinate)]; }
-		private int next(int value) { return identity ? -1 : next[value]; }
-	}
-
 	private static final class DenseFactor {
 		private final int[] scope;
 		private final int[] strides;
 		private final int[] dimensions;
 		private final double[] values;
 		private final HardTable hardValues;
+		private final ConditionalSupport conditionalSupport;
 		private final double[] lowValues;
 		private final long[] tieCosts;
 		private final int[] sparseCells;
@@ -4624,6 +5003,7 @@ public final class ExactCategoricalSolver {
 			this.scope = scope.clone();
 			this.values = values;
 			this.hardValues = null;
+			this.conditionalSupport = null;
 			this.lowValues = lowValues;
 			this.tieCosts = tieCosts;
 			this.sparseCells = sparseCells;
@@ -4641,6 +5021,7 @@ public final class ExactCategoricalSolver {
 			this.scope = scope.clone();
 			this.values = null;
 			this.hardValues = hardValues;
+			this.conditionalSupport = null;
 			this.lowValues = null;
 			this.tieCosts = null;
 			this.sparseCells = null;
@@ -4656,9 +5037,33 @@ public final class ExactCategoricalSolver {
 				throw new IllegalArgumentException("EXACT_VE_DENSE_FACTOR_SIZE_MISMATCH");
 		}
 
+		private DenseFactor(int[] scope, int[] domains, ConditionalSupport conditionalSupport) {
+			this.scope = scope.clone();
+			this.values = null;
+			this.hardValues = null;
+			this.conditionalSupport = conditionalSupport;
+			this.lowValues = null;
+			this.tieCosts = null;
+			this.sparseCells = null;
+			this.strides = new int[scope.length];
+			this.dimensions = new int[scope.length];
+			int stride = 1;
+			for(int index = scope.length - 1; index >= 0; index--) {
+				strides[index] = stride;
+				dimensions[index] = domains[scope[index]];
+				stride = Math.multiplyExact(stride, dimensions[index]);
+			}
+		}
+
 		private int logicalCells() {
 			if(hardValues != null)
 				return hardValues.cells();
+			if(conditionalSupport != null) {
+				int cells = 1;
+				for(int dimension : dimensions)
+					cells = Math.multiplyExact(cells, dimension);
+				return cells;
+			}
 			if(sparseCells == null)
 				return values.length;
 			int cells = 1;
@@ -4670,13 +5075,19 @@ public final class ExactCategoricalSolver {
 		private double valueAt(int logicalCell) {
 			if(hardValues != null)
 				return hardValues.costAt(logicalCell);
+			if(conditionalSupport != null)
+				return conditionalSupport.costAtCell(logicalCell);
 			int stored = storageCell(logicalCell);
 			return stored < 0 ? Double.POSITIVE_INFINITY : values[stored];
 		}
 
-		private int storedCells() { return hardValues == null ? values.length : hardValues.cells(); }
+		private int storedCells() {
+			return conditionalSupport != null ? Math.toIntExact(conditionalSupport.storedValues())
+				: hardValues == null ? values.length : hardValues.cells();
+		}
 		private double storedValue(int stored) {
-			return hardValues == null ? values[stored] : hardValues.costAt(stored);
+			return conditionalSupport != null ? 0d
+				: hardValues == null ? values[stored] : hardValues.costAt(stored);
 		}
 		private int storedLogicalCell(int stored) {
 			return hardValues != null || sparseCells == null ? stored : sparseCells[stored];
@@ -4684,6 +5095,8 @@ public final class ExactCategoricalSolver {
 
 		/** Storage indices retain their existing meaning; only iteration skips implicit infinities. */
 		private int nextFiniteStoredCell(int previous) {
+			if(conditionalSupport != null)
+				throw new IllegalStateException("EXACT_CONDITIONAL_SUPPORT_NOT_FLAT");
 			if(hardValues != null && hardValues.functional != null)
 				return hardValues.functional.finiteCellAfter(previous);
 			for(int stored = previous + 1; stored < storedCells(); stored++)
@@ -4704,13 +5117,19 @@ public final class ExactCategoricalSolver {
 		}
 
 		private int[] originalValueClasses(int axis, int domain) {
+			if(conditionalSupport != null) {
+				int[] identity = new int[domain];
+				for(int value = 0; value < domain; value++)
+					identity[value] = value;
+				return identity;
+			}
 			if(responseClasses == null)
 				responseClasses = new int[scope.length][];
 			if(responseClasses[axis] == null) {
 				if(hardValues != null) {
 					responseClasses[axis] = hardValues.axisClasses(dimensions[axis],strides[axis]);
 				}
-				else if(sparseCells == null)
+				else if(conditionalSupport == null && sparseCells == null)
 					responseClasses[axis] = ExactFactorValueClasses.denseAxisClasses(
 						values, lowValues, dimensions[axis], strides[axis]);
 				else {
@@ -4730,10 +5149,15 @@ public final class ExactCategoricalSolver {
 		}
 
 		/** Lift stored finite tuples through the bucket's exact common refinement. */
-		private int[] projectedFiniteCells(BucketProjection projection) {
+		private ExactFiniteSupportJoin.SupportRelation projectedSupport(BucketProjection projection) {
+			if(conditionalSupport != null)
+				return new ExactFiniteSupportJoin.ConditionalProductRelation(scope,
+					conditionalSupport.selectorAxis, dimensions,
+					conditionalSupport.constrainedSelectorValues, conditionalSupport.regions);
 			if(logicalCells() == 0)
-				return new int[0];
-			if(sparseCells == null && finiteCount == logicalCells())
+				return new ExactFiniteSupportJoin.Relation(scope, new int[0]);
+			ensureFiniteCount();
+			if(finiteCount == logicalCells())
 				return null;
 			boolean identity = true;
 			for(int axis = 0; identity && axis < scope.length; axis++) {
@@ -4743,60 +5167,41 @@ public final class ExactCategoricalSolver {
 					identity = coordinate(axis, representatives[value]) == value;
 			}
 			if(identity)
-				return selectiveFiniteCells();
+				return explicitSupport(selectiveFiniteCells());
 			int cells = checkedCells(scope, projection.domains, "EXACT_VE_FACTOR_CELL_OVERFLOW");
-			InverseAxis[] inverse = new InverseAxis[scope.length];
-			int[] quotientStrides = new int[scope.length];
-			int stride = 1;
-			for(int axis = scope.length - 1; axis >= 0; axis--) {
+			int[][] quotientToStored = new int[scope.length][];
+			int[][] coordinateCounts = new int[scope.length][];
+			for(int axis = 0; axis < scope.length; axis++) {
 				int[] representatives = projection.representatives[scope[axis]];
-				inverse[axis] = new InverseAxis(this, axis, representatives);
-				quotientStrides[axis] = stride;
-				stride = Math.multiplyExact(stride, representatives.length);
+				quotientToStored[axis] = new int[representatives.length];
+				coordinateCounts[axis] = new int[dimensions[axis]];
+				for(int value = 0; value < representatives.length; value++) {
+					int coordinate = coordinate(axis, representatives[value]);
+					quotientToStored[axis][value] = coordinate;
+					coordinateCounts[axis][coordinate]++;
+				}
 			}
-			long finite = 0L;
-			for(int stored = nextFiniteStoredCell(-1); stored >= 0; stored = nextFiniteStoredCell(stored)) {
+			long projectedFinite = 0L;
+			for(int stored = nextFiniteStoredCell(-1); stored >= 0;
+				stored = nextFiniteStoredCell(stored)) {
 				int cell = storedLogicalCell(stored);
 				long multiplicity = 1L;
 				for(int axis = 0; axis < scope.length; axis++)
-					multiplicity *= inverse[axis].size(cell / strides[axis] % dimensions[axis]);
-				finite += multiplicity;
-				if(finite * 2 > cells)
+					multiplicity *= coordinateCounts[axis][
+						cell / strides[axis] % dimensions[axis]];
+				projectedFinite += multiplicity;
+				if(projectedFinite * 2L > cells)
 					return null;
 			}
-			if(finite > Integer.MAX_VALUE)
-				throw new IllegalArgumentException("EXACT_VE_FACTOR_CELL_OVERFLOW");
-			int[] result = PlannerResourceGuard.allocateInts((int)finite,
-				"exact-sparse-support-projection");
-			int output = 0;
-			int[] first = new int[scope.length];
-			int[] positions = new int[scope.length];
-			for(int stored = nextFiniteStoredCell(-1); stored >= 0; stored = nextFiniteStoredCell(stored)) {
-				int cell = storedLogicalCell(stored);
-				boolean empty = false;
-				for(int axis = 0; axis < scope.length; axis++) {
-					first[axis] = inverse[axis].first(cell / strides[axis] % dimensions[axis]);
-					empty |= first[axis] < 0;
-				}
-				if(empty)
-					continue;
-				System.arraycopy(first, 0, positions, 0, first.length);
-				while(true) {
-					int encoded = 0;
-					for(int axis = 0; axis < scope.length; axis++)
-						encoded += positions[axis] * quotientStrides[axis];
-					result[output++] = encoded;
-					int axis = scope.length - 1;
-					while(axis >= 0 && (positions[axis] = inverse[axis].next(positions[axis])) < 0) {
-						positions[axis] = first[axis];
-						axis--;
-					}
-					if(axis < 0)
-						break;
-				}
-			}
-			Arrays.sort(result);
-			return result;
+			int[] finite = finiteCells();
+			ExactFiniteSupportJoin.QuotientProjectedRelation projected =
+				new ExactFiniteSupportJoin.QuotientProjectedRelation(
+					scope, dimensions, finite, quotientToStored);
+			return projected;
+		}
+
+		private ExactFiniteSupportJoin.SupportRelation explicitSupport(int[] finite) {
+			return finite == null ? null : new ExactFiniteSupportJoin.Relation(scope, finite);
 		}
 
 		private int storageCell(int logicalCell) {
@@ -4814,27 +5219,41 @@ public final class ExactCategoricalSolver {
 		 * selectivity. Every omitted constraint is still checked in arithmetic order.
 		 */
 		private int[] selectiveFiniteCells() {
+			ensureFiniteCount();
+			if((long)finiteCount * 2 > logicalCells())
+				return null;
+			return finiteCells();
+		}
+
+		private int[] finiteCells() {
 			if(sparseCells != null)
 				return sparseCells;
-			if(hardValues != null)
-				finiteCount = hardValues.finiteCount();
-			if(finiteCount < 0) {
-				finiteCount = 0;
-				for(int cell = 0; cell < logicalCells(); cell++)
-					if(valueAt(cell) != Double.POSITIVE_INFINITY)
-						finiteCount++;
-			}
-			int count = finiteCount;
-			if((long)count * 2 > logicalCells())
-				return null;
-			int[] cells = PlannerResourceGuard.allocateInts(count, "exact-sparse-support");
+			ensureFiniteCount();
+			int[] cells = PlannerResourceGuard.allocateInts(finiteCount, "exact-sparse-support");
 			int output = 0;
 			for(int cell = nextFiniteStoredCell(-1); cell >= 0; cell = nextFiniteStoredCell(cell))
 				cells[output++] = cell;
 			return cells;
 		}
 
+		private void ensureFiniteCount() {
+			if(sparseCells != null) {
+				finiteCount = values.length;
+				return;
+			}
+			if(hardValues != null)
+				finiteCount = hardValues.finiteCount();
+			if(finiteCount >= 0)
+				return;
+			finiteCount = 0;
+			for(int cell = 0; cell < logicalCells(); cell++)
+				if(valueAt(cell) != Double.POSITIVE_INFINITY)
+					finiteCount++;
+		}
+
 		private boolean allFiniteDense() {
+			if(conditionalSupport != null)
+				return false;
 			if(sparseCells != null)
 				return false;
 			if(hardValues != null)
@@ -4849,6 +5268,8 @@ public final class ExactCategoricalSolver {
 		}
 
 		private boolean finiteValuesAreExactPositiveZero() {
+			if(conditionalSupport != null)
+				return true;
 			if(hardValues != null)
 				return true;
 			if(finiteValuesAreExactPositiveZero < 0) {

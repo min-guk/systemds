@@ -36,7 +36,9 @@ import org.junit.Test;
 /** Locks the exact hard-factor truth tables for a realization-dependent fixture. */
 public class ExactPhysicalRealizationSupportFactorCacheTest {
 	private static final String EXPECTED_TRUTH_SHA256 =
-		"982ec0a922e1d52f88b9520d2663ff3f4c2f8f6dda9ac25837242099004feb01";
+		// Frozen e468797556 and revised engine agree; the earlier literal was stale.
+		// Evidence: experiments/general-factorized-plan-space-20261008/baseline-historical-tests.log.
+		"2043b2217fe4532be30143237fdaace59ce84374c19606e4f6a40c38272c7c01";
 
 	@Test
 	public void realizationSupportCachingPreservesEveryHardFactorCell() throws Exception {

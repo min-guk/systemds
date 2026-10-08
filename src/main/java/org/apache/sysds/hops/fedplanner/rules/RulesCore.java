@@ -39,6 +39,8 @@ import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.Rule;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeIndependentDecision;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.DecisionDependencies;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.CandidateFamilyDependencies;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /**
@@ -374,6 +376,26 @@ public final class RulesCore {
       return Optional.empty();
     }
 
+    public Optional<DecisionDependencies> decisionDependencies(OpSig sig) {
+      Optional<Rule> exact = reg.byOpcode(sig.opcode());
+      if(exact.isPresent())
+        return safeDecisionDependencies(exact.get(), sig);
+      for(Rule rule : reg.ofCategory(sig.category()))
+        if(rule.supports(sig))
+          return safeDecisionDependencies(rule, sig);
+      return Optional.empty();
+    }
+
+    public Optional<CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      Optional<Rule> exact = reg.byOpcode(sig.opcode());
+      if(exact.isPresent())
+        return safeCandidateFamilyDependencies(exact.get(), sig);
+      for(Rule rule : reg.ofCategory(sig.category()))
+        if(rule.supports(sig))
+          return safeCandidateFamilyDependencies(rule, sig);
+      return Optional.empty();
+    }
+
     private static OpCaps safeCaps(Rule rule, OpSig sig, List<FType> inFTypes, ShapeHint hint, ReasonCode fallbackReason) {
       try {
         OpCaps caps = rule.caps(sig, inFTypes, hint);
@@ -401,6 +423,41 @@ public final class RulesCore {
       }
       catch(RuntimeException ex) {
         throw ruleFailure("shapeIndependentDecision", rule, sig, List.of(), null, ex);
+      }
+    }
+
+    private static Optional<DecisionDependencies> safeDecisionDependencies(
+        Rule rule, OpSig sig) {
+      try {
+        Optional<DecisionDependencies> dependencies = rule.decisionDependencies(sig);
+        if(dependencies == null || dependencies.isEmpty())
+          return Optional.empty();
+        for(int position : dependencies.get().enumeratedPositions())
+          if(position >= sig.arity())
+            throw new IllegalArgumentException("Decision position " + position
+                + " exceeds operation arity " + sig.arity());
+        return dependencies;
+      }
+      catch(RuntimeException ex) {
+        throw ruleFailure("decisionDependencies", rule, sig, List.of(), null, ex);
+      }
+    }
+
+    private static Optional<CandidateFamilyDependencies> safeCandidateFamilyDependencies(
+        Rule rule, OpSig sig) {
+      try {
+        Optional<CandidateFamilyDependencies> dependencies =
+            rule.candidateFamilyDependencies(sig);
+        if(dependencies == null || dependencies.isEmpty())
+          return Optional.empty();
+        for(int position : dependencies.get().allPositions())
+          if(position >= sig.arity())
+            throw new IllegalArgumentException("Candidate-family position " + position
+                + " exceeds operation arity " + sig.arity());
+        return dependencies;
+      }
+      catch(RuntimeException ex) {
+        throw ruleFailure("candidateFamilyDependencies", rule, sig, List.of(), null, ex);
       }
     }
   }

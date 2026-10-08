@@ -28,6 +28,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.CpRuleFamily;
+import org.apache.sysds.hops.fedplanner.placement.CandidateRuleRelation;
 import org.apache.sysds.hops.fedplanner.placement.DerivedFoutAnchorCompatibility;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
@@ -46,6 +47,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.IndependentS
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.IndependentSupportProduct;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedText;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedTextBuilder;
@@ -69,7 +71,7 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
  */
 final class ExactPhysicalModel {
 	enum AuthorityKind {
-		LEGAL_SINGLETON, DURABLE_ANCHOR, CAPTURED_RULE, CP_RULE_FAMILY,
+		LEGAL_SINGLETON, DURABLE_ANCHOR, CAPTURED_RULE, CP_RULE_FAMILY, CANDIDATE_RULE_RELATION,
 		RELOCATION_SOURCE, SYNTHETIC_BOUNDARY
 	}
 	enum InputAuthorityKind { NATIVE_LOCAL, DIRECT_FOUT, RELOCATION }
@@ -104,6 +106,8 @@ final class ExactPhysicalModel {
 		CandidateEmissionRealization realization,
 		PlacementAnalysis.CandidateRealizationSupportClause supportClause,
 		IndependentSupportProduct compactSupport, CpRuleFamily cpRuleFamily,
+		CandidateRuleRelation candidateRuleRelation,
+		CandidateRuleRelation.ConditionalRegion candidateRuleRegion,
 		NormalizedText normalizedSignature) {
 		Alternative {
 			Objects.requireNonNull(decision, "decision");
@@ -122,6 +126,20 @@ final class ExactPhysicalModel {
 					|| executionRule != null || executionEmission != null || realization != null
 					|| supportClause != null || compactSupport != null))
 				throw new IllegalArgumentException("EXACT_PHYSICAL_CP_RULE_FAMILY_INVALID");
+			if((authorityKind == AuthorityKind.CANDIDATE_RULE_RELATION)
+					!= (candidateRuleRelation != null && candidateRuleRegion != null)
+				|| candidateRuleRelation != null && (candidateRuleRegion == null
+					|| !candidateRuleRelation.regions().contains(candidateRuleRegion)
+					|| candidateRuleRelation.parent() != decision
+					|| candidateRule != null || candidateEmission != null || executionRule != null
+					|| executionEmission == null
+					|| candidateRuleRegion.emissionsFor(orderedInputs).stream().noneMatch(
+						emission -> emission == executionEmission)
+					|| executionEmission.emissionState().placementState() != state
+					|| realization == null || supportClause == null
+					|| executionEmission.realizations().stream().noneMatch(
+						candidate -> candidate == realization)))
+				throw new IllegalArgumentException("EXACT_PHYSICAL_CANDIDATE_RELATION_INVALID");
 			boolean materializedOutputCandidate = candidateEmission != null
 				&& candidateEmission.derivedFoutAction() != null;
 			if(materializedOutputCandidate != (derivedFoutAction != null)
@@ -140,7 +158,8 @@ final class ExactPhysicalModel {
 			PlacementAnalysis.CandidateRealizationSupportClause supportClause, String signature) {
 			this(decision, state, authorityKind, candidateRule, candidateEmission, executionRule,
 				executionEmission, durableAnchor, relocationAction, derivedFoutAction, orderedInputs,
-				inputAuthorities, realization, supportClause, null, null, normalizedSignature(signature));
+				inputAuthorities, realization, supportClause, null, null, null, null,
+				normalizedSignature(signature));
 		}
 		Alternative(CompiledHopKey decision, PlacementState state, AuthorityKind authorityKind,
 			CandidateRuleFact candidateRule, CandidateEmissionFact candidateEmission,
@@ -153,7 +172,7 @@ final class ExactPhysicalModel {
 			IndependentSupportProduct compactSupport, String signature) {
 			this(decision, state, authorityKind, candidateRule, candidateEmission, executionRule,
 				executionEmission, durableAnchor, relocationAction, derivedFoutAction, orderedInputs,
-				inputAuthorities, realization, supportClause, compactSupport, null,
+				inputAuthorities, realization, supportClause, compactSupport, null, null, null,
 				normalizedSignature(signature));
 		}
 		Alternative(CompiledHopKey decision, PlacementState state, AuthorityKind authorityKind,
@@ -167,7 +186,7 @@ final class ExactPhysicalModel {
 			NormalizedText signature) {
 			this(decision, state, authorityKind, candidateRule, candidateEmission, executionRule,
 				executionEmission, durableAnchor, relocationAction, derivedFoutAction, orderedInputs,
-				inputAuthorities, realization, supportClause, null, null, signature);
+				inputAuthorities, realization, supportClause, null, null, null, null, signature);
 		}
 		Alternative(CompiledHopKey decision, PlacementState state, AuthorityKind authorityKind,
 			CandidateRuleFact candidateRule, CandidateEmissionFact candidateEmission,
@@ -180,7 +199,22 @@ final class ExactPhysicalModel {
 			IndependentSupportProduct compactSupport, NormalizedText signature) {
 			this(decision, state, authorityKind, candidateRule, candidateEmission, executionRule,
 				executionEmission, durableAnchor, relocationAction, derivedFoutAction, orderedInputs,
-				inputAuthorities, realization, supportClause, compactSupport, null, signature);
+				inputAuthorities, realization, supportClause, compactSupport, null, null, null, signature);
+		}
+		Alternative(CompiledHopKey decision, PlacementState state, AuthorityKind authorityKind,
+			CandidateRuleFact candidateRule, CandidateEmissionFact candidateEmission,
+			CandidateRuleFact executionRule, CandidateEmissionFact executionEmission,
+			DurableAnchorKey durableAnchor, RelocationAction relocationAction,
+			DerivedFoutMaterializationAction derivedFoutAction,
+			List<CandidateInputState> orderedInputs, List<InputAuthority> inputAuthorities,
+			CandidateEmissionRealization realization,
+			PlacementAnalysis.CandidateRealizationSupportClause supportClause,
+			IndependentSupportProduct compactSupport, CpRuleFamily cpRuleFamily,
+			NormalizedText signature) {
+			this(decision, state, authorityKind, candidateRule, candidateEmission, executionRule,
+				executionEmission, durableAnchor, relocationAction, derivedFoutAction, orderedInputs,
+				inputAuthorities, realization, supportClause, compactSupport, cpRuleFamily,
+				null, null, signature);
 		}
 		private static NormalizedText normalizedSignature(String signature) {
 			// Keep the legacy canonical-constructor validation order: a null signature
@@ -193,6 +227,7 @@ final class ExactPhysicalModel {
 		}
 		boolean captured() { return authorityKind == AuthorityKind.CAPTURED_RULE; }
 		boolean family() { return authorityKind == AuthorityKind.CP_RULE_FAMILY; }
+		boolean relationFamily() { return authorityKind == AuthorityKind.CANDIDATE_RULE_RELATION; }
 		@Override public int hashCode() {
 			int hash = Objects.hashCode(decision);
 			hash = 31 * hash + Objects.hashCode(state);
@@ -211,6 +246,10 @@ final class ExactPhysicalModel {
 			hash = 31 * hash + Objects.hashCode(compactSupport);
 			if(cpRuleFamily != null)
 				hash = 31 * hash + cpRuleFamily.hashCode();
+			if(candidateRuleRelation != null) {
+				hash = 31 * hash + candidateRuleRelation.hashCode();
+				hash = 31 * hash + candidateRuleRegion.hashCode();
+			}
 			return 31 * hash + signature().hashCode();
 		}
 		@Override public String toString() {
@@ -637,6 +676,7 @@ final class ExactPhysicalModel {
 		addLogicalBoundaryFactors(analysis, byDecision, factors);
 		RealizationSupportPreparationStatistics realizationSupportStatistics =
 			addRealizationSupportFactors(analysis, byDecision, factors, hardFactorizations);
+		addCorrelatedSupportFactors(byDecision, factors);
 		addDerivedFoutAnchorFactors(analysis, byDecision, factors);
 		InputAuthorityPreparationStatistics inputAuthorityStatistics =
 			addInputAuthorityFactors(analysis, relocationPrivacy, incoming, byDecision, factors,
@@ -835,6 +875,8 @@ final class ExactPhysicalModel {
 		}
 		Map<CompiledHopKey,CandidateRealizationSupportKey> selectedSupport = new IdentityHashMap<>();
 		for(Alternative alternative : selected) {
+			if(alternative.relationFamily())
+				continue;
 			CandidateRuleFact rule = alternative.captured()
 				? alternative.candidateRule() : alternative.executionRule();
 			CandidateEmissionFact emission = alternative.captured()
@@ -845,8 +887,22 @@ final class ExactPhysicalModel {
 						CandidateRealizationReference.of(rule.key(), alternative.realization())));
 		}
 		for(Alternative alternative : selected) {
+			if(alternative.relationFamily()) {
+				CandidateRuleFact rule = alternative.candidateRuleRelation()
+					.requireExact(alternative.orderedInputs());
+				CandidateEmissionFact emission = rule.allowedEmissionFacts().stream()
+					.filter(candidate -> candidate == alternative.executionEmission()
+						|| candidate.equals(alternative.executionEmission()))
+					.findFirst().orElseThrow(() -> new IllegalStateException(
+						"Selected relation emission is absent from its exact member"));
+				candidates.add(new SelectedCandidate(alternative.decision(), rule, emission,
+					alternative.realization(), alternative.compactSupport() == null
+						? alternative.supportClause() : alternative.compactSupport().select(selectedSupport::get),
+					alternative.inputAuthorities()));
+				continue;
+			}
 			if(alternative.family()) {
-				CandidateRuleFact rule = alternative.cpRuleFamily().canonicalMember();
+				CandidateRuleFact rule = alternative.cpRuleFamily().requireExact(alternative.orderedInputs());
 				CandidateEmissionFact emission = rule.allowedEmissionFacts().get(0);
 				CandidateEmissionRealization realization = emission.realizations().get(0);
 				CandidateRealizationSupportClause clause = realization.supportClauses().get(0);
@@ -863,6 +919,9 @@ final class ExactPhysicalModel {
 			if(rule != null && emission != null)
 				candidates.add(new SelectedCandidate(alternative.decision(), rule, emission,
 					alternative.realization(), selectedClause, alternative.inputAuthorities()));
+		}
+		// Relation and CP-family branches also own input relocation authorities.
+		for(Alternative alternative : selected) {
 			if(alternative.relocationAction() != null)
 				relocations.put(alternative.relocationAction().normalizedSignature(),
 					alternative.relocationAction());
@@ -873,6 +932,91 @@ final class ExactPhysicalModel {
 		}
 		return new PhysicalSelection(selected, candidates,
 			relocations.values().stream().sorted().toList());
+	}
+
+	/**
+	 * A sparse support relation is a union of exact source-index rectangles, not
+	 * the Cartesian product of its projected axes. Producer alternatives with the
+	 * same exact support identity remain a preimage set within one rectangle.
+	 */
+	private static void addCorrelatedSupportFactors(Map<CompiledHopKey,DecisionDomain> domains,
+		List<ExactCategoricalSolver.Factor> factors) {
+		Map<DecisionDomain,Map<CandidateRealizationSupportKey,int[]>> indicesBySource = new IdentityHashMap<>();
+		for(DecisionDomain consumer : domains.values().stream().sorted(
+			Comparator.comparing(domain -> domain.node().key().normalizedSignature())).toList()) {
+			Map<List<ExactCategoricalSolver.Variable>,List<ExactCategoricalSolver.ConditionalRegion>>
+				regionsByScope = new LinkedHashMap<>();
+			Map<List<ExactCategoricalSolver.Variable>,List<Integer>> constrainedByScope = new LinkedHashMap<>();
+			for(int value = 0; value < consumer.alternatives().size(); value++) {
+				Alternative alternative = consumer.alternatives().get(value);
+				IndependentSupportProduct relation = alternative.compactSupport();
+				if(relation == null || !relation.correlated())
+					continue;
+				List<DecisionDomain> scope = new ArrayList<>();
+				scope.add(consumer);
+				relation.axes().stream().map(IndependentSupportAxis::sourceOwner).distinct()
+					.filter(owner -> owner != consumer.node().key())
+					.sorted(Comparator.comparing(CompiledHopKey::normalizedSignature))
+					.forEach(owner -> scope.add(Objects.requireNonNull(domains.get(owner),
+						"Correlated support source has no physical domain")));
+				List<Map<CandidateRealizationSupportKey,int[]>> sourceIndices = new ArrayList<>();
+				for(DecisionDomain source : scope) {
+					Map<CandidateRealizationSupportKey,int[]> cached = indicesBySource.get(source);
+					if(cached != null) {
+						sourceIndices.add(cached);
+						continue;
+					}
+					Map<CandidateRealizationSupportKey,List<Integer>> grouped = new java.util.HashMap<>();
+					for(int index = 0; index < source.alternatives().size(); index++) {
+						Alternative member = source.alternatives().get(index);
+						CandidateRuleFact rule = member.captured() ? member.candidateRule() : member.executionRule();
+						if(rule == null || member.realization() == null)
+							continue;
+						CandidateRealizationSupportKey key = CandidateSelections.requiredInputSupportIdentity(
+							CandidateRealizationReference.of(rule.key(), member.realization()));
+						grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(index);
+					}
+					Map<CandidateRealizationSupportKey,int[]> indices = new java.util.HashMap<>();
+					grouped.forEach((key, ordinals) -> indices.put(key,
+						ordinals.stream().mapToInt(Integer::intValue).toArray()));
+					indicesBySource.put(source, indices);
+					sourceIndices.add(indices);
+				}
+				List<ExactCategoricalSolver.ConditionalRegion> regions = new ArrayList<>();
+				final int consumerValue = value;
+				relation.forEachAdmittedBindingRow(bindings -> {
+					Map<CompiledHopKey,CandidateRealizationSupportKey> required = new IdentityHashMap<>();
+					for(var binding : bindings) {
+						var key = CandidateSelections.requiredInputSupportIdentity(binding.source());
+						var old = required.putIfAbsent(binding.source().rule().parentOccurrence(), key);
+						if(old != null && !old.equals(key))
+							return; // One owner cannot select two different exact sources.
+					}
+					int[][] allowed = new int[scope.size()][];
+					for(int axis = 0; axis < scope.size(); axis++) {
+						var key = required.get(scope.get(axis).node().key());
+						if(axis == 0) {
+							if(key != null && java.util.Arrays.binarySearch(
+								sourceIndices.get(0).getOrDefault(key, new int[0]), consumerValue) < 0)
+								return;
+							continue;
+						}
+						allowed[axis] = key == null ? java.util.stream.IntStream.range(0,
+							scope.get(axis).alternatives().size()).toArray() : sourceIndices.get(axis).get(key);
+						if(allowed[axis] == null || allowed[axis].length == 0)
+							return;
+					}
+					regions.add(new ExactCategoricalSolver.ConditionalRegion(consumerValue, allowed));
+				});
+				List<ExactCategoricalSolver.Variable> variables = scope.stream().map(DecisionDomain::variable).toList();
+				regionsByScope.computeIfAbsent(variables, ignored -> new ArrayList<>()).addAll(regions);
+				constrainedByScope.computeIfAbsent(variables, ignored -> new ArrayList<>()).add(consumerValue);
+			}
+			for(var entry : regionsByScope.entrySet())
+				factors.add(ExactCategoricalSolver.Factor.conditionalSupport(entry.getKey(), 0,
+					constrainedByScope.get(entry.getKey()).stream().mapToInt(Integer::intValue).toArray(),
+					entry.getValue()));
+		}
 	}
 
 	private static List<Alternative> alternatives(PlacementAnalysis analysis,
@@ -900,6 +1044,47 @@ final class ExactPhysicalModel {
 					null, null, null));
 			alternatives.add(cpRuleFamily(node, family, authorities));
 		}
+		for(CandidateRuleRelation relation : analysis.candidateRuleFacts()
+			.candidateRelationsForParent(node.key()))
+			for(CandidateRuleRelation.ConditionalRegion region : relation.regions()) {
+				forEachRelationInputs(region.axes(), 0, new ArrayList<>(), inputs -> {
+					for(CandidateEmissionFact emission : region.emissionsFor(inputs))
+					for(CandidateEmissionRealization realization : emission.realizations()) {
+						if(emission.derivedFoutAction() != null)
+							continue;
+						PlacementState state = emission.emissionState().placementState();
+						if(node.legalAlternatives().stream().noneMatch(legal -> legal == state))
+							continue;
+						List<IndependentSupportProduct> supportRegions =
+							!clauseSensitiveDecisions.contains(node.key())
+								? realization.compactSupportRegions(binding -> deliveredSupportLayout(analysis, binding))
+								: List.of();
+						if(!supportRegions.isEmpty()) {
+							List<Alternative> compact = new ArrayList<>(supportRegions.size());
+							for(IndependentSupportProduct product : supportRegions) {
+								List<List<InputAuthority>> authorities = inputAuthorityProducts(analysis,
+									relocationPrivacy, relocationObligations, prunePrivacyIllegalRelocations,
+									relation.parent(), inputs, state, incoming, product.representativeClause());
+								if(authorities.size() != 1)
+									break;
+								compact.add(candidateRuleRelation(node, relation, region, inputs, emission,
+									realization, product.representativeClause(), authorities.get(0), product,
+									signatureContext));
+							}
+							if(compact.size() == supportRegions.size()) {
+								alternatives.addAll(compact);
+								continue;
+							}
+						}
+						for(CandidateRealizationSupportClause supportClause : realization.supportClauses())
+						for(List<InputAuthority> bindings : inputAuthorityProducts(analysis,
+							relocationPrivacy, relocationObligations, prunePrivacyIllegalRelocations,
+							relation.parent(), inputs, state, incoming, supportClause))
+							alternatives.add(candidateRuleRelation(node, relation, region, inputs,
+								emission, realization, supportClause, bindings, null, signatureContext));
+					}
+				});
+			}
 		for(CandidateRuleFact rule : ownerRules) {
 			if(rule.status() != CandidateEvaluationStatus.AVAILABLE)
 				continue;
@@ -908,18 +1093,23 @@ final class ExactPhysicalModel {
 				PlacementState state = emission.emissionState().placementState();
 				if(node.legalAlternatives().stream().noneMatch(legal -> legal == state))
 					continue;
-				Optional<IndependentSupportProduct> independent = emission.derivedFoutAction() == null
+				List<IndependentSupportProduct> supportRegions = emission.derivedFoutAction() == null
 					&& !clauseSensitiveDecisions.contains(node.key())
-					? realization.independentSupportProduct() : Optional.empty();
-				if(independent.isPresent()) {
-					IndependentSupportProduct product = independent.get();
-					List<List<InputAuthority>> authorities = inputAuthorityProducts(analysis,
-						relocationPrivacy, relocationObligations, prunePrivacyIllegalRelocations,
-						rule, state, incoming, product.representativeClause());
-					if(authorities.size() == 1) {
-						alternatives.add(candidate(node, state, rule, emission, realization,
-							product.representativeClause(), null, authorities.get(0), product,
-							signatureContext));
+					? realization.compactSupportRegions(binding -> deliveredSupportLayout(analysis, binding))
+					: List.of();
+				if(!supportRegions.isEmpty()) {
+					List<Alternative> regionAlternatives = new ArrayList<>();
+					for(IndependentSupportProduct product : supportRegions) {
+						List<List<InputAuthority>> authorities = inputAuthorityProducts(analysis,
+							relocationPrivacy, relocationObligations, prunePrivacyIllegalRelocations,
+							rule, state, incoming, product.representativeClause());
+						if(authorities.size() != 1)
+							break;
+						regionAlternatives.add(candidate(node, state, rule, emission, realization,
+							product.representativeClause(), null, authorities.get(0), product, signatureContext));
+					}
+					if(regionAlternatives.size() == supportRegions.size()) {
+						alternatives.addAll(regionAlternatives);
 						continue;
 					}
 				}
@@ -1005,7 +1195,7 @@ final class ExactPhysicalModel {
 			for(Alternative alternative : alternatives)
 				eagerUnique.putIfAbsent(alternative.signature(), alternative);
 			unique = eagerUnique.values().stream()
-				.sorted(Comparator.comparing(Alternative::signature)).toList();
+				.sorted(alternativeOrdering(eagerUnique.values())).toList();
 		}
 		if(unique.isEmpty())
 			throw new IllegalArgumentException("EXACT_PHYSICAL_DOMAIN_EMPTY|key="
@@ -1017,8 +1207,30 @@ final class ExactPhysicalModel {
 		return List.copyOf(unique);
 	}
 
+	private static DurableAnchorKey deliveredSupportLayout(PlacementAnalysis analysis,
+		PlacementIdentity.CandidateRealizationInputBinding binding) {
+		if(binding.relocationAction() != null)
+			return binding.relocationAction().durableAnchor();
+		CandidateEmissionRealization realization = analysis.requireExactCandidateRealization(binding.source());
+		if(realization.anchor() != null)
+			return realization.anchor();
+		var first = realization.supportClauses().get(0);
+		if(realization.nativeWorkerPoolLayoutExactForOwnedClause(first)) {
+			DurableAnchorKey witness = realization.nativeWorkerPoolResidencyForOwnedClause(first);
+			if(witness != null)
+				return witness;
+		}
+		var owner = binding.source().rule().parentOccurrence();
+		if(analysis.hop(owner).orElse(null) instanceof DataOp data && data.getOp() == OpOpData.FEDERATED) {
+			var anchors = analysis.graph().node(owner).orElseThrow().anchors();
+			if(anchors.size() == 1)
+				return anchors.get(0);
+		}
+		return null;
+	}
+
 	static List<Alternative> sortAndDeduplicateAlternatives(List<Alternative> generated) {
-		generated.sort(Comparator.comparing(Alternative::normalizedSignature));
+		generated.sort(alternativeOrdering(generated));
 		List<Alternative> unique = new ArrayList<>(generated.size());
 		NormalizedText previous = null;
 		for(Alternative alternative : generated)
@@ -1027,6 +1239,36 @@ final class ExactPhysicalModel {
 				previous = alternative.normalizedSignature();
 			}
 		return List.copyOf(unique);
+	}
+
+	/** Storage representation must not change the legacy exact-member tie break. */
+	private static Comparator<Alternative> alternativeOrdering(java.util.Collection<Alternative> alternatives) {
+		Map<Alternative,NormalizedText> compactOrder = new IdentityHashMap<>();
+		AlternativeSignatureContext context = new AlternativeSignatureContext();
+		for(Alternative alternative : alternatives) {
+			if(!alternative.family() && !alternative.relationFamily())
+				continue;
+			CandidateEmissionFact emission = alternative.family()
+				? alternative.cpRuleFamily().emission() : alternative.executionEmission();
+			CandidateEmissionRealization realization = alternative.family()
+				? emission.realizations().get(0) : alternative.realization();
+			CandidateRealizationSupportClause clause = alternative.family()
+				? realization.supportClauses().get(0) : alternative.supportClause();
+			NormalizedTextBuilder rule = new NormalizedTextBuilder()
+				.append(context.literal(alternative.decision(), alternative.decision()::normalizedSignature))
+				.append("|inputs=[");
+			for(int position = 0; position < alternative.orderedInputs().size(); position++) {
+				if(position > 0)
+					rule.append(", ");
+				rule.append(alternative.orderedInputs().get(position).normalizedSignature());
+			}
+			compactOrder.put(alternative, candidateSignature(alternative.state(), rule.append("]").build(),
+				emission, realization, clause, null, alternative.inputAuthorities(),
+				alternative.compactSupport(), context));
+		}
+		return Comparator.<Alternative,NormalizedText>comparing(alternative ->
+			compactOrder.getOrDefault(alternative, alternative.normalizedSignature()))
+			.thenComparing(Alternative::normalizedSignature);
 	}
 
 	private static List<DerivedFoutMaterializationAction> foutMaterializationActions(
@@ -1067,9 +1309,42 @@ final class ExactPhysicalModel {
 		NormalizedText signature = new NormalizedTextBuilder().append("CP_RULE_FAMILY|")
 			.append(state.normalizedSignature()).append("|family=")
 			.append(family.normalizedSignature()).build();
+		// Physical domains compare the raw rule text, while policy receipts use a
+		// length-framed key. Select the minimum for this consumer's legacy order.
+		List<CandidateInputState> inputs = family.axes().stream().map(axis -> axis.stream()
+			.min(Comparator.comparing(CandidateInputState::normalizedSignature)).orElseThrow()).toList();
 		return new Alternative(node.key(), state, AuthorityKind.CP_RULE_FAMILY,
-			null, null, null, null, null, null, null, family.canonicalInputs(), authorities,
-			null, null, null, family, signature);
+			null, null, null, null, null, null, null, inputs, authorities,
+			null, null, null, family, null, null, signature);
+	}
+
+	private static Alternative candidateRuleRelation(Node node, CandidateRuleRelation relation,
+		CandidateRuleRelation.ConditionalRegion region, List<CandidateInputState> inputs,
+		CandidateEmissionFact emission,
+		CandidateEmissionRealization realization, CandidateRealizationSupportClause supportClause,
+		List<InputAuthority> authorities, IndependentSupportProduct compactSupport,
+		AlternativeSignatureContext context) {
+		PlacementState state = emission.emissionState().placementState();
+		NormalizedText signature = candidateRuleRelationSignature(state, relation, region, inputs,
+			emission, realization, supportClause, authorities, compactSupport,
+			context == null ? new AlternativeSignatureContext() : context);
+		return new Alternative(node.key(), state, AuthorityKind.CANDIDATE_RULE_RELATION,
+			null, null, null, emission, null, null, null, inputs, authorities,
+			realization, supportClause, compactSupport, null, relation, region, signature);
+	}
+
+	private static void forEachRelationInputs(List<List<CandidateInputState>> axes, int position,
+		List<CandidateInputState> selected,
+		java.util.function.Consumer<List<CandidateInputState>> consumer) {
+		if(position == axes.size()) {
+			consumer.accept(List.copyOf(selected));
+			return;
+		}
+		for(CandidateInputState input : axes.get(position)) {
+			selected.add(input);
+			forEachRelationInputs(axes, position + 1, selected, consumer);
+			selected.remove(selected.size() - 1);
+		}
 	}
 
 	private static Alternative candidate(Node node, PlacementState state, CandidateRuleFact rule,
@@ -1098,9 +1373,18 @@ final class ExactPhysicalModel {
 		PlacementAnalysis.CandidateRealizationSupportClause supportClause,
 		DerivedFoutMaterializationAction outputAction, List<InputAuthority> bindings,
 		IndependentSupportProduct compactSupport, AlternativeSignatureContext context) {
+		return candidateSignature(state, context.canonical.candidateRule(rule.key()), emission,
+			realization, supportClause, outputAction, bindings, compactSupport, context);
+	}
+
+	private static NormalizedText candidateSignature(PlacementState state, NormalizedText rule,
+		CandidateEmissionFact emission, CandidateEmissionRealization realization,
+		CandidateRealizationSupportClause supportClause,
+		DerivedFoutMaterializationAction outputAction, List<InputAuthority> bindings,
+		IndependentSupportProduct compactSupport, AlternativeSignatureContext context) {
 		NormalizedTextBuilder signature = new NormalizedTextBuilder().append("CAPTURED|")
 			.append(context.literal(state, state::normalizedSignature)).append("|rule=")
-			.append(context.canonical.candidateRule(rule.key())).append("|emission=")
+			.append(rule).append("|emission=")
 			.append(context.literal(emission, emission::selectionSignature)).append("|realization=")
 			.append(context.canonical.realizationKey(realization.key())).append("|clause=")
 			.append(context.canonical.supportClause(supportClause))
@@ -1204,6 +1488,8 @@ final class ExactPhysicalModel {
 		IndependentSupportProduct compactSupport, AlternativeSignatureContext context) {
 		if(compactSupport == null)
 			return;
+		if(compactSupport.correlated())
+			signature.append("|admittedSupport=").append(compactSupport.admittedIndexSignature());
 		signature.append("|compactSupport=[");
 		for(int axisIndex = 0; axisIndex < compactSupport.axes().size(); axisIndex++) {
 			if(axisIndex > 0)
@@ -1234,6 +1520,17 @@ final class ExactPhysicalModel {
 	static NormalizedText canonicalAlternativeSignature(Alternative alternative) {
 		Objects.requireNonNull(alternative, "alternative");
 		AlternativeSignatureContext context = new AlternativeSignatureContext();
+		if(alternative.relationFamily()) {
+			if(alternative.candidateRuleRelation() == null || alternative.candidateRuleRegion() == null
+				|| alternative.executionEmission() == null || alternative.realization() == null
+				|| alternative.supportClause() == null)
+				return null;
+			return candidateRuleRelationSignature(alternative.state(),
+				alternative.candidateRuleRelation(), alternative.candidateRuleRegion(),
+				alternative.orderedInputs(),
+				alternative.executionEmission(), alternative.realization(),
+				alternative.supportClause(), alternative.inputAuthorities(), alternative.compactSupport(), context);
+		}
 		if(alternative.authorityKind() == AuthorityKind.CAPTURED_RULE) {
 			if(alternative.candidateRule() == null || alternative.candidateEmission() == null
 				|| alternative.executionRule() != null || alternative.executionEmission() != null
@@ -1257,6 +1554,26 @@ final class ExactPhysicalModel {
 			alternative.inputAuthorities(), alternative.compactSupport(), context);
 	}
 
+	private static NormalizedText candidateRuleRelationSignature(PlacementState state,
+		CandidateRuleRelation relation, CandidateRuleRelation.ConditionalRegion region,
+		List<CandidateInputState> inputs,
+		CandidateEmissionFact emission, CandidateEmissionRealization realization,
+		CandidateRealizationSupportClause supportClause, List<InputAuthority> authorities,
+		IndependentSupportProduct compactSupport, AlternativeSignatureContext context) {
+		NormalizedTextBuilder signature = new NormalizedTextBuilder().append("CANDIDATE_RULE_RELATION|")
+			.append(context.literal(state, state::normalizedSignature)).append("|relation=")
+			.append(context.literal(relation, relation::normalizedSignature)).append("|region=")
+			.append(context.literal(region, region::normalizedSignature)).append("|inputs=")
+			.append(inputs.stream().map(CandidateInputState::normalizedSignature).toList().toString())
+			.append("|emission=")
+			.append(context.literal(emission, emission::normalizedSignature)).append("|realization=")
+			.append(context.literal(realization, realization::normalizedSignature)).append("|support=")
+			.append(context.canonical.supportClause(supportClause)).append("|authorities=")
+			.append(authorities.stream().map(InputAuthority::signature).toList().toString());
+		appendCompactSupportSignature(signature, compactSupport, context);
+		return signature.build();
+	}
+
 	private static void appendLiteral(NormalizedTextBuilder signature,
 		AlternativeSignatureContext context, Object owner,
 		java.util.function.Supplier<String> value) {
@@ -1272,16 +1589,27 @@ final class ExactPhysicalModel {
 		boolean prunePrivacyIllegalRelocations, CandidateRuleFact rule,
 		PlacementState targetState, List<Link> incoming,
 		PlacementAnalysis.CandidateRealizationSupportClause supportClause) {
+		return inputAuthorityProducts(analysis, relocationPrivacy, relocationObligations,
+			prunePrivacyIllegalRelocations, rule.key().parentOccurrence(),
+			rule.key().orderedInputs(), targetState, incoming, supportClause);
+	}
+
+	private static List<List<InputAuthority>> inputAuthorityProducts(PlacementAnalysis analysis,
+		RelocationSelections.RelocationPrivacyIndex relocationPrivacy,
+		RelocationObligationIndex relocationObligations,
+		boolean prunePrivacyIllegalRelocations, CompiledHopKey parent,
+		List<CandidateInputState> orderedInputs, PlacementState targetState, List<Link> incoming,
+		PlacementAnalysis.CandidateRealizationSupportClause supportClause) {
 		List<List<List<InputAuthority>>> choices = new ArrayList<>();
 		boolean consumesFederationMap = targetState.execType() == ExecType.FED
-			&& !analysis.isDmlFunctionCallBoundary(rule.key().parentOccurrence());
+			&& !analysis.isDmlFunctionCallBoundary(parent);
 		long presentPhysicalInputs = java.util.stream.IntStream.range(0,
-			rule.key().orderedInputs().size()).filter(position ->
-				rule.key().orderedInputs().get(position).present()
+			orderedInputs.size()).filter(position ->
+				orderedInputs.get(position).present()
 					&& incoming.stream().anyMatch(link -> link.position == position)).count();
-		for(int position = 0; position < rule.key().orderedInputs().size(); position++) {
+		for(int position = 0; position < orderedInputs.size(); position++) {
 			final int inputPosition = position;
-			CandidateInputState input = rule.key().orderedInputs().get(position);
+			CandidateInputState input = orderedInputs.get(position);
 			if(!input.present() || !consumesFederationMap) {
 				// A CP instruction consumes a coordinator-local value, not a FederationMap.
 				// Likewise a DML FunctionOp is only a call-site forwarding placeholder;
@@ -1305,13 +1633,13 @@ final class ExactPhysicalModel {
 			for(Link link : links) {
 				List<RelocationAction> actions = link.kind == LinkKind.LOGICAL_TRANSIENT ? List.of()
 					: relocationObligations != null ? relocationObligations.actions(
-						link.sourceNode.valueVersion(), input.fType(), rule.key().parentOccurrence(),
+						link.sourceNode.valueVersion(), input.fType(), parent,
 						inputPosition, targetState)
 					: analysis.graph().relocationActions().stream()
 					.filter(action -> action.key().sourceValueVersion().equals(link.sourceNode.valueVersion()))
 					.filter(action -> action.key().materializationFType() == input.fType())
 					.filter(action -> action.obligations().stream().anyMatch(obligation ->
-						obligation.consumer() == rule.key().parentOccurrence()
+						obligation.consumer() == parent
 							&& obligation.inputPosition() == inputPosition
 							&& obligation.requiredPlacement().equals(targetState)))
 					.sorted().toList();
@@ -1866,6 +2194,9 @@ final class ExactPhysicalModel {
 						Set<Integer> allowed = new LinkedHashSet<>();
 						for(var option : axis.options())
 							allowed.add(referenceHandle(option.supportKey(), referenceHandles));
+						Set<Integer> previous = requirements.get(axis.sourceOwner());
+						if(previous != null)
+							allowed.retainAll(previous);
 						requirements.put(axis.sourceOwner(), Set.copyOf(allowed));
 					}
 				}
@@ -2036,6 +2367,14 @@ final class ExactPhysicalModel {
 	}
 
 	private static CandidateSelectionReceipt candidateReceipt(PlacementAnalysis analysis, Alternative alternative) {
+		if(alternative.relationFamily()) {
+			// The alternative constructor has verified this exact member emission against
+			// its owning relation. Relocation predicates need its binding authority even
+			// before final selection; do not intern a CandidateRuleFact for this view.
+			return new CandidateSelectionReceipt(new CandidateRuleKey(alternative.decision(),
+				alternative.orderedInputs()), alternative.executionEmission(), alternative.realization(),
+				alternative.supportClause(), List.of());
+		}
 		CandidateRuleFact rule = alternative.captured() ? alternative.candidateRule() : alternative.executionRule();
 		CandidateEmissionFact emission = alternative.captured() ? alternative.candidateEmission() : alternative.executionEmission();
 		return rule == null || emission == null || alternative.realization() == null ? null

@@ -10,6 +10,30 @@ import org.junit.Test;
 
 public class SearchSpaceFineGrainedMetricsTest {
 	@Test
+	public void generationCoverageSeparatesChecksFromCutsAndResets() {
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		metrics.recordCandidateOracleCalls(3);
+		metrics.recordCandidateEarlyFeasibilityApplication();
+		metrics.recordCandidateEarlyFeasibilityCheck(false);
+		metrics.recordCandidateEarlyFeasibilityCheck(true);
+		metrics.recordGenerationPrivacyLookup(false, false);
+		metrics.recordGenerationPrivacyLookup(true, true);
+		metrics.recordPrivacyInputMaskCheck();
+		metrics.recordSupportMrvProduct();
+		metrics.recordSupportSourceCheck(false);
+		metrics.recordSupportSourceCheck(true);
+		var snapshot = metrics.generationPruningCoverage();
+		Assert.assertEquals(new SearchSpaceMetrics.GenerationPruningCoverage(1, 2, 1, 2, 1, 1, 1, 1, 2, 1),
+			snapshot);
+		Assert.assertEquals(3, metrics.privacyPruningSnapshot().oracleCalls());
+		Assert.assertThrows(IllegalArgumentException.class, () -> metrics.recordCandidateOracleCalls(-1));
+		metrics.reset();
+		Assert.assertEquals(new SearchSpaceMetrics.GenerationPruningCoverage(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+			metrics.generationPruningCoverage());
+		Assert.assertEquals("captured counters remain immutable", 2, snapshot.earlyFeasibilityChecks());
+	}
+
+	@Test
 	public void routeRetentionIsBoundedAndPreviouslySeenOpcodesStillCount() {
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		for(int i = 0; i < 1000; i++)

@@ -398,3 +398,144 @@
 - **v4 회귀 잠금/검토**: copied/reconstructed binding과 relocation authority 테스트를 먼저 추가했고 v3 binary에서 **16 tests 중 의도한 sharing assertion 2개 실패** 확인. 외국 owner/consumer와 seed/output/precision/outer context 구분은 유지한다. production 변경 독립 review APPROVE; fresh green/package 측정은 대기 중이다.
 - **잔여 위험/감지**: 기본 schedule을 query-dependent overlay에 재사용하면 안 된다. Negative 결과, cycle, duplicate alternative identity, root rebind, lexical prefix 충돌을 영구 테스트로 검증한다. full planning completion은 아직 달성했다고 주장하지 않는다.
 - **의사결정 근거**: oracle/runtime 합법성은 변경하지 않고 정확히 동일한 불변 관계의 순회와 publication 재생성만 줄인다.
+
+## 일반 FED·상관 관계와 LogReg/GLM 검증 — 진행 중
+
+- **증상/원인**: scalar CP 및 독립 support 외에는 rule fact·clause·Alternative를 tuple별로 생성하고, DP quotient projection도 preimage product를 펼친다.
+- **해결 계획**: `FEDPLANNER_GENERAL_RELATIONS_PLAN_2026-10-08_KO.md`의 여섯 항목을 구현한다. 조건부 rule header, 상관 support 선택, source 인덱스 기반 physical factor, 정확한 공동 비용, 지연 join/projection을 연결한다.
+- **검증 계획**: explicit 합법 row·cost raw bits·Local/Exact·receipt parity와 actual PRIVATE_AGGREGATE LogReg/GLM Docker 비교. 기준선 `e468797556`.
+- **의사결정 근거**: 의미가 일정함이 증명된 축만 header를 공유하고, 나머지는 조건부 관계와 exact index로 보존한다. Privacy나 runtime 가능성을 완화하지 않는다.
+- **잔여 이슈/위험**: generic family의 profile/emission 의존성 누락, correlated hole 제거 실패, shared cost 중복/누락, canonical tie 변화가 위험이다. 동등성 회귀와 workload 결과로 확인한다.
+
+### 통합에서 확인한 경계와 검증 수정
+
+- **증상/원인**: singleton unary fact를 Closure 후 relation으로 바꾸면 기존 policy selector가 참조하는 active consumer/source identity가 빠졌다. 일반 FED relation의 임의 canonical tuple만 legacy selector에 넘겨도 서로 다른 입력 authority를 잃을 수 있다.
+- **해결**: 생성 단계에서 실제 fact를 생략하는 scalar WSLOSS/WCEMM 영역만 게시한다. 비용이 다른 tuple은 Physical Model의 정확한 Alternative fallback으로 유지한다. Legacy selector는 필요한 relation member를 정확하게 전개한다. 이 경로를 완전한 end-to-end symbolic 비용 처리로 보고하지 않는다.
+- **관측**: 첫 통합 실행 527건 중 12건 실패를 분류했다. Selector 누락, 독립 fingerprint oracle의 누락된 compact signature, 잘못된 테스트 source ranges, 기준선부터 실패하던 hash 기대값이 포함됐다. 원본 로그는 `experiments/general-factorized-plan-space-20261008/integration-first.log`.
+- **기존 기대값**: 동결된 `e468797556`과 수정 엔진에 동일 fixture를 실행해 hard-factor SHA, 구조 SHA, 비용 raw-bit SHA, cost fingerprint가 동일함을 확인한 뒤 오래된 상수만 갱신했다. `baseline-historical-tests.log`, `baseline-hash-probe.log`, `revised-hash-probe.log`를 보존했다. 계산 결과를 근사하거나 검사를 삭제하지 않았다.
+- **실제 학습 후 proof 검증 문제**: LogReg의 실행 중 dimension 갱신과 GLM의 정상 dynamic recompile 이후 live Hop으로 계획을 재구성하면 기존 비용/구조가 변한다. Test-only commit observer로 emit 완료 직후 immutable canonical proof를 캡처하고, 실행 뒤에는 동일 result identity·plan hash 및 runtime audit을 확인하도록 수정했다. Baseline에도 같은 diagnostic overlay를 적용한다. Production 구조 검사를 완화하지 않는다.
+- **Anchor 회귀 방지**: 동일 worker/range를 가진 서로 다른 값은 동일 source가 아니다. `exactAnchorHopHint`의 완전한 DurableAnchorKey 동일성 검사를 유지하고, 정확한 live hint가 없을 때 `-1`과 기존 action key를 쓰는 의미를 fixture에 반영했다. 같은 배치·다른 값 음성 테스트를 추가했다.
+- **검증 원칙**: 실제 성능은 Docker 경로만 사용한다. PUBLIC 단위 fixture의 제한된 동등성 검사는 `PRINCIPLE_REBUTTAL_FACTORIZED_EQUIVALENCE_2026-10-08_KO.md`에 근거와 범위를 기록했다.
+- **통합 검증**: production 32개·테스트 34개 컴파일, JUnit 532개 통과(기존 ignore 3개), Python 38개 통과. `ExactNativeLocalAnchorFanoutCostTest`의 오래된 privacy-pruning proof 전제도 baseline과 신규 모두 source domain이 이미 PRESENT FULL뿐임을 확인해 수정했다. 원래 없던 ABSENT_LOCAL에 privacy 증명을 만들어 넣지 않고 exact lookup의 MISSING_FACT를 검사한다. 최종 실행 로그는 `experiments/general-factorized-plan-space-20261008/tests.log`.
+- **측정 해석**: `candidateOracleCalls`는 `relationOracleCalls`를 이미 포함한다. 두 값을 더하면 중복 집계다. `factorizedClauses`는 누적 counter이며 retained heap/object 수가 아니다. 전체 컨테이너 관측 메모리와 JVM heap도 별개로 보고한다.
+
+### 최종 기준선 대조에서 발견한 FED family authority 누락 — 수정·재검증 중
+
+- **증상**: PRIVATE_AGGREGATE ROW weighted 실행은 출력·objective bits·선택 배치가 기준선과 같았지만, WSLOSS/WCEMM의 새 family가 선택한 support에서 DIRECT input-0 source binding 및 관련 exact action authority가 빠져 있었다. 같은 구현으로 생성한 canonical proof의 자체 통과만으로 전후 의미 동등성이 증명되지 않았다.
+- **원인**: Generator에서 tuple fact를 생략한 뒤, Closure가 원래 수행하던 source/action binding 확정까지 생략했다. 기본 LOCAL emission의 empty support를 닫힌 relation으로 게시하면 source identity가 보존되지 않는다. 새 relation을 나중에 explicit으로 펼친 참조 테스트도 같은 오류를 공유했다.
+- **조치**: 공통 header가 정확한 입력 support를 소유하지 않으면 생성 생략을 허용하지 않는다. 기존 Closure가 확정한 권위를 활용하는 제한된 압축 경로를 검토·구현한다. 독립 기준선의 selected input authority, support bindings, proof keys를 구조적으로 비교하는 fail-closed 도구 및 음성 회귀를 추가했다.
+- **근거/회귀**: 수정 전 weighted 비교는 이 새 authority comparator에서 실제 실패했다. 수정 전 hard factor 65→63 및 support 54→48 감소는 최적화 근거로 사용하지 않는다. 당시 532개 JUnit 통과와 runtime 출력 동등성은 이 누락을 검출하지 못했으므로 최종 수정 소스에서 다시 검증한다.
+- **한계**: 일반 FED의 source/action 생성이 exact rule fact에 의존하는 동안, Generator→Closure 전체의 fact 생성 제거가 완료됐다고 보고하지 않는다. 생산 경로에서 의미 보존이 입증된 압축만 유지한다.
+
+### FED authority 회귀 수정 최종 확인
+
+- **해결**: 미검증 FED header가 tuple 생성을 생략하는 분기와 Closure 우회 publication을 제거했다. 닫힌 exact emission 객체를 공유하는 행만 hash index·축별 sweep으로 병합하며, region 수가 줄지 않으면 explicit을 유지한다. 다른 support·derived action·transient endpoint가 참조하는 exact rule key는 변환에서 제외한다. Factorized 축/Indexed dictionary를 사용하여 참조 수집에서 Cartesian 전개를 피한다. 비활성 MMFed family 선언도 제거했다.
+- **검증**: 최종 소스 production 32개/test 34개 컴파일, JUnit 533개 통과(기존 ignore 3개). Python harness 38개·authority comparator 7개 통과. 컴파일에 사용한 모든 소스 SHA256이 workspace와 일치한다. 독립 리뷰의 focused 30개도 통과했다.
+- **Docker authority**: 최종 보호 weighted는 WSLOSS/WCEMM의 exact input authority, relocation action, DIRECT input0 X_PROTECTED source, support/proof inventory가 모두 기준선과 일치했다. objective bits `4611719720386145812`, cost-surface fingerprint, 52개 Alternative·65개 hard factor·support counter 54개도 일치한다. 수정 전 비교기의 실패 로그는 유지한다.
+- **수정 파일**: PlacementCandidateGenerator, PlacementRelationClosure, PlacementSupportRelations, Rulesets, CandidateRuleRelationTest, CpRuleFamilyPipelineTest 및 probe/비교기.
+- **잔여 범위**: 일반 FED fact 생성 감소는 0개다(생성 686개 유지). 실제 weighted는 압축 이득이 없어 explicit이며, live FED relation 압축을 검증했다고 주장하지 않는다. 컴포넌트에서는 2×2 직사각형 압축, sparse hole 보존, 서로 다른 authority 비병합을 검증했다.
+- **위험/감지**: 미래 적용 범위를 확장하면 exact source/action identity를 지울 수 있다. 참조 보호와 독립 full-Closure 기준선의 구조화된 selected authority 비교를 유지한다. 출력·비용만 같다는 이유로 의미 동등성을 통과시키지 않는다.
+
+### 최종 LogReg·GLM 측정 및 저장소 복구 — 완료
+
+- **검증**: 최종 동일 frozen engine에서 LogReg proof·성능 및 GLM proof·성능 4건 모두 성공했다. PRIVATE_AGGREGATE 입력, Local planner, 기존 canonical proof·runtime audit 유지. Objective bits·선택 candidate·모델 결과가 기준선과 같고 fallback/repair 0이다. 실제 Docker는 Local이며 Exact 최적값 동등성은 별도 compact/explicit 회귀로 검증했다.
+- **단일 성능 관측**: 컴파일 LogReg 24.823644→24.241345초, GLM 30.803939→29.443179초. Planning 전체는 각각 2.56%, 4.02% 감소. Oracle 호출은 7,989/5,821로 전후 같고, Alternative는 5,304→5,295 및 1,774→1,755. Closure support counters는 그대로다.
+- **메모리 한계**: 전체 컨테이너 최대 관측 메모리는 LogReg 2,240,899,187→2,860,448,219B(+27.65%), GLM 1,298,153,865→1,406,601,789B(+8.35%). Blocking docker stats 호출 뒤 1초 대기하므로 고정 1초 주기가 아니며 실제 순간 peak도 아니다. 전체 메모리 감소나 통계적인 시간 개선을 입증했다고 주장하지 않는다.
+- **디스크 장애/복구**: root 파일시스템 0B 상태에서 workload-comparison.json 쓰기가 중단됐다. 모든 원본은 /grid에 있어 유실되지 않았다. 이번 worktree의 target 빌드 산출물을 /grid의 repo-target-final-local-archive로 보존 이동하고 원래 target에 symlink를 유지하여 약 83MB를 확보했다. JSON은 원자료에서 재생성했고 정상 파싱 및 PASSED 상태를 확인했다.
+- **증거**: experiments/general-factorized-plan-space-20261008/workload-comparison.json, verification.json, source-verification.json, final-weighted-authority-comparison.json. 최종 엔진 engine-final-authority-20261008T2135. 자세한 범위와 한계는 FEDPLANNER_GENERAL_RELATIONS_RESULT_2026-10-08_KO.md.
+
+## FED Oracle relation-native 생성과 독립 paired 검증 — 2026-10-08 후속 작업
+
+- **기준선/보존**: 이번 요청 시작 시점의 dirty tree 129개 파일, HEAD e468797556를 별도로 snapshot했다. 기존 작업을 삭제하지 않았고 commit/push하지 않았다. 세 독립 worktree에서 family/API/검증을 나누고 native agent를 순환 배치했다.
+- **구현**: 등록된 49개 rule inventory, determinant/raw shape selector/allowed shape fact API, scalar WSLOSS/WCEMM의 생성 단계 relation과 immutable input-indexed emission binding을 연결했다. Physical Model은 relation의 compact support를 소비하고 최종 선택에서 exact fact와 clause를 복원한다. 실제 constructor counter를 추가했다.
+- **리뷰에서 수정한 오류**: AggTernary/TernaryElemwise/Replace/Rexpand/CumulativeOffset의 shape 선언 누락, high-arity eager seed 메모리 증가, relation의 relocation 검사 receipt 누락, 선택 action 수집 누락, endpoint-only DIRECT 조건 누락, 한 축 witness의 다른-pool action 누락, family-only action의 최종 projection 소실을 수정했다. Witness는 ABSENT base 및 모든 두 축 투영으로 만들고 기존 binder·source pruning·action projection을 통과시킨다.
+- **통합 중 실패와 조치**: 최초 553-test 실행에서 fixture의 CP family/exact row 중첩과 post-CFG FULL closure 회귀가 발생했다. Fixture의 원래 explicit expansion 계약을 복원했다. 독립 축이 없는 shape-qualified Oracle는 압축 이득 없이 eager table만 늘리므로 기존 streaming 경로로 돌렸다. 이 guard로 해당 회귀는 해소됐지만, 실패의 직접 원인 전체가 증명된 것은 아니다. Protected payload에서 relation이 CP region을 미리 제외하고 explicit 경로는 PRIVACY_EXCLUDED fact를 남길 수 있는 inventory 차이를 별도로 기록한다.
+- **회귀 검증**: 수정 후 통합 JUnit 557개 통과, 기존 ignore 3개. Oracle/rule 전용 suite와 compact/sparse/mixed consumer parity가 별도로 통과했다. PRIVATE_AGGREGATE protected weighted Docker의 exact DIRECT source/action/proof, objective bits, 전체 candidate inventory 비교도 통과했다.
+- **생성량 해석**: 7^4 fixture는 generator의 686 FED exact fact를 생략하지만 Closure에 254개의 pairwise exact witness가 남는다. 전체 fact 생성 0으로 보고하지 않는다. 작은 실제 weighted Docker는 key 50→72, fact 73→90으로 늘고 explicit support 76→69, indexed handle 6→0으로 줄었다. Synthetic 압축을 실제 compilation 개선으로 일반화하지 않는다.
+- **잔여 전개**: 일반 FOUT/external source identity, VALUE_MAP/함수 경계, nonseparable cost, Physical Model의 FType tuple별 Alternative, 복잡한 DP join은 exact 경로가 남는다. 큰 family 전체의 end-to-end factorization 완료를 주장하지 않는다.
+- **증거**: FEDPLANNER_ORACLE_INVENTORY_2026-10-08_KO.md, FEDPLANNER_ORACLE_NATIVE_API_PLAN_2026-10-08_KO.md, experiments/fed-oracle-native-20261008 및 /grid/3/cofee-lm-sweep-mchoi-20260914/fed-oracle-native-20261008/evidence. 반복 LogReg/GLM 결과는 최종 보고서에 추가한다.
+
+- **디스크 장애 후 보존 이동**: root 여유가 0B가 되어 Git index 갱신과 GLM candidate의 Java 시작 전 임시 디렉터리 생성이 실패했다. 현재 checkout 14,189개 파일/링크의 내용을 검증하여 `/grid/3/cofee-lm-sweep-mchoi-20260914/fed-oracle-native-20261008/workspace-preserved`에 보존 이동했다. 기존 `/home/mchoi/w1357-structural-grounding-20261006` 경로는 symlink로 유지하며 이동 전후 Git status와 파일 SHA256이 같다. 약 289MB를 확보했다. 다른 checkout/임시파일은 삭제하지 않았다. GLM 실패 기록은 보존하고 동일한 새 temp 경로로 paired run 전체를 재시도한다.
+- **후보 v1 성능 회귀**: LogReg 3 paired run에서 모든 출력/선택/권한이 같고 Oracle 7,989·Alternative 5,295·analysis 객체 생성 수도 같지만, execution region은 203→1,972로 증가했다. Compile 중앙값 ratio 1.0732, analysis 1.0469, optimizer 1.2214였다. 독립 축이 없는 신규 shape-independent declaration도 eager region을 만드는 경로를 찾아 v2에서 streaming으로 돌리는 검증을 진행한다. v1 결과는 삭제하지 않는다.
+
+### Oracle-native final integration and canonical receipt regression
+
+- Added a parsed 16-member WSLOSS relation fixture. Full explicit generation+Closure matched all exact authorities, but Local/Exact CP receipt tie-breaking differed despite equal objective and states. Fixed representation-independent physical ordering and per-axis raw-key canonical inputs; left length-framed policy receipt ordering unchanged. Independent architecture review: CLEAR for this bounded fix.
+- Final integrated JUnit: 565 passed (118.388s), existing 3 ignored. Python comparator/harness: 54 passed. Source hashes and logs archived under evidence/integration-final-565-passed.
+- Generation broad fixture eliminates 686 FED tuple facts, but temporary Closure pair witnesses and Physical tuple Alternatives remain. Parsed 16-member analysis facts 270→210, clauses 665→420. Do not characterize this as complete end-to-end factorization.
+- Final v2 Docker paired performance campaign follows a first v1 campaign with LogReg compile ratio 1.0732 (regression); v2 avoids new relation regions when no varying independent axis exists.
+
+## origin/main 병합과 COFEE worker-count 재탐색 — 진행 중
+
+- **증상/환경**: 동일 COFEE 50K×128, W1 LAN, DP-local baseline은 Analysis486.384초 이후 Cost Surface에서30분 이상 완료되지 않았다. 진단 전환 후 정상 수집한 세 JVM stack에서 `realizationSupportWorkerCount`의 upstream support 재귀가 반복됐다. 이 실행은 intentional diagnostic stop이며 paired 성공 시간에서 제외한다.
+- **원인**: root Alternative memo 외에 중간 source aggregate 재사용이 없어 공유 DAG를 경로마다 반복 순회한다. Direct support 자체에도 tuple별 continuity proof publication이 남는다. DML/Y를 원인으로 단정하지 않고 입력을 고정한다.
+- **병합**: 사용자 지시로 origin/main `50855b5df4c6a2312c3a12ee8a31415a9d96aa27`을 fast-forward했다. 미커밋173개 파일을 외부 tar/hash 및 stash `873c5d097784205a677a1ba231910b8d5ada2457`로 보존한 뒤 복원했다. 누락0. NativePlacementContinuity/Rulesets/SearchSpaceMetrics/본 문서의 충돌은 양쪽 변경을 유지해 해소했다. 새 commit/push는 없다.
+- **통합 수정**: Native fixed-pool worklist와 완전한 identity-owner invalidation footprint를 결합했다. Oracle의 추가 determinant contract와 shape-qualified factorization을 함께 유지했다. Solver의 새 SUFFIX pruning overload가 일반 SupportRelation을 받도록 타입을 정합화했다. 첫 compile에서 발견된 overload 타입 불일치2건은 수정 후 compile 통과했다.
+- **검증**: 병합 전 통합582 JUnit PASS. 병합 후 Python campaign/reference/runtime46 PASS; Native fixed-pool12, VALUE_MAP14, direct source projection10, relocation revision1 targeted PASS. 병합 후 전체 확장 Java suite 진행 중. 이 결과를 아직 완료되지 않은 대규모 runtime 성공으로 표현하지 않는다.
+- **후속 수정/위험**: 중간 source aggregate는 순환으로 ancestor edge를 건너뛰지 않은 경우만 재사용한다. 별도 reviewer가 structural source key의 owner-identity 충돌을 발견해 차단했으며, identity-scoped key와 반례 테스트를 추가 중이다. 순환/ambiguous0/fallback/derived-FOUT 비용 의미 및 bounded cache를 검증 후 통합한다.
+- **의사결정 근거**: candidate/Oracle/runtime/cost 의미를 바꾸거나 합법 후보를 임의로 제거하지 않는다. 동일 권한의 반복 계산과 객체 생성을 줄인다. 실제 생성량·pruning 수·전체 시간은 구분해서 보고한다.
+- **증거**: `/grid/3/cofee-lm-sweep-mchoi-20260914/fed-oracle-native-20261008/evidence/origin-main-merge-50855b5/`, `integration-v3/`; COFEE 상세는 `FEDPLANNER_COFEE_LARGE_VALIDATION_2026-10-08_KO.md`.
+
+### 병합 연동 회귀와 source memo 검증
+
+- 첫 통합659 tests 중7 failure를 보존했다.6개는 새 비용 certificate/suffix minimum 코드가 conditional hard support의 null numeric array를 순회한 문제였다. typed hard relation은0/INF임을 사용해 numeric certificate에서 제외하고 하한0을 유지한다. relation의 feasibility 검사는 그대로 남는다. 기존 sparse elimination의 새 overload도 일반 SupportRelation을 받도록 수정했다.
+- 추가된 `globalConditionalHardSupportRetainsCertifiedSuffixPruning`은 LEGACY/SUFFIX의 objective raw bits, 모든 elimination step/backpointer, assignment parity를 검사하고 suffix cut 및 numeric bound cell6개를 확인한다. 관련46 tests PASS, 독립 검토 CLEAR.
+- 나머지1개 inventory 차이는 TRead/TWrite의 대소문자 opcode 비교 때문에 dependency 선언이 누락되던 문제와 REPLACE의 불필요한 shape 의존 선언을 수정했다. 전방 실행 규칙은 유지한다. RMEMPTY/rshape의 input0 determinant 관계는 유효한 기존 local 개선이므로 inventory를 새 경로로 갱신했다. 관련41 tests PASS.
+- Source worker-count memo는 owner identity로 분리해 complete aggregate만 invocation-local로 최대4096개 보관한다. 순환에 의존하는 결과는 재사용하지 않고 ambiguous exact0과 fallback을 분리한다. reviewer의 최초 structural-key BLOCK을 해소한 뒤 CLEAR 및 lane588 tests PASS.14단 공유 fanout fixture에서 explicit resolver32,766→26회, count4동일.4,100개 source fixture는4,096개만 저장한다. 이 수치는 실제 COFEE 속도 개선으로 일반화하지 않는다.
+- 수정 production/test 파일은 root에서 시작·완료 SHA를 검증해 통합했다. origin/main과 합친 전체 suite 및 동일 COFEE LogReg 실행은 후속 진행한다.
+
+### 병합 최종 검증 통과
+
+- Production/test compile 성공, merged suite **666 JUnit PASS**(126.948초), Python32+46 PASS. Compiled source hash와 현재 파일 전수 일치, unmerged path0, diff-check PASS. 전체 Maven suite는 아니다.
+- 증거: `evidence/origin-main-merge-50855b5/final-integration-green/validation-result.json`. 새 candidate JAR `84e97e5d4450e7c81443a6200316bc8e97095a8319ada97e09707e803160304f`, overlay4,575 byte 검증 mismatch0.
+- 동일 COFEE50K128 LogReg를 candidate-first로 실행해 Cost Surface 완료 여부 및 numeric receipt를 확인한다. 아직 새 대규모 완료 시간·peak·paired 개선율은 없다.
+
+- **실행 준비 오류/해결**: 새 candidate wrapper가 manifest에만 dependency 위치를 기록하고 실제 `target/lib` symlink가 없어 probe compile이 실패했다. runtime 시작 전 오류로 분리하고 wrapper-only 경로 수정·301개 dependency preflight 후 새 run root에서 시작했다. Frozen JAR hash는 그대로다. 추가 profiling 없이 실제 LogReg→GLM 검증을 수행한다.
+
+### 2026-10-09: 일반 MRV 및 구조적 privacy generation 공백
+
+- 실제 merged candidate Analysis476.715초, MRV0/source conflict0/privacy avoided0, Clause21,979,887을 확인했다. 객체 압축 지표를 generation pruning으로 보고하지 않는다. 추가 profiling 대신 재현 테스트와 코드 수정으로 진행한다.
+- 원인: 일반 rule에는 partial FED hook이 없어 MRV fallback에 진입하지 않았고, 구조적 privacy projection이 완성돼도 full physical privacy closure 이전의 replay는 same-block seed만 사용했다. Source 검사는 기존에도 있었으나 원래 축 순서로 수행했다.
+- 수정: authoritative forward dependency 기반 일반 early feasibility + evidence 재사용, ordinary compiled op에 구조적 privacy projection 전달, direct support MRV 및 identity owner별 forward narrowing. Carrier/CP/UDF 및 exact source/action/proof 의미는 유지한다.
+- Direct source regression은 기존 코드에서 prefix 감소 assertion RED를 확인한 뒤 수정했다.80 legal leaves 동일, prefix321→83; random sparse240회 및 identity-owner 반례 parity.119 targeted JUnit PASS(이후 추가된 metrics/empty-domain test는 통합에서 재검증). 기존 vector module 누락으로 난 harness failure는 --add-modules=jdk.incubator.vector로 수정했고, 기존 conflict counter 의미도 option rejection으로 유지했다.
+- 일반 MRV24 targeted PASS. Privacy lane 및 전체 integrated regression은 진행 중. 대규모 compile/peak/numeric/receipt 동등성은 아직 완료되지 않았다.
+
+- 첫 generation-pruning 통합은679 tests 중1 failure였다. `ExactPhysicalRealizationSupportFactorCacheTest.flatPrivateAggregateRetainsSameDurableOutputAcrossSupplyRoutes`에서 FULL single-partition proof가 UNKNOWN으로 돌아간 replacement row가 조기 FED 검사로 사라져 기존 Closure의 exact retraction 증명이 누락됐다. Direct MRV만 적용한 독립 engine에서 같은2 tests는PASS(4.258초). UNKNOWN shape evidence를 INFEASIBLE로 확정하지 않고 기존 exact row 경로로 유지하는 수정 검증 중이다. 로그/컴파일 SHA는 `evidence/generation-pruning/first-integration-red/`에 보존했다.
+- 추가 privacy certificate 테스트5 failure는 survivor-only replay가 이전 exact unmasked-domain 증거를 제거해서 발생했다. 최초 재사용안의 protected-position/domain-only 비교는 독립 reviewer BLOCK이었다. 현재는 consumer와 모든 protected source의 canonical PrivacyFact 객체 identity가 같고 masked domain이 정확히 같은 경우에만 동일 certificate 객체를 유지한다. 다른 source/value authority 반례를 추가했다. 재사용으로 pruning 수치를 중복 증가시키지 않는다.
+
+- 최종 pruning 통합: **687 JUnit PASS(132.232초)**, COFEE Python helper17 tests PASS.35 main/58 test compile source hash 일치,4579 frozen class hash 일치. UNKNOWN shape retraction 보존 및 exact privacy certificate identity fix를 포함한다. 일반MRV/Privacy/Source MRV 독립 reviewCLEAR.
+- 새JAR `83d8ea70497341def4981482fb74c909581ca951ff5c2905a40aa5f96b7cae50`로 동일 COFEE50K128 LogReg 검증을 시작한다. 이전 엔진의 미완료 실행은 supersession marker+정상 owned cleanup 후 보존하며 성공 timing으로 계산하지 않는다. Profiling 없이 실제 generation counters와 phase completion을 확인한다.
+
+- Superseded attempt는 `superseded-validation.json`이 있으면 result가 passed로 남아도 성공 timing에서 제외하도록 report helper를 수정했고, 해당 회귀 포함18 Python tests PASS. 이전 engine attempt의 owned container cleanup 성공을 확인한 뒤 새 engine 실행으로 교체한다.
+
+- 수정본 실제 COFEE 시작 성공(campaign w1357-bounded-cb66bb81880742, attempt01791497648443771201-a50c1fad). 이전 run stage lease release는 BrokenPipe로 receipt가 unproven이었으나 exact owned containers cleanup 성공 후 새 normal acquire가 lease 가용성을 입증했다. 다른 lock을 우회/삭제하지 않았다. 실제 seq4에서 MRV11/check36, privacy projection379/protected34/mask checks34, avoided34/generator reject12. OracleMRV cut/source conflict cuts는 아직0이며 성공한 제거로 과장하지 않는다.
+
+- 실제 pruning v1 Analysis완료490.139초(CPU482.001초). 이전 matched-engine관측476.715초 대비+2.8%이며 paired 전체compile성공결과는 아니다. 생성keys27926→27442, facts227285→222582, Clause21979887→20882097(−5.0%), supportleaf4191721→3942161(−6.0%), allocation261498370024→249704432960바이트(−4.51%, peak아님). MRV241/check881/cut0; source descriptor176111/check0/cut0; privacy avoided125/reject12. 적용공백은고쳤으나 조합전개·시간문제해결로 보고하지않는다.
+- 실제 immediateowner가독립인제품은 정적MRV순서로 탐색해 per-prefix owner map/MRVscan을 제거하는 추가경로를 작성했다. Sharedowner경로는기존동적검사를유지한다. 독립reviewCLEAR; targeted test진행중. Cost단일worker증명은별도수정/검증중이며 현재 v1실행에는포함하지않았다.
+
+## 2026-10-09 generation-pruning v2 검증
+
+- 독립 owner 입력은 MRV 순서를 한 번 정해 유지한다. 논리 member 수는 동일하며 공유 owner의 동적 pruning은 유지한다.
+- Cost Model에 bounded singleton-worker certificate를 추가했다. 낮은 수준 exact count의 cycle/ambiguous zero 의미를 바꾸지 않고, 유효 worker 수가 반드시1인 Alternative 질의만 재귀 계산을 생략한다.
+- 독립 검토에서 anchored derived FOUT, non-FOUT WDIVMM W source, compact W witness/axis 불일치 반례를 발견하고 모두 수정·회귀 테스트했다. Factorized 축과 indexed metadata를 직접 검사하며 budget/authority 불확실성은 기존 경로로 fallback한다.
+- 최종 frozen main/test source는35/59개, mismatch0. 통합692 JUnit PASS(143.026초), COFEE helper18 PASS, 별도 reviewer CLEAR. 전체 Maven suite 결과는 아니다.
+- Freeze: `evidence/candidate-engine-generation-pruning-20261009-v2`,4582 class/resource files, manifest SHA `9e1066bf4e77cd22d4d209ff06c24207ba884c68374511fbf993d0e50936722b`. v1 actual evidence와 구분한다.
+- 실제 COFEE는 새 profiling 없이 동일 DML·Y·privacy·자원으로 검증한다. 이전 미완료 v1은 superseded marker와 로그를 보존하며 성공 시간에 포함하지 않는다.
+- 사용자의 병목 질문에는 객체/member 전개 및 경로 재방문을 주된 구조적 문제로 설명했다. 문자열에는 lazy/segmented representation과 identity memo가 이미 있으므로, 문자열만의 실행시간 비중은 근거 없이 단정하지 않았다.
+
+## 2026-10-09 post-v2 metadata 조회 전개 제거
+
+- `NativePlacementContinuity.hasDynamicNativeLayout`은 기존 source/rule/realization 권한 조회를 그대로 유지하고, 최종 support 판정만 저장 표현에 맞게 처리한다. Factorized 공통 witness/exactness와 indexed admitted-row metadata를 읽으며 Clause/handle을 생성하지 않는다.
+- Empty product(0축)의 logical size1, 빈 축 거부, indexed unused metadata 경계를 별도 reviewer가 확인했다. Explicit/factorized/indexed parity, NONE/EXACT/DYNAMIC witness, mixed indexed metadata, 실제10×10×10 product의 Clause 생성0 및 빈 explicit list를 검증했다.
+- 최종 통합695 JUnit PASS(131.025초), diff-check PASS. Freeze `evidence/candidate-engine-generation-pruning-20261009-v3`, manifest SHA `3e32306b7476a176b9305df52143bf82f22700d1689b9075005763a4abf05f9f`.
+- 실제 COFEE는 frozen v2(`w1357-bounded-1979f8d127b04e`, `01791499397504112528-81392061`)로 계속 실행하며 v3로 중간 교체하지 않는다. v3의 실제 workload 성능 효과는 아직 측정하지 않았다.
+- 사용자의 병목 질문에 대한 별도 문서: `docs/FEDPLANNER_BOTTLENECK_EXPLANATION_2026-10-09_KO.md`. Oracle FType 관계와 물리 source/support 관계를 구분하고, 문자열의 별도 시간 비중은 미확인으로 기록했다.
+
+## 2026-10-09 실제 v2 실패와 20초 목표
+
+- Actual v2 COFEE LogReg Analysis460.527664756초; keys27442/facts222582/Clause20882097 등 생성량은 v1과 동일. 누적 allocation249236625608B, coordinator cgroup peak7462850560B, OOM event0.
+- `COST_WORKER_COUNT_PROOF|certified=true|refs=1135|anchors=6522|clauses=38711|bindings=60002`를 확인했다. 이후 cost preflight의 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패해 전체 planning/runtime/numeric 성공은 없다. 소유 container cleanup resolved.
+- Raw symbolic support 검사와 실제 ordinary table freeze 한도 검사를 구분하는 수정 중이다. 기존 strict 후속 solver 한도는 유지되며 감축 후에도 큰 generic 관계는 여전히 실패할 수 있다. 작지만 indexable인 solver factor를 합산 budget에서 빠뜨린 반례도 검출하여 수정한다.
+- 사용자 최신 지시로 주기적인 origin/main 커밋·푸시·병합이 승인됐다. 이전 commit/push 금지 지시는 이 범위에서 대체된다. 최신 fetch 결과 origin/main=`a03365eade3e1553340dc36d23baa57f03ac5000`; 미커밋 작업을 보존해 병합 준비 중이다.
+- 명시적 목표: 동일 COFEE50K×128/W1 LogReg와GLM의 전체 초기 planning각20초이하. `performance-goal` skill 적용, slug `cofee-planning-20s`; native Codex goal active(예산 미지정). 각workload3회 clean runtime, 동일 frozen engine/입력/privacy/DML/seed/profile/JVM/CPU/메모리, numeric/receipt/regression통과를 PASS조건으로 고정했다.
+- Evaluator: `python3 experiments/fed-oracle-native-validation-20261008/evaluate_planning_goal.py --evidence-list .omx/goals/performance/cofee-planning-20s/evidence-list.json`. 최초실행 FAIL(각0/3), OMX fail checkpoint기록. 일반 unit test통과만으로 goal complete를 선언하지 않는다.

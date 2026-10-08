@@ -83,6 +83,29 @@ public class ExactPhysicalSemanticDagFingerprintTest {
 		Assert.assertEquals(0, materializedClauses(changed));
 	}
 
+	@Test
+	public void indexedFingerprintMatchesExplicitBytesWithoutCreatingRowHandles() {
+		CandidateEmissionFact explicitEmission = deepEmission(true, "indexed-proof", "indexed-scope");
+		CandidateEmissionRealization explicit = explicitEmission.realizations().get(0);
+		CandidateEmissionRealization indexed = explicit.withIndexedSupport();
+		CandidateEmissionFact indexedEmission = new CandidateEmissionFact(
+			explicitEmission.emissionState(), explicitEmission.executionFType(),
+			explicitEmission.derivedFoutAction(), List.of(indexed));
+		Assert.assertEquals(0, indexed.fullyMaterializedSupportClauseCount());
+
+		String expected = ExactPhysicalCostModel.physicalCandidateFactsDagFingerprintForTest(
+			List.of(fact("indexed", List.of(explicitEmission))));
+		String actual = ExactPhysicalCostModel.physicalCandidateFactsDagFingerprintForTest(
+			List.of(fact("indexed", List.of(indexedEmission))));
+
+		Assert.assertEquals(expected, actual);
+		Assert.assertEquals("fingerprinting must read indexed row dictionaries directly",
+			0, indexed.fullyMaterializedSupportClauseCount());
+		indexed.supportClauses().get(1);
+		Assert.assertEquals("only an explicitly selected row creates a handle",
+			1, indexed.fullyMaterializedSupportClauseCount());
+	}
+
 	private static CandidateEmissionRealization factorizedFingerprintFixture(int width, String prefix)
 		throws Exception {
 		PlacementEmissionState emission = new PlacementEmissionState(

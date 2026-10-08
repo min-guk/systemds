@@ -81,12 +81,19 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 
 	public static PlacementAnalysis withCandidateFacts(PlacementAnalysis source,
 		org.apache.sysds.parser.DMLProgram programOwner, List<CandidateRuleFact> facts) {
+		return withCandidateFacts(source, programOwner, facts, List.of());
+	}
+
+	public static PlacementAnalysis withCandidateFacts(PlacementAnalysis source,
+		org.apache.sysds.parser.DMLProgram programOwner, List<CandidateRuleFact> facts,
+		List<CandidateRuleRelation> relations) {
 		CONSTRUCTIONS.incrementAndGet();
 		java.util.IdentityHashMap<CompiledHopKey,Boolean> owners = new java.util.IdentityHashMap<>();
 		facts.forEach(fact -> owners.put(fact.key().parentOccurrence(), Boolean.TRUE));
+		relations.forEach(relation -> owners.put(relation.parent(), Boolean.TRUE));
 		return new PlacementAnalysis(source.graph(), source.occurrences(), source.topLevelStatementBlocks(),
-			programOwner, copiedShapeFacts(source, source.occurrences()), source.analysisFingerprint(),
-			source.heuristicPolicyFacts(), facts.stream().map(CandidateRuleFact::key).toList(), facts,
+			programOwner, copiedShapeFacts(source, source.occurrences()), source.heuristicPolicyFacts(),
+			facts.stream().map(CandidateRuleFact::key).toList(), facts,
 			source.candidateRuleDomain().orderedConsumerKeys().stream().filter(key ->
 				owners.containsKey(key.consumerOccurrence())).toList(),
 			source.candidateConsumerProfileFacts().orderedFacts().stream().filter(fact ->
@@ -94,7 +101,10 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 			source.detachedConsumerProfileFacts().orderedFacts().stream().filter(fact ->
 				owners.containsKey(fact.key().producerOccurrence())).toList(),
 			source.compiledInputEdgesInCanonicalOrder(), source.logicalTransientInputsInCanonicalOrder(),
-			source.privacyFactAuthority(), null);
+			source.privacyFactAuthority(), source.candidatePrivacyClosureEvidence().orElse(null),
+			source.logicalInlinedFunctionInputsInCanonicalOrder(), null,
+			source.candidateRuleDomain().privacyPrunedInputs(), source.jointInputAnalysis().orElse(null),
+			List.of(), relations);
 	}
 
 	/** Reorders only the immutable occurrence projection while retaining the exact owner, graph, and policy facts. */

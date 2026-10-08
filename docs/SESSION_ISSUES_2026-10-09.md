@@ -105,3 +105,28 @@
 - **중요한 해석 보정**: 최종 metadata fallback이0이어도 incomplete-only-extra는 LogReg47,346/GLM59,416이다. 해당 집계에는 아직 처리되지 않았거나 이미 pending에 있는 owner, 그리고 touched로 subscription이 무효화된 owner가 포함된다. 따라서 이전98% 비중을 실제 불필요한 재실행의98%라고 해석하면 안 된다. 다음 v12는 required 집합 중 새 pending/이미 pending을 분리한다. 이 계측 없이 fallback 제거율을 총성능 개선율로 주장하지 않는다.
 - **관측된 부분 개선**: v11 LogReg no-delta eligible facts3,750(이전 v9는5,007) 및 no-delta publication968,269(이전1,283,520)이다. 진행지점이 다른 partial snapshots이므로 총속도 개선율이 아니다. GLM canonical collection의 감소도 별도 경로 개선일 뿐20초 완료 증거가 아니다.
 - **게시 범위**: v10+v11 sealed/검증/독립승인된 source/tests만 게시하며, 아직 red-run 전인 v12 DirectedDirectClosureDirtyConeTest 추가는 제외한다. Source hash 대조로 구분했다. Candidate legality/privacy/DP arithmetic/derived authority 규칙 변경은 없다.
+
+## Incoming origin/main 5f9edeeb2f session evidence (retained)
+
+
+## COFEE 50K×128 통합 경로 — 압축 cost preflight와 main 병합 (진행중)
+
+- **목표/승인**: 사용자가 LogReg/GLM 전체 최초 planning 각각 20초 이내까지 계속 구현·검증하고, 검증된 개선을 주기적으로 origin/main에 커밋·푸시하도록 지시했다. 이전 미게시 제한을 이 지시로 갱신한다. 아래 결과는 위의 별도 60초 진단 실행과 구분하며, 새 profiling/JFR 없이 실제 Docker 실행으로 검증한다.
+- **고정 환경**: COFEE 50K×128, W1, X PRIVATE_AGGREGATE, Y PUBLIC, 기존 DML/seed/cost profile; so007 coordinator/so006 worker, CPU0–7, Docker24GiB/JVM16GiB. 입력 전처리·worker 수·privacy를 바꾸지 않는다.
+- **실제 v2 실패**: engine `2bdb182b594eb3e130888cdf01be3d3a2ca834f863c48c6ae7426e68cb523981`에서 Analysis 460.527664756초, coordinator cgroup peak 7,462,850,560B. singleton worker-count certificate는 refs1135/anchors6522/clauses38711/bindings60002를 검사해 통과했다. 이후 cost preflight가 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패했다. process 474.301초는 실패까지의 시간이며 전체 planning 성공 시간으로 사용하지 않는다. numeric/최종 receipt 성공도 없다.
+- **원인/변경**: ordinary 비용 테이블과 solver-only lazy relation을 같은 int Cartesian 배열 크기로 검사했다. 새 구조 검사는 모든 variable/scope/dense 비용을 먼저 검증하되, ordinary table의 크기·합산 budget을 유지하고 solver-only 큰 relation은 기존 unary/support reduction으로 넘긴다. reduction 후에도 int 범위로 줄지 않으면 기존 solver는 계속 실패한다. 무제한 배열 생성이나 후보 제거로 우회하지 않는다.
+- **회귀에서 발견한 문제**: 초기 변경이 indexable solver-only 12cells + ordinary8cells를 합산하지 않았다. 기존 `ExactNativeLocalSourceProjectionTest`의 limit19 실패/20 성공 계약으로 검출하고 고쳤다. 이어 raw functional map의 reduction 전 budget 부과가 unary 축소 순서를 바꾸는 반례를 별도 테스트로 잠갔다. 해당 projection/reduction 테스트를 통합 verify.py 필수 목록에 추가했다.
+- **main 병합**: `a03365eade3e1553340dc36d23baa57f03ac5000`을 fast-forward한 뒤 기존 작업을 복원했다. 사전 patch/tar/SHA 백업과 stash `e8743457c2ba226743ef6e4789d6b0f5d7924f51`은 보존한다. Native/Closure/DirectSourceSeedProjectionTest/전일 이슈 문서 네 충돌을 통합했다. 첫 통합 compile 성공, 906 tests 중1 실패: hidden VALUE_MAP owner footprint를 완전히 추적하는 구현에 upstream의 incomplete-metadata counter=1 기대값이 남아 있었다. owner identity 검사는 유지하고 counter0 계약으로 정정한 뒤 재검증한다.
+- **검증 도구**: COFEE harness/evaluator 전체 Python42 tests PASS. acceptance gate는 동일 frozen engine의 LogReg/GLM 각각3회, 매회 `planningFullInitialNanos ≤ 20,000,000,000`, fresh analysis, numeric comparison/receipt와 regression 성공을 요구한다. failed/incomplete/superseded/diagnostic/cached-analysis 실행은 제외한다. 현재 gate는 FAIL(각0/3)이다.
+- **수정 파일**: ExactCategoricalSolver, ExactPhysicalCostModel, ExactCompressedFactorStructureTest, ExactPhysicalCompressedPreflightTest, verify.py와 evaluator 도구. 최신 main의 proof publication/canonical 최적화는 기존 source/privacy/MRV 변경과 함께 통합한다.
+- **잔여 이슈**: 합법 native support의 leaf별 template→proof→clause 생성과 일부 downstream Cartesian 전개가 남아 있다. 단일 균일 rectangle의 relation-native 경로를 별도 작업공간에서 구현·대조하며, 정확성이 증명되지 않는 sparse/shared-owner/VALUE_MAP/function 경로는 기존 exact 경로를 유지한다. 20초 및 전체 compilation/실행 동등성은 아직 미달/미검증이다.
+- **잠재 회귀/감지**: preflight budget 누락, dense validation보다 먼저 evaluator 실행, source/action/proof 권한 손실, union의 sparse holes 재허용. 기존 pinned regression과 explicit-reference differential 테스트, 동일 Docker 실행으로 검출한다.
+- **의사결정 근거**: runtime/oracle/privacy/cost 의미를 변경하지 않고 중복 계산과 잘못된 선행 materialization 요구만 제거한다.
+
+
+### COFEE 통합 v4 게시 검증 (코드 검증 완료, 실제 20초 목표 진행중)
+
+- main/test compile 성공, **JUnit948 PASS(156.279초)**. `ExactNativeLocalSourceProjectionTest`와 `ExactPhysicalReducedSolverTest`를 포함한다. 컴파일 소스112개와 현재 파일 SHA mismatch0, unmerged0, diff-check PASS. 전체 Maven suite 결과로 확대하지 않는다.
+- Python COFEE/evaluator42 PASS, joint-boundary harness38 PASS. 별도 reviewer가 merged preflight/caller, singleton worker certificate, metadata-native layout/dependency 계약을 CLEAR로 판정했다. 네 병합 파일의 독립 계약 검토도 통과했다.
+- 검증 증거: `/grid/3/cofee-lm-sweep-mchoi-20260914/fed-oracle-native-20261008/merge-backups/origin-main-merge-a03365e-20261008T230334Z/final-merged-green-948`. 초기 실패는 같은 backup의 `first-merged-red-906`에 보존했다. Python 증거는 `evidence/generation-pruning/root-v4-python-validation/validation.json`이다.
+- 동일 source를 frozen engine v4로 패키징한 뒤 실제 LogReg를 실행한다. 이 게시 시점에는 20초 목표가 미달이며, 기존 v2의 실패를 성공으로 대체하지 않는다. 새 relation-native native support 구현은 별도 작업공간에서 진행하며 이 검증본에는 포함하지 않는다.

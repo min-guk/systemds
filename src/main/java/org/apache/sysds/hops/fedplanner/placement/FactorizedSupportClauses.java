@@ -15,7 +15,10 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.RandomAccess;
@@ -33,7 +36,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAncho
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
 
 /**
- * Exact Cartesian support relation with uniform proof and native-pool authority.
+ * Exact grouped-product support relation with uniform proof and native-pool authority.
  *
  * <p>The relation retains the sum of its input alternatives and materializes an
  * individual support clause only when a legacy {@link List} consumer requests it.
@@ -44,6 +47,7 @@ final class FactorizedSupportClauses extends AbstractList<CandidateRealizationSu
 	implements RandomAccess {
 	private final List<PlacementProofKey> proofs;
 	private final List<List<CandidateRealizationInputBinding>> factors;
+	private final List<SupportChoiceGroup> choiceGroups;
 	private final DurableAnchorKey nativeWorkerPoolWitness;
 	private final boolean nativeWorkerPoolLayoutExact;
 	private final int size;
@@ -56,13 +60,15 @@ final class FactorizedSupportClauses extends AbstractList<CandidateRealizationSu
 		DurableAnchorKey nativeWorkerPoolWitness, boolean nativeWorkerPoolLayoutExact) {
 		this.proofs = PlacementAnalysis.sharedCanonicalComparableList(proofs,
 			"factorized realization proof dependency");
-		this.factors = canonicalFactors(factors);
+		CanonicalEncoding encoding = canonicalEncoding(factors);
+		this.factors = encoding.factors();
+		choiceGroups = encoding.choiceGroups();
 		this.nativeWorkerPoolWitness = nativeWorkerPoolWitness;
 		this.nativeWorkerPoolLayoutExact = nativeWorkerPoolLayoutExact;
 		validateWitness();
 		long cardinality = 1;
-		for(List<CandidateRealizationInputBinding> factor : this.factors) {
-			cardinality *= factor.size();
+		for(SupportChoiceGroup group : choiceGroups) {
+			cardinality *= group.choices().size();
 			if(cardinality > Integer.MAX_VALUE)
 				throw new IllegalArgumentException("Factorized support relation exceeds List capacity");
 		}
@@ -141,14 +147,13 @@ final class FactorizedSupportClauses extends AbstractList<CandidateRealizationSu
 		return true;
 	}
 
-	private static List<List<CandidateRealizationInputBinding>> canonicalFactors(
+	private static CanonicalEncoding canonicalEncoding(
 		List<List<CandidateRealizationInputBinding>> inputFactors) {
 		Objects.requireNonNull(inputFactors, "factorized support input factors");
 		if(inputFactors.isEmpty())
-			return List.of();
+			return new CanonicalEncoding(List.of(), List.of());
 		List<List<CandidateRealizationInputBinding>> canonical = new ArrayList<>(inputFactors.size());
 		Set<Integer> positions = new HashSet<>();
-		Set<CompiledHopKey> sourceOwners = new HashSet<>();
 		for(List<CandidateRealizationInputBinding> inputFactor : inputFactors) {
 			List<CandidateRealizationInputBinding> factor = PlacementAnalysis.sharedCanonicalComparableList(
 				Objects.requireNonNull(inputFactor, "factorized support input factor"),
@@ -158,21 +163,115 @@ final class FactorizedSupportClauses extends AbstractList<CandidateRealizationSu
 			int position = factor.get(0).inputPosition();
 			if(!positions.add(position))
 				throw new IllegalArgumentException("Factorized support requires one factor per input position");
-			Set<CompiledHopKey> factorOwners = new HashSet<>();
 			for(CandidateRealizationInputBinding binding : factor) {
 				if(binding.inputPosition() != position)
 					throw new IllegalArgumentException(
 						"One factor cannot mix realization input positions");
-				factorOwners.add(binding.source().rule().parentOccurrence());
 			}
-			for(CompiledHopKey owner : factorOwners)
-				if(!sourceOwners.add(owner))
-					throw new IllegalArgumentException(
-						"Repeated source owner requires an explicit correlated support relation");
 			canonical.add(factor);
 		}
 		canonical.sort((left, right) -> left.get(0).compareTo(right.get(0)));
-		return List.copyOf(canonical);
+		Map<CompiledHopKey,List<Integer>> axesByOwner = new IdentityHashMap<>();
+		for(int axis = 0; axis < canonical.size(); axis++) {
+			Set<CompiledHopKey> owners = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+			for(CandidateRealizationInputBinding binding : canonical.get(axis))
+				owners.add(binding.source().rule().parentOccurrence());
+			for(CompiledHopKey owner : owners)
+				axesByOwner.computeIfAbsent(owner, ignored -> new ArrayList<>()).add(axis);
+		}
+		for(Map.Entry<CompiledHopKey,List<Integer>> entry : axesByOwner.entrySet()) {
+			if(entry.getValue().size() < 2)
+				continue;
+			for(int axis : entry.getValue())
+				for(CandidateRealizationInputBinding binding : canonical.get(axis))
+					if(binding.source().rule().parentOccurrence() != entry.getKey())
+						throw new IllegalArgumentException(
+							"Repeated source owner requires fixed-owner input axes");
+			List<PlacementIdentity.CandidateRealizationSupportKey> common = null;
+			for(int axis : entry.getValue()) {
+				Map<PlacementIdentity.CandidateRealizationSupportKey,
+					CandidateRealizationInputBinding> byKey = new LinkedHashMap<>();
+				for(CandidateRealizationInputBinding binding : canonical.get(axis)) {
+					var key = CandidateSelections.requiredInputSupportIdentity(binding.source());
+					if(byKey.put(key, binding) != null)
+						throw new IllegalArgumentException(
+							"Correlated support axis requires a unique source key per binding");
+				}
+				if(common == null)
+					common = new ArrayList<>(byKey.keySet());
+				else
+					common.removeIf(key -> !byKey.containsKey(key));
+			}
+			if(common == null || common.isEmpty())
+				throw new IllegalArgumentException(
+					"Repeated source owner has no common support choice");
+			Set<PlacementIdentity.CandidateRealizationSupportKey> retained = Set.copyOf(common);
+			for(int axis : entry.getValue())
+				canonical.set(axis, canonical.get(axis).stream().filter(binding -> retained.contains(
+					CandidateSelections.requiredInputSupportIdentity(binding.source()))).toList());
+		}
+		List<List<CandidateRealizationInputBinding>> frozen = List.copyOf(canonical);
+		List<SupportChoiceGroup> groups = new ArrayList<>();
+		Set<CompiledHopKey> groupedOwners = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+		for(int axis = 0; axis < frozen.size(); axis++) {
+			List<CandidateRealizationInputBinding> factor = frozen.get(axis);
+			CompiledHopKey owner = fixedOwner(factor);
+			List<Integer> correlatedAxes = owner == null ? List.of()
+				: axesByOwner.getOrDefault(owner, List.of());
+			if(correlatedAxes.size() > 1) {
+				if(!groupedOwners.add(owner))
+					continue;
+				groups.add(correlatedGroup(correlatedAxes, frozen));
+			}
+			else {
+				List<List<CandidateRealizationInputBinding>> choices = factor.stream()
+					.map(List::of).toList();
+				groups.add(new SupportChoiceGroup(List.of(axis), choices));
+			}
+		}
+		groups.sort(java.util.Comparator.comparingInt(group -> group.axes().get(0)));
+		return new CanonicalEncoding(frozen, List.copyOf(groups));
+	}
+
+	private static CompiledHopKey fixedOwner(List<CandidateRealizationInputBinding> factor) {
+		CompiledHopKey owner = factor.get(0).source().rule().parentOccurrence();
+		for(CandidateRealizationInputBinding binding : factor)
+			if(binding.source().rule().parentOccurrence() != owner)
+				return null;
+		return owner;
+	}
+
+	private static SupportChoiceGroup correlatedGroup(List<Integer> axes,
+		List<List<CandidateRealizationInputBinding>> factors) {
+		List<Map<PlacementIdentity.CandidateRealizationSupportKey,
+			CandidateRealizationInputBinding>> indexed = new ArrayList<>();
+		for(int axis : axes) {
+			Map<PlacementIdentity.CandidateRealizationSupportKey,
+				CandidateRealizationInputBinding> byKey = new LinkedHashMap<>();
+			for(CandidateRealizationInputBinding binding : factors.get(axis))
+				byKey.put(CandidateSelections.requiredInputSupportIdentity(binding.source()), binding);
+			indexed.add(byKey);
+		}
+		List<List<CandidateRealizationInputBinding>> choices = new ArrayList<>();
+		for(var key : indexed.get(0).keySet()) {
+			List<CandidateRealizationInputBinding> bindings = new ArrayList<>(axes.size());
+			for(Map<PlacementIdentity.CandidateRealizationSupportKey,
+				CandidateRealizationInputBinding> byKey : indexed)
+				bindings.add(byKey.get(key));
+			choices.add(List.copyOf(bindings));
+		}
+		return new SupportChoiceGroup(List.copyOf(axes), List.copyOf(choices));
+	}
+
+	private record CanonicalEncoding(List<List<CandidateRealizationInputBinding>> factors,
+		List<SupportChoiceGroup> choiceGroups) { }
+
+	static record SupportChoiceGroup(List<Integer> axes,
+		List<List<CandidateRealizationInputBinding>> choices) {
+		SupportChoiceGroup {
+			axes = List.copyOf(axes);
+			choices = choices.stream().map(List::copyOf).toList();
+		}
 	}
 
 	private void validateWitness() {
@@ -236,13 +335,13 @@ final class FactorizedSupportClauses extends AbstractList<CandidateRealizationSu
 			|| clause.inputBindings().size() != factors.size())
 			return -1;
 		int ordinal = 0;
-		for(int factorIndex = 0; factorIndex < factors.size(); factorIndex++) {
-			CandidateRealizationInputBinding binding = clause.inputBindings().get(factorIndex);
-			List<CandidateRealizationInputBinding> factor = factors.get(factorIndex);
-			int option = factor.indexOf(binding);
+		for(SupportChoiceGroup group : choiceGroups) {
+			List<CandidateRealizationInputBinding> selected = group.axes().stream()
+				.map(axis -> clause.inputBindings().get(axis)).toList();
+			int option = group.choices().indexOf(selected);
 			if(option < 0)
 				return -1;
-			ordinal = ordinal * factor.size() + option;
+			ordinal = ordinal * group.choices().size() + option;
 		}
 		return ordinal;
 	}
@@ -382,10 +481,13 @@ final class FactorizedSupportClauses extends AbstractList<CandidateRealizationSu
 		int remainder = index;
 		CandidateRealizationInputBinding[] selected =
 			new CandidateRealizationInputBinding[factors.size()];
-		for(int factorIndex = factors.size() - 1; factorIndex >= 0; factorIndex--) {
-			List<CandidateRealizationInputBinding> factor = factors.get(factorIndex);
-			selected[factorIndex] = factor.get(remainder % factor.size());
-			remainder /= factor.size();
+		for(int groupIndex = choiceGroups.size() - 1; groupIndex >= 0; groupIndex--) {
+			SupportChoiceGroup group = choiceGroups.get(groupIndex);
+			List<CandidateRealizationInputBinding> choice =
+				group.choices().get(remainder % group.choices().size());
+			for(int offset = 0; offset < group.axes().size(); offset++)
+				selected[group.axes().get(offset)] = choice.get(offset);
+			remainder /= group.choices().size();
 		}
 		return List.of(selected);
 	}
@@ -394,27 +496,25 @@ final class FactorizedSupportClauses extends AbstractList<CandidateRealizationSu
 		if(bindings.size() != factors.size())
 			return -1;
 		int ordinal = 0;
-		for(int axis = 0; axis < factors.size(); axis++) {
-			int option = factors.get(axis).indexOf(bindings.get(axis));
+		for(SupportChoiceGroup group : choiceGroups) {
+			List<CandidateRealizationInputBinding> selected = group.axes().stream()
+				.map(bindings::get).toList();
+			int option = group.choices().indexOf(selected);
 			if(option < 0)
 				return -1;
-			ordinal = ordinal * factors.get(axis).size() + option;
+			ordinal = ordinal * group.choices().size() + option;
 		}
 		return ordinal;
 	}
 
 	Optional<IndependentSupportProduct> independentRelocationProduct() {
 		List<IndependentSupportAxis> axes = new ArrayList<>(factors.size());
-		Set<CompiledHopKey> owners = java.util.Collections.newSetFromMap(
-			new java.util.IdentityHashMap<>());
 		for(List<CandidateRealizationInputBinding> factor : factors) {
 			CandidateRealizationInputBinding first = factor.get(0);
 			if(first.kind() != PlacementIdentity.CandidateInputBindingKind.RELOCATION
 				&& first.kind() != PlacementIdentity.CandidateInputBindingKind.DIRECT)
 				return Optional.empty();
 			CompiledHopKey owner = first.source().rule().parentOccurrence();
-			if(!owners.add(owner))
-				return Optional.empty();
 			PlacementIdentity.DurableAnchorKey directAnchor =
 				first.kind() == PlacementIdentity.CandidateInputBindingKind.DIRECT
 					&& first.source().realization().layoutKind()
@@ -470,19 +570,22 @@ final class FactorizedSupportClauses extends AbstractList<CandidateRealizationSu
 		int tupleWeights = geometricPowers(31, size).sum();
 		int bindingsWeightedHash = pow31(factors.size()) * tupleWeights;
 		int suffixCardinality = size;
-		for(int factorIndex = 0; factorIndex < factors.size(); factorIndex++) {
-			List<CandidateRealizationInputBinding> factor = factors.get(factorIndex);
-			suffixCardinality /= factor.size();
-			int prefixCardinality = size / (factor.size() * suffixCardinality);
+		for(SupportChoiceGroup group : choiceGroups) {
+			suffixCardinality /= group.choices().size();
+			int prefixCardinality = size / (group.choices().size() * suffixCardinality);
 			int prefixWeights = geometricPowers(
-				pow31(factor.size() * suffixCardinality), prefixCardinality).sum();
+				pow31(group.choices().size() * suffixCardinality), prefixCardinality).sum();
 			int optionWeights = 0;
-			for(int option = 0; option < factor.size(); option++)
-				optionWeights += factor.get(option).hashCode()
-					* pow31((factor.size() - 1 - option) * suffixCardinality);
+			for(int option = 0; option < group.choices().size(); option++) {
+				int choiceHash = 0;
+				for(int offset = 0; offset < group.axes().size(); offset++)
+					choiceHash += group.choices().get(option).get(offset).hashCode()
+						* pow31(factors.size() - 1 - group.axes().get(offset));
+				optionWeights += choiceHash
+					* pow31((group.choices().size() - 1 - option) * suffixCardinality);
+			}
 			int tailWeights = geometricPowers(31, suffixCardinality).sum();
-			bindingsWeightedHash += pow31(factors.size() - 1 - factorIndex)
-				* prefixWeights * optionWeights * tailWeights;
+			bindingsWeightedHash += prefixWeights * optionWeights * tailWeights;
 		}
 		int witnessHash = nativeWorkerPoolWitness == null ? 0 : nativeWorkerPoolWitness.hashCode();
 		int clauseConstant = proofs.hashCode() * pow31(3)
@@ -523,12 +626,13 @@ final class FactorizedSupportClauses extends AbstractList<CandidateRealizationSu
 
 	List<PlacementProofKey> proofs() { return proofs; }
 	List<List<CandidateRealizationInputBinding>> factors() { return factors; }
+	List<SupportChoiceGroup> choiceGroups() { return choiceGroups; }
 	DurableAnchorKey nativeWorkerPoolWitness() { return nativeWorkerPoolWitness; }
 	boolean nativeWorkerPoolLayoutExact() { return nativeWorkerPoolLayoutExact; }
 	int retainedFactorOptionCount() {
 		int count = 0;
-		for(List<CandidateRealizationInputBinding> factor : factors)
-			count += factor.size();
+		for(SupportChoiceGroup group : choiceGroups)
+			count += group.choices().size();
 		return count;
 	}
 	int materializedClauseCount() {

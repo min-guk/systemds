@@ -98,6 +98,27 @@ public class CertifiedCostPruningWorkTest {
 	}
 
 	@Test
+	public void globalConditionalHardSupportRetainsCertifiedSuffixPruning() {
+		var x = variable("global-conditional-x", 3);
+		List<ExactCategoricalSolver.Variable> variables = List.of(x);
+		var hard = ExactCategoricalSolver.Factor.conditionalSupport(variables, 0,
+			new int[] {2}, List.of());
+		var compiled = compile(variables, List.of(hard,
+			factor(x, 3d, 4d, 100d), factor(x, 7d, 9d, 100d)), List.of(x.key()));
+		GlobalRun legacy = solve(compiled, null, null,
+			ExactCategoricalSolver.CostPruningMode.LEGACY);
+		GlobalRun suffix = solve(compiled, null, null,
+			ExactCategoricalSolver.CostPruningMode.SUFFIX);
+
+		assertRunParity(legacy, suffix);
+		Assert.assertEquals(10d, suffix.result().objective(), 0d);
+		Assert.assertEquals(List.of(0), suffix.result().assignmentInVariableOrder());
+		assertSuffixReduction(legacy.counters(), suffix.counters());
+		Assert.assertEquals("only the monetary tables are inspected for bounds", 6L,
+			suffix.counters().boundCellsExamined());
+	}
+
+	@Test
 	public void globalSparseHardJoinUsesTheSameCertifiedSuffixCut() {
 		var x = variable("global-sparse-x", 4);
 		var boundary = variable("global-sparse-boundary", 20);

@@ -286,7 +286,34 @@ public final class SearchSpaceMetrics {
 		supportReverseIncidences += work.reverseIncidences();
 		supportQueueVisits += work.queueVisits();
 	}
+	private long candidateRuleKeysCreated;
+	private long candidateRuleFactsCreated;
+	private long explicitSupportClausesCreated;
+	private long indexedSupportHandlesCreated;
+	void recordCandidateRuleKeyCreated() { candidateRuleKeysCreated++; }
+	void recordCandidateRuleFactCreated() { candidateRuleFactsCreated++; }
+	void recordSupportClauseCreated(boolean indexed) {
+		if(indexed) indexedSupportHandlesCreated++;
+		else explicitSupportClausesCreated++;
+	}
+	/** Constructor calls while this analysis collector is active, including temporary objects. */
+	public record ObjectCreationSnapshot(long candidateRuleKeys, long candidateRuleFacts,
+		long explicitSupportClauses, long indexedSupportHandles) { }
+	public ObjectCreationSnapshot objectCreationSnapshot() {
+		return new ObjectCreationSnapshot(candidateRuleKeysCreated, candidateRuleFactsCreated,
+			explicitSupportClausesCreated, indexedSupportHandlesCreated);
+	}
 	private long candidateOracleCalls;
+	private long candidateEarlyFeasibilityApplications;
+	private long candidateEarlyFeasibilityChecks;
+	private long candidateEarlyFeasibilityCuts;
+	private long generationPrivacyLookups;
+	private long generationPrivacyProjectionLookups;
+	private long generationPrivacyProtectedLookups;
+	private long privacyInputMaskChecks;
+	private long supportMrvProducts;
+	private long supportSourceChecks;
+	private long supportSourceOptionsRemoved;
 	private long executionRelations;
 	private long executionRegions;
 	private long executionRelationOracleCalls;
@@ -299,6 +326,41 @@ public final class SearchSpaceMetrics {
 	private java.math.BigInteger privacyGeneratorCombinationsRejected = java.math.BigInteger.ZERO;
 
 	void recordCandidateOracleCall() { candidateOracleCalls++; }
+	void recordCandidateOracleCalls(long count) {
+		if(count < 0)
+			throw new IllegalArgumentException("Negative Oracle evaluation count");
+		candidateOracleCalls += count;
+	}
+	void recordCandidateEarlyFeasibilityApplication() { candidateEarlyFeasibilityApplications++; }
+	void recordCandidateEarlyFeasibilityCheck(boolean infeasible) {
+		candidateEarlyFeasibilityChecks++;
+		if(infeasible)
+			candidateEarlyFeasibilityCuts++;
+	}
+	void recordGenerationPrivacyLookup(boolean projectionAvailable, boolean hasProtectedInputs) {
+		generationPrivacyLookups++;
+		if(projectionAvailable)
+			generationPrivacyProjectionLookups++;
+		if(hasProtectedInputs)
+			generationPrivacyProtectedLookups++;
+	}
+	void recordPrivacyInputMaskCheck() { privacyInputMaskChecks++; }
+	void recordSupportMrvProduct() { supportMrvProducts++; }
+	void recordSupportSourceCheck(boolean removed) {
+		supportSourceChecks++;
+		if(removed)
+			supportSourceOptionsRemoved++;
+	}
+	public record GenerationPruningCoverage(long earlyFeasibilityApplications,
+		long earlyFeasibilityChecks, long earlyFeasibilityCuts, long privacyLookups,
+		long privacyProjectionLookups, long privacyProtectedLookups, long privacyInputMaskChecks,
+		long supportMrvProducts, long supportSourceChecks, long supportSourceOptionsRemoved) { }
+	public GenerationPruningCoverage generationPruningCoverage() {
+		return new GenerationPruningCoverage(candidateEarlyFeasibilityApplications,
+			candidateEarlyFeasibilityChecks, candidateEarlyFeasibilityCuts, generationPrivacyLookups,
+			generationPrivacyProjectionLookups, generationPrivacyProtectedLookups, privacyInputMaskChecks,
+			supportMrvProducts, supportSourceChecks, supportSourceOptionsRemoved);
+	}
 	void recordExecutionRelation(int regions, int evaluations) {
 		if(regions < 0 || evaluations < 0)
 			throw new IllegalArgumentException("Negative execution relation metrics");
@@ -433,7 +495,12 @@ public final class SearchSpaceMetrics {
 		candidateRouteOverflow = 0;
 		Arrays.fill(directWork, 0);
 		factorizedRelocationProducts = factorizedRelocationLogicalLeaves = explicitRelocationLeaves = 0;
+		candidateRuleKeysCreated = candidateRuleFactsCreated = 0;
+		explicitSupportClausesCreated = indexedSupportHandlesCreated = 0;
 		candidateOracleCalls = preparedProfileQueries = preparedProfileHits = 0;
+		candidateEarlyFeasibilityApplications = candidateEarlyFeasibilityChecks = candidateEarlyFeasibilityCuts = 0;
+		generationPrivacyLookups = generationPrivacyProjectionLookups = generationPrivacyProtectedLookups = 0;
+		privacyInputMaskChecks = supportMrvProducts = supportSourceChecks = supportSourceOptionsRemoved = 0;
 		executionRelations = executionRegions = executionRelationOracleCalls = 0;
 		executionRegionTuples = java.math.BigInteger.ZERO;
 		privacyEmissionsSuppressed = privacyMaskedDomains = 0;
@@ -612,7 +679,11 @@ public final class SearchSpaceMetrics {
 			+ "|memoHits=" + memoHits + "|memoMisses=" + memoMisses
 			+ "|profileQueries=" + preparedProfileQueries + "|profileHits=" + preparedProfileHits
 			+ "|supportPrefixes=" + supportPrefixes + "|supportLeaves=" + supportLeaves
+			+ "|supportConflictPrefixes=" + supportConflictPrefixes
 			+ "|relocationPrefixes=" + relocationPrefixes + "|relocationLeaves=" + relocationLeaves
+			+ "|relocationConflictPrefixes=" + relocationConflictPrefixes
+			+ "|privacyAvoidedTuples=" + privacyAvoidedTuples
+			+ "|privacyGeneratorCombinationsRejected=" + privacyGeneratorCombinationsRejected
 			+ "|serializations=" + signatureSerializations + "|serializedChars=" + signatureSerializedChars
 			+ "|sorts=" + canonicalSortCalls + "|sortElements=" + canonicalSortElements
 			+ "|comparisons=" + canonicalComparisons);
@@ -621,6 +692,8 @@ public final class SearchSpaceMetrics {
 		System.err.println("SEARCH_SPACE_COUNTERS|seq=" + sequence + "|" + snapshot());
 		System.err.println("SEARCH_SPACE_EXECUTION_RELATIONS|seq=" + sequence
 			+ "|" + executionRelationSnapshot());
+		System.err.println("SEARCH_SPACE_GENERATION_PRUNING|seq=" + sequence
+			+ "|" + generationPruningCoverage());
 		System.err.println("SEARCH_SPACE_CANDIDATE_CONSTRUCTION|seq=" + sequence
 			+ "|" + candidateConstructionSnapshot());
 		System.err.println("SEARCH_SPACE_DIRECT_WORK|seq=" + sequence + "|" + directBindingSnapshot());

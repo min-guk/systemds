@@ -3,8 +3,10 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedExact;
 
 import java.util.List;
 
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.junit.Assert;
 import org.junit.Test;
+import org.mockito.Mockito;
 
 public class AutomaticSupplySharingDockerProbeArgumentsTest {
 	@Test
@@ -45,5 +47,21 @@ public class AutomaticSupplySharingDockerProbeArgumentsTest {
 		Assert.assertThrows(IllegalArgumentException.class,
 			() -> AutomaticSupplySharingDockerProbe.dmlArguments(new String[] {
 				"script.dml", "config.xml", "result.json", "MODEL_OUTPUT=x"}));
+	}
+
+	@Test
+	public void commitProofIndexRequiresExactResultIdentityAndReceiptHash() {
+		var index = new AutomaticSupplySharingDockerProbe.ExactCommitIndex<String>();
+		NormalizedPlannerResult committed = Mockito.mock(NormalizedPlannerResult.class);
+		NormalizedPlannerResult unrelated = Mockito.mock(NormalizedPlannerResult.class);
+		index.record(committed, "plan-a", "proof-a");
+
+		Assert.assertEquals("proof-a", index.require(committed, "plan-a"));
+		Assert.assertThrows(IllegalStateException.class,
+			() -> index.require(unrelated, "plan-a"));
+		Assert.assertThrows(IllegalStateException.class,
+			() -> index.require(committed, "stale-plan"));
+		Assert.assertThrows(IllegalStateException.class,
+			() -> index.record(committed, "plan-a", "replacement-proof"));
 	}
 }
