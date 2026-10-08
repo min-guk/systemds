@@ -16,6 +16,10 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -23,8 +27,10 @@ import java.util.Set;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
@@ -129,6 +135,159 @@ public class MaterializedContinuityTest {
 				.proveCandidate(valid.output(), valid.outputPool()));
 		Assert.assertNull("fresh authority without the owner certificate is the reference result",
 			valid.freshWithdrawn().proveCandidate(valid.output(), valid.outputPool()));
+	}
+
+	@Test
+	public void derivedActionMetadataFootprintIncludesExactAnchorOwnerColdAndWarm() {
+		for(Fixture fixture : List.of(fixture(true, true, false),
+			nativeBoundaryFixture(NativeOwnerMode.EXACT_ACTUAL_TO_FORMAL))) {
+			CompiledHopKey producer = fixture.output().rule().parentOccurrence();
+			for(int invocation = 0; invocation < 2; invocation++) {
+				Set<CompiledHopKey> footprint = identitySet(producer);
+				Assert.assertTrue("certified anchor authority has a complete exact read inventory",
+					fixture.continuity().expandValueMapMetadataDependencies(footprint));
+				Assert.assertTrue("derived materialization must subscribe to its exact anchor owner",
+					containsIdentity(footprint, fixture.authorityOwner()));
+				Assert.assertNotNull("second expansion must cover a warm positive proof cache",
+					fixture.continuity().proveCandidate(fixture.output(), fixture.outputPool()));
+			}
+		}
+	}
+
+	@Test
+	public void derivedActionProofReceiptIncludesExactAnchorOwnerColdAndWarm() {
+		for(Fixture fixture : List.of(fixture(true, true, false),
+			nativeBoundaryFixture(NativeOwnerMode.EXACT_ACTUAL_TO_FORMAL))) {
+			NativePlacementContinuity.CandidateSupportResult cold = fixture.continuity()
+				.proveCandidateSupport(fixture.output(), fixture.outputPool());
+			NativePlacementContinuity.CandidateSupportResult warm = fixture.continuity()
+				.proveCandidateSupport(fixture.output(), fixture.outputPool());
+			Assert.assertFalse(cold.proofs().isEmpty());
+			Assert.assertFalse(warm.proofs().isEmpty());
+			Assert.assertTrue(containsIdentity(cold.dependencyOccurrences(), fixture.authorityOwner()));
+			Assert.assertTrue(containsIdentity(warm.dependencyOccurrences(), fixture.authorityOwner()));
+			assertIdentitySetEquals(cold.dependencyOccurrences(), warm.dependencyOccurrences());
+		}
+	}
+
+	@Test
+	public void rejectedDerivedActionProofReceiptIncludesAnchorColdAndWarm() {
+		for(Fixture fixture : List.of(fixture(true, false, false),
+			nativeBoundaryFixture(NativeOwnerMode.WRONG_POOL),
+			nativeBoundaryFixture(NativeOwnerMode.LOCAL_ONLY))) {
+			NativePlacementContinuity.CandidateSupportResult cold = fixture.continuity()
+				.proveCandidateSupport(fixture.output(), fixture.outputPool());
+			NativePlacementContinuity.CandidateSupportResult warm = fixture.continuity()
+				.proveCandidateSupport(fixture.output(), fixture.outputPool());
+			Assert.assertTrue(cold.proofs().isEmpty());
+			Assert.assertTrue(warm.proofs().isEmpty());
+			Assert.assertTrue(containsIdentity(cold.dependencyOccurrences(), fixture.authorityOwner()));
+			Assert.assertTrue(containsIdentity(warm.dependencyOccurrences(), fixture.authorityOwner()));
+			assertIdentitySetEquals(cold.dependencyOccurrences(), warm.dependencyOccurrences());
+		}
+	}
+
+	@Test
+	public void anchorOnlyWithdrawalAndRestorationPreserveExactProofReceipt() {
+		Fixture valid = nativeBoundaryFixture(NativeOwnerMode.EXACT_ACTUAL_TO_FORMAL);
+		NativePlacementContinuity.CandidateSupportResult warm = valid.continuity()
+			.proveCandidateSupport(valid.output(), valid.outputPool());
+		Assert.assertFalse(warm.proofs().isEmpty());
+		Assert.assertTrue(containsIdentity(warm.dependencyOccurrences(), valid.authorityOwner()));
+
+		NativePlacementContinuity withdrawn = valid.continuity().nextRevisionWithCompleteCandidateDelta(
+			valid.withdrawnFacts(), identitySet(valid.authorityOwner()));
+		NativePlacementContinuity.CandidateSupportResult rejected = withdrawn
+			.proveCandidateSupport(valid.output(), valid.outputPool());
+		NativePlacementContinuity.CandidateSupportResult freshRejected = valid.freshWithdrawn()
+			.proveCandidateSupport(valid.output(), valid.outputPool());
+		Assert.assertTrue(rejected.proofs().isEmpty());
+		Assert.assertEquals(freshRejected.proofs(), rejected.proofs());
+		Assert.assertTrue(containsIdentity(rejected.dependencyOccurrences(), valid.authorityOwner()));
+		assertIdentitySetEquals(freshRejected.dependencyOccurrences(), rejected.dependencyOccurrences());
+
+		NativePlacementContinuity restored = withdrawn.nextRevisionWithCompleteCandidateDelta(
+			valid.activeFacts(), identitySet(valid.authorityOwner()));
+		NativePlacementContinuity.CandidateSupportResult restoredSupport = restored
+			.proveCandidateSupport(valid.output(), valid.outputPool());
+		NativePlacementContinuity.CandidateSupportResult freshRestored = valid.continuity()
+			.proveCandidateSupport(valid.output(), valid.outputPool());
+		Assert.assertFalse(restoredSupport.proofs().isEmpty());
+		Assert.assertEquals(freshRestored.proofs(), restoredSupport.proofs());
+		Assert.assertTrue(containsIdentity(restoredSupport.dependencyOccurrences(), valid.authorityOwner()));
+		assertIdentitySetEquals(freshRestored.dependencyOccurrences(), restoredSupport.dependencyOccurrences());
+	}
+
+	@Test
+	public void deepConsumerProofReceiptIncludesHiddenDerivedAnchorColdAndWarm() {
+		Fixture fixture = deepConsumerFixture();
+		NativePlacementContinuity.CandidateSupportResult cold = fixture.continuity()
+			.proveCandidateSupport(fixture.output(), fixture.outputPool());
+		NativePlacementContinuity.CandidateSupportResult warm = fixture.continuity()
+			.proveCandidateSupport(fixture.output(), fixture.outputPool());
+		Assert.assertFalse(cold.proofs().isEmpty());
+		Assert.assertFalse(warm.proofs().isEmpty());
+		Assert.assertTrue(containsIdentity(cold.dependencyOccurrences(), fixture.authorityOwner()));
+		Assert.assertTrue(containsIdentity(warm.dependencyOccurrences(), fixture.authorityOwner()));
+		assertIdentitySetEquals(cold.dependencyOccurrences(), warm.dependencyOccurrences());
+	}
+
+	@Test
+	public void derivedActionFootprintStaysCompleteAcrossNegativeAuthorityAndWithdrawal() {
+		for(NativeOwnerMode mode : List.of(NativeOwnerMode.WRONG_POOL, NativeOwnerMode.LOCAL_ONLY)) {
+			Fixture fixture = nativeBoundaryFixture(mode);
+			Set<CompiledHopKey> footprint = identitySet(
+				fixture.output().rule().parentOccurrence());
+			Assert.assertTrue(mode.name(),
+				fixture.continuity().expandValueMapMetadataDependencies(footprint));
+			Assert.assertTrue(mode.name(), containsIdentity(footprint, fixture.authorityOwner()));
+			Assert.assertNull("footprint completeness must not grant materialization legality",
+				fixture.continuity().proveCandidate(fixture.output(), fixture.outputPool()));
+		}
+
+		Fixture valid = nativeBoundaryFixture(NativeOwnerMode.EXACT_ACTUAL_TO_FORMAL);
+		Assert.assertNotNull("withdrawal revision must start from a warm certified proof",
+			valid.continuity().proveCandidate(valid.output(), valid.outputPool()));
+		NativePlacementContinuity withdrawn = valid.continuity().nextRevision(valid.withdrawnFacts());
+		Set<CompiledHopKey> revisedFootprint = identitySet(
+			valid.output().rule().parentOccurrence());
+		Assert.assertTrue(withdrawn.expandValueMapMetadataDependencies(revisedFootprint));
+		Assert.assertTrue(containsIdentity(revisedFootprint, valid.authorityOwner()));
+		Assert.assertNull(withdrawn.proveCandidate(valid.output(), valid.outputPool()));
+		Set<CompiledHopKey> freshFootprint = identitySet(
+			valid.output().rule().parentOccurrence());
+		Assert.assertTrue(valid.freshWithdrawn()
+			.expandValueMapMetadataDependencies(freshFootprint));
+		Assert.assertTrue(containsIdentity(freshFootprint, valid.authorityOwner()));
+		assertIdentitySetEquals(freshFootprint, revisedFootprint);
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	public void anchorOnlyChangeInvalidatesItsSubscribedMaterializationConsumer() throws Exception {
+		Fixture fixture = fixture(true, true, false);
+		CompiledHopKey consumer = fixture.output().rule().parentOccurrence();
+		Set<CompiledHopKey> footprint = identitySet(consumer);
+		Assert.assertTrue(fixture.continuity().expandValueMapMetadataDependencies(footprint));
+
+		Class<?> subscriptionsType = Class.forName(
+			PlacementRelationClosure.class.getName() + "$DirectQuerySubscriptions");
+		Constructor<?> constructor = subscriptionsType.getDeclaredConstructor();
+		constructor.setAccessible(true);
+		Object subscriptions = constructor.newInstance();
+		Method replace = subscriptionsType.getDeclaredMethod(
+			"replace", Set.class, Map.class, Set.class);
+		replace.setAccessible(true);
+		replace.invoke(subscriptions, identitySet(consumer), Map.of(consumer, footprint), Set.of());
+		Method required = PlacementRelationClosure.class.getDeclaredMethod(
+			"requiredDirectClosureOccurrences", Set.class, Map.class, Map.class, Map.class,
+			Map.class, subscriptionsType);
+		required.setAccessible(true);
+		Set<CompiledHopKey> invalidated = (Set<CompiledHopKey>)required.invoke(null,
+			identitySet(fixture.authorityOwner()), Map.of(), Map.of(), Map.of(), Map.of(),
+			subscriptions);
+		Assert.assertTrue("an anchor-only revision must requeue the subscribed upload consumer",
+			containsIdentity(invalidated, consumer));
 	}
 
 	private enum NativeOwnerMode {
@@ -270,7 +429,7 @@ public class MaterializedContinuityTest {
 			nodes, hops, withdrawnFacts, List.of(), Map.of());
 		return new Fixture(continuity, producerFact, uploadEmission,
 			CandidateRealizationReference.of(producerRule, uploadEmission.realizations().get(0)), expected,
-			withdrawnFacts, freshWithdrawn, formal);
+			List.copyOf(facts), withdrawnFacts, freshWithdrawn, formal);
 	}
 
 	private static Fixture fixture(boolean includeAction, boolean includeLocalSource,
@@ -331,7 +490,74 @@ public class MaterializedContinuityTest {
 		CandidateRealizationReference output = CandidateRealizationReference.of(
 			producerRule, uploadEmission.realizations().get(0));
 		return new Fixture(continuity, producerFact, uploadEmission, output, outputPool,
-			List.of(), null, null);
+			List.of(producerFact, anchorFact), List.of(), null, anchorOwner);
+	}
+
+	private static Fixture deepConsumerFixture() {
+		ControlRegionKey region = new ControlRegionKey(
+			"materialized-continuity", "main", List.of("main/deep/0"), "main", "compiled");
+		CompiledHopKey producer = key(region, "producer");
+		CompiledHopKey anchorOwner = key(region, "anchor");
+		CompiledHopKey consumer = key(region, "consumer");
+		PlacementState local = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
+		PlacementState upload = new PlacementState(ExecType.CP, FederatedOutput.FOUT, FType.ROW, false);
+		PlacementState resident = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
+		DurableAnchorKey outputPool = pool("deep-output", "worker-a:1234", "worker-b:1234");
+		CandidateRuleKey producerRule = new CandidateRuleKey(producer, List.of());
+		ValueVersionKey producerVersion = version(region, "producer", 0);
+		DerivedFoutMaterializationActionKey action = new DerivedFoutMaterializationActionKey(
+			producer, producerVersion, producerRule, local, upload, outputPool, anchorOwner,
+			FType.ROW, FType.ROW, region.normalizedSignature());
+		PlacementEmissionState localState = new PlacementEmissionState(local, false);
+		PlacementEmissionState uploadState = new PlacementEmissionState(upload, false);
+		CandidateEmissionFact localEmission = new CandidateEmissionFact(
+			localState, null, null, List.of(CandidateEmissionRealization.local(localState)));
+		CandidateEmissionFact uploadEmission = new CandidateEmissionFact(uploadState, null, action,
+			List.of(CandidateEmissionRealization.durable(uploadState, outputPool,
+				List.of(new PlacementProofKey(PlacementProofKind.DURABLE_ANCHOR, producer,
+					"derived-fout:" + action.normalizedSignature())), List.of())));
+		CandidateRuleFact producerFact = fact(producerRule, ExecType.CP, FederatedOutput.FOUT,
+			FType.ROW, List.of(), List.of(localEmission, uploadEmission));
+		CandidateRealizationReference producerOutput = CandidateRealizationReference.of(
+			producerRule, uploadEmission.realizations().get(0));
+
+		PlacementEmissionState residentState = new PlacementEmissionState(resident, false);
+		CandidateRuleKey anchorRule = new CandidateRuleKey(anchorOwner, List.of());
+		CandidateRuleFact anchorFact = fact(anchorRule, ExecType.FED, FederatedOutput.FOUT,
+			FType.ROW, List.of(FType.ROW), List.of(new CandidateEmissionFact(
+				residentState, FType.ROW, null, List.of(CandidateEmissionRealization.durable(
+					residentState, outputPool, List.of(), List.of())))));
+
+		CandidateRuleKey consumerRule = new CandidateRuleKey(consumer,
+			List.of(CandidateInputState.present(FType.ROW)));
+		CandidateEmissionRealization consumerRealization = CandidateEmissionRealization.nativeLineage(
+			residentState, "deep-derived-consumer", List.of(),
+			List.of(CandidateRealizationInputBinding.direct(0, producerOutput)));
+		CandidateRuleFact consumerFact = fact(consumerRule, ExecType.FED, FederatedOutput.FOUT,
+			FType.ROW, List.of(FType.ROW), List.of(new CandidateEmissionFact(
+				residentState, FType.ROW, null, List.of(consumerRealization))));
+
+		DataOp producerHop = data("deep-producer", OpOpData.TRANSIENTREAD);
+		DataOp anchorHop = data("deep-anchor", OpOpData.FEDERATED);
+		UnaryOp consumerHop = new UnaryOp("deep-consumer", DataType.MATRIX, ValueType.FP64,
+			OpOp1.LOG, producerHop);
+		Map<CompiledHopKey,Node> nodes = new IdentityHashMap<>();
+		nodes.put(producer, new Node(producer, NodeKind.OPERATION, producerVersion, true,
+			List.of(local, upload), List.of(), List.of()));
+		nodes.put(anchorOwner, new Node(anchorOwner, NodeKind.OPERATION,
+			version(region, "anchor", 1), true, List.of(resident), List.of(), List.of(outputPool)));
+		nodes.put(consumer, new Node(consumer, NodeKind.OPERATION,
+			version(region, "consumer", 2), true, List.of(resident), List.of(), List.of()));
+		Map<CompiledHopKey,org.apache.sysds.hops.Hop> hops = new IdentityHashMap<>();
+		hops.put(producer, producerHop);
+		hops.put(anchorOwner, anchorHop);
+		hops.put(consumer, consumerHop);
+		List<CandidateRuleFact> facts = List.of(producerFact, anchorFact, consumerFact);
+		NativePlacementContinuity continuity = new NativePlacementContinuity(nodes, hops, facts,
+			List.of(new PlacementAnalysis.CompiledInputEdgeFact(producer, consumer, 0)), Map.of());
+		return new Fixture(continuity, producerFact, uploadEmission,
+			CandidateRealizationReference.of(consumerRule, consumerRealization), outputPool,
+			facts, List.of(), null, anchorOwner);
 	}
 
 	private static CandidateRuleFact fact(CandidateRuleKey rule, ExecType exec,
@@ -375,9 +601,27 @@ public class MaterializedContinuityTest {
 			new AnchorPartition(second, List.of(4L, 0L), List.of(8L, 2L))));
 	}
 
+	private static Set<CompiledHopKey> identitySet(CompiledHopKey... owners) {
+		Set<CompiledHopKey> result = Collections.newSetFromMap(new IdentityHashMap<>());
+		Collections.addAll(result, owners);
+		return result;
+	}
+
+	private static boolean containsIdentity(Set<CompiledHopKey> owners, CompiledHopKey target) {
+		return owners.stream().anyMatch(owner -> owner == target);
+	}
+
+	private static void assertIdentitySetEquals(Set<CompiledHopKey> expected,
+		Set<CompiledHopKey> actual) {
+		Assert.assertEquals(expected.size(), actual.size());
+		for(CompiledHopKey owner : expected)
+			Assert.assertTrue(actual.stream().anyMatch(candidate -> candidate == owner));
+	}
+
 	private record Fixture(NativePlacementContinuity continuity,
 		CandidateRuleFact producerFact, CandidateEmissionFact uploadEmission,
 		CandidateRealizationReference output, DurableAnchorKey outputPool,
-		List<CandidateRuleFact> withdrawnFacts, NativePlacementContinuity freshWithdrawn,
+		List<CandidateRuleFact> activeFacts, List<CandidateRuleFact> withdrawnFacts,
+		NativePlacementContinuity freshWithdrawn,
 		CompiledHopKey authorityOwner) { }
 }

@@ -4978,16 +4978,10 @@ final class PlacementRelationClosure {
 				continue;
 			DirectSupportUpdate supportUpdate = supportIndex.update(changed, merged);
 			pending.addAll(requiredDirectClosureOccurrences(changed, potential, support,
-				supportUpdate.removed(), aliases, querySubscriptions, complexityMetrics));
-			if(supportUpdate.changed()) {
-				// Preserve unsettled members when added OR removed edges change SCCs.
-				for(var component : dirty)
-					if(component.owners().stream().anyMatch(pending::contains))
-						pending.addAll(component.owners());
-				if(supportUpdate.dependencyUnionChanged())
-					components = directComponentSchedule(
-						owners, potential, support, aliasEdges, directComponentSchedules);
-			}
+				supportUpdate.removed(), aliases, querySubscriptions, complexityMetrics, pending));
+			if(prepareDirectComponentRebuild(supportUpdate, dirty, pending))
+				components = directComponentSchedule(
+					owners, potential, support, aliasEdges, directComponentSchedules);
 			facts = List.copyOf(merged);
 			index.sources().nextRevision(facts, changed);
 			// This private loop keeps the complete structural context, shapes and privacy
@@ -4998,6 +4992,21 @@ final class PlacementRelationClosure {
 		if(!pending.isEmpty())
 			throw new IllegalStateException("Direct component relation did not converge");
 		return new DirectClosureResult(facts, continuity);
+	}
+
+	/** Preserve unsettled owners before replacing the dependency component schedule. */
+	private static boolean prepareDirectComponentRebuild(DirectSupportUpdate update,
+		Set<PlacementDependencyComponents.Component> dirty, Set<CompiledHopKey> pending) {
+		// Support pairs already covered by the fixed potential graph cannot change
+		// SCC membership or order. Required invalidations are already pending;
+		// readyDirectOwners also includes every member without a complete receipt.
+		// Requeue settled members only when added/removed edges change the union.
+		if(!update.dependencyUnionChanged())
+			return false;
+		for(var component : dirty)
+			if(component.owners().stream().anyMatch(pending::contains))
+				pending.addAll(component.owners());
+		return true;
 	}
 
 	/** Work completed in a wave that committed no candidate-fact row delta. */
@@ -5031,6 +5040,18 @@ final class PlacementRelationClosure {
 		Map<CompiledHopKey,Set<CompiledHopKey>> removedSupport,
 		Map<CompiledHopKey,List<CompiledHopKey>> aliases,
 		DirectQuerySubscriptions querySubscriptions, SearchSpaceMetrics metrics) {
+		return requiredDirectClosureOccurrences(changed, potential, support, removedSupport,
+			aliases, querySubscriptions, metrics, null);
+	}
+
+	private static Set<CompiledHopKey> requiredDirectClosureOccurrences(
+		Set<CompiledHopKey> changed,
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential,
+		Map<CompiledHopKey,Set<CompiledHopKey>> support,
+		Map<CompiledHopKey,Set<CompiledHopKey>> removedSupport,
+		Map<CompiledHopKey,List<CompiledHopKey>> aliases,
+		DirectQuerySubscriptions querySubscriptions, SearchSpaceMetrics metrics,
+		Set<CompiledHopKey> pending) {
 		Set<CompiledHopKey> affected = Collections.newSetFromMap(new IdentityHashMap<>());
 		Set<CompiledHopKey> required = Collections.newSetFromMap(new IdentityHashMap<>());
 		required.addAll(changed);
@@ -5076,14 +5097,31 @@ final class PlacementRelationClosure {
 				if(addedOnlyByIncompleteFallback && metrics != null)
 					metrics.recordDirectWork(
 						DirectWork.INVALIDATION_INCOMPLETE_ONLY_EXTRA_OWNERS);
+				if(addedOnlyByIncompleteFallback && metrics != null && pending != null
+					&& !pending.contains(owner))
+					metrics.recordDirectWork(
+						DirectWork.INVALIDATION_INCOMPLETE_ONLY_NEW_PENDING_OWNERS);
 			}
 		if(metrics != null) {
 			long uniqueExtraOwners = 0;
+			long newPendingOwners = 0;
+			long alreadyPendingOwners = 0;
 			for(CompiledHopKey owner : required)
 				if(!changed.contains(owner))
 					uniqueExtraOwners++;
+			for(CompiledHopKey owner : required)
+				if(pending != null) {
+					if(pending.contains(owner))
+						alreadyPendingOwners++;
+					else
+						newPendingOwners++;
+				}
 			metrics.recordDirectWork(
 				DirectWork.INVALIDATION_UNIQUE_EXTRA_OWNERS, uniqueExtraOwners);
+			metrics.recordDirectWork(
+				DirectWork.INVALIDATION_NEW_PENDING_OWNERS, newPendingOwners);
+			metrics.recordDirectWork(
+				DirectWork.INVALIDATION_ALREADY_PENDING_OWNERS, alreadyPendingOwners);
 		}
 		return required;
 	}
@@ -5696,6 +5734,8 @@ final class PlacementRelationClosure {
 						CompiledHopKey sourceKey = input.sourceKey();
 						Node source = sourceKey == null ? null : nodesByKey.get(sourceKey);
 						if(source != null) {
+							// Empty and cached seed queries also read this exact source owner.
+							factDependencies.add(sourceKey);
 							seeds.addAll(sourceSeeds.seeds(sourceKey, input.fType()));
 							factDependencies.addAll(
 								sourceSeeds.dependencyOccurrences(sourceKey, input.fType()));
@@ -5757,10 +5797,7 @@ final class PlacementRelationClosure {
 								if(complexityMetrics != null)
 									complexityMetrics.recordDirectWork(
 										DirectWork.INCOMPLETE_PROOF_METADATA_INCIDENCES);
-								if(incompleteDependencyOccurrences.add(factOccurrence)
-									&& complexityMetrics != null)
-									complexityMetrics.recordDirectWork(
-										DirectWork.INCOMPLETE_UNIQUE_OWNERS);
+								incompleteDependencyOccurrences.add(factOccurrence);
 							}
 							List<DirectInputBinding> requiredInputs = ruleBinding.requiredInputs();
 							if(requiredInputs == null)
@@ -5914,20 +5951,47 @@ final class PlacementRelationClosure {
 				fact.capability(), fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
 		}
 		Map<CompiledHopKey,Set<CompiledHopKey>> immutableDependencies = new IdentityHashMap<>();
-		dependencyOccurrences.forEach((owner, dependencies) -> {
-			Set<CompiledHopKey> immutable = Collections.newSetFromMap(new IdentityHashMap<>());
-			immutable.addAll(dependencies);
-			immutableDependencies.put(owner, Collections.unmodifiableSet(immutable));
-		});
+		SearchSpaceMetrics.PhaseToken metadataStarted = complexityMetrics == null ? null
+			: complexityMetrics.startPhase(SearchSpaceMetrics.Phase.DIRECT_METADATA_DEPENDENCIES);
+		try {
+			// Multiple facts may share an owner. Certify only after unioning every
+			// proof receipt and seed-source read, including negative results.
+			dependencyOccurrences.forEach((owner, dependencies) -> {
+				int originalSize = dependencies.size();
+				boolean complete = continuity.expandValueMapMetadataDependencies(dependencies);
+				if(complete)
+					incompleteDependencyOccurrences.remove(owner);
+				else
+					incompleteDependencyOccurrences.add(owner);
+				if(complexityMetrics != null) {
+					complexityMetrics.recordDirectWork(complete
+						? DirectWork.METADATA_FOOTPRINT_CERTIFIED_OWNERS
+						: DirectWork.METADATA_FOOTPRINT_FALLBACK_OWNERS);
+					complexityMetrics.recordDirectWork(DirectWork.METADATA_FOOTPRINT_OWNERS_ADDED,
+						dependencies.size() - originalSize);
+				}
+				Set<CompiledHopKey> immutable = Collections.newSetFromMap(new IdentityHashMap<>());
+				immutable.addAll(dependencies);
+				immutableDependencies.put(owner, Collections.unmodifiableSet(immutable));
+			});
+			if(complexityMetrics != null)
+				complexityMetrics.recordDirectWork(DirectWork.INCOMPLETE_UNIQUE_OWNERS,
+					incompleteDependencyOccurrences.size());
+		}
+		finally {
+			if(complexityMetrics != null)
+				complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.DIRECT_METADATA_DEPENDENCIES,
+					metadataStarted);
+		}
 		return new DirectBindingResult(List.copyOf(rebound),
 			Collections.unmodifiableMap(immutableDependencies),
 			Collections.unmodifiableSet(incompleteDependencyOccurrences));
 	}
 
 	/**
-	 * Derived FOUT action authority is still outside the native proof-state receipt.
-	 * VALUE_MAP grounding publishes its exact owner reads separately; only rows that
-	 * touch the remaining incomplete metadata owners stay on the ordinary cone.
+	 * Native proof receipts and source-seed projections include exact VALUE_MAP reads.
+	 * The final conservative metadata closure also records derived-anchor owner reads;
+	 * ambiguous identities retain fallback without changing materialization legality.
 	 */
 	private static boolean readsIncompleteDirectMetadata(Set<CompiledHopKey> dependencies,
 		Set<CompiledHopKey> metadataSensitiveOwners) {
