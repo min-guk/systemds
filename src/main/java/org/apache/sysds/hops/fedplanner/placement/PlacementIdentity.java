@@ -473,6 +473,7 @@ public final class PlacementIdentity {
 		private final PlacementProofKind kind;
 		private final CompiledHopKey owner;
 		private final String authoritySignature;
+		private final NativeContinuityDescriptor nativeContinuityDescriptor;
 		private final int hash;
 
 		public PlacementProofKey(PlacementProofKind kind, CompiledHopKey owner,
@@ -480,14 +481,17 @@ public final class PlacementIdentity {
 			this.kind = Objects.requireNonNull(kind, "kind");
 			this.owner = owner;
 			this.authoritySignature = requireText(authoritySignature, "authoritySignature");
+			nativeContinuityDescriptor = null;
 			hash = proofHash(kind, owner, this.authoritySignature.hashCode());
 		}
 
 		private PlacementProofKey(PlacementProofKind kind, CompiledHopKey owner,
-			String authoritySignature, int authorityHash) {
+			String authoritySignature, int authorityHash,
+			NativeContinuityDescriptor nativeContinuityDescriptor) {
 			this.kind = Objects.requireNonNull(kind, "kind");
 			this.owner = owner;
 			this.authoritySignature = requireText(authoritySignature, "authoritySignature");
+			this.nativeContinuityDescriptor = nativeContinuityDescriptor;
 			hash = proofHash(kind, owner, authorityHash);
 		}
 
@@ -496,7 +500,46 @@ public final class PlacementIdentity {
 			Objects.requireNonNull(kind, "kind");
 			Objects.requireNonNull(authority, "authoritySignature");
 			int authorityHash = authority.hashCode();
-			return new PlacementProofKey(kind, owner, authority.materialize(), authorityHash);
+			return new PlacementProofKey(kind, owner, authority.materialize(), authorityHash, null);
+		}
+
+		static PlacementProofKey fromNativeContinuity(CompiledHopKey owner,
+			NativePlacementContinuity.NativeContinuityProof proof) {
+			Objects.requireNonNull(proof, "proof");
+			int authorityHash = proof.normalizedSignatureHash();
+			String authority = proof.normalizedSignature();
+			return new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY, owner,
+				authority, authorityHash, new NativeContinuityDescriptor(proof.externalSeed(),
+					proof.outputWorkerPoolWitness(), proof.exactPartitionRanges(),
+					proof.immediateBindings()));
+		}
+
+		boolean hasNativeContinuityDescriptor() { return nativeContinuityDescriptor != null; }
+		int nativeContinuityStructuralHash() { return nativeContinuityDescriptor.hashCode(); }
+		List<CandidateRealizationInputBinding> nativeContinuityImmediateBindings() {
+			return nativeContinuityDescriptor.immediateBindings();
+		}
+		boolean matchesNativeContinuityDescriptor(
+			NativePlacementContinuity.NativeContinuityProof proof) {
+			return nativeContinuityDescriptor != null
+				&& nativeContinuityDescriptor.externalSeed().equals(proof.externalSeed())
+				&& nativeContinuityDescriptor.outputWorkerPoolWitness()
+					.equals(proof.outputWorkerPoolWitness())
+				&& nativeContinuityDescriptor.exactPartitionRanges()
+					== proof.exactPartitionRanges()
+				&& nativeContinuityDescriptor.immediateBindings()
+					.equals(proof.immediateBindings());
+		}
+
+		private record NativeContinuityDescriptor(DurableAnchorKey externalSeed,
+			DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
+			List<CandidateRealizationInputBinding> immediateBindings) {
+			private NativeContinuityDescriptor {
+				Objects.requireNonNull(externalSeed, "externalSeed");
+				Objects.requireNonNull(outputWorkerPoolWitness, "outputWorkerPoolWitness");
+				immediateBindings = PlacementAnalysis.sharedAlreadyCanonicalComparableList(
+					immediateBindings, "native continuity descriptor binding");
+			}
 		}
 
 		private static int proofHash(PlacementProofKind kind, CompiledHopKey owner,

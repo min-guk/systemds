@@ -55,6 +55,9 @@ import org.apache.sysds.parser.WhileStatementBlock;
  */
 public final class PlacementJointInputAnalysis {
 	private static final int MAX_ENVIRONMENTS = 16_384;
+	private static final int MAX_ENVIRONMENT_COMPARISONS = 4_096;
+	private static final int MAX_INTERNED_AXES = 4_096;
+	private static final int MAX_INTERNED_DEFINITIONS = 65_536;
 	public static final class ResourceLimitException extends IllegalStateException {
 		private static final long serialVersionUID = 1L;
 		ResourceLimitException(String message) { super(message); }
@@ -160,6 +163,172 @@ public final class PlacementJointInputAnalysis {
 		}
 	}
 
+	/** Persistent balanced canonical text for one immutable sorted definition map. */
+	private static final class CanonicalDefinitionMap<K extends Comparable<? super K>> {
+		private static final class Node<K> {
+			private final K key;
+			private final PlacementAnalysis.NormalizedText entryText;
+			private final Node<K> left;
+			private final Node<K> right;
+			private final int height;
+			private final PlacementAnalysis.NormalizedText text;
+
+			private Node(K key, PlacementAnalysis.NormalizedText entryText, Node<K> left, Node<K> right) {
+				this.key = key;
+				this.entryText = entryText;
+				this.left = left;
+				this.right = right;
+				height = 1 + Math.max(height(left), height(right));
+				PlacementAnalysis.NormalizedTextBuilder builder = new PlacementAnalysis.NormalizedTextBuilder();
+				if(left != null)
+					builder.append(left.text).append(";");
+				builder.append(entryText);
+				if(right != null)
+					builder.append(";").append(right.text);
+				text = builder.build();
+			}
+		}
+
+		private final Node<K> root;
+		private final String mappingSeparator;
+
+		private CanonicalDefinitionMap(Node<K> root, String mappingSeparator) {
+			this.root = root;
+			this.mappingSeparator = mappingSeparator;
+		}
+
+		private static <K extends Comparable<? super K>> CanonicalDefinitionMap<K> from(
+			Map<K,Definition> values, String mappingSeparator,
+			Function<Definition,String> definitionKey) {
+			List<Map.Entry<K,Definition>> entries = new ArrayList<>(values.entrySet());
+			return new CanonicalDefinitionMap<>(build(entries, 0, entries.size(), mappingSeparator,
+				definitionKey), mappingSeparator);
+		}
+
+		private CanonicalDefinitionMap<K> with(K key, Definition definition,
+			Function<Definition,String> definitionKey) {
+			return new CanonicalDefinitionMap<>(put(root, key,
+				entryText(key, definition, mappingSeparator, definitionKey)), mappingSeparator);
+		}
+
+		private PlacementAnalysis.NormalizedText text() {
+			return root == null ? Environment.EMPTY_TEXT : root.text;
+		}
+
+		private static <K extends Comparable<? super K>> Node<K> build(
+			List<Map.Entry<K,Definition>> entries, int from, int to, String mappingSeparator,
+			Function<Definition,String> definitionKey) {
+			if(from == to)
+				return null;
+			int middle = (from + to) >>> 1;
+			Map.Entry<K,Definition> entry = entries.get(middle);
+			return new Node<>(entry.getKey(),
+				entryText(entry.getKey(), entry.getValue(), mappingSeparator, definitionKey),
+				build(entries, from, middle, mappingSeparator, definitionKey),
+				build(entries, middle + 1, to, mappingSeparator, definitionKey));
+		}
+
+		private static <K extends Comparable<? super K>> Node<K> put(Node<K> node, K key,
+			PlacementAnalysis.NormalizedText entryText) {
+			if(node == null)
+				return new Node<>(key, entryText, null, null);
+			int order = key.compareTo(node.key);
+			Node<K> updated = order < 0
+				? new Node<>(node.key, node.entryText, put(node.left, key, entryText), node.right)
+				: order > 0
+					? new Node<>(node.key, node.entryText, node.left, put(node.right, key, entryText))
+					: new Node<>(key, entryText, node.left, node.right);
+			return balance(updated);
+		}
+
+		private static <K> Node<K> balance(Node<K> node) {
+			int balance = height(node.left) - height(node.right);
+			if(balance > 1) {
+				Node<K> left = node.left;
+				if(height(left.left) < height(left.right))
+					left = rotateLeft(left);
+				return rotateRight(new Node<>(node.key, node.entryText, left, node.right));
+			}
+			if(balance < -1) {
+				Node<K> right = node.right;
+				if(height(right.right) < height(right.left))
+					right = rotateRight(right);
+				return rotateLeft(new Node<>(node.key, node.entryText, node.left, right));
+			}
+			return node;
+		}
+
+		private static <K> Node<K> rotateLeft(Node<K> node) {
+			Node<K> right = node.right;
+			Node<K> moved = new Node<>(node.key, node.entryText, node.left, right.left);
+			return new Node<>(right.key, right.entryText, moved, right.right);
+		}
+
+		private static <K> Node<K> rotateRight(Node<K> node) {
+			Node<K> left = node.left;
+			Node<K> moved = new Node<>(node.key, node.entryText, left.right, node.right);
+			return new Node<>(left.key, left.entryText, left.left, moved);
+		}
+
+		private static int height(Node<?> node) {
+			return node == null ? 0 : node.height;
+		}
+
+		private static <K> PlacementAnalysis.NormalizedText entryText(K key, Definition definition,
+			String mappingSeparator, Function<Definition,String> definitionKey) {
+			return new PlacementAnalysis.NormalizedTextBuilder().append(key.toString())
+				.append(mappingSeparator).append(definitionKey.apply(definition)).build();
+		}
+	}
+
+	/** Exact analysis-local interning; hashes only route to Map.equals, which proves reuse. */
+	private static final class CanonicalAxisPool {
+		private final Map<Map<String,Definition>,CanonicalDefinitionMap<String>> values =
+			new java.util.HashMap<>();
+		private final Map<Map<Integer,Definition>,CanonicalDefinitionMap<Integer>> reads =
+			new java.util.HashMap<>();
+		private int retainedAxes;
+		private int retainedDefinitions;
+
+		private CanonicalDefinitionMap<String> values(Map<String,Definition> key,
+			CanonicalDefinitionMap<String> candidate) {
+			CanonicalDefinitionMap<String> retained = values.get(key);
+			if(retained != null)
+				return retained;
+			if(canRetain(key.size())) {
+				values.put(key, candidate);
+				retainedAxes++;
+				retainedDefinitions += key.size();
+			}
+			return candidate;
+		}
+
+		private CanonicalDefinitionMap<Integer> reads(Map<Integer,Definition> key,
+			CanonicalDefinitionMap<Integer> candidate) {
+			CanonicalDefinitionMap<Integer> retained = reads.get(key);
+			if(retained != null)
+				return retained;
+			if(canRetain(key.size())) {
+				reads.put(key, candidate);
+				retainedAxes++;
+				retainedDefinitions += key.size();
+			}
+			return candidate;
+		}
+
+		private boolean canRetain(int definitions) {
+			return retainedAxes < MAX_INTERNED_AXES
+				&& definitions <= MAX_INTERNED_DEFINITIONS - retainedDefinitions;
+		}
+
+		private void clear() {
+			values.clear();
+			reads.clear();
+			retainedAxes = 0;
+			retainedDefinitions = 0;
+		}
+	}
+
 	private static final class Environment implements Comparable<Environment> {
 		private static final int ORDERING_PREFIX_LENGTH = 96;
 		private static final PlacementAnalysis.NormalizedText EMPTY_TEXT =
@@ -167,6 +336,9 @@ public final class PlacementJointInputAnalysis {
 		private final Map<String,Definition> values;
 		private final Map<Integer,Definition> readSources;
 		private final Function<Definition,String> definitionKey;
+		private final CanonicalAxisPool axisPool;
+		private final CanonicalDefinitionMap<String> valuesAxis;
+		private final CanonicalDefinitionMap<Integer> readSourcesAxis;
 		private final PlacementAnalysis.NormalizedText valuesText;
 		private final PlacementAnalysis.NormalizedText readSourcesText;
 		private final PlacementAnalysis.NormalizedText orderingText;
@@ -179,19 +351,29 @@ public final class PlacementJointInputAnalysis {
 		}
 		Environment(Map<String,Definition> values, Map<Integer,Definition> readSources,
 			Function<Definition,String> definitionKey) {
-			this(values, readSources, definitionKey, false, null, null);
+			this(values, readSources, definitionKey, null, false, null, null);
+		}
+		Environment(Map<String,Definition> values, Map<Integer,Definition> readSources,
+			CanonicalAxisPool axisPool) {
+			this(values, readSources, Definition::stableKey, axisPool, false, null, null);
 		}
 		private Environment(Map<String,Definition> values, Map<Integer,Definition> readSources,
-			Function<Definition,String> definitionKey, boolean trustedImmutable,
-			PlacementAnalysis.NormalizedText retainedValuesText,
-			PlacementAnalysis.NormalizedText retainedReadSourcesText) {
+			Function<Definition,String> definitionKey, CanonicalAxisPool axisPool,
+			boolean trustedImmutable, CanonicalDefinitionMap<String> retainedValuesAxis,
+			CanonicalDefinitionMap<Integer> retainedReadSourcesAxis) {
 			this.values = trustedImmutable ? values : immutableSortedCopy(values);
 			this.readSources = trustedImmutable ? readSources : immutableSortedCopy(readSources);
 			this.definitionKey = definitionKey;
-			valuesText = retainedValuesText == null
-				? valuesText(this.values, definitionKey) : retainedValuesText;
-			readSourcesText = retainedReadSourcesText == null
-				? readSourcesText(this.readSources, definitionKey) : retainedReadSourcesText;
+			this.axisPool = axisPool;
+			CanonicalDefinitionMap<String> nextValuesAxis = retainedValuesAxis == null
+				? CanonicalDefinitionMap.from(this.values, "=", definitionKey) : retainedValuesAxis;
+			CanonicalDefinitionMap<Integer> nextReadSourcesAxis = retainedReadSourcesAxis == null
+				? CanonicalDefinitionMap.from(this.readSources, "=>", definitionKey) : retainedReadSourcesAxis;
+			valuesAxis = axisPool == null ? nextValuesAxis : axisPool.values(this.values, nextValuesAxis);
+			readSourcesAxis = axisPool == null ? nextReadSourcesAxis
+				: axisPool.reads(this.readSources, nextReadSourcesAxis);
+			valuesText = valuesAxis.text();
+			readSourcesText = readSourcesAxis.text();
 			orderingText = new PlacementAnalysis.NormalizedTextBuilder()
 				.append(valuesText).append("|reads=").append(readSourcesText).build();
 			orderingPrefix = orderingPrefix(this.values, this.readSources, definitionKey);
@@ -204,24 +386,28 @@ public final class PlacementJointInputAnalysis {
 				return this;
 			Map<String,Definition> copy = new TreeMap<>(values);
 			copy.put(variable, definition);
-			return new Environment(Collections.unmodifiableMap(copy), readSources, definitionKey,
-				true, null, readSourcesText);
+			return new Environment(Collections.unmodifiableMap(copy), readSources, definitionKey, axisPool,
+				true, valuesAxis.with(variable, definition, definitionKey), readSourcesAxis);
 		}
 		Environment observe(int readOrdinal, Definition definition) {
 			if(Objects.equals(readSources.get(readOrdinal), definition))
 				return this;
 			Map<Integer,Definition> copy = new TreeMap<>(readSources);
 			copy.put(readOrdinal, definition);
-			return new Environment(values, Collections.unmodifiableMap(copy), definitionKey,
-				true, valuesText, null);
+			return new Environment(values, Collections.unmodifiableMap(copy), definitionKey, axisPool,
+				true, valuesAxis, readSourcesAxis.with(readOrdinal, definition, definitionKey));
 		}
 		Environment nextBlock() {
 			return readSources.isEmpty() ? this
-				: new Environment(values, Map.of(), definitionKey, true, valuesText, EMPTY_TEXT);
+				: new Environment(values, Map.of(), definitionKey, axisPool, true, valuesAxis,
+					CanonicalDefinitionMap.from(Map.<Integer,Definition>of(), "=>", definitionKey));
 		}
 		@Override public int compareTo(Environment that) {
 			if(this == that)
 				return 0;
+			if(valuesText == that.valuesText)
+				return readSourcesText == that.readSourcesText ? 0
+					: readSourcesText.compareTo(that.readSourcesText);
 			int prefixOrder = orderingPrefix.compareTo(that.orderingPrefix);
 			if(prefixOrder != 0)
 				return prefixOrder;
@@ -234,6 +420,9 @@ public final class PlacementJointInputAnalysis {
 			Comparator<PlacementAnalysis.NormalizedText> canonicalOrder) {
 			if(this == that)
 				return 0;
+			if(valuesText == that.valuesText)
+				return readSourcesText == that.readSourcesText ? 0
+					: canonicalOrder.compare(readSourcesText, that.readSourcesText);
 			int prefixOrder = orderingPrefix.compareTo(that.orderingPrefix);
 			if(prefixOrder != 0)
 				return prefixOrder;
@@ -258,37 +447,6 @@ public final class PlacementJointInputAnalysis {
 
 		@Override public int hashCode() {
 			return hashCode;
-		}
-
-		private static PlacementAnalysis.NormalizedText valuesText(Map<String,Definition> values,
-			Function<Definition,String> definitionKey) {
-			if(values.isEmpty())
-				return EMPTY_TEXT;
-			PlacementAnalysis.NormalizedTextBuilder key = new PlacementAnalysis.NormalizedTextBuilder();
-			boolean first = true;
-			for(Map.Entry<String,Definition> entry : values.entrySet()) {
-				if(!first)
-					key.append(";");
-				key.append(entry.getKey()).append("=").append(definitionKey.apply(entry.getValue()));
-				first = false;
-			}
-			return key.build();
-		}
-
-		private static PlacementAnalysis.NormalizedText readSourcesText(
-			Map<Integer,Definition> readSources, Function<Definition,String> definitionKey) {
-			if(readSources.isEmpty())
-				return EMPTY_TEXT;
-			PlacementAnalysis.NormalizedTextBuilder key = new PlacementAnalysis.NormalizedTextBuilder();
-			boolean firstRead = true;
-			for(Map.Entry<Integer,Definition> entry : readSources.entrySet()) {
-				if(!firstRead)
-					key.append(";");
-				key.append(entry.getKey().toString()).append("=>")
-					.append(definitionKey.apply(entry.getValue()));
-				firstRead = false;
-			}
-			return key.build();
 		}
 
 		private static String orderingPrefix(Map<String,Definition> values,
@@ -375,10 +533,13 @@ public final class PlacementJointInputAnalysis {
 	private final Map<List<Integer>,List<JointTuple>> tupleCache = new java.util.HashMap<>();
 	private final Map<String,Definition[]> occurrenceDefinitionCache = new java.util.HashMap<>();
 	private final Map<Set<String>,Set<String>> expandedTrackedSlices = new java.util.HashMap<>();
+	private final CanonicalAxisPool canonicalAxisPool = new CanonicalAxisPool();
 	private final Comparator<PlacementAnalysis.NormalizedText> normalizedTextOrder =
 		PlacementAnalysis.normalizedTextComparator();
-	private final Comparator<Environment> environmentOrder = (left, right) -> left == right ? 0
-		: left.compareCanonical(right, normalizedTextOrder);
+	private final IdentityHashMap<Environment,IdentityHashMap<Environment,Integer>> environmentComparisonMemo =
+		new IdentityHashMap<>();
+	private final Comparator<Environment> environmentOrder = this::compareEnvironments;
+	private int environmentComparisonMemoEntries;
 	private Set<String> trackedVariables = Set.of();
 	private AnalysisSlice recentSlice;
 	private Map<Set<String>,List<List<Integer>>> consumerReadsBySlice;
@@ -580,6 +741,8 @@ public final class PlacementJointInputAnalysis {
 	}
 
 	private AnalysisSlice analyzeFor(Set<String> tracked) {
+		clearEnvironmentComparisonMemo();
+		canonicalAxisPool.clear();
 		observationsByRead.clear();
 		activeFunctions.clear();
 		invocationExitMemo.clear();
@@ -589,7 +752,7 @@ public final class PlacementJointInputAnalysis {
 		analysisPassCount++;
 		try {
 			executeSequence(program.getStatementBlocks(),
-				Set.of(new Environment(Map.of(), Map.of())), "main");
+				Set.of(new Environment(Map.of(), Map.of(), canonicalAxisPool)), "main");
 			Map<Integer,List<Map<Integer,Definition>>> compact = new TreeMap<>();
 			for(Map.Entry<Integer,Set<Observation>> entry : observationsByRead.entrySet()) {
 				Set<Map<Integer,Definition>> snapshots = new LinkedHashSet<>();
@@ -600,6 +763,8 @@ public final class PlacementJointInputAnalysis {
 			return new AnalysisSlice(tracked, Collections.unmodifiableMap(compact));
 		}
 		finally {
+			clearEnvironmentComparisonMemo();
+			canonicalAxisPool.clear();
 			observationsByRead.clear();
 			activeFunctions.clear();
 			invocationExitMemo.clear();
@@ -772,7 +937,7 @@ public final class PlacementJointInputAnalysis {
 
 	private Environment bindArguments(int callOrdinal, FunctionOp call, List<String> formalInputs,
 		Environment caller, String context) {
-		Environment callee = new Environment(Map.of(), Map.of());
+		Environment callee = new Environment(Map.of(), Map.of(), canonicalAxisPool);
 		for(int position = 0; position < formalInputs.size() && position < call.getInput().size(); position++) {
 			Hop actual = call.getInput(position);
 			Definition source;
@@ -853,6 +1018,31 @@ public final class PlacementJointInputAnalysis {
 		TreeSet<Environment> result = mutableOrderedCopy(orderedLeft);
 		result.addAll(orderedRight);
 		return freezeOwned(result);
+	}
+
+	private int compareEnvironments(Environment left, Environment right) {
+		if(left == right)
+			return 0;
+		IdentityHashMap<Environment,Integer> forward = environmentComparisonMemo.get(left);
+		Integer cached = forward == null ? null : forward.get(right);
+		if(cached != null)
+			return cached;
+		IdentityHashMap<Environment,Integer> reverse = environmentComparisonMemo.get(right);
+		cached = reverse == null ? null : reverse.get(left);
+		if(cached != null)
+			return -cached;
+		int order = Integer.signum(left.compareCanonical(right, normalizedTextOrder));
+		if(environmentComparisonMemoEntries == MAX_ENVIRONMENT_COMPARISONS)
+			clearEnvironmentComparisonMemo();
+		environmentComparisonMemo.computeIfAbsent(left, ignored -> new IdentityHashMap<>())
+			.put(right, order);
+		environmentComparisonMemoEntries++;
+		return order;
+	}
+
+	private void clearEnvironmentComparisonMemo() {
+		environmentComparisonMemo.clear();
+		environmentComparisonMemoEntries = 0;
 	}
 
 	private Set<Environment> ordered(Set<Environment> values) {

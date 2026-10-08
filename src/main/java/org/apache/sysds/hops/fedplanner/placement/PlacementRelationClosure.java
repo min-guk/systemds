@@ -313,7 +313,7 @@ final class PlacementRelationClosure {
 		@Override
 		public boolean equals(Object other) {
 			return this == other || other instanceof DirectNativePublicationKey that
-				&& proof == that.proof && owner == that.owner
+				&& sameTemplateProof(that.proof) && owner == that.owner
 				&& emissionState.equals(that.emissionState)
 				&& Objects.equals(outputAnchor, that.outputAnchor)
 				&& nativeLineage.equals(that.nativeLineage)
@@ -322,12 +322,24 @@ final class PlacementRelationClosure {
 		}
 		@Override
 		public int hashCode() {
-			int hash = 31 * System.identityHashCode(proof) + System.identityHashCode(owner);
+			int proofHash = proof.immediateBindings().isEmpty() ? System.identityHashCode(proof)
+				: proof.hashCode();
+			int hash = 31 * proofHash + System.identityHashCode(owner);
 			hash = 31 * hash + emissionState.hashCode();
 			hash = 31 * hash + Objects.hashCode(outputAnchor);
 			hash = 31 * hash + nativeLineage.hashCode();
 			hash = 31 * hash + Boolean.hashCode(directInputsExact);
 			return 31 * hash + Boolean.hashCode(exactPartitionRanges);
+		}
+		private boolean sameTemplateProof(NativePlacementContinuity.NativeContinuityProof that) {
+			// Empty proofs carry no binding authority, so only their originating proof
+			// object may reuse a publication. Nonempty proofs may be rebuilt from an
+			// equal immutable template, but exact occurrence/relocation-consumer owners
+			// remain identity authority rather than structural values.
+			return proof == that || !proof.immediateBindings().isEmpty()
+				&& proof.equals(that)
+				&& sameDirectBindingAuthority(
+					proof.immediateBindings(), that.immediateBindings());
 		}
 	}
 	private record LogicalTransientReplayFactMemo(CompiledHopKey owner, String opcode,
@@ -4197,7 +4209,8 @@ final class PlacementRelationClosure {
 		else {
 			Set<CompiledHopKey> initialDirty = incrementalDirectClosure && lastDirectNodes != null
 				? initialOuterDirectDirty(lastDirectNodes, lastDirectFacts, lastDirectEdges,
-					lastDirectReaching, currentNodes, templates, edges, reaching, Set.of()) : null;
+					lastDirectReaching, currentNodes, templates, edges, reaching, Set.of(),
+					complexityMetrics) : null;
 			direct = closeDirectComponents(index, templates, currentNodes, edges, reaching,
 				constraints, origins, shapeFactsByHop, continuity, initialDirty);
 		}
@@ -4220,15 +4233,38 @@ final class PlacementRelationClosure {
 		List<CompiledInputEdgeFact> afterEdges,
 		Map<CompiledHopKey,List<CompiledHopKey>> afterReaching,
 		Set<CompiledHopKey> changedLoopSeeds) {
+		return initialOuterDirectDirty(beforeNodes, beforeFacts, beforeEdges, beforeReaching,
+			afterNodes, afterFacts, afterEdges, afterReaching, changedLoopSeeds, null);
+	}
+
+	private static Set<CompiledHopKey> initialOuterDirectDirty(
+		List<Node> beforeNodes, List<CandidateRuleFact> beforeFacts,
+		List<CompiledInputEdgeFact> beforeEdges,
+		Map<CompiledHopKey,List<CompiledHopKey>> beforeReaching,
+		List<Node> afterNodes, List<CandidateRuleFact> afterFacts,
+		List<CompiledInputEdgeFact> afterEdges,
+		Map<CompiledHopKey,List<CompiledHopKey>> afterReaching,
+		Set<CompiledHopKey> changedLoopSeeds, SearchSpaceMetrics metrics) {
 		Set<CompiledHopKey> referencedOwners = derivedAnchorOwners(beforeFacts, afterFacts);
 		if(derivedAnchorOwnerContextChanged(
-			referencedOwners, beforeNodes, beforeFacts, afterNodes, afterFacts))
+			referencedOwners, beforeNodes, beforeFacts, afterNodes, afterFacts)) {
+			if(metrics != null)
+				metrics.recordDirectWork(DirectWork.INITIAL_FULL_RESET_DERIVED_ANCHOR_CONTEXT);
 			return null;
+		}
 		Set<CompiledHopKey> dirty = initialPostPhysicalDirectDirty(
 			beforeNodes, beforeFacts, beforeEdges, beforeReaching,
 			afterNodes, afterFacts, afterEdges, afterReaching, changedLoopSeeds);
-		if(dirty == null || referencedOwners.stream().anyMatch(dirty::contains))
+		if(dirty == null) {
+			if(metrics != null)
+				metrics.recordDirectWork(DirectWork.INITIAL_FULL_RESET_BASELINE);
 			return null;
+		}
+		if(referencedOwners.stream().anyMatch(dirty::contains)) {
+			if(metrics != null)
+				metrics.recordDirectWork(DirectWork.INITIAL_FULL_RESET_REFERENCED_OWNER_DIRTY);
+			return null;
+		}
 		return dirty;
 	}
 
@@ -4394,6 +4430,10 @@ final class PlacementRelationClosure {
 			List<CandidateRuleFact> selectedFacts = new ArrayList<>(bindingSlots.size());
 			for(int slot : bindingSlots)
 				selectedFacts.add(facts.get(slot));
+			long seedRelationsBefore = complexityMetrics == null ? 0
+				: complexityMetrics.directWorkCount(DirectWork.SEED_RELATIONS_REQUESTED);
+			long publicationsBefore = complexityMetrics == null ? 0
+				: complexityMetrics.directWorkCount(DirectWork.MEMOIZED_NATIVE_PUBLICATION_REQUESTS);
 			DirectBindingResult binding = bindDirectNativeCandidateRealizations(
 				index, selectedFacts, origins, shapes, continuity, selected);
 			List<CandidateRuleFact> rebound = binding.facts();
@@ -4404,6 +4444,8 @@ final class PlacementRelationClosure {
 			// consumable without copying the full fact list or re-entering closure.
 			if(boundarySession != null && selectedFacts.equals(rebound)) {
 				if(complexityMetrics != null) {
+					recordNoDeltaDirectWork(bindingSlots.size(), seedRelationsBefore,
+						publicationsBefore);
 					complexityMetrics.recordDirectClosurePass(true, false);
 					for(int slot = selectedSlots.size(); slot < facts.size(); slot++)
 						complexityMetrics.recordIncrementalFact(false);
@@ -4429,6 +4471,9 @@ final class PlacementRelationClosure {
 			// its complete delta. Compare their union to detect net cancellations too.
 			Set<CompiledHopKey> changed = changedCandidateOwnersInSlots(facts, merged, slots, touched);
 			if(complexityMetrics != null) {
+				if(changed.isEmpty())
+					recordNoDeltaDirectWork(bindingSlots.size(), seedRelationsBefore,
+						publicationsBefore);
 				complexityMetrics.recordDirectClosurePass(changed.isEmpty(), wave == 0 && initialDirty == null);
 				for(int slot = selectedSlots.size(); slot < facts.size(); slot++)
 					complexityMetrics.recordIncrementalFact(false);
@@ -4440,7 +4485,7 @@ final class PlacementRelationClosure {
 				continue;
 			DirectSupportUpdate supportUpdate = supportIndex.update(changed, merged);
 			pending.addAll(requiredDirectClosureOccurrences(changed, potential, support,
-				supportUpdate.removed(), aliases, querySubscriptions));
+				supportUpdate.removed(), aliases, querySubscriptions, complexityMetrics));
 			if(supportUpdate.changed()) {
 				// Preserve unsettled members when added OR removed edges change SCCs.
 				for(var component : dirty)
@@ -4462,6 +4507,19 @@ final class PlacementRelationClosure {
 		return new DirectClosureResult(facts, continuity);
 	}
 
+	/** Work completed in a wave that committed no candidate-fact row delta. */
+	private void recordNoDeltaDirectWork(int eligibleFacts, long seedRelationsBefore,
+		long publicationsBefore) {
+		complexityMetrics.recordDirectWork(DirectWork.NO_DELTA_WAVES);
+		complexityMetrics.recordDirectWork(DirectWork.NO_DELTA_ELIGIBLE_FACTS, eligibleFacts);
+		complexityMetrics.recordDirectWork(DirectWork.NO_DELTA_SEED_RELATIONS_REQUESTED,
+			complexityMetrics.directWorkCount(DirectWork.SEED_RELATIONS_REQUESTED)
+				- seedRelationsBefore);
+		complexityMetrics.recordDirectWork(DirectWork.NO_DELTA_PUBLICATION_REQUESTS,
+			complexityMetrics.directWorkCount(DirectWork.MEMOIZED_NATIVE_PUBLICATION_REQUESTS)
+				- publicationsBefore);
+	}
+
 	private static Set<CompiledHopKey> requiredDirectClosureOccurrences(
 		Set<CompiledHopKey> changed,
 		Map<CompiledHopKey,Set<CompiledHopKey>> potential,
@@ -4469,15 +4527,41 @@ final class PlacementRelationClosure {
 		Map<CompiledHopKey,Set<CompiledHopKey>> removedSupport,
 		Map<CompiledHopKey,List<CompiledHopKey>> aliases,
 		DirectQuerySubscriptions querySubscriptions) {
+		return requiredDirectClosureOccurrences(changed, potential, support, removedSupport,
+			aliases, querySubscriptions, null);
+	}
+
+	private static Set<CompiledHopKey> requiredDirectClosureOccurrences(
+		Set<CompiledHopKey> changed,
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential,
+		Map<CompiledHopKey,Set<CompiledHopKey>> support,
+		Map<CompiledHopKey,Set<CompiledHopKey>> removedSupport,
+		Map<CompiledHopKey,List<CompiledHopKey>> aliases,
+		DirectQuerySubscriptions querySubscriptions, SearchSpaceMetrics metrics) {
 		Set<CompiledHopKey> affected = Collections.newSetFromMap(new IdentityHashMap<>());
 		Set<CompiledHopKey> required = Collections.newSetFromMap(new IdentityHashMap<>());
 		required.addAll(changed);
+		if(metrics != null)
+			metrics.recordDirectWork(DirectWork.INVALIDATION_SELF_INCIDENCES, changed.size());
 		for(CompiledHopKey owner : changed) {
-			required.addAll(potential.getOrDefault(owner, Set.of()));
-			required.addAll(support.getOrDefault(owner, Set.of()));
-			required.addAll(removedSupport.getOrDefault(owner, Set.of()));
-			required.addAll(aliases.getOrDefault(owner, List.of()));
-			required.addAll(querySubscriptions.subscribers(owner));
+			Set<CompiledHopKey> potentialOwners = potential.getOrDefault(owner, Set.of());
+			Set<CompiledHopKey> supportOwners = support.getOrDefault(owner, Set.of());
+			Set<CompiledHopKey> removedOwners = removedSupport.getOrDefault(owner, Set.of());
+			List<CompiledHopKey> aliasOwners = aliases.getOrDefault(owner, List.of());
+			Set<CompiledHopKey> subscribers = querySubscriptions.subscribers(owner);
+			required.addAll(potentialOwners);
+			required.addAll(supportOwners);
+			required.addAll(removedOwners);
+			required.addAll(aliasOwners);
+			required.addAll(subscribers);
+			if(metrics != null) {
+				metrics.recordDirectWork(DirectWork.INVALIDATION_IMMEDIATE_INCIDENCES,
+					(long)potentialOwners.size() + supportOwners.size() + removedOwners.size());
+				metrics.recordDirectWork(DirectWork.INVALIDATION_ALIAS_INCIDENCES,
+					aliasOwners.size());
+				metrics.recordDirectWork(DirectWork.INVALIDATION_SUBSCRIBER_INCIDENCES,
+					subscribers.size());
+			}
 		}
 		querySubscriptions.invalidate(changed);
 		java.util.ArrayDeque<CompiledHopKey> queue = new java.util.ArrayDeque<>(changed);
@@ -4491,8 +4575,23 @@ final class PlacementRelationClosure {
 			queue.addAll(aliases.getOrDefault(owner, List.of()));
 		}
 		for(CompiledHopKey owner : affected)
-			if(!querySubscriptions.complete(owner))
-				required.add(owner);
+			if(!querySubscriptions.complete(owner)) {
+				boolean addedOnlyByIncompleteFallback = required.add(owner);
+				if(metrics != null)
+					metrics.recordDirectWork(
+						DirectWork.INVALIDATION_INCOMPLETE_TRANSITIVE_INCIDENCES);
+				if(addedOnlyByIncompleteFallback && metrics != null)
+					metrics.recordDirectWork(
+						DirectWork.INVALIDATION_INCOMPLETE_ONLY_EXTRA_OWNERS);
+			}
+		if(metrics != null) {
+			long uniqueExtraOwners = 0;
+			for(CompiledHopKey owner : required)
+				if(!changed.contains(owner))
+					uniqueExtraOwners++;
+			metrics.recordDirectWork(
+				DirectWork.INVALIDATION_UNIQUE_EXTRA_OWNERS, uniqueExtraOwners);
+		}
 		return required;
 	}
 
@@ -5023,7 +5122,7 @@ final class PlacementRelationClosure {
 							"direct-template:" + emission.emissionState().normalizedSignature(),
 							List.of(), List.of())) : templateEmission.realizations();
 				GroundedNativePreparation grounded = recomputeNative
-					? prepareGroundedNativeSupport(emission) : null;
+					? prepareGroundedNativeSupport(emission, complexityMetrics) : null;
 				List<CandidateEmissionRealization> realizations = new ArrayList<>();
 				if(grounded != null)
 					realizations.addAll(grounded.retained());
@@ -5035,6 +5134,7 @@ final class PlacementRelationClosure {
 						continue;
 					}
 					List<CandidateEmissionRealization> bound = new ArrayList<>();
+					boolean coveredByRetained = false;
 					if(owner instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTWRITE
 						&& fact.key().orderedInputs().size() == 1 && fact.key().orderedInputs().get(0).present()) {
 						CompiledHopKey sourceKey = inputs.getOrDefault(fact.key().parentOccurrence(), Map.of()).get(0);
@@ -5106,8 +5206,15 @@ final class PlacementRelationClosure {
 							// fixedValueMapPool recursively reads VALUE_MAP support metadata.
 							// Until that resolver exposes its complete owner footprint, keep this
 							// row unsubscribed so the ordinary dependency cone recomputes it.
-							if(sourceSeeds.fixedValueMapConsulted(sourceKey, input.fType()))
-								incompleteDependencyOccurrences.add(factOccurrence);
+							if(sourceSeeds.fixedValueMapConsulted(sourceKey, input.fType())) {
+								if(complexityMetrics != null)
+									complexityMetrics.recordDirectWork(
+										DirectWork.INCOMPLETE_SEED_VALUE_MAP_INCIDENCES);
+								if(incompleteDependencyOccurrences.add(factOccurrence)
+									&& complexityMetrics != null)
+									complexityMetrics.recordDirectWork(
+										DirectWork.INCOMPLETE_UNIQUE_OWNERS);
+							}
 						}
 					}
 					boolean dynamicOutputLayout = NativePlacementContinuity.recomputesNativePartitionRanges(
@@ -5162,8 +5269,15 @@ final class PlacementRelationClosure {
 						try {
 							factDependencies.addAll(supportResult.dependencyOccurrences());
 							if(readsIncompleteDirectMetadata(
-								supportResult.dependencyOccurrences(), metadataSensitiveOwners))
-								incompleteDependencyOccurrences.add(factOccurrence);
+								supportResult.dependencyOccurrences(), metadataSensitiveOwners)) {
+								if(complexityMetrics != null)
+									complexityMetrics.recordDirectWork(
+										DirectWork.INCOMPLETE_PROOF_METADATA_INCIDENCES);
+								if(incompleteDependencyOccurrences.add(factOccurrence)
+									&& complexityMetrics != null)
+									complexityMetrics.recordDirectWork(
+										DirectWork.INCOMPLETE_UNIQUE_OWNERS);
+							}
 							List<DirectInputBinding> requiredInputs = ruleBinding.requiredInputs();
 							if(requiredInputs == null)
 								requiredInputs = ruleBinding.presentInputs().stream().filter(input -> {
@@ -5234,9 +5348,14 @@ final class PlacementRelationClosure {
 												CandidateEmissionRealization::allOwnedSupportClausesHaveExactNativeLayout);
 									});
 									if(recomputeNative) {
-										bound.add(directNativePublication(proof, fact.key().parentOccurrence(),
+										CandidateEmissionRealization publication = directNativePublication(
+											proof, fact.key().parentOccurrence(),
 											emission.emissionState(), outputAnchor, nativeLineage,
-											directInputsExact));
+											directInputsExact, grounded);
+										if(publication == null)
+											coveredByRetained = true;
+										else
+											bound.add(publication);
 										continue;
 									}
 									PlacementProofKey continuityProof = new PlacementProofKey(
@@ -5276,11 +5395,11 @@ final class PlacementRelationClosure {
 					}
 					// Keep a generic lineage only as staging authority when no exact direct
 					// realization is currently provable. It is excluded from transient replay.
-					if(bound.isEmpty() && FederatedPlannerTrace.shouldTrace(owner))
+					if(bound.isEmpty() && !coveredByRetained && FederatedPlannerTrace.shouldTrace(owner))
 						FederatedPlannerTrace.log(owner, "Neutral-UnboundNative", "inputs=" + fact.key().orderedInputs()
 							+ "|state=" + outputState + "|shape=" + shapes.get(owner)
 							+ "|seeds=" + seeds.stream().distinct().toList());
-					if(bound.isEmpty())
+					if(bound.isEmpty() && !coveredByRetained)
 						realizations.add(realization);
 					else
 						realizations.addAll(bound);
@@ -5339,6 +5458,15 @@ final class PlacementRelationClosure {
 		NativePlacementContinuity.NativeContinuityProof proof, CompiledHopKey owner,
 		PlacementEmissionState emissionState, DurableAnchorKey outputAnchor,
 		String nativeLineage, boolean directInputsExact) {
+		return directNativePublication(proof, owner, emissionState, outputAnchor,
+			nativeLineage, directInputsExact, null);
+	}
+
+	private CandidateEmissionRealization directNativePublication(
+		NativePlacementContinuity.NativeContinuityProof proof, CompiledHopKey owner,
+		PlacementEmissionState emissionState, DurableAnchorKey outputAnchor,
+		String nativeLineage, boolean directInputsExact,
+		GroundedNativePreparation grounded) {
 		if(complexityMetrics != null)
 			complexityMetrics.recordDirectWork(DirectWork.MEMOIZED_NATIVE_PUBLICATION_REQUESTS);
 		DirectNativePublicationKey key = new DirectNativePublicationKey(proof, owner, emissionState,
@@ -5350,28 +5478,51 @@ final class PlacementRelationClosure {
 			return cached.key().emissionState() == emissionState ? cached
 				: PlacementSupportRelations.rebindRealization(cached, emissionState);
 		}
+		DirectNativeOutput output = directNativeOutput(proof, emissionState, outputAnchor,
+			nativeLineage, directInputsExact);
+		if(grounded != null && grounded.coversRetainedNative(proof, owner, output))
+			return null;
 		PlacementProofKey continuityProof = proof.continuityProofKey(owner);
+		if(complexityMetrics != null)
+			complexityMetrics.recordDirectWork(DirectWork.EARLY_NATIVE_DESCRIPTOR_CREATIONS);
 		List<CandidateRealizationInputBinding> bindings = proof.immediateBindings();
 		CandidateEmissionRealization publication;
-		if(outputAnchor != null && proof.exactPartitionRanges() && directInputsExact)
+		if(output.realizationKey().layoutKind() == PlacementLayoutKind.DURABLE_MAP)
 			publication = CandidateEmissionRealization.durable(
-				emissionState, outputAnchor, List.of(continuityProof), bindings);
+				emissionState, output.realizationKey().durableAnchor(), List.of(continuityProof), bindings);
 		else {
-			DurableAnchorKey outputPool = proof.outputWorkerPoolWitness();
-			if(proof.exactPartitionRanges() && outputAnchor != null)
-				outputPool = normalizedNativeLayout(outputPool.placementId(), outputAnchor);
-			String publicationLineage = nativeLineage
-				+ "|output-layout=" + nativeCompatibilityLayout(outputPool)
-				+ "|exact=" + proof.exactPartitionRanges();
-			publication = proof.exactPartitionRanges()
+			publication = output.clauseLayoutExact()
 				? CandidateEmissionRealization.nativeLineage(emissionState,
-					publicationLineage, outputPool, List.of(continuityProof), bindings)
+					output.realizationKey().nativeLineage(), output.clauseNativePool(),
+					List.of(continuityProof), bindings)
 				: CandidateEmissionRealization.nativeLineageDynamicLayout(emissionState,
-					publicationLineage, outputPool, List.of(continuityProof), bindings);
+					output.realizationKey().nativeLineage(), output.clauseNativePool(),
+					List.of(continuityProof), bindings);
 		}
 		directNativePublicationMemo.put(key, publication);
 		return publication;
 	}
+
+	private static DirectNativeOutput directNativeOutput(
+		NativePlacementContinuity.NativeContinuityProof proof,
+		PlacementEmissionState emissionState, DurableAnchorKey outputAnchor,
+		String nativeLineage, boolean directInputsExact) {
+		if(outputAnchor != null && proof.exactPartitionRanges() && directInputsExact)
+			return new DirectNativeOutput(
+				PlacementIdentity.PlacementRealizationKey.durable(emissionState, outputAnchor),
+				null, true);
+		DurableAnchorKey outputPool = proof.outputWorkerPoolWitness();
+		if(proof.exactPartitionRanges() && outputAnchor != null)
+			outputPool = normalizedNativeLayout(outputPool.placementId(), outputAnchor);
+		String publicationLineage = nativeLineage
+			+ "|output-layout=" + nativeCompatibilityLayout(outputPool)
+			+ "|exact=" + proof.exactPartitionRanges();
+		return new DirectNativeOutput(PlacementIdentity.PlacementRealizationKey.nativeLineage(
+			emissionState, publicationLineage), outputPool, proof.exactPartitionRanges());
+	}
+
+	private record DirectNativeOutput(PlacementIdentity.PlacementRealizationKey realizationKey,
+		DurableAnchorKey clauseNativePool, boolean clauseLayoutExact) { }
 
 	/**
 	 * A direct proof is one alternative support clause, not a replaceable snapshot of
@@ -5399,7 +5550,56 @@ final class PlacementRelationClosure {
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause>> prior,
 		IdentityHashMap<PlacementIdentity.PlacementRealizationKey,
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause>> priorByIdentity,
-		boolean hasStaging, boolean hasConflictingEqualAuthority) {
+		boolean hasStaging, boolean hasConflictingEqualAuthority,
+		Map<PlacementIdentity.PlacementRealizationKey,
+			Map<Integer,List<RetainedNativeCoverage>>> nativeCoverage,
+		SearchSpaceMetrics metrics) {
+		private boolean coversRetainedNative(
+			NativePlacementContinuity.NativeContinuityProof proof, CompiledHopKey owner,
+			DirectNativeOutput output) {
+			if(metrics != null)
+				metrics.recordDirectWork(DirectWork.EARLY_NATIVE_COVERAGE_PROBES);
+			Map<Integer,List<RetainedNativeCoverage>> byHash =
+				nativeCoverage.get(output.realizationKey());
+			if(byHash == null)
+				return false;
+			List<RetainedNativeCoverage> bucket = byHash.get(proof.hashCode());
+			if(bucket == null)
+				return false;
+			for(RetainedNativeCoverage retained : bucket) {
+				if(metrics != null)
+					metrics.recordDirectWork(DirectWork.EARLY_NATIVE_COVERAGE_BUCKET_CANDIDATES);
+				PlacementProofKey retainedProof = retained.proof();
+				if(retainedProof.kind() != PlacementProofKind.NATIVE_CONTINUITY
+					|| retainedProof.owner() != owner) {
+					if(metrics != null)
+						metrics.recordDirectWork(DirectWork.EARLY_NATIVE_COVERAGE_IDENTITY_REJECTS);
+					continue;
+				}
+				if(!retainedProof.matchesNativeContinuityDescriptor(proof))
+					continue;
+				List<CandidateRealizationInputBinding> bindings = proof.immediateBindings();
+				if(!retained.clause().inputBindings().equals(bindings)
+					|| !sameDirectBindingAuthority(retained.clause().inputBindings(), bindings)) {
+					if(metrics != null)
+						metrics.recordDirectWork(DirectWork.EARLY_NATIVE_COVERAGE_IDENTITY_REJECTS);
+					continue;
+				}
+				if(!Objects.equals(retained.clause().nativeWorkerPoolWitness(),
+					output.clauseNativePool())
+					|| retained.clause().nativeWorkerPoolLayoutExact()
+						!= output.clauseLayoutExact())
+					continue;
+				if(metrics != null) {
+					metrics.recordDirectWork(DirectWork.EARLY_NATIVE_COVERAGE_HITS);
+					metrics.recordDirectWork(DirectWork.EARLY_NATIVE_COVERAGE_AVOIDED_AUTHORITY_CHARS,
+						proof.normalizedSignatureLength());
+				}
+				return true;
+			}
+			return false;
+		}
+
 		private boolean containsExact(List<CandidateEmissionRealization> realizations) {
 			if(hasStaging || hasConflictingEqualAuthority)
 				return false;
@@ -5426,8 +5626,16 @@ final class PlacementRelationClosure {
 		}
 	}
 
+	private record RetainedNativeCoverage(PlacementProofKey proof,
+		CandidateRealizationSupportClause clause) { }
+
 	private static GroundedNativePreparation prepareGroundedNativeSupport(
 		CandidateEmissionFact emission) {
+		return prepareGroundedNativeSupport(emission, null);
+	}
+
+	private static GroundedNativePreparation prepareGroundedNativeSupport(
+		CandidateEmissionFact emission, SearchSpaceMetrics metrics) {
 		List<CandidateEmissionRealization> retained = new ArrayList<>();
 		Map<PlacementIdentity.PlacementRealizationKey,
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause>> prior =
@@ -5435,8 +5643,13 @@ final class PlacementRelationClosure {
 		IdentityHashMap<PlacementIdentity.PlacementRealizationKey,
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause>> priorByIdentity =
 			new IdentityHashMap<>();
+		// The index retains descriptors only for clauses already live in this emission;
+		// it is invocation-local and is discarded with this grounding pass.
+		Map<PlacementIdentity.PlacementRealizationKey,
+			Map<Integer,List<RetainedNativeCoverage>>> nativeCoverage = new HashMap<>();
 		boolean hasStaging = false;
 		boolean hasConflictingEqualAuthority = false;
+		int indexedNativeClauses = 0;
 		for(CandidateEmissionRealization candidate : emission.realizations()) {
 			List<CandidateRealizationSupportClause> grounded = new ArrayList<>();
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> clauses =
@@ -5451,14 +5664,37 @@ final class PlacementRelationClosure {
 				CandidateRealizationSupportClause previous = clauses.put(clause, clause);
 				if(previous != null && !sameDirectSupportAuthority(previous, clause))
 					hasConflictingEqualAuthority = true;
+				if(clause.proofDependencies().size() == 1) {
+					PlacementProofKey proof = clause.proofDependencies().get(0);
+					if(proof.kind() == PlacementProofKind.NATIVE_CONTINUITY) {
+						if(!proof.hasNativeContinuityDescriptor()) {
+							if(metrics != null)
+								metrics.recordDirectWork(DirectWork.EARLY_NATIVE_COVERAGE_UNMARKED_CLAUSES);
+						}
+						else if(proof.nativeContinuityImmediateBindings().equals(clause.inputBindings())
+							&& sameDirectBindingAuthority(
+								proof.nativeContinuityImmediateBindings(), clause.inputBindings())) {
+							nativeCoverage.computeIfAbsent(candidate.key(), ignored -> new HashMap<>())
+								.computeIfAbsent(proof.nativeContinuityStructuralHash(),
+									ignored -> new ArrayList<>())
+								.add(new RetainedNativeCoverage(proof, clause));
+							indexedNativeClauses++;
+						}
+					}
+				}
 			}
 			if(!grounded.isEmpty())
 				retained.add(grounded.size() == candidate.supportClauses().size() ? candidate
 					: CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(
 						candidate.key(), grounded));
 		}
+		if(hasStaging || hasConflictingEqualAuthority)
+			nativeCoverage = Map.of();
+		else if(metrics != null)
+			metrics.recordDirectWork(
+				DirectWork.EARLY_NATIVE_COVERAGE_INDEXED_CLAUSES, indexedNativeClauses);
 		return new GroundedNativePreparation(List.copyOf(retained), prior, priorByIdentity,
-			hasStaging, hasConflictingEqualAuthority);
+			hasStaging, hasConflictingEqualAuthority, nativeCoverage, metrics);
 	}
 
 	/** Exact membership only: comparator ties never authorize reuse of prior support. */
@@ -5497,16 +5733,31 @@ final class PlacementRelationClosure {
 			if(left.proofDependencies().get(index).owner()
 				!= right.proofDependencies().get(index).owner())
 				return false;
-		for(int index = 0; index < left.inputBindings().size(); index++) {
-			CandidateRealizationInputBinding a = left.inputBindings().get(index);
-			CandidateRealizationInputBinding b = right.inputBindings().get(index);
+		return sameDirectBindingAuthority(left.inputBindings(), right.inputBindings());
+	}
+
+	/** Caller has already established structural equality; retain exact owner authority. */
+	private static boolean sameDirectBindingAuthority(
+		List<CandidateRealizationInputBinding> left,
+		List<CandidateRealizationInputBinding> right) {
+		if(left == right)
+			return true;
+		if(left.size() != right.size())
+			return false;
+		for(int index = 0; index < left.size(); index++) {
+			CandidateRealizationInputBinding a = left.get(index);
+			CandidateRealizationInputBinding b = right.get(index);
 			if(a.source().rule().parentOccurrence() != b.source().rule().parentOccurrence())
 				return false;
-			if(a.relocationAction() != null)
+			if(a.relocationAction() != null) {
+				if(b.relocationAction() == null || a.relocationAction().compatibleConsumers().size()
+					!= b.relocationAction().compatibleConsumers().size())
+					return false;
 				for(int owner = 0; owner < a.relocationAction().compatibleConsumers().size(); owner++)
 					if(a.relocationAction().compatibleConsumers().get(owner)
 						!= b.relocationAction().compatibleConsumers().get(owner))
 						return false;
+			}
 		}
 		return true;
 	}

@@ -81,14 +81,31 @@ public final class SearchSpaceMetrics {
 	void recordCandidateHeader(boolean reused) { headerRequests++; if(reused) headerReuses++; }
 	void recordCandidateProfile(boolean reused) { profileRequests++; if(reused) profileReuses++; }
 
-	/** Event counts, not distinct semantic identities or numbers of live objects. */
+	/**
+	 * Event counts, not analysis-global distinct identities or numbers of live objects.
+	 * UNIQUE counters sum identities deduplicated within each binder/invalidation invocation.
+	 */
 	enum DirectWork {
 		FACT_VISITS, FACTS_SKIPPED_CLEAN, FACTS_SKIPPED_INELIGIBLE,
 		EMISSION_VISITS, EMISSIONS_REUSED, EMISSIONS_REBUILT,
 		SEEDS_BEFORE_DEDUP, SEED_RELATIONS_REQUESTED, SEED_RELATIONS_DUPLICATE,
 		PROOFS_CONSUMED, REQUIRED_INPUT_CHECKS, BINDING_CANDIDATES_EXAMINED,
 		INCOMPLETE_PROOFS, LAYOUT_CHECKS, LAYOUT_CACHE_HITS,
-		MEMOIZED_NATIVE_PUBLICATION_REQUESTS, MEMOIZED_NATIVE_PUBLICATION_CACHE_HITS
+		MEMOIZED_NATIVE_PUBLICATION_REQUESTS, MEMOIZED_NATIVE_PUBLICATION_CACHE_HITS,
+		EARLY_NATIVE_COVERAGE_PROBES, EARLY_NATIVE_COVERAGE_HITS,
+		EARLY_NATIVE_COVERAGE_BUCKET_CANDIDATES, EARLY_NATIVE_COVERAGE_UNMARKED_CLAUSES,
+		EARLY_NATIVE_COVERAGE_IDENTITY_REJECTS, EARLY_NATIVE_COVERAGE_AVOIDED_AUTHORITY_CHARS,
+		EARLY_NATIVE_COVERAGE_INDEXED_CLAUSES, EARLY_NATIVE_DESCRIPTOR_CREATIONS,
+		INCOMPLETE_SEED_VALUE_MAP_INCIDENCES, INCOMPLETE_PROOF_METADATA_INCIDENCES,
+		INCOMPLETE_UNIQUE_OWNERS,
+		INVALIDATION_SELF_INCIDENCES, INVALIDATION_IMMEDIATE_INCIDENCES,
+		INVALIDATION_ALIAS_INCIDENCES, INVALIDATION_SUBSCRIBER_INCIDENCES,
+		INVALIDATION_INCOMPLETE_TRANSITIVE_INCIDENCES, INVALIDATION_UNIQUE_EXTRA_OWNERS,
+		INVALIDATION_INCOMPLETE_ONLY_EXTRA_OWNERS,
+		NO_DELTA_WAVES, NO_DELTA_ELIGIBLE_FACTS, NO_DELTA_SEED_RELATIONS_REQUESTED,
+		NO_DELTA_PUBLICATION_REQUESTS,
+		INITIAL_FULL_RESET_DERIVED_ANCHOR_CONTEXT, INITIAL_FULL_RESET_BASELINE,
+		INITIAL_FULL_RESET_REFERENCED_OWNER_DIRTY
 	}
 
 	private static final int CANDIDATE_OPCODE_LIMIT = 64;
@@ -149,6 +166,7 @@ public final class SearchSpaceMetrics {
 			&& (directWork[work.ordinal()] & 1023) == 0)
 			emitLiveMetrics(false);
 	}
+	long directWorkCount(DirectWork work) { return directWork[work.ordinal()]; }
 	Map<DirectWork,Long> directBindingSnapshot() {
 		Map<DirectWork,Long> result = new LinkedHashMap<>();
 		for(DirectWork work : DirectWork.values())
@@ -216,6 +234,12 @@ public final class SearchSpaceMetrics {
 	private long proofStatesBuilt;
 	private long proofAlternativesBuilt;
 	private long proofDependencyEdgesBuilt;
+	private long proofDefaultScheduleBuilds;
+	private long proofDefaultScheduleHits;
+	// Baseline-equivalent dependency occurrences, not physically repeated visits.
+	private long proofDefaultRawSuccessorVisits;
+	private long proofDefaultUniqueSuccessorVisits;
+	private long proofNoEmptyDagPruningSkips;
 	private long acyclicProofGraphs;
 	private long cyclicProofGraphs;
 	private long acyclicAlternativesRemoved;
@@ -418,6 +442,9 @@ public final class SearchSpaceMetrics {
 		exactContextOverflowQueries = 0;
 		proofGraphsBuilt = proofStatesBuilt = 0;
 		proofAlternativesBuilt = proofDependencyEdgesBuilt = 0;
+		proofDefaultScheduleBuilds = proofDefaultScheduleHits = 0;
+		proofDefaultRawSuccessorVisits = proofDefaultUniqueSuccessorVisits = 0;
+		proofNoEmptyDagPruningSkips = 0;
 		acyclicProofGraphs = cyclicProofGraphs = acyclicAlternativesRemoved = proofRowsExamined = 0;
 		deadStatesQueued = dependencyNotifications = alternativesRemoved = 0;
 		ownerCompactionElementsScanned = 0;
@@ -679,6 +706,18 @@ public final class SearchSpaceMetrics {
 		proofAlternativesBuilt += alternatives;
 		proofDependencyEdgesBuilt += dependencyEdges;
 	}
+	void recordDefaultTraversalSchedule(boolean built, long rawSuccessors,
+		long uniqueSuccessors) {
+		if(rawSuccessors < 0 || uniqueSuccessors < 0 || uniqueSuccessors > rawSuccessors)
+			throw new IllegalArgumentException("Invalid default proof traversal work");
+		if(built)
+			proofDefaultScheduleBuilds++;
+		else
+			proofDefaultScheduleHits++;
+		proofDefaultRawSuccessorVisits += rawSuccessors;
+		proofDefaultUniqueSuccessorVisits += uniqueSuccessors;
+	}
+	void recordNoEmptyDagPruningSkip() { proofNoEmptyDagPruningSkips++; }
 	void recordProofGraphPath(boolean cyclic, long acyclicRemoved) {
 		if(cyclic)
 			cyclicProofGraphs++;
@@ -1302,6 +1341,9 @@ public final class SearchSpaceMetrics {
 			directClosureFullPasses, proofQueries, exactContextUniqueQueries,
 			exactContextRepeatedQueries, exactContextOverflowQueries, proofGraphsBuilt, proofStatesBuilt,
 			proofAlternativesBuilt, proofDependencyEdgesBuilt, acyclicProofGraphs,
+			proofDefaultScheduleBuilds, proofDefaultScheduleHits,
+			proofDefaultRawSuccessorVisits, proofDefaultUniqueSuccessorVisits,
+			proofNoEmptyDagPruningSkips,
 			cyclicProofGraphs, acyclicAlternativesRemoved, proofRowsExamined, deadStatesQueued,
 			dependencyNotifications, alternativesRemoved, ownerCompactionElementsScanned,
 			// Historical SCC counters remain zero in the diagnostic schema.
@@ -1363,6 +1405,9 @@ public final class SearchSpaceMetrics {
 		long exactContextOverflowQueries,
 		long proofGraphsBuilt, long proofStatesBuilt,
 		long proofAlternativesBuilt, long proofDependencyEdgesBuilt, long acyclicProofGraphs,
+		long proofDefaultScheduleBuilds, long proofDefaultScheduleHits,
+		long proofDefaultRawSuccessorVisits, long proofDefaultUniqueSuccessorVisits,
+		long proofNoEmptyDagPruningSkips,
 		long cyclicProofGraphs, long acyclicAlternativesRemoved, long proofRowsExamined,
 		long deadStatesQueued, long dependencyNotifications, long alternativesRemoved,
 		long ownerCompactionElementsScanned, long sccInvocations, long sccStatesScanned,

@@ -178,6 +178,64 @@ public class NativePlacementPruneOwnerTest {
 	}
 
 	@Test
+	public void wideOwnerThenSingletonsAndSmallDuplicatesMatchFrozenPropagation() throws Exception {
+		Object witness = witness();
+		CompiledHopKey deadKey = key("capacity-dead"), liveKey = key("capacity-live");
+		Object dead = state(deadKey, 1, witness), live = state(liveKey, 2, witness);
+		Map<Object,List<Object>> dependencies = new IdentityHashMap<>();
+		Map<Object,List<Object>> input = new LinkedHashMap<>();
+		input.put(dead, List.of());
+		Object ground = alternative(List.of(), witness);
+		dependencies.put(ground, List.of());
+		input.put(live, List.of(ground));
+
+		List<Object> wide = new ArrayList<>();
+		for(int slot = 0; slot < 512; slot++) {
+			Object alternative = alternative(List.of(dependency(liveKey, 2, witness)), witness);
+			dependencies.put(alternative, List.of(live));
+			wide.add(alternative);
+		}
+		input.put(state(key("capacity-wide"), 3, witness), List.copyOf(wide));
+		for(int owner = 0; owner < 128; owner++) {
+			Object singleton = alternative(List.of(dependency(liveKey, 2, witness)), witness);
+			dependencies.put(singleton, List.of(live));
+			input.put(state(key("capacity-singleton-" + owner), owner + 4, witness),
+				List.of(singleton));
+		}
+
+		CompiledHopKey duplicateOwnerKey = key("capacity-duplicate-owner");
+		Object duplicateOwner = state(duplicateOwnerKey, 200, witness);
+		List<Object> deadDependencies = List.of(dependency(deadKey, 1, witness));
+		Object shared = alternative(deadDependencies, witness);
+		Object equalDistinct = alternative(deadDependencies, witness);
+		Assert.assertEquals(shared, equalDistinct);
+		Assert.assertNotSame(shared, equalDistinct);
+		dependencies.put(shared, List.of(dead));
+		dependencies.put(equalDistinct, List.of(dead));
+		input.put(duplicateOwner, List.of(shared, shared, equalDistinct));
+		Object ancestor = state(key("capacity-ancestor"), 201, witness);
+		Object ancestorAlternative = alternative(
+			List.of(dependency(duplicateOwnerKey, 200, witness)), witness);
+		dependencies.put(ancestorAlternative, List.of(duplicateOwner));
+		input.put(ancestor, List.of(ancestorAlternative));
+
+		Map<Object,List<Object>> original = new LinkedHashMap<>(input);
+		long[] expectedCounts = new long[4];
+		Map<Object,List<Object>> expected = legacyPrune(input, dependencies, expectedCounts);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		Map<?,?> actual = prune(continuity(metrics), input);
+
+		assertIdenticalOrderedGraph("wide/singleton capacity history", expected, actual);
+		assertIdenticalOrderedGraph("capacity-history input remains immutable", original, input);
+		Assert.assertSame("duplicate slots retain the frozen owner live-count behavior",
+			ancestorAlternative, ((List<?>)actual.get(ancestor)).get(0));
+		Assert.assertEquals(expectedCounts[0], metrics.snapshot().ownerCompactionElementsScanned());
+		Assert.assertEquals(expectedCounts[1], metrics.snapshot().deadStatesQueued());
+		Assert.assertEquals(expectedCounts[2], metrics.snapshot().dependencyNotifications());
+		Assert.assertEquals(expectedCounts[3], metrics.snapshot().alternativesRemoved());
+	}
+
+	@Test
 	public void collidingWitnessHashesDoNotAliasDifferentStates() throws Exception {
 		Object firstWitness = witness("Aa:1234"), secondWitness = witness("BB:1234");
 		CompiledHopKey sharedKey = key("hash-collision");
@@ -199,6 +257,7 @@ public class NativePlacementPruneOwnerTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
 	public void randomizedPropagationMatchesFrozenOwnerIdentityAlgorithm() throws Exception {
 		Random random = new Random(0x5EED1357L);
 		for(int trial = 0; trial < 300; trial++) {
@@ -264,6 +323,22 @@ public class NativePlacementPruneOwnerTest {
 			assertIdenticalOrderedGraph("metrics off " + trial, expected, prune(continuity(null), input));
 			if(expected == input)
 				Assert.assertSame(input, actual);
+
+			// The production builder includes every dependency row. Complete the random
+			// graph with explicit dead rows and exercise the same certificate-bearing
+			// entry point, including cycles, repeated edges and shared object slots.
+			Map<Object,List<Object>> closed = new LinkedHashMap<>(input);
+			for(Object state : states)
+				closed.putIfAbsent(state, List.of());
+			SearchSpaceMetrics conservativeMetrics = new SearchSpaceMetrics();
+			SearchSpaceMetrics certifiedMetrics = new SearchSpaceMetrics();
+			Map<Object,List<Object>> conservative =
+				(Map<Object,List<Object>>)prune(continuity(conservativeMetrics), closed);
+			Map<?,?> certified = certifiedPrune(continuity(certifiedMetrics), closed);
+			assertIdenticalOrderedGraph("certified closed graph " + trial,
+				conservative, certified);
+			Assert.assertEquals("all logical pruning counters remain equal",
+				conservativeMetrics.snapshot(), certifiedMetrics.snapshot());
 		}
 	}
 
@@ -354,6 +429,22 @@ public class NativePlacementPruneOwnerTest {
 			"pruneDeadAlternatives", Map.class);
 		method.setAccessible(true);
 		return (Map<?,?>)method.invoke(continuity, graph);
+	}
+
+	private static Map<?,?> certifiedPrune(NativePlacementContinuity continuity,
+		Map<Object,List<Object>> graph) throws Exception {
+		Class<?> traversalType = nested("CandidateProofTraversal");
+		Constructor<?> constructor = traversalType.getDeclaredConstructor();
+		constructor.setAccessible(true);
+		Object traversal = constructor.newInstance();
+		java.lang.reflect.Field empty = traversalType.getDeclaredField("emptyFilteredStates");
+		empty.setAccessible(true);
+		empty.setLong(traversal, graph.values().stream().filter(List::isEmpty).count());
+		Method method = NativePlacementContinuity.class.getDeclaredMethod(
+			"pruneDeadAlternatives", Map.class, traversalType, long.class);
+		method.setAccessible(true);
+		return (Map<?,?>)method.invoke(continuity, graph, traversal,
+			graph.values().stream().mapToLong(List::size).sum());
 	}
 
 	private static void assertAllEmpty(Map<?,?> graph) {

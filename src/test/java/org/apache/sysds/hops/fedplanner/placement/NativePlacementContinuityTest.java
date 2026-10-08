@@ -3986,6 +3986,8 @@ public class NativePlacementContinuityTest {
 				List.of(CandidateInputState.present(FType.FULL))), ground.anchor));
 		Assert.assertTrue("the chain must use at least one acyclic proof graph",
 			metrics.snapshot().acyclicProofGraphs() > 0);
+		Assert.assertTrue("a dependency-closed grounded DAG needs no dead-seed scan",
+			metrics.snapshot().proofNoEmptyDagPruningSkips() > 0);
 		Assert.assertEquals("the acyclic chain must not invoke the SCC fallback", 0,
 			metrics.snapshot().cyclicProofGraphs());
 		Assert.assertEquals("dead pruning already establishes acyclic source support", 0,
@@ -4008,6 +4010,8 @@ public class NativePlacementContinuityTest {
 			metrics.snapshot().cyclicProofGraphs());
 		Assert.assertTrue("the acyclic pruning pass must remove the dependent alternative",
 			metrics.snapshot().acyclicAlternativesRemoved() > 0);
+		Assert.assertEquals("an empty dependency forbids the no-dead-seed shortcut", 0,
+			metrics.snapshot().proofNoEmptyDagPruningSkips());
 	}
 
 	@Test

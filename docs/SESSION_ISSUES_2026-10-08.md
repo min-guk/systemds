@@ -373,3 +373,28 @@
 - **잔여 이슈**: full LogReg/GLM common analysis 60초 timeout은 아직 해결되지 않았다. 게시 후 별도 bottleneck 측정/개선 대상으로 유지한다.
 - **잠재 회귀/감지**: mocked runner 검증은 실제 Docker 성능 검증을 대신하지 않는다. frozen `OPERATION_OCCURRENCES.tsv`의 literal 끝 공백 107행은 의미 있는 데이터이므로 보존한다.
 - **의사결정 근거**: oracle/runtime/planner 합법성 및 timeout 정책은 변경하지 않고 테스트 계약만 수정했다.
+
+## Post-publication bottleneck drive — 정확한 구조 공유 (진행중)
+
+- **게시 상태**: 기존 검증된 47파일을 `50855b5df4c6a2312c3a12ee8a31415a9d96aa27`로 commit하고 `git push origin HEAD:main`을 수행했다. `git ls-remote origin refs/heads/main` SHA 일치 확인. 이후 변경은 별도 검증 중이다.
+- **측정 조건**: 기존 pinned Docker image와 full LogReg/GLM, PRIVATE_AGGREGATE X, 4CPU/16GiB/10GiB heap, JFR55초/watchdog60초 유지. `run_LAN_docker.sh`만 사용한다.
+- **원인/관측**: LogReg는 support memo 적중에도 새 public-proof wrapper와 새 canonical binding-list를 만들어 publication memo의 proof identity key가 거의 적중하지 않았다(이전 상세 snapshot 요청 2,159,608/적중 27,808). GLM은 TreeSet 삽입 때 재생성된 환경의 긴 canonical text를 반복 순회한다.
+- **변경 요약**: native witness geometry의 exact bounded interning, 정확히 같은 proof prefix 비교 생략. Support template의 불변 binding-list identity를 보존하고 동일 nonempty list 및 seed/output/precision 전체가 일치할 때만 기존 bounded publication memo를 재사용한다. GLM canonical text를 persistent AVL inorder rope로 유지하고 정확한 Map.equals 기반의 bounded axis 공유를 적용한다. 원래 owner/emission identity, lexicographic order, privacy 및 환경 상한은 그대로다.
+- **수정 파일**: NativePlacementContinuity, PlacementRelationClosure, PlacementJointInputAnalysis 및 NativePoolWitnessInterningTest/DirectSupportUnionScheduleTest/PlacementJointInputOrderedEnvironmentOptimizationTest.
+- **회귀 잠금**: publication memo 수정 전 실제 support-template instantiation 경로 포함 15개 테스트에서 의도한 2개 sharing assertion만 실패했다. 빈 proof의 기존 query-identity 보수적 계약은 유지한다. GLM은 randomized AVL rotation/update 및 delimiter/Korean/astral UTF-16 parity, saturation/clear를 검사한다.
+- **검증 이력**: v1 targeted Maven package 성공(159 tests, failure/error 0, repository PUBLIC-only 정책에 따른 skip 1). v1 Docker 두 workload는 여전히 60초 timeout. v2 independent source review APPROVE이며 package/성능 검증 진행 중이다. v1 테스트의 Comparator import 및 v2 empty Map generic inference 컴파일 오류는 바로 수정했다.
+- **실험 무효화**: 첫 published-baseline 재실행은 subagent의 짧은 javac/JUnit 작업과 겹쳤으므로 acceptance 성능 비교에서 제외한다. 최종 baseline을 별도로 다시 실행한다. collector ON v1의 긴 String hash 표본 다수는 SignatureAdmissionObserver의 진단 비용이므로 collector OFF 성능과 혼동하지 않는다.
+- **잔여 이슈**: 아직 full planning completion receipt가 없다. partial work counters/sample 비중은 speedup이 아니다. 남은 graph overlay/pruning 및 materialization을 계속 측정한다.
+- **잠재 회귀/감지**: 캐시 key의 identity authority 누락, AVL 직렬화 순서, pool retention, materialized proof rope 수명. exact negative tests/기존 parity suites/동일-budget Docker와 독립 review로 검증한다.
+- **의사결정 근거**: 합법 후보를 제거하지 않고 동일 불변 증거·문자열 구조의 중복 작업만 줄인다. 신규 timeout/정책 flag, fallback, dependency 추가는 없다.
+
+### Post-publication v3/v4 — traversal 반복 및 publication authority (진행중)
+
+- **증상/근거**: v2 상세 LogReg 55초 snapshot에서 graph 25,736개, state 2,469,336개, dependency 50,313,686개를 방문했다. Publication 요청 2,480,151개 중 적중 62,519개로, list identity만 보존하는 v2는 동일 내용을 재생성하는 경우를 놓친다. OFF와 ON 계측은 서로 다른 조건이므로 speedup 비교에 섞지 않는다.
+- **v3 해결**: 불변 default topology에만 첫 등장 순서의 distinct successor schedule을 저장한다. 원본 alternatives/빈 row fallback은 유지한다. 모든 graph state가 비어 있지 않은 DAG에서만 dead pruning을 생략한다. 생성/overlay 경로는 기존 동작을 유지한다. GLM rope의 offset=0 whole literal은 길이가 달라도 String.compareTo를 활용하되, 비교값이 길이 차이와 같은 경우 반드시 실제 prefix인지 확인한다.
+- **발견한 회귀/수정**: cached negative component가 empty-state counter를 우회했다. 재현 테스트가 수정 전 5개 중 1개 실패했고, negative summary도 dead seed로 계수하도록 수정했다. 실제 NativePlacementContinuity DAG/negative dependency fixture도 함께 검사한다.
+- **v3 검증**: 기존 전체 selector 및 추가 suite로 fresh Maven **694 tests, failure/error 0, skip 1(PUBLIC-only 정책)**, BUILD SUCCESS. JAR `270bb380540242aeb378b41aa1bbd1e836b2bc1a9a25bb6b3a91982b27c64e61`; source/patch/test reports를 `placement-bottleneck-drive-20261008/candidate-v3`에 봉인했다. 독립 source review에서 blocker 없음. 같은 60초 Docker를 재측정 중이다.
+- **v4 해결 방향**: nonempty proof는 완전한 proof value equality와 모든 binding parent/relocation consumer의 exact object identity를 동시에 확인한 경우에만 기존 publication을 공유한다. empty proof는 기존 proof identity 계약 유지. 해시는 기존 immutable proof cached hash를 사용하며 충돌은 exact equality로 처리한다. 추가 캐시·후보 축소·privacy 완화 없음.
+- **v4 회귀 잠금/검토**: copied/reconstructed binding과 relocation authority 테스트를 먼저 추가했고 v3 binary에서 **16 tests 중 의도한 sharing assertion 2개 실패** 확인. 외국 owner/consumer와 seed/output/precision/outer context 구분은 유지한다. production 변경 독립 review APPROVE; fresh green/package 측정은 대기 중이다.
+- **잔여 위험/감지**: 기본 schedule을 query-dependent overlay에 재사용하면 안 된다. Negative 결과, cycle, duplicate alternative identity, root rebind, lexical prefix 충돌을 영구 테스트로 검증한다. full planning completion은 아직 달성했다고 주장하지 않는다.
+- **의사결정 근거**: oracle/runtime 합법성은 변경하지 않고 정확히 동일한 불변 관계의 순회와 publication 재생성만 줄인다.

@@ -174,15 +174,25 @@ public class DirectSourceSeedProjectionTest {
 		Map<CompiledHopKey,Set<CompiledHopKey>> potential = new IdentityHashMap<>();
 		potential.put(leaf, identitySet(valueMap));
 		potential.put(valueMap, identitySet(consumer));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		Method required = PlacementRelationClosure.class.getDeclaredMethod(
 			"requiredDirectClosureOccurrences", Set.class, Map.class, Map.class, Map.class,
-			Map.class, nested("DirectQuerySubscriptions"));
+			Map.class, nested("DirectQuerySubscriptions"), SearchSpaceMetrics.class);
 		required.setAccessible(true);
 		@SuppressWarnings("unchecked")
 		Set<CompiledHopKey> affected = (Set<CompiledHopKey>)required.invoke(null,
-			identitySet(leaf), potential, Map.of(), Map.of(), Map.of(), subscriptions);
+			identitySet(leaf), potential, Map.of(), Map.of(), Map.of(), subscriptions, metrics);
 		Assert.assertTrue("deep leaf change must recompute an incompletely subscribed consumer",
 			affected.contains(consumer));
+		Assert.assertEquals(1, directMetric(metrics, "INVALIDATION_SELF_INCIDENCES"));
+		Assert.assertEquals(1, directMetric(metrics, "INVALIDATION_IMMEDIATE_INCIDENCES"));
+		Assert.assertEquals(0, directMetric(metrics, "INVALIDATION_ALIAS_INCIDENCES"));
+		Assert.assertEquals(0, directMetric(metrics, "INVALIDATION_SUBSCRIBER_INCIDENCES"));
+		Assert.assertEquals(3, directMetric(metrics,
+			"INVALIDATION_INCOMPLETE_TRANSITIVE_INCIDENCES"));
+		Assert.assertEquals(2, directMetric(metrics, "INVALIDATION_UNIQUE_EXTRA_OWNERS"));
+		Assert.assertEquals(1, directMetric(metrics,
+			"INVALIDATION_INCOMPLETE_ONLY_EXTRA_OWNERS"));
 	}
 
 	@Test
@@ -206,7 +216,8 @@ public class DirectSourceSeedProjectionTest {
 			List.class, List.class, List.class, List.class, Map.class, Map.class);
 		indexBuilder.setAccessible(true);
 		Object index = indexBuilder.invoke(null, allFacts, nodes, edges, allFacts, Map.of(), Map.of());
-		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, null, true,
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, metrics, true,
 			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
 		Method bind = PlacementRelationClosure.class.getDeclaredMethod(
 			"bindDirectNativeCandidateRealizationsWithDependenciesMeasured", nested("DirectBindingIndex"),
@@ -221,6 +232,9 @@ public class DirectSourceSeedProjectionTest {
 		Set<CompiledHopKey> incompleteOwners = (Set<CompiledHopKey>)incomplete.invoke(result);
 		Assert.assertTrue("binder must not publish a complete subscription for a deep map seed",
 			incompleteOwners.contains(consumerOwner));
+		Assert.assertEquals(1, directMetric(metrics, "INCOMPLETE_SEED_VALUE_MAP_INCIDENCES"));
+		Assert.assertEquals(0, directMetric(metrics, "INCOMPLETE_PROOF_METADATA_INCIDENCES"));
+		Assert.assertEquals(1, directMetric(metrics, "INCOMPLETE_UNIQUE_OWNERS"));
 	}
 
 	@Test
@@ -284,7 +298,8 @@ public class DirectSourceSeedProjectionTest {
 			nodes.stream().collect(java.util.stream.Collectors.toMap(
 				Node::key, node -> node, (left, right) -> right, IdentityHashMap::new)),
 			origins, allFacts, edges, Map.of());
-		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, null, true,
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, metrics, true,
 			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
 		Method bind = PlacementRelationClosure.class.getDeclaredMethod(
 			"bindDirectNativeCandidateRealizationsWithDependenciesMeasured", nested("DirectBindingIndex"),
@@ -306,6 +321,9 @@ public class DirectSourceSeedProjectionTest {
 		Set<CompiledHopKey> incompleteOwners = (Set<CompiledHopKey>)incomplete.invoke(result);
 		Assert.assertTrue("R must stay on the full cone because V hides S metadata",
 			incompleteOwners.contains(consumerOwner));
+		Assert.assertEquals(0, directMetric(metrics, "INCOMPLETE_SEED_VALUE_MAP_INCIDENCES"));
+		Assert.assertEquals(1, directMetric(metrics, "INCOMPLETE_PROOF_METADATA_INCIDENCES"));
+		Assert.assertEquals(1, directMetric(metrics, "INCOMPLETE_UNIQUE_OWNERS"));
 
 		Constructor<?> subscriptionsConstructor = nested("DirectQuerySubscriptions").getDeclaredConstructor();
 		subscriptionsConstructor.setAccessible(true);
@@ -460,6 +478,12 @@ public class DirectSourceSeedProjectionTest {
 			"fixedValueMapConsulted", CompiledHopKey.class, FType.class);
 		method.setAccessible(true);
 		return (boolean)method.invoke(projection, owner, type);
+	}
+
+	private static long directMetric(SearchSpaceMetrics metrics, String name) {
+		return metrics.directBindingSnapshot().entrySet().stream()
+			.filter(entry -> entry.getKey().name().equals(name))
+			.mapToLong(Map.Entry::getValue).findFirst().orElse(0);
 	}
 
 	private static Set<CompiledHopKey> identitySet(CompiledHopKey... values) {

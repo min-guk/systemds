@@ -283,7 +283,7 @@ public class ExactInputAuthorityOptimizationTest {
 			Object text = pending.removeLast();
 			if(canonicalTexts.put(text, Boolean.TRUE) != null)
 				continue;
-			for(Object piece : (List<?>) piecesField.get(text)) {
+			for(Object piece : (Object[]) piecesField.get(text)) {
 				if(piece instanceof String literal) {
 					references++;
 					if(literals.put(literal, Boolean.TRUE) == null) {
@@ -320,7 +320,7 @@ public class ExactInputAuthorityOptimizationTest {
 			Object text = pending.removeLast();
 			if(!result.add(text))
 				continue;
-			for(Object piece : (List<?>) piecesField.get(text))
+			for(Object piece : (Object[]) piecesField.get(text))
 				if(!(piece instanceof String))
 					pending.addLast(piece);
 		}
@@ -337,7 +337,7 @@ public class ExactInputAuthorityOptimizationTest {
 			textField.setAccessible(true);
 			var piecesField = textField.getType().getDeclaredField("pieces");
 			piecesField.setAccessible(true);
-			return ((List<?>) piecesField.get(textField.get(value))).stream()
+			return java.util.Arrays.stream((Object[]) piecesField.get(textField.get(value)))
 				.anyMatch(piece -> !(piece instanceof String));
 		}
 		catch(ReflectiveOperationException ex) {

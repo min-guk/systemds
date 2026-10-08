@@ -211,8 +211,13 @@ public class NeutralPlacementFixedPointCompositionTest {
 		Assert.assertTrue(first.proofAlternativesBuilt() >= 0);
 		Assert.assertTrue(first.proofDependencyEdgesBuilt() >= 0);
 		Assert.assertTrue(first.proofRowsExamined() >= first.proofAlternativesBuilt());
-		Assert.assertEquals("dead pruning must compact each built alternative exactly once",
-			first.proofAlternativesBuilt(), first.ownerCompactionElementsScanned());
+		Assert.assertEquals("this fixture builds only acyclic proof graphs",
+			first.proofGraphsBuilt(), first.acyclicProofGraphs());
+		Assert.assertEquals("every fixture graph has a certified nonempty row for every state",
+			first.proofGraphsBuilt(), first.proofNoEmptyDagPruningSkips());
+		Assert.assertEquals("no-dead-seed DAGs skip compaction instead of scanning all built alternatives",
+			0, first.ownerCompactionElementsScanned());
+		Assert.assertEquals(0, first.alternativesRemoved());
 		Assert.assertTrue(first.alternativesRemoved() <= first.proofAlternativesBuilt());
 		Assert.assertTrue(first.supportLeaves() >= first.uniqueProofs());
 		Assert.assertEquals(first.supportLeaves(), first.uniqueProofs() + first.duplicateProofs());
@@ -391,6 +396,13 @@ public class NeutralPlacementFixedPointCompositionTest {
 				incremental.candidateRuleFacts().orderedFacts());
 			Assert.assertTrue("fixture must exercise repeated direct closure",
 				incrementalMetrics.snapshot().directClosurePasses() > 1);
+			var direct = incrementalMetrics.directBindingSnapshot();
+			Assert.assertTrue("fixture must exercise a completed wave with no committed row delta",
+				directMetric(direct, "NO_DELTA_WAVES") > 0);
+			Assert.assertTrue(directMetric(direct, "NO_DELTA_SEED_RELATIONS_REQUESTED")
+				<= directMetric(direct, "SEED_RELATIONS_REQUESTED"));
+			Assert.assertTrue(directMetric(direct, "NO_DELTA_PUBLICATION_REQUESTS")
+				<= directMetric(direct, "MEMOIZED_NATIVE_PUBLICATION_REQUESTS"));
 		}
 		finally {
 			if(prior == null)
@@ -398,6 +410,12 @@ public class NeutralPlacementFixedPointCompositionTest {
 			else
 				System.setProperty(memoProperty, prior);
 		}
+	}
+
+	private static long directMetric(
+		java.util.Map<SearchSpaceMetrics.DirectWork,Long> metrics, String name) {
+		return metrics.entrySet().stream().filter(entry -> entry.getKey().name().equals(name))
+			.mapToLong(java.util.Map.Entry::getValue).findFirst().orElse(0);
 	}
 
 	@Test

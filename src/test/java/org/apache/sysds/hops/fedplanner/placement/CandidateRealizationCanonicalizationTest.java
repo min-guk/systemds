@@ -1379,7 +1379,7 @@ public class CandidateRealizationCanonicalizationTest {
 	private static List<?> canonicalTextPieces(Object text) throws Exception {
 		Field pieces = text.getClass().getDeclaredField("pieces");
 		pieces.setAccessible(true);
-		return (List<?>) pieces.get(text);
+		return java.util.Arrays.asList((Object[]) pieces.get(text));
 	}
 
 	private static String flattenCanonicalText(Object text) throws Exception {
@@ -1896,7 +1896,7 @@ public class CandidateRealizationCanonicalizationTest {
 			return;
 		Field pieces = value.getClass().getDeclaredField("pieces");
 		pieces.setAccessible(true);
-		for(Object piece : (List<?>) pieces.get(value))
+		for(Object piece : (Object[]) pieces.get(value))
 			collectCanonicalTextDescendants(piece, result);
 	}
 

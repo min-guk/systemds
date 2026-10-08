@@ -16,6 +16,9 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -25,6 +28,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import org.apache.sysds.api.DMLScript;
@@ -76,6 +80,203 @@ public class PlacementJointInputOrderedEnvironmentOptimizationTest {
 			((String)field(left, "orderingPrefix")).length());
 		Assert.assertNull("comparison must not flatten the full canonical environment text",
 			field(field(left, "orderingText"), "materialized"));
+	}
+
+	@Test
+	public void persistentObservationUpdatesCompareOnlyTheChangedReadSuffix() throws Exception {
+		Definition common = definition(1, "common");
+		Definition leftDefinition = definition(2, "left");
+		Definition rightDefinition = definition(3, "right");
+		Map<String,Definition> values = new TreeMap<>();
+		for(int index = 0; index < 80; index++)
+			values.put(String.format("shared-%03d", index), common);
+		Object base = environment(values, Map.of(), Definition::stableKey);
+		Method observe = base.getClass().getDeclaredMethod("observe", int.class, Definition.class);
+		observe.setAccessible(true);
+		Object left = observe.invoke(base, 7, leftDefinition);
+		Object right = observe.invoke(base, 7, rightDefinition);
+		PlacementAnalysis.NormalizedText leftReads =
+			(PlacementAnalysis.NormalizedText)field(left, "readSourcesText");
+		PlacementAnalysis.NormalizedText rightReads =
+			(PlacementAnalysis.NormalizedText)field(right, "readSourcesText");
+		AtomicReference<PlacementAnalysis.NormalizedText> comparedLeft = new AtomicReference<>();
+		AtomicReference<PlacementAnalysis.NormalizedText> comparedRight = new AtomicReference<>();
+		Comparator<PlacementAnalysis.NormalizedText> exactOrder = (first, second) -> {
+			comparedLeft.set(first);
+			comparedRight.set(second);
+			return first.compareTo(second);
+		};
+		Method compareCanonical = left.getClass().getDeclaredMethod(
+			"compareCanonical", left.getClass(), Comparator.class);
+		compareCanonical.setAccessible(true);
+
+		int actual = (Integer)compareCanonical.invoke(left, right, exactOrder);
+		String expectedLeft = legacyKey(values, Map.of(7, leftDefinition), Definition::stableKey);
+		String expectedRight = legacyKey(values, Map.of(7, rightDefinition), Definition::stableKey);
+		Assert.assertEquals(Integer.signum(expectedLeft.compareTo(expectedRight)), Integer.signum(actual));
+		Assert.assertSame("the unchanged reaching-definition prefix must be skipped exactly",
+			leftReads, comparedLeft.get());
+		Assert.assertSame("only the changed read-source suffix should reach the exact comparator",
+			rightReads, comparedRight.get());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	public void analysisLocalMemoReusesExactPairOrderAndKeepsFirstCanonicalRepresentative()
+		throws Exception {
+		PlacementJointInputAnalysis analysis = emptyAnalysis();
+		Definition first = definition(4, "first-provenance");
+		Definition second = definition(4, "second-provenance");
+		Assert.assertNotEquals(first, second);
+		Assert.assertEquals(first.stableKey(), second.stableKey());
+		Object left = environment(Map.of("x", first), Map.of(), Definition::stableKey);
+		Object right = environment(Map.of("x", second), Map.of(), Definition::stableKey);
+		Comparator<Object> order = (Comparator<Object>)field(analysis, "environmentOrder");
+
+		Assert.assertEquals(0, order.compare(left, right));
+		Assert.assertEquals("one exact pair result must be retained", 1,
+			field(analysis, "environmentComparisonMemoEntries"));
+		Assert.assertEquals(0, order.compare(left, right));
+		Assert.assertEquals(0, order.compare(right, left));
+		Assert.assertEquals("forward and reverse lookups must reuse the same exact result", 1,
+			field(analysis, "environmentComparisonMemoEntries"));
+
+		Method ordered = method("ordered", Set.class);
+		Set<Object> result = (Set<Object>)ordered.invoke(analysis,
+			new LinkedHashSet<>(List.of(left, right)));
+		Assert.assertEquals(1, result.size());
+		Assert.assertSame("canonical equality must retain the first inserted representative",
+			left, result.iterator().next());
+	}
+
+	@Test
+	public void exactAxisInterningReusesReconstructedCanonicalStructure() throws Exception {
+		Object pool = canonicalAxisPool();
+		Definition definition = definition(9, "retained-provenance");
+		Map<String,Definition> firstMap = new TreeMap<>();
+		Map<String,Definition> secondMap = new TreeMap<>();
+		for(int index = 0; index < 48; index++) {
+			String key = String.format("v-%03d", index);
+			firstMap.put(key, definition);
+			secondMap.put(key, definition);
+		}
+		Object first = environment(firstMap, Map.of(), pool);
+		Object second = environment(secondMap, Map.of(), pool);
+
+		Assert.assertNotSame(firstMap, secondMap);
+		Assert.assertSame("exact Map.equals must reuse the retained persistent canonical axis",
+			field(first, "valuesAxis"), field(second, "valuesAxis"));
+		Assert.assertSame("axis reuse must expose the same normalized text identity",
+			field(first, "valuesText"), field(second, "valuesText"));
+	}
+
+	@Test
+	public void persistentBalancedUpdateSharesTheUntouchedCanonicalSubtree() throws Exception {
+		Map<String,Definition> values = new TreeMap<>();
+		for(int index = 0; index < 127; index++)
+			values.put(String.format("v-%03d", index), definition(index, "base"));
+		Object base = environment(values, Map.of(), canonicalAxisPool());
+		Method with = base.getClass().getDeclaredMethod("with", String.class, Definition.class);
+		with.setAccessible(true);
+		Object updated = with.invoke(base, "v-126", definition(211, "replacement"));
+		Object baseRoot = field(field(base, "valuesAxis"), "root");
+		Object updatedRoot = field(field(updated, "valuesAxis"), "root");
+
+		Assert.assertNotSame(baseRoot, updatedRoot);
+		Assert.assertSame("a right-edge update must retain the complete untouched left subtree",
+			field(baseRoot, "left"), field(updatedRoot, "left"));
+		Map<String,Definition> expectedValues = new TreeMap<>(values);
+		expectedValues.put("v-126", definition(211, "replacement"));
+		String expected = legacyKey(expectedValues, Map.of(), Definition::stableKey);
+		Assert.assertEquals(expected, stableKey(updated));
+	}
+
+	@Test
+	public void persistentAxesRemainByteExactAcrossRotationsUpdatesAndUtf16Delimiters()
+		throws Exception {
+		Random random = new Random(77190234L);
+		List<String> keys = new ArrayList<>();
+		for(int index = 0; index < 63; index++)
+			keys.add(String.format("k;%03d=|reads=한글🚀", index));
+		Function<Definition,String> definitionKey = definition -> definition.stableKey()
+			+ ";=>|reads=\ud83d\ude80";
+		for(int trial = 0; trial < 24; trial++) {
+			List<String> insertionOrder = new ArrayList<>(keys);
+			Collections.shuffle(insertionOrder, random);
+			Object environment = environment(Map.of(), Map.of(), definitionKey);
+			Map<String,Definition> expectedValues = new TreeMap<>();
+			for(int index = 0; index < insertionOrder.size(); index++) {
+				Definition definition = definition(trial * 100 + index, "rotation-" + trial);
+				environment = with(environment, insertionOrder.get(index), definition);
+				expectedValues.put(insertionOrder.get(index), definition);
+			}
+			for(int update = 0; update < 30; update++) {
+				String key = keys.get(random.nextInt(keys.size()));
+				Definition definition = definition(5_000 + trial * 100 + update, "update-" + update);
+				environment = with(environment, key, definition);
+				expectedValues.put(key, definition);
+			}
+			Map<Integer,Definition> expectedReads = new TreeMap<>();
+			for(int read = 0; read < 37; read++) {
+				int ordinal = random.nextInt(200);
+				Definition definition = definition(9_000 + trial * 100 + read, "read-" + read);
+				environment = observe(environment, ordinal, definition);
+				expectedReads.put(ordinal, definition);
+			}
+			Assert.assertEquals("persistent serialization changed at trial " + trial,
+				legacyKey(expectedValues, expectedReads, definitionKey), stableKey(environment));
+		}
+
+		List<String> shapeKeys = new ArrayList<>(keys.subList(0, 62));
+		List<String> reversed = new ArrayList<>(shapeKeys);
+		Collections.reverse(reversed);
+		Object ascending = environment(Map.of(), Map.of(), definitionKey);
+		Object descending = environment(Map.of(), Map.of(), definitionKey);
+		Map<String,Definition> expected = new TreeMap<>();
+		for(int index = 0; index < shapeKeys.size(); index++) {
+			Definition definition = definition(index, "same");
+			expected.put(shapeKeys.get(index), definition);
+			ascending = with(ascending, shapeKeys.get(index), definition);
+		}
+		for(String key : reversed)
+			descending = with(descending, key, expected.get(key));
+		Object ascendingRoot = field(field(ascending, "valuesAxis"), "root");
+		Object descendingRoot = field(field(descending, "valuesAxis"), "root");
+		Assert.assertNotEquals("the comparison must cover different balanced tree shapes",
+			treeShape(ascendingRoot), treeShape(descendingRoot));
+		Assert.assertEquals(legacyKey(expected, Map.of(), definitionKey), stableKey(ascending));
+		Assert.assertEquals(stableKey(ascending), stableKey(descending));
+		Assert.assertEquals("different balanced shapes must retain exact UTF-16 canonical equality",
+			0, compare(ascending, descending));
+	}
+
+	@Test
+	public void axisInterningIsBoundedAndClearReleasesEveryRetainedAxis() throws Exception {
+		Object pool = canonicalAxisPool();
+		Object first = null;
+		for(int index = 0; index < 4_200; index++) {
+			Object environment = environment(
+				Map.of("unique-" + index, definition(index, "pool")), Map.of(), pool);
+			if(index == 0)
+				first = environment;
+		}
+		Assert.assertEquals(4_096, field(pool, "retainedAxes"));
+		Assert.assertTrue((Integer)field(pool, "retainedDefinitions") <= 65_536);
+		Object repeated = environment(Map.of("unique-0", definition(0, "pool")), Map.of(), pool);
+		Assert.assertSame("an exact retained axis remains reusable after saturation",
+			field(first, "valuesAxis"), field(repeated, "valuesAxis"));
+
+		Object overflowFirst = environment(Map.of("overflow", definition(9_999, "first")), Map.of(), pool);
+		Object overflowSecond = environment(Map.of("overflow", definition(9_999, "first")), Map.of(), pool);
+		Assert.assertNotSame("overflow loses only sharing and must not expand retention",
+			field(overflowFirst, "valuesAxis"), field(overflowSecond, "valuesAxis"));
+		Method clear = pool.getClass().getDeclaredMethod("clear");
+		clear.setAccessible(true);
+		clear.invoke(pool);
+		Assert.assertEquals(0, field(pool, "retainedAxes"));
+		Assert.assertEquals(0, field(pool, "retainedDefinitions"));
+		Assert.assertTrue(((Map<?,?>)field(pool, "values")).isEmpty());
+		Assert.assertTrue(((Map<?,?>)field(pool, "reads")).isEmpty());
 	}
 
 	@Test
@@ -154,6 +355,49 @@ public class PlacementJointInputOrderedEnvironmentOptimizationTest {
 		Constructor<?> constructor = type.getDeclaredConstructor(Map.class, Map.class, Function.class);
 		constructor.setAccessible(true);
 		return constructor.newInstance(values, reads, definitionKey);
+	}
+
+	private static Object environment(Map<String,Definition> values, Map<Integer,Definition> reads,
+		Object axisPool) throws Exception {
+		Class<?> environment = Class.forName(PlacementJointInputAnalysis.class.getName() + "$Environment");
+		Class<?> pool = Class.forName(PlacementJointInputAnalysis.class.getName() + "$CanonicalAxisPool");
+		Constructor<?> constructor = environment.getDeclaredConstructor(Map.class, Map.class, pool);
+		constructor.setAccessible(true);
+		return constructor.newInstance(values, reads, axisPool);
+	}
+
+	private static Object canonicalAxisPool() throws Exception {
+		Class<?> type = Class.forName(PlacementJointInputAnalysis.class.getName() + "$CanonicalAxisPool");
+		Constructor<?> constructor = type.getDeclaredConstructor();
+		constructor.setAccessible(true);
+		return constructor.newInstance();
+	}
+
+	private static String stableKey(Object environment) throws Exception {
+		Method stableKey = environment.getClass().getDeclaredMethod("stableKey");
+		stableKey.setAccessible(true);
+		return (String)stableKey.invoke(environment);
+	}
+
+	private static Object with(Object environment, String variable, Definition definition)
+		throws Exception {
+		Method with = environment.getClass().getDeclaredMethod("with", String.class, Definition.class);
+		with.setAccessible(true);
+		return with.invoke(environment, variable, definition);
+	}
+
+	private static Object observe(Object environment, int ordinal, Definition definition)
+		throws Exception {
+		Method observe = environment.getClass().getDeclaredMethod("observe", int.class, Definition.class);
+		observe.setAccessible(true);
+		return observe.invoke(environment, ordinal, definition);
+	}
+
+	private static String treeShape(Object node) throws Exception {
+		if(node == null)
+			return "-";
+		return '(' + field(node, "key").toString() + treeShape(field(node, "left"))
+			+ treeShape(field(node, "right")) + ')';
 	}
 
 	private static String legacyKey(Map<String,Definition> values, Map<Integer,Definition> reads,

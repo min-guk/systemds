@@ -208,7 +208,7 @@ public final class PlacementAnalysis {
 		private static final long NODE_AND_LIST_OVERHEAD = 64;
 		private static final long PIECE_REFERENCE_OVERHEAD = 8;
 		private static final long LITERAL_OVERHEAD = 40;
-		private final List<Object> pieces;
+		private final Object[] pieces;
 		private final int length;
 		private final long retainedWeight;
 		private int stringHash;
@@ -216,11 +216,12 @@ public final class PlacementAnalysis {
 		private volatile boolean hashComputed;
 
 		private CanonicalText(List<Object> pieces) {
-			this.pieces = List.copyOf(pieces);
+			this.pieces = pieces.toArray();
 			long total = 0;
 			long weight = saturatedAdd(NODE_AND_LIST_OVERHEAD,
-				PIECE_REFERENCE_OVERHEAD * pieces.size());
-			for(Object piece : pieces) {
+				PIECE_REFERENCE_OVERHEAD * this.pieces.length);
+			for(Object piece : this.pieces) {
+				Objects.requireNonNull(piece, "canonical text piece");
 				total += piece instanceof String text ? text.length() : ((CanonicalText) piece).length;
 				weight = saturatedAdd(weight, piece instanceof String text
 					? saturatedAdd(LITERAL_OVERHEAD, 2L * text.length())
@@ -255,7 +256,7 @@ public final class PlacementAnalysis {
 					pending.removeLast();
 					continue;
 				}
-				if(frame.index == text.pieces.size()) {
+				if(frame.index == text.pieces.length) {
 					text.stringHash = frame.hash;
 					text.hashPower = frame.power;
 					// Publish both integers together; concurrent redundant computation
@@ -264,7 +265,7 @@ public final class PlacementAnalysis {
 					pending.removeLast();
 					continue;
 				}
-				Object piece = text.pieces.get(frame.index);
+				Object piece = text.pieces[frame.index];
 				int hash;
 				int power;
 				if(piece instanceof String literal) {
@@ -311,6 +312,15 @@ public final class PlacementAnalysis {
 		private TextHashFrame(CanonicalText text) { this.text = text; }
 	}
 
+	private static final class CanonicalPieceIterator {
+		private final Object[] pieces;
+		private int index;
+
+		private CanonicalPieceIterator(CanonicalText text) { pieces = text.pieces; }
+		private boolean hasNext() { return index < pieces.length; }
+		private Object next() { return pieces[index++]; }
+	}
+
 	/** Reusable only inside one canonical sort invocation; ordinary comparisons create a fresh instance. */
 	private static final class CanonicalTextComparison {
 		private final CanonicalTextCursor leftCursor = new CanonicalTextCursor();
@@ -346,11 +356,17 @@ public final class PlacementAnalysis {
 				int count = Math.min(leftText.length() - leftOffset, rightText.length() - rightOffset);
 				// Compare a contiguous literal once, not one rope traversal per UTF-16
 				// character. Whole literals use the JDK's optimized String comparator.
-				if(leftOffset == 0 && rightOffset == 0
-					&& count == leftText.length() && count == rightText.length()) {
+				if(leftOffset == 0 && rightOffset == 0) {
 					int order = leftText.compareTo(rightText);
-					if(order != 0)
-						return order;
+					if(order != 0) {
+						int lengthDifference = leftText.length() - rightText.length();
+						// A literal prefix is not a rope prefix: its next segment may
+						// reverse the order. A character difference can also equal the
+						// length delta, so verify that ambiguous case exactly.
+						if(order != lengthDifference || !(lengthDifference < 0
+							? rightText.startsWith(leftText) : leftText.startsWith(rightText)))
+							return order;
+					}
 				}
 				else {
 					for(int index = 0; index < count; index++) {
@@ -448,8 +464,8 @@ public final class PlacementAnalysis {
 				int leftIndex = indices[leftPosition];
 				if(leftNode != rightNode || leftIndex != that.indices[rightPosition])
 					break;
-				for(int index = leftIndex; index < leftNode.pieces.size(); index++) {
-					Object piece = leftNode.pieces.get(index);
+				for(int index = leftIndex; index < leftNode.pieces.length; index++) {
+					Object piece = leftNode.pieces[index];
 					remaining += piece instanceof String literal ? literal.length() : ((CanonicalText) piece).length;
 				}
 				frames++;
@@ -474,11 +490,11 @@ public final class PlacementAnalysis {
 				int position = depth - 1;
 				CanonicalText node = nodes[position];
 				int index = indices[position];
-				if(index == node.pieces.size()) {
+				if(index == node.pieces.length) {
 					pop();
 					continue;
 				}
-				Object piece = node.pieces.get(index);
+				Object piece = node.pieces[index];
 				indices[position] = index + 1;
 				if(piece instanceof String literal) {
 					text = literal;
@@ -596,7 +612,7 @@ public final class PlacementAnalysis {
 			if(weight > maxWeight)
 				return null;
 			IdentityHashMap<Object,Boolean> staged = new IdentityHashMap<>();
-			ArrayDeque<java.util.Iterator<Object>> pending = new ArrayDeque<>();
+			ArrayDeque<CanonicalPieceIterator> pending = new ArrayDeque<>();
 			Object next = value;
 			while(true) {
 				if(!staged.containsKey(next)) {
@@ -605,8 +621,8 @@ public final class PlacementAnalysis {
 						return null;
 					weight += additional;
 					staged.put(next, Boolean.TRUE);
-					if(next instanceof CanonicalText text && !text.pieces.isEmpty())
-						pending.addLast(text.pieces.iterator());
+					if(next instanceof CanonicalText text && text.pieces.length != 0)
+						pending.addLast(new CanonicalPieceIterator(text));
 				}
 				while(!pending.isEmpty() && !pending.getLast().hasNext())
 					pending.removeLast();
@@ -650,7 +666,7 @@ public final class PlacementAnalysis {
 					return;
 				}
 				IdentityHashMap<Object,Boolean> staged = new IdentityHashMap<>();
-				ArrayDeque<java.util.Iterator<Object>> pending = new ArrayDeque<>();
+				ArrayDeque<CanonicalPieceIterator> pending = new ArrayDeque<>();
 				Object next = value;
 				while(true) {
 					if(!retainedDescriptors.containsKey(next) && !staged.containsKey(next)) {
@@ -661,8 +677,8 @@ public final class PlacementAnalysis {
 						}
 						weight += additional;
 						staged.put(next, Boolean.TRUE);
-						if(next instanceof CanonicalText text && !text.pieces.isEmpty())
-							pending.addLast(text.pieces.iterator());
+						if(next instanceof CanonicalText text && text.pieces.length != 0)
+							pending.addLast(new CanonicalPieceIterator(text));
 					}
 					while(!pending.isEmpty() && !pending.getLast().hasNext())
 						pending.removeLast();
@@ -688,7 +704,7 @@ public final class PlacementAnalysis {
 				return LEDGER_IDENTITY_OVERHEAD + CanonicalText.LITERAL_OVERHEAD + 2L * literal.length();
 			CanonicalText text = (CanonicalText)descriptor;
 			return LEDGER_IDENTITY_OVERHEAD + CanonicalText.NODE_AND_LIST_OVERHEAD
-				+ CanonicalText.PIECE_REFERENCE_OVERHEAD * text.pieces.size();
+				+ CanonicalText.PIECE_REFERENCE_OVERHEAD * text.pieces.length;
 		}
 
 		private void clear() {
@@ -873,8 +889,8 @@ public final class PlacementAnalysis {
 			Objects.requireNonNull(consumer, "consumer");
 			// Do not spend the cache on one-shot top-level alternatives. Local frames
 			// also keep deep ropes stack-safe and permit consumer reentry/exceptions.
-			ArrayDeque<java.util.Iterator<Object>> pending = new ArrayDeque<>();
-			pending.addLast(value.text.pieces.iterator());
+			ArrayDeque<CanonicalPieceIterator> pending = new ArrayDeque<>();
+			pending.addLast(new CanonicalPieceIterator(value.text));
 			while(!pending.isEmpty()) {
 				var pieces = pending.getLast();
 				if(!pieces.hasNext()) {
@@ -890,7 +906,7 @@ public final class PlacementAnalysis {
 					if(replay != null)
 						consumer.accept(replay);
 					else
-						pending.addLast(child.pieces.iterator());
+						pending.addLast(new CanonicalPieceIterator(child));
 				}
 			}
 		}

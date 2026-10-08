@@ -295,6 +295,10 @@ public class DirectedDirectClosureDirtyConeTest {
 		Assert.assertNull("new global durable seed may enable a previously absent source",
 			postPhysicalDirty(List.of(source, consumer), facts, List.of(), Map.of(),
 				List.of(anchored, consumer), facts, List.of(), Map.of(), Set.of()));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		Assert.assertNull(outerDirty(List.of(source, consumer), facts, List.of(), Map.of(),
+			List.of(anchored, consumer), facts, List.of(), Map.of(), Set.of(), metrics));
+		Assert.assertEquals(1, directMetric(metrics, "INITIAL_FULL_RESET_BASELINE"));
 	}
 
 	@Test
@@ -305,9 +309,12 @@ public class DirectedDirectClosureDirtyConeTest {
 		CandidateRuleFact derived = derivedFact(producer, anchorOwner);
 		List<Node> nodes = List.of(anchorOwner, producer);
 
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		Assert.assertNull("derived action metadata reads the anchor owner's complete node/fact row",
 			outerDirty(nodes, List.of(ownerBefore, derived), List.of(), Map.of(),
-				nodes, List.of(ownerAfter, derived), List.of(), Map.of(), Set.of()));
+				nodes, List.of(ownerAfter, derived), List.of(), Map.of(), Set.of(), metrics));
+		Assert.assertEquals(1, directMetric(metrics,
+			"INITIAL_FULL_RESET_DERIVED_ANCHOR_CONTEXT"));
 	}
 
 	@Test
@@ -336,9 +343,12 @@ public class DirectedDirectClosureDirtyConeTest {
 		List<CandidateRuleFact> after = List.of(excludedFact(source), owner, derived);
 		List<CompiledInputEdgeFact> edges = List.of(edge(source, anchorOwner));
 
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		Assert.assertNull("a dirty anchor owner can change metadata observed by an unrelated action",
 			outerDirty(nodes, before, edges, Map.of(),
-				nodes, after, edges, Map.of(), Set.of()));
+				nodes, after, edges, Map.of(), Set.of(), metrics));
+		Assert.assertEquals(1, directMetric(metrics,
+			"INITIAL_FULL_RESET_REFERENCED_OWNER_DIRTY"));
 	}
 
 	@Test
@@ -746,6 +756,29 @@ public class DirectedDirectClosureDirtyConeTest {
 		return (Set<CompiledHopKey>)method.invoke(null,
 			beforeNodes, beforeFacts, beforeEdges, beforeReaching,
 			afterNodes, afterFacts, afterEdges, afterReaching, changedLoopSeeds);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Set<CompiledHopKey> outerDirty(List<Node> beforeNodes,
+		List<CandidateRuleFact> beforeFacts, List<CompiledInputEdgeFact> beforeEdges,
+		Map<CompiledHopKey,List<CompiledHopKey>> beforeReaching,
+		List<Node> afterNodes, List<CandidateRuleFact> afterFacts,
+		List<CompiledInputEdgeFact> afterEdges,
+		Map<CompiledHopKey,List<CompiledHopKey>> afterReaching,
+		Set<CompiledHopKey> changedLoopSeeds, SearchSpaceMetrics metrics) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"initialOuterDirectDirty", List.class, List.class, List.class, Map.class,
+			List.class, List.class, List.class, Map.class, Set.class, SearchSpaceMetrics.class);
+		method.setAccessible(true);
+		return (Set<CompiledHopKey>)method.invoke(null,
+			beforeNodes, beforeFacts, beforeEdges, beforeReaching,
+			afterNodes, afterFacts, afterEdges, afterReaching, changedLoopSeeds, metrics);
+	}
+
+	private static long directMetric(SearchSpaceMetrics metrics, String name) {
+		return metrics.directBindingSnapshot().entrySet().stream()
+			.filter(entry -> entry.getKey().name().equals(name))
+			.mapToLong(Map.Entry::getValue).findFirst().orElse(0);
 	}
 
 	private static CandidateRuleFact derivedFact(Node producer, Node anchorOwner) {

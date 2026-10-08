@@ -82,7 +82,7 @@ public class NormalizedTextAppendSessionTest {
 		Assert.assertEquals("x", String.join("", chunks(small, unary)));
 		Field text = NormalizedText.class.getDeclaredField("text"); text.setAccessible(true);
 		Field pieces = text.get(unary).getClass().getDeclaredField("pieces"); pieces.setAccessible(true);
-		Object firstChild = ((List<?>)pieces.get(text.get(unary))).get(0);
+		Object firstChild = ((Object[])pieces.get(text.get(unary)))[0];
 		Assert.assertFalse("short text must not admit a huge retained key graph", cache(small).containsKey(firstChild));
 	}
 	@Test public void consumerReentryAndExceptionsDoNotCorruptTraversal() throws Exception {

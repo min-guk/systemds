@@ -198,9 +198,9 @@ public class CanonicalTextDagCacheTest {
 			if(value instanceof String literal)
 				total += 40 + 2L * literal.length();
 			else {
-				List<?> pieces = (List<?>) field(value, "pieces");
-				total += 64 + 8L * pieces.size();
-				queue.addAll(pieces);
+				Object[] pieces = (Object[]) field(value, "pieces");
+				total += 64 + 8L * pieces.length;
+				java.util.Collections.addAll(queue, pieces);
 			}
 		}
 		return total;
@@ -214,7 +214,7 @@ public class CanonicalTextDagCacheTest {
 			Object value = queue.removeLast();
 			if(seen.put(value, Boolean.TRUE) != null || value instanceof String)
 				continue;
-			queue.addAll((List<?>)field(value, "pieces"));
+			java.util.Collections.addAll(queue, (Object[])field(value, "pieces"));
 		}
 		return seen.size();
 	}

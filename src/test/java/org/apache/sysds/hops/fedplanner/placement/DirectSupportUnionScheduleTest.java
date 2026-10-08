@@ -32,6 +32,9 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAncho
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder.PrivacyEvidenceMode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
@@ -452,6 +455,167 @@ public class DirectSupportUnionScheduleTest {
 	}
 
 	@Test
+	public void directNativePublicationReusesOnlyExactNonemptyBindingAuthority() throws Exception {
+		CompiledHopKey source = key("template-source"), owner = key("template-owner");
+		PlacementEmissionState emission = new PlacementEmissionState(new PlacementState(
+			ExecType.FED, FederatedOutput.FOUT, FType.ROW, false), false);
+		DurableAnchorKey seed = anchor("seed", 4, 2), output = anchor("output", 4, 2);
+		List<CandidateRealizationInputBinding> bindings = supportFact(source, owner)
+			.allowedEmissionFacts().get(0).realizations().get(0).supportClauses().get(0).inputBindings();
+		NativePlacementContinuity.NativeContinuityProof firstProof =
+			new NativePlacementContinuity.NativeContinuityProof(seed, seed, true, bindings);
+		NativePlacementContinuity.NativeContinuityProof sharedProof =
+			new NativePlacementContinuity.NativeContinuityProof(seed, seed, true, firstProof.immediateBindings());
+		Assert.assertSame(firstProof.immediateBindings(), sharedProof.immediateBindings());
+		Assert.assertNotSame(firstProof, sharedProof);
+		PlacementRelationClosure closure = closure();
+		CandidateEmissionRealization first = directNativePublication(
+			closure, firstProof, owner, emission, output, "lineage", true);
+		Assert.assertSame("a fresh wrapper over the exact same immutable template retains authority",
+			first, directNativePublication(closure, sharedProof, owner, emission, output, "lineage", true));
+		Assert.assertEquals("sharing must equal an uncached publication",
+			first, directNativePublication(closure(), sharedProof, owner, emission, output, "lineage", true));
+
+		NativePlacementContinuity.NativeContinuityProof copiedProof =
+			new NativePlacementContinuity.NativeContinuityProof(seed, seed, true, new ArrayList<>(bindings));
+		Assert.assertEquals(firstProof, copiedProof);
+		Assert.assertNotSame(firstProof.immediateBindings(), copiedProof.immediateBindings());
+		Assert.assertSame("a copied immutable list retains exact binding authority",
+			first, directNativePublication(closure, copiedProof, owner, emission, output, "lineage", true));
+
+		List<CandidateRealizationInputBinding> rebuiltBindings = supportFact(source, owner)
+			.allowedEmissionFacts().get(0).realizations().get(0).supportClauses().get(0).inputBindings();
+		Assert.assertEquals(bindings, rebuiltBindings);
+		Assert.assertNotSame(bindings, rebuiltBindings);
+		Assert.assertNotSame(bindings.get(0), rebuiltBindings.get(0));
+		Assert.assertSame(source,
+			rebuiltBindings.get(0).source().rule().parentOccurrence());
+		NativePlacementContinuity.NativeContinuityProof rebuiltProof =
+			new NativePlacementContinuity.NativeContinuityProof(seed, seed, true, rebuiltBindings);
+		Assert.assertEquals(firstProof, rebuiltProof);
+		Assert.assertSame("separately rebuilt equal references retain the same exact owner authority",
+			first, directNativePublication(
+				closure, rebuiltProof, owner, emission, output, "lineage", true));
+		List<CandidateRealizationInputBinding> foreignBindings = supportFact(key("template-source"), owner)
+			.allowedEmissionFacts().get(0).realizations().get(0).supportClauses().get(0).inputBindings();
+		NativePlacementContinuity.NativeContinuityProof foreignProof =
+			new NativePlacementContinuity.NativeContinuityProof(seed, seed, true, foreignBindings);
+		Assert.assertEquals(firstProof, foreignProof);
+		Assert.assertNotSame(first, directNativePublication(
+			closure, foreignProof, owner, emission, output, "lineage", true));
+		Assert.assertSame(foreignBindings.get(0).source().rule().parentOccurrence(),
+			directNativePublication(closure, foreignProof, owner, emission, output, "lineage", true)
+				.supportClauses().get(0).inputBindings().get(0).source().rule().parentOccurrence());
+		for(NativePlacementContinuity.NativeContinuityProof changed : List.of(
+			new NativePlacementContinuity.NativeContinuityProof(anchor("other-seed", 4, 2), seed,
+				true, firstProof.immediateBindings()),
+			new NativePlacementContinuity.NativeContinuityProof(seed, anchor("other-pool", 4, 2),
+				true, firstProof.immediateBindings()),
+			new NativePlacementContinuity.NativeContinuityProof(seed, seed, false, firstProof.immediateBindings())))
+			Assert.assertNotSame("all seed/output/precision fields remain in the authority key",
+				first, directNativePublication(closure, changed, owner, emission, output, "lineage", true));
+	}
+
+	@Test
+	public void directNativePublicationRelocationAuthorityUsesExactConsumerIdentities()
+		throws Exception {
+		CompiledHopKey source = key("relocation-source"), owner = key("relocation-owner");
+		CompiledHopKey consumer = key("relocation-consumer");
+		CompiledHopKey equalForeignConsumer = key("relocation-consumer");
+		Assert.assertEquals(consumer, equalForeignConsumer);
+		Assert.assertNotSame(consumer, equalForeignConsumer);
+		PlacementEmissionState emission = new PlacementEmissionState(new PlacementState(
+			ExecType.FED, FederatedOutput.FOUT, FType.ROW, false), false);
+		DurableAnchorKey seed = anchor("relocation-seed", 4, 2);
+		DurableAnchorKey output = anchor("relocation-output", 4, 2);
+		CandidateRealizationReference firstReference = supportFact(source, owner)
+			.allowedEmissionFacts().get(0).realizations().get(0).supportClauses().get(0)
+			.inputBindings().get(0).source();
+		CandidateRealizationReference rebuiltReference = supportFact(source, owner)
+			.allowedEmissionFacts().get(0).realizations().get(0).supportClauses().get(0)
+			.inputBindings().get(0).source();
+		RelocationActionKey firstAction = relocationAction(consumer, emission.placementState());
+		RelocationActionKey sameAuthorityAction = relocationAction(
+			consumer, emission.placementState());
+		RelocationActionKey foreignConsumerAction = relocationAction(
+			equalForeignConsumer, emission.placementState());
+		Assert.assertEquals(firstAction, sameAuthorityAction);
+		Assert.assertEquals(firstAction, foreignConsumerAction);
+		Assert.assertNotSame(firstAction, sameAuthorityAction);
+
+		NativePlacementContinuity.NativeContinuityProof firstProof =
+			new NativePlacementContinuity.NativeContinuityProof(seed, seed, true, List.of(
+				CandidateRealizationInputBinding.relocation(0, firstReference, firstAction)));
+		NativePlacementContinuity.NativeContinuityProof sameAuthorityProof =
+			new NativePlacementContinuity.NativeContinuityProof(seed, seed, true, List.of(
+				CandidateRealizationInputBinding.relocation(
+					0, rebuiltReference, sameAuthorityAction)));
+		NativePlacementContinuity.NativeContinuityProof foreignConsumerProof =
+			new NativePlacementContinuity.NativeContinuityProof(seed, seed, true, List.of(
+				CandidateRealizationInputBinding.relocation(
+					0, rebuiltReference, foreignConsumerAction)));
+		Assert.assertEquals(firstProof, sameAuthorityProof);
+		Assert.assertEquals(firstProof, foreignConsumerProof);
+
+		PlacementRelationClosure closure = closure();
+		CandidateEmissionRealization first = directNativePublication(
+			closure, firstProof, owner, emission, output, "relocation", true);
+		Assert.assertSame("rebuilt relocation actions with the same exact consumers retain authority",
+			first, directNativePublication(closure, sameAuthorityProof, owner,
+				emission, output, "relocation", true));
+		Assert.assertNotSame("equal-valued foreign consumers cannot borrow relocation authority",
+			first, directNativePublication(closure, foreignConsumerProof, owner,
+				emission, output, "relocation", true));
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	public void supportMemoInstantiationRetainsExactTemplateBindingsForPublicationReuse() throws Exception {
+		CompiledHopKey source = key("memo-source"), owner = key("memo-owner");
+		List<CandidateRealizationInputBinding> bindings = supportFact(source, owner)
+			.allowedEmissionFacts().get(0).realizations().get(0).supportClauses().get(0).inputBindings();
+		CandidateRealizationReference root = bindings.get(0).source();
+		DurableAnchorKey seed = anchor("memo-seed", 4, 2);
+		Class<?> templateType = Class.forName(NativePlacementContinuity.class.getName() + "$CandidateSupportTemplate");
+		Constructor<?> templateConstructor = templateType.getDeclaredConstructor(
+			DurableAnchorKey.class, boolean.class, List.class);
+		templateConstructor.setAccessible(true);
+		Object template = templateConstructor.newInstance(seed, true, bindings);
+		Class<?> entryType = Class.forName(NativePlacementContinuity.class.getName() + "$SupportMemoEntry");
+		Constructor<?> entryConstructor = entryType.getDeclaredConstructor(
+			CandidateRealizationReference.class, List.class, Set.class, long.class, boolean.class);
+		entryConstructor.setAccessible(true);
+		Object entry = entryConstructor.newInstance(root, List.of(template), Set.of(source), 128L, true);
+		NativePlacementContinuity continuity = new NativePlacementContinuity(
+			Map.of(), Map.of(), List.of(), List.of(), Map.of());
+		Method instantiate = NativePlacementContinuity.class.getDeclaredMethod(
+			"instantiateSupportTemplates", entryType, CandidateRealizationReference.class, DurableAnchorKey.class);
+		instantiate.setAccessible(true);
+		NativePlacementContinuity.NativeContinuityProof first =
+			((List<NativePlacementContinuity.NativeContinuityProof>)instantiate.invoke(continuity, entry, root, seed)).get(0);
+		NativePlacementContinuity.NativeContinuityProof second =
+			((List<NativePlacementContinuity.NativeContinuityProof>)instantiate.invoke(continuity, entry, root, seed)).get(0);
+		Assert.assertNotSame(first, second);
+		Assert.assertSame("real support-memo instantiations must retain the same canonical list",
+			first.immediateBindings(), second.immediateBindings());
+		PlacementEmissionState emission = new PlacementEmissionState(new PlacementState(
+			ExecType.FED, FederatedOutput.FOUT, FType.ROW, false), false);
+		PlacementRelationClosure closure = closure();
+		Assert.assertSame(directNativePublication(closure, first, owner, emission, seed, "memo", true),
+			directNativePublication(closure, second, owner, emission, seed, "memo", true));
+		CandidateRealizationReference requestedRoot = new CandidateRealizationReference(root.rule(),
+			PlacementIdentity.PlacementRealizationKey.nativeLineage(emission, "rebound-root"));
+		NativePlacementContinuity.NativeContinuityProof rebound =
+			((List<NativePlacementContinuity.NativeContinuityProof>)instantiate.invoke(
+				continuity, entry, requestedRoot, seed)).get(0);
+		Assert.assertNotSame("rebinding cannot borrow the cached root's binding-container authority",
+			first.immediateBindings(), rebound.immediateBindings());
+		Assert.assertSame(requestedRoot, rebound.immediateBindings().get(0).source());
+		Assert.assertSame("the original immutable template remains untouched", root,
+			first.immediateBindings().get(0).source());
+	}
+
+	@Test
 	public void directNativePublicationMemoEvictsOldestAndClearsPerBuild() throws Exception {
 		CompiledHopKey owner = key("owner");
 		PlacementEmissionState emission = new PlacementEmissionState(new PlacementState(
@@ -511,6 +675,14 @@ public class DirectSupportUnionScheduleTest {
 	private static DurableAnchorKey anchor(String id, long rows, long columns) {
 		return new DurableAnchorKey(id, FType.ROW,
 			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(rows, columns))));
+	}
+
+	private static RelocationActionKey relocationAction(CompiledHopKey consumer,
+		PlacementState target) {
+		ValueVersionKey sourceVersion = new ValueVersionKey("support-union", "relocation-source",
+			REGION, 0, VersionKind.ORDINARY, List.of());
+		return new RelocationActionKey(sourceVersion, target, FType.ROW,
+			anchor("relocation-anchor", 4, 2), REGION.normalizedSignature(), List.of(consumer));
 	}
 
 	private static int publicationMemoSize(PlacementRelationClosure closure) throws Exception {
