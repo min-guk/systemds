@@ -1,0 +1,1675 @@
+{
+  "status": "CYCLE_FINISHED_TARGET_NOT_MET",
+  "adoption": "NO_CONFIRMED_IMPROVEMENT",
+  "performanceScope": "Actual multiLogReg, total compilation = common + planner + lowering/other",
+  "targetSeconds": 10,
+  "targetMet": false,
+  "baselineSource": {
+    "head": "88d77d641c4f5f9177b82724bca3ea70ce4edb63",
+    "sourceRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/steplm-planning-20s-validation-20261007/steplm-20s-cg-final3-01",
+    "javaFiles": 3618,
+    "mismatches": []
+  },
+  "build": {
+    "returncode": 0,
+    "sourceUnchanged": true,
+    "seconds": 215.9581744670868,
+    "head": "88d77d641c4f5f9177b82724bca3ea70ce4edb63"
+  },
+  "java": {
+    "tests": 1089,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 6,
+    "classes": 140,
+    "suites": [
+      {
+        "class": "AllDefinitionContinuityReuseTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "AutomaticSupplySharingDockerProbeArgumentsTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "BoundaryPruningTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "BoundarySupportMergeTest",
+        "tests": 14,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CampaignBG014AlsPartitionedComputeCostRedTest",
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CandidateEmissionSelectionKeyTest",
+        "tests": 5,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CandidateRealizationCanonicalizationTest",
+        "tests": 55,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CandidateRealizationReferenceHashTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CandidateRuleFactsRealizationIndexTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CandidateRuleKeyEqualityTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CanonicalTextChunkComparisonTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CanonicalTextDagCacheTest",
+        "tests": 8,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CanonicalTextScopedCacheTest",
+        "tests": 10,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CfgNativeLineageNormalizationTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CfgReplayCompatibilityIndexTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CfgReplayMemoTest",
+        "tests": 10,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CompiledInputEdgeReuseTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ContinuityRefreshReuseTest",
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "CostBasedPruningTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "DerivedFoutNormalizationTest",
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "DirectBindingSeedReuseTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "DirectComponentScheduleCacheTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "DirectSupportUnionScheduleTest",
+        "tests": 11,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "DirectedDirectClosureDirtyConeTest",
+        "tests": 29,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "DynamicNativeLayoutCompositionTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "EarlyPrivacyPruningLegalSpaceParityTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "EliminationOrderScoreCacheTest",
+        "tests": 5,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactCategoricalSolverArithmeticParityTest",
+        "tests": 12,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactCategoricalSolverTest",
+        "tests": 22,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactCompiledSupplySharingTest",
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactDerivedSupplySharingTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactDurableOutputSupportTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactDyadicOrderedResidualBoundaryTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactDyadicOrderedResidualTest",
+        "tests": 5,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactDyadicSolverTest",
+        "tests": 8,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactEliminationOrderPolicyTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactEmissionBindingIdentityTest",
+        "tests": 10,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactFactorFreezeOrderTest",
+        "tests": 5,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactFactorValueClassesTest",
+        "tests": 9,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactFiniteRowIndexTest",
+        "tests": 7,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactFiniteSupportJoinTest",
+        "tests": 11,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactHardFactorObservationDecompositionTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactLoopPhiSupplySharingTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactNativeLocalAnchorFanoutCostTest",
+        "tests": 10,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPartialHardFactorTest",
+        "tests": 8,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalCostFingerprintDeterminismTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalCostFingerprintPreflightTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalCostFingerprintStreamingTest",
+        "tests": 7,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalCostSurfaceEstimateSnapshotTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalDyadicCertificateTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalLegalityEncodingTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalNativeSupplyRepresentationTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalRealizationSupportFactorCacheTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalReducedSolverTest",
+        "tests": 35,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalShapeDemandTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalSharedSourceEncodingTest",
+        "tests": 27,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalUnaryPreparationTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactPhysicalWitnessEncodingTest",
+        "tests": 5,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactRootWorkerCountMemoTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactSharedSourceLinearPreparationTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactSparseMessageParityTest",
+        "tests": 12,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ExactSparseStorageBudgetTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "FederatedPlanLocalCostIntegrationTest",
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "HeuristicProtectedNestedDemotionTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalBoundaryMessageTest",
+        "tests": 18,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalBoundarySeedTest",
+        "tests": 11,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalConditionalReplayTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalRegionalConfigurationTest",
+        "tests": 8,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalRegionalOptimizerTest",
+        "tests": 20,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalRegionalSeedTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "IncrementalSinglePartitionProofTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointAliasProjectionTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointAliasReachabilityTest",
+        "tests": 8,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointBoundaryMixedInputTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointBoundaryPhysicalModelProofTest",
+        "tests": 10,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointCompactAlignmentTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointEarlyPruningTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointInputReachingDefinitionsTest",
+        "tests": 9,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointPartialTruthTest",
+        "tests": 5,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointPhysicalCostRowsPrefixTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointPhysicalCostRowsTraversalMemoTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointPhysicalCostTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointValueMapRelationsTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "JointValueMapSelectionLegalityTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LocalCategoricalOptimizerTest",
+        "tests": 21,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LocalPhysicalOptimizerIncrementalTraceTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LogicalBoundaryRealizationsTest",
+        "tests": 23,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LogregProtectedLoopSliceTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LoopIdentityBackedgeClosureTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LoopSeedReplayWideningTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "LoopSeedSnapshotEqualityMemoTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "MaterializationProofInventoryTest",
+        "tests": 15,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "MaterializedContinuityTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "NativePlacementContinuityTest",
+        "tests": 91,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 1
+      },
+      {
+        "class": "NativePlacementGroundingAndSignatureTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "NativePlacementPruneOwnerTest",
+        "tests": 8,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "NativeProofSignatureCacheTest",
+        "tests": 5,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "NeutralPlacementFixedPointCompositionTest",
+        "tests": 12,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "NormalizedTextAppendSessionTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "OracleFacadeInnerFailurePropagationTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "OracleFacadeTest",
+        "tests": 28,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PhysicalCandidateRefinementTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PhysicalGenerationEnvelopeTest",
+        "tests": 10,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PhysicalSinglePartitionProofFixedPointTest",
+        "tests": 9,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementAnalysisNormalizedTextTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementCanonicalFingerprintTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementDependencyComponentsTest",
+        "tests": 11,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementIdentityAnalysisScopeTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementIdentityCollectionHashTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementJointInputEnvironmentTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementRealizationAuthorityTest",
+        "tests": 12,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlacementRealizationLookupIndexTest",
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlannerCandidateSpaceAuditEncodingTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlannerResourceGuardTest",
+        "tests": 8,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlannerRuntimePlacementAuditShortHashTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PlannerSpaceAuditTest",
+        "tests": 17,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PolicyGreedyGroundingTest",
+        "tests": 7,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PolicyGreedyPlacementSelectorTest",
+        "tests": 14,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PruningAblationTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "PublicationSupportClosureTest",
+        "tests": 10,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "RefedReuseAuditTest",
+        "tests": 7,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "ReferenceProductPrefixPruningTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "RelocationBindingPrefixPruningTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "RelocationBindingScheduleTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "RelocationProductMemoTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "RequiredInputSupportMemoTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "RuntimeReadLegalityParityTest",
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "SharedCanonicalListHashTest",
+        "tests": 3,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "SharedReductionRepairTest",
+        "tests": 6,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "SharedRegionalCompactionParityTest",
+        "tests": 7,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "SharedRegionalPreparationTest",
+        "tests": 13,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "SparseKnownZeroMaskTest",
+        "tests": 9,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "StepLmCgCallGraphTest",
+        "tests": 2,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "StepLmPublicationReceiptClosureTest",
+        "tests": 1,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "StepLmTrainingBudgetTest",
+        "tests": 8,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "TransientPlacementAlternativesTest",
+        "tests": 7,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 5
+      },
+      {
+        "class": "ValueMapReferenceIndexTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "WorkerPoolAnchorResolverCycleTest",
+        "tests": 12,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "WorkerPoolAnchorResolverFunctionReturnTest",
+        "tests": 12,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      },
+      {
+        "class": "WorkerPoolRealizationTraversalTest",
+        "tests": 4,
+        "errors": 0,
+        "failures": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "python": {
+    "tests": 35,
+    "failures": 0,
+    "log": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round3-20261007/integration-88d/python-joint-harness.log"
+  },
+  "integrationReview": {
+    "status": "CLEAR",
+    "reviewer": "logreg_cfg_cache_design",
+    "scope": "Final 88d integration: ExactCategoricalSolver and arithmetic parity test",
+    "evidence": [
+      "PreciseCost, StoredCellOdometer, support merge and assignment advancement unchanged from 88d77d641c",
+      "Dense scalar accumulation preserves arithmetic order, overflow, ties, pruning and counter placement",
+      "All 10 upstream arithmetic tests plus both scalar boundary regressions retained"
+    ],
+    "reviewOnly": true
+  },
+  "summary": {
+    "baseline": {
+      "commonSeconds": {
+        "values": [
+          11.976149673,
+          11.353847249,
+          11.941125424
+        ],
+        "mean": 11.757040782,
+        "median": 11.941125424
+      },
+      "plannerSeconds": {
+        "values": [
+          3.82510316,
+          3.55003715,
+          3.901960938
+        ],
+        "mean": 3.7590337493333332,
+        "median": 3.82510316
+      },
+      "otherSeconds": {
+        "values": [
+          0.887148166999999,
+          0.9799096010000006,
+          1.2041416379999994
+        ],
+        "mean": 1.023733135333333,
+        "median": 0.9799096010000006
+      },
+      "compilationSeconds": {
+        "values": [
+          16.688401,
+          15.883794,
+          17.047228
+        ],
+        "mean": 16.53980766666667,
+        "median": 16.688401
+      }
+    },
+    "candidate": {
+      "commonSeconds": {
+        "values": [
+          11.915067021,
+          11.276768357,
+          12.821553997
+        ],
+        "mean": 12.004463125000001,
+        "median": 11.915067021
+      },
+      "plannerSeconds": {
+        "values": [
+          3.479903929,
+          3.400273755,
+          4.215397408
+        ],
+        "mean": 3.6985250306666666,
+        "median": 3.479903929
+      },
+      "otherSeconds": {
+        "values": [
+          1.0468800499999995,
+          1.0362298879999998,
+          1.3170945949999995
+        ],
+        "mean": 1.1334015109999995,
+        "median": 1.0468800499999995
+      },
+      "compilationSeconds": {
+        "values": [
+          16.441851,
+          15.713272,
+          18.354046
+        ],
+        "mean": 16.836389666666665,
+        "median": 16.441851
+      }
+    },
+    "totalMeanImprovementPercent": -1.7931405611064655,
+    "totalMedianImprovementPercent": 1.4773734164225782,
+    "targetMet": false
+  },
+  "runs": [
+    {
+      "variant": "baseline",
+      "runId": "logreg-r3-88d-base-01",
+      "validation": {
+        "baselineRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round3-20261007/integration-88d/logreg-r3-88d-base-01",
+        "fixtureParity": true,
+        "inputParity": true,
+        "imageParity": true,
+        "dependencyParity": true,
+        "harnessReturnCode": 0,
+        "status": "PASSED",
+        "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+        "noRuntimeConversion": true,
+        "modelProofPassed": true,
+        "cases": [
+          {
+            "case": "ml_logreg",
+            "passed": true,
+            "checkpointParity": true,
+            "checkpointCount": 1228,
+            "fingerprintParity": true,
+            "modelComparison": {
+              "actualEntries": 16,
+              "actualShape": [
+                8,
+                2
+              ],
+              "entries": 16,
+              "errors": [],
+              "expectedShape": null,
+              "finite": true,
+              "matched": true,
+              "maxAbsDifference": 2.220446049250313e-16,
+              "nonzero": true,
+              "referenceShape": [
+                8,
+                2
+              ],
+              "shapeMatched": true
+            },
+            "runtimeAuditViolations": [],
+            "statistics": {
+              "compilationSeconds": 16.688401,
+              "executionSeconds": 2.855
+            },
+            "commonSeconds": 11.976149673,
+            "plannerSeconds": 3.82510316,
+            "loweringAndOtherSeconds": 0.887148166999999,
+            "commonPreparationSeconds": 11.991173333,
+            "timingTargetMet": false
+          }
+        ]
+      },
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "925e9c18cd72ecbc5a66b28f0c4fe1b2d4a345bce6c24027d8799f7d5ce41880",
+        "mainSources": "c061c281605948288652056118e0885ef6a386514b6030e2cd1e20a35d4310a2",
+        "testClasses": "3099efdbd40d681947c2f1a85d2349dc1c42e4c17cdc95205d2786195bdf8472",
+        "testSources": "d1643c447862ffb231f4cc9ef2c50c8c905d4640067eea4c60f165d47f0c01d0"
+      },
+      "resultSha256": "8cc328e14ecc78e5f28535c7dbcbe90931639a24a5c3fc8131e2907544610829",
+      "manifestSha256": "d5a3655e62f7df502102879d7ae3dee603ae10275e4d7893c31361d5916901be",
+      "dockerArgv": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--network",
+        "none",
+        "--name",
+        "systemds-joint-boundary-0bde61ba86484377",
+        "--cpus",
+        "4",
+        "--memory",
+        "8g",
+        "--user",
+        "10041:5500",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-base-01:/evidence:rw",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-base-01/frozen-inputs/main-classes:/engine/classes:ro",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-base-01/frozen-inputs/test-classes:/engine/test-classes:ro",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-base-01/frozen-inputs/dependencies:/deps:ro",
+        "--entrypoint",
+        "bash",
+        "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+        "/evidence/container-run.sh"
+      ]
+    },
+    {
+      "variant": "publication/final",
+      "runId": "logreg-r3-88d-final-01",
+      "validation": {
+        "baselineRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round3-20261007/integration-88d/logreg-r3-88d-base-01",
+        "fixtureParity": true,
+        "inputParity": true,
+        "imageParity": true,
+        "dependencyParity": true,
+        "harnessReturnCode": 0,
+        "status": "PASSED",
+        "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+        "noRuntimeConversion": true,
+        "modelProofPassed": true,
+        "cases": [
+          {
+            "case": "ml_logreg",
+            "passed": true,
+            "checkpointParity": true,
+            "checkpointCount": 1228,
+            "fingerprintParity": true,
+            "modelComparison": {
+              "actualEntries": 16,
+              "actualShape": [
+                8,
+                2
+              ],
+              "entries": 16,
+              "errors": [],
+              "expectedShape": null,
+              "finite": true,
+              "matched": true,
+              "maxAbsDifference": 2.220446049250313e-16,
+              "nonzero": true,
+              "referenceShape": [
+                8,
+                2
+              ],
+              "shapeMatched": true
+            },
+            "runtimeAuditViolations": [],
+            "statistics": {
+              "compilationSeconds": 16.441851,
+              "executionSeconds": 2.956
+            },
+            "commonSeconds": 11.915067021,
+            "plannerSeconds": 3.479903929,
+            "loweringAndOtherSeconds": 1.0468800499999995,
+            "commonPreparationSeconds": 11.928633187,
+            "timingTargetMet": false
+          }
+        ]
+      },
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "77b6ac9369656758cfe71d37b69d718c5fa25f83370e0433ccc02be69f4ab331",
+        "mainSources": "f60e82be812354fa20bfe89c275059ad9f07ffdbadf19f624b0b1a7a4b95b0fb",
+        "testClasses": "e0fb140f810dc7ef8f1fd6686688303c6ef006a6b09d3bbf06f0dae1cb071230",
+        "testSources": "ff4a782199ce6fef84d8834ad9bffa881b9750f7a8c7e792db98ad8568056039"
+      },
+      "resultSha256": "781fe210b48e0da2e15712a06c529aa8f2521f2fb0c18b1118b9e6962c7304e4",
+      "manifestSha256": "4125d72e6b6f7135239c0ab1c873fb48488dd1af8735899979c0b689a6c86e39",
+      "dockerArgv": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--network",
+        "none",
+        "--name",
+        "systemds-joint-boundary-02f668c1db6a4a38",
+        "--cpus",
+        "4",
+        "--memory",
+        "8g",
+        "--user",
+        "10041:5500",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-final-01:/evidence:rw",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-final-01/frozen-inputs/main-classes:/engine/classes:ro",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-final-01/frozen-inputs/test-classes:/engine/test-classes:ro",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-final-01/frozen-inputs/dependencies:/deps:ro",
+        "--entrypoint",
+        "bash",
+        "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+        "/evidence/container-run.sh"
+      ]
+    },
+    {
+      "variant": "publication/final",
+      "runId": "logreg-r3-88d-final-02",
+      "validation": {
+        "baselineRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round3-20261007/integration-88d/logreg-r3-88d-base-01",
+        "fixtureParity": true,
+        "inputParity": true,
+        "imageParity": true,
+        "dependencyParity": true,
+        "harnessReturnCode": 0,
+        "status": "PASSED",
+        "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+        "noRuntimeConversion": true,
+        "modelProofPassed": true,
+        "cases": [
+          {
+            "case": "ml_logreg",
+            "passed": true,
+            "checkpointParity": true,
+            "checkpointCount": 1228,
+            "fingerprintParity": true,
+            "modelComparison": {
+              "actualEntries": 16,
+              "actualShape": [
+                8,
+                2
+              ],
+              "entries": 16,
+              "errors": [],
+              "expectedShape": null,
+              "finite": true,
+              "matched": true,
+              "maxAbsDifference": 2.220446049250313e-16,
+              "nonzero": true,
+              "referenceShape": [
+                8,
+                2
+              ],
+              "shapeMatched": true
+            },
+            "runtimeAuditViolations": [],
+            "statistics": {
+              "compilationSeconds": 15.713272,
+              "executionSeconds": 2.464
+            },
+            "commonSeconds": 11.276768357,
+            "plannerSeconds": 3.400273755,
+            "loweringAndOtherSeconds": 1.0362298879999998,
+            "commonPreparationSeconds": 11.294817913,
+            "timingTargetMet": false
+          }
+        ]
+      },
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "77b6ac9369656758cfe71d37b69d718c5fa25f83370e0433ccc02be69f4ab331",
+        "mainSources": "f60e82be812354fa20bfe89c275059ad9f07ffdbadf19f624b0b1a7a4b95b0fb",
+        "testClasses": "e0fb140f810dc7ef8f1fd6686688303c6ef006a6b09d3bbf06f0dae1cb071230",
+        "testSources": "ff4a782199ce6fef84d8834ad9bffa881b9750f7a8c7e792db98ad8568056039"
+      },
+      "resultSha256": "d6e8cf0ff7422c7c907652342a830d9fd70856826fc1244dcbc0cd5f5ccdfba9",
+      "manifestSha256": "47d430dbeef9ee749642cceec7614f1ec3971aa2a013b980edc29947b395ca9d",
+      "dockerArgv": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--network",
+        "none",
+        "--name",
+        "systemds-joint-boundary-85b11b8cc68e4ad4",
+        "--cpus",
+        "4",
+        "--memory",
+        "8g",
+        "--user",
+        "10041:5500",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-final-02:/evidence:rw",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-final-02/frozen-inputs/main-classes:/engine/classes:ro",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-final-02/frozen-inputs/test-classes:/engine/test-classes:ro",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-final-02/frozen-inputs/dependencies:/deps:ro",
+        "--entrypoint",
+        "bash",
+        "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+        "/evidence/container-run.sh"
+      ]
+    },
+    {
+      "variant": "baseline",
+      "runId": "logreg-r3-88d-base-02",
+      "validation": {
+        "baselineRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round3-20261007/integration-88d/logreg-r3-88d-base-01",
+        "fixtureParity": true,
+        "inputParity": true,
+        "imageParity": true,
+        "dependencyParity": true,
+        "harnessReturnCode": 0,
+        "status": "PASSED",
+        "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+        "noRuntimeConversion": true,
+        "modelProofPassed": true,
+        "cases": [
+          {
+            "case": "ml_logreg",
+            "passed": true,
+            "checkpointParity": true,
+            "checkpointCount": 1228,
+            "fingerprintParity": true,
+            "modelComparison": {
+              "actualEntries": 16,
+              "actualShape": [
+                8,
+                2
+              ],
+              "entries": 16,
+              "errors": [],
+              "expectedShape": null,
+              "finite": true,
+              "matched": true,
+              "maxAbsDifference": 2.220446049250313e-16,
+              "nonzero": true,
+              "referenceShape": [
+                8,
+                2
+              ],
+              "shapeMatched": true
+            },
+            "runtimeAuditViolations": [],
+            "statistics": {
+              "compilationSeconds": 15.883794,
+              "executionSeconds": 2.98
+            },
+            "commonSeconds": 11.353847249,
+            "plannerSeconds": 3.55003715,
+            "loweringAndOtherSeconds": 0.9799096010000006,
+            "commonPreparationSeconds": 11.368451094,
+            "timingTargetMet": false
+          }
+        ]
+      },
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "925e9c18cd72ecbc5a66b28f0c4fe1b2d4a345bce6c24027d8799f7d5ce41880",
+        "mainSources": "c061c281605948288652056118e0885ef6a386514b6030e2cd1e20a35d4310a2",
+        "testClasses": "3099efdbd40d681947c2f1a85d2349dc1c42e4c17cdc95205d2786195bdf8472",
+        "testSources": "d1643c447862ffb231f4cc9ef2c50c8c905d4640067eea4c60f165d47f0c01d0"
+      },
+      "resultSha256": "3bd0d04b8facc1c66aaf4cc743d8e25c5a18db319b1c8ee23d223cb752fa8490",
+      "manifestSha256": "2e68eda1dc95c0e878867516faf3fe010c0874fca972ac840a4bd2e9a0a3d9bd",
+      "dockerArgv": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--network",
+        "none",
+        "--name",
+        "systemds-joint-boundary-aeeb8aa777254845",
+        "--cpus",
+        "4",
+        "--memory",
+        "8g",
+        "--user",
+        "10041:5500",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-base-02:/evidence:rw",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-base-02/frozen-inputs/main-classes:/engine/classes:ro",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-base-02/frozen-inputs/test-classes:/engine/test-classes:ro",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-base-02/frozen-inputs/dependencies:/deps:ro",
+        "--entrypoint",
+        "bash",
+        "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+        "/evidence/container-run.sh"
+      ]
+    },
+    {
+      "variant": "baseline",
+      "runId": "logreg-r3-88d-base-03",
+      "validation": {
+        "baselineRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round3-20261007/integration-88d/logreg-r3-88d-base-01",
+        "fixtureParity": true,
+        "inputParity": true,
+        "imageParity": true,
+        "dependencyParity": true,
+        "harnessReturnCode": 0,
+        "status": "PASSED",
+        "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+        "noRuntimeConversion": true,
+        "modelProofPassed": true,
+        "cases": [
+          {
+            "case": "ml_logreg",
+            "passed": true,
+            "checkpointParity": true,
+            "checkpointCount": 1228,
+            "fingerprintParity": true,
+            "modelComparison": {
+              "actualEntries": 16,
+              "actualShape": [
+                8,
+                2
+              ],
+              "entries": 16,
+              "errors": [],
+              "expectedShape": null,
+              "finite": true,
+              "matched": true,
+              "maxAbsDifference": 2.220446049250313e-16,
+              "nonzero": true,
+              "referenceShape": [
+                8,
+                2
+              ],
+              "shapeMatched": true
+            },
+            "runtimeAuditViolations": [],
+            "statistics": {
+              "compilationSeconds": 17.047228,
+              "executionSeconds": 2.923
+            },
+            "commonSeconds": 11.941125424,
+            "plannerSeconds": 3.901960938,
+            "loweringAndOtherSeconds": 1.2041416379999994,
+            "commonPreparationSeconds": 11.959329148,
+            "timingTargetMet": false
+          }
+        ]
+      },
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "925e9c18cd72ecbc5a66b28f0c4fe1b2d4a345bce6c24027d8799f7d5ce41880",
+        "mainSources": "c061c281605948288652056118e0885ef6a386514b6030e2cd1e20a35d4310a2",
+        "testClasses": "3099efdbd40d681947c2f1a85d2349dc1c42e4c17cdc95205d2786195bdf8472",
+        "testSources": "d1643c447862ffb231f4cc9ef2c50c8c905d4640067eea4c60f165d47f0c01d0"
+      },
+      "resultSha256": "dbdeb9759e960e5654997eee7741833e888920317a154560f42ca5345f159ba8",
+      "manifestSha256": "481bfeb2bcb46e9f499f5451ae804fccc3585cd3aae2f5020871471ed35ab9d5",
+      "dockerArgv": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--network",
+        "none",
+        "--name",
+        "systemds-joint-boundary-2482d0df6d414082",
+        "--cpus",
+        "4",
+        "--memory",
+        "8g",
+        "--user",
+        "10041:5500",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-base-03:/evidence:rw",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-base-03/frozen-inputs/main-classes:/engine/classes:ro",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-base-03/frozen-inputs/test-classes:/engine/test-classes:ro",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-base-03/frozen-inputs/dependencies:/deps:ro",
+        "--entrypoint",
+        "bash",
+        "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+        "/evidence/container-run.sh"
+      ]
+    },
+    {
+      "variant": "publication/final",
+      "runId": "logreg-r3-88d-final-03",
+      "validation": {
+        "baselineRun": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round3-20261007/integration-88d/logreg-r3-88d-base-01",
+        "fixtureParity": true,
+        "inputParity": true,
+        "imageParity": true,
+        "dependencyParity": true,
+        "harnessReturnCode": 0,
+        "status": "PASSED",
+        "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+        "noRuntimeConversion": true,
+        "modelProofPassed": true,
+        "cases": [
+          {
+            "case": "ml_logreg",
+            "passed": true,
+            "checkpointParity": true,
+            "checkpointCount": 1228,
+            "fingerprintParity": true,
+            "modelComparison": {
+              "actualEntries": 16,
+              "actualShape": [
+                8,
+                2
+              ],
+              "entries": 16,
+              "errors": [],
+              "expectedShape": null,
+              "finite": true,
+              "matched": true,
+              "maxAbsDifference": 2.220446049250313e-16,
+              "nonzero": true,
+              "referenceShape": [
+                8,
+                2
+              ],
+              "shapeMatched": true
+            },
+            "runtimeAuditViolations": [],
+            "statistics": {
+              "compilationSeconds": 18.354046,
+              "executionSeconds": 3.479
+            },
+            "commonSeconds": 12.821553997,
+            "plannerSeconds": 4.215397408,
+            "loweringAndOtherSeconds": 1.3170945949999995,
+            "commonPreparationSeconds": 12.84114864,
+            "timingTargetMet": false
+          }
+        ]
+      },
+      "artifactInventoryDigests": {
+        "dependencies": "a81f0d0131c5ad4312604be836425262037019270505b41c2fa431618d8ed4ce",
+        "mainClasses": "77b6ac9369656758cfe71d37b69d718c5fa25f83370e0433ccc02be69f4ab331",
+        "mainSources": "f60e82be812354fa20bfe89c275059ad9f07ffdbadf19f624b0b1a7a4b95b0fb",
+        "testClasses": "e0fb140f810dc7ef8f1fd6686688303c6ef006a6b09d3bbf06f0dae1cb071230",
+        "testSources": "ff4a782199ce6fef84d8834ad9bffa881b9750f7a8c7e792db98ad8568056039"
+      },
+      "resultSha256": "4e783b7fcf8acf25c41b23a7c4fb31252199aa91fa339edfa89da465089fcacf",
+      "manifestSha256": "f47b7cb5199d5e752e0c721dd1005cf9d90ce73d524fef3c2d2a9e342616b07e",
+      "dockerArgv": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--network",
+        "none",
+        "--name",
+        "systemds-joint-boundary-8612d88703e34bba",
+        "--cpus",
+        "4",
+        "--memory",
+        "8g",
+        "--user",
+        "10041:5500",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-final-03:/evidence:rw",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-final-03/frozen-inputs/main-classes:/engine/classes:ro",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-final-03/frozen-inputs/test-classes:/engine/test-classes:ro",
+        "--volume",
+        "/home/mchoi/w1357-structural-grounding-20261006/target/joint-boundary-e2e-runtime/logreg-r3-88d-final-03/frozen-inputs/dependencies:/deps:ro",
+        "--entrypoint",
+        "bash",
+        "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+        "/evidence/container-run.sh"
+      ]
+    }
+  ],
+  "artifactRoot": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round3-20261007/integration-88d",
+  "limitations": [
+    "Three fresh JVM runs per variant on a shared host; observed improvement, not a guarantee across hardware or input sizes.",
+    "192x8 multiLogReg fixture, three classes, maxi10/maxii5; no performance claim for StepLM, GLM or larger data.",
+    "The 10-second total-compilation target was not met; optimization ends at user request."
+  ],
+  "workspaceRestoration": {
+    "status": "RESTORED",
+    "head": "88d77d641c4f5f9177b82724bca3ea70ce4edb63",
+    "javaFilesMatchedToGit": 3618,
+    "untrackedJavaFiles": 0,
+    "rejectedPatchApplyCheck": "PASSED",
+    "package": "BUILD SUCCESS (tests skipped; baseline artifact restoration)",
+    "packageLog": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round3-20261007/integration-88d/restoration-build.log",
+    "candidatePreserved": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-common-round3-20261007/integration-88d/rejected-final"
+  }
+}
