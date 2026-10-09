@@ -29,7 +29,6 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRea
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
@@ -42,6 +41,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementPro
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
+
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 
 public class NativeMixedAxisSplitPublicationTest {
 	private static final ControlRegionKey REGION = new ControlRegionKey(
@@ -355,6 +356,169 @@ public class NativeMixedAxisSplitPublicationTest {
 			signature.contains("binder-d1")));
 	}
 
+	@Test
+	public void retainedNativeRectangleConsumesOnlyTheExactResidual() throws Exception {
+		CompiledHopKey leftOwner = fixtureKey("residual-left");
+		CompiledHopKey rightOwner = fixtureKey("residual-right");
+		CompiledHopKey consumerOwner = fixtureKey("residual-consumer");
+		BinderAxis left = binderAxis(leftOwner, "residual-left", 2, 1);
+		BinderAxis right = binderAxis(rightOwner, "residual-right", 2, 0);
+		CandidateRuleFact staging = binaryConsumerFact(consumerOwner);
+		BinaryOp consumerHop = new BinaryOp("residual-consumer", DataType.MATRIX,
+			ValueType.FP64, OpOp2.PLUS, left.sourceHop(), right.sourceHop());
+
+		CandidateRuleFact cold = bindBinary(closure(), left, right, staging, consumerHop);
+		CandidateEmissionRealization durable = cold.allowedEmissionFacts().get(0).realizations()
+			.stream().filter(value -> value.key().layoutKind() == PlacementLayoutKind.DURABLE_MAP)
+			.findFirst().orElseThrow();
+		CandidateEmissionRealization nativePart = cold.allowedEmissionFacts().get(0).realizations()
+			.stream().filter(value -> value.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE)
+			.findFirst().orElseThrow(() -> new AssertionError(cold.allowedEmissionFacts().get(0)
+				.realizations().stream().map(value -> value.key().layoutKind()).toList()));
+		NativeContinuitySupportClauses durableRelation =
+			(NativeContinuitySupportClauses)durable.supportClauses();
+		List<CandidateRealizationInputBinding> retainedBindings = List.of(
+			durableRelation.commonAxes().get(0).get(0),
+			durableRelation.commonAxes().get(1).get(0));
+		NativeContinuitySupportClauses retainedRelation = durableRelation.restrictBindings(
+			retainedBindings::contains).orElseThrow();
+		Assert.assertEquals(1, retainedRelation.size());
+		CandidateRealizationSupportClause retainedClause = retainedRelation.get(0);
+		CandidateEmissionRealization partialDurable = new CandidateEmissionRealization(
+			durable.key(), retainedRelation);
+		CandidateRuleFact retained = fact(staging.key(), List.of(partialDurable, nativePart));
+
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(0);
+		CandidateRuleFact rebound = bindBinary(closure(metrics), left, right, retained, consumerHop);
+		Assert.assertEquals("residual publication must preserve every cold source/proof member",
+			exactMemberSignatures(cold), exactMemberSignatures(rebound));
+		CandidateEmissionRealization reboundDurable = rebound.allowedEmissionFacts().get(0)
+			.realizations().stream().filter(value -> value.key().equals(durable.key()))
+			.findFirst().orElseThrow();
+		Assert.assertTrue("the retained exact clause remains the first donor authority",
+			reboundDurable.supportClauses().stream().anyMatch(clause -> clause == retainedClause));
+		for(CandidateRealizationSupportClause clause : reboundDurable.supportClauses()) {
+			Assert.assertSame(consumerOwner, clause.proofDependencies().get(0).owner());
+			Assert.assertTrue(clause.inputBindings().stream().anyMatch(binding ->
+				binding.source().rule().parentOccurrence() == leftOwner));
+			Assert.assertTrue(clause.inputBindings().stream().anyMatch(binding ->
+				binding.source().rule().parentOccurrence() == rightOwner));
+		}
+		SearchSpaceMetrics.NativePublicationCount partitioned = metrics.nativePublicationSnapshot()
+			.stream().filter(value -> value.outcome()
+				== SearchSpaceMetrics.NativePublicationOutcome.PARTITIONED)
+			.findFirst().orElseThrow();
+		Assert.assertEquals(6, partitioned.logicalProofs());
+		Assert.assertEquals("four exact tuples minus the retained 1x1 rectangle; retained="
+			+ metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS)
+				+ ":collision=" + metrics.directWorkCount(
+					SearchSpaceMetrics.DirectWork.PARTITIONED_COLLISION_PROOFS)
+				+ ":singleton=" + metrics.directWorkCount(
+					SearchSpaceMetrics.DirectWork.PARTITIONED_SINGLETON_PROOFS), 3,
+			partitioned.consumedProofs());
+		Assert.assertEquals(3L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS));
+	}
+
+	@Test
+	public void exactAuthorityResidualMatchesCanonicalExplicitSubsequenceAcrossSeededDomains()
+		throws Exception {
+		java.util.Random random = new java.util.Random(731_991L);
+		for(int trial = 0; trial < 24; trial++) {
+			int dimensions = 1 + random.nextInt(4);
+			List<List<CandidateRealizationInputBinding>> axes = new ArrayList<>();
+			for(int axis = 0; axis < dimensions; axis++) {
+				int width = 2 + random.nextInt(3);
+				axes.add(axis(key("residual-seeded-owner-" + trial + '-' + axis), axis,
+					"residual-seeded-" + trial + '-' + axis, width, 0).bindings());
+			}
+			DurableAnchorKey seed = anchor("residual-seeded-seed-" + trial);
+			DurableAnchorKey witness = anchor("residual-seeded-witness-" + trial);
+			NativePlacementContinuity.NativeSupportProduct product =
+				NativePlacementContinuity.NativeSupportProduct.tryCreate(seed, witness, true, axes);
+			Assert.assertNotNull(product);
+			List<List<CandidateRealizationInputBinding>> coveredAxes = new ArrayList<>();
+			for(int axis = 0; axis < axes.size(); axis++) {
+				int retained = axis == 0 ? axes.get(axis).size() - 1
+					: 1 + random.nextInt(axes.get(axis).size());
+				coveredAxes.add(List.copyOf(axes.get(axis).subList(0, retained)));
+			}
+			NativePlacementContinuity.NativeSupportProduct covered =
+				NativePlacementContinuity.NativeSupportProduct.tryCreate(
+					seed, witness, true, coveredAxes);
+			Assert.assertNotNull(covered);
+			CompiledHopKey owner = key("residual-seeded-consumer-" + trial);
+			NativeContinuitySupportClauses full = new NativeContinuitySupportClauses(
+				owner, product, witness, true);
+			NativeContinuitySupportClauses prior = new NativeContinuitySupportClauses(
+				owner, covered, witness, true);
+			NativeContinuitySupportClauses.ExactAuthorityResidual residual =
+				full.exactAuthorityResidualAfter(prior);
+			Assert.assertNotNull(residual);
+			Assert.assertEquals(covered.size(), residual.coveredMembers());
+			NativeContinuitySupportClauses actual = new NativeContinuitySupportClauses(
+				owner, residual.product(), witness, true);
+			List<CandidateRealizationSupportClause> expected = new ArrayList<>();
+			for(int ordinal = 0; ordinal < full.size(); ordinal++) {
+				CandidateRealizationSupportClause clause = full.get(ordinal);
+				boolean excluded = true;
+				for(int axis = 0; axis < clause.inputBindings().size(); axis++) {
+					CandidateRealizationInputBinding binding = clause.inputBindings().get(axis);
+					excluded &= coveredAxes.get(axis).stream().anyMatch(option -> option == binding);
+				}
+				if(!excluded)
+					expected.add(clause);
+			}
+			Assert.assertEquals(expected.stream()
+				.map(CandidateRealizationSupportClause::normalizedSignature).toList(),
+				actual.stream().map(CandidateRealizationSupportClause::normalizedSignature).toList());
+			for(int ordinal = 0; ordinal < actual.size(); ordinal++) {
+				Assert.assertSame(owner, actual.get(ordinal).proofDependencies().get(0).owner());
+				for(int axis = 0; axis < dimensions; axis++)
+					Assert.assertSame(axes.get(axis).get(0).source().rule().parentOccurrence(),
+						actual.get(ordinal).inputBindings().get(axis).source().rule().parentOccurrence());
+			}
+		}
+	}
+
+	@Test
+	public void residualMatchesRebuiltBindingsButRejectsForeignOwnerAuthority() throws Exception {
+		CompiledHopKey sourceOwner = key("residual-authority-source");
+		Axis source = axis(sourceOwner, 0, "residual-authority", 2, 0);
+		DurableAnchorKey seed = anchor("residual-authority-seed");
+		DurableAnchorKey witness = anchor("residual-authority-witness");
+		NativePlacementContinuity.NativeSupportProduct candidate =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				seed, witness, true, List.of(source.bindings()));
+		CompiledHopKey consumer = key("residual-authority-consumer");
+		NativeContinuitySupportClauses relation = new NativeContinuitySupportClauses(
+			consumer, candidate, witness, true);
+		CandidateRealizationInputBinding original = source.bindings().get(0);
+		CandidateRealizationInputBinding rebuilt = CandidateRealizationInputBinding.direct(
+			original.inputPosition(), new CandidateRealizationReference(
+				original.source().rule(), original.source().realization()));
+		NativePlacementContinuity.NativeSupportProduct rebuiltProduct =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				seed, witness, true, List.of(List.of(rebuilt)));
+		Assert.assertNotNull(relation.exactAuthorityResidualAfter(
+			new NativeContinuitySupportClauses(consumer, rebuiltProduct, witness, true)));
+
+		CompiledHopKey foreignOwner = key("residual-authority-source");
+		Assert.assertEquals(sourceOwner, foreignOwner);
+		Assert.assertNotSame(sourceOwner, foreignOwner);
+		CandidateRealizationInputBinding foreign = CandidateRealizationInputBinding.direct(
+			original.inputPosition(), new CandidateRealizationReference(
+				new CandidateRuleKey(foreignOwner, original.source().rule().orderedInputs()),
+				original.source().realization()));
+		NativePlacementContinuity.NativeSupportProduct foreignProduct =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				seed, witness, true, List.of(List.of(foreign)));
+		Assert.assertNull("structural equality never borrows source-owner authority",
+			relation.exactAuthorityResidualAfter(
+				new NativeContinuitySupportClauses(consumer, foreignProduct, witness, true)));
+	}
+
 	private static Axis axis(CompiledHopKey owner, int position, String prefix,
 		int exactCount, int dynamicCount) throws Exception {
 		DurableAnchorKey pool = anchor(prefix + "-pool");
@@ -405,6 +569,43 @@ public class NativeMixedAxisSplitPublicationTest {
 			List.of(CandidateInputState.present(FType.ROW))), List.of(staging));
 	}
 
+	private static CandidateRuleFact binaryConsumerFact(CompiledHopKey owner) throws Exception {
+		CandidateEmissionRealization staging = CandidateEmissionRealization.nativeLineage(
+			EMISSION, "binary-binder-staging", List.of(), List.of());
+		return fact(new CandidateRuleKey(owner, List.of(
+			CandidateInputState.present(FType.ROW), CandidateInputState.present(FType.ROW))),
+			List.of(staging));
+	}
+
+	private static BinderAxis binderAxis(CompiledHopKey owner, String id,
+		int exactCount, int valueCount) throws Exception {
+		CompiledHopKey leafOwner = fixtureKey(id + "-leaf");
+		DurableAnchorKey pool = anchor(id + "-pool");
+		CandidateEmissionRealization leafRealization = sourceRealization(
+			leafOwner, pool, id + "-leaf", true);
+		CandidateRuleFact leaf = fact(new CandidateRuleKey(leafOwner, List.of()),
+			List.of(leafRealization));
+		List<CandidateRealizationInputBinding> leafBinding = List.of(
+			CandidateRealizationInputBinding.direct(0,
+				CandidateRealizationReference.of(leaf.key(), leafRealization)));
+		List<CandidateEmissionRealization> alternatives = new ArrayList<>();
+		for(int index = 0; index < exactCount; index++)
+			alternatives.add(CandidateEmissionRealization.nativeLineage(EMISSION,
+				id + "-exact-" + index, pool, List.of(new PlacementProofKey(
+					PlacementProofKind.NATIVE_CONTINUITY, owner, id + "-exact-" + index)),
+				leafBinding));
+		for(int index = 0; index < valueCount; index++)
+			alternatives.add(CandidateEmissionRealization.valueMap(EMISSION,
+				id + "-value-" + index,
+				List.of(new CandidateRealizationSupportClause(List.of(), leafBinding))));
+		CandidateRuleFact source = fact(new CandidateRuleKey(owner,
+			List.of(CandidateInputState.present(FType.ROW))), alternatives);
+		DataOp leafHop = dataHop(id + "-leaf");
+		UnaryOp sourceHop = new UnaryOp(id, DataType.MATRIX, ValueType.FP64,
+			OpOp1.LOG, leafHop);
+		return new BinderAxis(leafOwner, owner, leaf, source, leafHop, sourceHop);
+	}
+
 	private static CandidateRuleFact fact(CandidateRuleKey key,
 		List<CandidateEmissionRealization> realizations) throws Exception {
 		Method method = NativeMultiSeedPublicationTest.class.getDeclaredMethod(
@@ -441,6 +642,57 @@ public class NativeMixedAxisSplitPublicationTest {
 		return (CandidateRuleFact)method.invoke(null, closure, source, consumer, sourceHop,
 			consumerHop, Map.of(anchor("binder-pool"), width),
 			new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2), null);
+	}
+
+	private static CandidateRuleFact bindBinary(PlacementRelationClosure closure,
+		BinderAxis left, BinderAxis right, CandidateRuleFact consumer,
+		BinaryOp consumerHop) throws Exception {
+		List<CandidateRuleFact> inventory = List.of(
+			left.leaf(), left.source(), right.leaf(), right.source(), consumer);
+		List<Node> nodes = List.of(fixtureNode(left.leafOwner()), fixtureNode(left.owner()),
+			fixtureNode(right.leafOwner()), fixtureNode(right.owner()),
+			fixtureNode(consumer.key().parentOccurrence()));
+		List<CompiledInputEdgeFact> edges = List.of(
+			new CompiledInputEdgeFact(left.leafOwner(), left.owner(), 0),
+			new CompiledInputEdgeFact(right.leafOwner(), right.owner(), 0),
+			new CompiledInputEdgeFact(left.owner(),
+				consumer.key().parentOccurrence(), 0),
+			new CompiledInputEdgeFact(right.owner(),
+				consumer.key().parentOccurrence(), 1));
+		Map<CompiledHopKey,Hop> origins = new IdentityHashMap<>();
+		origins.put(left.leafOwner(), left.leafHop());
+		origins.put(left.owner(), left.sourceHop());
+		origins.put(right.leafOwner(), right.leafHop());
+		origins.put(right.owner(), right.sourceHop());
+		origins.put(consumer.key().parentOccurrence(), consumerHop);
+		Map<Hop,PlacementAnalysis.NodeShapeFact> shapes = new IdentityHashMap<>();
+		shapes.put(left.leafHop(), new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+		shapes.put(left.sourceHop(), new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+		shapes.put(right.leafHop(), new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+		shapes.put(right.sourceHop(), new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+		shapes.put(consumerHop, new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+		for(Node node : nodes)
+			nodesByKey.put(node.key(), node);
+		NativePlacementContinuity continuity = new NativePlacementContinuity(
+			nodesByKey, origins, inventory, edges, Map.of());
+		Method indexBuilder = PlacementRelationClosure.class.getDeclaredMethod("directBindingIndex",
+			List.class, List.class, List.class, List.class, Map.class, Map.class);
+		indexBuilder.setAccessible(true);
+		Object index = indexBuilder.invoke(null, inventory, nodes, edges, inventory, origins, shapes);
+		Method bind = PlacementRelationClosure.class.getDeclaredMethod(
+			"bindDirectNativeCandidateRealizationsWithDependenciesMeasured", index.getClass(),
+			List.class, Map.class, Map.class, NativePlacementContinuity.class, Set.class);
+		bind.setAccessible(true);
+		Set<CompiledHopKey> dirty = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+		dirty.add(consumer.key().parentOccurrence());
+		Object result = bind.invoke(closure, index, List.of(consumer), origins, shapes,
+			continuity, dirty);
+		Method facts = result.getClass().getDeclaredMethod("facts");
+		facts.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		List<CandidateRuleFact> rebound = (List<CandidateRuleFact>)facts.invoke(result);
+		return rebound.get(0);
 	}
 
 	private static CandidateRuleFact bindBinary(PlacementRelationClosure closure,
@@ -509,6 +761,11 @@ public class NativeMixedAxisSplitPublicationTest {
 			"node", CompiledHopKey.class, List.class);
 		method.setAccessible(true);
 		return (Node)method.invoke(null, key, List.of());
+	}
+
+	private static DataOp dataHop(String name) {
+		return new DataOp(name, DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, name, 8, 2, 16, 1000);
 	}
 
 	private static List<CandidateEmissionRealization> products(CandidateRuleFact fact) {
@@ -594,4 +851,6 @@ public class NativeMixedAxisSplitPublicationTest {
 		List<CandidateRealizationInputBinding> exactBindings,
 		List<CandidateRealizationInputBinding> dynamicBindings,
 		List<CandidateRealizationInputBinding> bindings) { }
+	private record BinderAxis(CompiledHopKey leafOwner, CompiledHopKey owner,
+		CandidateRuleFact leaf, CandidateRuleFact source, DataOp leafHop, UnaryOp sourceHop) { }
 }

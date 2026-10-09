@@ -5986,6 +5986,17 @@ final class PlacementRelationClosure {
 										else {
 											NativePlacementContinuity.NativeSupportProduct product =
 												((NativeContinuitySupportClauses)publication.supportClauses()).singleProduct().orElseThrow();
+											if(admission.outcome() == NativePublicationOutcome.RETAINED_UNION) {
+												NativeRetainedResidual residual =
+													grounded.retainedNativeResidual(publication);
+												if(residual != null) {
+													if(residual.product() == null) {
+														coveredByRetained = true;
+														continue;
+													}
+													product = residual.product();
+												}
+											}
 											if(complexityMetrics != null)
 												complexityMetrics.recordDirectWork(
 													admission.outcome() == NativePublicationOutcome.OUTPUT_COLLISION
@@ -6538,6 +6549,8 @@ final class PlacementRelationClosure {
 		private boolean admitted() { return covered || publication != null; }
 	}
 	private record NativeRetainedUnion(CandidateEmissionRealization publication, boolean covered) { }
+	private record NativeRetainedResidual(
+		NativePlacementContinuity.NativeSupportProduct product) { }
 
 	private static Optional<NativeContinuitySupportClauses> nativeRelationUnion(
 		NativeContinuitySupportClauses left, NativeContinuitySupportClauses right) {
@@ -6678,6 +6691,23 @@ final class PlacementRelationClosure {
 					return new NativeRetainedUnion(null, true);
 			return new NativeRetainedUnion(
 				new CandidateEmissionRealization(candidate.key(), union), false);
+		}
+		private NativeRetainedResidual retainedNativeResidual(
+			CandidateEmissionRealization candidate) {
+			if(hasStaging || hasConflictingEqualAuthority
+				|| !(candidate.supportClauses() instanceof NativeContinuitySupportClauses relation))
+				return null;
+			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> explicit =
+				prior.get(candidate.key());
+			if(explicit != null && !explicit.isEmpty())
+				return null;
+			List<NativeContinuitySupportClauses> retainedRelations =
+				nativeProducts.get(candidate.key());
+			if(retainedRelations == null || retainedRelations.size() != 1)
+				return null;
+			NativeContinuitySupportClauses.ExactAuthorityResidual residual =
+				relation.exactAuthorityResidualAfter(retainedRelations.get(0));
+			return residual == null ? null : new NativeRetainedResidual(residual.product());
 		}
 		private boolean coversRetainedNative(
 			NativePlacementContinuity.NativeContinuityProof proof, CompiledHopKey owner,

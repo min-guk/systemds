@@ -2417,6 +2417,38 @@ public final class PlacementAnalysis {
 				}
 				List<CandidateRealizationSupportClause> leftClauses = left.supportClauses();
 				List<CandidateRealizationSupportClause> rightClauses = right.supportClauses();
+				if(leftClauses instanceof NativeContinuitySupportClauses leftNative
+					&& rightClauses instanceof NativeContinuitySupportClauses rightNative) {
+					Optional<NativeContinuitySupportClauses> nativeUnion =
+						leftNative.oneAxisUnion(rightNative);
+					if(nativeUnion.isEmpty())
+						nativeUnion = leftNative.multiHeaderUnion(rightNative);
+					if(nativeUnion.isEmpty())
+						nativeUnion = NativeContinuitySupportClauses.unionSameAxesHeaderGroup(
+							List.of(leftNative, rightNative));
+					if(nativeUnion.isPresent()) {
+						NativeContinuitySupportClauses union = nativeUnion.get();
+						long inputClauses = (long)leftClauses.size() + rightClauses.size();
+						long uniqueClauses = union.size();
+						boolean reused = union == leftNative;
+						if(metrics != null) {
+							metrics.recordRealizationMergeInput();
+							metrics.recordRealizationMergeInput();
+							metrics.recordRealizationMergeClauses(
+								uniqueClauses, inputClauses - uniqueClauses);
+							if(metrics.hasDuplicateMergeDiagnostics())
+								metrics.recordNativeRelationMergeDiagnostics(
+									"TWO_NATIVE_RELATION_UNION", 2, inputClauses,
+									uniqueClauses, reused);
+						}
+						if(reused) {
+							if(metrics != null)
+								metrics.recordRealizationMergeReuse();
+							return List.of(left);
+						}
+						return List.of(new CandidateEmissionRealization(left.key(), union));
+					}
+				}
 				if(supportClauseListsEqual(leftClauses, rightClauses)) {
 					if(metrics != null) {
 						metrics.recordRealizationMergeInput();
@@ -2444,34 +2476,6 @@ public final class PlacementAnalysis {
 						|| leftClauses instanceof NativeContinuitySupportClauses ? left
 						: rightClauses instanceof FactorizedSupportClauses
 							|| rightClauses instanceof NativeContinuitySupportClauses ? right : left);
-				}
-				if((metrics == null || !metrics.hasDuplicateMergeDiagnostics())
-					&& leftClauses instanceof NativeContinuitySupportClauses leftNative
-					&& rightClauses instanceof NativeContinuitySupportClauses rightNative) {
-					Optional<NativeContinuitySupportClauses> nativeUnion =
-						leftNative.oneAxisUnion(rightNative);
-					if(nativeUnion.isEmpty())
-						nativeUnion = leftNative.multiHeaderUnion(rightNative);
-					if(nativeUnion.isEmpty())
-						nativeUnion = NativeContinuitySupportClauses.unionSameAxesHeaderGroup(
-							List.of(leftNative, rightNative));
-					if(nativeUnion.isPresent()) {
-						NativeContinuitySupportClauses union = nativeUnion.get();
-						long uniqueClauses = union.size();
-						long duplicateClauses = (long)leftClauses.size()
-							+ rightClauses.size() - uniqueClauses;
-						if(metrics != null) {
-							metrics.recordRealizationMergeInput();
-							metrics.recordRealizationMergeInput();
-							metrics.recordRealizationMergeClauses(uniqueClauses, duplicateClauses);
-						}
-						if(union == leftNative) {
-							if(metrics != null)
-								metrics.recordRealizationMergeReuse();
-							return List.of(left);
-						}
-						return List.of(new CandidateEmissionRealization(left.key(), union));
-					}
 				}
 				if((metrics == null || !metrics.hasDuplicateMergeDiagnostics())
 					&& leftClauses instanceof FactorizedSupportClauses leftFactorized
@@ -2775,22 +2779,25 @@ public final class PlacementAnalysis {
 
 		private static CandidateEmissionRealization mergeNativeRealizationGroup(
 			List<CandidateEmissionRealization> group, SearchSpaceMetrics metrics) {
-			if(metrics != null && metrics.hasDuplicateMergeDiagnostics())
-				return null;
 			List<NativeContinuitySupportClauses> relations = new ArrayList<>(group.size());
 			long inputClauses = 0;
 			for(CandidateEmissionRealization realization : group) {
 				if(!(realization.supportClauses() instanceof NativeContinuitySupportClauses relation))
 					return null;
-				inputClauses += relation.size();
+				inputClauses = Math.addExact(inputClauses, relation.size());
 				relations.add(relation);
 			}
 			NativeContinuitySupportClauses union =
 				NativeContinuitySupportClauses.unionSameAxesHeaderGroup(relations).orElse(null);
 			if(union == null)
 				return null;
-			if(metrics != null)
+			if(metrics != null) {
 				metrics.recordRealizationMergeClauses(union.size(), inputClauses - union.size());
+				if(metrics.hasDuplicateMergeDiagnostics())
+					metrics.recordNativeRelationMergeDiagnostics("K_NATIVE_RELATION_UNION",
+						group.size(), inputClauses, union.size(),
+						group.stream().anyMatch(realization -> union == realization.supportClauses()));
+			}
 			for(CandidateEmissionRealization realization : group)
 				if(union == realization.supportClauses()) {
 					if(metrics != null)

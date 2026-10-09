@@ -5963,6 +5963,29 @@ final class NativePlacementContinuity {
 			return that != null && exactPartitionRanges == that.exactPartitionRanges
 				&& outputWorkerPoolWitness.equals(that.outputWorkerPoolWitness);
 		}
+		List<List<CandidateRealizationInputBinding>> exactAuthorityIntersectionAxes(
+			NativeSupportProduct that) {
+			if(that == null || excludedExactProduct != null || that.excludedExactProduct != null
+				|| !sameHeaderAuthority(that) || axes.size() != that.axes.size())
+				return null;
+			List<List<CandidateRealizationInputBinding>> intersection = new ArrayList<>(axes.size());
+			for(int axis = 0; axis < axes.size(); axis++) {
+				List<CandidateRealizationInputBinding> left = axes.get(axis);
+				List<CandidateRealizationInputBinding> right = that.axes.get(axis);
+				if(left.isEmpty() || right.isEmpty()
+					|| left.get(0).inputPosition() != right.get(0).inputPosition()
+					|| left.get(0).source().rule().parentOccurrence()
+						!= right.get(0).source().rule().parentOccurrence())
+					return null;
+				Set<CandidateRealizationInputBinding> retained = new HashSet<>(right);
+				List<CandidateRealizationInputBinding> common = left.stream()
+					.filter(retained::contains).toList();
+				if(common.isEmpty())
+					return null;
+				intersection.add(common);
+			}
+			return List.copyOf(intersection);
+		}
 		String headerAuthoritySignature() {
 			return externalSeed.normalizedSignature()
 				+ "|outputPool=" + outputWorkerPoolWitness.normalizedSignature()
@@ -6112,6 +6135,59 @@ final class NativePlacementContinuity {
 			return oneAxisUnion(that, MAX_CANONICAL_LENGTH_STATES,
 				MAX_CANONICAL_LENGTH_TRANSITIONS);
 		}
+
+		java.util.Optional<ConditionalUnion> conditionalUnion(NativeSupportProduct that) {
+			return conditionalUnion(that, MAX_CANONICAL_LENGTH_STATES,
+				MAX_CANONICAL_LENGTH_TRANSITIONS);
+		}
+
+		java.util.Optional<ConditionalUnion> conditionalUnion(NativeSupportProduct that,
+			int maximumLengthStates, long maximumLengthTransitions) {
+			if(that == null || excludedExactProduct == null || that.excludedExactProduct == null
+				|| !sameHeaderAuthority(that) || !sameIdentityAxes(that)
+				|| maximumLengthStates < 0 || maximumLengthTransitions < 0)
+				return java.util.Optional.empty();
+			List<List<CandidateRealizationInputBinding>> intersection =
+				new ArrayList<>(axes.size());
+			boolean sameAsLeftMask = true;
+			for(int axis = 0; axis < axes.size(); axis++) {
+				List<CandidateRealizationInputBinding> leftMask = excludedExactProduct.axes.get(axis);
+				List<CandidateRealizationInputBinding> common = new ArrayList<>();
+				for(CandidateRealizationInputBinding binding : leftMask)
+					if(that.excludedExactProduct.containsIdentityBinding(axis, binding))
+						common.add(binding);
+				if(common.isEmpty()) {
+					NativeSupportProduct full = baseProduct();
+					return java.util.Optional.of(new ConditionalUnion(
+						full, excludedExactProduct, false));
+				}
+				sameAsLeftMask &= common.size() == leftMask.size();
+				intersection.add(List.copyOf(common));
+			}
+			if(sameAsLeftMask)
+				return java.util.Optional.of(new ConditionalUnion(this, null, true));
+			int stateBudget = maximumLengthStates / 2;
+			long transitionBudget = maximumLengthTransitions / 2;
+			NativeSupportProduct union = tryCreateExactComplement(
+				baseProduct(), intersection, stateBudget, transitionBudget);
+			if(union == null)
+				return java.util.Optional.empty();
+			NativeSupportProduct rightOnly = tryCreateExactComplement(
+				excludedExactProduct, intersection,
+				maximumLengthStates - stateBudget,
+				maximumLengthTransitions - transitionBudget);
+			return rightOnly == null ? java.util.Optional.empty()
+				: java.util.Optional.of(new ConditionalUnion(union, rightOnly, false));
+		}
+
+		private NativeSupportProduct baseProduct() {
+			return excludedExactProduct == null ? this : new NativeSupportProduct(
+				externalSeed, outputWorkerPoolWitness, exactPartitionRanges,
+				axes, Math.addExact(size, excludedExactProduct.size), canonicalIndex);
+		}
+
+		record ConditionalUnion(NativeSupportProduct product,
+			NativeSupportProduct rightOnly, boolean unchanged) { }
 		java.util.Optional<NativeSupportProduct> oneAxisUnion(NativeSupportProduct that,
 			int maximumLengthStates, long maximumLengthTransitions) {
 			if(excludedExactProduct != null || that == null || that.excludedExactProduct != null

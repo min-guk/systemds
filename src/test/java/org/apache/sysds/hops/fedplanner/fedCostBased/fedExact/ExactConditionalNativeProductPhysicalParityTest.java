@@ -108,6 +108,15 @@ public class ExactConditionalNativeProductPhysicalParityTest {
 			selections(explicitFixture), selections(lazyFixture));
 		Assert.assertEquals("all original decision assignments and final receipts agree in each planner",
 			plans(explicitFixture), plans(lazyFixture));
+		var explicitFacts = ((PlacementAnalysis)component(explicitFixture, "analysis"))
+			.candidateRuleFacts().orderedFacts();
+		var lazyFacts = ((PlacementAnalysis)component(lazyFixture, "analysis"))
+			.candidateRuleFacts().orderedFacts();
+		Assert.assertEquals("expanded authority is independent of the retained support encoding",
+			explicitFacts, lazyFacts);
+		Assert.assertNotEquals("the existing candidate DAG certificate explicitly binds support encoding",
+			new PhysicalSemanticDagFingerprint().candidateFactsForTest(explicitFacts),
+			new PhysicalSemanticDagFingerprint().candidateFactsForTest(lazyFacts));
 	}
 
 	private static boolean excludedTuple(List<CandidateRealizationInputBinding> bindings,

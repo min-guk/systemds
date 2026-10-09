@@ -1105,6 +1105,27 @@
 - **v33 통합 gate 완료**: selected FedPlanner1,335개PASS(195.373초),7,855 class/resource 실행 전후 변경0/source SHA 불일치0. 근거 `evidence/native-canonical-complement-merge-full-gate-v33/validation.json`. Incoming canonical run17LOC·conditional complement·summary 재사용·sparse transfer의 통합 회귀이며 독립 incoming/integration 검토 CLEAR. 별도 probe 뒤 origin/main에 게시한다. v32 actual은 별도 봉인 엔진으로 진행 중이다.
 
 - **v33 probe**: 별도9개PASS(1.871초). 통합1,335 selected tests와 source/class 무결성 검증을 마친 버전을 게시·봉인한다.
+
+
+### 조건부 relation의 대규모 생성량 회귀 검사 (완료)
+
+- **문제/방법**: 작은9-member 동등성 검증과 별도로, 수십만 논리 support에서 relation 생성·hash가 임시 Clause를 만들지 않는지 확인한다. NativeConditionalSupportScaleTest는512×512 product에서256×256 rectangle을 제외한196,608개 support를 생성한다. 기존 object constructor 계측을 사용하며 timing을 실제 ML 성능 근거로 삼지 않는다.
+- **검증 결과**: 별도1testPASS(0.396초). 생성과 전체 list hash 후 explicit Clause0/handle0; 처음·중간·마지막3개를 선택하면 실제 Clause3개만 생성하고 반복 선택은 같은 객체를 반환한다. Exact hole 제외와 sparse ordinal역조회/owner identity도 검사했다. 기존 source relation은0handle. 근거 `engine-conditional-scale-root-gate/tests.log`.
+- **범위/잔여 위험**: 이 검사는 논리 후보 감소가 아니라 constructor 호출 감소를 검증한다. 실제 v32 LogReg는357.011653369초로 v31보다2.656초 느렸고 numeric/audit/objective PASS다. 전체 성능 향상으로 일반화하지 않으며 normal counters로 후단 전개를 확인한다.
+
+
+### v34 / 진단 중 native union 보존 및 retained rectangle 재열거 제거 (통합 중)
+
+- **문제/원인**: v32의 mixed-multiple 전개 제거에도 후속 PARTITIONED 전개와 explicit Clause가 증가했다. 상세 중복 진단이 기존 native union을 우회하고, retained native rectangle을 scalar fallback에서 다시 소비하는 경로를 확인했다. Constructor의 native origin 제외는 이미 있어 별도 원인으로 주장하지 않는다.
+- **변경/보존**: PlacementAnalysis/SearchSpaceMetrics는 기존 성공하는 native union의 순서·authority·cap을 유지하면서 논리 중복 수를 별도 nativeRelationDuplicateMembers로 기록한다. 기존 explicit identity/provenance bucket은 유지한다. NativePlacementContinuity/NativeContinuitySupportClauses/PlacementRelationClosure는 같은 owner/header/source authority의 단일 ordinary retained product 교집합만 빼서 exact residual을 소비한다. Conditional/multi-retained/불확실한 authority는 기존 fallback을 유지한다.
+- **사전 검증**: retained residual actual binder RED consumed6→GREEN3(logical6 유지), fixed-seed/owner authority 등71개 PASS. 진단 union은60개 PASS, native handle/explicit/indexed member 생성0 및 trace cap/reset 검증. 두 production patch 독립 검토 CLEAR. 통합 전체 gate를 새 build에서 수행한다.
+- **지문 검증**: ExactConditionalNativeProductPhysicalParityTest에 explicit/native exact fact 전체 equality와 서로 다른 표현 지문을 함께 검증했다. 별도2개 PASS(4.092초). 첫 시도는 없는 normalizedSignature API로 compile 실패했고 structural equality로 수정했다. 다음 runner는 tests-command.json 누락으로 실패해 정확한 기존 JUnit 명령을 복원한 뒤 재실행했다. Production 변경은 없으며 실제 workload의 전체 비용 동등성을 이 작은 fixture로 대신하지 않는다.
+- **잔여/위험**: 상세 진단 native duplicate는 논리 overlap이며 실제 생성 Clause가 아니다. Constructor/Clause/proof 소비 counters와 분리해 보고한다. Closure header forwarding의 별도 진단 guard, conditional union, Physical exact fallback은 남는다. v32 actual은 LogReg357.012초/GLM122.062초이며 목표 미달, 전체 cost fingerprint 차이는 별도 보조 검증 중이다.
+
+- **실측 경로 정정**: fixed v32 command는 liveMetrics=true이며 상세 duplicate diagnostics는 OFF다. DMLTranslator.productionSearchSpaceMetrics는 단순 new SearchSpaceMetrics이고 frozen main source에는 enableDuplicateMergeDiagnostics 호출이 없다. 따라서 진단 guard 수정은 유효한 기능 개선이지만 실제357초 병목의 원인/해결로 귀속하지 않는다. 실제 retained residual과 conditional fallback 최적화를 우선한다.
+
+- **v34 통합 gate 완료**: selected FedPlanner1,344개 PASS(185.876초),7,859 class/resource 실행 전후 변경0/source SHA 불일치0. 근거 evidence/native-retained-diagnostic-native-full-gate-v34/validation.json. 최신 origin0fb33a7fff의 conditional length-rank bounds 및 기존 경로 exit counter 변경은 독립 검토 CLEAR이며 병합 후 fresh gate로 검증한다.
+
 - **V46 incoming 통합/아직 미게시**: origin/main의 bd44009fbb/409b9fe4a9가 들어와 local7e45b68f90 push는 non-fast-forward로 거절됐다(no force). 병합e00f9f90ba에서 문서 양쪽을 보존하고 hybrid 충돌은 incoming의 `null || alternatives.isEmpty()`/모든 alternative 추가를 유지하면서 local first-reject counter를 붙였다. 새 conditional relation은 exact Cartesian rectangle과 나머지의 disjoint/exhaustive partition이다. 새 Physical parity class를 넣은 pre-fix183class gate **1,442tests/0/0/1** 통과(12:07:08+02); 이후 아래 추가 수정/테스트가 있어 최종 gate는 다시 실행한다.
 
 ### V46 incoming conditional relation 경계 계약 및 검증 보강
@@ -1116,6 +1137,8 @@
 - **독립 검토/잔여 이슈**: 생성·conditional rank/hash·gate 분해·fixed-point 수식·revision mask 의미 검토 CLEAR, bounds 최종 diff도 CLEAR. OOME 복구를 보장하는 최적화가 아니며 접근 시 임시 descriptor/map allocation은 남는다. 전체 선택 gate/새 seal/Docker를 다시 실행한 뒤에만 게시본 성능을 평가한다. 20초/전체 ML route 확대는 여전히 미달.
 
 - **V46 병합 최종 gate**: fresh183selectedclasses **1,445tests/failure0/error0/skip1**, Maven package BUILD SUCCESS(2026-10-09 12:15:44+02). Bounds/seed/partial deletion 및 실제 binder 보강까지 포함한 최종 소스다. Independent final review CLEAR; 2×2 helper는 독립 scalar4개와 직접 비교하고 3×2 실제 binder는 count/metrics/replay/withdrawal-cold parity를 비교한다(독립 six-scalar oracle로 과장하지 않는다). `git diff --check` 통과. 봉인·게시 후 고정 Docker에서 재측정하며, 전체 저장소 성공/20초 달성을 뜻하지 않는다.
+
+- **v34 origin 병합 gate 완료**: incoming0fb33a7fff를3e346769f3으로 병합했다. 문서 append는 양쪽을 보존했고 NativeMixedAxisSplitPublicationTest의 두 bindBinary overload를 각각 원본 그대로 유지했다. Fresh selected FedPlanner1,349개 PASS(225.565초),7,859 class/resource 변경0/source SHA 불일치0. 별도probe9개 PASS(1.510초). 근거 evidence/native-retained-diagnostic-native-merged-full-gate-v34/validation.json. 봉인 이후 고정 Docker 검증을 진행하며 actual20초 달성은 아직 아니다.
 
 - **V46 동일 Docker 결과**: OFF·detailed × LogReg·GLM 모두 watchdog60초/fullInitial receipt 없음, 네 container 제거. OFF LogReg2,420samples/direct58.60%/native materialization6.12%, GLM2,637/canonical9.33%/joint6.26%. Partial scalar consumption은864,644/341,538이며 완료 진척률이 아니다. Detailed hybrid 요청 LogReg2,822 중 DERIVED1,915(67.9%)/ACCEPTED850/NO_NATIVE57; GLM3,227 중 DERIVED2,347(72.7%)/ACCEPTED589/NO_NATIVE291, 나머지 거부0. Derived는 action validation 이전의 최초 거부 incidence라 유효 row 수/예상 절감량을 뜻하지 않는다. 외부 build가 OFF3/detailed24 monitor samples에 중첩됐고 외부 planner2개도 전체 구간 존재했으므로 진단용이며 깨끗한 비교시간이 아니다. 근거 R/evidence/v46-merged-{hybrid-outcomes.json,contention-summary.json,planner-breakdown.txt,publication.log}.
 
@@ -1137,3 +1160,19 @@
 - **테스트 가정 수정**: 최초 PART/OTHER를 FULL pool과 물리적으로 같다고 둔 fixture는 samePhysicalWorkerPool 계약에 어긋나 실행 전에 수정했다. 이후 PART/OTHER durable realization의 target FType을 FULL로 둔 오류는 실제 constructor 검증으로 실패했고, action target/materialization/realization을 anchor FType과 일치시켜 고쳤다. Production 조건을 완화하지 않았다.
 - **검토/잔여 위험**: production actual-diff 독립 검토 CLEAR. Ordered immutable Node.anchors 계약, full anchor memo key 및 invocation 수명에 의존한다. 전체184class gate/Docker 진행 중이며 deterministic work 감소를 end-to-end 완료 시간 감소로 확대하지 않는다.
 - **V48 로컬 gate 완료**: fresh184selectedclasses **1,451tests/failure0/error0/skip1**, Maven package BUILD SUCCESS(2026-10-09 12:44:55+02). 두 actual-diff 독립 검토 CLEAR. 이 사이 origin/main에 retained residual/conditional union 및 Regional prepared scope 변경(e146043b3b)이 들어왔으므로 병합 후 새 gate를 실행한다. Local gate만으로 병합본이나20초 목표를 승인하지 않는다.
+
+
+### v35 / derived-FOUT 혼합 경로와 conditional union 및 반복 DP 검증 준비 (진행 중)
+
+- **v34 게시 상태**: pre-derived 봉인은 완료했지만 push는 origin/main의 afb488e60a 추가로 non-fast-forward 거절됐다. Force push하지 않고3b7641edf9로 incoming을 병합했다. v34 엔진은 별도 immutable evidence로 유지하며 다음 검증본에 포함해 게시한다.
+- **중복 작업 보존**: root도 native_derived_hybrid 분리 lane에서 invalid derived action의6→1 native handle RED/GREEN을 재현하고 기존 action 검사 공유 helper를 구현했다. Valid/invalid proof/version/source/owner 및 canonical order와 source identity를 포함해172개 PASS(4.652초). 동일 기능의 incoming afb가 hidden-owner lifecycle까지 검증해 게시됐으므로 incoming 구현을 사용하고 root 패치는 artifact로만 보존했다. 최초 test compile에서 accessor/constructor signature를 잘못 사용한 오류, foreign missing-owner를 두 번 생성해 identity 비교가 실패한 fixture 오류를 각각 수정했고 production semantics는 변경하지 않았다.
+- **Local DP 변경**: RegionalSearchProblem이 immutable factor scope의 variable ordinal을 한 번 준비하고 IncrementalRegionalOptimizer의 root/original 검증에서 재사용한다. 기존 static evaluator와 canonical third evaluation은 그대로 유지한다. Factor 순서·axis 순서·ExactCompensatedCostSum 및 INF/오류 계약을 유지한다. 독립 root review CLEAR,41개 focused PASS;400 fixed-seed assignment의 raw bits와 exact optimizer 최적 assignment/체크포인트 불변식 검증이다. Pre-change checkpoint 전수 동등성이나 실제 optimizer 시간 개선을 주장하지 않는다. 각 Factor.cost용 int[]는 여전히 생성하며 ordinal 배열 보관 비용이 추가된다.
+- **Conditional union**: 같은 header/owner/base binding identity에서만 B\E ∪ B\F를 B\(E∩F)로 유지한다. 왼쪽 donor를 먼저 보존하고 RHS는 E\(E∩F)만 담당한다. Nested RHS/cap/다른 authority는 기존 exact fallback.66개 사전 PASS 및 독립 핵심 검토 CLEAR이며 불필요한 실패 후 index 생성 제거와 보수적 K-way 검증을 마친 뒤 통합한다.
+- **실측 한계**: 최신 완료 fixed actual은 v32 LogReg357.012초/GLM122.062초이고20초 미달이다. v31/v32 전체 cost fingerprint의 표현 영향은 보조 correctness run으로 확인 중이다. 원격 문서의 별도 watchdog/JFR 관측은 본8CPU/no-profiling 성능 근거에 포함하지 않는다.
+
+- **v35 conditional final2**: production SHA e97b1115e2619b0e6a29a0753d8d2b37b94b0e6bc4c0996dfbaf7d66623cd0e0/tests cf1f1dd3241f99d438af0613119ef197a9b81238ce69ac6b8b5bec89cd0a8b26. 첫 half-budget 실패 시 RHS index를 만들지 않고 즉시 fallback한다. All-conditional K-way encounter-order fold를 추가했고 중간 결과가 ordinary가 된 다음 conditional을 만나면 기존 exact fallback을 유지한다.68개 PASS, K=3 first/second/third donor identity와 생성 전0handle 검증. Root에 통합해 fresh gate를 수행한다.
+- **보조 지문 검증 오류 정정**: v31/v32 supplemental의 Java List.hashCode 기반 digest가 달랐으나 proof/binding의 enum hash는 JVM identity에 의존한다. 별도 JVM 간 불일치를 의미 차이로 해석할 수 없어 해당 판정은 무효로 보존한다. 총147,012 committed support에 bounded normalized clause SHA stream을 적용해 재검증한다. 실제 selected numeric/assignment/receipt parity PASS와 full universe 미확정 상태는 그대로다.
+
+- **v35 통합 gate 완료**: latest derived hybrid + conditional union final2 + Regional scope preparation을 함께 검증했다. Selected FedPlanner1,361개 PASS(177.399초),7,864 class/resource 실행 전후 변경0/source SHA 불일치0. 근거 evidence/native-conditional-union-derived-regional-full-gate-v35/validation.json. Incoming derived와 final2 conditional은 독립 reviewer CLEAR, Regional은 root가 immutable scope와 evaluator contract를 독립 검토했다. 기존 omitted/ignored baseline 범위는 유지하며 전체 저장소 Maven 통과로 확대하지 않는다.
+
+- **v35 probe**: 별도9개 PASS(1.394초). 검증된 source를 봉인·게시한다. v34 actual 및 별도 normalized semantic 검증은 진행 중이며20초 목표는 미달이다.

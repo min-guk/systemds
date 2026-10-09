@@ -2,35 +2,38 @@
 
 ## 상태
 
-최신 완료 실측은 **v31 (`0232ad22fb`)**다. 같은 입력·seed·privacy·cost profile·JVM·CPU/메모리 조건의 COFEE 50K×128 W1 결과이며, 각 버전별 1회 관측이다. **20초 목표는 미달이다.**
+최신 완료 실측은 **v32 (`bd44009fbb`)**다. 같은 입력·seed·privacy·cost profile·JVM·CPU/메모리 조건의 COFEE 50K×128 W1 결과이며 각 버전별 1회 관측이다. **20초 목표는 미달이다.**
 
 | 엔진 | LogReg 전체 초기 planning | GLM 전체 초기 planning |
 |---|---:|---:|
 | v28 | 359.976초 | 116.389초 |
 | v29 | 361.813초 | 123.207초 |
 | v31 | 354.356초 | 124.597초 |
+| v32 | 357.012초 | 122.062초 |
 
-v31은 v29 대비 LogReg가7.457초 줄고 GLM은1.390초 늘었다. 단일 실행이며 두 workload의 일관된 성능 개선을 주장하지 않는다. Numeric comparison, runtime audit(mismatch/missing0), objective raw bits, assignment, 전체 selected candidate 문자열과 receipt/section 동등성을 v19/v29 기준으로 통과했다. CostSurface 및 aggregate final fingerprint도 v29와 같다. 실제 workload의 모든 cost cell을 전수 비교한 결과는 아니다.
+v32는 v31 대비 LogReg가 2.656초 늘고 GLM은 2.535초 줄었다. 두 workload 전체의 일관된 개선은 확인하지 못했다. Numeric comparison, runtime audit, objective raw bits, assignment, 전체 selected candidate 문자열과 receipt/section 동등성은 v19/v31 기준으로 통과했다. **CostSurface 및 aggregate finalSelection fingerprint는 두 workload 모두 달라 전체 후보·비용 동등성은 추가 검증 중이다.** 기존 지문은 native/explicit 저장 표현도 포함한다. 작은 conditional fixture에서는 exact fact 전체가 같아도 이 지문이 달라짐을 확인했지만 이를 실제 workload의 차이 원인으로 단정하지 않는다.
 
-| v31 단계/메모리 | LogReg | GLM |
+| v32 단계/메모리 | LogReg | GLM |
 |---|---:|---:|
-| PlacementAnalysis | 263.483초 | 78.584초 |
-| Physical Model | 5.869초 | 4.383초 |
-| Cost Surface | 9.719초 | 9.603초 |
-| Optimizer | 71.579초 | 26.981초 |
-| 실제 실행 | 4.413초 | 6.908초 |
-| Coordinator peak | 8,942,387,200B | 5,201,670,144B |
-| Worker peak | 735,903,744B | 756,994,048B |
+| PlacementAnalysis | 267.598초 | 77.990초 |
+| Physical Model | 5.861초 | 4.604초 |
+| Cost Surface | 7.372초 | 8.689초 |
+| Optimizer | 72.339초 | 26.371초 |
+| 실제 실행 | 4.832초 | 7.047초 |
+| Coordinator peak | 9,094,819,840B | 4,823,154,688B |
+| Worker peak | 756,088,832B | 754,409,472B |
 
-v31은 acyclic summary 재사용과 sparse native skeleton 전파를 합쳤다. Selected FedPlanner1,325개/probe9개를 통과해 origin/main에 게시했다. v30 단독 실측은 없으므로 두 변경의 시간 효과를 분리하지 않는다.
+v32는 여러 입력 축에 exact/inexact source가 섞인 관계를 `전체 product − all-exact rectangle`으로 유지한다. LogReg의 mixed-multiple proof 소비는 1,530,296→0으로 줄었지만 PARTITIONED 소비가 2,532,571→3,431,359로 늘었다. 총 proof 소비는 6,774,679→6,127,475, explicit Clause 생성은 2,318,473→2,543,426이다. 압축은 적용됐으나 후속 fallback 전개가 남아 실제 전체 시간은 개선되지 않았다. 생성 객체 감소와 논리 후보 pruning을 혼동하지 않는다.
 
-다음 v32(`bd44009fbb`)는 여러 입력 축에 exact/inexact source가 섞인 관계를 `전체 product − all-exact rectangle`으로 유지한다. 사전 index memory cap, identity별 mask, 기존 공개 proof 순서와 canonical clause 순서를 보존한다. 통합1,334개/probe9개 및 독립 검토를 통과했으며 같은 Docker에서 실측 중이다. Physical Model의 정확한 member 전개 fallback은 남아 있다. 전 과정의 전개가 제거됐다거나 실제 시간이 개선됐다고 아직 주장하지 않는다. 이후 원격 canonical 정렬 최적화를 v33으로 통합·검증한다.
+v33 (`409b9fe4a9`)은 canonical run 정렬 최적화를 병합한 버전이며 selected FedPlanner 1,335개/probe 9개를 통과해 origin/main에 게시했다. 별도 실제 workload 측정은 생략했다. v34는 이미 보존된 exact 영역의 재열거를 피하고, 상세 진단이 켜져 있어도 기존 native union을 유지한다. 두 수정은 독립 검토를 통과했으며 최신 origin 병합 후 selected FedPlanner 1,349개/probe 9개를 통과했다. 실제 workload 측정은 다음 단계다. 실제 v32에서는 상세 중복 진단이 OFF였으므로 진단 경로 변경은 이 성능 병목을 설명하지 않는다. liveMetrics와 상세 중복 진단은 별개다. Physical Model과 복잡한 conditional union의 exact fallback은 남아 있다.
 
-- v19-v31 비교 SHA `b6a1538f1ef46eaa18921cd8ca90603938ed2ab28273f675d79cfecdeab10feb`
-- v29-v31 비교 SHA `d5d946a47de5885e28ed639fa84afd6ff430e748928e16aa12030d26894d6da4`
-- v31 evaluator FAIL SHA `ef833f172fe533a8672b06a31e85829b70738c3e3089645d65a1c2e15e76f05d`
+v35는 검증된 derived-FOUT row를 기존 권한 검사로 처리하면서 다른 native 관계의 압축을 유지하고, 같은 base/header의 conditional union과 반복 DP 비용 검증 인덱스를 재사용한다. 독립 검토와 selected FedPlanner 1,361개를 통과했다. 단위 검사에서의 생성량 감소를 실제 ML 성능으로 확대하지 않으며 v34/v35 실측과 전체 후보 동등성 검증을 이어간다.
 
-동일 엔진3회씩 모두20초 이하와 parity라는 완료 조건을 충족하지 못했다. 실패 checkpoint를 기록했으며 완료로 표시하지 않았다. 아래 역사 기록은 각 당시 상태이며, 최신 상태는 위 표를 따른다.
+- v19-v32 비교 SHA `004bb8d3ef4df8f6b642521a6cc21f9b5b9aa4512225f03fb1797f8bff932d7a`
+- v31-v32 비교 SHA `17204be378baa67517dd9f6ff4281150e664433cf1bd9797a19adfca942385bf`
+- v32 evaluator FAIL SHA `5b77dbcae20e371342f3b15b9ef6f81b9ad59c165b38f6665106ccfcb8358137`
+
+동일 엔진 3회씩 모두 20초 이하와 parity라는 완료 조건을 충족하지 못했다. 실패 checkpoint를 기록했으며 완료로 표시하지 않았다. 아래 역사 기록은 각 당시 상태이며 최신 상태는 위 표를 따른다.
 
 이하 v27 및 이전 상세 관측이다.
 
