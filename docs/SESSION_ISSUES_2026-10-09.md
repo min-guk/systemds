@@ -297,3 +297,12 @@
 - **계측/리뷰**: shared/reindexed rows는 cache admission에 성공한 행만 계수한다. Positive path shared>0/reindexed0을assert하고 negative namespace기존회귀유지. v21/v22 production 독립review CLEAR. Equal-but-foreign productsource identity추가assert를 포함해 fresh133class package를 수행한다.
 - **v20 실측**: LogReg/GLM detailed모두60초 timeout/no finalreceipt. LogReg39,037graphs/4.328Mstates/54.283Malternatives/91.784Medges, GLM74,589graphs/375,852states/6.445Malternatives. Partialprogress라이전버전과전체속도비교로환산하지않는다. v22의가변길이 productrank, 축projection, topologyrawsharing효과는다음봉인측정에서확인한다.
 - **v22 full gate**: incoming9fb + v21/v22의 fresh133class package BUILD SUCCESS02:39:48, failure0/error0/skip1. Source/JAR 봉인 후 origin/main에 merge 게시를 재시도한다. Supplemental Exact/PCA 기존 실패는 여전히 위 별도항목이며 전체repository green으로 주장하지 않는다. Pin guard mutation은실제고장1개를검출했고 privateproduct의equal-but-foreign source identity까지fullgate에포함했다.
+
+### v23 stable-handle bucket 선형 검사 (검증중)
+
+- **문제**: v22 guard가 한 reference의 여러 topology row마다 같은 handle bucket을 identity검색하여 O(sum bucketWidth²)가 될 수 있다. v22 실측에서 raw-shared rows LogReg1,094,877/GLM2,423,353, reindexed0이므로 이검사도 반복비용이 된다. 양쪽여전히60초timeout/no finalreceipt다.
+- **변경/증명**: private topology builders는 모든 exact row를 정확히 하나의 handle bucket에 넣는다. Bucket을 한 번 순회해 destination rowhandle==positivebucketkey와 기존 null/positivepin 검사를 유지하고, visited==rows.size를 방어적으로 확인한다. 추가map/후보축소/해시동치완화없음.
+- **회귀**: 실제64clause/64row/하나의reference bucket을 만들고 privateconstructor에CountingList bucket만 대입해 same-fact revision을 실행한다. Applying전109tests 중linearwork assertion1개가실패했고, Applying후 focused4suites134tests/skip1PASS. Ordered proof/identity-footprint coldparity, row/pin-only shiftedarena와negativefallback도유지한다. 시간임계값 대신bucket실제접근횟수로검증한다.
+- **위험**: 향후다른constructor가 row-index consistency를깨면linearcheck전제가깨진다. 현재세construction site의동일row단일삽입을확인했고, 전체기능회귀및widebucket검사를유지한다. 완전planning20초효과는아직없다.
+- **후속 v24는 계측만**: recipe/emission/witness가같은generatedquery들을batch로재사용할수있는가설을독립architect가검토했다. 하지만실제공유가능비율을모르므로 먼저기존exactmemo결과에대한bounded shadowindex로잠재graph회피수만측정한다. Root-history-independent+root-owner-freebinding, exactowneridentity및기존cachebudget을모두만족해야하고, 결과/현재query수는변경하지않는다. 반복이적으면실제cache구현을기각한다.
+- **v23 full gate 결과**: fresh package **1,117 selected tests/failure0/error0/skip1**, BUILD SUCCESS02:46:46. 독립architect productionreview CLEAR이며봉인후게시한다. Widefixture에서정확히64visits와실제rawsameidentity를직접assert하는보강은후속test변경으로분리한다(현재oldcode복잡도red는유효). 기존Exact/PCA supplemental gap은해결주장하지않는다.

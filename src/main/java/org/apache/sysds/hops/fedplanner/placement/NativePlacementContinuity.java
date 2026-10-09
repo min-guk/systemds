@@ -4560,26 +4560,32 @@ final class NativePlacementContinuity {
 		}
 
 		private boolean hasStableStructuralHandles(NativePlacementContinuity destination) {
-			for(CandidateTopologyRow row : rows) {
-				int rowHandle = destination.candidateHandle(row.reference);
-				if(rowHandle <= 0 || rowsByHandle.getOrDefault(rowHandle, List.of()).stream()
-					.noneMatch(indexed -> indexed == row))
+			int visited = 0;
+			// Both private builders index every exact row once. Walk those buckets
+			// directly: searching the same realization bucket for each row is quadratic.
+			for(var bucket : rowsByHandle.entrySet()) {
+				if(bucket.getKey() <= 0)
 					return false;
-				for(CandidateDependencySkeleton dependency : row.dependencies) {
-					if(dependency.clausePinned == null) {
-						if(dependency.clausePinnedHandle != 0)
-							return false;
-					}
-					else {
-						int dependencyHandle = destination.candidateHandle(dependency.clausePinned);
-						// Equal negative numbers in two revisions are not shared authority.
-						if(dependencyHandle <= 0
-							|| dependencyHandle != dependency.clausePinnedHandle)
-							return false;
+				for(CandidateTopologyRow row : bucket.getValue()) {
+					if(destination.candidateHandle(row.reference) != bucket.getKey())
+						return false;
+					visited++;
+					for(CandidateDependencySkeleton dependency : row.dependencies) {
+						if(dependency.clausePinned == null) {
+							if(dependency.clausePinnedHandle != 0)
+								return false;
+						}
+						else {
+							int dependencyHandle = destination.candidateHandle(dependency.clausePinned);
+							// Equal negative numbers in two revisions are not shared authority.
+							if(dependencyHandle <= 0
+								|| dependencyHandle != dependency.clausePinnedHandle)
+								return false;
+						}
 					}
 				}
 			}
-			return true;
+			return visited == rows.size();
 		}
 	}
 
