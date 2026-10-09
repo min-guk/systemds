@@ -3748,6 +3748,24 @@ final class NativePlacementContinuity {
 		}
 		if(matchedRealization == null || matchedRelation == null || matchedRelation.isEmpty())
 			return null;
+		return nativeFactoredProofAlternativesResolved(key, pinned, witness, fixed,
+			node, hop, matchedFact, matchedRealization, matchedRelation);
+	}
+
+	/** Builds the circuit for an exact inventory row already validated by its caller. */
+	private NativeFactoredProofAlternatives nativeFactoredProofAlternativesResolved(
+		CompiledHopKey key, CandidateRealizationReference pinned,
+		NativePoolWitness witness, FixedCandidateBoundary fixed,
+		Node node, Hop hop, CandidateRuleFact matchedFact,
+		CandidateEmissionRealization matchedRealization,
+		NativeContinuitySupportClauses matchedRelation) {
+		CandidateRealizationReference exact =
+			CandidateRealizationReference.of(matchedFact.key(), matchedRealization);
+		if(matchedFact.key().parentOccurrence() != key
+			|| exact.rule().parentOccurrence() != key || !exact.equals(pinned)
+			|| matchedRealization.supportClauses() != matchedRelation
+			|| matchedRelation.isEmpty())
+			return null;
 		List<List<CandidateRealizationInputBinding>> axes = matchedRelation.commonAxes();
 		if(axes.isEmpty())
 			return null;
@@ -3870,6 +3888,7 @@ final class NativePlacementContinuity {
 				state.output() == FederatedOutput.FOUT && state.fType() == witness.fType))
 			return null;
 		List<SelectedCandidateProof> alternatives = new ArrayList<>();
+		Set<CandidateRealizationReference> exactReferences = new HashSet<>();
 		boolean matchedNative = false;
 		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
 			if(fact.status() != CandidateEvaluationStatus.AVAILABLE
@@ -3896,8 +3915,15 @@ final class NativePlacementContinuity {
 						return null;
 					CandidateRealizationReference reference =
 						CandidateRealizationReference.of(fact.key(), realization);
-					NativeFactoredProofAlternatives factored = nativeFactoredProofAlternatives(
-						key, reference, witness, fixed);
+					// The pinned resolver rejected structurally duplicated authority while
+					// rescanning the inventory. Preserve that fallback before bypassing its
+					// repeated lookup for this already validated exact row.
+					if(!exactReferences.add(reference))
+						return null;
+					NativeFactoredProofAlternatives factored =
+						nativeFactoredProofAlternativesResolved(key, reference, witness, fixed,
+							node, hop, fact, realization,
+								(NativeContinuitySupportClauses)realization.supportClauses());
 					if(factored == null || factored.alternatives().size() != 1)
 						return null;
 					alternatives.add(factored.alternatives().get(0));

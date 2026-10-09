@@ -130,23 +130,74 @@ public class NativeMultiSeedPublicationTest {
 				null, null, metrics, false, PrivacyEvidenceMode.NONE, false), grownSource, repeated,
 				sourceHop, consumerHop, Map.of(firstPool, 5, secondPool, 5),
 				new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+			List<CandidateEmissionRealization> grownRealizations = realizations(grown);
+			Assert.assertEquals(1, grownRealizations.size());
+			Assert.assertTrue("complete per-header source growth must remain relation-native",
+				grownRealizations.get(0).supportClauses() instanceof NativeContinuitySupportClauses);
+			Assert.assertEquals(10, grownRealizations.get(0).supportClauses().size());
+			Assert.assertEquals("growth publication must remain lazy before parity enumeration", 0,
+				grownRealizations.get(0).fullyMaterializedSupportClauseCount());
+			Assert.assertEquals("complete batch growth must not consume scalar proofs", 0L,
+				metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
 			CandidateRuleFact cold = bind(new PlacementRelationClosure(
 				null, null, null, false, PrivacyEvidenceMode.NONE, false), grownSource, consumer,
 				sourceHop, consumerHop, Map.of(firstPool, 5, secondPool, 5),
 				new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
-			Assert.assertTrue("multi-header one-axis growth must remain compressed",
-				realizations(grown).get(0).supportClauses() instanceof NativeContinuitySupportClauses);
-			Assert.assertEquals("growth must not restore any member before a consumer asks", 0,
-				realizations(grown).get(0).fullyMaterializedSupportClauseCount());
-			Assert.assertEquals("multi-header axis growth must match cold exact authority",
+			Assert.assertEquals("compressed multi-header axis growth must match cold exact authority",
 				expandedOrderedClauses(cold), expandedOrderedClauses(grown));
-			List<CandidateRealizationSupportClause> grownMembers = realizations(grown).get(0).supportClauses();
+			List<CandidateRealizationSupportClause> grownMembers = grownRealizations.get(0).supportClauses();
 			Assert.assertEquals(10, grownMembers.size());
 			for(CandidateRealizationSupportClause prior : priorMembers)
-				Assert.assertTrue("growth must retain every old exact clause identity",
+				Assert.assertTrue("compressed growth must retain every old exact clause identity",
 					grownMembers.stream().anyMatch(member -> member == prior));
-			Assert.assertEquals("supported growth must not visit the two five-member products", 0L,
+			Assert.assertEquals("compressed growth never consumes the two five-member products", 0L,
 				metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+		}
+		else {
+			List<CandidateRealizationSupportClause> priorDurableMembers =
+				List.copyOf(publication.supportClauses());
+			List<CandidateEmissionRealization> priorNativeParts = realizations(repeated).stream()
+				.filter(realization -> realization.key().layoutKind()
+					== PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE)
+				.filter(realization -> realization.supportClauses()
+					instanceof NativeContinuitySupportClauses).toList();
+			Assert.assertEquals(2, priorNativeParts.size());
+			variants.add(exactSource(sourceOwner, firstPool, "mixed-first-added"));
+			CandidateRuleFact grownSource = sourceFact(sourceOwner, variants);
+			CandidateRuleFact grown = bind(new PlacementRelationClosure(
+				null, null, metrics, false, PrivacyEvidenceMode.NONE, false), grownSource, repeated,
+				sourceHop, consumerHop,
+				Map.of(firstPool, variants.size(), secondPool, variants.size()),
+				new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+			CandidateEmissionRealization grownDurable = realizations(grown).stream()
+				.filter(realization -> realization.key().layoutKind()
+					== PlacementIdentity.PlacementLayoutKind.DURABLE_MAP)
+				.findFirst().orElseThrow();
+			Assert.assertTrue("lossless split growth must forward both retained-union headers",
+				grownDurable.supportClauses() instanceof NativeContinuitySupportClauses);
+			Assert.assertEquals(10, grownDurable.supportClauses().size());
+			Assert.assertEquals("forwarded parts must stay lazy until the final family merge", 0,
+				grownDurable.fullyMaterializedSupportClauseCount());
+			Assert.assertEquals("the five-argument retained-union path avoids scalar fallback", 0L,
+				metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+			Assert.assertEquals(0L, metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS));
+			for(CandidateEmissionRealization retained : priorNativeParts)
+				Assert.assertSame("the independently covered inexact part must replay exactly",
+					retained, realizations(grown).stream()
+						.filter(candidate -> candidate.key().equals(retained.key()))
+						.findFirst().orElseThrow());
+
+			CandidateRuleFact cold = bind(new PlacementRelationClosure(
+				null, null, null, false, PrivacyEvidenceMode.NONE, false), grownSource, consumer,
+				sourceHop, consumerHop,
+				Map.of(firstPool, variants.size(), secondPool, variants.size()),
+				new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+			Assert.assertEquals("forwarded split headers must retain the complete cold authority",
+				expandedOrderedClauses(cold), expandedOrderedClauses(grown));
+			for(CandidateRealizationSupportClause prior : priorDurableMembers)
+				Assert.assertTrue("final family merge retains every old durable clause object",
+					grownDurable.supportClauses().stream().anyMatch(member -> member == prior));
 		}
 	}
 

@@ -5898,13 +5898,11 @@ final class PlacementRelationClosure {
 							seed, outputAnchor, nativeLineage, output));
 						prospectiveOutputCounts.merge(output, 1, Math::addExact);
 					}
-					// Only complete, compact products are retained here. The cap bounds
-					// descriptors independently of their logical member cardinality; larger
-					// request sets keep the original streaming scalar fallback.
-					Map<PlacementRealizationKey,List<DeferredNativeGrowth>> deferredGrowth =
-						proofRequests.size() <= DeferredNativeGrowth.MAX_REQUESTS
-							&& (complexityMetrics == null || !complexityMetrics.hasDuplicateMergeDiagnostics())
-							? new LinkedHashMap<>() : null;
+					// Bound additional complete-header operands retained for the final merge.
+					// Diagnostic mode keeps scalar consumption observable at the binder.
+					boolean allowNativeHeaderForwarding =
+						proofRequests.size() <= MAX_NATIVE_HEADER_FORWARD_REQUESTS
+							&& (complexityMetrics == null || !complexityMetrics.hasDuplicateMergeDiagnostics());
 					for(DirectNativeProofRequest request : proofRequests) {
 						NativePlacementContinuity.CandidateSupportResult supportResult;
 						SearchSpaceMetrics.PhaseToken proofStarted = complexityMetrics == null ? null
@@ -5968,10 +5966,12 @@ final class PlacementRelationClosure {
 								NativeProductAdmission exactAdmission = nativeProductAdmission(
 									productPublications.get(0), grounded,
 									productPublications.get(0).supportClauses().size() > 1,
-									prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1 || losslessProduct);
+									prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1 || losslessProduct,
+									allowNativeHeaderForwarding && losslessProduct);
 								NativeProductAdmission nativeAdmission = nativeProductAdmission(
 									productPublications.get(1), grounded,
-									productPublications.get(1).supportClauses().size() > 1, true);
+									productPublications.get(1).supportClauses().size() > 1, true,
+									allowNativeHeaderForwarding && losslessProduct);
 								if(exactAdmission.admitted() || nativeAdmission.admitted()) {
 									if(publicationTrace != null)
 										complexityMetrics.recordNativePublication(
@@ -6032,7 +6032,8 @@ final class PlacementRelationClosure {
 									== PlacementLayoutKind.NATIVE_LINEAGE
 									|| prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1 || losslessProduct;
 								NativeProductAdmission admission = nativeProductAdmission(
-									productPublication, grounded, worthwhile, disjointRequest);
+									productPublication, grounded, worthwhile, disjointRequest,
+									allowNativeHeaderForwarding && losslessProduct);
 								if(publicationTrace != null)
 									publicationTrace.outcome = admission.outcome();
 								if(admission.admitted()) {
@@ -6045,13 +6046,7 @@ final class PlacementRelationClosure {
 											admission.outcome(), supportResult.proofs().size());
 									continue;
 								}
-								if(deferredGrowth != null && losslessProduct
-									&& admission.outcome() == NativePublicationOutcome.RETAINED_UNION
-									&& canDeferRetainedNativeGrowth(productPublication, grounded)) {
-									deferredGrowth.computeIfAbsent(productPublication.key(), ignored -> new ArrayList<>())
-										.add(new DeferredNativeGrowth(productPublication, supportResult.proofs().size()));
-									continue;
-								}
+
 							}
 							if(publicationTrace != null)
 								complexityMetrics.recordNativePublication(publicationTrace.outcome, supportResult.proofs().size());
@@ -6166,9 +6161,6 @@ final class PlacementRelationClosure {
 								complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CONSUMPTION, consumeStarted);
 						}
 					}
-					if(deferredGrowth != null)
-						coveredByRetained |= publishDeferredNativeGrowth(
-							deferredGrowth, grounded, fact.key().parentOccurrence(), bound);
 					if(complexityMetrics != null && distinctSeeds.size() > 1) {
 						complexityMetrics.recordDirectWork(DirectWork.MULTI_SEED_BATCHES);
 						complexityMetrics.recordDirectWork(DirectWork.MULTI_SEED_DISTINCT_SEEDS, distinctSeeds.size());
@@ -6456,6 +6448,23 @@ final class PlacementRelationClosure {
 		return members == original.size();
 	}
 
+	private static final int MAX_NATIVE_HEADER_FORWARD_REQUESTS = 64;
+
+	private static NativeProductAdmission nativeProductAdmission(CandidateEmissionRealization publication,
+		GroundedNativePreparation grounded, boolean worthwhile, boolean disjointRequest,
+		boolean allowLosslessForwarding) {
+		NativeProductAdmission admission = nativeProductAdmission(
+			publication, grounded, worthwhile, disjointRequest);
+		// A single wider header can temporarily break a family's rectangular domain.
+		// Keep this exact operand for the existing final emission merge, where all
+		// headers may have grown. Never bypass staging/explicit/foreign authority,
+		// and never forward a filtered query in place of legacy scalar validation.
+		if(admission.outcome() == NativePublicationOutcome.RETAINED_UNION && allowLosslessForwarding
+			&& grounded.hasOnlyNativeRetainedAuthority(publication.key()))
+			return NativeProductAdmission.published(publication);
+		return admission;
+	}
+
 	private static NativeProductAdmission nativeProductAdmission(CandidateEmissionRealization publication,
 		GroundedNativePreparation grounded, boolean worthwhile, boolean disjointRequest) {
 		if(!worthwhile)
@@ -6472,96 +6481,6 @@ final class PlacementRelationClosure {
 		return union.covered()
 			? NativeProductAdmission.coveredRetained()
 			: NativeProductAdmission.published(union.publication());
-	}
-
-	private record DeferredNativeGrowth(CandidateEmissionRealization publication,
-		int logicalProofs) {
-		private static final int MAX_REQUESTS = 64;
-	}
-
-	private static boolean canDeferRetainedNativeGrowth(CandidateEmissionRealization publication,
-		GroundedNativePreparation grounded) {
-		if(publication.key().layoutKind() != PlacementLayoutKind.DURABLE_MAP
-			|| publication.supportClauses().size() <= 1 || grounded.hasConflictingEqualAuthority()
-			|| !(publication.supportClauses() instanceof NativeContinuitySupportClauses relation)
-			|| relation.singleProduct().isEmpty())
-			return false;
-		Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> explicit =
-			grounded.prior().get(publication.key());
-		return explicit == null || explicit.isEmpty();
-	}
-
-	/**
-	 * A retained complete header set can grow one axis only after all new seed
-	 * headers have been observed. Group at most a bounded number of already
-	 * certified, lossless product descriptors, then admit their common-header
-	 * relation against the retained relation. Any incomplete or incompatible
-	 * group restores the exact scalar publications from those descriptors.
-	 */
-	private boolean publishDeferredNativeGrowth(
-		Map<PlacementRealizationKey,List<DeferredNativeGrowth>> groups,
-		GroundedNativePreparation grounded, CompiledHopKey owner,
-		List<CandidateEmissionRealization> bound) {
-		if(groups.isEmpty())
-			return false;
-		boolean covered = false;
-		SearchSpaceMetrics.PhaseToken started = complexityMetrics == null ? null
-			: complexityMetrics.startPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CONSUMPTION);
-		try {
-			for(List<DeferredNativeGrowth> entries : groups.values()) {
-				CandidateEmissionRealization first = entries.get(0).publication();
-				NativeContinuitySupportClauses union =
-					(NativeContinuitySupportClauses)first.supportClauses();
-				for(int index = 1; index < entries.size() && union != null; index++)
-					union = union.multiHeaderUnion((NativeContinuitySupportClauses)
-						entries.get(index).publication().supportClauses()).orElse(null);
-				NativeProductAdmission admission = union == null
-					? NativeProductAdmission.rejected(NativePublicationOutcome.RETAINED_UNION)
-					: nativeProductAdmission(new CandidateEmissionRealization(first.key(), union),
-						grounded, true, true);
-				if(admission.admitted()) {
-					covered |= admission.covered();
-					if(admission.publication() != null)
-						bound.add(admission.publication());
-					if(complexityMetrics != null)
-						for(DeferredNativeGrowth entry : entries)
-							complexityMetrics.recordNativePublication(
-								admission.outcome(), entry.logicalProofs());
-					continue;
-				}
-				for(DeferredNativeGrowth entry : entries) {
-					NativePlacementContinuity.NativeSupportProduct product =
-						((NativeContinuitySupportClauses)entry.publication().supportClauses())
-							.singleProduct().orElseThrow();
-					if(complexityMetrics != null)
-						complexityMetrics.recordNativePublication(
-							NativePublicationOutcome.RETAINED_UNION, entry.logicalProofs());
-					for(int ordinal = 0; ordinal < product.size(); ordinal++) {
-						if(complexityMetrics != null) {
-							complexityMetrics.recordNativePublicationProofConsumed(
-								NativePublicationOutcome.RETAINED_UNION);
-							complexityMetrics.recordDirectWork(DirectWork.PROOFS_CONSUMED);
-						}
-						var proof = new NativePlacementContinuity.NativeContinuityProof(
-							product.externalSeed(), product.outputWorkerPoolWitness(),
-							product.exactPartitionRanges(), product.bindingsAt(ordinal));
-						CandidateEmissionRealization scalar = directNativePublication(proof, owner,
-							entry.publication().key().emissionState(),
-							entry.publication().key().durableAnchor(), "", true, grounded);
-						if(scalar == null)
-							covered = true;
-						else
-							bound.add(scalar);
-					}
-				}
-			}
-			return covered;
-		}
-		finally {
-			if(complexityMetrics != null)
-				complexityMetrics.finishPhase(
-					SearchSpaceMetrics.Phase.DIRECT_PROOF_CONSUMPTION, started);
-		}
 	}
 
 	private record NativeProductAdmission(NativePublicationOutcome outcome,
@@ -6680,6 +6599,14 @@ final class PlacementRelationClosure {
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> clauses = prior.get(key);
 			// Staging-only keys have an empty prior map, not grounded authority.
 			return clauses != null && !clauses.isEmpty() || nativeProducts.containsKey(key);
+		}
+		private boolean hasOnlyNativeRetainedAuthority(PlacementIdentity.PlacementRealizationKey key) {
+			if(hasStaging || hasConflictingEqualAuthority)
+				return false;
+			var explicit = prior.get(key);
+			var nativeRelations = nativeProducts.get(key);
+			return (explicit == null || explicit.isEmpty())
+				&& nativeRelations != null && !nativeRelations.isEmpty();
 		}
 		private NativeRetainedUnion unionRetainedNativeProduct(
 			CandidateEmissionRealization candidate) {
