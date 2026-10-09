@@ -108,7 +108,7 @@ public class IncrementalFactorwiseCertificateTest {
 		Assert.assertEquals(1L,sparse.blocks());
 
 		RegionalSearchProblem numericProblem = RegionalSearchProblem.generic(variables,
-			List.of(Factor.dense(variables,0d,0d,0d,0d)));
+			List.of(Factor.dense(variables,0d,0d,0d,1d)));
 		ExactPhysicalReducedSolver.CompactModel numericRoot = numericProblem.reducedRoot(GENEROUS);
 		int[] numericIncumbent = compact(numericRoot,0,0);
 		SharedRegionalPreparation numeric = new SharedRegionalPreparation(numericProblem,GENEROUS,false);

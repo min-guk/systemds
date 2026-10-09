@@ -143,6 +143,16 @@ final class NativePlacementContinuity {
 	private final long topologyMaxRows;
 	private long topologyRetainedRows;
 	private long topologyRetainedOwnerReads;
+	// Query-local fixed-boundary overlays are immutable for one candidate revision.
+	// Keep the overlaid list, rather than only its shared topology, so its lazy DFS
+	// schedule is also reused. Exact positive analysis handles and owner identity are
+	// the authority boundary; this memo is deliberately never migrated to a revision.
+	private final Map<FixedBoundaryOverlayKey,DefaultAlternativeList> fixedBoundaryOverlays =
+		new java.util.LinkedHashMap<>(16, 0.75f, true);
+	private long fixedBoundaryOverlayRetainedRows;
+	private long fixedBoundaryOverlayBuilds;
+	private long fixedBoundaryOverlayHits;
+	private long fixedBoundaryOverlayRowsVisited;
 	private final SearchSpaceMetrics metrics;
 	// The observer is revision-local. CandidateQueryKey additionally retains the
 	// complete rule/emission/product reference and exact worker/layout witness.
@@ -2240,10 +2250,11 @@ final class NativePlacementContinuity {
 	}
 
 	private static long estimatedProofBytes(List<NativeContinuityProof> proofs) {
-		// Do not expand a lazy relation merely to decide whether the public memo may
-		// retain it. The support memo owns the bounded factorized representation.
-		if(proofs instanceof NativeContinuityProofProduct)
-			return Long.MAX_VALUE;
+		// Charge the compressed immutable metadata, never its logical Cartesian members.
+		// The ordinary proof-count budget still charges product.size(), so this only
+		// admits relations already within the existing logical-proof limit.
+		if(proofs instanceof NativeContinuityProofProduct product)
+			return product.estimatedPublicMemoBytes();
 		long bytes = 0;
 		for(NativeContinuityProof proof : proofs) {
 			long proofBytes = 96L + 2L * proof.normalizedSignatureLength()
@@ -3325,7 +3336,7 @@ final class NativePlacementContinuity {
 			if(alternatives instanceof DefaultAlternativeList defaults) {
 				// Graph construction already prepared this exact immutable schedule.
 				// Full-state, first-encounter deduplication removes only repeated queue
-				// entries; overlays and filtered ordinary lists keep the original walk.
+				// entries; ordinary overlay and filtered lists keep the original walk.
 				DefaultTraversalSchedule schedule = defaults.traversalSchedule(null);
 				if(metrics != null) {
 					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_SCHEDULES);
@@ -3464,6 +3475,16 @@ final class NativePlacementContinuity {
 			if(!defaults.isEmpty())
 				return defaults;
 		}
+		FixedBoundaryOverlayKey overlayKey = fixedBoundaryOverlayKey(key, pinned,
+			pinnedHandle, witness, allowPinnedTemplate, fixed);
+		DefaultAlternativeList cachedOverlay = overlayKey == null ? null
+			: fixedBoundaryOverlays.get(overlayKey);
+		if(cachedOverlay != null) {
+			fixedBoundaryOverlayHits++;
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_HITS);
+			return cachedOverlay;
+		}
 		List<SelectedCandidateProof> alternatives = new ArrayList<>();
 		List<CandidateTopologyRow> overlayRows = pinned == null ? topology.rows
 			: topology.rowsByHandle.getOrDefault(pinnedHandle, List.of());
@@ -3478,6 +3499,10 @@ final class NativePlacementContinuity {
 		// The first query-local overlay creates the only collision opportunity, so seed
 		// every preceding default then check that row and all later defaults/overlays.
 		Set<ContinuityEdgeKey> seen = null;
+		fixedBoundaryOverlayRowsVisited += overlayRows.size();
+		if(metrics != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_ROWS_VISITED,
+				overlayRows.size());
 		for(int rowIndex = 0; rowIndex < overlayRows.size(); rowIndex++) {
 			CandidateTopologyRow row = overlayRows.get(rowIndex);
 			boolean queryOverlay = false;
@@ -3535,7 +3560,59 @@ final class NativePlacementContinuity {
 					alternatives.add(new SelectedCandidateProof(pinned, dependencies,
 						false, witness));
 			}
+		if(overlayKey != null && !overlayRows.isEmpty() && !alternatives.isEmpty()) {
+			DefaultAlternativeList overlay = new DefaultAlternativeList(alternatives);
+			cacheFixedBoundaryOverlay(overlayKey, overlay);
+			return overlay;
+		}
 		return List.copyOf(alternatives);
+	}
+
+	private FixedBoundaryOverlayKey fixedBoundaryOverlayKey(CompiledHopKey owner,
+		CandidateRealizationReference pinned, int pinnedHandle, NativePoolWitness witness,
+		boolean templateRoot, FixedCandidateBoundary fixed) {
+		// Negative handles are resolver-local structural fallbacks rather than exact
+		// analysis authority. Empty/unresolved pins retain the legacy overlay path.
+		if(fixed.handle() <= 0 || pinnedHandle < 0 || (pinned == null) != (pinnedHandle == 0))
+			return null;
+		return new FixedBoundaryOverlayKey(owner, pinnedHandle, witness, templateRoot,
+			fixed.owner(), fixed.handle());
+	}
+
+	private void cacheFixedBoundaryOverlay(FixedBoundaryOverlayKey key,
+		DefaultAlternativeList overlay) {
+		long rows = overlay.size();
+		if(topologyMaxEntries == 0 || topologyMaxRows == 0 || rows > topologyMaxRows)
+			return;
+		DefaultAlternativeList prior = fixedBoundaryOverlays.remove(key);
+		if(prior != null)
+			fixedBoundaryOverlayRetainedRows -= prior.size();
+		evictOptionalOverlaysForTopologyBudget(1, rows);
+		// Optional overlays share the original topology budget, rather than receiving
+		// a second copy of it. Never evict topology just to retain an overlay.
+		if(!hasTopologyBudgetFor(1, rows))
+			return;
+		fixedBoundaryOverlays.put(key, overlay);
+		fixedBoundaryOverlayRetainedRows += rows;
+		fixedBoundaryOverlayBuilds++;
+		if(metrics != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_ADMISSIONS);
+	}
+
+	private boolean hasTopologyBudgetFor(int additionalEntries, long additionalRows) {
+		return (long)candidateTopologies.size() + fixedBoundaryOverlays.size() + additionalEntries
+				<= topologyMaxEntries
+			&& topologyRetainedRows + topologyRetainedOwnerReads
+				+ fixedBoundaryOverlayRetainedRows + additionalRows <= topologyMaxRows;
+	}
+
+	private void evictOptionalOverlaysForTopologyBudget(int additionalEntries, long additionalRows) {
+		while(!fixedBoundaryOverlays.isEmpty()
+			&& !hasTopologyBudgetFor(additionalEntries, additionalRows)) {
+			var oldest = fixedBoundaryOverlays.entrySet().iterator().next();
+			fixedBoundaryOverlayRetainedRows -= oldest.getValue().size();
+			fixedBoundaryOverlays.remove(oldest.getKey());
+		}
 	}
 
 	/** Snapshot-local representation check; it carries no source or proof authority. */
@@ -4064,10 +4141,9 @@ final class NativePlacementContinuity {
 			topologyRetainedRows -= prior.rows.size();
 			topologyRetainedOwnerReads -= prior.metadataOwnerReads.size();
 		}
+		evictOptionalOverlaysForTopologyBudget(1, rows + ownerReads);
 		while(!candidateTopologies.isEmpty()
-			&& (candidateTopologies.size() >= topologyMaxEntries
-				|| topologyRetainedRows + topologyRetainedOwnerReads + rows + ownerReads
-					> topologyMaxRows)) {
+			&& !hasTopologyBudgetFor(1, rows + ownerReads)) {
 			var oldest = candidateTopologies.entrySet().iterator().next();
 			topologyRetainedRows -= oldest.getValue().rows.size();
 			topologyRetainedOwnerReads -= oldest.getValue().metadataOwnerReads.size();
@@ -5208,6 +5284,43 @@ final class NativePlacementContinuity {
 		}
 	}
 
+	/** Exact revision-local authority for one legacy topology overlay. */
+	private static final class FixedBoundaryOverlayKey {
+		private final CompiledHopKey owner;
+		private final int pinnedHandle;
+		private final NativePoolWitness witness;
+		private final boolean templateRoot;
+		private final CompiledHopKey fixedOwner;
+		private final int fixedHandle;
+		private final int hashCode;
+
+		private FixedBoundaryOverlayKey(CompiledHopKey owner, int pinnedHandle,
+			NativePoolWitness witness, boolean templateRoot, CompiledHopKey fixedOwner,
+			int fixedHandle) {
+			this.owner = Objects.requireNonNull(owner, "overlay owner");
+			this.pinnedHandle = pinnedHandle;
+			this.witness = Objects.requireNonNull(witness, "overlay witness");
+			this.templateRoot = templateRoot;
+			this.fixedOwner = Objects.requireNonNull(fixedOwner, "fixed overlay owner");
+			this.fixedHandle = fixedHandle;
+			int hash = 31 * System.identityHashCode(owner) + pinnedHandle;
+			hash = 31 * hash + witness.hashCode();
+			hash = 31 * hash + Boolean.hashCode(templateRoot);
+			hash = 31 * hash + System.identityHashCode(fixedOwner);
+			hashCode = 31 * hash + fixedHandle;
+		}
+
+		@Override public int hashCode() { return hashCode; }
+
+		@Override
+		public boolean equals(Object other) {
+			return this == other || other instanceof FixedBoundaryOverlayKey that
+				&& owner == that.owner && pinnedHandle == that.pinnedHandle
+				&& witness.equals(that.witness) && templateRoot == that.templateRoot
+				&& fixedOwner == that.fixedOwner && fixedHandle == that.fixedHandle;
+		}
+	}
+
 	private static final class CandidateQueryKey {
 		private final CompiledHopKey rootOccurrence;
 		private final CandidateRealizationReference source;
@@ -5922,6 +6035,21 @@ final class NativePlacementContinuity {
 		}
 
 		@Override public int size() { return product.size(); }
+
+		private long estimatedPublicMemoBytes() {
+			// Retain the proof wrapper, template product and outer immutable axis array.
+			// Each axis owns one immutable list/array and every option owns the direct
+			// binding record created for this relation. Referenced candidate authority
+			// remains owned by the immutable candidate inventory and is not counted again.
+			long bytes = 192L;
+			for(List<CandidateRealizationInputBinding> axis : product.axes) {
+				long retained = 48L + 48L * axis.size();
+				if(Long.MAX_VALUE - bytes < retained)
+					return Long.MAX_VALUE;
+				bytes += retained;
+			}
+			return bytes;
+		}
 
 		@Override public NativeContinuityProof get(int ordinal) {
 			CandidateSupportTemplate template = product.get(ordinal);

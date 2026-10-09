@@ -624,9 +624,37 @@
 
 
 - **origin/main1948f 병합 완료 검증**: staging-only key는 authority로 세지 않고, 같은 key의 grounded explicit clause 또는 native product가 있을 때만 retained authority로 처리하는 incoming 변경과 새 회귀를 보존했다. Mixed exactness 조건은 양쪽이 동일하여 주석 충돌만 정리했다. 독립 정적 review CLEAR 및 fresh 전체 **1,126 tests PASS(160.235초), source SHA mismatch0**. 증거 `evidence/main1948f-mixed-sparse-full-green-1126`. v17 실제 실행은 병합 전 봉인 엔진이며 이 테스트 결과를 v17 runtime의 소스라고 주장하지 않는다.
+
+### 압축 public proof memo 및 다항 sparse pruning (통합 검증중)
+
+- **문제**: singular proof product의 예상 메모리를 Long.MAX_VALUE로 처리해 기존 예산 안의 작은 압축 relation도 public memo에 들어가지 못했다. 별도로 finite support의 저장 행 기반 GAC는 이미 모든 arity를 처리하지만 호출부가 입력2개 이하로 제한되어3개 이상에서는 pruning을 건너뛰었다.
+- **변경/근거**: public memo는 제품의 축·옵션 메타데이터만 saturating 추정하고 기존 논리적 proof수65,536/entry/byte 예산은 그대로 적용한다. Finite support는 불변 저장 행을 인덱스로 읽어 모든 arity에서 지원 없는 값만 제거한다. Public clone API는 유지하고 매 fixed-point round의 배열 복사를 없앴다. 합법 tuple·authority·비용은 변경하지 않는다.
+- **수정 파일**: NativePlacementContinuity, ExactCategoricalSolver, ExactPhysicalReducedSolver 및 관련 회귀. Native memo 독립169PASS와root169PASS(1.335초), n-ary 독립59PASS. N-ary는3회 전파 cascade와80개 고정seed dense-reference objective rawbits/assignment 비교를 포함한다. 전체 통합 검증은 이어진다.
+- **남은 문제/위험**: 큰 논리적 product는 여전히 기존 proof수 예산으로 memo에서 제외된다. Exact/dynamic region union은 이번 메모리 추정 변경에 포함하지 않는다. Cache resident memory와 실제 ML 시간은 동일Docker 실측으로 확인해야 한다.
+- **v17 GLM 실측**: planningFullInitial132.662625426초로v16130.794740209초보다1.868초 늘었다. Analysis84.614초, cost10.261초, optimizer28.523초. 숫자 comparator/runtime audit 및선택receipt·objectiveRawBits4655470428781502442 동등성PASS. MIXED_EXACTNESS 소비는681,653→487,531로감소했지만 OUTPUT_COLLISION1,358,208 및RETAINED_UNION355,644가남는다. 이변경을전체시간개선으로보고하지않는다. LogReg는실행중이다.
+
+- **다항·조건부 pruning root gate**: finite-support 60tests PASS(0.857초), conditional과조합한7suites **69tests PASS(1.084초)**. ConditionalSupport는 각region의모든축이현재활성도메인과교차할때만지원mask에기여한다. Unconstrained selector는기존wildcard의미를유지하며서로다른region축을합쳐새tuple을만들지않는다. 160fixed-seed exhaustive mask비교, frozen/partial두경로, removal epochcascade, 10억logical tuple/저장값6개회귀및dense원본objective/tie parity를검증했다. 독립검토CLEAR. 실제workload에얼마나적용되는지는다음봉인본으로측정한다.
+
+- **Native memo + 다항/conditional 통합 전체 gate**: fresh main/test compile 및 **1,138 tests PASS(150.209초), source SHA mismatch0**. 증거 `evidence/native-memo-nary-conditional-full-green-1138`. 이코드를v18로별도봉인한다. v17최종LogReg386.943659265초/GLM132.662625426초는v16보다각5.676/1.868초늘었다. 두실행numeric/audit 및선택receipt/rawbits동등성PASS이나성능목표는여전히미달이다.
+
 - **v32 최신 main 통합 검증**: incoming12f1의production은자동병합됐고문서양쪽기록을보존했다. Native residenttopologykey/identity boundary/primitivephasehandle과DP/sparse certificate를독립된두read-only검토로확인하여correctnessblocker없음/CLEAR. DPcertificate는동일root·fixedboundary·raw+0의recognizedhardrelation만허용하고Incremental strictimprovement의incumbenttie를보존한다. Foreign-equivalentroot, postconditioningnumeric→hardpositive, untouchedsubnormaloutsidefactor의전용회귀는비차단후속coveragegap이다.
 - **통합 full gate**: fresh143class package **1,212 selected tests/failure0/error0/skip1**, BUILD SUCCESS06:59:32. IncomingprivateFixedCandidateBoundary시그니처변경과관련기존reflection테스트도함께보존/통과했다. 자체v32봉인96916c26에는incoming최적화가없으므로실제측정은별도candidate-v32-merged봉인으로수행한다. 이통과는전체저장소테스트나20초달성선언이아니다.
 
+### origin/main dbee와 단일 mixed 축 분리 (진행중)
+
+- **병합 검증**: incoming 실제NATIVE출력key의seed identity를활용하는prospectivecollision 예외와MIXED_EXACTNESS 단일/다중축구분을보존했다. 독립reviewCLEAR, root7suites66tests PASS(4.310초). 이추가변경은v18봉인에포함되지않는다.
+- **후속 설계/근거**: exact proof와concrete output anchor의경우mixed축이정확히1개이면다른축은모두exact다. 해당축을exact/inexact 옵션으로분리하여DURABLE과NATIVE 두직사각관계를만든다. 원래필터링된합법tuple을겹침·누락없이분할하며서로다른authority를합치지않는다. Multiple mixed axes, 재구성실패, 두region모두singleton은기존scalar경로를유지한다.
+- **Authority/잔여 위험**: retained coverage 및동일key충돌은region별로판정한다. 한region이충돌해도다른region은압축을유지하고충돌region만기존scalar권한병합을따른다. PUBLISHED_SPLIT은요청1개와논리적proof수를기록하며최종merge의객체생성절감을의미하지않는다. 강제멤버복원·원본scalarproof·sourceowner identity·retained replay·withdrawal회귀와실제Docker검증이필요하다.
+
+### DP의 동일 비용 벡터 certificate 확장 (통합 검증중)
+
+- **문제/판단**: 기존certificate는hard+0 factor만허용하여값이항상같은numeric factor가포함된경우에도조건부solve를반복한다. 일반적인factor별최솟값합은부동소수보정합의raw bits에대한증명이아니므로그설계는적용하지않았다.
+- **안전한 범위**: 이미소유한dense factor의모든finite cell이동일한nonnegative raw bits이고incumbent가그finite cell을선택하는경우만인정한다. +INF hole은허용하되그값을선택하면fallback한다. 모든합법assignment의순서있는factor 비용비트벡터가같으므로동일한ExactCompensatedCostSum의결과도정확히같다. Varied cost, unknown evaluator, 음수/-0/NaN/all-INF는기존solve다.
+- **구현/검증**: root/conditioned 분류를한번만계산해보관한다. 이미검사한cost bits를기존순서의보정합에넣어중복factor평가·temporary map을피한다. Resource preflight, 고정경계, incumbent auxiliary witness와strict improvement 정책은보존한다. 독립62tests PASS, rawbits/조건부slice/40fixed-seed reference를포함한다. Root통합회귀와실제workload 효과는아직미검증이다.
+- **single mixed 축 추가 회귀**: 독립test에서구조적으로같지만identity가다른source owner가글로벌structural source index의layout을빌릴수있는helper입력을발견했다. 새압축경로는그경우관계전체를기존scalar fallback으로돌린다. Foreign옵션을부분삭제하거나legacy허용집합을바꾸지않는다. 일반planner전체의foreignowner문제를해결했다고주장하지않는다.
+
+- v18 실제 COFEE 고정 조건 결과: LogReg 385.222894848초 / GLM 128.050397173초. v17의 objective raw bits, assignment, selected receipt, costSurface 및 전체 fingerprint와 동일; numeric/audit PASS. 각 1회이며 20초 목표 FAIL. Consumed proof 수는 16,848,259 / 2,210,823으로 변하지 않음. 비교 SHA `6ffe1ab1da692805748c9981dff1c73a86c46fa82592099fbdb2ebea2e11ee47`.
+- Constant certificate v2 root focused gate 46개 중 1개 실패: 기존 numeric fallback 통합 fixture가 일정한 MIN_VALUE 비용이어서 새 정당한 constant certificate를 사용함. 실패 증거 `evidence/constant-certificate-root-red-46` 보존. varied-cost fallback fixture와 별도 constant 통합 검증으로 수정 중.
 ### v33 / 단일 mixed source 축의 정확한 두 product 분할 (진행중)
 
 - **문제/근거**: v32-merged OFF/detailed 두 workload 모두60초 watchdog/no fullInitial receipt. 상세 마지막 partial snapshot에서LogReg single-mixed축2,444,038/3,201,921 consumed(76.3%), GLM126,922/1,382,843이다. 전체workload총량이나walltime개선율이아니다.
@@ -639,6 +667,13 @@
 
 - **v33 최종 gate**: singleton정책을실제binder에서검증하는1+1/1+2/2+1과required/non-required dead옵션쌍을포함한새7testsPASS. Root frozen7suites **197testsPASS(2.527초,기존ignored1)** 및fresh144class package **1,219 selected tests/failure0/error0/skip1**, BUILD SUCCESS07:17:23. 독립최종production/testCLEAR. 실제mixed two-seed collision, exhaustivecoldidentityfootprint 및partialdurableclause assertSame은비차단추가coveragegap이며기존uniformcollision/identity회귀를대체했다고하지않는다. Defaultbudgetproduct의옵션부분집합은canonicalstates/transitions/cardinality를증가시키지않으며두child재구성null을모두게시전에검사한다. 전체저장소테스트나20초성공선언이아니다; 게시/봉인후동일Docker로실측한다.
 
+- origin/main `d0144c5f14`의 동일 single-mixed-axis 구현을 병합했다. 공통 production은 incoming admission/PARTITIONED 경로로 통일하고, root에서 발견한 equal-structural/foreign owner의 권한 대여 방지 fallback과 추가 binder 회귀를 유지했다. Incoming non-required staging option 보존 guard도 유지. 두 가지 테스트 모음과 constant numeric certificate를 함께 재검증한다.
+
+- d014 병합 focused gate에서 private singleton descriptor 생성 계약 차이를 확인했다(82개 중 최초1, early-return 실험시3 실패; 각각 증거 보존). Incoming은 singleton descriptor를 생성한 뒤 실제 admission에서 둘 다 scalar fallback하므로 해당 계약을 유지했다. 추가 테스트는 descriptor의 disjoint key/크기를 확인하고 기존 binder 테스트가 실제 fallback을 검증한다.
+
+- Full gate 1,161개 중 constant certificate 6개 실패(158.439초)는 병렬 lane의 verify.py가 하드코딩된 공통 class 출력 디렉터리를 덮어쓴 검증 오염으로 확인했다. Overlay lane javac 명령은 공통 `engine-integration-main-50855b5/classes`에 pre-certificate 소스를 출력했고, root 기대 source SHA와 달랐다. RED 근거 `evidence/split-constant-full-red-1161`은 보존하되 올바른 candidate의 회귀 결과로 사용하지 않는다. verify.py에 --build-root를 추가하고 v19 전용 출력 `engine-v19-exclusive-gate`를 사용한다. 테스트 의미/기대값이나 arbitrary lazy numeric fallback은 변경하지 않는다.
+
+- v19 exclusive full gate: 1,166 JUnit PASS / 183.996초. Main/test source SHA 불일치0, 실행 전후 7,776개 class/resource 파일 변화0. 근거 `evidence/mixed-overlay-constant-full-green-1166`. Single-mixed-axis publication + foreign-owner guard + constant finite numeric certificate + revision-local exact overlay/schedule memo 통합 검증이다. Overlay 캐시는 identity/positive handle/witness/template 조건별로 분리하고 revision에서 이월하지 않으며 LRU 축출/재계산 parity를 검증했다. Independent source review CLEAR. 전체 ML 성능은 다음 고정 Docker 실행으로 확인한다.
 - **v33 게시/실측**: d0144c5f14e0a15d713484f729d3a0d720d13afd origin/main remoteSHA확인, 봉인JARf913a8cd40d3be803f255310f8363164860cf9ef1f516bc8b77396e8b4352cde. OFF/detailed모두60초/no receipt/owncontainers제거. PartialLogReg PARTITIONED2,061,422logical중1,930,871scalar로남고전체3,291,382consumed; GLM은OUTPUT_COLLISION895,540/1,435,528consumed다. 분할효과가큰durablepart의fallback에가려져있으며20초미달이다. JFR에서directNativePublication은LogReg12/2623samples뿐이므로거대한generalunion을즉시구현하기보다공통proofgraph의측정된비용을우선한다.
 
 ### v34 / acyclic dependency footprint의 불필요한 재생성 (진행중)
@@ -660,3 +695,20 @@
 - **수정 파일**: NativePlacementContinuity.java, SearchSpaceMetrics.java, NativeAcyclicFootprintScheduleTest.java.
 - **계측/위험**: 새 counter는 실제 shortcut state 수와 raw/unique enqueue incidences이고 분석 전체 distinct edge 수가 아니다. MetricsOFF는 기존 null check 외 진단 객체를 만들지 않는다. 잘못된 graph wrapper에 schedule을 재사용하는 회귀는 plain-list fallback·cap·identity 테스트로 감지한다. 20초 목표는 미달이며 fresh 선택 gate/독립 검토/동일 Docker 적용률 실측 후 판단한다.
 - **v35 중간 검증/실행 오류 분리**: 최초 focused 명령은 존재하지 않는 NativeContinuitySupportProductTest라는 suite명을 지정해 JUnit 초기화에서 실패했다. Production/test 실패로 집계하지 않고 실제 suite명으로 바로 재실행했다. Root valid frozen8suites **196testsPASS(3.737초,기존ignored1)**; 독립 actual production+6회귀 최종 CLEAR. Fresh146class package **1,229 selected tests/failure0/error0/skip1**, BUILD SUCCESS07:45:02. 이후fetch에서origin/main fe44101e97의native public product memo/fixed overlay 및DP conditional/sparse/constant-cost 변경을발견했다. 자체v35를별도봉인/commit하고원격과통합해다시gate한다. 아직원격게시나20초성공을주장하지않는다.
+
+#### 원격 overlay 통합 기록 (후속 병합으로 보존)
+
+- `b31cc2bf67` push는 remote main이 `e24fb093bd`로 전진하여 non-fast-forward 거절되었다. 강제 push 없이 immutable acyclic footprint reuse 변경을 병합한다. 이미 봉인해 실행 중인 v19 JAR/freeze는 변경하지 않으며, incoming 변경은 별도 통합 gate로 검증한다.
+
+- origin e24 병합 후 Native continuity/footprint/overlay/revision/mixed-axis 관련 171개 JUnit PASS / 1.129초(기존 skip1). 바로 이전 root 전체 gate는 1,166 PASS이다. 실제 실행 중인 v19는 `b31cc2bf67`, JAR `b14f3dc5a6af4a63905b67e0238fab420e326d2bbd3f436ecb4941a61f32defc`, freeze `cd97d7d03dd44cafc2e046b2dea861c945dc7a93c0bd485ebbb61f9eca8617a6`로 고정되었으며 e24 후속 변경은 포함하지 않는다.
+
+### v35 통합 / overlay memo가 기존 topology 예산을 중복 사용하는 문제 (검증중)
+
+- **문제/원인**: origin/main fe44101e97의 fixed-boundary overlay memo는 올바른 owner identity/positive handle/witness/template 조건과 revision-local lifetime을 갖지만, topology 캐시와 별개로 같은 maxEntries/maxRows 전액을 사용할 수 있었다. 따라서 기존 논리 보존 예산이 약2배로 늘어날 수 있다. 캐시 예산을 늘려 성능 목표를 맞추지 않는 evaluator 조건과 충돌한다.
+- **회귀 선행**: incoming production을 별도 컴파일하여 새 실제 cacheTopology/candidateProofAlternatives fixture를 실행했다. 7tests중2개가 combined row cap/topology 우선 축출에서 의도대로 실패했다(v35-budget-red-test.log). 두 테스트는 각 entry/row cap과 양쪽 insertion 순서를 다루며 첫 row-case에서 RED가 발생했다; 아직 모든 parameter가 개별 RED였다고 주장하지 않는다.
+- **해결/보존**: topology entries+overlay entries 및 topology rows+metadata owner reads+overlay rows를 기존 한도 하나로 계산한다. Overlay는 오래된 overlay만 축출하고 topology가 공간을 차지하면 보존하지 않는다. Topology admission은 optional overlay를 먼저 축출한 뒤 원래 topology LRU를 적용한다. Replacement 비용은 먼저 차감한다. 반환되는 정확한 immutable overlay/proof 자체는 바꾸지 않으며 저장 실패/축출 시 동일 계산을 다시 수행한다. 새로운 flag/확대한 cap은 없다.
+- **수정 파일/검증**: NativePlacementContinuity.java, NativeFixedBoundaryOverlayMemoTest.java. 기존2개overlay LRU테스트는 자체topology1개도포함하도록fixture 총capacity만3entries/6rows로설정하고모든이전LRU/canonical/sourceidentity 기대값을보존했다. 각admission에서실제resident내용과계수/owner-readweight/residentkeyindex를대조한다. 독립 reviewer가 budget문제를확인하고 shared policy를CLEAR로평가했다.
+- **추가 gate/잔여**: synthetic handle test에만의존하지않도록실제analysis scope의cyclic fixed-root query 반복/콜드parity 회귀를추가한다. IncomingDP conditional/sparse reduction과constant-cost certificate는별도read-only 검토에서correctnessblocker없음이나fresh153classgate가아직남아있다. Cache row단위는기존논리계수이며정확한byteceiling은아니다. Zero-budget/oversize의실제query도가능하면이회귀에서검증한다.
+- **잠재 회귀 위험**: budget축소로overlayhit가줄수있으며성능영향은merged봉인엔진Docker에서검증한다. Topology우선축출정책에서residentkeyindex와hiddenmetadata읽기가누락되지않는지회귀로감지한다. 합법성/privacy/runtime후보집합은변경하지않는다.
+- **통합 최종 gate**: 실제 analysis-scoped loop의정상positivehandle/반복overlayhit/orderedproof·sourceowneridentity·전체dependencyfootprint coldparity, workerwitness변경, nextRevision coldparity 및topology maxEntries0/maxRows0의실제두query 무저장parity를추가했다. Root final focused8suites **186testsPASS(2.651초,기존ignored1)**. Fresh153class package **1,284 selected tests/failure0/error0/skip1**, BUILD SUCCESS07:54:18. Native sharedbudget+통합회귀 및incomingDP 독립최종검토 CLEAR; 기존supplemental Exact/PCA 제약을전체저장소테스트통과로덮지않는다.
+- **진단 의미**: 새 FIXED_BOUNDARY_OVERLAY_HITS는실제residenthit, ADMISSIONS는보존성공(모든build가아님), ROWS_VISITED는legacyoverlayloop의모든row(negativehandle/uncached/budgetbypass포함,hit/defaultshortcut제외)이다. 모두metricsON에서만추가계수하며OFF할당없다. V35 successor shortcut은incoming의검증된DefaultAlternativeList overlay에도적용되고일반plain overlay는원래walk한다. 선택/합법성/privacy/runtime조건은그대로다. 실제20초달성은별도봉인Docker에서판단한다.

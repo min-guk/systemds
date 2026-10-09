@@ -5344,6 +5344,11 @@ final class PlacementRelationClosure {
 			return executableReferences.containsKey(reference);
 		}
 
+		private boolean hasForeignNativeOwner(CandidateRealizationReference reference) {
+			CompiledHopKey owner = nativeOwners.get(reference);
+			return owner != null && owner != reference.rule().parentOccurrence();
+		}
+
 		private Set<CompiledHopKey> incompleteMetadataOwners() { return incompleteMetadataOwners; }
 
 		private void nextRevision(List<CandidateRuleFact> facts, Set<CompiledHopKey> changed) {
@@ -6311,6 +6316,10 @@ final class PlacementRelationClosure {
 					|| binding.source().realization().emissionState().placementState().fType()
 						!= required.fType()))
 					continue;
+				// Equal structural keys must not borrow a different owner's authority.
+				// Keep the complete scalar path when the compressed source index aliases.
+				if(sources.hasForeignNativeOwner(binding.source()))
+					return rejectedNativeProduct(trace, NativePublicationOutcome.CONFLICTING_AUTHORITY);
 				if(!sources.executable(binding.source())) {
 					droppedNonRequiredOption |= required == null;
 					continue;

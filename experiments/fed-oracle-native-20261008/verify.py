@@ -2,6 +2,9 @@
 """Compile the current FedPlanner changes over the pinned pre-change engine; save evidence."""
 import argparse,hashlib,json,pathlib,subprocess
 parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--build-root',type=pathlib.Path,
+ default=pathlib.Path('/grid/3/cofee-lm-sweep-mchoi-20260914/fed-oracle-native-20261008/engine-integration-main-50855b5'),
+ help='Prepared engine overlay directory; use a separate directory for each parallel lane')
 mode=parser.add_mutually_exclusive_group()
 mode.add_argument('--compile-only',action='store_true')
 mode.add_argument('--test',nargs='+',metavar='CLASS')
@@ -9,7 +12,7 @@ args=parser.parse_args()
 repo=pathlib.Path(__file__).resolve().parents[2]
 art=pathlib.Path(__file__).resolve().parent
 baseline=repo/'experiments/general-factorized-plan-space-20261008'
-root=pathlib.Path('/grid/3/cofee-lm-sweep-mchoi-20260914/fed-oracle-native-20261008/engine-integration-main-50855b5')
+root=args.build_root.resolve()
 deps='/home/mchoi/w1357-stage-main276-20261008T1025Z/systemds/target/lib/*'
 main_extra=['placement/CpRuleFamily.java','placement/PlacementSupportRelations.java','placement/PlannerCandidateSpaceAudit.java','fedCostBased/fedExact/ExactCategoricalSolver.java','fedCostBased/fedExact/ExactPhysicalReducedSolver.java']
 test_extra=['placement/PlacementSupportDeletionWorklistTest.java','placement/CpRuleFamilyTest.java','fedCostBased/fedExact/ExactFiniteSupportInputFactorTest.java','fedCostBased/fedExact/ExactRealizationSupportSparseRowsTest.java','fedCostBased/fedExact/ExactNativeLocalSourceProjectionTest.java','fedCostBased/fedExact/ExactPhysicalReducedSolverTest.java']
