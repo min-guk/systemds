@@ -344,6 +344,8 @@ public class NativeSingleAxisProductUnionTest {
 		PlacementSupportRelations.WorklistResult fixedPoint = PlacementSupportRelations
 			.pruneUnsupportedRealizationsToFixedPointWithWork(
 				List.of(doomedSource, alternatives, consumer), null, List.of(), Map.of());
+		Assert.assertEquals("one dependent source clause plus one member per seed header", 3L,
+			fixedPoint.work().invalidatedClauses());
 		CandidateEmissionRealization retained = fixedPoint.facts().stream()
 			.filter(candidate -> candidate.key().parentOccurrence() == consumerOwner)
 			.flatMap(candidate -> candidate.allowedEmissionFacts().stream())

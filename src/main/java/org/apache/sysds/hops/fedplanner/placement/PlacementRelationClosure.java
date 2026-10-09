@@ -5768,8 +5768,6 @@ final class PlacementRelationClosure {
 						continue;
 					}
 					List<CandidateEmissionRealization> bound = new ArrayList<>();
-					Map<PlacementIdentity.PlacementRealizationKey,List<DeferredNativeCollision>>
-						deferredCollisions = new LinkedHashMap<>();
 					boolean coveredByRetained = false;
 					if(owner instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTWRITE
 						&& fact.key().orderedInputs().size() == 1 && fact.key().orderedInputs().get(0).present()) {
@@ -5900,6 +5898,13 @@ final class PlacementRelationClosure {
 							seed, outputAnchor, nativeLineage, output));
 						prospectiveOutputCounts.merge(output, 1, Math::addExact);
 					}
+					// Only complete, compact products are retained here. The cap bounds
+					// descriptors independently of their logical member cardinality; larger
+					// request sets keep the original streaming scalar fallback.
+					Map<PlacementRealizationKey,List<DeferredNativeGrowth>> deferredGrowth =
+						proofRequests.size() <= DeferredNativeGrowth.MAX_REQUESTS
+							&& (complexityMetrics == null || !complexityMetrics.hasDuplicateMergeDiagnostics())
+							? new LinkedHashMap<>() : null;
 					for(DirectNativeProofRequest request : proofRequests) {
 						NativePlacementContinuity.CandidateSupportResult supportResult;
 						SearchSpaceMetrics.PhaseToken proofStarted = complexityMetrics == null ? null
@@ -5944,6 +5949,16 @@ final class PlacementRelationClosure {
 								productPublications = directNativeProductPublication(supportProduct,
 									fact.key().parentOccurrence(), emission.emissionState(), outputAnchor,
 									nativeLineage, requiredInputs, sources, exactSourceLayouts, publicationTrace);
+							boolean losslessProduct = nativeProductPublicationIsLossless(
+								productPublications, supportProduct);
+							if(productPublications != null && !losslessProduct) {
+								// Required-input filtering can safely discard an infeasible tuple, but
+								// the same descriptor cannot prove that a filtered non-required receipt
+								// was dispensable. Keep the complete scalar validation path.
+								productPublications = null;
+								if(publicationTrace != null)
+									publicationTrace.outcome = NativePublicationOutcome.REQUIRED_INPUTS;
+							}
 							if(productPairs != null && productPublications != null)
 								for(CandidateEmissionRealization publication : productPublications)
 									productPairs.observe(factOccurrence, publication);
@@ -5953,24 +5968,17 @@ final class PlacementRelationClosure {
 								NativeProductAdmission exactAdmission = nativeProductAdmission(
 									productPublications.get(0), grounded,
 									productPublications.get(0).supportClauses().size() > 1,
-									prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1);
+									prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1 || losslessProduct);
 								NativeProductAdmission nativeAdmission = nativeProductAdmission(
 									productPublications.get(1), grounded,
 									productPublications.get(1).supportClauses().size() > 1, true);
-								boolean deferExact = prospectiveOutputCounts.getOrDefault(request.output(), 0) > 1
-									&& canDeferNativeCollision(productPublications.get(0), grounded);
-								if(deferExact || exactAdmission.admitted() || nativeAdmission.admitted()) {
+								if(exactAdmission.admitted() || nativeAdmission.admitted()) {
 									if(publicationTrace != null)
 										complexityMetrics.recordNativePublication(
 											NativePublicationOutcome.PARTITIONED, supportResult.proofs().size());
 									for(int part = 0; part < 2; part++) {
 										CandidateEmissionRealization publication = productPublications.get(part);
 										NativeProductAdmission admission = part == 0 ? exactAdmission : nativeAdmission;
-										if(part == 0 && deferExact) {
-											deferredCollisions.computeIfAbsent(publication.key(), ignored -> new ArrayList<>())
-												.add(new DeferredNativeCollision(publication, true, 0));
-											continue;
-										}
 										if(admission.covered())
 											coveredByRetained = true;
 										else if(admission.publication() != null)
@@ -6022,12 +6030,7 @@ final class PlacementRelationClosure {
 								// durable outputs can collapse distinct seeds to the same key.
 								boolean disjointRequest = productPublication.key().layoutKind()
 									== PlacementLayoutKind.NATIVE_LINEAGE
-									|| prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1;
-								if(!disjointRequest && canDeferNativeCollision(productPublication, grounded)) {
-									deferredCollisions.computeIfAbsent(productPublication.key(), ignored -> new ArrayList<>())
-										.add(new DeferredNativeCollision(productPublication, false, supportResult.proofs().size()));
-									continue;
-								}
+									|| prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1 || losslessProduct;
 								NativeProductAdmission admission = nativeProductAdmission(
 									productPublication, grounded, worthwhile, disjointRequest);
 								if(publicationTrace != null)
@@ -6040,6 +6043,13 @@ final class PlacementRelationClosure {
 									if(publicationTrace != null)
 										complexityMetrics.recordNativePublication(
 											admission.outcome(), supportResult.proofs().size());
+									continue;
+								}
+								if(deferredGrowth != null && losslessProduct
+									&& admission.outcome() == NativePublicationOutcome.RETAINED_UNION
+									&& canDeferRetainedNativeGrowth(productPublication, grounded)) {
+									deferredGrowth.computeIfAbsent(productPublication.key(), ignored -> new ArrayList<>())
+										.add(new DeferredNativeGrowth(productPublication, supportResult.proofs().size()));
 									continue;
 								}
 							}
@@ -6156,8 +6166,9 @@ final class PlacementRelationClosure {
 								complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CONSUMPTION, consumeStarted);
 						}
 					}
-					coveredByRetained |= publishDeferredNativeCollisions(
-						deferredCollisions, grounded, fact.key().parentOccurrence(), bound);
+					if(deferredGrowth != null)
+						coveredByRetained |= publishDeferredNativeGrowth(
+							deferredGrowth, grounded, fact.key().parentOccurrence(), bound);
 					if(complexityMetrics != null && distinctSeeds.size() > 1) {
 						complexityMetrics.recordDirectWork(DirectWork.MULTI_SEED_BATCHES);
 						complexityMetrics.recordDirectWork(DirectWork.MULTI_SEED_DISTINCT_SEEDS, distinctSeeds.size());
@@ -6426,6 +6437,25 @@ final class PlacementRelationClosure {
 		return new CandidateEmissionRealization(output.realizationKey(), clauses);
 	}
 
+	/**
+	 * The helper returns axis subsets, or two disjoint exactness partitions. Equal
+	 * total cardinality therefore proves that it dropped no original tuple. Only
+	 * this lossless case may bypass the collision blocker: legacy scalar validation
+	 * does not require non-required bindings to be executable. All other admission
+	 * guards remain unchanged, and the ordinary emission merge retains encounter
+	 * precedence and falls back to a complete canonical union when necessary.
+	 */
+	private static boolean nativeProductPublicationIsLossless(
+		List<CandidateEmissionRealization> publications,
+		NativePlacementContinuity.NativeSupportProduct original) {
+		if(publications == null || original == null)
+			return false;
+		long members = 0;
+		for(CandidateEmissionRealization publication : publications)
+			members = Math.addExact(members, publication.supportClauses().size());
+		return members == original.size();
+	}
+
 	private static NativeProductAdmission nativeProductAdmission(CandidateEmissionRealization publication,
 		GroundedNativePreparation grounded, boolean worthwhile, boolean disjointRequest) {
 		if(!worthwhile)
@@ -6444,10 +6474,12 @@ final class PlacementRelationClosure {
 			: NativeProductAdmission.published(union.publication());
 	}
 
-	private record DeferredNativeCollision(CandidateEmissionRealization publication,
-		boolean partitioned, int logicalProofs) { }
+	private record DeferredNativeGrowth(CandidateEmissionRealization publication,
+		int logicalProofs) {
+		private static final int MAX_REQUESTS = 64;
+	}
 
-	private static boolean canDeferNativeCollision(CandidateEmissionRealization publication,
+	private static boolean canDeferRetainedNativeGrowth(CandidateEmissionRealization publication,
 		GroundedNativePreparation grounded) {
 		if(publication.key().layoutKind() != PlacementLayoutKind.DURABLE_MAP
 			|| publication.supportClauses().size() <= 1 || grounded.hasConflictingEqualAuthority()
@@ -6460,12 +6492,14 @@ final class PlacementRelationClosure {
 	}
 
 	/**
-	 * Distinct seed headers can prove the same durable output. Keep the validated
-	 * product descriptors until their common axes can be checked together, without
-	 * retaining the per-query graph or expanding any member for that check.
+	 * A retained complete header set can grow one axis only after all new seed
+	 * headers have been observed. Group at most a bounded number of already
+	 * certified, lossless product descriptors, then admit their common-header
+	 * relation against the retained relation. Any incomplete or incompatible
+	 * group restores the exact scalar publications from those descriptors.
 	 */
-	private boolean publishDeferredNativeCollisions(
-		Map<PlacementIdentity.PlacementRealizationKey,List<DeferredNativeCollision>> groups,
+	private boolean publishDeferredNativeGrowth(
+		Map<PlacementRealizationKey,List<DeferredNativeGrowth>> groups,
 		GroundedNativePreparation grounded, CompiledHopKey owner,
 		List<CandidateEmissionRealization> bound) {
 		if(groups.isEmpty())
@@ -6474,14 +6508,15 @@ final class PlacementRelationClosure {
 		SearchSpaceMetrics.PhaseToken started = complexityMetrics == null ? null
 			: complexityMetrics.startPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CONSUMPTION);
 		try {
-			for(List<DeferredNativeCollision> entries : groups.values()) {
+			for(List<DeferredNativeGrowth> entries : groups.values()) {
 				CandidateEmissionRealization first = entries.get(0).publication();
-				NativeContinuitySupportClauses union = (NativeContinuitySupportClauses)first.supportClauses();
+				NativeContinuitySupportClauses union =
+					(NativeContinuitySupportClauses)first.supportClauses();
 				for(int index = 1; index < entries.size() && union != null; index++)
 					union = union.multiHeaderUnion((NativeContinuitySupportClauses)
 						entries.get(index).publication().supportClauses()).orElse(null);
 				NativeProductAdmission admission = union == null
-					? NativeProductAdmission.rejected(NativePublicationOutcome.OUTPUT_COLLISION)
+					? NativeProductAdmission.rejected(NativePublicationOutcome.RETAINED_UNION)
 					: nativeProductAdmission(new CandidateEmissionRealization(first.key(), union),
 						grounded, true, true);
 				if(admission.admitted()) {
@@ -6489,38 +6524,34 @@ final class PlacementRelationClosure {
 					if(admission.publication() != null)
 						bound.add(admission.publication());
 					if(complexityMetrics != null)
-						for(DeferredNativeCollision entry : entries)
-							if(!entry.partitioned())
-								complexityMetrics.recordNativePublication(admission.outcome(), entry.logicalProofs());
+						for(DeferredNativeGrowth entry : entries)
+							complexityMetrics.recordNativePublication(
+								admission.outcome(), entry.logicalProofs());
 					continue;
 				}
-				// Each saved product already passed the required-input/source/layout
-				// checks. Restore its original exact proofs only on this fallback.
-				for(DeferredNativeCollision entry : entries) {
-					CandidateEmissionRealization publication = entry.publication();
+				for(DeferredNativeGrowth entry : entries) {
 					NativePlacementContinuity.NativeSupportProduct product =
-						((NativeContinuitySupportClauses)publication.supportClauses()).singleProduct().orElseThrow();
-					NativePublicationOutcome outcome = entry.partitioned()
-						? NativePublicationOutcome.PARTITIONED : NativePublicationOutcome.OUTPUT_COLLISION;
-					if(complexityMetrics != null) {
-						if(entry.partitioned())
-							complexityMetrics.recordDirectWork(DirectWork.PARTITIONED_COLLISION_PROOFS, product.size());
-						else
-							complexityMetrics.recordNativePublication(outcome, entry.logicalProofs());
-					}
+						((NativeContinuitySupportClauses)entry.publication().supportClauses())
+							.singleProduct().orElseThrow();
+					if(complexityMetrics != null)
+						complexityMetrics.recordNativePublication(
+							NativePublicationOutcome.RETAINED_UNION, entry.logicalProofs());
 					for(int ordinal = 0; ordinal < product.size(); ordinal++) {
 						if(complexityMetrics != null) {
-							complexityMetrics.recordNativePublicationProofConsumed(outcome);
+							complexityMetrics.recordNativePublicationProofConsumed(
+								NativePublicationOutcome.RETAINED_UNION);
 							complexityMetrics.recordDirectWork(DirectWork.PROOFS_CONSUMED);
 						}
-						var proof = new NativePlacementContinuity.NativeContinuityProof(product.externalSeed(),
-							product.outputWorkerPoolWitness(), product.exactPartitionRanges(), product.bindingsAt(ordinal));
-						CandidateEmissionRealization exact = directNativePublication(proof, owner,
-							publication.key().emissionState(), publication.key().durableAnchor(), "", true, grounded);
-						if(exact == null)
+						var proof = new NativePlacementContinuity.NativeContinuityProof(
+							product.externalSeed(), product.outputWorkerPoolWitness(),
+							product.exactPartitionRanges(), product.bindingsAt(ordinal));
+						CandidateEmissionRealization scalar = directNativePublication(proof, owner,
+							entry.publication().key().emissionState(),
+							entry.publication().key().durableAnchor(), "", true, grounded);
+						if(scalar == null)
 							covered = true;
 						else
-							bound.add(exact);
+							bound.add(scalar);
 					}
 				}
 			}
@@ -6528,7 +6559,8 @@ final class PlacementRelationClosure {
 		}
 		finally {
 			if(complexityMetrics != null)
-				complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CONSUMPTION, started);
+				complexityMetrics.finishPhase(
+					SearchSpaceMetrics.Phase.DIRECT_PROOF_CONSUMPTION, started);
 		}
 	}
 

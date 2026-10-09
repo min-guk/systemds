@@ -515,7 +515,13 @@ final class NativeContinuitySupportClauses
 		}
 		private int size() { return size; }
 		private long retainedMetadataUnits() {
-			return 2L + 5L * buckets.size();
+			long units = 2L + 5L * buckets.size();
+			for(NativeHeaderBucket bucket : buckets)
+				// Charge stored text too; repeated references are conservatively charged
+				// per bucket, avoiding another retained identity index just for accounting.
+				units = Math.addExact(units, Math.addExact(
+					(long)bucket.lengthPrefix().length(), bucket.headerPrefix().length()));
+			return units;
 		}
 		private NativeMember memberAt(int ordinal) {
 			Objects.checkIndex(ordinal, size);

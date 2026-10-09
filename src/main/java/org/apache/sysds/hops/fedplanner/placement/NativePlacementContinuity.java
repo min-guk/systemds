@@ -5907,6 +5907,7 @@ final class NativePlacementContinuity {
 
 		private long retainedMetadataUnits() {
 			long units = 1L + optionLengths.size() + suffixLengthCounts.size() + orderedLengths.size();
+			units = Math.addExact(units, 1L + 3L * bindingLengthCounts.size());
 			for(int[] lengths : optionLengths)
 				units = Math.addExact(units, 1L + lengths.length);
 			for(java.util.Map<Integer,Integer> counts : suffixLengthCounts)
