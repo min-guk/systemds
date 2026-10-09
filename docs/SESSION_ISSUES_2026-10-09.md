@@ -468,3 +468,25 @@
 - **병합 focused gate**: native↔durable 및 durableA↔B에 대해 positive4member/failed-deep-producer negative를 추가했다. 최초 초안의 빠진 method brace와 존재하지 않는 UNAVAILABLE 상태는 compile 전 정적 확인에서 고쳤으며, 기존 RULE_ERROR/empty profile/zero emission invariant를 사용했다. Incoming3tests와 revision 보강을 포함한165focused tests/skip1PASS(1.377초). Fresh135class package를 별도 `v27-merged`로 실행한다.
 - **v27 상세 관측**: 원본 봉인본의 실제 batch reuse는 LogReg68,597회/GLM113,008회였다. 같은60초 중 마지막 관측 graph build는19,999/26,422(직전 원본31k/76k potential 계측과 별개)이며 기존 v26-unpinned graph count38,755/81,373보다 작다. 하지만 partial-progress 모집단이 같지 않고 fullInitial receipt는 여전히 없으므로 이를 wall-time 개선율로 환산하지 않는다. LogReg topology 약10.74초·overlay exclusive8.34초가 남아 있고, GLM joint/canonical 및 relocation binding 경로도 남는다. 새 incoming presence preflight 효과와 다음 fallback 진단을 별도 측정한다.
 - **v27 통합 최종 gate/봉인**: 독립 reviewer가 실제 최종 diff와165focused 결과를 재검토해 CLEAR로 확인했다. 이어 fresh135class package **1,162 selected tests/failure0/error0/skip1**, BUILD SUCCESS05:41:40. `candidate-v27-merged` JAR SHA256=`e0df82f0e78810481d436a86afefe809daf2158ad98a3b7f71d97f50ac745471`로 봉인했다. 기존 supplemental Exact/PCA 제한은 이 선택 회귀 통과에 포함하지 않는다. 원격 추가 representation preflight의 성능 효과는 이 봉인본으로 별도 측정하며,20초 목표는 미달 상태다.
+
+
+### Generated batch의 durable proposal 적용 범위 확장 (검증중)
+
+- **문제/원인**: batch 재사용은 NATIVE_LINEAGE proposal에서만 활성화되어, 같은 generator rule/emission/witness의 DURABLE_MAP 요청은 여전히 그래프를 재계산한다. Generated root는 trusted recipe와 witness로 dependency skeleton을 만들고 proposed output은 opaque pinned reference로 사용한다. Output anchor를 proof 권한 대신 채택하지 않는다.
+- **설계/보존 조건**: 기존 root-history independence, returned root-owner binding 부재, exact resolver/fact/emission/root identity, 전체 NativePoolWitness 및 resident cache gate는 그대로 유지한다. 검증되는 두 proposal layout만 허용하고 unknown layout은 fallback한다. Template wrapper만 현재 proposal로 rebase하여 external seed와 exact member source/proof는 현재 요청으로 복원한다.
+- **검증 계획**: 기존 cold explicit reference와 native/durable/mixed proposal별 ordered proof·identity footprint·lazy product를 비교한다. Empty result 및 metrics OFF도 포함하고, durable에서도 hidden root history/worker-layout mismatch/eviction이 공유되지 않는지 확인한다. 먼저 원래 guard에서 durable/mixed graph-work red를 확보한다.
+- **잔여/위험**: query root의 durable identity를 metadata legality에 사용하면서 history certificate에 기록하지 않는 새 경로가 생기면 잘못 공유할 수 있다. Hidden VALUE_MAP/derived 및 cold reference 대조로 감지한다. 실제 성능 개선은 후속 봉인 실측 전 미확인이다.
+
+- **중간 검증**: 기존 guard에서151tests 중 durable/mixed graph 재계산 검사2개가 red였고 ordered proof/footprint 비교는 통과했다(`durable-batch-red-151`). 확장 후 native·product·revision4suites160PASS(1.439초). ROW/COL/FULL/BROADCAST의 다른 worker/partition 및 동일 layout의 다른 seed authority를 cold reference와 대조했다. Durable hidden VALUE_MAP/derived history는 재사용0, capacity1의 witness eviction도 재사용0이다. 전체 gate와 독립 검토를 이어간다.
+
+- **v12 실제 검증의 계획 차이 발견**: LogReg402.506716391초/GLM137.753315043초, 숫자와runtime audit는PASS. 그러나GLM의initial/final planfp가둘다113d2d19…로v10의ebf0cc31…와다르다. Analysisfp5409cf1e…는동일하다. 같은실행안의initial==final만으로버전간계획동등성을PASS로간주하지않는다. Objectivebits/costfingerprint가정상receipt/log에없어동일비용도미확인이다. v11단독ConditionalSupport 엔진을분리실행하고Local heuristic/resource/tie영향을조사한다. v13실행도계속기록하되계획보존성공으로보고하지않는다.
+
+- **Durable batch 전체 gate**: fresh compile1,068PASS(165.143초), source SHA mismatch0. 증거 `evidence/durable-batch-full-green-1068`. 이 검증은 기존v12GLM의선택fingerprint 차이를해결했다는의미가아니다.
+
+- **Durable batch 독립 review CLEAR**: generated root의empty clause dependency 생성, prospective output의emissionFType 외 anchor 미참조, non-recipe/hidden root history flag, root recurrence 및 returned root binding certificate를 별도 reviewer가 확인했다. 기존v12의GLM plan차이는별도미해결항목으로유지한다.
+
+### v27 / durable batch 원격 후속 통합 (검증 완료)
+
+- **문제/해결**: fetch에서 원격 `592818109f7b`가 추가되어 다시3-way 병합했다. 바로 앞의 'Generated batch의 durable proposal 적용 범위 확장'은 **원격 분기의 역사 기록**이며, 현재 채택한 no-alias batch는 이미 layout에 무관한 동일 recipe/certificate를 검증한다. 이번 통합은 production diff가0이며 원격5개 durable/mixed/witness/history/eviction 테스트와 문서만 추가했다.
+- **검증**: 동일 production의 앞선1,162 selected 전체 gate에 더해, fresh isolated compile 및 native3suites **170tests/skip1PASS(1.203초)**. 독립 reviewer는 conflict/retired API 및 보존 회귀를 확인하여 CLEAR. `candidate-v27-merged` 봉인 엔진은 여전히 정확한 current production이다.
+- **잔여/위험**: metricsOFF Docker LogReg/GLM 모두60초timeout/no fullInitial receipt, own containers 제거. 원격v12의 GLM 버전간 plan fingerprint 차이는 별개 미해결이며 이번 merge가 해결했다고 주장하지 않는다. 다음 단계는 publication fallback을 실제 logical/consumed work로 나눠 계측하는 것; 지원 후보/합법성/privacy 변경은 없다.
