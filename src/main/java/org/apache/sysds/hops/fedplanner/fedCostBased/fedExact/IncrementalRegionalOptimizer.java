@@ -6,6 +6,7 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -188,6 +189,7 @@ final class IncrementalRegionalOptimizer {
 	private final Map<Variable,Set<Node>> incidence = new LinkedHashMap<>();
 	private final Map<Variable,Candidate> candidates = new HashMap<>();
 	private final TreeSet<Candidate> queue = new TreeSet<>(ORDER);
+	private final Map<Candidate,Double> successfulConflictScores = new IdentityHashMap<>();
 	private final Map<String,Neighborhood> rejectedNeighborhoods = new LinkedHashMap<>();
 	private final ConditionalReplayCache conditionalReplayCache = new ConditionalReplayCache();
 	private final List<Checkpoint> checkpoints = new ArrayList<>();
@@ -197,6 +199,7 @@ final class IncrementalRegionalOptimizer {
 	private long slots, assignments, dpNanos, scoringNanos, validationNanos;
 	private int nextId, merges, improvements, resourceRejected, internalDecisions;
 	private int conditionalAttempts, conditionalImprovements;
+	private long conflictScoreEvaluations, conflictScoreCacheHits, incompleteConflictScores;
 	private boolean coverReleased;
 
 	private IncrementalRegionalOptimizer(RegionalSearchProblem problem,
@@ -300,8 +303,11 @@ final class IncrementalRegionalOptimizer {
 				return finish("RESOURCE");
 			}
 			// Diagnostics are optional: never reject required DP output because of an evictable cache.
-			if(options.boundedTest() && add(slots,candidate.slots()) > options.maximumRetainedSlots())
-				for(Node node : active) releaseMarginals(node);
+			if(options.boundedTest() && add(slots,candidate.slots()) > options.maximumRetainedSlots()) {
+				for(Node node : active)
+					releaseMarginals(node);
+				successfulConflictScores.clear();
+			}
 			if(options.boundedTest() && add(slots,candidate.slots()) > options.maximumRetainedSlots()) {
 				rememberRejectedNeighborhood(candidate);
 				discard(candidate.pivot()); resourceRejected++; continue;
@@ -682,6 +688,7 @@ final class IncrementalRegionalOptimizer {
 		for(Node node : active)
 			releaseMarginals(node);
 		active.clear(); sealed.clear(); incidence.clear(); candidates.clear(); queue.clear();
+		successfulConflictScores.clear();
 		slots = 0;
 		coverReleased = true;
 		checkpoint("CONDITIONAL_READY");
@@ -693,6 +700,7 @@ final class IncrementalRegionalOptimizer {
 		active.clear(); sealed.clear(); incidence.clear(); candidates.clear(); queue.clear();
 		rejectedNeighborhoods.clear();
 		conditionalReplayCache.clear();
+		successfulConflictScores.clear();
 		slots = 0;
 		coverReleased = true;
 	}
@@ -758,7 +766,7 @@ final class IncrementalRegionalOptimizer {
 				Set<Node> current = incidence.get(c.pivot());
 				if(current==null || current.size()!=c.inputs().size() || !current.containsAll(c.inputs()))
 					throw new IllegalStateException("INCREMENTAL_STALE_BUCKET");
-				double score = conflict(c) / Math.max(1d,c.work());
+				double score = conflictScore(c) / Math.max(1d,c.work());
 				if(best==null || score>bestScore) { best=c; bestScore=score; }
 			}
 			return best;
@@ -768,7 +776,10 @@ final class IncrementalRegionalOptimizer {
 
 	private void discard(Variable v) {
 		Candidate previous = candidates.remove(v);
-		if(previous!=null) queue.remove(previous);
+		if(previous!=null) {
+			queue.remove(previous);
+			successfulConflictScores.remove(previous);
+		}
 	}
 
 	private void refresh(Variable v) {
@@ -802,17 +813,34 @@ final class IncrementalRegionalOptimizer {
 		catch(PlannerResourceGuard.ResourceExhaustedException exhausted) {
 			traceResourceRejection("conflict-sums",exhausted);
 			resourceRejected++;
-			return 0;
+			return Double.NaN;
 		}
 		double separate = 0;
 		for(Node node : candidate.inputs()) {
 			double[] values = marginals(node,v);
-			if(values==null) return 0;
+			if(values==null) return Double.NaN;
 			for(int i=0; i<sums.length; i++) sums[i]+=values[i];
 			separate += node.minimum;
 		}
 		double joined = Arrays.stream(sums).min().orElseThrow();
 		return Double.isFinite(joined-separate) ? Math.max(0,joined-separate) : 0;
+	}
+
+	/** Reuses only complete scores over immutable candidates; resource failures remain retryable. */
+	private double conflictScore(Candidate candidate) {
+		Double cached = successfulConflictScores.get(candidate);
+		if(cached != null) {
+			conflictScoreCacheHits++;
+			return cached;
+		}
+		conflictScoreEvaluations++;
+		double score = conflict(candidate);
+		if(Double.isNaN(score)) {
+			incompleteConflictScores++;
+			return 0d;
+		}
+		successfulConflictScores.put(candidate,score);
+		return score;
 	}
 
 	private double[] marginals(Node node, Variable v) {
@@ -932,6 +960,9 @@ final class IncrementalRegionalOptimizer {
 		List<Integer> encoded = root.expandAssignment(Arrays.stream(incumbent).boxed().toList());
 		return new Result(List.copyOf(encoded.subList(0,problem.decisionCount())),lower,upper,reason,List.copyOf(checkpoints));
 	}
+	long conflictScoreEvaluationsForTest() { return conflictScoreEvaluations; }
+	long conflictScoreCacheHitsForTest() { return conflictScoreCacheHits; }
+	long incompleteConflictScoresForTest() { return incompleteConflictScores; }
 	static double relativeGap(double lower, double upper) {
 		if(upper == lower) return 0;
 		return lower > 0 ? Math.nextUp(Math.nextUp(upper-lower)/lower) : Double.POSITIVE_INFINITY;

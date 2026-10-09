@@ -49,7 +49,8 @@ public class NativeSupportHashMemoTest {
 			realization.key(), explicit);
 
 		Assert.assertEquals(explicit.hashCode(), relation.hashCode());
-		Assert.assertTrue("cold hash must preserve the legacy member traversal", handles.gets > 0);
+		Assert.assertEquals("cold algebraic hash must not visit member handles", 0, handles.gets);
+		Assert.assertEquals(0, relation.materializedHandleCount());
 		Assert.assertEquals(explicit, relation);
 		Assert.assertEquals(relation, explicit);
 		Assert.assertEquals(explicitRealization.hashCode(), realization.hashCode());
@@ -86,6 +87,8 @@ public class NativeSupportHashMemoTest {
 		CountingHandles unionHandles = countedHandles(union);
 
 		Assert.assertEquals(explicit.hashCode(), union.hashCode());
+		Assert.assertEquals("cold union hash must not visit member handles", 0, unionHandles.gets);
+		Assert.assertEquals(0, union.materializedHandleCount());
 		Assert.assertEquals(explicit, union);
 		Assert.assertSame(firstB, memberWithSource(union, b.source().realization()));
 		Assert.assertSame(firstC, memberWithSource(union, c.source().realization()));
@@ -99,6 +102,8 @@ public class NativeSupportHashMemoTest {
 			List.of(seed), output, List.of(sorted(b, c)));
 		CountingHandles restrictedHandles = countedHandles(restricted);
 		Assert.assertEquals(explicitRestricted.hashCode(), restricted.hashCode());
+		Assert.assertEquals("cold restricted hash must not visit member handles", 0, restrictedHandles.gets);
+		Assert.assertEquals(0, restricted.materializedHandleCount());
 		Assert.assertEquals(explicitRestricted, restricted);
 		Assert.assertSame(firstB, memberWithSource(restricted, b.source().realization()));
 		Assert.assertSame(firstC, memberWithSource(restricted, c.source().realization()));
@@ -129,6 +134,8 @@ public class NativeSupportHashMemoTest {
 		CountingHandles handles = countedHandles(union);
 
 		Assert.assertEquals(explicit.hashCode(), union.hashCode());
+		Assert.assertEquals("cold multi-header hash must not visit member handles", 0, handles.gets);
+		Assert.assertEquals(0, union.materializedHandleCount());
 		Assert.assertEquals(explicit, union);
 		Assert.assertTrue(union.stream().anyMatch(clause -> clause == firstA));
 		Assert.assertTrue(union.stream().anyMatch(clause -> clause == secondB));

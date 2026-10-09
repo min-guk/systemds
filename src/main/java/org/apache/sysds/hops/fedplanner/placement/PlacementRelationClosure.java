@@ -5898,6 +5898,11 @@ final class PlacementRelationClosure {
 							seed, outputAnchor, nativeLineage, output));
 						prospectiveOutputCounts.merge(output, 1, Math::addExact);
 					}
+					// Bound additional complete-header operands retained for the final merge.
+					// Diagnostic mode keeps scalar consumption observable at the binder.
+					boolean allowNativeHeaderForwarding =
+						proofRequests.size() <= MAX_NATIVE_HEADER_FORWARD_REQUESTS
+							&& (complexityMetrics == null || !complexityMetrics.hasDuplicateMergeDiagnostics());
 					for(DirectNativeProofRequest request : proofRequests) {
 						NativePlacementContinuity.CandidateSupportResult supportResult;
 						SearchSpaceMetrics.PhaseToken proofStarted = complexityMetrics == null ? null
@@ -5942,21 +5947,31 @@ final class PlacementRelationClosure {
 								productPublications = directNativeProductPublication(supportProduct,
 									fact.key().parentOccurrence(), emission.emissionState(), outputAnchor,
 									nativeLineage, requiredInputs, sources, exactSourceLayouts, publicationTrace);
+							boolean losslessProduct = nativeProductPublicationIsLossless(
+								productPublications, supportProduct);
+							if(productPublications != null && !losslessProduct) {
+								// Required-input filtering can safely discard an infeasible tuple, but
+								// the same descriptor cannot prove that a filtered non-required receipt
+								// was dispensable. Keep the complete scalar validation path.
+								productPublications = null;
+								if(publicationTrace != null)
+									publicationTrace.outcome = NativePublicationOutcome.REQUIRED_INPUTS;
+							}
 							if(productPairs != null && productPublications != null)
 								for(CandidateEmissionRealization publication : productPublications)
 									productPairs.observe(factOccurrence, publication);
-							boolean losslessProduct = nativeProductPublicationIsLossless(
-								productPublications, supportProduct);
 							if(productPublications != null && productPublications.size() == 2) {
 								// Both parts are prepared before any publication. Distinct output keys
 								// let one stay lazy even when the other needs its exact scalar union.
 								NativeProductAdmission exactAdmission = nativeProductAdmission(
 									productPublications.get(0), grounded,
 									productPublications.get(0).supportClauses().size() > 1,
-									prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1 || losslessProduct, losslessProduct);
+									prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1 || losslessProduct,
+									allowNativeHeaderForwarding && losslessProduct);
 								NativeProductAdmission nativeAdmission = nativeProductAdmission(
 									productPublications.get(1), grounded,
-									productPublications.get(1).supportClauses().size() > 1, true, losslessProduct);
+									productPublications.get(1).supportClauses().size() > 1, true,
+									allowNativeHeaderForwarding && losslessProduct);
 								if(exactAdmission.admitted() || nativeAdmission.admitted()) {
 									if(publicationTrace != null)
 										complexityMetrics.recordNativePublication(
@@ -6017,7 +6032,8 @@ final class PlacementRelationClosure {
 									== PlacementLayoutKind.NATIVE_LINEAGE
 									|| prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1 || losslessProduct;
 								NativeProductAdmission admission = nativeProductAdmission(
-									productPublication, grounded, worthwhile, disjointRequest, losslessProduct);
+									productPublication, grounded, worthwhile, disjointRequest,
+									allowNativeHeaderForwarding && losslessProduct);
 								if(publicationTrace != null)
 									publicationTrace.outcome = admission.outcome();
 								if(admission.admitted()) {
@@ -6030,6 +6046,7 @@ final class PlacementRelationClosure {
 											admission.outcome(), supportResult.proofs().size());
 									continue;
 								}
+
 							}
 							if(publicationTrace != null)
 								complexityMetrics.recordNativePublication(publicationTrace.outcome, supportResult.proofs().size());
@@ -6431,16 +6448,18 @@ final class PlacementRelationClosure {
 		return members == original.size();
 	}
 
+	private static final int MAX_NATIVE_HEADER_FORWARD_REQUESTS = 64;
+
 	private static NativeProductAdmission nativeProductAdmission(CandidateEmissionRealization publication,
 		GroundedNativePreparation grounded, boolean worthwhile, boolean disjointRequest,
-		boolean losslessProduct) {
+		boolean allowLosslessForwarding) {
 		NativeProductAdmission admission = nativeProductAdmission(
 			publication, grounded, worthwhile, disjointRequest);
 		// A single wider header can temporarily break a family's rectangular domain.
 		// Keep this exact operand for the existing final emission merge, where all
 		// headers may have grown. Never bypass staging/explicit/foreign authority,
 		// and never forward a filtered query in place of legacy scalar validation.
-		if(admission.outcome() == NativePublicationOutcome.RETAINED_UNION && losslessProduct
+		if(admission.outcome() == NativePublicationOutcome.RETAINED_UNION && allowLosslessForwarding
 			&& grounded.hasOnlyNativeRetainedAuthority(publication.key()))
 			return NativeProductAdmission.published(publication);
 		return admission;

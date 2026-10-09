@@ -80,7 +80,8 @@ public class DeferredLogicalTransientReplayDetailTest {
 			+ "|input=" + INPUT.normalizedSignature() + "|realizations="
 			+ List.of(explicitOracle.normalizedSignature());
 		Assert.assertEquals(expectedDetail, fact.capability().detail());
-		Assert.assertEquals(6, realization.fullyMaterializedSupportClauseCount());
+		Assert.assertEquals("deferred detail must retain exact legacy bytes without expanding native support",
+			0, realization.fullyMaterializedSupportClauseCount());
 
 		CandidateCapabilityFact eager = new CandidateCapabilityFact(
 			OpCategory.OTHER, fact.capability().opcode(), STATE.execType(), STATE.output(), STATE.fType(),
@@ -94,6 +95,8 @@ public class DeferredLogicalTransientReplayDetailTest {
 		String legacyText = legacy.toString().replaceFirst("LegacyCapability", "CandidateCapabilityFact");
 		Assert.assertEquals(legacyText, fact.capability().toString());
 		Assert.assertEquals(legacyText, new StringBuilder().append(fact.capability()).toString());
+		Assert.assertEquals("equality, hash and text must keep the native relation lazy",
+			0, realization.fullyMaterializedSupportClauseCount());
 	}
 
 	@Test

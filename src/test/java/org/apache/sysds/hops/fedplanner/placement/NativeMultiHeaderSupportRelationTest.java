@@ -30,6 +30,150 @@ import org.junit.Test;
 
 public class NativeMultiHeaderSupportRelationTest {
 	@Test
+	public void fixedSeedOneAxisGrowthMatchesExplicitUnionAndOriginalDonorObjects() {
+		Random random = new Random(0x47524f5748445253L);
+		for(int trial = 0; trial < 60; trial++) {
+			CompiledHopKey owner = key("growing-consumer-" + trial);
+			CompiledHopKey leftOwner = key("growing-left-" + trial);
+			CompiledHopKey rightOwner = key("growing-right-" + trial);
+			DurableAnchorKey output = pool("growing-output-" + trial);
+			int changedAxis = random.nextInt(2);
+			var a = direct(changedAxis, "a", changedAxis == 0 ? leftOwner : rightOwner);
+			var b = direct(changedAxis, "b-" + "x".repeat(random.nextInt(100)),
+				changedAxis == 0 ? leftOwner : rightOwner);
+			var c = direct(changedAxis, "c-" + "y".repeat(random.nextInt(100)),
+				changedAxis == 0 ? leftOwner : rightOwner);
+			var stable = randomAxis(random, 1 - changedAxis,
+				changedAxis == 0 ? rightOwner : leftOwner, "stable");
+			var firstAxes = changedAxis == 0 ? List.of(sorted(a, b), stable)
+				: List.of(stable, sorted(a, b));
+			var nextAxes = changedAxis == 0 ? List.of(sorted(directLike(b), c), stable)
+				: List.of(stable, sorted(directLike(b), c));
+			List<NativeContinuitySupportClauses> firstLeaves = new ArrayList<>();
+			List<NativeContinuitySupportClauses> nextLeaves = new ArrayList<>();
+			NativeContinuitySupportClauses first = null, next = null;
+			int headerCount = 2 + random.nextInt(3);
+			for(int header = 0; header < headerCount; header++) {
+				DurableAnchorKey seed = pool("growth-seed-" + header + '-'
+					+ "z".repeat(random.nextInt(100)));
+				var left = relation(owner, seed, output, firstAxes);
+				var right = relation(owner, seed, output, nextAxes);
+				firstLeaves.add(left);
+				nextLeaves.add(right);
+				first = first == null ? left : first.multiHeaderUnion(left).orElseThrow();
+				next = next == null ? right : next.multiHeaderUnion(right).orElseThrow();
+			}
+			NativeContinuitySupportClauses union = first.oneAxisUnion(next).orElseThrow();
+			Assert.assertEquals(headerCount * 3 * stable.size(), union.size());
+			Assert.assertEquals(0, union.materializedHandleCount());
+			Assert.assertEquals(0, first.materializedHandleCount());
+			Assert.assertEquals(0, next.materializedHandleCount());
+			java.util.Map<String,CandidateRealizationSupportClause> explicit = new java.util.TreeMap<>();
+			for(var leaves : List.of(firstLeaves, nextLeaves))
+				for(var leaf : leaves)
+					for(var clause : leaf)
+						explicit.putIfAbsent(clause.normalizedSignature(), clause);
+			List<CandidateRealizationSupportClause> expected = List.copyOf(explicit.values());
+			Assert.assertEquals(expected.size(), union.size());
+			for(int ordinal = 0; ordinal < union.size(); ordinal++)
+				Assert.assertSame("trial " + trial + " member " + ordinal,
+					expected.get(ordinal), union.get(ordinal));
+			Assert.assertSame("covered subset retains the complete original relation",
+				union, union.oneAxisUnion(first).orElseThrow());
+		}
+	}
+
+	@Test
+	public void multiHeaderGrowthAfterRestrictionUsesNewAuthorityForRemovedOptions() {
+		CompiledHopKey owner = key("regrow-consumer"), source = key("regrow-source");
+		DurableAnchorKey output = pool("regrow-output");
+		var a = direct(0, "a", source);
+		var b = direct(0, "b", source);
+		var oldA = relation(owner, pool("seed-a"), output, List.of(sorted(a, b)));
+		var oldB = relation(owner, pool("seed-b"), output, List.of(sorted(directLike(a), directLike(b))));
+		var original = oldA.multiHeaderUnion(oldB).orElseThrow();
+		var restricted = original.restrictBindings(binding -> !binding.source().equals(b.source())).orElseThrow();
+		var newA = relation(owner, pool("seed-a"), output, List.of(sorted(directLike(a), directLike(b))));
+		var newB = relation(owner, pool("seed-b"), output, List.of(sorted(directLike(a), directLike(b))));
+		var restored = restricted.oneAxisUnion(newA.multiHeaderUnion(newB).orElseThrow()).orElseThrow();
+		Assert.assertEquals(4, restored.size());
+		Assert.assertEquals(0, restored.materializedHandleCount());
+		for(var old : List.of(oldA, oldB))
+			for(var clause : old)
+				Assert.assertEquals(clause.inputBindings().get(0).source().equals(b.source()),
+					identityOrdinal(restored, clause) < 0);
+		for(var fresh : List.of(newA, newB))
+			for(var clause : fresh)
+				Assert.assertEquals(clause.inputBindings().get(0).source().equals(b.source()),
+					identityOrdinal(restored, clause) >= 0);
+	}
+
+	@Test
+	public void multiHeaderAxisUnionRejectsSparseHolesAndChangingHeaderSets() {
+		CompiledHopKey owner = key("sparse-consumer"), left = key("sparse-left"), right = key("sparse-right");
+		DurableAnchorKey output = pool("sparse-output");
+		var a = direct(0, "a", left);
+		var b = direct(0, "b", left);
+		var c = direct(1, "c", right);
+		var d = direct(1, "d", right);
+		var firstAxes = List.of(List.of(a), List.of(c));
+		var sparseAxes = List.of(List.of(b), List.of(d));
+		var first = relation(owner, pool("seed-a"), output, firstAxes).multiHeaderUnion(
+			relation(owner, pool("seed-b"), output, firstAxes)).orElseThrow();
+		var sparse = relation(owner, pool("seed-a"), output, sparseAxes).multiHeaderUnion(
+			relation(owner, pool("seed-b"), output, sparseAxes)).orElseThrow();
+		Assert.assertTrue(first.oneAxisUnion(sparse).isEmpty());
+		var changedAxes = List.of(sorted(a, b), List.of(c));
+		var changedHeaders = relation(owner, pool("seed-a"), output, changedAxes).multiHeaderUnion(
+			relation(owner, pool("seed-c"), output, changedAxes)).orElseThrow();
+		Assert.assertTrue(first.oneAxisUnion(changedHeaders).isEmpty());
+		Assert.assertTrue(first.oneAxisUnion(relation(owner, pool("seed-a"), output, changedAxes)).isEmpty());
+		var foreignAxes = List.of(List.of(direct(0, "a", cloneKey(left))), List.of(c));
+		var foreign = relation(owner, pool("seed-a"), output, foreignAxes).multiHeaderUnion(
+			relation(owner, pool("seed-b"), output, foreignAxes)).orElseThrow();
+		Assert.assertTrue(first.oneAxisUnion(foreign).isEmpty());
+		Assert.assertEquals(0, first.materializedHandleCount());
+		Assert.assertEquals(0, sparse.materializedHandleCount());
+	}
+
+	@Test
+	public void multiHeaderGrowthKeepsTheExistingDonorLimitAndExactFallback() {
+		CompiledHopKey owner = key("budget-consumer"), source = key("budget-source");
+		DurableAnchorKey output = pool("budget-output");
+		List<CandidateRealizationInputBinding> options = new ArrayList<>();
+		NativeContinuitySupportClauses retained = null, rejected = null;
+		for(int option = 0; option <= 32; option++) {
+			options.add(direct(0, "budget-" + option, source));
+			var axes = List.of(options.stream().map(NativeMultiHeaderSupportRelationTest::directLike)
+				.sorted(PlacementAnalysis.canonicalComparator()).toList());
+			var incoming = relation(owner, pool("seed-a"), output, axes).multiHeaderUnion(
+				relation(owner, pool("seed-b"), output, axes)).orElseThrow();
+			if(retained == null)
+				retained = incoming;
+			else if(option < 32)
+				retained = retained.oneAxisUnion(incoming).orElseThrow();
+			else {
+				Assert.assertTrue("the 66th donor must use exact fallback", retained.oneAxisUnion(incoming).isEmpty());
+				rejected = incoming;
+			}
+		}
+		Assert.assertEquals(64, retained.authorityDonorCount());
+		Assert.assertEquals(64, retained.size());
+		Assert.assertEquals(0, retained.materializedHandleCount());
+		Assert.assertEquals(0, rejected.materializedHandleCount());
+		CandidateRealizationSupportClause prior = retained.get(0);
+		var realizationKey = PlacementRealizationKey.nativeLineage(emission(), "budget-fallback");
+		CandidateEmissionFact fallback = new CandidateEmissionFact(emission(), FType.ROW, null,
+			List.of(new CandidateEmissionRealization(realizationKey, retained),
+				new CandidateEmissionRealization(realizationKey, rejected)));
+		var actual = fallback.realizations().get(0).supportClauses();
+		Assert.assertEquals(66, actual.size());
+		Assert.assertTrue(actual.stream().anyMatch(clause -> clause == prior));
+		Assert.assertEquals(rejected.stream().map(CandidateRealizationSupportClause::normalizedSignature).toList(),
+			actual.stream().map(CandidateRealizationSupportClause::normalizedSignature).toList());
+	}
+
+	@Test
 	public void fixedSeedRandomHeadersMatchExplicitCanonicalRankAndDonorIdentity() {
 		Random random = new Random(0x4d554c5449484541L);
 		for(int trial = 0; trial < 100; trial++) {

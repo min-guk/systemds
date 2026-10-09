@@ -3748,6 +3748,24 @@ final class NativePlacementContinuity {
 		}
 		if(matchedRealization == null || matchedRelation == null || matchedRelation.isEmpty())
 			return null;
+		return nativeFactoredProofAlternativesResolved(key, pinned, witness, fixed,
+			node, hop, matchedFact, matchedRealization, matchedRelation);
+	}
+
+	/** Builds the circuit for an exact inventory row already validated by its caller. */
+	private NativeFactoredProofAlternatives nativeFactoredProofAlternativesResolved(
+		CompiledHopKey key, CandidateRealizationReference pinned,
+		NativePoolWitness witness, FixedCandidateBoundary fixed,
+		Node node, Hop hop, CandidateRuleFact matchedFact,
+		CandidateEmissionRealization matchedRealization,
+		NativeContinuitySupportClauses matchedRelation) {
+		CandidateRealizationReference exact =
+			CandidateRealizationReference.of(matchedFact.key(), matchedRealization);
+		if(matchedFact.key().parentOccurrence() != key
+			|| exact.rule().parentOccurrence() != key || !exact.equals(pinned)
+			|| matchedRealization.supportClauses() != matchedRelation
+			|| matchedRelation.isEmpty())
+			return null;
 		List<List<CandidateRealizationInputBinding>> axes = matchedRelation.commonAxes();
 		if(axes.isEmpty())
 			return null;
@@ -3870,6 +3888,7 @@ final class NativePlacementContinuity {
 				state.output() == FederatedOutput.FOUT && state.fType() == witness.fType))
 			return null;
 		List<SelectedCandidateProof> alternatives = new ArrayList<>();
+		Set<CandidateRealizationReference> exactReferences = new HashSet<>();
 		boolean matchedNative = false;
 		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
 			if(fact.status() != CandidateEvaluationStatus.AVAILABLE
@@ -3896,8 +3915,15 @@ final class NativePlacementContinuity {
 						return null;
 					CandidateRealizationReference reference =
 						CandidateRealizationReference.of(fact.key(), realization);
-					NativeFactoredProofAlternatives factored = nativeFactoredProofAlternatives(
-						key, reference, witness, fixed);
+					// The pinned resolver rejected structurally duplicated authority while
+					// rescanning the inventory. Preserve that fallback before bypassing its
+					// repeated lookup for this already validated exact row.
+					if(!exactReferences.add(reference))
+						return null;
+					NativeFactoredProofAlternatives factored =
+						nativeFactoredProofAlternativesResolved(key, reference, witness, fixed,
+							node, hop, fact, realization,
+								(NativeContinuitySupportClauses)realization.supportClauses());
 					if(factored == null || factored.alternatives().size() != 1)
 						return null;
 					alternatives.add(factored.alternatives().get(0));
@@ -5844,6 +5870,11 @@ final class NativePlacementContinuity {
 		java.util.Map<Integer,Integer> bindingLengthCounts() {
 			return canonicalIndex.bindingLengthCounts();
 		}
+		java.util.Map<Integer,NativeHashSequence> clauseHashSummaries(CompiledHopKey owner,
+			DurableAnchorKey clauseWitness, boolean clauseLayoutExact) {
+			return canonicalIndex.clauseHashSummaries(this, owner,
+				clauseWitness, clauseLayoutExact);
+		}
 		int fixedAuthorityLength() { return canonicalIndex.fixedAuthorityLength(); }
 		private static List<CandidateRealizationInputBinding> rowMajorBindingsAt(
 			List<List<CandidateRealizationInputBinding>> axes, int size, int ordinal) {
@@ -5860,6 +5891,14 @@ final class NativePlacementContinuity {
 			}
 			return PlacementAnalysis.sharedAlreadyCanonicalComparableList(
 				java.util.Arrays.asList(selected), "native support product binding");
+		}
+	}
+
+	/** Algebraic hash of one consecutive canonical clause sequence. */
+	static record NativeHashSequence(int count, int power, int weightedHash) {
+		NativeHashSequence append(NativeHashSequence suffix) {
+			return new NativeHashSequence(Math.addExact(count, suffix.count),
+				power * suffix.power, weightedHash * suffix.power + suffix.weightedHash);
 		}
 	}
 
@@ -5995,6 +6034,118 @@ final class NativePlacementContinuity {
 		private int fixedAuthorityLength() { return fixedAuthorityLength; }
 		private java.util.Map<Integer,Integer> bindingLengthCounts() {
 			return bindingLengthCounts;
+		}
+
+		private java.util.Map<Integer,NativeHashSequence> clauseHashSummaries(
+			NativeSupportProduct product, CompiledHopKey owner,
+			DurableAnchorKey clauseWitness, boolean clauseLayoutExact) {
+			PlacementAnalysis.NormalizedTextContext textContext =
+				new PlacementAnalysis.NormalizedTextContext();
+			List<java.util.Map<Integer,NativeTupleHashSummary>> memo = new ArrayList<>(
+				Collections.nCopies(product.axes().size() + 1, null));
+			for(int axis = 0; axis < memo.size(); axis++)
+				memo.set(axis, new java.util.HashMap<>());
+			memo.get(product.axes().size()).put(0,
+				new NativeTupleHashSummary(1, 31, 1, 31, ']', 1, 0));
+
+			java.util.Map<Integer,NativeHashSequence> result = new java.util.LinkedHashMap<>();
+			String authorityPrefix = product.headerAuthoritySignature() + "|bindings=[";
+			int proofConstant = 31 * (31
+				* PlacementIdentity.PlacementProofKind.NATIVE_CONTINUITY.hashCode()
+				+ Objects.hashCode(owner));
+			int witnessHash = Objects.hashCode(clauseWitness);
+			int clauseConstant = 923521 + 29791 * proofConstant
+				+ 31 * witnessHash + Boolean.hashCode(clauseLayoutExact);
+			for(NativeCanonicalLengthBucket bucket : orderedLengths) {
+				NativeTupleHashSummary tuples = tupleHashSummary(product.axes(), textContext,
+					memo, 0, bucket.bindingLength());
+				if(tuples == null || tuples.count() != bucket.count())
+					throw new IllegalStateException("Native canonical hash index is inconsistent");
+				int authorityWeighted = authorityPrefix.hashCode()
+					* tuples.authorityCharPower() * tuples.geometric()
+					+ tuples.weightedAuthoritySuffix();
+				int bindingsWeighted = tuples.bindingsPower() * tuples.geometric()
+					+ tuples.weightedBindingsSuffix();
+				int clauseWeighted = clauseConstant * tuples.geometric()
+					+ 29791 * authorityWeighted + 961 * bindingsWeighted;
+				result.put(bucket.bindingLength(), new NativeHashSequence(
+					tuples.count(), tuples.sequencePower(), clauseWeighted));
+			}
+			return java.util.Collections.unmodifiableMap(result);
+		}
+
+		private NativeTupleHashSummary tupleHashSummary(
+			List<List<CandidateRealizationInputBinding>> axes,
+			PlacementAnalysis.NormalizedTextContext textContext,
+			List<java.util.Map<Integer,NativeTupleHashSummary>> memo,
+			int axis, int remainingLength) {
+			if(!rowMajor && !suffixLengthCounts.get(axis).containsKey(remainingLength))
+				return null;
+			NativeTupleHashSummary cached = memo.get(axis).get(remainingLength);
+			if(cached != null)
+				return cached;
+			if(axis == axes.size())
+				return null;
+			NativeTupleHashSummary result = null;
+			for(int option = 0; option < axes.get(axis).size(); option++) {
+				int optionLength = optionLengths.get(axis)[option];
+				if(optionLength > remainingLength)
+					continue;
+				NativeTupleHashSummary tail = tupleHashSummary(axes, textContext, memo,
+					axis + 1, remainingLength - optionLength);
+				if(tail == null)
+					continue;
+				CandidateRealizationInputBinding binding = axes.get(axis).get(option);
+				PlacementAnalysis.NormalizedText text = textContext.binding(binding);
+				int chunkLength = text.length();
+				int chunkHash = text.hashCode();
+				if(axis + 1 < axes.size()) {
+					chunkHash = chunkHash * 961 + ", ".hashCode();
+					chunkLength += 2;
+				}
+				int authorityPower = pow31(chunkLength) * tail.authorityCharPower();
+				int bindingPower = 31 * tail.bindingsPower();
+				NativeTupleHashSummary block = new NativeTupleHashSummary(tail.count(),
+					tail.sequencePower(), tail.geometric(), authorityPower,
+					chunkHash * tail.authorityCharPower() * tail.geometric()
+						+ tail.weightedAuthoritySuffix(), bindingPower,
+					binding.hashCode() * tail.bindingsPower() * tail.geometric()
+						+ tail.weightedBindingsSuffix());
+				result = result == null ? block : result.append(block);
+			}
+			if(result != null)
+				memo.get(axis).put(remainingLength, result);
+			return result;
+		}
+
+		private static int pow31(int exponent) {
+			int result = 1;
+			int base = 31;
+			for(int remaining = exponent; remaining != 0; remaining >>>= 1) {
+				if((remaining & 1) != 0)
+					result *= base;
+				base *= base;
+			}
+			return result;
+		}
+
+		private record NativeTupleHashSummary(int count, int sequencePower, int geometric,
+			int authorityCharPower, int weightedAuthoritySuffix,
+			int bindingsPower, int weightedBindingsSuffix) {
+			private NativeTupleHashSummary append(NativeTupleHashSummary suffix) {
+				if(authorityCharPower != suffix.authorityCharPower
+					|| bindingsPower != suffix.bindingsPower)
+					throw new IllegalStateException("Native hash bucket has inconsistent tuple width");
+				return new NativeTupleHashSummary(Math.addExact(count, suffix.count),
+					sequencePower * suffix.sequencePower,
+					geometric * suffix.sequencePower + suffix.geometric,
+					authorityCharPower,
+					weightedAuthoritySuffix * suffix.sequencePower
+						+ suffix.weightedAuthoritySuffix,
+					bindingsPower,
+					weightedBindingsSuffix * suffix.sequencePower
+						+ suffix.weightedBindingsSuffix);
+			}
 		}
 
 		private List<CandidateRealizationInputBinding> bindingsAt(

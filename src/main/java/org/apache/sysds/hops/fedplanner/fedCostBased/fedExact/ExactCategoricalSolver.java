@@ -606,6 +606,34 @@ public final class ExactCategoricalSolver {
 			return false;
 		}
 
+		/** Fill every unconditioned marginal for one axis in one selector/region scan. */
+		private void fillMinMarginals(int axis, double[] result) {
+			if(axis < 0 || axis >= dimensions.length || result.length != dimensions[axis])
+				throw new IllegalArgumentException("EXACT_VE_CONDITIONAL_AXIS_INVALID");
+			Arrays.fill(result, Double.POSITIVE_INFINITY);
+			if(axis == selectorAxis) {
+				for(int selector = 0; selector < conditioned.length; selector++)
+					if(!conditioned[selector])
+						result[selector] = 0d;
+				for(ConditionalRegion region : regions)
+					if(nonempty(region))
+						result[region.selectorValue] = 0d;
+				return;
+			}
+
+			for(boolean selected : conditioned)
+				if(!selected) {
+					Arrays.fill(result, 0d);
+					return;
+				}
+			for(ConditionalRegion region : regions) {
+				if(!nonempty(region))
+					continue;
+				for(int value : region.allowedValuesByAxis[axis])
+					result[value] = 0d;
+			}
+		}
+
 		private boolean feasible() {
 			for(int selector = 0; selector < conditioned.length; selector++)
 				if(hasCompletion(selectorAxis, selector))
@@ -1259,9 +1287,7 @@ public final class ExactCategoricalSolver {
 			int position = marginalPosition(variable);
 			if(conditionalSupport != null) {
 				double[] result = new double[variable.domainSize()];
-				for(int value = 0; value < result.length; value++)
-					result[value] = conditionalSupport.hasCompletion(position, value)
-						? 0d : Double.POSITIVE_INFINITY;
+				conditionalSupport.fillMinMarginals(position, result);
 				return result;
 			}
 			double[] minimumHigh = PlannerResourceGuard.allocateDoubles(

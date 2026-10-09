@@ -37,8 +37,8 @@ final class NativeContinuitySupportClauses
 	private final List<AuthorityDonor> authorityDonors;
 	private final ConcurrentHashMap<Integer,CandidateRealizationSupportClause> handles =
 		new ConcurrentHashMap<>();
-	private int cachedHash;
-	private volatile boolean hashComputed;
+	private int listHash;
+	private volatile boolean listHashComputed;
 
 	NativeContinuitySupportClauses(CompiledHopKey owner,
 		NativePlacementContinuity.NativeSupportProduct product,
@@ -77,6 +77,33 @@ final class NativeContinuitySupportClauses
 		Objects.checkIndex(ordinal, size());
 		CandidateRealizationSupportClause current = handles.get(ordinal);
 		return current != null ? current : handles.computeIfAbsent(ordinal, this::materialize);
+	}
+
+	@Override
+	public int hashCode() {
+		if(listHashComputed)
+			return listHash;
+		NativePlacementContinuity.NativeHashSequence summary =
+			new NativePlacementContinuity.NativeHashSequence(0, 1, 0);
+		if(canonicalIndex == null) {
+			for(var block : products.get(0).clauseHashSummaries(
+				owner, clauseWitness, clauseLayoutExact).values())
+				summary = summary.append(block);
+		}
+		else {
+			java.util.Map<NativePlacementContinuity.NativeSupportProduct,
+				java.util.Map<Integer,NativePlacementContinuity.NativeHashSequence>> summaries =
+				new java.util.IdentityHashMap<>();
+			for(var product : products)
+				summaries.put(product, product.clauseHashSummaries(
+					owner, clauseWitness, clauseLayoutExact));
+			for(NativeHeaderBucket bucket : canonicalIndex.buckets)
+				summary = summary.append(summaries.get(bucket.product()).get(bucket.bindingLength()));
+		}
+		int computed = summary.power() + summary.weightedHash();
+		listHash = computed;
+		listHashComputed = true;
+		return computed;
 	}
 
 	private CandidateRealizationSupportClause materialize(int ordinal) {
@@ -144,7 +171,7 @@ final class NativeContinuitySupportClauses
 			|| !Objects.equals(clauseWitness, that.clauseWitness))
 			return java.util.Optional.empty();
 		if(products.size() != 1 || that.products.size() != 1)
-			return java.util.Optional.empty();
+			return multiHeaderAxisUnion(that);
 		var product = products.get(0);
 		var thatProduct = that.products.get(0);
 		var union = product.oneAxisUnion(thatProduct);
@@ -175,6 +202,53 @@ final class NativeContinuitySupportClauses
 			return java.util.Optional.empty();
 		return java.util.Optional.of(new NativeContinuitySupportClauses(owner,
 			union.get(), clauseWitness, clauseLayoutExact, donors));
+	}
+	private java.util.Optional<NativeContinuitySupportClauses> multiHeaderAxisUnion(
+		NativeContinuitySupportClauses that) {
+		// Header growth and axis growth together need a correlated union. Only
+		// the identical complete header set can share this rectangular axis union.
+		if(products.size() != that.products.size())
+			return java.util.Optional.empty();
+		for(int header = 0; header < products.size(); header++)
+			if(!products.get(header).sameHeaderAuthority(that.products.get(header)))
+				return java.util.Optional.empty();
+		var original = products.get(0);
+		var first = original.oneAxisUnion(that.products.get(0));
+		if(first.isEmpty())
+			return java.util.Optional.empty();
+		if(original.sameExactAuthority(first.get()))
+			return java.util.Optional.of(this);
+		List<NativePlacementContinuity.NativeSupportProduct> merged = new java.util.ArrayList<>();
+		merged.add(first.get());
+		for(int header = 1; header < products.size(); header++) {
+			var next = products.get(header).oneAxisUnion(that.products.get(header));
+			if(next.isEmpty() || !first.get().sameExactAxes(next.get()))
+				return java.util.Optional.empty();
+			merged.add(next.get());
+		}
+		int changedAxis = -1;
+		for(int axis = 0; axis < first.get().axes().size(); axis++)
+			if(first.get().axes().get(axis).size() != original.axes().get(axis).size()) {
+				if(changedAxis >= 0)
+					return java.util.Optional.empty();
+				changedAxis = axis;
+			}
+		if(changedAxis < 0)
+			return java.util.Optional.empty();
+		int addedAxis = changedAxis;
+		List<AuthorityDonor> donors = new java.util.ArrayList<>(authoritySources());
+		for(AuthorityDonor donor : that.authoritySources()) {
+			AuthorityDonor added = donor.restrict(binding ->
+				binding.inputPosition() != first.get().axes().get(addedAxis).get(0).inputPosition()
+					|| !original.containsExactBinding(addedAxis, binding));
+			if(added != null)
+				donors.add(added);
+		}
+		NativeMultiHeaderIndex index = NativeMultiHeaderIndex.tryCreate(merged);
+		if(index == null || !withinAuthorityRetentionBudget(merged, index.retainedMetadataUnits(), donors))
+			return java.util.Optional.empty();
+		return java.util.Optional.of(new NativeContinuitySupportClauses(owner, merged,
+			clauseWitness, clauseLayoutExact, donors));
 	}
 	java.util.Optional<NativeContinuitySupportClauses> multiHeaderUnion(
 		NativeContinuitySupportClauses that) {
@@ -386,16 +460,6 @@ final class NativeContinuitySupportClauses
 				&& Objects.equals(clauseWitness, that.clauseWitness)
 				&& sameStructuralProducts(that);
 		return super.equals(other);
-	}
-	@Override
-	public int hashCode() {
-		if(!hashComputed) {
-			// Preserve the ordered List hash exactly. Lazy handle creation changes
-			// neither membership nor member hashes; only the first call enumerates.
-			cachedHash = super.hashCode();
-			hashComputed = true;
-		}
-		return cachedHash;
 	}
 	String authoritySignature() {
 		return owner.normalizedSignature() + "|headers=" + products.stream()
