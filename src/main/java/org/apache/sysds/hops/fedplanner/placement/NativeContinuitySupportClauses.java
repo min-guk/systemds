@@ -17,6 +17,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRea
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
 
 /**
  * Exact native-continuity product whose member proof is restored only when that
@@ -484,6 +485,27 @@ final class NativeContinuitySupportClauses
 			? products.get(0).sameHeaderAuthority(header)
 				? products.get(0).ordinalOfExactAuthorityBindings(bindings) : -1
 			: canonicalIndex.ordinalOfExactAuthorityMember(header, bindings);
+	}
+	/** Locates an exact clause without materializing this relation's member handles. */
+	int ordinalOfExactAuthorityClause(CandidateRealizationSupportClause clause) {
+		if(clause.proofDependencies().size() != 1
+			|| clause.nativeWorkerPoolLayoutExact() != clauseLayoutExact
+			|| !Objects.equals(clause.nativeWorkerPoolWitness(), clauseWitness))
+			return -1;
+		var key = clause.proofDependencies().get(0);
+		if(key.kind() != PlacementProofKind.NATIVE_CONTINUITY || key.owner() != owner)
+			return -1;
+		for(var product : products) {
+			var proof = new NativePlacementContinuity.NativeContinuityProof(
+				product.externalSeed(), product.outputWorkerPoolWitness(),
+				product.exactPartitionRanges(), clause.inputBindings());
+			boolean sameProof = key.hasNativeContinuityDescriptor()
+				? key.matchesNativeContinuityDescriptor(proof)
+				: key.authoritySignature().equals(proof.normalizedSignature());
+			if(sameProof)
+				return ordinalOfExactAuthorityMember(product, clause.inputBindings());
+		}
+		return -1;
 	}
 	CandidateRealizationSupportClause firstCanonicalMemberForBindings(
 		List<CandidateRealizationInputBinding> bindings) {
