@@ -609,6 +609,57 @@ public class EarlyNativeCoverageOptimizationTest {
 	}
 
 	@Test
+	public void exactDurableMixedSingleAxisHasSpecificTraceOutcome() throws Exception {
+		CompiledHopKey owner = key("single-mixed-owner");
+		MixedAxis mixed = mixedAxis(key("single-mixed-source"), "single-mixed", 0);
+		MixedAxis uniform = mixedAxis(key("single-uniform-source"), "single-uniform", 1);
+		NativePlacementContinuity.NativeSupportProduct product =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				anchor("single-mixed-seed"), anchor("single-mixed-output"), true,
+				List.of(mixed.bindings(), List.of(uniform.exactBinding())));
+		Assert.assertNotNull(product);
+		Assert.assertEquals(2, product.axes().size());
+		Assert.assertEquals(2, product.size());
+		Assert.assertNotSame(mixed.owner(), uniform.owner());
+		assertMixedAxis(product.axes().get(0), 0,
+			mixed.exactBinding(), mixed.dynamicBinding());
+		Assert.assertEquals(List.of(uniform.exactBinding()), product.axes().get(1));
+		Object sources = directSources(List.of(mixed.fact(), uniform.fact()));
+		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, null, false,
+			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
+		TracedPublication traced = productPublicationWithTrace(closure, product, owner,
+			anchor("single-known-output"), "single-mixed-axis", sources);
+		Assert.assertNull(traced.publication());
+		Assert.assertEquals("MIXED_EXACTNESS_SINGLE_AXIS", traced.outcome());
+	}
+
+	@Test
+	public void exactDurableMixedMultipleAxesHasSpecificTraceOutcome() throws Exception {
+		CompiledHopKey owner = key("multiple-mixed-owner");
+		MixedAxis first = mixedAxis(key("multiple-source-a"), "axis-a", 0);
+		MixedAxis second = mixedAxis(key("multiple-source-b"), "axis-b", 1);
+		DurableAnchorKey seed = anchor("multiple-mixed-seed");
+		NativePlacementContinuity.NativeSupportProduct product =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(seed,
+				anchor("multiple-mixed-output"), true,
+				List.of(first.bindings(), second.bindings()));
+		Assert.assertNotNull(product);
+		Assert.assertEquals(4, product.size());
+		Assert.assertNotSame(first.owner(), second.owner());
+		assertMixedAxis(product.axes().get(0), 0,
+			first.exactBinding(), first.dynamicBinding());
+		assertMixedAxis(product.axes().get(1), 1,
+			second.exactBinding(), second.dynamicBinding());
+		Object sources = directSources(List.of(first.fact(), second.fact()));
+		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, null, false,
+			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
+		TracedPublication traced = productPublicationWithTrace(closure, product, owner,
+			anchor("multiple-known-output"), "multiple-mixed-axes", sources);
+		Assert.assertNull(traced.publication());
+		Assert.assertEquals("MIXED_EXACTNESS_MULTIPLE_AXES", traced.outcome());
+	}
+
+	@Test
 	public void collidingDurableSeedOutputsKeepTheExactExplicitUnion() throws Exception {
 		CompiledHopKey sourceOwner = (CompiledHopKey)seedFixture("key",
 			new Class<?>[] {String.class}, "collision-source");
@@ -895,6 +946,48 @@ public class EarlyNativeCoverageOptimizationTest {
 		NativePlacementContinuity.NativeSupportProduct exactProduct,
 		NativePlacementContinuity.NativeSupportProduct dynamicProduct, Object sources) { }
 
+	private static MixedAxis mixedAxis(CompiledHopKey owner, String lineage, int position)
+		throws Exception {
+		DurableAnchorKey pool = anchor(lineage + "-pool");
+		CandidateEmissionRealization exact = CandidateEmissionRealization.nativeLineage(
+			NATIVE_EMISSION, lineage + "-exact", pool, List.of(new PlacementProofKey(
+				PlacementProofKind.NATIVE_CONTINUITY, owner, lineage + "-exact-proof")), List.of());
+		CandidateEmissionRealization dynamic =
+			CandidateEmissionRealization.nativeLineageDynamicLayout(
+				NATIVE_EMISSION, lineage + "-dynamic", pool, List.of(new PlacementProofKey(
+					PlacementProofKind.NATIVE_CONTINUITY, owner,
+					lineage + "-dynamic-proof")), List.of());
+		CandidateRuleFact fact = sourceFact(owner, exact);
+		CandidateEmissionFact emission = fact.allowedEmissionFacts().get(0);
+		fact = new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+			fact.profile(), List.of(new CandidateEmissionFact(emission.emissionState(),
+				emission.executionFType(), emission.derivedFoutAction(), List.of(exact, dynamic))),
+			fact.failureCode());
+		CandidateRealizationInputBinding exactBinding = CandidateRealizationInputBinding.direct(
+			position, CandidateRealizationReference.of(fact.key(), exact));
+		CandidateRealizationInputBinding dynamicBinding = CandidateRealizationInputBinding.direct(
+			position, CandidateRealizationReference.of(fact.key(), dynamic));
+		Assert.assertTrue(exact.allOwnedSupportClausesHaveExactNativeLayout());
+		Assert.assertFalse(dynamic.allOwnedSupportClausesHaveExactNativeLayout());
+		return new MixedAxis(owner, fact, exactBinding, dynamicBinding,
+			List.of(exactBinding, dynamicBinding));
+	}
+
+	private static void assertMixedAxis(List<CandidateRealizationInputBinding> axis,
+		int position, CandidateRealizationInputBinding exact,
+		CandidateRealizationInputBinding dynamic) {
+		Assert.assertEquals(2, axis.size());
+		Assert.assertTrue(axis.stream().allMatch(binding -> binding.inputPosition() == position));
+		Assert.assertEquals(Set.of(exact.source().realization(), dynamic.source().realization()),
+			axis.stream().map(binding -> binding.source().realization())
+				.collect(java.util.stream.Collectors.toSet()));
+	}
+
+	private record MixedAxis(CompiledHopKey owner, CandidateRuleFact fact,
+		CandidateRealizationInputBinding exactBinding,
+		CandidateRealizationInputBinding dynamicBinding,
+		List<CandidateRealizationInputBinding> bindings) { }
+
 	private static Object directSources(List<CandidateRuleFact> sources) throws Exception {
 		Class<?> type = Class.forName(PlacementRelationClosure.class.getName() + "$DirectSourceIndex");
 		Constructor<?> constructor = type.getDeclaredConstructor(List.class);
@@ -906,17 +999,43 @@ public class EarlyNativeCoverageOptimizationTest {
 		PlacementRelationClosure closure, NativePlacementContinuity.NativeSupportProduct product,
 		CompiledHopKey owner, DurableAnchorKey outputAnchor, String lineage, Object sources)
 		throws Exception {
-		Class<?> trace = Class.forName(
+		return invokeProductPublication(closure, product, owner, outputAnchor, lineage,
+			sources, null);
+	}
+
+	private static TracedPublication productPublicationWithTrace(
+		PlacementRelationClosure closure, NativePlacementContinuity.NativeSupportProduct product,
+		CompiledHopKey owner, DurableAnchorKey outputAnchor, String lineage, Object sources)
+		throws Exception {
+		Class<?> traceType = Class.forName(
+			PlacementRelationClosure.class.getName() + "$NativePublicationTrace");
+		Constructor<?> constructor = traceType.getDeclaredConstructor();
+		constructor.setAccessible(true);
+		Object trace = constructor.newInstance();
+		CandidateEmissionRealization publication = invokeProductPublication(
+			closure, product, owner, outputAnchor, lineage, sources, trace);
+		Field outcome = traceType.getDeclaredField("outcome");
+		outcome.setAccessible(true);
+		return new TracedPublication(publication, ((Enum<?>)outcome.get(trace)).name());
+	}
+
+	private static CandidateEmissionRealization invokeProductPublication(
+		PlacementRelationClosure closure, NativePlacementContinuity.NativeSupportProduct product,
+		CompiledHopKey owner, DurableAnchorKey outputAnchor, String lineage, Object sources,
+		Object trace) throws Exception {
+		Class<?> traceType = Class.forName(
 			PlacementRelationClosure.class.getName() + "$NativePublicationTrace");
 		Method method = PlacementRelationClosure.class.getDeclaredMethod(
 			"directNativeProductPublication", product.getClass(), CompiledHopKey.class,
 			PlacementEmissionState.class, DurableAnchorKey.class, String.class, List.class,
-			sources.getClass(), Map.class, trace);
+			sources.getClass(), Map.class, traceType);
 		method.setAccessible(true);
 		return (CandidateEmissionRealization)method.invoke(closure, product, owner,
 			NATIVE_EMISSION, outputAnchor, lineage, List.of(), sources,
-			new IdentityHashMap<CandidateEmissionRealization,Boolean>(), null);
+			new IdentityHashMap<CandidateEmissionRealization,Boolean>(), trace);
 	}
+
+	private record TracedPublication(CandidateEmissionRealization publication, String outcome) { }
 
 	private static void assertLazyProductMatchesScalarReference(
 		CandidateEmissionRealization publication,
