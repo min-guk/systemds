@@ -2207,6 +2207,100 @@ public class NativePlacementContinuityTest {
 		assertRevisionTopologyHandleDrift(true);
 	}
 
+	@Test
+	public void stableHandleCheckVisitsOneWideReferenceBucketLinearly() throws Exception {
+		PlacementIdentity.beginAnalysisScope(null);
+		try {
+			Fixture full = new Fixture(FType.FULL);
+			DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+			Ref source = full.federatedSource("source", pool);
+			List<CandidateInputState> sourceInputs = List.of(
+				CandidateInputState.absentLocal(), CandidateInputState.absentLocal());
+			DurableAnchorKey[] alternatives = new DurableAnchorKey[64];
+			for(int option = 0; option < alternatives.length; option++)
+				alternatives[option] = new DurableAnchorKey(
+					String.format("source-%03d", option), FType.FULL, pool.partitions());
+			full.samePoolRealizations(source, sourceInputs, alternatives);
+			Ref root = full.unary("root", OpOp1.LOG, source, false);
+			List<CandidateInputState> rootInputs =
+				List.of(CandidateInputState.present(FType.FULL));
+			CandidateRuleFact sourceFact = full.fact(source, sourceInputs);
+			List<CandidateRealizationSupportClause> clauses = new ArrayList<>();
+			for(CandidateEmissionRealization realization :
+				sourceFact.allowedEmissionFacts().get(0).realizations()) {
+				CandidateRealizationInputBinding binding = CandidateRealizationInputBinding.direct(0,
+					CandidateRealizationReference.of(sourceFact.key(), realization));
+				NativePlacementContinuity.NativeContinuityProof proof =
+					new NativePlacementContinuity.NativeContinuityProof(
+						pool, pool, true, List.of(binding));
+				clauses.add(new CandidateRealizationSupportClause(
+					List.of(proof.continuityProofKey(root.key)),
+					proof.immediateBindings(), pool, true));
+			}
+			CandidateRealizationReference reference =
+				full.withClauses(root, rootInputs, clauses);
+			NativePlacementContinuity first = full.resolver();
+			Assert.assertFalse(first.proveCandidateAlternatives(reference, pool).isEmpty());
+
+			@SuppressWarnings("unchecked")
+			Map<Object,Object> topologies = (Map<Object,Object>)accessibleField(
+				NativePlacementContinuity.class, "candidateTopologies").get(first);
+			Object topologyKey = topologies.keySet().stream().filter(key -> {
+				try {
+					return accessibleField(key.getClass(), "occurrence").get(key) == root.key;
+				}
+				catch(ReflectiveOperationException exception) {
+					throw new AssertionError(exception);
+				}
+			}).findFirst().orElseThrow();
+			Object topology = topologies.get(topologyKey);
+			@SuppressWarnings("unchecked")
+			List<Object> rows = (List<Object>)accessibleField(
+				topology.getClass(), "rows").get(topology);
+			@SuppressWarnings("unchecked")
+			Map<Integer,List<Object>> indexed = (Map<Integer,List<Object>>)accessibleField(
+				topology.getClass(), "rowsByHandle").get(topology);
+			Assert.assertEquals(64, rows.size());
+			Assert.assertEquals(1, indexed.size());
+			CountingList<Object> countedBucket =
+				new CountingList<>(indexed.values().iterator().next());
+			Map<Integer,List<Object>> countedIndex = new java.util.HashMap<>(indexed);
+			countedIndex.put(indexed.keySet().iterator().next(), countedBucket);
+			Constructor<?> topologyConstructor = null;
+			for(Constructor<?> candidate : topology.getClass().getDeclaredConstructors())
+				if(candidate.getParameterCount() == 5) {
+					topologyConstructor = candidate;
+					break;
+				}
+			Assert.assertNotNull(topologyConstructor);
+			topologyConstructor.setAccessible(true);
+			Object countedTopology = topologyConstructor.newInstance(
+				accessibleField(topology.getClass(), "eligible").getBoolean(topology),
+				accessibleField(topology.getClass(), "nodeDirectGround").getBoolean(topology),
+				rows, countedIndex,
+				accessibleField(topology.getClass(), "metadataOwnerReads").get(topology));
+			topologies.put(topologyKey, countedTopology);
+			countedBucket.reset();
+
+			List<CandidateRuleFact> equalNewFacts = full.candidates.stream().map(fact ->
+				new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+					fact.profile(), fact.allowedEmissionFacts(), fact.failureCode())).toList();
+			NativePlacementContinuity revised = first.nextRevision(equalNewFacts);
+			Assert.assertTrue("each indexed row may be checked only once",
+				countedBucket.gets() <= rows.size());
+			NativePlacementContinuity.CandidateSupportResult actual =
+				revised.proveCandidateSupport(reference, pool);
+			NativePlacementContinuity.CandidateSupportResult fresh = new NativePlacementContinuity(
+				full.nodes, full.origins, equalNewFacts, full.edges, full.reaching, Set.of(), full.privacy)
+				.proveCandidateSupport(reference, pool);
+			Assert.assertEquals(fresh.proofs(), actual.proofs());
+			assertIdentitySetEquals(fresh.dependencyOccurrences(), actual.dependencyOccurrences());
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+		}
+	}
+
 	private static void assertRevisionTopologyHandleDrift(boolean preserveRootHandle) throws Exception {
 		Fixture full;
 		Ref seed;
@@ -5254,6 +5348,23 @@ public class NativePlacementContinuityTest {
 		Assert.assertTrue("fixture fact must be present", index >= 0);
 		replaced.set(index, after);
 		return List.copyOf(replaced);
+	}
+
+	private static final class CountingList<E> extends java.util.AbstractList<E> {
+		private final List<E> values;
+		private int gets;
+
+		private CountingList(List<E> values) {
+			this.values = List.copyOf(values);
+		}
+
+		@Override public E get(int index) {
+			gets++;
+			return values.get(index);
+		}
+		@Override public int size() { return values.size(); }
+		private int gets() { return gets; }
+		private void reset() { gets = 0; }
 	}
 
 	private static final class Fixture {
