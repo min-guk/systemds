@@ -3187,7 +3187,12 @@ public class NativePlacementContinuityTest {
 			List<NativePlacementContinuity.NativeContinuityProof> proofs =
 				(List<NativePlacementContinuity.NativeContinuityProof>)accessibleField(
 					entry.getClass(), "proofs").get(entry);
-			memoProofs.addAll(proofs);
+			// A lazy product creates member proof objects only on get(). Enumerating it here
+			// would manufacture a different binding-list marker than the independently
+			// selected closure member and would defeat this test's explicit-proof identity
+			// contract. Product members use the canonical-order branch below.
+			if(!proofs.getClass().getSimpleName().equals("NativeContinuityProofProduct"))
+				memoProofs.addAll(proofs);
 		}
 		CandidateRuleFact reboundSum = rebound.stream()
 			.filter(fact -> fact.key().parentOccurrence() == sum.key).findFirst().orElseThrow();

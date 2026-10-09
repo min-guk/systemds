@@ -2240,10 +2240,11 @@ final class NativePlacementContinuity {
 	}
 
 	private static long estimatedProofBytes(List<NativeContinuityProof> proofs) {
-		// Do not expand a lazy relation merely to decide whether the public memo may
-		// retain it. The support memo owns the bounded factorized representation.
-		if(proofs instanceof NativeContinuityProofProduct)
-			return Long.MAX_VALUE;
+		// Charge the compressed immutable metadata, never its logical Cartesian members.
+		// The ordinary proof-count budget still charges product.size(), so this only
+		// admits relations already within the existing logical-proof limit.
+		if(proofs instanceof NativeContinuityProofProduct product)
+			return product.estimatedPublicMemoBytes();
 		long bytes = 0;
 		for(NativeContinuityProof proof : proofs) {
 			long proofBytes = 96L + 2L * proof.normalizedSignatureLength()
@@ -5873,6 +5874,21 @@ final class NativePlacementContinuity {
 		}
 
 		@Override public int size() { return product.size(); }
+
+		private long estimatedPublicMemoBytes() {
+			// Retain the proof wrapper, template product and outer immutable axis array.
+			// Each axis owns one immutable list/array and every option owns the direct
+			// binding record created for this relation. Referenced candidate authority
+			// remains owned by the immutable candidate inventory and is not counted again.
+			long bytes = 192L;
+			for(List<CandidateRealizationInputBinding> axis : product.axes) {
+				long retained = 48L + 48L * axis.size();
+				if(Long.MAX_VALUE - bytes < retained)
+					return Long.MAX_VALUE;
+				bytes += retained;
+			}
+			return bytes;
+		}
 
 		@Override public NativeContinuityProof get(int ordinal) {
 			CandidateSupportTemplate template = product.get(ordinal);
