@@ -104,6 +104,7 @@ final class NativePlacementContinuity {
 	private final Map<CompiledHopKey,Hop> originsByKey;
 	private final CandidateFactsSnapshot candidateFactsSnapshot;
 	private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByKey;
+	private final Map<CompiledHopKey,Boolean> nativeRelationOwners = new IdentityHashMap<>();
 	private Map<CompiledHopKey,List<CompiledHopKey>> boundCandidateReadersBySource;
 	private long boundSourceProjectionScans;
 	private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edgesByConsumer;
@@ -1982,6 +1983,13 @@ final class NativePlacementContinuity {
 			: new GeneratedSupportBatchObserver(trustedBase, baseEmission);
 	}
 
+	/** One immutable rule/emission recipe; only certified resident templates are shared. */
+	GeneratedSupportBatchObserver generatedSupportBatch(
+		CandidateRuleFact trustedBase, CandidateEmissionFact baseEmission) {
+		return supportMemoMaxEntries == 0 ? generatedSupportBatchObserver(trustedBase, baseEmission)
+			: new GeneratedSupportBatchObserver(trustedBase, baseEmission, true);
+	}
+
 	CandidateSupportResult proveGeneratedCandidateSupport(
 		CandidateRuleFact trustedBase, CandidateEmissionFact baseEmission,
 		CandidateRealizationReference proposedOutput, DurableAnchorKey externalSeed,
@@ -2406,10 +2414,18 @@ final class NativePlacementContinuity {
 			return new ComputedPublicProof(
 				instantiateSupportTemplates(sharedRoot, source, externalSeed), sharedRoot.occurrences());
 		}
-		if(metrics != null)
-			metrics.recordSupportMemoMiss();
 		boolean certifiedPriorResident = batchObserver != null
 			&& batchObserver.beforeGraphBuild(witness);
+		SupportMemoEntry sharedBatch = batchObserver == null ? null
+			: batchObserver.reuseCertified(source, witness, query);
+		if(sharedBatch != null) {
+			if(metrics != null)
+				metrics.recordSupportMemoHit();
+			return new ComputedPublicProof(
+				instantiateSupportTemplates(sharedBatch, source, externalSeed), sharedBatch.occurrences());
+		}
+		if(metrics != null)
+			metrics.recordSupportMemoMiss();
 		ComputedCandidateSupport computed = computeCandidateSupportAlternatives(
 			source, witness, generation);
 		SupportMemoEntry entry = new SupportMemoEntry(source, computed.templates,
@@ -3329,10 +3345,9 @@ final class NativePlacementContinuity {
 			metrics.recordTopologyOverlayEvaluation();
 		if(generation != null)
 			return generatedRootAlternative(key, pinned, witness, fixed, fixedHandles, generation);
-		NativeFactoredProofAlternatives factored = pinned == null
-			? nativeUnpinnedFactoredProofAlternatives(key, witness, fixed, fixedHandles)
-			: nativeFactoredProofAlternatives(
-				key, pinned, witness, fixed, fixedHandles);
+		NativeFactoredProofAlternatives factored = !hasNativeRelationOwner(key) ? null
+			: pinned == null ? nativeUnpinnedFactoredProofAlternatives(key, witness, fixed, fixedHandles)
+				: nativeFactoredProofAlternatives(key, pinned, witness, fixed, fixedHandles);
 		if(factored != null)
 			return factored.alternatives;
 		CandidateTopology topology = candidateTopology(key, witness);
@@ -3424,6 +3439,22 @@ final class NativePlacementContinuity {
 						false, witness));
 			}
 		return List.copyOf(alternatives);
+	}
+
+	/** Snapshot-local representation check; it carries no source or proof authority. */
+	private boolean hasNativeRelationOwner(CompiledHopKey owner) {
+		List<CandidateRuleFact> facts = candidateFactsByKey.get(owner);
+		if(facts == null)
+			return false;
+		Boolean known = nativeRelationOwners.get(owner);
+		if(known != null)
+			return known;
+		boolean nativeRelation = facts.stream().flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream())
+			.anyMatch(realization -> realization.supportClauses() instanceof NativeContinuitySupportClauses);
+		// At most one Boolean per immutable snapshot owner. Revisions get a fresh map.
+		nativeRelationOwners.put(owner, nativeRelation);
+		return nativeRelation;
 	}
 
 	private List<SelectedCandidateProof> generatedRootAlternative(CompiledHopKey key,
@@ -5163,11 +5194,18 @@ final class NativePlacementContinuity {
 		private final CandidateEmissionFact baseEmission;
 		private final CompiledHopKey root;
 		private final int maximumEntries;
+		private final boolean reuseEnabled;
 		private final Map<NativePoolWitness,CandidateSupportQueryKey> certifiedByWitness =
 			new java.util.HashMap<>();
 
 		private GeneratedSupportBatchObserver(CandidateRuleFact trustedBase,
 			CandidateEmissionFact baseEmission) {
+			this(trustedBase, baseEmission, false);
+		}
+
+		private GeneratedSupportBatchObserver(CandidateRuleFact trustedBase,
+			CandidateEmissionFact baseEmission, boolean reuseEnabled) {
+			this.reuseEnabled = reuseEnabled;
 			this.trustedBase = Objects.requireNonNull(trustedBase, "trusted generator base");
 			this.baseEmission = Objects.requireNonNull(baseEmission, "generator base emission");
 			root = trustedBase.key().parentOccurrence();
@@ -5179,11 +5217,39 @@ final class NativePlacementContinuity {
 			CandidateRealizationReference proposedOutput) {
 			return NativePlacementContinuity.this == resolver
 				&& fact == trustedBase && emission == baseEmission
-				&& proposedOutput.rule().parentOccurrence() == root;
+				&& proposedOutput.rule().parentOccurrence() == root
+				&& (!reuseEnabled || proposedOutput.realization().layoutKind()
+					== PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE);
+		}
+
+		private void recordWork(SearchSpaceMetrics.DirectWork work) {
+			if(metrics != null)
+				metrics.recordDirectWork(work);
+		}
+
+		private SupportMemoEntry reuseCertified(CandidateRealizationReference source,
+			NativePoolWitness witness, CandidateSupportQueryKey query) {
+			if(!reuseEnabled)
+				return null;
+			CandidateSupportQueryKey prior = certifiedByWitness.get(witness);
+			SupportMemoEntry certified = prior == null ? null : completedSupportMemo.get(prior);
+			if(certified == null)
+				return null;
+			// Certification excludes root history and every returned binding owned
+			// by this root. Changing only the prospective output authority therefore
+			// leaves the complete ordered template relation and footprint unchanged.
+			// Rebase the memo wrapper, not the product members, so publication stays lazy.
+			SupportMemoEntry rebound = new SupportMemoEntry(source, certified.templates,
+				certified.occurrences, certified.estimatedBytes, true);
+			cacheCompletedSupports(query, rebound);
+			if(completedSupportMemo.containsKey(query))
+				certifiedByWitness.put(witness, query);
+			recordWork(SearchSpaceMetrics.DirectWork.GENERATED_BATCH_REUSED_GRAPHS);
+			return rebound;
 		}
 
 		private boolean beforeGraphBuild(NativePoolWitness witness) {
-			metrics.recordDirectWork(
+			recordWork(
 				SearchSpaceMetrics.DirectWork.GENERATED_BATCH_ELIGIBLE_GRAPH_MISSES);
 			CandidateSupportQueryKey prior = certifiedByWitness.get(witness);
 			return prior != null && completedSupportMemo.containsKey(prior);
@@ -5193,24 +5259,24 @@ final class NativePlacementContinuity {
 			CandidateSupportQueryKey query, SupportMemoEntry entry,
 			boolean certifiedPriorResident) {
 			if(!entry.rootIndependent) {
-				metrics.recordDirectWork(
+				recordWork(
 					SearchSpaceMetrics.DirectWork.GENERATED_BATCH_ROOT_HISTORY_REJECTIONS);
 				return;
 			}
 			if(hasReturnedRootBinding(entry)) {
-				metrics.recordDirectWork(
+				recordWork(
 					SearchSpaceMetrics.DirectWork.GENERATED_BATCH_ROOT_BINDING_REJECTIONS);
 				return;
 			}
 			if(certifiedPriorResident)
-				metrics.recordDirectWork(
+				recordWork(
 					SearchSpaceMetrics.DirectWork.GENERATED_BATCH_CERTIFIED_REPEAT_POTENTIAL);
 			if(!completedSupportMemo.containsKey(query))
 				return;
 			if(certifiedByWitness.containsKey(witness) || certifiedByWitness.size() < maximumEntries)
 				certifiedByWitness.put(witness, query);
 			else
-				metrics.recordDirectWork(
+				recordWork(
 					SearchSpaceMetrics.DirectWork.GENERATED_BATCH_INDEX_SATURATION);
 		}
 

@@ -4096,6 +4096,8 @@ public class NativePlacementContinuityTest {
 		NativePlacementContinuity.CandidateSupportResult explicit =
 			full.resolver(explicitMetrics, 0, 0).proveGeneratedCandidateSupport(
 				outerFact, outerEmission, proposed, pool);
+		NativePlacementContinuity warmExplicit = full.resolver();
+		warmExplicit.proveGeneratedCandidateSupport(outerFact, outerEmission, proposed, pool);
 
 		NativeContinuitySupportClauses factoredRelation = new NativeContinuitySupportClauses(
 			child.key, generatedChild.supportProduct(), pool, true);
@@ -4112,6 +4114,17 @@ public class NativePlacementContinuityTest {
 		assertIdentitySetEquals(explicit.dependencyOccurrences(), factored.dependencyOccurrences());
 		Assert.assertEquals(Set.of(outer.key, child.key, left.key, right.key, seed.key),
 			factored.dependencyOccurrences());
+		// Legacy topology migration is a separate materialization boundary. Give it
+		// its own relation so its work is not attributed to the cold gate query above.
+		NativeContinuitySupportClauses revisionRelation = new NativeContinuitySupportClauses(
+			child.key, generatedChild.supportProduct(), pool, true);
+		full.withClauses(child, binary, revisionRelation);
+		var revised = warmExplicit.nextRevision(full.candidates).proveGeneratedCandidateSupport(
+			outerFact, outerEmission, proposed, pool);
+		Assert.assertEquals("representation preflight must not survive an owner revision",
+			factored.proofs(), revised.proofs());
+		assertIdentitySetEquals(factored.dependencyOccurrences(), revised.dependencyOccurrences());
+		full.withClauses(child, binary, factoredRelation);
 		Assert.assertEquals("the unpinned native child uses one authoritative member",
 			1, factoredRelation.materializedHandleCount());
 		Assert.assertTrue(factoredMetrics.snapshot().proofAlternativesBuilt()
@@ -4576,6 +4589,141 @@ public class NativePlacementContinuityTest {
 
 		Assert.assertEquals("staging history must not change the generator-root relation", absent, staging);
 		Assert.assertEquals("an old exact support subset must not constrain generation", absent, partialProofs);
+	}
+
+	@Test
+	public void certifiedGeneratedBatchReusesGraphsAndRetainsLazyProductAuthority() {
+		for(int trial = 0; trial < 8; trial++) {
+			Fixture full = new Fixture(FType.FULL);
+			DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+			Ref seed = full.source("batch-seed-" + trial, pool);
+			List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+			Ref left = full.unary("batch-left-" + trial, OpOp1.LOG, seed, false);
+			Ref right = full.unary("batch-right-" + trial, OpOp1.LOG, seed, false);
+			for(Ref producer : List.of(left, right)) {
+				DurableAnchorKey[] options = java.util.stream.IntStream.range(0, 2 + trial % 3)
+					.mapToObj(index -> new DurableAnchorKey(producer.key.emittedHopInstance() + index,
+						FType.FULL, pool.partitions())).toArray(DurableAnchorKey[]::new);
+				full.samePoolRealizations(producer, unary, options);
+			}
+			Ref root = full.binary("batch-root-" + trial, OpOp2.PLUS, left, right, false);
+			List<CandidateInputState> binary = List.of(
+				CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+			CandidateRuleFact base = full.fact(root, binary);
+			CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+			if(trial % 3 == 2)
+				full.candidates.removeIf(fact -> fact.key().parentOccurrence() == right.key);
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity resolver = full.resolver(metrics, 128, 2048);
+			var batch = resolver.generatedSupportBatch(base, emission);
+			NativePlacementContinuity withoutMetrics = full.resolver(null, 128, 2048);
+			var silentBatch = withoutMetrics.generatedSupportBatch(base, emission);
+			Assert.assertNotNull("optimization remains available without metrics", silentBatch);
+			long firstGraphs = -1;
+			for(int proposal = 0; proposal < 4; proposal++) {
+				CandidateRealizationReference source = CandidateRealizationReference.of(base.key(),
+					CandidateEmissionRealization.nativeLineage(emission.emissionState(),
+						"batch-proposal-" + proposal, List.of(), List.of()));
+				DurableAnchorKey querySeed = new DurableAnchorKey("batch-seed-alias-" + proposal,
+					FType.FULL, pool.partitions());
+				var expected = full.resolver(null, 0, 0).proveGeneratedCandidateSupport(
+					base, emission, source, querySeed);
+				var actual = resolver.proveGeneratedCandidateSupport(base, emission, source, querySeed, batch);
+				var silent = withoutMetrics.proveGeneratedCandidateSupport(
+					base, emission, source, querySeed, silentBatch);
+				if(!expected.proofs().isEmpty()) {
+					Assert.assertNotNull("reuse must not enumerate the product", actual.supportProduct());
+					Assert.assertNotNull(silent.supportProduct());
+				}
+				Assert.assertEquals(expected.proofs(), actual.proofs());
+				Assert.assertEquals(expected.proofs(), silent.proofs());
+				assertIdentitySetEquals(expected.dependencyOccurrences(), actual.dependencyOccurrences());
+				assertIdentitySetEquals(expected.dependencyOccurrences(), silent.dependencyOccurrences());
+				if(proposal == 0) firstGraphs = metrics.snapshot().proofGraphsBuilt();
+				else Assert.assertEquals("a certified recipe must not rebuild its graph", firstGraphs,
+					metrics.snapshot().proofGraphsBuilt());
+			}
+			Assert.assertTrue(shadowWork(metrics, "GENERATED_BATCH_REUSED_GRAPHS") > 0);
+		}
+	}
+
+	@Test
+	public void certifiedGeneratedBatchRejectsHiddenRootHistoryAndForeignResolver() {
+		for(boolean derived : List.of(false, true)) {
+			GeneratedHiddenRootFixture fixture = generatedHiddenRootFixture(derived);
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity resolver = fixture.full().resolver(metrics, 128, 2048);
+			var batch = resolver.generatedSupportBatch(fixture.activeRoot(), fixture.activeEmission());
+			for(int proposal = 0; proposal < 3; proposal++) {
+				CandidateRealizationReference source = CandidateRealizationReference.of(fixture.activeRoot().key(),
+					CandidateEmissionRealization.nativeLineage(fixture.activeEmission().emissionState(),
+						"history-proposal-" + proposal, List.of(), List.of()));
+				var expected = fixture.full().resolver(null, 0, 0).proveGeneratedCandidateSupport(
+					fixture.activeRoot(), fixture.activeEmission(), source, fixture.seed().anchor);
+				var actual = resolver.proveGeneratedCandidateSupport(fixture.activeRoot(),
+					fixture.activeEmission(), source, fixture.seed().anchor, batch);
+				Assert.assertEquals(expected.proofs(), actual.proofs());
+				assertIdentitySetEquals(expected.dependencyOccurrences(), actual.dependencyOccurrences());
+			}
+			Assert.assertEquals(0, shadowWork(metrics, "GENERATED_BATCH_REUSED_GRAPHS"));
+		}
+		Fixture full = new Fixture(FType.BROADCAST);
+		DurableAnchorKey pool = anchor(FType.BROADCAST, "worker1:8001", 0, 50);
+		Ref seed = full.source("foreign-batch-seed", pool);
+		Ref root = full.unary("foreign-batch-root", OpOp1.LOG, seed, false);
+		CandidateRuleFact base = full.fact(root, List.of(CandidateInputState.present(FType.BROADCAST)));
+		CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+		NativePlacementContinuity original = full.resolver(new SearchSpaceMetrics(), 128, 2048);
+		var batch = original.generatedSupportBatch(base, emission);
+		original.proveGeneratedCandidateSupport(base, emission, full.reference(root, base.key().orderedInputs()), pool, batch);
+		full.candidates.removeIf(fact -> fact.key().parentOccurrence() == seed.key);
+		// A literal anchor also grounds the source without a candidate fact.
+		full.nodes.remove(seed.key);
+		full.origins.remove(seed.key);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity changed = full.resolver(metrics, 128, 2048);
+		var expected = full.resolver(null, 0, 0).proveGeneratedCandidateSupport(
+			base, emission, full.reference(root, base.key().orderedInputs()), pool);
+		var actual = changed.proveGeneratedCandidateSupport(
+			base, emission, full.reference(root, base.key().orderedInputs()), pool, batch);
+		Assert.assertEquals(expected.proofs(), actual.proofs());
+		Assert.assertTrue(actual.proofs().isEmpty());
+		assertIdentitySetEquals(expected.dependencyOccurrences(), actual.dependencyOccurrences());
+		Assert.assertEquals(0, shadowWork(metrics, "GENERATED_BATCH_REUSED_GRAPHS"));
+	}
+
+	@Test
+	public void certifiedGeneratedBatchDoesNotReuseEvictedWitness() {
+		String property = "sysds.fedplanner.continuitySupportMemo.maxEntries";
+		String previous = System.getProperty(property);
+		try {
+			System.setProperty(property, "1");
+			Fixture full = new Fixture(FType.BROADCAST);
+			DurableAnchorKey first = anchor(FType.BROADCAST, "worker1:8001", 0, 50);
+			DurableAnchorKey other = anchor(FType.BROADCAST, "worker2:8002", 0, 50);
+			Ref seed = full.source("eviction-batch-seed", first);
+			Ref root = full.unary("eviction-batch-root", OpOp1.LOG, seed, false);
+			CandidateRuleFact base = full.fact(root, List.of(CandidateInputState.present(FType.BROADCAST)));
+			CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity resolver = full.resolver(metrics, 128, 2048);
+			var batch = resolver.generatedSupportBatch(base, emission);
+			int proposal = 0;
+			for(DurableAnchorKey querySeed : List.of(first, other, first)) {
+				var source = CandidateRealizationReference.of(base.key(),
+					CandidateEmissionRealization.nativeLineage(emission.emissionState(),
+						"eviction-proposal-" + proposal++, List.of(), List.of()));
+				var expected = full.resolver(null, 0, 0).proveGeneratedCandidateSupport(base, emission, source, querySeed);
+				var actual = resolver.proveGeneratedCandidateSupport(base, emission, source, querySeed, batch);
+				Assert.assertEquals(expected.proofs(), actual.proofs());
+				assertIdentitySetEquals(expected.dependencyOccurrences(), actual.dependencyOccurrences());
+			}
+			Assert.assertEquals(0, shadowWork(metrics, "GENERATED_BATCH_REUSED_GRAPHS"));
+		}
+		finally {
+			if(previous == null) System.clearProperty(property);
+			else System.setProperty(property, previous);
+		}
 	}
 
 	@Test

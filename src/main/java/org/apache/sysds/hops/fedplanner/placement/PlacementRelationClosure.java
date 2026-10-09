@@ -5743,8 +5743,7 @@ final class PlacementRelationClosure {
 				GroundedNativePreparation grounded = recomputeNative
 					? prepareGroundedNativeSupport(emission, complexityMetrics) : null;
 				NativePlacementContinuity.GeneratedSupportBatchObserver generatedBatchObserver =
-					complexityMetrics != null && recomputeNative
-						? continuity.generatedSupportBatchObserver(fact, emission) : null;
+					recomputeNative ? continuity.generatedSupportBatch(fact, emission) : null;
 				List<CandidateEmissionRealization> realizations = new ArrayList<>();
 				if(grounded != null)
 					realizations.addAll(grounded.retained());
