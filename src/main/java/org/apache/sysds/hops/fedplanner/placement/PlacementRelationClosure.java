@@ -5915,12 +5915,10 @@ final class PlacementRelationClosure {
 							if(publicationTrace != null)
 								publicationTrace.outcome = !recomputeNative ? NativePublicationOutcome.NOT_RECOMPUTED
 									: supportProduct == null ? NativePublicationOutcome.NO_PRODUCT
-									: distinctSeeds.size() != 1 ? NativePublicationOutcome.MULTI_SEED
 									: grounded == null ? NativePublicationOutcome.NO_GROUNDED_PREPARATION
 									: grounded.hasConflictingEqualAuthority() ? NativePublicationOutcome.CONFLICTING_AUTHORITY
 									: NativePublicationOutcome.RETAINED_UNION;
-							if(recomputeNative && distinctSeeds.size() == 1
-								&& supportProduct != null && grounded != null
+							if(recomputeNative && supportProduct != null && grounded != null
 								&& !grounded.hasConflictingEqualAuthority()) {
 								CandidateEmissionRealization publication = directNativeProductPublication(
 									supportProduct, fact.key().parentOccurrence(), emission.emissionState(),
@@ -5933,7 +5931,11 @@ final class PlacementRelationClosure {
 												NativePublicationOutcome.COVERED_RETAINED, supportResult.proofs().size());
 										continue;
 									}
-									if(grounded.retained().isEmpty()) {
+									// Native output lineage retains the complete seed layout; distinct
+									// deduplicated queries therefore publish different native keys.
+									// Unrelated retained keys must not force tuple expansion. Same-key
+									// changed support keeps the scalar path and its exact first authority.
+									if(!grounded.hasRetainedAuthority(publication.key())) {
 										bound.add(publication);
 										if(publicationTrace != null)
 											complexityMetrics.recordNativePublication(
@@ -6358,6 +6360,11 @@ final class PlacementRelationClosure {
 				if(retainedProduct.sameExactAuthority(product))
 					return true;
 			return false;
+		}
+		private boolean hasRetainedAuthority(PlacementIdentity.PlacementRealizationKey key) {
+			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> clauses = prior.get(key);
+			// Staging-only keys have an empty prior map, not grounded authority.
+			return clauses != null && !clauses.isEmpty() || nativeProducts.containsKey(key);
 		}
 		private boolean coversRetainedNative(
 			NativePlacementContinuity.NativeContinuityProof proof, CompiledHopKey owner,
