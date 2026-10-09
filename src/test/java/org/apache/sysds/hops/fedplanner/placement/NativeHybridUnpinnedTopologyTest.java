@@ -33,16 +33,95 @@ public class NativeHybridUnpinnedTopologyTest {
 	@Test
 	public void mixedNativeAndExplicitRowsPreserveEveryCanonicalProofLazily()
 		throws Exception {
-		assertMixedParity("a-native", List.of("m-explicit", "z-explicit"));
-		assertMixedParity("m-native", List.of("a-explicit", "z-explicit"));
-		assertMixedParity("z-native", List.of("a-explicit", "m-explicit"));
+		assertMixedParity("a-choice", List.of("m-choice", "z-choice"), 0);
+		assertMixedParity("m-choice", List.of("a-choice", "z-choice"), 1);
+		assertMixedParity("z-choice", List.of("a-choice", "m-choice"), 2);
+	}
+
+	@Test
+	public void hiddenValueMapOwnerAloneInvalidatesAndRestoresWarmHybridSupport()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Object hiddenSeed = invoke(scenario.fixture(), "source", "hybrid-hidden-seed", scenario.pool());
+		Object hidden = invoke(scenario.fixture(), "unary", "hybrid-hidden-owner",
+			OpOp1.LOG, hiddenSeed, false);
+		invoke(scenario.fixture(), "samePoolRealizations", hidden, unary,
+			new DurableAnchorKey[] {scenario.pool()});
+		CompiledHopKey hiddenOwner = (CompiledHopKey)invoke(hidden, "key");
+		CandidateRealizationReference hiddenReference = (CandidateRealizationReference)invoke(
+			scenario.fixture(), "reference", hidden, unary);
+		CandidateEmissionRealization valueMap = CandidateEmissionRealization.valueMap(
+			scenario.childEmission().emissionState(), "hybrid-hidden-value-map",
+			List.of(new CandidateRealizationSupportClause(List.of(),
+				List.of(CandidateRealizationInputBinding.direct(0, hiddenReference)))));
+
+		scenario.install(true, List.of(valueMap));
+		NativePlacementContinuity.CandidateSupportResult explicit = scenario.queryCurrent();
+		NativeContinuitySupportClauses lazyRelation = scenario.install(false, List.of(valueMap));
+		List<CandidateRuleFact> activeFacts = List.copyOf(candidateFacts(scenario.fixture()));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity cached = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 128, 2048L);
+		NativePlacementContinuity.CandidateSupportResult warm = scenario.queryCurrent(cached);
+		long builtBeforeWarmRepeat = metrics.snapshot().proofGraphsBuilt();
+		Assert.assertEquals(warm.proofs(), scenario.queryCurrent(cached).proofs());
+		Assert.assertEquals("an unchanged warm query must reuse its completed support",
+			builtBeforeWarmRepeat, metrics.snapshot().proofGraphsBuilt());
+		long builtBeforeWithdrawal = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity.CandidateSupportResult fresh = scenario.queryCurrent();
+		Assert.assertEquals(signatures(explicit), signatures(fresh));
+		Assert.assertEquals(signatures(fresh), signatures(warm));
+		assertBindingSourceIdentity(explicit, warm);
+		assertIdentitySetEquals(explicit.dependencyOccurrences(), warm.dependencyOccurrences());
+		assertIdentitySetEquals(fresh.dependencyOccurrences(), warm.dependencyOccurrences());
+		Assert.assertTrue("hybrid support must retain the VALUE_MAP metadata owner by identity",
+			warm.dependencyOccurrences().stream().anyMatch(owner -> owner == hiddenOwner));
+		Assert.assertFalse("the metadata owner is deliberately outside every native product axis",
+			lazyRelation.commonAxes().stream().flatMap(List::stream)
+				.anyMatch(binding -> binding.source().rule().parentOccurrence() == hiddenOwner));
+		Assert.assertEquals(1, lazyRelation.materializedHandleCount());
+
+		List<CandidateRuleFact> withdrawnFacts = activeFacts.stream()
+			.filter(fact -> fact.key().parentOccurrence() != hiddenOwner).toList();
+		Assert.assertEquals(activeFacts.size() - 1, withdrawnFacts.size());
+		NativePlacementContinuity withdrawn = cached.nextRevisionWithCompleteCandidateDelta(
+			withdrawnFacts, Set.of(hiddenOwner));
+		NativePlacementContinuity.CandidateSupportResult withdrawnActual =
+			scenario.queryCurrent(withdrawn);
+		NativePlacementContinuity.CandidateSupportResult withdrawnCold =
+			queryWithCandidateFacts(scenario, withdrawnFacts);
+		Assert.assertEquals(signatures(withdrawnCold), signatures(withdrawnActual));
+		assertIdentitySetEquals(withdrawnCold.dependencyOccurrences(),
+			withdrawnActual.dependencyOccurrences());
+		Assert.assertTrue(withdrawnActual.dependencyOccurrences().stream()
+			.anyMatch(owner -> owner == hiddenOwner));
+		Assert.assertTrue("withdrawing only the hidden metadata owner must invalidate warm support",
+			metrics.snapshot().proofGraphsBuilt() > builtBeforeWithdrawal);
+
+		long builtBeforeRestoration = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity restored = withdrawn.nextRevisionWithCompleteCandidateDelta(
+			activeFacts, Set.of(hiddenOwner));
+		NativePlacementContinuity.CandidateSupportResult restoredActual = scenario.queryCurrent(restored);
+		NativePlacementContinuity.CandidateSupportResult restoredCold = scenario.queryCurrent();
+		Assert.assertEquals(signatures(explicit), signatures(restoredActual));
+		Assert.assertEquals(signatures(restoredCold), signatures(restoredActual));
+		assertBindingSourceIdentity(explicit, restoredActual);
+		assertIdentitySetEquals(restoredCold.dependencyOccurrences(),
+			restoredActual.dependencyOccurrences());
+		Assert.assertTrue(restoredActual.dependencyOccurrences().stream()
+			.anyMatch(owner -> owner == hiddenOwner));
+		Assert.assertTrue("restoring only the hidden metadata owner must invalidate withdrawn support",
+			metrics.snapshot().proofGraphsBuilt() > builtBeforeRestoration);
 	}
 
 	private static void assertMixedParity(String nativeLineage,
-		List<String> explicitLineages) throws Exception {
+		List<String> explicitLineages, int expectedNativeOrdinal) throws Exception {
 		Scenario scenario = scenario(nativeLineage, explicitLineages);
 		NativePlacementContinuity.CandidateSupportResult explicit = scenario.query(true);
 		NativeContinuitySupportClauses lazyRelation = scenario.install(false);
+		Assert.assertEquals("equal-length lineage order must place the native row at its lexical rank",
+			expectedNativeOrdinal, scenario.installedNativeOrdinal());
 		NativePlacementContinuity.CandidateSupportResult hybrid = scenario.queryCurrent();
 
 		Assert.assertEquals(3, explicit.proofs().size());
@@ -103,11 +182,20 @@ public class NativeHybridUnpinnedTopologyTest {
 		}
 
 		private NativePlacementContinuity.CandidateSupportResult queryCurrent() throws Exception {
-			return ((NativePlacementContinuity)invoke(fixture, "resolver"))
-				.proveGeneratedCandidateSupport(outerFact, outerEmission, proposed, pool);
+			return queryCurrent((NativePlacementContinuity)invoke(fixture, "resolver"));
+		}
+
+		private NativePlacementContinuity.CandidateSupportResult queryCurrent(
+			NativePlacementContinuity resolver) {
+			return resolver.proveGeneratedCandidateSupport(outerFact, outerEmission, proposed, pool);
 		}
 
 		private NativeContinuitySupportClauses install(boolean explicit) throws Exception {
+			return install(explicit, List.of());
+		}
+
+		private NativeContinuitySupportClauses install(boolean explicit,
+			List<CandidateEmissionRealization> additional) throws Exception {
 			NativeContinuitySupportClauses relation = new NativeContinuitySupportClauses(
 				childKey, product, pool, true);
 			CandidateEmissionRealization nativeRealization = new CandidateEmissionRealization(
@@ -121,10 +209,22 @@ public class NativeHybridUnpinnedTopologyTest {
 						childEmission.emissionState(), lineage),
 					List.of(new CandidateRealizationSupportClause(
 						List.of(), product.bindingsAt(0)))));
+			realizations.addAll(additional);
 			// Encounter order intentionally differs from canonical reference order.
 			realizations.add(1, nativeRealization);
 			replaceChildFact(fixture, childKey, childFact, childEmission, realizations);
 			return relation;
+		}
+
+		private int installedNativeOrdinal() throws Exception {
+			CandidateRuleFact installed = candidateFacts(fixture).stream()
+				.filter(fact -> fact.key().parentOccurrence() == childKey).findFirst().orElseThrow();
+			List<CandidateEmissionRealization> realizations =
+				installed.allowedEmissionFacts().get(0).realizations();
+			for(int ordinal = 0; ordinal < realizations.size(); ordinal++)
+				if(nativeLineage.equals(realizations.get(ordinal).key().nativeLineage()))
+					return ordinal;
+			throw new AssertionError("installed native realization is missing");
 		}
 	}
 
@@ -148,6 +248,28 @@ public class NativeHybridUnpinnedTopologyTest {
 		candidates.add(position, new CandidateRuleFact(template.key(), template.status(),
 			template.capability(), template.shapeProof(), template.profile(),
 			List.of(emission), template.failureCode()));
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<CandidateRuleFact> candidateFacts(Object fixture) throws Exception {
+		Field candidatesField = fixture.getClass().getDeclaredField("candidates");
+		candidatesField.setAccessible(true);
+		return (List<CandidateRuleFact>)candidatesField.get(fixture);
+	}
+
+	private static NativePlacementContinuity.CandidateSupportResult queryWithCandidateFacts(
+		Scenario scenario, List<CandidateRuleFact> facts) throws Exception {
+		List<CandidateRuleFact> live = candidateFacts(scenario.fixture());
+		List<CandidateRuleFact> prior = List.copyOf(live);
+		try {
+			live.clear();
+			live.addAll(facts);
+			return scenario.queryCurrent();
+		}
+		finally {
+			live.clear();
+			live.addAll(prior);
+		}
 	}
 
 	private static Object newFixture(FType type) throws Exception {

@@ -325,8 +325,16 @@ public final class LogicalBoundaryRealizations {
 		if(fact.status() != CandidateEvaluationStatus.AVAILABLE)
 			return;
 		for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
-			for(CandidateEmissionRealization realization : emission.realizations())
-				for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+			for(CandidateEmissionRealization realization : emission.realizations()) {
+				List<CandidateRealizationSupportClause> clauses = realization.supportClauses();
+				// Native families have uniform pool metadata. Boundary analysis needs
+				// only their first original representative, not every support member.
+				// Keep the full realization authoritative, and retain clause-specific
+				// VALUE_MAP target choices for source compatibility below.
+				if(clauses instanceof NativeContinuitySupportClauses
+					&& realization.key().layoutKind() != PlacementLayoutKind.VALUE_MAP)
+					clauses = List.of(clauses.get(0));
+				for(CandidateRealizationSupportClause clause : clauses) {
 					PlacementState state = realization.key().emissionState().placementState();
 					DurableAnchorKey pool = realization.nativeWorkerPoolResidencyForOwnedClause(clause);
 					if(state.output() == FederatedOutput.FOUT && pool == null
@@ -335,6 +343,7 @@ public final class LogicalBoundaryRealizations {
 					result.add(new Option(CandidateRealizationReference.of(fact.key(), realization), realization, clause,
 						state, pool, realization.nativeWorkerPoolLayoutExactForOwnedClause(clause)));
 				}
+			}
 	}
 
 	private static boolean collectSources(CompiledHopKey key, Map<CompiledHopKey,Node> nodes,

@@ -35,17 +35,22 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCap
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateProfileFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateShapeProofFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
@@ -469,6 +474,227 @@ public class LogicalBoundaryRealizationsTest {
 		}
 	}
 
+	@Test
+	public void nativeProductsContributeOneBoundaryOptionWithoutLosingExactSupport() {
+		for(boolean durableLayout : new boolean[] {false, true}) {
+			NativeOptionFixture coldFixture = new NativeOptionFixture(durableLayout);
+			Assert.assertEquals(3, coldFixture.relation.headerCount());
+			Assert.assertEquals(List.of(2, 2), coldFixture.relation.commonAxes().stream()
+				.map(List::size).toList());
+			Assert.assertEquals(12, coldFixture.relation.size());
+			Assert.assertEquals(0, coldFixture.relation.materializedHandleCount());
+			LogicalBoundaryRealizations boundary = new LogicalBoundaryRealizations(coldFixture.fixture.nodes,
+				coldFixture.fixture.edges, coldFixture.fixture.origins, coldFixture.nativeFacts);
+			Assert.assertTrue(boundary.sources(coldFixture.fixture.reader).stream()
+				.anyMatch(source -> source == coldFixture.fixture.argument));
+			Assert.assertTrue(boundary.relations().contains(new LogicalBoundaryRealizations.Relation(
+				coldFixture.fixture.argument, coldFixture.fixture.reader)));
+			Assert.assertTrue("boundary option projection must retain at most one lazy native handle",
+				coldFixture.relation.materializedHandleCount() <= 1);
+
+			NativeOptionFixture sessionFixture = new NativeOptionFixture(durableLayout);
+			LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
+				sessionFixture.fixture.nodes, sessionFixture.fixture.edges,
+				sessionFixture.fixture.origins, sessionFixture.nativeFacts);
+			Assert.assertTrue("session construction must not enumerate native support members",
+				sessionFixture.relation.materializedHandleCount() <= 1);
+			var sessionClosed = session.close(sessionFixture.nativeFacts,
+				owners(sessionFixture.nativeFacts));
+			Assert.assertTrue("session refresh must keep the native option representative lazy",
+				sessionFixture.relation.materializedHandleCount() <= 1);
+
+			List<CandidateRuleFact> coldNative = closeCold(coldFixture.fixture.nodes,
+				coldFixture.fixture.edges, coldFixture.fixture.origins, coldFixture.nativeFacts);
+			List<CandidateRuleFact> explicit = closeCold(coldFixture.fixture.nodes,
+				coldFixture.fixture.edges, coldFixture.fixture.origins, coldFixture.explicitFacts);
+			Assert.assertEquals("native option compression must preserve complete boundary closure",
+				explicit, coldNative);
+			Assert.assertEquals(coldNative, sessionClosed.facts());
+			Assert.assertEquals(boundary.relations(), new LogicalBoundaryRealizations(
+				coldFixture.fixture.nodes, coldFixture.fixture.edges,
+				coldFixture.fixture.origins, explicit).relations());
+			Assert.assertEquals(boundary.sources(coldFixture.fixture.reader),
+				new LogicalBoundaryRealizations(coldFixture.fixture.nodes, coldFixture.fixture.edges,
+					coldFixture.fixture.origins, explicit).sources(coldFixture.fixture.reader));
+			new LogicalBoundaryRealizations(coldFixture.fixture.nodes, coldFixture.fixture.edges,
+				coldFixture.fixture.origins, coldNative).validate(coldNative);
+			CandidateEmissionRealization retained = fact(coldNative, coldFixture.fixture.argument)
+				.allowedEmissionFacts().get(0).realizations().get(0);
+			Assert.assertSame(coldFixture.relation, retained.supportClauses());
+
+			CandidateRealizationSupportClause nonFirst = coldFixture.relation.get(7);
+			CandidateSelectionReceipt selected = new CandidateSelectionReceipt(
+				fact(coldFixture.nativeFacts, coldFixture.fixture.argument).key(),
+				fact(coldFixture.nativeFacts, coldFixture.fixture.argument).allowedEmissionFacts().get(0),
+				coldFixture.realization, nonFirst, List.of());
+			Assert.assertSame(nonFirst, selected.supportClause());
+			LogicalBoundaryRealizations closedBoundary = new LogicalBoundaryRealizations(
+				coldFixture.fixture.nodes, coldFixture.fixture.edges,
+				coldFixture.fixture.origins, coldNative);
+			Map<CompiledHopKey,CandidateSelectionReceipt> selectedAtA = new IdentityHashMap<>();
+			selectedAtA.put(coldFixture.fixture.argument, selected);
+			selectedAtA.put(coldFixture.fixture.writer,
+				receipt(coldNative, coldFixture.fixture.writer, POOL_A));
+			selectedAtA.put(coldFixture.fixture.reader,
+				receipt(coldNative, coldFixture.fixture.reader, POOL_A));
+			Assert.assertTrue(closedBoundary.canStillBeCompatible(Map.of(), selectedAtA, Map.of()));
+			Map<CompiledHopKey,CandidateSelectionReceipt> selectedAtB = new IdentityHashMap<>(selectedAtA);
+			selectedAtB.put(coldFixture.fixture.writer,
+				receipt(coldNative, coldFixture.fixture.writer, POOL_B));
+			CandidateEmissionRealization readerB = durable(coldFixture.fixture.reader, POOL_B);
+			CandidateEmissionFact readerBEmission = new CandidateEmissionFact(
+				NATIVE, FType.ROW, null, List.of(readerB));
+			selectedAtB.put(coldFixture.fixture.reader, new CandidateSelectionReceipt(
+				fact(coldNative, coldFixture.fixture.reader).key(), readerBEmission, readerB, List.of()));
+			Assert.assertFalse("the actual selected non-first native clause remains fixed at pool A",
+				closedBoundary.canStillBeCompatible(Map.of(), selectedAtB, Map.of()));
+			CandidateEmissionRealization matching = durable(key("selected-match"), POOL_A);
+			CandidateEmissionRealization mismatch = durable(key("selected-mismatch"), POOL_B);
+			Assert.assertTrue(LogicalBoundaryRealizations.compatible(coldFixture.realization,
+				nonFirst, matching, matching.requireSingletonSupportClause()));
+			Assert.assertFalse(LogicalBoundaryRealizations.compatible(coldFixture.realization,
+				nonFirst, mismatch, mismatch.requireSingletonSupportClause()));
+		}
+	}
+
+	@Test
+	public void dynamicAndUnprovedNativeProductsKeepTheirBoundarySemantics() {
+		NativeOptionFixture dynamic = new NativeOptionFixture(false, false, true);
+		Assert.assertEquals(0, dynamic.relation.materializedHandleCount());
+		new LogicalBoundaryRealizations(dynamic.fixture.nodes, dynamic.fixture.edges,
+			dynamic.fixture.origins, dynamic.nativeFacts);
+		Assert.assertTrue(dynamic.relation.materializedHandleCount() <= 1);
+		List<CandidateRuleFact> dynamicClosed = closeCold(dynamic.fixture.nodes,
+			dynamic.fixture.edges, dynamic.fixture.origins, dynamic.nativeFacts);
+		Assert.assertEquals(closeCold(dynamic.fixture.nodes, dynamic.fixture.edges,
+			dynamic.fixture.origins, dynamic.explicitFacts), dynamicClosed);
+		new LogicalBoundaryRealizations(dynamic.fixture.nodes, dynamic.fixture.edges,
+			dynamic.fixture.origins, dynamicClosed).validate(dynamicClosed);
+		CandidateEmissionRealization dynamicReader = realizationAtNativePool(
+			fact(dynamicClosed, dynamic.fixture.reader), POOL_A);
+		Assert.assertFalse(dynamicReader.nativeWorkerPoolLayoutExactForOwnedClause(
+			dynamicReader.requireSingletonSupportClause()));
+
+		NativeOptionFixture staging = new NativeOptionFixture(false, true, false);
+		Assert.assertEquals(0, staging.relation.materializedHandleCount());
+		LogicalBoundaryRealizations stagingBoundary = new LogicalBoundaryRealizations(
+			staging.fixture.nodes, staging.fixture.edges, staging.fixture.origins, staging.nativeFacts);
+		Assert.assertTrue(staging.relation.materializedHandleCount() <= 1);
+		List<CandidateRuleFact> stagingClosed = closeCold(staging.fixture.nodes,
+			staging.fixture.edges, staging.fixture.origins, staging.nativeFacts);
+		Assert.assertEquals(closeCold(staging.fixture.nodes, staging.fixture.edges,
+			staging.fixture.origins, staging.explicitFacts), stagingClosed);
+		Assert.assertTrue(fact(stagingClosed, staging.fixture.reader).allowedEmissionFacts().stream()
+			.flatMap(emission -> emission.realizations().stream()).allMatch(realization ->
+				realization.supportClauses().stream().allMatch(clause ->
+					realization.nativeWorkerPoolResidencyForOwnedClause(clause) == null)));
+		Map<CompiledHopKey,CandidateSelectionReceipt> selected = new IdentityHashMap<>();
+		selected.put(staging.fixture.argument, new CandidateSelectionReceipt(
+			fact(staging.nativeFacts, staging.fixture.argument).key(),
+			fact(staging.nativeFacts, staging.fixture.argument).allowedEmissionFacts().get(0),
+			staging.realization, staging.relation.get(5), List.of()));
+		selected.put(staging.fixture.writer,
+			receipt(staging.nativeFacts, staging.fixture.writer, POOL_A));
+		selected.put(staging.fixture.reader,
+			receipt(staging.nativeFacts, staging.fixture.reader, POOL_A));
+		Assert.assertFalse("an unproved native product must not authorize a fixed boundary pool",
+			stagingBoundary.canStillBeCompatible(Map.of(), selected, Map.of()));
+	}
+
+	@Test
+	public void restrictedMultiHeaderProjectionRetainsTheOriginalFirstDonor() {
+		NativeOptionFixture fixture = new NativeOptionFixture(false);
+		CandidateRealizationSupportClause originalFirst = fixture.relation.get(0);
+		CandidateRealizationInputBinding removed = fixture.axes.get(0).get(1);
+		NativeContinuitySupportClauses restricted = fixture.relation
+			.restrictBindings(binding -> binding != removed).orElseThrow();
+		Assert.assertEquals(3, restricted.headerCount());
+		Assert.assertEquals(6, restricted.size());
+		Assert.assertEquals(0, restricted.materializedHandleCount());
+		CandidateEmissionRealization realization = new CandidateEmissionRealization(
+			fixture.realization.key(), restricted);
+		List<CandidateRuleFact> facts = replaceOwner(fixture.nativeFacts, fixture.fixture.argument,
+			withRealization(fact(fixture.nativeFacts, fixture.fixture.argument), realization));
+		new LogicalBoundaryRealizations(fixture.fixture.nodes, fixture.fixture.edges,
+			fixture.fixture.origins, facts);
+		Assert.assertTrue(restricted.materializedHandleCount() <= 1);
+		Assert.assertSame("projection must retain the first donor's exact clause identity",
+			originalFirst, restricted.get(0));
+	}
+
+	@Test
+	public void nativeSessionMatchesFreshClosureAcrossWithdrawalRestorationAndPoolChange() {
+		NativeOptionFixture fixture = new NativeOptionFixture(false);
+		LogicalBoundaryRealizations.Session session = new LogicalBoundaryRealizations.Session(
+			fixture.fixture.nodes, fixture.fixture.edges, fixture.fixture.origins, fixture.nativeFacts);
+		var initial = session.close(fixture.nativeFacts, owners(fixture.nativeFacts));
+		Assert.assertEquals(closeCold(fixture.fixture.nodes, fixture.fixture.edges,
+			fixture.fixture.origins, fixture.nativeFacts), initial.facts());
+
+		List<CandidateRuleFact> withdrawnInput = replaceOwner(initial.facts(), fixture.fixture.argument,
+			unavailable(fact(initial.facts(), fixture.fixture.argument)));
+		var withdrawn = session.close(withdrawnInput, Set.of(fixture.fixture.argument));
+		Assert.assertEquals(closeCold(fixture.fixture.nodes, fixture.fixture.edges,
+			fixture.fixture.origins, withdrawnInput), withdrawn.facts());
+
+		List<CandidateRuleFact> restoredInput = replaceOwner(withdrawn.facts(), fixture.fixture.argument,
+			fact(fixture.nativeFacts, fixture.fixture.argument));
+		var restored = session.close(restoredInput, Set.of(fixture.fixture.argument));
+		Assert.assertEquals(closeCold(fixture.fixture.nodes, fixture.fixture.edges,
+			fixture.fixture.origins, restoredInput), restored.facts());
+
+		NativeContinuitySupportClauses poolBRelation = nativeRelation(fixture.fixture.argument,
+			fixture.seeds, POOL_B, fixture.axes, POOL_B, true);
+		CandidateEmissionRealization poolBRealization = new CandidateEmissionRealization(
+			PlacementRealizationKey.nativeLineage(NATIVE, "boundary-native-product-b"), poolBRelation);
+		List<CandidateRuleFact> changedInput = replaceOwner(restored.facts(), fixture.fixture.argument,
+			withRealization(fact(restored.facts(), fixture.fixture.argument), poolBRealization));
+		var changed = session.close(changedInput, Set.of(fixture.fixture.argument));
+		Assert.assertTrue("pool-change refresh must retain only its first native representative",
+			poolBRelation.materializedHandleCount() <= 1);
+		Assert.assertEquals(closeCold(fixture.fixture.nodes, fixture.fixture.edges,
+			fixture.fixture.origins, changedInput), changed.facts());
+		Assert.assertNotNull(receipt(changed.facts(), fixture.fixture.reader, POOL_B));
+	}
+
+	@Test
+	public void valueMapBoundaryOptionsRemainClauseSpecific() {
+		Fixture fixture = new Fixture();
+		CandidateRuleFact argument = fact(fixture.facts, fixture.argument);
+		CandidateRuleFact writer = fact(fixture.facts, fixture.writer);
+		CandidateEmissionRealization argumentA = realizationAtPool(argument, POOL_A);
+		CandidateEmissionRealization argumentB = realizationAtPool(argument, POOL_B);
+		CandidateEmissionRealization writerA = realizationAtPool(writer, POOL_A);
+		CandidateRealizationReference argumentARef = CandidateRealizationReference.of(argument.key(), argumentA);
+		CandidateRealizationReference argumentBRef = CandidateRealizationReference.of(argument.key(), argumentB);
+		CandidateRealizationReference writerARef = CandidateRealizationReference.of(writer.key(), writerA);
+		CandidateRealizationSupportClause first = valueMapClause(
+			fixture.reader, "a-unsupported", argumentBRef, writerARef);
+		CandidateRealizationSupportClause second = valueMapClause(
+			fixture.reader, "z-supported--", argumentARef, writerARef);
+		CandidateEmissionRealization valueMap = CandidateEmissionRealization.valueMap(NATIVE,
+			"clause-specific-boundary", List.of(first, second));
+		CandidateRuleFact reader = fact(fixture.facts, fixture.reader);
+		CandidateEmissionFact emission = new CandidateEmissionFact(NATIVE, FType.ROW,
+			null, List.of(valueMap));
+		CandidateRuleFact revisedReader = new CandidateRuleFact(reader.key(), reader.status(),
+			reader.capability(), reader.shapeProof(), reader.profile(), List.of(emission), reader.failureCode());
+		List<CandidateRuleFact> facts = replaceOwner(fixture.facts, fixture.reader, revisedReader);
+		LogicalBoundaryRealizations boundary = new LogicalBoundaryRealizations(
+			fixture.nodes, fixture.edges, fixture.origins, facts);
+		Map<CompiledHopKey,CandidateSelectionReceipt> selected = new IdentityHashMap<>();
+		selected.put(fixture.argument, new CandidateSelectionReceipt(argument.key(),
+			argument.allowedEmissionFacts().get(0), argumentA, List.of()));
+		selected.put(fixture.writer, new CandidateSelectionReceipt(writer.key(),
+			writer.allowedEmissionFacts().get(0), writerA, List.of()));
+		Assert.assertTrue("the supported second VALUE_MAP clause must remain visible",
+			boundary.canStillBeCompatible(Map.of(), selected, Map.of()));
+		selected.put(fixture.reader, new CandidateSelectionReceipt(reader.key(), emission,
+			valueMap, first, List.of()));
+		Assert.assertFalse("an explicitly selected first clause cannot borrow the second clause's source",
+			boundary.canStillBeCompatible(Map.of(), selected, Map.of()));
+	}
+
 	/** Independent full-rebuild oracle retained when production uses incremental closure. */
 	private static List<CandidateRuleFact> coldClose(List<Node> nodes, java.util.Collection<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins, List<CandidateRuleFact> facts) {
@@ -527,6 +753,158 @@ public class LogicalBoundaryRealizationsTest {
 	private static CandidateRuleFact unavailable(CandidateRuleFact fact) {
 		return new CandidateRuleFact(fact.key(), CandidateEvaluationStatus.PRIVACY_EXCLUDED,
 			fact.capability(), fact.shapeProof(), fact.profile(), List.of(), "PRIVATE_AGGREGATE");
+	}
+
+	private static CandidateEmissionRealization realizationAtPool(CandidateRuleFact fact,
+		DurableAnchorKey pool) {
+		return fact.allowedEmissionFacts().stream().flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> PlacementIdentity.samePhysicalWorkerPool(
+				realization.provenWorkerPool(realization.requireSingletonSupportClause()), pool))
+			.findFirst().orElseThrow();
+	}
+
+	private static CandidateEmissionRealization realizationAtNativePool(CandidateRuleFact fact,
+		DurableAnchorKey pool) {
+		return fact.allowedEmissionFacts().stream().flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> realization.key().layoutKind()
+				!= PlacementIdentity.PlacementLayoutKind.VALUE_MAP)
+			.filter(realization -> PlacementIdentity.samePhysicalWorkerPool(
+				realization.nativeWorkerPoolResidencyForOwnedClause(
+					realization.requireSingletonSupportClause()), pool))
+			.findFirst().orElseThrow();
+	}
+
+	private static CandidateRealizationSupportClause valueMapClause(CompiledHopKey owner,
+		String evidence, CandidateRealizationReference... sources) {
+		List<CandidateRealizationInputBinding> bindings = java.util.Arrays.stream(sources)
+			.map(source -> CandidateRealizationInputBinding.logicalTransient(0, source)).toList();
+		return new CandidateRealizationSupportClause(List.of(new PlacementProofKey(
+			PlacementProofKind.CONTROL_FLOW, owner, evidence)), bindings);
+	}
+
+	private static CandidateRuleFact withRealization(CandidateRuleFact template,
+		CandidateEmissionRealization realization) {
+		CandidateEmissionFact emission = new CandidateEmissionFact(NATIVE, FType.ROW,
+			null, List.of(realization));
+		return new CandidateRuleFact(template.key(), template.status(), template.capability(),
+			template.shapeProof(), template.profile(), List.of(emission), template.failureCode());
+	}
+
+	private static CandidateRealizationInputBinding nativeDirect(int position, String name,
+		CompiledHopKey owner) {
+		CandidateRuleKey rule = new CandidateRuleKey(owner,
+			List.of(CandidateInputState.present(FType.ROW)));
+		return CandidateRealizationInputBinding.direct(position,
+			new CandidateRealizationReference(rule,
+				PlacementRealizationKey.nativeLineage(NATIVE, "boundary-source-" + name)));
+	}
+
+	private static NativeContinuitySupportClauses nativeRelation(CompiledHopKey owner,
+		List<DurableAnchorKey> seeds, DurableAnchorKey output,
+		List<List<CandidateRealizationInputBinding>> axes, boolean durableLayout) {
+		return nativeRelation(owner, seeds, output, axes,
+			durableLayout ? null : output, true);
+	}
+
+	private static NativeContinuitySupportClauses nativeRelation(CompiledHopKey owner,
+		List<DurableAnchorKey> seeds, DurableAnchorKey output,
+		List<List<CandidateRealizationInputBinding>> axes, DurableAnchorKey clauseWitness,
+		boolean exactLayout) {
+		NativeContinuitySupportClauses result = null;
+		for(DurableAnchorKey seed : seeds) {
+			var product = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				seed, output, exactLayout, axes);
+			Assert.assertNotNull(product);
+			NativeContinuitySupportClauses next = new NativeContinuitySupportClauses(
+				owner, product, clauseWitness, exactLayout);
+			result = result == null ? next : result.multiHeaderUnion(next).orElseThrow();
+		}
+		return result;
+	}
+
+	private static List<CandidateRealizationSupportClause> explicitNativeClauses(
+		CompiledHopKey owner, List<DurableAnchorKey> seeds, DurableAnchorKey output,
+		List<List<CandidateRealizationInputBinding>> axes, boolean durableLayout) {
+		return explicitNativeClauses(owner, seeds, output, axes,
+			durableLayout ? null : output, true);
+	}
+
+	private static List<CandidateRealizationSupportClause> explicitNativeClauses(
+		CompiledHopKey owner, List<DurableAnchorKey> seeds, DurableAnchorKey output,
+		List<List<CandidateRealizationInputBinding>> axes, DurableAnchorKey clauseWitness,
+		boolean exactLayout) {
+		List<CandidateRealizationSupportClause> result = new ArrayList<>();
+		for(DurableAnchorKey seed : seeds)
+			enumerateNativeClauses(owner, seed, output, axes, clauseWitness, exactLayout,
+				0, new ArrayList<>(), result);
+		return result;
+	}
+
+	private static void enumerateNativeClauses(CompiledHopKey owner, DurableAnchorKey seed,
+		DurableAnchorKey output, List<List<CandidateRealizationInputBinding>> axes,
+		DurableAnchorKey clauseWitness, boolean exactLayout, int axis,
+		List<CandidateRealizationInputBinding> selected,
+		List<CandidateRealizationSupportClause> result) {
+		if(axis < axes.size()) {
+			for(CandidateRealizationInputBinding option : axes.get(axis)) {
+				selected.add(option);
+				enumerateNativeClauses(owner, seed, output, axes, clauseWitness, exactLayout,
+					axis + 1, selected, result);
+				selected.remove(selected.size() - 1);
+			}
+			return;
+		}
+		List<CandidateRealizationInputBinding> bindings =
+			PlacementAnalysis.sharedAlreadyCanonicalComparableList(
+				List.copyOf(selected), "logical boundary native reference");
+		PlacementProofKey proof = new NativePlacementContinuity.NativeContinuityProof(
+			seed, output, exactLayout, bindings).continuityProofKey(owner);
+		result.add(new CandidateRealizationSupportClause(List.of(proof), bindings,
+			clauseWitness, exactLayout));
+	}
+
+	private static final class NativeOptionFixture {
+		private final Fixture fixture = new Fixture();
+		private final NativeContinuitySupportClauses relation;
+		private final CandidateEmissionRealization realization;
+		private final List<CandidateRuleFact> nativeFacts;
+		private final List<CandidateRuleFact> explicitFacts;
+		private final List<List<CandidateRealizationInputBinding>> axes;
+		private final List<DurableAnchorKey> seeds;
+
+		private NativeOptionFixture(boolean durableLayout) {
+			this(durableLayout, true, true);
+		}
+
+		private NativeOptionFixture(boolean durableLayout, boolean exactLayout, boolean proved) {
+			CompiledHopKey left = key("native-option-left");
+			CompiledHopKey right = key("native-option-right");
+			axes = List.of(
+				List.of(nativeDirect(0, "left-a", left), nativeDirect(0, "left-b", left)).stream()
+					.sorted(PlacementAnalysis.canonicalComparator()).toList(),
+				List.of(nativeDirect(1, "right-a", right), nativeDirect(1, "right-b", right)).stream()
+					.sorted(PlacementAnalysis.canonicalComparator()).toList());
+			seeds = List.of(
+				pool("native-seed-a", 12001), pool("native-seed-b", 13001),
+				pool("native-seed-c", 14001));
+			DurableAnchorKey clauseWitness = durableLayout || !proved ? null : POOL_A;
+			relation = nativeRelation(fixture.argument, seeds, POOL_A, axes,
+				clauseWitness, exactLayout);
+			PlacementRealizationKey key = durableLayout
+				? PlacementRealizationKey.durable(NATIVE, POOL_A)
+				: PlacementRealizationKey.nativeLineage(NATIVE, "boundary-native-product");
+			realization = new CandidateEmissionRealization(key, relation);
+			CandidateEmissionRealization explicit = new CandidateEmissionRealization(key,
+				explicitNativeClauses(fixture.argument, seeds, POOL_A, axes,
+					clauseWitness, exactLayout));
+			List<CandidateRuleFact> targetPrepared = replaceOwner(fixture.facts, fixture.reader,
+				withRealization(fact(fixture.facts, fixture.reader),
+					durable(fixture.reader, POOL_A)));
+			nativeFacts = replaceOwner(targetPrepared, fixture.argument,
+				withRealization(fact(fixture.facts, fixture.argument), realization));
+			explicitFacts = replaceOwner(targetPrepared, fixture.argument,
+				withRealization(fact(fixture.facts, fixture.argument), explicit));
+		}
 	}
 
 	private static CandidateSelectionReceipt receipt(List<CandidateRuleFact> facts,
