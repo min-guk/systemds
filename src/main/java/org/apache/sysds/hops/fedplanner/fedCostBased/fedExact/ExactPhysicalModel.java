@@ -2265,48 +2265,49 @@ final class ExactPhysicalModel {
 				for(int ownerValue = 0; ownerValue < requirementsByOwnerValue.size(); ownerValue++)
 					dependencyRequirements.add(consumer.alternatives().get(ownerValue).realization() == null
 						? null : requirementsByOwnerValue.get(ownerValue).get(dependency));
-				ExactCategoricalSolver.CostFunction predicate = values -> {
-					int ownerValue = values[0];
-					if(consumer.alternatives().get(ownerValue).realization() == null)
-						return 0.0;
-					Set<Integer> required = requirementsByOwnerValue.get(ownerValue).get(dependency);
-					if(required == null)
-						return 0.0;
-					if(required.isEmpty())
-						return Double.POSITIVE_INFINITY;
-					int selectedSource = sourceHandles[values[consumer == source ? 0 : 1]];
-					return required.contains(selectedSource) ? 0.0 : Double.POSITIVE_INFINITY;
-				};
-				int[] finiteCells = sparseRealizationSupportCells(
-					dependencyRequirements, sourceHandles, consumer == source);
-				ExactCategoricalSolver.Factor factor = finiteCells == null
-					? ExactCategoricalSolver.Factor.lazy(
-						scope.stream().map(DecisionDomain::variable).toList(), predicate)
-					: ExactCategoricalSolver.Factor.finiteSupport(
-						scope.stream().map(DecisionDomain::variable).toList(), finiteCells);
-				factors.add(factor);
-				if(consumer != source) {
-					List<Object> consumerObservations = new ArrayList<>(consumer.alternatives().size());
-					for(int ownerValue = 0; ownerValue < consumer.alternatives().size(); ownerValue++) {
-						Set<Integer> required = requirementsByOwnerValue.get(ownerValue).get(dependency);
-						consumerObservations.add(consumer.alternatives().get(ownerValue).realization() == null
-							|| required == null ? null : required.size() == 1
-								? required.iterator().next() : required);
-					}
-					List<?>[] observations = new List<?>[] {
-						consumerObservations,
-						ExactHardFactorObservationDecomposition.keys(sourceHandles)
-					};
-					var encoded = ExactHardFactorObservationDecomposition.create(
-						"realization-support|consumer=" + consumer.node().key().normalizedSignature()
-							+ "|source=" + dependency.normalizedSignature(), factor, observations);
-					if(encoded != null)
-						factorizations.put(factor, encoded);
-				}
+				factors.add(realizationSupportFactor(
+					"realization-support|consumer=" + consumer.node().key().normalizedSignature()
+						+ "|source=" + dependency.normalizedSignature(),
+					scope.stream().map(DecisionDomain::variable).toList(),
+					dependencyRequirements, sourceHandles, factorizations));
 			}
 		}
 		return new RealizationSupportPreparationStatistics(supportsByClause.size(),
 			referenceHandleByAlternative.size(), referenceHandles.size());
+	}
+
+	/** Prepares the exact required-source relation without retaining other owners' requirements. */
+	static ExactCategoricalSolver.Factor realizationSupportFactor(String key,
+		List<ExactCategoricalSolver.Variable> scope, List<Set<Integer>> requirements,
+		int[] sourceHandles,
+		Map<ExactCategoricalSolver.Factor,ExactHardFactorObservationDecomposition.Result> factorizations) {
+		boolean selfScope = scope.size() == 1;
+		ExactCategoricalSolver.CostFunction predicate = values -> {
+			for(int position = 0; position < values.length; position++)
+				if(values[position] < 0 || values[position] >= scope.get(position).domainSize())
+					throw new IllegalArgumentException("EXACT_VE_FACTOR_ASSIGNMENT_VALUE_INVALID");
+			Set<Integer> required = requirements.get(values[0]);
+			return required == null || required.contains(sourceHandles[values[selfScope ? 0 : 1]])
+				? 0.0 : Double.POSITIVE_INFINITY;
+		};
+		ExactCategoricalSolver.Factor factor = ExactCategoricalSolver.Factor.lazy(scope, predicate);
+		if(!selfScope) {
+			List<Object> consumerObservations = new ArrayList<>(requirements.size());
+			for(Set<Integer> required : requirements)
+				consumerObservations.add(required == null ? null : required.size() == 1
+					? required.iterator().next() : required);
+			List<?>[] observations = new List<?>[] {
+				consumerObservations, ExactHardFactorObservationDecomposition.keys(sourceHandles)
+			};
+			var encoded = ExactHardFactorObservationDecomposition.create(key, factor, observations);
+			if(encoded != null) {
+				// The solver consumes observations, so no canonical legal-pair array is needed.
+				factorizations.put(factor, encoded);
+				return factor;
+			}
+		}
+		int[] finiteCells = sparseRealizationSupportCells(requirements, sourceHandles, selfScope);
+		return finiteCells == null ? factor : ExactCategoricalSolver.Factor.finiteSupport(scope, finiteCells);
 	}
 
 	/**

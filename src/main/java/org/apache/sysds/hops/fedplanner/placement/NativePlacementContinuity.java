@@ -3462,8 +3462,13 @@ final class NativePlacementContinuity {
 		NativeFactoredProofAlternatives factored = !hasNativeRelationOwner(key) ? null
 			: pinned == null ? nativeUnpinnedFactoredProofAlternatives(key, witness, fixed)
 				: nativeFactoredProofAlternatives(key, pinned, witness, fixed);
-		if(factored != null)
+		if(factored != null) {
+			if(!factored.metadataOwnerReads().isEmpty())
+				traversal.hiddenOwnerReadsByState.put(
+					new CandidateProofState(key, pinned, pinnedHandle, witness,
+						allowPinnedTemplate), factored.metadataOwnerReads());
 			return factored.alternatives;
+		}
 		CandidateTopology topology = candidateTopology(key, witness);
 		if(!topology.metadataOwnerReads.isEmpty())
 			traversal.hiddenOwnerReadsByState.put(
@@ -3875,9 +3880,11 @@ final class NativePlacementContinuity {
 	}
 
 	/**
-	 * Keeps an unpinned occurrence factorized only when its complete executable
-	 * alternative set consists of exact native products. Any mixed representation
-	 * returns to the legacy topology so no row is silently omitted.
+	 * Keeps rectangular native alternatives factorized inside an otherwise explicit
+	 * unpinned occurrence. The result remains query-local: explicit rows retain the
+	 * legacy overlay and metadata reads, while native gates never enter topology
+	 * caches. Any ambiguous or unsupported native authority returns to the complete
+	 * legacy topology.
 	 */
 	private NativeFactoredProofAlternatives nativeUnpinnedFactoredProofAlternatives(
 		CompiledHopKey key, NativePoolWitness witness, FixedCandidateBoundary fixed) {
@@ -3887,7 +3894,10 @@ final class NativePlacementContinuity {
 			|| node.legalAlternatives().stream().noneMatch(state ->
 				state.output() == FederatedOutput.FOUT && state.fType() == witness.fType))
 			return null;
-		List<SelectedCandidateProof> alternatives = new ArrayList<>();
+		List<HybridTopologyRow> rows = new ArrayList<>();
+		Set<ContinuityEdgeKey> defaultEdges = new java.util.HashSet<>();
+		Set<CompiledHopKey> metadataOwnerReads =
+			Collections.newSetFromMap(new IdentityHashMap<>());
 		Set<CandidateRealizationReference> exactReferences = new HashSet<>();
 		boolean matchedNative = false;
 		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
@@ -3909,10 +3919,6 @@ final class NativePlacementContinuity {
 				for(CandidateEmissionRealization realization : emission.realizations()) {
 					if(realization.supportClauses().isEmpty())
 						continue;
-					if(!nativeContinuityProductLayout(realization)
-						|| !(realization.supportClauses()
-							instanceof NativeContinuitySupportClauses))
-						return null;
 					CandidateRealizationReference reference =
 						CandidateRealizationReference.of(fact.key(), realization);
 					// The pinned resolver rejected structurally duplicated authority while
@@ -3920,28 +3926,98 @@ final class NativePlacementContinuity {
 					// repeated lookup for this already validated exact row.
 					if(!exactReferences.add(reference))
 						return null;
-					NativeFactoredProofAlternatives factored =
-						nativeFactoredProofAlternativesResolved(key, reference, witness, fixed,
-							node, hop, fact, realization,
-								(NativeContinuitySupportClauses)realization.supportClauses());
-					if(factored == null || factored.alternatives().size() != 1)
-						return null;
-					alternatives.add(factored.alternatives().get(0));
-					matchedNative = true;
+					if(realization.supportClauses() instanceof NativeContinuitySupportClauses relation) {
+						if(!nativeContinuityProductLayout(realization))
+							return null;
+						NativeFactoredProofAlternatives factored =
+							nativeFactoredProofAlternativesResolved(key, reference, witness, fixed,
+								node, hop, fact, realization, relation);
+						if(factored == null || factored.alternatives().size() != 1)
+							return null;
+						SelectedCandidateProof alternative = factored.alternatives().get(0);
+						rows.add(HybridTopologyRow.nativeRow(reference, alternative));
+						matchedNative = true;
+						continue;
+					}
+					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+						FixedValueMapPool fixedMap = null;
+						if(realization.key().layoutKind()
+							== PlacementIdentity.PlacementLayoutKind.VALUE_MAP) {
+							FixedValueMapResolution fixedResolution = fixedValueMapResolution(reference);
+							metadataOwnerReads.addAll(fixedResolution.ownerReads());
+							fixedMap = fixedResolution.pool();
+						}
+						boolean fixedMapGround = fixedMap != null
+							&& witness.matches(nativeWitness(fixedMap.pool()), fixedMap.exactLayout());
+						List<CandidateDependencySkeleton> dependencies = fixedMapGround ? List.of()
+							: candidateDependencySkeletons(fact, clause, hop, witness, true);
+						if(dependencies == null)
+							continue;
+						boolean realizationGround = realization.key().layoutKind()
+							== PlacementIdentity.PlacementLayoutKind.DURABLE_MAP
+								&& witness.matches(nativeWitness(realization.anchor()), true)
+							|| clause.nativeWorkerPoolWitness() != null
+								&& witness.matches(nativeWitness(clause.nativeWorkerPoolWitness()),
+									clause.nativeWorkerPoolLayoutExact())
+							|| fixedMapGround;
+						CandidateTopologyRow row = CandidateTopologyRow.create(reference,
+							dependencies, realizationGround, witness);
+						if(defaultEdges.add(row.defaultEdge()))
+							rows.add(HybridTopologyRow.explicitRow(row));
+						else if(metrics != null)
+							metrics.recordTopologyRowCollapsed();
+					}
 				}
 			}
 		}
 		if(!matchedNative)
 			return null;
-		alternatives.sort((left, right) -> PlacementAnalysis.canonicalComparator()
-			.compare(left.realization(), right.realization()));
+		rows.sort((left, right) -> PlacementAnalysis.canonicalComparator()
+			.compare(left.reference(), right.reference()));
+		List<SelectedCandidateProof> alternatives = new ArrayList<>(rows.size() + 1);
 		boolean nodeDirectGround = node.legalAlternatives().stream().anyMatch(state ->
 			state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
 				&& state.fType() == witness.fType) && node.anchors().stream()
 			.anyMatch(anchor -> witness.matches(nativeWitness(anchor), true));
 		if(nodeDirectGround)
 			alternatives.add(0, new SelectedCandidateProof(null, List.of(), true, witness));
-		return new NativeFactoredProofAlternatives(List.copyOf(alternatives));
+		Set<ContinuityEdgeKey> seen = null;
+		for(int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
+			HybridTopologyRow hybrid = rows.get(rowIndex);
+			if(hybrid.nativeAlternative() != null) {
+				SelectedCandidateProof alternative = hybrid.nativeAlternative();
+				if(seen == null || seen.add(hybrid.defaultEdge()))
+					alternatives.add(alternative);
+				continue;
+			}
+			CandidateTopologyRow row = hybrid.explicitRow();
+			boolean queryOverlay = row.dependencies().stream()
+				.anyMatch(dependency -> fixed.matches(dependency.key()));
+			SelectedCandidateProof alternative;
+			ContinuityEdgeKey edge;
+			if(queryOverlay) {
+				if(seen == null) {
+					seen = new java.util.HashSet<>();
+					for(int priorIndex = 0; priorIndex < rowIndex; priorIndex++)
+						seen.add(rows.get(priorIndex).defaultEdge());
+				}
+				List<CandidateProofDependency> dependencies = overlayDependencies(
+					row.dependencies(), row.defaultAlternative().dependencies(), fixed);
+				alternative = new SelectedCandidateProof(row.reference(), dependencies,
+					row.directGround(), witness);
+				edge = ContinuityEdgeKey.ofEffective(row.reference(), row.directGround(), dependencies);
+			}
+			else {
+				alternative = row.defaultAlternative();
+				edge = row.defaultEdge();
+			}
+			if(seen == null || seen.add(edge))
+				alternatives.add(alternative);
+			else if(metrics != null)
+				metrics.recordTopologyOverlayRowCollapsed();
+		}
+		return new NativeFactoredProofAlternatives(List.copyOf(alternatives),
+			metadataOwnerReads);
 	}
 
 	private static boolean nativeContinuityProductLayout(
@@ -5100,6 +5176,21 @@ final class NativePlacementContinuity {
 				reference, defaults, directGround, witness);
 			return new CandidateTopologyRow(reference, immutable, directGround, alternative,
 				ContinuityEdgeKey.ofEffective(reference, directGround, defaults));
+		}
+	}
+
+	private record HybridTopologyRow(CandidateRealizationReference reference,
+		CandidateTopologyRow explicitRow, SelectedCandidateProof nativeAlternative,
+		ContinuityEdgeKey defaultEdge) {
+		private static HybridTopologyRow explicitRow(CandidateTopologyRow row) {
+			return new HybridTopologyRow(row.reference(), row, null, row.defaultEdge());
+		}
+
+		private static HybridTopologyRow nativeRow(CandidateRealizationReference reference,
+			SelectedCandidateProof alternative) {
+			return new HybridTopologyRow(reference, null, alternative,
+				ContinuityEdgeKey.ofEffective(reference, alternative.directGround(),
+					alternative.dependencies()));
 		}
 	}
 
@@ -6608,8 +6699,17 @@ final class NativePlacementContinuity {
 	private record SelectedCandidateProof(CandidateRealizationReference realization,
 		List<CandidateProofDependency> dependencies,
 		boolean directGround, NativePoolWitness witness) { }
-	private record NativeFactoredProofAlternatives(
-		List<SelectedCandidateProof> alternatives) { }
+	private record NativeFactoredProofAlternatives(List<SelectedCandidateProof> alternatives,
+		Set<CompiledHopKey> metadataOwnerReads) {
+		private NativeFactoredProofAlternatives {
+			alternatives = List.copyOf(alternatives);
+			metadataOwnerReads = new ImmutableIdentityOwnerReads(metadataOwnerReads);
+		}
+
+		private NativeFactoredProofAlternatives(List<SelectedCandidateProof> alternatives) {
+			this(alternatives, Set.of());
+		}
+	}
 
 	private void buildProof(CompiledHopKey key, NativePoolWitness witness,
 		Map<CompiledHopKey,ProofNode> proof) {

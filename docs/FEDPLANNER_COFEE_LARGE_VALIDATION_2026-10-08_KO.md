@@ -2,7 +2,32 @@
 
 ## 상태
 
-최신 완료 실측은 **v23 (`da1c751dd9`)**이다. 동일 COFEE 50K×128 W1에서 LogReg **356.775028030초**, GLM **129.702007017초**였다. LogReg는 v22보다193.240초, 이전 정상 v21보다40.509초 줄었지만 GLM은 v22보다8.028초, v21보다6.457초 늘었다. 각1회 관측이며 **20초 목표는 미달**이다. 결과를 두 workload 모두의 성능 개선으로 해석하지 않는다.
+최신 완료 실측은 **v24 (`20a8445484`)**다. 동일 COFEE 50K×128 W1에서 LogReg **368.178351863초**, GLM **120.710225116초**였다. v23 대비 LogReg는11.403초 늘었고 GLM은8.992초 줄었다. 각1회 관측이며 **20초 목표는 미달**이다.
+
+| v24 관측 | LogReg | GLM |
+|---|---:|---:|
+| 전체 초기 planning | 368.178초 | 120.710초 |
+| Analysis | 281.046초 | 74.668초 |
+| Physical Model | 6.066초 | 6.736초 |
+| Cost Surface | 7.870초 | 9.209초 |
+| Optimizer | 69.261초 | 26.007초 |
+| 실제 실행 | 4.628초 | 7.303초 |
+| Coordinator peak | 8,908,238,848B | 5,097,136,128B |
+| Worker peak | 731,529,216B | 762,368,000B |
+| 생성 explicit Clause | 2,492,530 | 1,117,561 |
+| 소비 proof member | 6,774,679 | 886,700 |
+
+두 workload의 numeric 검사, runtime audit(mismatch0), objective raw bits, assignment, 전체 선택 candidate 문자열과 선택 section counts/hashes가 v19·v23과 동일하다. CostSurface 및 aggregate final-selection fingerprint는 별도로 달라지며 실제 workload 전체 cost cell 전수 비교로 확대하지 않는다.
+
+LogReg는 proof 소비가8,038,406→6,774,679로 줄어도 전체 시간이 늘었다. Graph103,616개/누적 row19,650,531은 그대로이고, exclusive overlay60.485초/topology54.013초가 가장 크다. Closure32.992초/direct consumption30.141초/dependency pruning25.920초/relocation18.939초가 뒤따른다. Row 방문량을 신규 객체 생성량으로 해석하지 않는다. PARTITIONED 소비2,532,571, mixed-single1,674,914, mixed-multiple1,530,296, retained-union949,972가 남았다.
+
+다음 v25는 mixed native/explicit topology에서 native product를 펼치지 않고 기존 explicit rows와 함께 처리하며, Physical support의 observation decomposition 전에 생성하던 legal pair ID 배열을 생략한다. 논리 후보 수·authority·cost는 보존한다. 단위 생성량 감소를 실제 성능 개선으로 보고하지 않는다.
+
+봉인 JAR SHA `2e373520f1165c563b71e5367cec4896e2f51644d3fbd8e78f56549029ab56c5`, freeze SHA `47cba5cd0ff909965996248589e92fcec620fe6e8420739f08d0eac7bd4a4f5f`. v19-v24 비교 SHA `00e5b6d56632ea53f5bd807018d8d97e05dd063c5870a490cebe557cd7271c06`, v23-v24 비교 SHA `d457fdc065859056040fa6f76e66f4cb6afd2b2ef431966e091bbfac8004a97b`, runtime binding SHA `3c89b7b95463b86730af4fc92fed0c5a8e83124be6eb18c2a9ce106c3bb99685`. Goal evaluator FAIL과 validation_failed checkpoint를 기록했다.
+
+이하 v23 및 이전 관측이다.
+
+v23 실측은 **v23 (`da1c751dd9`)**이다. 동일 COFEE 50K×128 W1에서 LogReg **356.775028030초**, GLM **129.702007017초**였다. LogReg는 v22보다193.240초, 이전 정상 v21보다40.509초 줄었지만 GLM은 v22보다8.028초, v21보다6.457초 늘었다. 각1회 관측이며 **20초 목표는 미달**이다. 결과를 두 workload 모두의 성능 개선으로 해석하지 않는다.
 
 | v23 관측 | LogReg | GLM |
 |---|---:|---:|
@@ -43,6 +68,7 @@ LogReg CLOSURE_REPLAY는 v22의211.061초에서30.258초로 회복됐다(v21 28.
 | v21 | 397.284초 | 123.245초 | 두 workload numeric/audit·선택 권한·비용 raw bits PASS. LogReg 악화 |
 | v22 | 550.015초 | 121.674초 | 두 workload numeric/audit·선택 권한·비용 raw bits PASS. LogReg 심각한 시간 회귀 |
 | v23 | 356.775초 | 129.702초 | 두 workload numeric/audit·선택 권한·비용 raw bits PASS. LogReg 개선, GLM 악화 |
+| v24 | 368.178초 | 120.710초 | 두 workload numeric/audit·선택 권한·비용 raw bits PASS. LogReg 악화, GLM 개선 |
 
 v21 LogReg는 v19보다 13.443초, v20보다 4.343초 느렸고, GLM은 마지막 정상 v19보다 4.260초 빨랐다. 각1회 관측이며 반복 검증된 성능 개선이 아니다. 두 workload의 objective bits, assignment, exact selected candidates 및 선택 section counts/hashes는 v19와 같다. Cost-surface/aggregate fingerprint 변화는 별도로 기록했고 전체 cost cell parity로 확대하지 않는다.
 

@@ -119,10 +119,10 @@ public class ExactPhysicalRealizationSupportFactorCacheTest {
 	public void flatPrivateAggregateRetainsSameDurableOutputAcrossSupplyRoutes() throws Exception {
 		ExactPhysicalModel model = ExactPhysicalModel.build(flatPrivateAnalysis());
 		assertDifferentRoutePremise(model);
-		Assert.assertTrue("fixture must use a finite-row production realization-support factor",
+		Assert.assertTrue("fixture must retain the indexed production realization-support factor",
 			model.hardFactorEncodings().stream().anyMatch(encoding ->
 				encoding.decomposition().descriptor().startsWith("realization-support|")
-					&& encoding.canonicalFactor().isFiniteSupport()));
+					&& !encoding.canonicalFactor().isFiniteSupport()));
 		assertRealizationSupportFactorCells(model);
 	}
 

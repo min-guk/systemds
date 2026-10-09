@@ -4876,17 +4876,31 @@ public class NativePlacementContinuityTest {
 
 		NativeContinuitySupportClauses mixedRelation = new NativeContinuitySupportClauses(
 			child.key, product, pool, true);
-		CandidateEmissionRealization nativeMixed = new CandidateEmissionRealization(
-			first.key(), mixedRelation);
 		CandidateEmissionRealization valueMap = CandidateEmissionRealization.valueMap(
 			childEmission.emissionState(), "unpinned-family-value-map",
 			List.of(new CandidateRealizationSupportClause(List.of(), product.bindingsAt(0))));
+		CandidateEmissionRealization explicitNativeMixed = new CandidateEmissionRealization(
+			first.key(), List.copyOf(mixedRelation));
+		replaceRealizations(full, full.fact(child, binary), childEmission,
+			List.of(explicitNativeMixed, valueMap));
+		NativePlacementContinuity.CandidateSupportResult explicitMixed = full.resolver()
+			.proveGeneratedCandidateSupport(outerFact, outerEmission, proposed, pool);
+		mixedRelation = new NativeContinuitySupportClauses(child.key, product, pool, true);
+		CandidateEmissionRealization nativeMixed = new CandidateEmissionRealization(
+			first.key(), mixedRelation);
 		replaceRealizations(full, full.fact(child, binary), childEmission,
 			List.of(nativeMixed, valueMap));
-		full.resolver().proveGeneratedCandidateSupport(
+		NativePlacementContinuity.CandidateSupportResult hybridMixed = full.resolver()
+			.proveGeneratedCandidateSupport(
 			outerFact, outerEmission, proposed, pool);
-		Assert.assertEquals("mixed native and VALUE_MAP authority uses the full legacy topology",
-			product.size(), mixedRelation.materializedHandleCount());
+		Assert.assertEquals(explicitMixed.proofs().stream().map(
+			NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+			hybridMixed.proofs().stream().map(
+				NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+		assertIdentitySetEquals(explicitMixed.dependencyOccurrences(),
+			hybridMixed.dependencyOccurrences());
+		Assert.assertEquals("mixed native and VALUE_MAP authority keeps the native family factored",
+			1, mixedRelation.materializedHandleCount());
 	}
 
 	@Test
