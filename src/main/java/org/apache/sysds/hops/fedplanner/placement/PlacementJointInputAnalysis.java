@@ -27,6 +27,7 @@ import java.util.SortedSet;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
@@ -291,10 +292,11 @@ public final class PlacementJointInputAnalysis {
 		private int retainedDefinitions;
 
 		private CanonicalDefinitionMap<String> values(Map<String,Definition> key,
-			CanonicalDefinitionMap<String> candidate) {
+			Supplier<CanonicalDefinitionMap<String>> build) {
 			CanonicalDefinitionMap<String> retained = values.get(key);
 			if(retained != null)
 				return retained;
+			CanonicalDefinitionMap<String> candidate = build.get();
 			if(canRetain(key.size())) {
 				values.put(key, candidate);
 				retainedAxes++;
@@ -304,10 +306,11 @@ public final class PlacementJointInputAnalysis {
 		}
 
 		private CanonicalDefinitionMap<Integer> reads(Map<Integer,Definition> key,
-			CanonicalDefinitionMap<Integer> candidate) {
+			Supplier<CanonicalDefinitionMap<Integer>> build) {
 			CanonicalDefinitionMap<Integer> retained = reads.get(key);
 			if(retained != null)
 				return retained;
+			CanonicalDefinitionMap<Integer> candidate = build.get();
 			if(canRetain(key.size())) {
 				reads.put(key, candidate);
 				retainedAxes++;
@@ -365,13 +368,14 @@ public final class PlacementJointInputAnalysis {
 			this.readSources = trustedImmutable ? readSources : immutableSortedCopy(readSources);
 			this.definitionKey = definitionKey;
 			this.axisPool = axisPool;
-			CanonicalDefinitionMap<String> nextValuesAxis = retainedValuesAxis == null
-				? CanonicalDefinitionMap.from(this.values, "=", definitionKey) : retainedValuesAxis;
-			CanonicalDefinitionMap<Integer> nextReadSourcesAxis = retainedReadSourcesAxis == null
-				? CanonicalDefinitionMap.from(this.readSources, "=>", definitionKey) : retainedReadSourcesAxis;
-			valuesAxis = axisPool == null ? nextValuesAxis : axisPool.values(this.values, nextValuesAxis);
-			readSourcesAxis = axisPool == null ? nextReadSourcesAxis
-				: axisPool.reads(this.readSources, nextReadSourcesAxis);
+			// Supplied axes already describe these exact immutable maps and have been
+			// interned by the transition. Never reprobe an unchanged parent axis.
+			valuesAxis = retainedValuesAxis != null ? retainedValuesAxis : axisPool == null
+				? CanonicalDefinitionMap.from(this.values, "=", definitionKey)
+				: axisPool.values(this.values, () -> CanonicalDefinitionMap.from(this.values, "=", definitionKey));
+			readSourcesAxis = retainedReadSourcesAxis != null ? retainedReadSourcesAxis : axisPool == null
+				? CanonicalDefinitionMap.from(this.readSources, "=>", definitionKey)
+				: axisPool.reads(this.readSources, () -> CanonicalDefinitionMap.from(this.readSources, "=>", definitionKey));
 			valuesText = valuesAxis.text();
 			readSourcesText = readSourcesAxis.text();
 			orderingText = new PlacementAnalysis.NormalizedTextBuilder()
@@ -386,21 +390,33 @@ public final class PlacementJointInputAnalysis {
 				return this;
 			Map<String,Definition> copy = new TreeMap<>(values);
 			copy.put(variable, definition);
-			return new Environment(Collections.unmodifiableMap(copy), readSources, definitionKey, axisPool,
-				true, valuesAxis.with(variable, definition, definitionKey), readSourcesAxis);
+			Map<String,Definition> updated = Collections.unmodifiableMap(copy);
+			CanonicalDefinitionMap<String> axis = axisPool == null
+				? valuesAxis.with(variable, definition, definitionKey)
+				: axisPool.values(updated, () -> valuesAxis.with(variable, definition, definitionKey));
+			return new Environment(updated, readSources, definitionKey, axisPool,
+				true, axis, readSourcesAxis);
 		}
 		Environment observe(int readOrdinal, Definition definition) {
 			if(Objects.equals(readSources.get(readOrdinal), definition))
 				return this;
 			Map<Integer,Definition> copy = new TreeMap<>(readSources);
 			copy.put(readOrdinal, definition);
-			return new Environment(values, Collections.unmodifiableMap(copy), definitionKey, axisPool,
-				true, valuesAxis, readSourcesAxis.with(readOrdinal, definition, definitionKey));
+			Map<Integer,Definition> updated = Collections.unmodifiableMap(copy);
+			CanonicalDefinitionMap<Integer> axis = axisPool == null
+				? readSourcesAxis.with(readOrdinal, definition, definitionKey)
+				: axisPool.reads(updated, () -> readSourcesAxis.with(readOrdinal, definition, definitionKey));
+			return new Environment(values, updated, definitionKey, axisPool,
+				true, valuesAxis, axis);
 		}
 		Environment nextBlock() {
-			return readSources.isEmpty() ? this
-				: new Environment(values, Map.of(), definitionKey, axisPool, true, valuesAxis,
-					CanonicalDefinitionMap.from(Map.<Integer,Definition>of(), "=>", definitionKey));
+			if(readSources.isEmpty())
+				return this;
+			Map<Integer,Definition> empty = Map.of();
+			CanonicalDefinitionMap<Integer> axis = axisPool == null
+				? CanonicalDefinitionMap.from(empty, "=>", definitionKey)
+				: axisPool.reads(empty, () -> CanonicalDefinitionMap.from(empty, "=>", definitionKey));
+			return new Environment(values, empty, definitionKey, axisPool, true, valuesAxis, axis);
 		}
 		@Override public int compareTo(Environment that) {
 			if(this == that)
