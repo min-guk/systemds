@@ -2,7 +2,24 @@
 
 ## 상태
 
-최신 완료 v12(`95ed3daeb2`, JAR `3ee4db4e…`)의 전체 최초 planning은 LogReg **402.506716391초**, GLM **137.753315043초**다. 각1회이며 **20초 미달**이다. Numeric/raw-output 비교와 runtime audit mismatch0은 통과했다. LogReg 선택 fingerprint는 이전과 같지만, **GLM 선택 fingerprint는 `ebf0cc31…`에서 `113d2d19…`로 달라져 버전 간 계획 동등성은 미검증/불일치 상태**다. Analysis fingerprint는 같다. 공개 receipt/log에 objective raw bits와 cost fingerprint가 없어 동일 비용이라고 추정하지 않는다. DP conditional conditioning 단독v11 분리 실행과 코드 검토로 원인을 확인한다.
+최신 완료 v14(`592818109f`, JAR `d6f68baa…`)의 전체 최초 planning은 LogReg **371.222976558초**, GLM **136.946062790초**다. 같은 COFEE50K×128 W1 조건이며 각1회다. v12 대비 LogReg31.284초(7.77%) 줄었지만 GLM은0.807초 감소에 그쳤다. **20초 목표는 미달**이며 반복 측정으로 확인한 개선율은 아니다. 숫자 결과/raw hash와 runtime audit는 모두PASS다.
+
+| v14 관측 | LogReg | GLM |
+|---|---:|---:|
+| 전체 최초 planning | 371.222976558초 | 136.946062790초 |
+| Analysis | 280.217789505초 | 92.296초 |
+| Optimizer | 77.604초 | 26.801초 |
+| 실제 batch graph 재사용 | 92,253 | 72,302 |
+| proof graph 계산 | 89,904 | 25,947 |
+| Explicit Clause 생성 | 2,478,691 | 1,124,873 |
+
+작업량 감소와 비용의 위치를 구분한다. LogReg Analysis는v12보다38.986초 감소했으나optimizer는7.928초 증가했다. GLM graph 계산은46,685→25,947로44.4% 줄었는데전체시간은거의같다. 압축·재사용적용만으로후속방문과전개비용이사라지지않는다.
+
+**해시 차이는 아직 분리 검증 중이다.** v11 GLM은126.740초, v10과같은`ebf0cc31…`이고v12/v14는`113d2d19…`다. 하지만 이 fingerprint에는 선택한 실행 계획 외에 objectiveCertificate의cost surface hash·assignment 인덱스·maxFactorCells·objective bits도 포함된다. v11/v12의6,824 lowering과278 FED dispatch 기록은 의미 필드multiset이동일하다. 따라서실행계획이바뀌었다고단정하지않으며,동일비용·정확한선택receipt보존도아직증명되지않았다. 다음 검증은planning timer 종료후기존committed result에서certificate와선택필드를분리한다.
+
+v13 LogReg은402.155507465초로v12와차이가작았고, v13 GLM은후속v14검증을우선해실행하지않았다. 아래는v12 및이전기록이다.
+
+이전 완료 v12(`95ed3daeb2`, JAR `3ee4db4e…`)의 전체 최초 planning은 LogReg **402.506716391초**, GLM **137.753315043초**다. 각1회이며 **20초 미달**이다. Numeric/raw-output 비교와 runtime audit mismatch0은 통과했다. LogReg 선택 fingerprint는 이전과 같지만, **GLM aggregate fingerprint는 `ebf0cc31…`에서 `113d2d19…`로 달라져 certificate와 선택 필드의 분리 검증이 필요**다. Analysis fingerprint는 같다. 공개 receipt/log에 objective raw bits와 cost fingerprint가 없어 동일 비용이라고 추정하지 않는다. DP conditional conditioning 단독v11 분리 실행과 코드 검토로 원인을 확인한다.
 
 | v12 관측 | LogReg | GLM |
 |---|---:|---:|

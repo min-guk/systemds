@@ -460,3 +460,29 @@
 - **Durable batch 전체 gate**: fresh compile1,068PASS(165.143초), source SHA mismatch0. 증거 `evidence/durable-batch-full-green-1068`. 이 검증은 기존v12GLM의선택fingerprint 차이를해결했다는의미가아니다.
 
 - **Durable batch 독립 review CLEAR**: generated root의empty clause dependency 생성, prospective output의emissionFType 외 anchor 미참조, non-recipe/hidden root history flag, root recurrence 및 returned root binding certificate를 별도 reviewer가 확인했다. 기존v12의GLM plan차이는별도미해결항목으로유지한다.
+
+
+### Dynamic proof 필터의 uniform product 전개 제거 (검증중)
+
+- **문제**: computeCandidateAlternatives는 exact/dynamic witness를 구한 뒤 dynamic proof 전체를 stream으로 펼친다. 연산 자체가 partition range를 재계산하거나 모든 축의 입력이static인 경우에도 product member를 생성한다.
+- **설계**: 연산이항상재계산하면전체immutable product를유지한다. 아니면 축의 source layout predicate만검사하여 모든option이static이면빈관계, 한축이모두dynamic이면전체product를반환한다. 두경우모두tuple을만들필요가없다. 나머지mixed축은기존정확한memberfilter를유지한다. Source identity/proof order/privacy판정은그대로다.
+- **검증 계획/위험**:1,000member fixture의source검사횟수를축30개이하로제한하는red,32fixed-seed mixed/empty/all조건과canonical proof/source identity를explicit필터에대조한다. Joint/sparse관계에는독립product규칙을적용하지않고기존경로를유지한다. 실제시간절감은미확인이다.
+
+
+### 多 seed / durable Closure publication의 bounded product 확장 (통합 검증중)
+
+- **변경**: 단일seed/빈retained 조건 대신 prospective output key가seed들사이에서유일하고실제output key가retained와겹치지않을때native product를직접게시한다. 동일exact product는기존authority객체를재사용한다. 단일seed DURABLE_MAP도null clause witness와durable anchor를그대로보존한다. Same-key retained/다중seed충돌은기존exact union으로돌아간다.
+- **메모리 검토 수정**: 최초patch는모든CandidateSupportResult를먼저보관해기존boundedmemo밖의큰결과수명을늘릴수있었다. 통합전거절하고작은requestmetadata와prospectivekey count만미리보관하도록수정했다. 각seed의support는이전처럼prove→consume순서로즉시처리한다. 최종원격lane56testsPASS. Root는중복phase계측블록을제거하고한seed당기존consumption범위를유지했다.
+- **검증/한계**: single durable,disjoint retained+newseed,retained identityreuse,sourcewithdrawal,andcollidingdurable의explicit proof/source canonical parity를실제bind경로에서검사한다. 개별제품이불가능한요청과실제key가겹치는예외는최종canonicalization의exact union을이용하므로전개될수있다. Native topology의durable fallback과Physical Alternative전개는여전히남는다. 새Physicalselectedreceipt전용회귀는추가검증대상이다.
+
+
+### Resume: 실제 workload 및 Closure 전체 회귀 (진행중)
+
+- **실측**: 변경 없는 COFEE 50K×128 W1 v14(`592818109f`) LogReg 전체 최초 planning371.222976558초, Analysis280.217789505초다. v12 대비 전체31.284초/Analysis38.986초 줄었지만 optimizer는 약7.928초 늘었다. GLM은136.946062790초로v12보다0.807초 감소에 그쳤다. 각1회 관측이며 반복 성능 보장은 아니다. 숫자/raw-output/runtime audit는 모두PASS,20초 목표는 미달이다.
+- **계획 해시 분리**: v11 conditional-only GLM126.740130738초는v10과같은ebf0cc31…해시다. v12/v14는113d2d19…다. 다만 canonicalPlanHash는 선택뿐 아니라 objectiveCertificate(cost surface fingerprint, objective bits, assignment 인덱스, maxFactorCells)도 포함한다. 독립 비교에서v11/v12의6,824 lowering 및278 FED dispatch 의미 필드 multiset은동일했다. 따라서 해시 차이를 실행 계획 회귀로 단정하지 않는다. Objective raw bits와 canonical selected receipt는 아직 분리 검증이 필요하다. 증거 `evidence/generated-batch-v11-v12-semantic-audit/audit.json`.
+- **회귀 실패 보존**: Closure+dynamic filter의1,071 전체 테스트 중2개 실패했다(`evidence/closure-dynamic-full-red-1071`). 기존 모델 구조 및 비용 raw bits digest는 통과했으나 durable singleton의 새 relation encoding이 protected fingerprint를 바꿨고, 실제 explicit intern 수136과 logical receipt slot137이 달랐다. 합법성이나 비용을 바꾼 근거는 없지만 기대 hash/counter를 덮어쓰지 않는다.
+- **수정**: 새 singleton product는 Cartesian 감소가 없어 기존 exact clause 경로로 보낸다. 기존 single-seed/empty-retained NATIVE_LINEAGE product는 유지한다. Multi-member product의 source/action/proof와 계수 의미는 그대로다. 두 원래 실패는35개 focused run에서 통과했고, 새 singleton fixture만 product를 강제 기대해 실패했다(`closure-singleton-guard-fixture-red-35`). 이 fixture를singleton exact와3옵션 durable product로 나누어 기존 binding/source canonical parity를 함께 검증한다.
+- **추가 검증**: 새 DURABLE Physical test는0→6 member의 의도된 exact fallback, 모든 강제 member의 raw 비용·receipt·source/proof, Local/Exact 선택 및 shared lifetime을 비교한다. Native relation을명시적으로복사한reference이므로독립 generation oracle로 과장하지 않는다. 서로다른receipt의동일비용row가있지만unforced optimum 자체의tie를입증한것은아니다. 독립 review CLEAR.
+- **잔여/위험**: exact+dynamic proof의혼합 병합, durable proof topology 및 Physical member 전개는남는다. 새 회귀가모두통과하기전에는현재미커밋후보를게시하지않는다. 기존 golden fingerprint/cost model/privacy/runtime 규칙은변경하지않는다.
+
+- **Closure 최종 gate**: singleton exact/3옵션 durable fixture 및 새로운 Physical 회귀 포함 fresh main/test compile **1,073PASS(178.238초)**,source SHA mismatch0. 증거 `evidence/closure-dynamic-full-green-1073`. 기존 protected cost fingerprint/구조/raw bits와 실제 explicit계수의기대값을변경하지않고통과했다. 새post-timer receipt probe는독립compile및9testsPASS이며planner/runtime/timer규칙은바꾸지않는다. 추가gate확장은이봉인본에포함하지않는다.

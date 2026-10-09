@@ -2115,12 +2115,36 @@ final class NativePlacementContinuity {
 			return exact;
 		ComputedPublicProof dynamic = proveCandidateAlternatives(
 			source, externalSeed, dynamicWitness, generation, batchObserver);
-		List<NativeContinuityProof> dynamicProofs = dynamic.proofs().stream()
-			.filter(proof -> recomputesNativePartitionRanges(owner, witnessType)
-				|| proof.immediateBindings().stream().anyMatch(binding ->
-					hasDynamicNativeLayout(binding.source())))
-			.toList();
+		List<NativeContinuityProof> dynamicProofs = retainDynamicProofs(dynamic.proofs(),
+			recomputesNativePartitionRanges(owner, witnessType), this::hasDynamicNativeLayout);
 		return mergeExactAndDynamicAlternatives(exact, dynamic, dynamicProofs);
+	}
+
+	static List<NativeContinuityProof> retainDynamicProofs(List<NativeContinuityProof> proofs,
+		boolean recomputesRanges,
+		java.util.function.Predicate<CandidateRealizationReference> dynamicSource) {
+		if(proofs instanceof NativeContinuityProofProduct product) {
+			if(recomputesRanges)
+				return proofs;
+			boolean anyDynamic = false;
+			for(List<CandidateRealizationInputBinding> axis : product.product.axes) {
+				boolean allDynamic = true;
+				for(CandidateRealizationInputBinding binding : axis) {
+					boolean dynamic = dynamicSource.test(binding.source());
+					anyDynamic |= dynamic;
+					allDynamic &= dynamic;
+				}
+				// Every member chooses one option from this nonempty axis.
+				if(allDynamic)
+					return proofs;
+			}
+			if(!anyDynamic)
+				return List.of();
+		}
+		// Mixed products can have sparse holes. Retain their exact member filter.
+		return proofs.stream().filter(proof -> recomputesRanges
+			|| proof.immediateBindings().stream().anyMatch(binding -> dynamicSource.test(binding.source())))
+			.toList();
 	}
 
 	private static NativePoolWitness distinctDynamicPartitionWitness(NativePoolWitness witness) {

@@ -5846,6 +5846,14 @@ final class PlacementRelationClosure {
 					if(complexityMetrics != null)
 						complexityMetrics.recordDirectWork(DirectWork.SEEDS_BEFORE_DEDUP, seeds.size());
 					List<DurableAnchorKey> distinctSeeds = seeds.stream().distinct().sorted().toList();
+					List<DirectInputBinding> requiredInputs = ruleBinding.requiredInputs();
+					if(requiredInputs == null)
+						requiredInputs = ruleBinding.presentInputs().stream().filter(input -> {
+							Hop sourceHop = input.sourceKey() == null ? null : origins.get(input.sourceKey());
+							return sourceHop != null && isPlacementDataShape(shapes, sourceHop);
+						}).toList();
+					List<DirectNativeProofRequest> proofRequests = new ArrayList<>();
+					Map<CandidateRealizationReference,Integer> prospectiveOutputCounts = new HashMap<>();
 					for(DurableAnchorKey seed : distinctSeeds) {
 						DurableAnchorKey outputAnchor = dynamicOutputLayout ? null : transposeChangesPartitionAxis(
 							owner, seed.fType(), outputState.fType())
@@ -5873,6 +5881,11 @@ final class PlacementRelationClosure {
 						}
 						if(complexityMetrics != null)
 							complexityMetrics.recordDirectWork(DirectWork.SEED_RELATIONS_REQUESTED);
+						proofRequests.add(new DirectNativeProofRequest(
+							seed, outputAnchor, nativeLineage, output));
+						prospectiveOutputCounts.merge(output, 1, Math::addExact);
+					}
+					for(DirectNativeProofRequest request : proofRequests) {
 						NativePlacementContinuity.CandidateSupportResult supportResult;
 						SearchSpaceMetrics.PhaseToken proofStarted = complexityMetrics == null ? null
 							: complexityMetrics.startPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CALL);
@@ -5882,13 +5895,16 @@ final class PlacementRelationClosure {
 							// newly available input alternatives or make raw reset history matter.
 							supportResult = recomputeNative
 								? continuity.proveGeneratedCandidateSupport(
-									fact, emission, output, seed, generatedBatchObserver)
-								: continuity.provePrimitiveCandidateSupport(output, seed);
+									fact, emission, request.output(), request.seed(), generatedBatchObserver)
+								: continuity.provePrimitiveCandidateSupport(request.output(), request.seed());
 						}
 						finally {
 							if(complexityMetrics != null)
 								complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CALL, proofStarted);
 						}
+						DurableAnchorKey seed = request.seed();
+						DurableAnchorKey outputAnchor = request.outputAnchor();
+						String nativeLineage = request.nativeLineage();
 						SearchSpaceMetrics.PhaseToken consumeStarted = complexityMetrics == null ? null
 							: complexityMetrics.startPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CONSUMPTION);
 						try {
@@ -5900,29 +5916,27 @@ final class PlacementRelationClosure {
 										DirectWork.INCOMPLETE_PROOF_METADATA_INCIDENCES);
 								incompleteDependencyOccurrences.add(factOccurrence);
 							}
-							List<DirectInputBinding> requiredInputs = ruleBinding.requiredInputs();
-							if(requiredInputs == null)
-								requiredInputs = ruleBinding.presentInputs().stream().filter(input -> {
-									Hop sourceHop = input.sourceKey() == null ? null : origins.get(input.sourceKey());
-									return sourceHop != null && isPlacementDataShape(shapes, sourceHop);
-								}).toList();
-							NativePlacementContinuity.NativeSupportProduct supportProduct =
-								supportResult.supportProduct();
-							if(recomputeNative && distinctSeeds.size() == 1
-								&& supportProduct != null && grounded != null
-								&& !grounded.hasConflictingEqualAuthority()) {
-								CandidateEmissionRealization publication = directNativeProductPublication(
-									supportProduct, fact.key().parentOccurrence(), emission.emissionState(),
-									outputAnchor, nativeLineage, requiredInputs, sources, exactSourceLayouts);
-								if(publication != null) {
-									if(grounded.coversRetainedNativeProduct(publication)) {
-										coveredByRetained = true;
-										continue;
-									}
-									if(grounded.retained().isEmpty()) {
-										bound.add(publication);
-										continue;
-									}
+							CandidateEmissionRealization productPublication = null;
+							NativePlacementContinuity.NativeSupportProduct supportProduct = supportResult.supportProduct();
+							if(recomputeNative && supportProduct != null && grounded != null
+								&& !grounded.hasConflictingEqualAuthority())
+								productPublication = directNativeProductPublication(supportProduct,
+									fact.key().parentOccurrence(), emission.emissionState(), outputAnchor,
+									nativeLineage, requiredInputs, sources, exactSourceLayouts);
+							if(productPublication != null
+								// A newly enabled singleton has no product work to avoid. Keep
+								// its existing clause encoding instead of adding a relation wrapper.
+								&& (supportProduct.size() > 1 || distinctSeeds.size() == 1
+									&& grounded.retained().isEmpty()
+									&& productPublication.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE)
+								&& prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1) {
+								if(grounded.coversRetainedNativeProduct(productPublication)) {
+									coveredByRetained = true;
+									continue;
+								}
+								if(!grounded.hasRetainedRealizationKey(productPublication.key())) {
+									bound.add(productPublication);
+									continue;
 								}
 							}
 							for(NativePlacementContinuity.NativeContinuityProof proof : supportResult.proofs()) {
@@ -6226,10 +6240,6 @@ final class PlacementRelationClosure {
 		boolean directInputsExact = everyBindingExact;
 		DirectNativeOutput output = directNativeOutput(filtered, emissionState,
 			outputAnchor, nativeLineage, directInputsExact);
-		// Equal durable keys from distinct seeds must be unioned by exact member
-		// authority. Keep that path explicit until relation-native union is proven.
-		if(output.realizationKey().layoutKind() == PlacementLayoutKind.DURABLE_MAP)
-			return null;
 		NativeContinuitySupportClauses clauses = new NativeContinuitySupportClauses(owner,
 			filtered, output.clauseNativePool(), output.clauseLayoutExact());
 		return new CandidateEmissionRealization(output.realizationKey(), clauses);
@@ -6313,13 +6323,22 @@ final class PlacementRelationClosure {
 			List<NativeContinuitySupportClauses>> nativeProducts,
 		SearchSpaceMetrics metrics) {
 		private boolean coversRetainedNativeProduct(CandidateEmissionRealization candidate) {
+			if(metrics != null)
+				metrics.recordDirectWork(DirectWork.EARLY_NATIVE_COVERAGE_PROBES);
 			if(!(candidate.supportClauses() instanceof NativeContinuitySupportClauses product))
 				return false;
 			for(NativeContinuitySupportClauses retainedProduct :
 				nativeProducts.getOrDefault(candidate.key(), List.of()))
-				if(retainedProduct.sameExactAuthority(product))
+				if(retainedProduct.sameExactAuthority(product)) {
+					if(metrics != null)
+						metrics.recordDirectWork(DirectWork.EARLY_NATIVE_COVERAGE_HITS);
 					return true;
+				}
 			return false;
+		}
+		private boolean hasRetainedRealizationKey(
+			PlacementIdentity.PlacementRealizationKey key) {
+			return retained.stream().anyMatch(candidate -> candidate.key().equals(key));
 		}
 		private boolean coversRetainedNative(
 			NativePlacementContinuity.NativeContinuityProof proof, CompiledHopKey owner,
@@ -7055,6 +7074,9 @@ final class PlacementRelationClosure {
 	}
 
 	private record DirectNativeSeedKey(FType inputType, List<AnchorPartition> partitions,
+		CandidateRealizationReference output) { }
+	private record DirectNativeProofRequest(DurableAnchorKey seed,
+		DurableAnchorKey outputAnchor, String nativeLineage,
 		CandidateRealizationReference output) { }
 
 	/**
