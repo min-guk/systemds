@@ -1137,3 +1137,5 @@
 - **독립 검토/잔여 이슈**: 생성·conditional rank/hash·gate 분해·fixed-point 수식·revision mask 의미 검토 CLEAR, bounds 최종 diff도 CLEAR. OOME 복구를 보장하는 최적화가 아니며 접근 시 임시 descriptor/map allocation은 남는다. 전체 선택 gate/새 seal/Docker를 다시 실행한 뒤에만 게시본 성능을 평가한다. 20초/전체 ML route 확대는 여전히 미달.
 
 - **V46 병합 최종 gate**: fresh183selectedclasses **1,445tests/failure0/error0/skip1**, Maven package BUILD SUCCESS(2026-10-09 12:15:44+02). Bounds/seed/partial deletion 및 실제 binder 보강까지 포함한 최종 소스다. Independent final review CLEAR; 2×2 helper는 독립 scalar4개와 직접 비교하고 3×2 실제 binder는 count/metrics/replay/withdrawal-cold parity를 비교한다(독립 six-scalar oracle로 과장하지 않는다). `git diff --check` 통과. 봉인·게시 후 고정 Docker에서 재측정하며, 전체 저장소 성공/20초 달성을 뜻하지 않는다.
+
+- **v34 origin 병합 gate 완료**: incoming0fb33a7fff를3e346769f3으로 병합했다. 문서 append는 양쪽을 보존했고 NativeMixedAxisSplitPublicationTest의 두 bindBinary overload를 각각 원본 그대로 유지했다. Fresh selected FedPlanner1,349개 PASS(225.565초),7,859 class/resource 변경0/source SHA 불일치0. 별도probe9개 PASS(1.510초). 근거 evidence/native-retained-diagnostic-native-merged-full-gate-v34/validation.json. 봉인 이후 고정 Docker 검증을 진행하며 actual20초 달성은 아직 아니다.

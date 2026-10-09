@@ -25,7 +25,7 @@ v32는 v31 대비 LogReg가 2.656초 늘고 GLM은 2.535초 줄었다. 두 workl
 
 v32는 여러 입력 축에 exact/inexact source가 섞인 관계를 `전체 product − all-exact rectangle`으로 유지한다. LogReg의 mixed-multiple proof 소비는 1,530,296→0으로 줄었지만 PARTITIONED 소비가 2,532,571→3,431,359로 늘었다. 총 proof 소비는 6,774,679→6,127,475, explicit Clause 생성은 2,318,473→2,543,426이다. 압축은 적용됐으나 후속 fallback 전개가 남아 실제 전체 시간은 개선되지 않았다. 생성 객체 감소와 논리 후보 pruning을 혼동하지 않는다.
 
-v33 (`409b9fe4a9`)은 canonical run 정렬 최적화를 병합한 버전이며 selected FedPlanner 1,335개/probe 9개를 통과해 origin/main에 게시했다. 별도 실제 workload 측정은 생략했다. 다음 v34는 이미 보존된 exact 영역의 재열거를 피하고, 상세 진단이 켜져 있어도 기존 native union을 유지한다. 두 수정은 독립 검토를 통과했으며 통합 gate를 진행한다. 실제 v32에서는 상세 중복 진단이 OFF였으므로 진단 경로 변경은 이 성능 병목을 설명하지 않는다. liveMetrics와 상세 중복 진단은 별개다. Physical Model과 복잡한 conditional union의 exact fallback은 남아 있다.
+v33 (`409b9fe4a9`)은 canonical run 정렬 최적화를 병합한 버전이며 selected FedPlanner 1,335개/probe 9개를 통과해 origin/main에 게시했다. 별도 실제 workload 측정은 생략했다. v34는 이미 보존된 exact 영역의 재열거를 피하고, 상세 진단이 켜져 있어도 기존 native union을 유지한다. 두 수정은 독립 검토를 통과했으며 최신 origin 병합 후 selected FedPlanner 1,349개/probe 9개를 통과했다. 실제 workload 측정은 다음 단계다. 실제 v32에서는 상세 중복 진단이 OFF였으므로 진단 경로 변경은 이 성능 병목을 설명하지 않는다. liveMetrics와 상세 중복 진단은 별개다. Physical Model과 복잡한 conditional union의 exact fallback은 남아 있다.
 
 - v19-v32 비교 SHA `004bb8d3ef4df8f6b642521a6cc21f9b5b9aa4512225f03fb1797f8bff932d7a`
 - v31-v32 비교 SHA `17204be378baa67517dd9f6ff4281150e664433cf1bd9797a19adfca942385bf`
