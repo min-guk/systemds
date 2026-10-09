@@ -3354,7 +3354,8 @@ final class NativePlacementContinuity {
 			metrics.recordTopologyOverlayEvaluation();
 		if(generation != null)
 			return generatedRootAlternative(key, pinned, witness, fixed, fixedHandles, generation);
-		NativeFactoredProofAlternatives factored = pinned == null ? null
+		NativeFactoredProofAlternatives factored = pinned == null
+			? nativeUnpinnedFactoredProofAlternatives(key, witness, fixed, fixedHandles)
 			: nativeFactoredProofAlternatives(
 				key, pinned, witness, fixed, fixedHandles);
 		if(factored != null)
@@ -3663,6 +3664,71 @@ final class NativePlacementContinuity {
 				matchedRelation.clauseLayoutExact());
 		return new NativeFactoredProofAlternatives(List.of(new SelectedCandidateProof(
 			pinned, List.copyOf(consumerDependencies), directGround, witness)));
+	}
+
+	/**
+	 * Keeps an unpinned occurrence factorized only when its complete executable
+	 * alternative set consists of exact native products. Any mixed representation
+	 * returns to the legacy topology so no row is silently omitted.
+	 */
+	private NativeFactoredProofAlternatives nativeUnpinnedFactoredProofAlternatives(
+		CompiledHopKey key, NativePoolWitness witness,
+		Map<CompiledHopKey,CandidateRealizationReference> fixed,
+		Map<CompiledHopKey,Integer> fixedHandles) {
+		Node node = nodesByKey.get(key);
+		Hop hop = originsByKey.get(key);
+		if(node == null || hop == null || incompleteSources.contains(key)
+			|| node.legalAlternatives().stream().noneMatch(state ->
+				state.output() == FederatedOutput.FOUT && state.fType() == witness.fType))
+			return null;
+		List<SelectedCandidateProof> alternatives = new ArrayList<>();
+		boolean matchedNative = false;
+		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
+			if(fact.status() != CandidateEvaluationStatus.AVAILABLE
+				|| fact.key().parentOccurrence() != key)
+				continue;
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				// Derived authority is validated from action metadata by the legacy
+				// topology and cannot be inferred from native relation axes.
+				if(emission.derivedFoutAction() != null)
+					return null;
+				if(isBroadcastRowProvablyUnselectable(fact)
+					|| !operationPreservesWitness(hop, witness, fact))
+					continue;
+				PlacementState state = emission.emissionState().placementState();
+				if(state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT
+					|| state.fType() != witness.fType || emission.executionFType() != witness.fType)
+					continue;
+				for(CandidateEmissionRealization realization : emission.realizations()) {
+					if(realization.supportClauses().isEmpty())
+						continue;
+					if(realization.key().layoutKind()
+							!= PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE
+						|| !(realization.supportClauses()
+							instanceof NativeContinuitySupportClauses))
+						return null;
+					CandidateRealizationReference reference =
+						CandidateRealizationReference.of(fact.key(), realization);
+					NativeFactoredProofAlternatives factored = nativeFactoredProofAlternatives(
+						key, reference, witness, fixed, fixedHandles);
+					if(factored == null || factored.alternatives().size() != 1)
+						return null;
+					alternatives.add(factored.alternatives().get(0));
+					matchedNative = true;
+				}
+			}
+		}
+		if(!matchedNative)
+			return null;
+		alternatives.sort((left, right) -> PlacementAnalysis.canonicalComparator()
+			.compare(left.realization(), right.realization()));
+		boolean nodeDirectGround = node.legalAlternatives().stream().anyMatch(state ->
+			state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+				&& state.fType() == witness.fType) && node.anchors().stream()
+			.anyMatch(anchor -> witness.matches(nativeWitness(anchor), true));
+		if(nodeDirectGround)
+			alternatives.add(0, new SelectedCandidateProof(null, List.of(), true, witness));
+		return new NativeFactoredProofAlternatives(List.copyOf(alternatives));
 	}
 
 	private CandidateTopology candidateTopology(CompiledHopKey key, NativePoolWitness witness) {

@@ -172,6 +172,18 @@ public class NativePlacementContinuityTest {
 			full.resolver().provePrimitiveCandidateAlternatives(matching, seed.anchor).isEmpty());
 	}
 
+	private static CandidateRuleFact replaceRealizations(Fixture fixture,
+		CandidateRuleFact prior, CandidateEmissionFact priorEmission,
+		List<CandidateEmissionRealization> replacements) {
+		CandidateEmissionFact emission = new CandidateEmissionFact(priorEmission.emissionState(),
+			priorEmission.executionFType(), priorEmission.derivedFoutAction(), replacements);
+		CandidateRuleFact updated = new CandidateRuleFact(prior.key(), prior.status(), prior.capability(),
+			prior.shapeProof(), prior.profile(), List.of(emission), prior.failureCode());
+		fixture.candidates.set(fixture.candidates.indexOf(prior), updated);
+		return updated;
+	}
+
+
 	private static List<NativePlacementContinuity.NativeContinuityProof> publishAndProve(
 		Fixture fixture, CandidateRuleFact original, CandidateEmissionFact emission,
 		CandidateRealizationReference selectedSource, DurableAnchorKey witness,
@@ -4203,6 +4215,14 @@ public class NativePlacementContinuityTest {
 						java.util.Arrays.copyOf(choices[axis], keep));
 			}
 
+			Ref outer = full.unary("random-unpinned-" + trial, OpOp1.LOG, consumer, false);
+			CandidateRuleFact outerFact = full.fact(outer, unary);
+			CandidateEmissionFact outerEmission = outerFact.allowedEmissionFacts().get(0);
+			CandidateRealizationReference proposed = CandidateRealizationReference.of(outerFact.key(),
+				CandidateEmissionRealization.nativeLineage(outerEmission.emissionState(),
+					"random-proposed-" + trial, List.of(), List.of()));
+			NativePlacementContinuity.CandidateSupportResult explicitOuter = full.resolver()
+				.proveGeneratedCandidateSupport(outerFact, outerEmission, proposed, pool);
 			NativePlacementContinuity.CandidateSupportResult explicit = full.resolver()
 				.proveCandidateSupport(explicitPublished, pool);
 			NativeContinuitySupportClauses factoredRelation =
@@ -4211,6 +4231,14 @@ public class NativePlacementContinuityTest {
 				consumer, inputs, factoredRelation);
 			NativePlacementContinuity.CandidateSupportResult factored = full.resolver()
 				.proveCandidateSupport(factoredPublished, pool);
+			NativePlacementContinuity.CandidateSupportResult factoredOuter = full.resolver()
+				.proveGeneratedCandidateSupport(outerFact, outerEmission, proposed, pool);
+			Assert.assertEquals("unpinned proof parity at trial " + trial,
+				explicitOuter.proofs().stream().map(
+					NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+				factoredOuter.proofs().stream().map(
+					NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+			assertIdentitySetEquals(explicitOuter.dependencyOccurrences(), factoredOuter.dependencyOccurrences());
 
 			Assert.assertEquals("ordered proof parity at trial " + trial,
 				explicit.proofs().stream().map(
@@ -4229,6 +4257,310 @@ public class NativePlacementContinuityTest {
 				factored.proofs().stream().map(
 					NativePlacementContinuity.NativeContinuityProof::exactPartitionRanges).toList());
 		}
+	}
+
+	@Test
+	public void generatedRootFactorsAnUnpinnedNativeChildWithoutChangingProofs() {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+		Ref seed = full.source("unpinned-gate-seed", pool);
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Ref left = full.unary("unpinned-gate-left", OpOp1.LOG, seed, false);
+		Ref right = full.unary("unpinned-gate-right", OpOp1.LOG, seed, false);
+		DurableAnchorKey[] leftChoices = java.util.stream.IntStream.range(0, 4)
+			.mapToObj(option -> new DurableAnchorKey("unpinned-gate-left-" + option,
+				FType.FULL, pool.partitions())).toArray(DurableAnchorKey[]::new);
+		DurableAnchorKey[] rightChoices = java.util.stream.IntStream.range(0, 5)
+			.mapToObj(option -> new DurableAnchorKey("unpinned-gate-right-" + option,
+				FType.FULL, pool.partitions())).toArray(DurableAnchorKey[]::new);
+		full.samePoolRealizations(left, unary, leftChoices);
+		full.samePoolRealizations(right, unary, rightChoices);
+		Ref child = full.binary("unpinned-gate-child", OpOp2.PLUS, left, right, false);
+		List<CandidateInputState> binary = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+		NativePlacementContinuity.CandidateSupportResult generatedChild = full.resolver()
+			.proveCandidateSupport(full.reference(child, binary), pool);
+		Assert.assertNotNull(generatedChild.supportProduct());
+
+		Ref outer = full.unary("unpinned-gate-outer", OpOp1.LOG, child, false);
+		CandidateRuleFact outerFact = full.fact(outer, unary);
+		CandidateEmissionFact outerEmission = outerFact.allowedEmissionFacts().get(0);
+		CandidateRealizationReference proposed = CandidateRealizationReference.of(outerFact.key(),
+			CandidateEmissionRealization.nativeLineage(
+				outerEmission.emissionState(), "unpinned-generated-root", List.of(), List.of()));
+
+		NativeContinuitySupportClauses explicitRelation = new NativeContinuitySupportClauses(
+			child.key, generatedChild.supportProduct(), pool, true);
+		full.withClauses(child, binary, List.copyOf(explicitRelation));
+		SearchSpaceMetrics explicitMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity.CandidateSupportResult explicit =
+			full.resolver(explicitMetrics, 0, 0).proveGeneratedCandidateSupport(
+				outerFact, outerEmission, proposed, pool);
+
+		NativeContinuitySupportClauses factoredRelation = new NativeContinuitySupportClauses(
+			child.key, generatedChild.supportProduct(), pool, true);
+		full.withClauses(child, binary, factoredRelation);
+		SearchSpaceMetrics factoredMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity.CandidateSupportResult factored =
+			full.resolver(factoredMetrics, 0, 0).proveGeneratedCandidateSupport(
+				outerFact, outerEmission, proposed, pool);
+
+		Assert.assertEquals(explicit.proofs().stream().map(
+			NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+			factored.proofs().stream().map(
+				NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+		assertIdentitySetEquals(explicit.dependencyOccurrences(), factored.dependencyOccurrences());
+		Assert.assertEquals(Set.of(outer.key, child.key, left.key, right.key, seed.key),
+			factored.dependencyOccurrences());
+		Assert.assertEquals("the unpinned native child uses one authoritative member",
+			1, factoredRelation.materializedHandleCount());
+		Assert.assertTrue(factoredMetrics.snapshot().proofAlternativesBuilt()
+			< explicitMetrics.snapshot().proofAlternativesBuilt());
+		Assert.assertTrue(factoredMetrics.snapshot().proofDependencyEdgesBuilt()
+			< explicitMetrics.snapshot().proofDependencyEdgesBuilt());
+
+		full.samePoolRealizations(left, unary, leftChoices[0]);
+		full.withClauses(child, binary, List.copyOf(explicitRelation));
+		NativePlacementContinuity.CandidateSupportResult narrowedExplicit = full.resolver()
+			.proveGeneratedCandidateSupport(outerFact, outerEmission, proposed, pool);
+		NativeContinuitySupportClauses narrowedRelation = new NativeContinuitySupportClauses(
+			child.key, generatedChild.supportProduct(), pool, true);
+		full.withClauses(child, binary, narrowedRelation);
+		NativePlacementContinuity.CandidateSupportResult narrowed = full.resolver()
+			.proveGeneratedCandidateSupport(outerFact, outerEmission, proposed, pool);
+		Assert.assertEquals(narrowedExplicit.proofs().stream().map(
+			NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+			narrowed.proofs().stream().map(
+				NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+		Assert.assertEquals(1, narrowedRelation.materializedHandleCount());
+		full.candidates.removeIf(candidate -> candidate.key().parentOccurrence() == right.key);
+		Assert.assertTrue(full.resolver().proveGeneratedCandidateSupport(
+			outerFact, outerEmission, proposed, pool).proofs().isEmpty());
+		Assert.assertEquals(1, narrowedRelation.materializedHandleCount());
+	}
+
+	@Test
+	public void unpinnedNativeChildSummaryInvalidatesOnDeepAxisWithdrawalAndRestoration() {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+		Ref seed = full.source("summary-gate-seed", pool);
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Ref left = full.unary("summary-gate-left", OpOp1.LOG, seed, false);
+		Ref right = full.unary("summary-gate-right", OpOp1.LOG, seed, false);
+		full.samePoolRealizations(left, unary,
+			new DurableAnchorKey("summary-left-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("summary-left-b", FType.FULL, pool.partitions()));
+		full.samePoolRealizations(right, unary,
+			new DurableAnchorKey("summary-right-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("summary-right-b", FType.FULL, pool.partitions()));
+		CandidateRuleFact leftFact = full.fact(left, unary);
+		Ref child = full.binary("summary-gate-child", OpOp2.PLUS, left, right, false);
+		List<CandidateInputState> binary = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+		NativePlacementContinuity.NativeSupportProduct product = full.resolver(null, 0, 0)
+			.proveCandidateSupport(full.reference(child, binary), pool).supportProduct();
+		Assert.assertNotNull(product);
+		Assert.assertEquals(4, product.size());
+		full.withClauses(child, binary,
+			new NativeContinuitySupportClauses(child.key, product, pool, true));
+		Ref firstRoot = full.unary("summary-gate-first", OpOp1.EXP, child, false);
+		Ref secondRoot = full.unary("summary-gate-second", OpOp1.SQRT, child, false);
+		CandidateRuleFact firstFact = full.fact(firstRoot, unary);
+		CandidateRuleFact secondFact = full.fact(secondRoot, unary);
+		CandidateEmissionFact firstEmission = firstFact.allowedEmissionFacts().get(0);
+		CandidateEmissionFact secondEmission = secondFact.allowedEmissionFacts().get(0);
+		CandidateRealizationReference firstProposal = new CandidateRealizationReference(
+			firstFact.key(), PlacementIdentity.PlacementRealizationKey.nativeLineage(
+				firstEmission.emissionState(), "summary-first-proposal"));
+		CandidateRealizationReference secondProposal = new CandidateRealizationReference(
+			secondFact.key(), PlacementIdentity.PlacementRealizationKey.nativeLineage(
+				secondEmission.emissionState(), "summary-second-proposal"));
+		List<CandidateRuleFact> originalFacts = List.copyOf(full.candidates);
+		java.util.function.Function<List<CandidateRuleFact>,NativePlacementContinuity> cold =
+			facts -> new NativePlacementContinuity(full.nodes, full.origins, facts,
+				full.edges, full.reaching, Set.of(), full.privacy, null, 0, 0);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity cached = full.resolver(metrics, 128, 2048);
+		NativePlacementContinuity.CandidateSupportResult first = cached
+			.proveGeneratedCandidateSupport(firstFact, firstEmission, firstProposal, pool);
+		Assert.assertFalse(first.proofs().isEmpty());
+		NativePlacementContinuity.CandidateSupportResult firstCold = cold.apply(originalFacts)
+			.proveGeneratedCandidateSupport(firstFact, firstEmission, firstProposal, pool);
+		Assert.assertEquals(firstCold.proofs(), first.proofs());
+		assertIdentitySetEquals(firstCold.dependencyOccurrences(), first.dependencyOccurrences());
+		Assert.assertTrue(first.dependencyOccurrences().stream().anyMatch(owner -> owner == left.key));
+		long firstStates = metrics.snapshot().proofStatesBuilt();
+		long reuseBefore = metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_REUSE_HITS);
+		NativePlacementContinuity.CandidateSupportResult second = cached
+			.proveGeneratedCandidateSupport(secondFact, secondEmission, secondProposal, pool);
+		NativePlacementContinuity.CandidateSupportResult secondCold = cold.apply(originalFacts)
+			.proveGeneratedCandidateSupport(secondFact, secondEmission, secondProposal, pool);
+		Assert.assertFalse(second.proofs().isEmpty());
+		Assert.assertEquals(secondCold.proofs(), second.proofs());
+		assertIdentitySetEquals(secondCold.dependencyOccurrences(), second.dependencyOccurrences());
+		Assert.assertTrue("a sibling generated root must reuse the unpinned child summary",
+			metrics.directWorkCount(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_REUSE_HITS)
+				> reuseBefore);
+		Assert.assertTrue("summary reuse must avoid rebuilding transitive gate states",
+			metrics.snapshot().proofStatesBuilt() - firstStates < firstStates);
+		List<CandidateRuleFact> withdrawnFacts = originalFacts.stream()
+			.filter(fact -> fact != leftFact).toList();
+		long builtBeforeWithdrawal = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity withdrawn = cached.nextRevisionWithCompleteCandidateDelta(
+			withdrawnFacts, identitySet(left.key));
+		NativePlacementContinuity.CandidateSupportResult negative = withdrawn
+			.proveGeneratedCandidateSupport(secondFact, secondEmission, secondProposal, pool);
+		NativePlacementContinuity.CandidateSupportResult negativeCold = cold.apply(withdrawnFacts)
+			.proveGeneratedCandidateSupport(secondFact, secondEmission, secondProposal, pool);
+		Assert.assertTrue("withdrawing the deep axis must invalidate the positive summary",
+			negative.proofs().isEmpty());
+		Assert.assertEquals(negativeCold.proofs(), negative.proofs());
+		assertIdentitySetEquals(negativeCold.dependencyOccurrences(), negative.dependencyOccurrences());
+		Assert.assertTrue(metrics.snapshot().proofGraphsBuilt() > builtBeforeWithdrawal);
+		long builtBeforeRestoration = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity restored = withdrawn.nextRevisionWithCompleteCandidateDelta(
+			originalFacts, identitySet(left.key));
+		NativePlacementContinuity.CandidateSupportResult restoredActual = restored
+			.proveGeneratedCandidateSupport(secondFact, secondEmission, secondProposal, pool);
+		NativePlacementContinuity.CandidateSupportResult restoredCold = cold.apply(originalFacts)
+			.proveGeneratedCandidateSupport(secondFact, secondEmission, secondProposal, pool);
+		Assert.assertFalse("restoration must invalidate the negative summary",
+			restoredActual.proofs().isEmpty());
+		Assert.assertEquals(restoredCold.proofs(), restoredActual.proofs());
+		Assert.assertEquals(second.proofs(), restoredActual.proofs());
+		assertIdentitySetEquals(restoredCold.dependencyOccurrences(), restoredActual.dependencyOccurrences());
+		Assert.assertTrue(metrics.snapshot().proofGraphsBuilt() > builtBeforeRestoration);
+	}
+
+	@Test
+	public void unpinnedNativeFamiliesKeepCanonicalOrsAndMixedAuthorityFallsBack() {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+		Ref seed = full.source("unpinned-family-seed", pool);
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Ref left = full.unary("unpinned-family-left", OpOp1.LOG, seed, false);
+		Ref right = full.unary("unpinned-family-right", OpOp1.LOG, seed, false);
+		full.samePoolRealizations(left, unary,
+			new DurableAnchorKey("unpinned-family-left-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("unpinned-family-left-b", FType.FULL, pool.partitions()));
+		full.samePoolRealizations(right, unary,
+			new DurableAnchorKey("unpinned-family-right-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("unpinned-family-right-b", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("unpinned-family-right-c", FType.FULL, pool.partitions()));
+		Ref child = full.binary("unpinned-family-child", OpOp2.PLUS, left, right, false);
+		List<CandidateInputState> binary = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+		NativePlacementContinuity.NativeSupportProduct product = full.resolver()
+			.proveCandidateSupport(full.reference(child, binary), pool).supportProduct();
+		Assert.assertNotNull(product);
+		CandidateRuleFact childFact = full.fact(child, binary);
+		CandidateEmissionFact childEmission = childFact.allowedEmissionFacts().get(0);
+
+		NativeContinuitySupportClauses firstRelation = new NativeContinuitySupportClauses(
+			child.key, product, pool, true);
+		NativeContinuitySupportClauses secondRelation = new NativeContinuitySupportClauses(
+			child.key, product, pool, true);
+		CandidateEmissionRealization first = new CandidateEmissionRealization(
+			PlacementIdentity.PlacementRealizationKey.nativeLineage(
+				childEmission.emissionState(), "unpinned-family-first"), firstRelation);
+		CandidateEmissionRealization second = new CandidateEmissionRealization(
+			PlacementIdentity.PlacementRealizationKey.nativeLineage(
+				childEmission.emissionState(), "unpinned-family-second"), secondRelation);
+
+		Ref outer = full.unary("unpinned-family-outer", OpOp1.LOG, child, false);
+		CandidateRuleFact outerFact = full.fact(outer, unary);
+		CandidateEmissionFact outerEmission = outerFact.allowedEmissionFacts().get(0);
+		CandidateRealizationReference proposed = CandidateRealizationReference.of(outerFact.key(),
+			CandidateEmissionRealization.nativeLineage(
+				outerEmission.emissionState(), "unpinned-family-output", List.of(), List.of()));
+
+		replaceRealizations(full, childFact, childEmission, List.of(
+			new CandidateEmissionRealization(first.key(), List.copyOf(firstRelation)),
+			new CandidateEmissionRealization(second.key(), List.copyOf(secondRelation))));
+		NativePlacementContinuity.CandidateSupportResult explicit = full.resolver()
+			.proveGeneratedCandidateSupport(outerFact, outerEmission, proposed, pool);
+		// The explicit reference materialized its own lists above. Fresh lazy relations
+		// are required to measure work in the factorized query independently.
+		firstRelation = new NativeContinuitySupportClauses(child.key, product, pool, true);
+		secondRelation = new NativeContinuitySupportClauses(child.key, product, pool, true);
+		first = new CandidateEmissionRealization(first.key(), firstRelation);
+		second = new CandidateEmissionRealization(second.key(), secondRelation);
+		replaceRealizations(full, full.fact(child, binary), childEmission, List.of(first, second));
+		NativePlacementContinuity.CandidateSupportResult factored = full.resolver()
+			.proveGeneratedCandidateSupport(outerFact, outerEmission, proposed, pool);
+		Assert.assertEquals("distinct native realizations retain canonical OR order",
+			explicit.proofs().stream().map(
+				NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+			factored.proofs().stream().map(
+				NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+		assertIdentitySetEquals(explicit.dependencyOccurrences(), factored.dependencyOccurrences());
+		Assert.assertEquals(1, firstRelation.materializedHandleCount());
+		Assert.assertEquals(1, secondRelation.materializedHandleCount());
+
+		NativeContinuitySupportClauses duplicateRelation = new NativeContinuitySupportClauses(
+			child.key, product, pool, true);
+		CandidateEmissionRealization duplicate = new CandidateEmissionRealization(
+			first.key(), duplicateRelation);
+		CandidateRuleFact duplicated = replaceRealizations(full, full.fact(child, binary),
+			childEmission, List.of(duplicate));
+		full.candidates.add(duplicated);
+		full.resolver().proveGeneratedCandidateSupport(
+			outerFact, outerEmission, proposed, pool);
+		Assert.assertEquals("ambiguous structural authority uses the full legacy topology",
+			product.size(), duplicateRelation.materializedHandleCount());
+		full.candidates.remove(full.candidates.size() - 1);
+
+		NativeContinuitySupportClauses mixedRelation = new NativeContinuitySupportClauses(
+			child.key, product, pool, true);
+		CandidateEmissionRealization nativeMixed = new CandidateEmissionRealization(
+			first.key(), mixedRelation);
+		CandidateEmissionRealization valueMap = CandidateEmissionRealization.valueMap(
+			childEmission.emissionState(), "unpinned-family-value-map",
+			List.of(new CandidateRealizationSupportClause(List.of(), product.bindingsAt(0))));
+		replaceRealizations(full, full.fact(child, binary), childEmission,
+			List.of(nativeMixed, valueMap));
+		full.resolver().proveGeneratedCandidateSupport(
+			outerFact, outerEmission, proposed, pool);
+		Assert.assertEquals("mixed native and VALUE_MAP authority uses the full legacy topology",
+			product.size(), mixedRelation.materializedHandleCount());
+	}
+
+	@Test
+	public void nativeRootOverlayPreservesGroundedRecurrenceWithDifferentPublishedPin() {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+		Ref seed = full.source("overlay-seed", pool);
+		Ref consumer = full.unary("overlay-root", OpOp1.LOG, seed, false);
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		CandidateRealizationReference current = full.reference(consumer, inputs);
+		CandidateRealizationReference historical = new CandidateRealizationReference(current.rule(),
+			PlacementIdentity.PlacementRealizationKey.nativeLineage(
+				current.realization().emissionState(), "historical-root-pin"));
+		NativePlacementContinuity.NativeSupportProduct product =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(pool, pool, true,
+				List.of(List.of(CandidateRealizationInputBinding.direct(0, historical))));
+		Assert.assertNotNull(product);
+		full.edges.removeIf(edge -> edge.consumer() == consumer.key);
+		full.edges.add(new CompiledInputEdgeFact(consumer.key, consumer.key, 0));
+		NativeContinuitySupportClauses explicitRelation = new NativeContinuitySupportClauses(
+			consumer.key, product, pool, true);
+		CandidateRealizationReference explicitPublished = full.withClauses(
+			consumer, inputs, List.copyOf(explicitRelation));
+		Assert.assertNotEquals(historical, explicitPublished);
+		NativePlacementContinuity.CandidateSupportResult explicit = full.resolver()
+			.proveCandidateSupport(explicitPublished, pool);
+		Assert.assertFalse("the legacy root overlay grounds this recurrence", explicit.proofs().isEmpty());
+		NativeContinuitySupportClauses nativeRelation = new NativeContinuitySupportClauses(
+			consumer.key, product, pool, true);
+		CandidateRealizationReference nativePublished = full.withClauses(consumer, inputs, nativeRelation);
+		NativePlacementContinuity.CandidateSupportResult actual = full.resolver()
+			.proveCandidateSupport(nativePublished, pool);
+		Assert.assertEquals(explicit.proofs().stream().map(
+			NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+			actual.proofs().stream().map(
+				NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+		assertIdentitySetEquals(explicit.dependencyOccurrences(), actual.dependencyOccurrences());
 	}
 
 	@Test
