@@ -2,15 +2,29 @@
 
 ## 상태
 
-최신 게시본 v4(`5f9edeeb2f`)의 COFEE50K×128 LogReg Analysis는 **333.489초**, explicit Clause 생성은 **2,550,102개**다. 이전 v2의460.528초·20,882,097개보다 줄었으나 각각 단일 실행 관측이다. 이후 **Local DP의 unary/binary reduction 뒤 `EXACT_VE_FACTOR_CELL_OVERFLOW`로 실패**했다. 전체 planning/학습 성공 시간과 numeric receipt는 아직 없으며20초 목표는 미달이다. 과거 baseline 진단 및 소규모192×8 회귀 결과와 구분한다.
+최신 게시본 v5(`bd00913e21`, JAR `b843129d…`)은 동일 COFEE50K×128 W1 LogReg에서 **전체 최초 planning 403.786초**에 완료됐다. 최종 receipt의 `planningFullInitialNanos=403786041598`이 목표 판정값이다. 내부 `candidateE2E.totalNanos=402603192964`와 혼동하지 않는다. 숫자 출력 비교는 byte-identical, runtime audit MATCH이며, 이전 v4의 DP overflow는 해결됐다. 같은 봉인본의 GLM도 전체 최초 planning **142.961초**에 완료됐고 숫자 비교/audit mismatch0을 통과했다. **두 workload 모두20초 목표에는 미달**이다.
 
-사용자의 최신 지시에 따라 DML·Y 위치·전처리를 바꾸지 않는다. 같은 COFEE workload에서 기존 pruning/압축의 적용 범위와 downstream 재탐색을 수정한다.
+| v5 측정 | LogReg | GLM |
+|---|---:|---:|
+| 전체 최초 planning (parse→runtime program) | 403.786초 | 142.961초 |
+| 내부 Analysis | 316.871초 | 97.883초 |
+| Physical Model | 4.296초 | 5.264초 |
+| Cost Surface | 6.497초 | 7.830초 |
+| Optimizer | 73.494초 | 27.837초 |
+| 변환 | 1.093초 | 1.764초 |
+| 실제 실행 | 4.455초 | 6.782초 |
+| coordinator cgroup peak | 9,286,393,856B | 5,284,954,112B |
+| 숫자 비교 / audit | PASS / mismatch0 | PASS / mismatch0 |
 
-최신 main `a03365e`와 압축 cost preflight 수정 통합본은 **948 JUnit PASS**, 소스112개 해시 일치, Python42+38 PASS 및 독립 검토 CLEAR다. v4 실제 검증은 위의 DP 준비 오류로 종료됐으며 후속 수정을 진행한다. 테스트 성공을 20초 성능 달성으로 해석하지 않는다.
+단계별 값은 내부 계측이므로 합계와 전체 최초 planning 구간이 다르다. 각 엔진1회 관측이며 paired 반복 완료 측정의 성능 개선율은 아직 없다. v4는 Analysis333.489초 이후 DP 실패였으므로 v5 전체 성공 시간과 v4 실패까지의 시간을 속도비로 비교하지 않는다.
+
+사용자 지시대로 DML·Y 위치·전처리·privacy·seed·cost profile·자원을 유지했다. 최신 main `ac0b5e6028` + native support/DP 통합 회귀 **1,006 JUnit PASS**, source/class hash mismatch0, independent review CLEAR다. 실제 runtime 근거는 `evidence/cofee-50k128-v5-validation/candidate-logreg-run1`, 범위가 명확한 시간 근거는 각 run 아래 `timing-evidence.json`이다. 두 완료 결과를 묶은 근거는 `evidence/cofee-50k128-v5-validation/first-valid-both-workloads.json`이다. 신규 profiling/JFR는 사용하지 않았다.
+
+다음 미게시 후보는 variable-length native support canonical rank와 Physical Model의 compact relation 소비다. v5는 native 생성/Closure/metadata를 제한된 rectangle에 적용하지만 Physical exact fallback이 남아 있다. 적용 범위와 성능을 실제 v6 검증 전에는 확대해 보고하지 않는다.
 
 ## 현재 병목: pruning 누락과 조합 전개를 구분
 
-현재 가장 직접적인 문제는 **support 조합을 펼쳐 객체를 만들고, 같은 의존 경로를 반복 방문하는 구조**다. 최신 실제 LogReg의 support leaf394만 건, Clause 생성2088만 개, proof row 방문1996만 회가 그 증거다. 이들은 누적 생성·방문량이며 서로 다른 전역 실행 계획의 수나 동시에 메모리에 살아 있는 객체 수가 아니다.
+현재 가장 직접적인 문제는 **support 조합을 펼쳐 객체를 만들고, 같은 의존 경로를 반복 방문하는 구조**다. v5 실제 LogReg의 support leaf3,919,362건과 Clause 생성2,534,754개가 그 증거다. 논리 proof3,941,087개와 실제 leaf 방문 수가 거의 같으므로 생성 전개를 충분히 피하지 못했다. 이들은 누적 생성·방문량이며 서로 다른 전역 실행 계획의 수나 동시에 메모리에 살아 있는 객체 수가 아니다.
 
 1. **생성·Closure:** Oracle에서 압축한 입력 관계가 일반 FED rule fact, DIRECT support, 공개 proof 복원 단계까지 항상 압축 상태로 이어지지 않는다. 기존 최적화가 일부 HOP 또는 조건에만 적용되는 문제뿐 아니라, 같은 HOP의 후속 단계에서 다시 전개되는 문제도 있다. 최종 저장 region 수만 줄여서는 이미 생성된 임시 Clause 비용을 회수할 수 없다.
 2. **조기 pruning:** 일반 rule MRV와 구조적 privacy projection의 적용 누락은 실제로 있었다. 수정 후 Clause 생성량은 약5% 줄었으나 Analysis 시간은 개선되지 않았다. 직접 source owner 충돌이 없는 입력도 전이적 공유 source·joint 조건에서는 충돌할 수 있으며, 그 관계를 모두 생성 단계에서 판정하는 구조는 아직 아니다. 반대로 실제로 모두 합법인 독립 조합은 pruning 대상이 아니므로 압축 상태로 전달해야 한다.

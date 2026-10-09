@@ -610,8 +610,7 @@ final class NativePlacementContinuity {
 		Map<CompiledHopKey,Boolean> unchangedRows = new IdentityHashMap<>();
 		Map<CompiledHopKey,Boolean> unchangedGeneratedRoots = new IdentityHashMap<>();
 		RevisionComparisonWork comparisonWork = new RevisionComparisonWork();
-		boolean sharedExactAuthority = structuralContext == next.structuralContext
-			&& candidateFactsSnapshot == next.candidateFactsSnapshot;
+		boolean sharedStructuralAuthority = structuralContext == next.structuralContext;
 		boolean hasReusableEntries = !candidateTopologies.isEmpty() || !completedSupportMemo.isEmpty()
 			|| !acyclicRootSupportMemo.isEmpty() || !completedProofMemo.isEmpty()
 			|| !acyclicComponentMemo.isEmpty() || !replayOwnerRevisionTokens.isEmpty();
@@ -636,10 +635,19 @@ final class NativePlacementContinuity {
 				!unchangedRows.computeIfAbsent(owner, key -> unchangedContinuityFacts(
 					next, key, changedOccurrences, comparisonWork, boundOwnerImpact))))
 				continue;
-			CandidateTopology migrated = sharedExactAuthority && topology.hasStableStructuralHandles()
-				? topology : next.reindexTopology(topology);
-			if(next.cacheTopology(entry.getKey(), migrated))
+			// The complete execution/metadata checks above authorize the old references.
+			// A fresh fact snapshot alone does not require rebuilding immutable rows:
+			// only their destination-local handle indexes can still have changed.
+			boolean shareRows = sharedStructuralAuthority && topology.hasStableStructuralHandles(next);
+			CandidateTopology migrated = shareRows ? topology : next.reindexTopology(topology);
+			if(next.cacheTopology(entry.getKey(), migrated)) {
 				reused++;
+				if(metrics != null)
+					metrics.recordDirectWork(shareRows
+						? SearchSpaceMetrics.DirectWork.TOPOLOGY_REVISION_SHARED_ROWS
+						: SearchSpaceMetrics.DirectWork.TOPOLOGY_REVISION_REINDEXED_ROWS,
+						migrated.rows.size());
+			}
 		}
 		long supportReused = 0;
 		for(var entry : completedSupportMemo.entrySet()) {
@@ -1447,6 +1455,11 @@ final class NativePlacementContinuity {
 			memo.remember(realization, current);
 		}
 		if(current.projection == null) {
+			if(realization.supportClauses() instanceof NativeContinuitySupportClauses product) {
+				current.projection = new ContinuityRealizationProjection(realization.key(), Set.of(),
+					continuityProductProjectionOwned(product, current, donor));
+				return current.projection;
+			}
 			Set<ContinuityClauseProjection> clauses = new java.util.HashSet<>();
 			for(CandidateRealizationSupportClause clause : realization.supportClauses())
 				clauses.add(continuityClauseProjectionOwned(clause, current, donor));
@@ -1454,6 +1467,30 @@ final class NativePlacementContinuity {
 				realization.key(), cachedSet(clauses));
 		}
 		return current.projection;
+	}
+
+	private static NativeProductContinuityProjection continuityProductProjectionOwned(
+		NativeContinuitySupportClauses product, RealizationProjectionMemo memo,
+		RealizationProjectionMemo donorMemo) {
+		List<List<ContinuityBindingProjection>> axes = product.product().axes().stream()
+			.map(axis -> axis.stream()
+				.map(binding -> continuityBindingProjectionOwned(binding, memo, donorMemo))
+				.toList())
+			.toList();
+		return new NativeProductContinuityProjection(
+			axes, product.clauseWitness(), product.clauseLayoutExact());
+	}
+
+	private static ContinuityBindingProjection continuityBindingProjectionOwned(
+		CandidateRealizationInputBinding binding, RealizationProjectionMemo memo,
+		RealizationProjectionMemo donorMemo) {
+		ContinuityBindingProjection projection = memo.bindings.get(binding);
+		if(projection == null && donorMemo != null)
+			projection = donorMemo.bindings.get(binding);
+		if(projection == null)
+			projection = new ContinuityBindingProjection(binding);
+		memo.bindings.put(binding, projection);
+		return projection;
 	}
 
 	private static ContinuityClauseProjection continuityClauseProjectionOwned(
@@ -1474,15 +1511,8 @@ final class NativePlacementContinuity {
 			return exactDonor;
 		}
 		List<ContinuityBindingProjection> bindings = new ArrayList<>(clause.inputBindings().size());
-		for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
-			ContinuityBindingProjection projection = memo.bindings.get(binding);
-			if(projection == null && donorMemo != null)
-				projection = donorMemo.bindings.get(binding);
-			if(projection == null)
-				projection = new ContinuityBindingProjection(binding);
-			bindings.add(projection);
-			memo.bindings.put(binding, projection);
-		}
+		for(CandidateRealizationInputBinding binding : clause.inputBindings())
+			bindings.add(continuityBindingProjectionOwned(binding, memo, donorMemo));
 		current = new ContinuityClauseProjection(List.copyOf(bindings),
 			clause.nativeWorkerPoolWitness(), clause.nativeWorkerPoolLayoutExact());
 		memo.clauses.put(clause, current);
@@ -1501,23 +1531,37 @@ final class NativePlacementContinuity {
 		boolean includePublishedRealizations) {
 		Set<ContinuityEmissionProjection> emissions = new java.util.HashSet<>();
 		for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
-				Set<ContinuityRealizationProjection> realizations = new java.util.HashSet<>();
-				for(CandidateEmissionRealization realization : includePublishedRealizations
-					? emission.realizations() : List.<CandidateEmissionRealization>of()) {
-					Set<ContinuityClauseProjection> clauses = new java.util.HashSet<>();
-					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
-						List<ContinuityBindingProjection> bindings = clause.inputBindings().stream()
-							.map(ContinuityBindingProjection::new).toList();
-						clauses.add(new ContinuityClauseProjection(bindings,
-							clause.nativeWorkerPoolWitness(), clause.nativeWorkerPoolLayoutExact()));
-					}
-					realizations.add(new ContinuityRealizationProjection(
-						realization.key(), cachedSet(clauses)));
+			Set<ContinuityRealizationProjection> realizations = new java.util.HashSet<>();
+			for(CandidateEmissionRealization realization : includePublishedRealizations
+				? emission.realizations() : List.<CandidateEmissionRealization>of()) {
+				if(realization.supportClauses() instanceof NativeContinuitySupportClauses product) {
+					realizations.add(new ContinuityRealizationProjection(realization.key(), Set.of(),
+						continuityProductProjection(product)));
+					continue;
 				}
+				Set<ContinuityClauseProjection> clauses = new java.util.HashSet<>();
+				for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+					List<ContinuityBindingProjection> bindings = clause.inputBindings().stream()
+						.map(ContinuityBindingProjection::new).toList();
+					clauses.add(new ContinuityClauseProjection(bindings,
+						clause.nativeWorkerPoolWitness(), clause.nativeWorkerPoolLayoutExact()));
+				}
+				realizations.add(new ContinuityRealizationProjection(
+					realization.key(), cachedSet(clauses)));
+			}
 			emissions.add(new ContinuityEmissionProjection(emission.emissionState(),
 				emission.executionFType(), emission.derivedFoutAction(), cachedSet(realizations)));
 		}
 		return new ContinuityFactProjection(fact.key(), fact.status(), cachedSet(emissions));
+	}
+
+	private static NativeProductContinuityProjection continuityProductProjection(
+		NativeContinuitySupportClauses product) {
+		List<List<ContinuityBindingProjection>> axes = product.product().axes().stream()
+			.map(axis -> axis.stream().map(ContinuityBindingProjection::new).toList())
+			.toList();
+		return new NativeProductContinuityProjection(
+			axes, product.clauseWitness(), product.clauseLayoutExact());
 	}
 
 	private static <E> Set<E> cachedSet(Set<E> ownedElements) {
@@ -1556,7 +1600,16 @@ final class NativePlacementContinuity {
 		DerivedFoutMaterializationActionKey action,
 		Set<ContinuityRealizationProjection> realizations) { }
 	private record ContinuityRealizationProjection(PlacementRealizationKey key,
-		Set<ContinuityClauseProjection> clauses) { }
+		Set<ContinuityClauseProjection> clauses,
+		NativeProductContinuityProjection nativeProduct) {
+		private ContinuityRealizationProjection(PlacementRealizationKey key,
+			Set<ContinuityClauseProjection> clauses) {
+			this(key, clauses, null);
+		}
+	}
+	private record NativeProductContinuityProjection(
+		List<List<ContinuityBindingProjection>> axes,
+		DurableAnchorKey clauseWitness, boolean clauseLayoutExact) { }
 	private record ContinuityClauseProjection(List<ContinuityBindingProjection> bindings,
 		DurableAnchorKey nativeWorkerPoolWitness, boolean nativeWorkerPoolLayoutExact) { }
 	private static final class ContinuityBindingProjection {
@@ -4506,10 +4559,10 @@ final class NativePlacementContinuity {
 			return false;
 		}
 
-		private boolean hasStableStructuralHandles() {
+		private boolean hasStableStructuralHandles(NativePlacementContinuity destination) {
 			for(CandidateTopologyRow row : rows) {
-				Integer rowHandle = PlacementIdentity.structuralHandle(row.reference);
-				if(rowHandle == null || rowsByHandle.getOrDefault(rowHandle, List.of()).stream()
+				int rowHandle = destination.candidateHandle(row.reference);
+				if(rowHandle <= 0 || rowsByHandle.getOrDefault(rowHandle, List.of()).stream()
 					.noneMatch(indexed -> indexed == row))
 					return false;
 				for(CandidateDependencySkeleton dependency : row.dependencies) {
@@ -4518,9 +4571,9 @@ final class NativePlacementContinuity {
 							return false;
 					}
 					else {
-						Integer dependencyHandle =
-							PlacementIdentity.structuralHandle(dependency.clausePinned);
-						if(dependencyHandle == null
+						int dependencyHandle = destination.candidateHandle(dependency.clausePinned);
+						// Equal negative numbers in two revisions are not shared authority.
+						if(dependencyHandle <= 0
 							|| dependencyHandle != dependency.clausePinnedHandle)
 							return false;
 					}
@@ -4841,21 +4894,26 @@ final class NativePlacementContinuity {
 
 	/** One independently factorized support product; exact members remain lazy. */
 	static final class NativeSupportProduct {
+		private static final int MAX_CANONICAL_LENGTH_STATES = 65_536;
+		private static final long MAX_CANONICAL_LENGTH_TRANSITIONS = 1_000_000L;
 		private final DurableAnchorKey externalSeed;
 		private final DurableAnchorKey outputWorkerPoolWitness;
 		private final boolean exactPartitionRanges;
 		private final List<List<CandidateRealizationInputBinding>> axes;
 		private final int size;
+		private final NativeCanonicalProductIndex canonicalIndex;
 
 		private NativeSupportProduct(DurableAnchorKey externalSeed,
 			DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
-			List<List<CandidateRealizationInputBinding>> axes, int size) {
+			List<List<CandidateRealizationInputBinding>> axes, int size,
+			NativeCanonicalProductIndex canonicalIndex) {
 			this.externalSeed = Objects.requireNonNull(externalSeed, "externalSeed");
 			this.outputWorkerPoolWitness = Objects.requireNonNull(
 				outputWorkerPoolWitness, "outputWorkerPoolWitness");
 			this.exactPartitionRanges = exactPartitionRanges;
 			this.axes = axes;
 			this.size = size;
+			this.canonicalIndex = Objects.requireNonNull(canonicalIndex, "canonicalIndex");
 		}
 
 		DurableAnchorKey externalSeed() { return externalSeed; }
@@ -4866,9 +4924,25 @@ final class NativePlacementContinuity {
 		static NativeSupportProduct tryCreate(DurableAnchorKey externalSeed,
 			DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
 			List<List<CandidateRealizationInputBinding>> axes) {
+			return tryCreate(externalSeed, outputWorkerPoolWitness,
+				exactPartitionRanges, axes, MAX_CANONICAL_LENGTH_STATES,
+				MAX_CANONICAL_LENGTH_TRANSITIONS);
+		}
+		static NativeSupportProduct tryCreate(DurableAnchorKey externalSeed,
+			DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
+			List<List<CandidateRealizationInputBinding>> axes, int maximumLengthStates) {
+			return tryCreate(externalSeed, outputWorkerPoolWitness, exactPartitionRanges,
+				axes, maximumLengthStates, MAX_CANONICAL_LENGTH_TRANSITIONS);
+		}
+		static NativeSupportProduct tryCreate(DurableAnchorKey externalSeed,
+			DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
+			List<List<CandidateRealizationInputBinding>> axes, int maximumLengthStates,
+			long maximumLengthTransitions) {
 			CandidateSupportTemplateProduct templates = CandidateSupportTemplateProduct.tryCreate(
 				outputWorkerPoolWitness, exactPartitionRanges, axes);
-			return templates == null ? null : templates.nativeProduct(externalSeed);
+			return templates == null ? null
+				: templates.nativeProduct(externalSeed, maximumLengthStates,
+					maximumLengthTransitions);
 		}
 		boolean sameExactAuthority(NativeSupportProduct that) {
 			if(this == that)
@@ -4906,9 +4980,12 @@ final class NativePlacementContinuity {
 		}
 
 		List<CandidateRealizationInputBinding> bindingsAt(int ordinal) {
-			return bindingsAt(axes, size, ordinal);
+			return canonicalIndex.bindingsAt(axes, size, ordinal);
 		}
-		private static List<CandidateRealizationInputBinding> bindingsAt(
+		int ordinalOfBindings(List<CandidateRealizationInputBinding> bindings) {
+			return canonicalIndex.ordinalOfBindings(axes, bindings);
+		}
+		private static List<CandidateRealizationInputBinding> rowMajorBindingsAt(
 			List<List<CandidateRealizationInputBinding>> axes, int size, int ordinal) {
 			Objects.checkIndex(ordinal, size);
 			if(axes.isEmpty())
@@ -4925,6 +5002,210 @@ final class NativePlacementContinuity {
 				java.util.Arrays.asList(selected), "native support product binding");
 		}
 	}
+
+	/**
+	 * Exact canonical unrank for a native support product. The first member-varying
+	 * field in a support clause is the length-prefixed native proof authority. Its
+	 * length is a fixed prefix plus the sum of the selected binding text lengths.
+	 * Suffix counts therefore recover canonical members without enumerating tuples.
+	 */
+	private static final class NativeCanonicalProductIndex {
+		private final boolean rowMajor;
+		private final List<int[]> optionLengths;
+		private final List<java.util.Map<Integer,Integer>> suffixLengthCounts;
+		private final List<NativeCanonicalLengthBucket> orderedLengths;
+
+		private NativeCanonicalProductIndex(boolean rowMajor,
+			List<int[]> optionLengths,
+			List<java.util.Map<Integer,Integer>> suffixLengthCounts,
+			List<NativeCanonicalLengthBucket> orderedLengths) {
+			this.rowMajor = rowMajor;
+			this.optionLengths = optionLengths;
+			this.suffixLengthCounts = suffixLengthCounts;
+			this.orderedLengths = orderedLengths;
+		}
+
+		private static NativeCanonicalProductIndex tryCreate(DurableAnchorKey externalSeed,
+			DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
+			List<List<CandidateRealizationInputBinding>> axes, int maximumLengthStates,
+			long maximumLengthTransitions) {
+			if(maximumLengthStates < 0 || maximumLengthTransitions < 0)
+				return null;
+			PlacementAnalysis.NormalizedTextContext textContext =
+				new PlacementAnalysis.NormalizedTextContext();
+			List<int[]> optionLengths = new ArrayList<>(axes.size());
+			boolean uniform = true;
+			for(List<CandidateRealizationInputBinding> axis : axes) {
+				int[] lengths = new int[axis.size()];
+				for(int option = 0; option < axis.size(); option++) {
+					lengths[option] = textContext.binding(axis.get(option)).length();
+					uniform &= option == 0 || lengths[option] == lengths[0];
+				}
+				optionLengths.add(lengths);
+			}
+			try {
+				int fixedAuthorityLength = Math.addExact(
+					Math.addExact(externalSeed.normalizedSignature().length(), "|outputPool=".length()),
+					outputWorkerPoolWitness.normalizedSignature().length());
+				fixedAuthorityLength = Math.addExact(fixedAuthorityLength, "|partitionRanges=".length());
+				fixedAuthorityLength = Math.addExact(fixedAuthorityLength,
+					exactPartitionRanges ? "exact".length() : "dynamic".length());
+				fixedAuthorityLength = Math.addExact(fixedAuthorityLength, "|bindings=[".length() + 1);
+				fixedAuthorityLength = Math.addExact(fixedAuthorityLength,
+					Math.multiplyExact(Math.max(0, axes.size() - 1), ", ".length()));
+				if(uniform) {
+					int authorityLength = fixedAuthorityLength;
+					for(int[] lengths : optionLengths)
+						authorityLength = Math.addExact(authorityLength, lengths[0]);
+					return new NativeCanonicalProductIndex(true, List.copyOf(optionLengths),
+						List.of(), List.of());
+				}
+
+				List<java.util.Map<Integer,Integer>> suffix = new ArrayList<>(
+					Collections.nCopies(axes.size() + 1, null));
+				suffix.set(axes.size(), java.util.Map.of(0, 1));
+				long retainedStates = 1;
+				long transitions = 0;
+				for(int axis = axes.size() - 1; axis >= 0; axis--) {
+					java.util.Map<Integer,Integer> tail = suffix.get(axis + 1);
+					java.util.Map<Integer,Integer> lengthMultiplicities = new java.util.HashMap<>();
+					for(int optionLength : optionLengths.get(axis))
+						lengthMultiplicities.merge(optionLength, 1, Math::addExact);
+					long axisTransitions = Math.multiplyExact(
+						(long)lengthMultiplicities.size(), tail.size());
+					if(axisTransitions > maximumLengthTransitions - transitions)
+						return null;
+					transitions += axisTransitions;
+					java.util.Map<Integer,Integer> counts = new java.util.HashMap<>();
+					for(var lengthEntry : lengthMultiplicities.entrySet())
+						for(var tailEntry : tail.entrySet()) {
+							int length = Math.addExact(lengthEntry.getKey(), tailEntry.getKey());
+							int contribution = Math.multiplyExact(
+								lengthEntry.getValue(), tailEntry.getValue());
+							Integer prior = counts.get(length);
+							if(prior == null) {
+								if(retainedStates >= maximumLengthStates)
+									return null;
+								counts.put(length, contribution);
+								retainedStates++;
+							}
+							else
+								counts.put(length, Math.addExact(prior, contribution));
+						}
+					suffix.set(axis, java.util.Map.copyOf(counts));
+				}
+
+				List<NativeCanonicalLengthBucket> ordered = new ArrayList<>(suffix.get(0).size());
+				for(var entry : suffix.get(0).entrySet()) {
+					int authorityLength = Math.addExact(fixedAuthorityLength, entry.getKey());
+					ordered.add(new NativeCanonicalLengthBucket(entry.getKey(), entry.getValue(),
+						Integer.toString(authorityLength) + ':'));
+				}
+				ordered.sort(java.util.Comparator.comparing(NativeCanonicalLengthBucket::lengthPrefix));
+				return new NativeCanonicalProductIndex(false, List.copyOf(optionLengths),
+					List.copyOf(suffix), List.copyOf(ordered));
+			}
+			catch(ArithmeticException overflow) {
+				return null;
+			}
+		}
+
+		private List<CandidateRealizationInputBinding> bindingsAt(
+			List<List<CandidateRealizationInputBinding>> axes, int size, int ordinal) {
+			Objects.checkIndex(ordinal, size);
+			if(rowMajor)
+				return NativeSupportProduct.rowMajorBindingsAt(axes, size, ordinal);
+			int bindingLength = -1;
+			int withinLength = ordinal;
+			for(NativeCanonicalLengthBucket bucket : orderedLengths) {
+				if(withinLength < bucket.count()) {
+					bindingLength = bucket.bindingLength();
+					break;
+				}
+				withinLength -= bucket.count();
+			}
+			if(bindingLength < 0)
+				throw new IllegalStateException("Native support ordinal exceeds canonical length index");
+
+			CandidateRealizationInputBinding[] selected =
+				new CandidateRealizationInputBinding[axes.size()];
+			int remainingLength = bindingLength;
+			for(int axis = 0; axis < axes.size(); axis++) {
+				boolean found = false;
+				for(int optionIndex = 0; optionIndex < axes.get(axis).size(); optionIndex++) {
+					CandidateRealizationInputBinding option = axes.get(axis).get(optionIndex);
+					int optionLength = optionLengths.get(axis)[optionIndex];
+					int suffixLength = remainingLength - optionLength;
+					int count = suffixLength < 0 ? 0
+						: suffixLengthCounts.get(axis + 1).getOrDefault(suffixLength, 0);
+					if(withinLength >= count) {
+						withinLength -= count;
+						continue;
+					}
+					selected[axis] = option;
+					remainingLength = suffixLength;
+					found = true;
+					break;
+				}
+				if(!found)
+					throw new IllegalStateException("Native canonical support index is inconsistent");
+			}
+			if(remainingLength != 0 || withinLength != 0)
+				throw new IllegalStateException("Native canonical support member was not fully consumed");
+			return PlacementAnalysis.sharedAlreadyCanonicalComparableList(
+				java.util.Arrays.asList(selected), "native support product binding");
+		}
+
+		private int ordinalOfBindings(List<List<CandidateRealizationInputBinding>> axes,
+			List<CandidateRealizationInputBinding> bindings) {
+			if(bindings.size() != axes.size())
+				return -1;
+			int[] selectedOptions = new int[axes.size()];
+			int bindingLength = 0;
+			for(int axis = 0; axis < axes.size(); axis++) {
+				selectedOptions[axis] = identityIndexOf(axes.get(axis), bindings.get(axis));
+				if(selectedOptions[axis] < 0)
+					return -1;
+				bindingLength = Math.addExact(bindingLength,
+					optionLengths.get(axis)[selectedOptions[axis]]);
+			}
+			if(rowMajor) {
+				int ordinal = 0;
+				for(int axis = 0; axis < axes.size(); axis++)
+					ordinal = Math.addExact(Math.multiplyExact(ordinal, axes.get(axis).size()),
+						selectedOptions[axis]);
+				return ordinal;
+			}
+
+			int rank = 0;
+			for(NativeCanonicalLengthBucket bucket : orderedLengths) {
+				if(bucket.bindingLength() == bindingLength)
+					break;
+				rank = Math.addExact(rank, bucket.count());
+			}
+			int remainingLength = bindingLength;
+			for(int axis = 0; axis < axes.size(); axis++) {
+				for(int option = 0; option < selectedOptions[axis]; option++) {
+					int suffixLength = remainingLength - optionLengths.get(axis)[option];
+					if(suffixLength >= 0)
+						rank = Math.addExact(rank,
+							suffixLengthCounts.get(axis + 1).getOrDefault(suffixLength, 0));
+				}
+				remainingLength -= optionLengths.get(axis)[selectedOptions[axis]];
+			}
+			return remainingLength == 0 ? rank : -1;
+		}
+
+		private static int identityIndexOf(List<?> values, Object selected) {
+			for(int index = 0; index < values.size(); index++)
+				if(values.get(index) == selected)
+					return index;
+			return -1;
+		}
+	}
+
+	private record NativeCanonicalLengthBucket(int bindingLength, int count,
+		String lengthPrefix) { }
 
 	private static final class CandidateSupportTemplateProduct
 		extends AbstractList<CandidateSupportTemplate> implements java.util.RandomAccess {
@@ -4952,8 +5233,6 @@ final class NativePlacementContinuity {
 			if(axes.isEmpty())
 				return null;
 			Set<CompiledHopKey> owners = Collections.newSetFromMap(new IdentityHashMap<>());
-			PlacementAnalysis.NormalizedTextContext textContext =
-				new PlacementAnalysis.NormalizedTextContext();
 			long cardinality = 1L;
 			int previousInputPosition = -1;
 			for(List<CandidateRealizationInputBinding> axis : axes) {
@@ -4966,17 +5245,13 @@ final class NativePlacementContinuity {
 				CompiledHopKey owner = axis.get(0).source().rule().parentOccurrence();
 				Set<CandidateRealizationReference> exactSources = new java.util.HashSet<>();
 				CandidateRealizationInputBinding previous = null;
-				int normalizedLength = -1;
 				for(CandidateRealizationInputBinding binding : axis) {
-					int bindingLength = textContext.binding(binding).length();
 					if(binding.kind() != CandidateInputBindingKind.DIRECT
 						|| binding.inputPosition() != inputPosition
 						|| binding.source().rule().parentOccurrence() != owner
 						|| !exactSources.add(binding.source())
-						|| normalizedLength >= 0 && normalizedLength != bindingLength
 						|| previous != null && previous.compareTo(binding) >= 0)
 						return null;
-					normalizedLength = bindingLength;
 					previous = binding;
 				}
 				// Repeated owners are correlated by one physical source decision. Keep
@@ -5039,12 +5314,21 @@ final class NativePlacementContinuity {
 
 		@Override public CandidateSupportTemplate get(int ordinal) {
 			return new CandidateSupportTemplate(outputWorkerPoolWitness,
-				exactPartitionRanges, NativeSupportProduct.bindingsAt(axes, size, ordinal));
+				exactPartitionRanges, NativeSupportProduct.rowMajorBindingsAt(axes, size, ordinal));
 		}
 
 		private NativeSupportProduct nativeProduct(DurableAnchorKey externalSeed) {
-			return new NativeSupportProduct(externalSeed, outputWorkerPoolWitness,
-				exactPartitionRanges, axes, size);
+			return nativeProduct(externalSeed, NativeSupportProduct.MAX_CANONICAL_LENGTH_STATES,
+				NativeSupportProduct.MAX_CANONICAL_LENGTH_TRANSITIONS);
+		}
+
+		private NativeSupportProduct nativeProduct(DurableAnchorKey externalSeed,
+			int maximumLengthStates, long maximumLengthTransitions) {
+			NativeCanonicalProductIndex canonicalIndex = NativeCanonicalProductIndex.tryCreate(
+				externalSeed, outputWorkerPoolWitness, exactPartitionRanges,
+				axes, maximumLengthStates, maximumLengthTransitions);
+			return canonicalIndex == null ? null : new NativeSupportProduct(externalSeed,
+				outputWorkerPoolWitness, exactPartitionRanges, axes, size, canonicalIndex);
 		}
 
 		private long estimatedRetainedBytes() {
