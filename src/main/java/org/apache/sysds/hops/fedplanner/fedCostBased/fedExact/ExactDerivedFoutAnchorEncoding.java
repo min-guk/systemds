@@ -102,6 +102,10 @@ final class ExactDerivedFoutAnchorEncoding {
 		}
 		private void factor(List<ExactCategoricalSolver.Variable> scope,
 			ExactCategoricalSolver.CostFunction evaluator) {
+			factor(ExactCategoricalSolver.Factor.lazy(scope, evaluator));
+		}
+		private void factor(ExactCategoricalSolver.Factor factor) {
+			List<ExactCategoricalSolver.Variable> scope = factor.scope();
 			if(new HashSet<>(scope).size() != scope.size())
 				throw new IllegalArgumentException("EXACT_DERIVED_FOUT_DUPLICATE_FACTOR_VARIABLE");
 			BigInteger factorCells = BigInteger.ONE;
@@ -111,7 +115,7 @@ final class ExactDerivedFoutAnchorEncoding {
 				throw new IllegalArgumentException("EXACT_DERIVED_FOUT_ENCODED_FACTOR_OVERFLOW|scope="
 					+ scope.stream().map(ExactCategoricalSolver.Variable::key).toList()
 					+ "|cells=" + factorCells);
-			factors.add(ExactCategoricalSolver.Factor.lazy(scope, evaluator));
+			factors.add(factor);
 			cells = cells.add(factorCells);
 		}
 	}
@@ -513,17 +517,15 @@ final class ExactDerivedFoutAnchorEncoding {
 		ExactCategoricalSolver.Variable state = null; // 0 equal, 1 greater, 2 less
 		for(int bit = 0; bit < left.size(); bit++) {
 			var pair = circuit.variable(key + "|bit=" + bit + "|pair", 4);
-			circuit.factor(List.of(left.get(bit), right.get(bit), pair), values ->
-				values[2] == values[0] * 2 + values[1] ? 0d : Double.POSITIVE_INFINITY);
+			circuit.factor(ExactCategoricalSolver.Factor.finiteSupport(
+				List.of(left.get(bit), right.get(bit), pair), 0, 5, 10, 15));
 			var next = circuit.variable(key + "|bit=" + bit + "|state", 3);
 			if(state == null)
-				circuit.factor(List.of(pair, next), values ->
-					values[1] == compareBits(values[0]) ? 0d : Double.POSITIVE_INFINITY);
+				circuit.factor(ExactCategoricalSolver.Factor.functionalMap(
+					pair, next, new int[] {0, 2, 1, 0}));
 			else
-				circuit.factor(List.of(state, pair, next), values -> {
-					int expected = values[0] == 0 ? compareBits(values[1]) : values[0];
-					return values[2] == expected ? 0d : Double.POSITIVE_INFINITY;
-				});
+				circuit.factor(ExactCategoricalSolver.Factor.finiteSupport(
+					List.of(state, pair, next), COMPARATOR_TRANSITIONS));
 			state = next;
 		}
 		ExactCategoricalSolver.Variable terminalState = state;
@@ -531,11 +533,11 @@ final class ExactDerivedFoutAnchorEncoding {
 			values[0] == 0 || values[1] == 1 ? 0d : Double.POSITIVE_INFINITY);
 	}
 
-	private static int compareBits(int pair) {
-		int left = pair / 2;
-		int right = pair % 2;
-		return left == right ? 0 : left > right ? 1 : 2;
-	}
+	// Row-major [previous state, bit pair, next state], with states equal/greater/less.
+	// Equal compares the bit pair; a prior strict comparison remains unchanged.
+	private static final int[] COMPARATOR_TRANSITIONS = {
+		0, 5, 7, 9, 13, 16, 19, 22, 26, 29, 32, 35
+	};
 
 	private static List<List<Integer>> adjacency(List<QueryPlan> plans,
 		Map<QueryKey,Integer> indexes) {

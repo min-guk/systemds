@@ -4933,6 +4933,18 @@ public final class PlacementAnalysis {
 		for(CandidateRuleFact fact : candidateRuleFacts.orderedFacts())
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
 				for(CandidateEmissionRealization realization : emission.realizations()) {
+					NativeContinuitySupportProduct nativeProduct =
+						realization.nativeContinuitySupportProduct().orElse(null);
+					if(nativeProduct != null) {
+						if(realization.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE
+							&& nativeProduct.nativeWorkerPoolWitness() == null)
+							throw new IllegalArgumentException(
+								"Published native lineage lacks exact worker-pool authority");
+						for(List<CandidateRealizationInputBinding> axis : nativeProduct.axes())
+							for(CandidateRealizationInputBinding binding : axis)
+								validateCandidateRealizationBinding(fact, binding);
+						continue;
+					}
 					if(realization.supportClauses() instanceof IndexedSupportClauses indexed) {
 						if(realization.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE
 							&& indexed.hasMissingNativeWitness())

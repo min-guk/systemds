@@ -107,6 +107,23 @@ public class NativeDynamicLayoutRelationViewTest {
 		Assert.assertFalse(NativePlacementContinuity.hasDynamicNativeLayout(List.of()));
 	}
 
+	@Test
+	public void tenThousandMemberNativeProductReadsUniformLayoutMetadataWithoutHandles() {
+		CandidateEmissionRealization template =
+			NativeContinuitySupportFixtureBridge.realization("native-layout-metadata", 100, 100);
+		var axes = template.nativeContinuitySupportProduct().orElseThrow().axes();
+		for(boolean exact : List.of(false, true)) {
+			CandidateEmissionRealization relation =
+				NativeContinuitySupportFixtureBridge.nativeRelation(template.key(), OWNER,
+					POOL, POOL, exact, axes);
+			Assert.assertEquals(!exact,
+				NativePlacementContinuity.hasDynamicNativeLayout(relation.supportClauses()));
+			Assert.assertEquals(10_000, relation.supportClauses().size());
+			Assert.assertEquals(0,
+				NativeContinuitySupportFixtureBridge.materialized(relation));
+		}
+	}
+
 	private static CandidateEmissionRealization explicit(
 		List<CandidateRealizationSupportClause> clauses, String id) {
 		return new CandidateEmissionRealization(

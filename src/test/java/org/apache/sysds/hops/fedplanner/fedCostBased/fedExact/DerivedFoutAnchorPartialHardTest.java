@@ -269,11 +269,15 @@ public class DerivedFoutAnchorPartialHardTest {
 		var canonicalSurface = ExactPhysicalCostModel.physicalCostSurface(analysis, canonicalModel);
 		var encodedSurface = ExactPhysicalCostModel.physicalCostSurface(analysis, encodedModel);
 		var local = LocalPhysicalOptimizer.optimize(canonicalModel, canonicalSurface).physicalResult();
+		var encodedLocal = LocalPhysicalOptimizer.optimize(encodedModel, encodedSurface).physicalResult();
 		var canonical = ExactPhysicalOptimizer.optimize(canonicalModel, canonicalSurface,
 			ExactPhysicalOptimizer.PRODUCTION_LIMITS);
 		var encoded = ExactPhysicalOptimizer.optimize(encodedModel, encodedSurface,
 			ExactPhysicalOptimizer.PRODUCTION_LIMITS);
 		Assert.assertEquals(local.canonicalObjectiveBits(), canonical.canonicalObjectiveBits());
+		Assert.assertEquals(local.canonicalObjectiveBits(), encodedLocal.canonicalObjectiveBits());
+		Assert.assertEquals(local.solverResult().assignmentInVariableOrder(),
+			encodedLocal.solverResult().assignmentInVariableOrder().subList(0, canonicalModel.domains().size()));
 		Assert.assertEquals(canonical.canonicalObjectiveBits(), encoded.canonicalObjectiveBits());
 		Assert.assertEquals(local.solverResult().assignmentInVariableOrder(),
 			canonical.solverResult().assignmentInVariableOrder());

@@ -7,7 +7,10 @@ import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NativeContinuitySupportFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
@@ -73,6 +76,32 @@ public class ExactNativeSupportCostMetadataTest {
 		}
 	}
 
+	@Test
+	public void dynamicNativeMetadataFallsThroughToFederatedSourceAnchorWithoutExpansion() {
+		var relation = nativeRelation("dynamic-source-layout", 20, 2, false);
+		var owner = NativeContinuitySupportFixtureBridge.key("dynamic-source-owner");
+		var rule = new CandidateRuleKey(owner, List.of());
+		var binding = CandidateRealizationInputBinding.direct(0,
+			CandidateRealizationReference.of(rule, relation));
+		var analysis = analysis();
+		when(analysis.requireExactCandidateRealization(binding.source())).thenReturn(relation);
+		DataOp federated = mock(DataOp.class);
+		when(federated.getOp()).thenReturn(OpOpData.FEDERATED);
+		when(analysis.hop(owner)).thenReturn(Optional.of(federated));
+		var sourceNode = mock(NeutralPlacementGraph.Node.class);
+		DurableAnchorKey fallback = pool("federated-fallback", 3);
+		when(sourceNode.anchors()).thenReturn(List.of(fallback));
+		when(analysis.graph().node(owner)).thenReturn(Optional.of(sourceNode));
+
+		Assert.assertSame(fallback,
+			ExactPhysicalModel.deliveredSupportLayoutForTest(analysis, binding));
+		Assert.assertEquals(0, relation.fullyMaterializedSupportClauseCount());
+
+		when(analysis.hop(owner)).thenReturn(Optional.empty());
+		Assert.assertNull(ExactPhysicalModel.deliveredSupportLayoutForTest(analysis, binding));
+		Assert.assertEquals(0, relation.fullyMaterializedSupportClauseCount());
+	}
+
 	private static CandidateEmissionRealization nativeRelation(
 		String name, int width, int workers, boolean exact) {
 		var template = NativeContinuitySupportFixtureBridge.realization(name, width, width);
@@ -84,6 +113,14 @@ public class ExactNativeSupportCostMetadataTest {
 		return NativeContinuitySupportFixtureBridge.nativeRelation(template.key(),
 			NativeContinuitySupportFixtureBridge.key(name + "-owner"), pool, pool, exact,
 			template.nativeContinuitySupportProduct().orElseThrow().axes());
+	}
+
+	private static DurableAnchorKey pool(String name, int workers) {
+		List<AnchorPartition> ranges = new ArrayList<>();
+		for(int worker = 0; worker < workers; worker++)
+			ranges.add(new AnchorPartition("worker-" + worker + ":1234/data",
+				List.of((long)worker * 8, 0L), List.of((long)(worker + 1) * 8, 2L)));
+		return new DurableAnchorKey(name, FType.ROW, ranges);
 	}
 
 	private static PlacementAnalysis analysis() {

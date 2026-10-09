@@ -248,3 +248,21 @@
 - **Physical 후속 제한**: 강제 선택한 모든 tuple의 비용/receipt 동등성만으로는 unconstrained optimizer의 동일-cost tie 순서까지 보장하지 못한다. Consumer clause domain을 축소할 때 canonical member 순서와 producer domain 순서가 달라질 수 있어, free Local/Exact 동률 반례 및 보존 조건을 추가 검증한다. 검증 전 Physical 변경을 실제 성능 엔진에 포함하지 않는다. Rank 단독 후보는 별도 전체 gate를 진행한다.
 
 - **Rank 단독 통합 gate**: fresh main/test compile, **1,012 JUnit PASS(177.301초)**, source SHA mismatch0, static independent review CLEAR. Evidence `evidence/native-variable-rank-full-green-1012`. Multi-member Physical compaction은 동률 receipt 반례 때문에 제외했고, 이 검증본만 v6로 게시·봉인·실측한다.
+
+
+### COFEE v6 실제 완료: 생성 방문 감소가 전체 시간 감소로 이어지지 않음
+
+- **상태/증상**: v6 `9fb272e355`/JAR `f1eedaa2187e31af274887c9419941a16c6879d91a1ded37ed91f1b77fe912e6`, 동일50K×128/W1/DML/Y/privacy/seed/profile/자원에서 LogReg fullInitial422.957952127초, GLM151.734634551초. v5의403.786/142.961초보다 느리고20초 미달이다. 양쪽 numeric comparator PASS, runtime audit mismatch0, plan fingerprint는 v5와 동일하다.
+- **원인 근거**: native support leaf 방문은 LogReg3,919,362→3,072, GLM799,642→356으로 줄었지만 explicit Clause는2,534,754→2,536,770 및1,156,839→1,157,816로 거의 그대로다. `candidateTopologyMeasured`가 모든 support member를 다시 순회하고, PlacementAnalysis validation과 일부 metadata 조회도 전개한다. 잔여 proof alternative/edge 집계에는 summary 재사용 크기가 포함되므로 새 객체/DP 방문 수로 보고하지 않는다. Memo eviction0이며 capacity 증설을 해법으로 가정하지 않는다.
+- **증거/재현**: `evidence/cofee-50k128-v6-validation/v6-final-summary.json` SHA77721096e2708e165282e0ca3480060ef601057cde22fdf44badb9f4606ceaa9. 각1회 clean completed run이며20초 초과이므로 반복3회 성공으로 포장하지 않는다. 새 profiling/JFR 없이 정상 harness/receipt 지표만 사용했다.
+
+### v7 후보: native metadata 재전개 제거 및 SCC rank 관계 표현
+
+- **상태**: focused37 PASS(9.742초), independent static review CLEAR; 전체 gate 진행중. 실제 시간 개선은 아직 검증 전이다.
+- **변경/근거**: PlacementAnalysis는 각 native axis의 모든 binding과 uniform witness를 검사한다. Physical source-owner 집계와 delivered layout은 native metadata를 읽되 기존 FEDERATED unique-anchor fallback을 보존한다. NPC dynamic-layout와 exact-owner authority는 uniform metadata로 판정한다. Fixed-pool graph는 동일한 grounded pool leaf 반복만 하나로 표현하며 exact member source/proof authority는 원래 relation에 유지한다.
+- **DP 변경**: `ExactDerivedFoutAnchorEncoding` SCC bit comparator의16/12/36 Cartesian lazy cells를4/4/12개 finite-support 또는 functional row로 표현한다. 변수, scope, factor 순서, logical-cell 회계,0/+INF raw bits는 같다. 모든 cell explicit parity와 fixed-seed free assignment/tie parity를 검증했다. 이 gate가 실제 optimizer74초의 주원인이라고 주장하지 않는다.
+- **수정 파일**: NativePlacementContinuity.java, PlacementAnalysis.java, ExactPhysicalModel.java, ExactDerivedFoutAnchorEncoding.java와 해당 focused 회귀 tests.
+- **검증/실패 보존**: metadata 기존 구현은400member 모두 materialize하여 새0-handle assertion에 실패했다(`evidence/native-fixed-metadata-red-13`). 수정 후 exact/dynamic의 alias resolution·ownerReads·action authority explicit parity 및0handles 통과.10,000member dynamic 조회도0handles다. Sparse gate 초기 red와15PASS는 `evidence/derived-rank-sparse-red`, `evidence/derived-rank-sparse-green-15`; 통합 focused37PASS는 `evidence/native-metadata-sparse-focused-green-37`.
+- **제외/잔여 위험**: multi-member Physical compaction은 unconstrained equal-cost canonical receipt 반례가 있어 제외했다. Physical exact fallback과 proof topology member 전개는 남는다. AND(per-axis OR) proof graph 설계는 full rectangle/DIRECT/distinct owner만 대상으로 하며 SCC·cache·fixed pin·authority 검증 전에는 통합하지 않는다. Metadata shortcut의 회귀는 dynamic layout/FEDERATED fallback/explicit parity 및 전체 회귀로 감지한다.
+
+- **v7 병합 전 gate**: fresh compile 및1,017 JUnit PASS(185.856초), source SHA mismatch0, independent static review CLEAR. Encoded Local과 Exact의 canonical assignment/raw objective parity까지 통과했다. 증거 `evidence/native-metadata-sparse-full-green-1017`. 이후 도착한 origin/main d27fa82b44의 pruning ordinal/native projection 변경을 병합하여 재검증한다.

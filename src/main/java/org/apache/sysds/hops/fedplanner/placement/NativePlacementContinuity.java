@@ -2281,6 +2281,9 @@ final class NativePlacementContinuity {
 		if(supportClauses instanceof FactorizedSupportClauses factorized)
 			return factorized.nativeWorkerPoolWitness() != null
 				&& !factorized.nativeWorkerPoolLayoutExact();
+		if(supportClauses instanceof NativeContinuitySupportClauses nativeProduct)
+			return nativeProduct.clauseWitness() != null
+				&& !nativeProduct.clauseLayoutExact();
 		if(supportClauses instanceof IndexedSupportClauses indexed) {
 			for(int row = 0; row < indexed.size(); row++)
 				if(indexed.witnessAt(row) != null && !indexed.layoutExactAt(row))
@@ -3490,6 +3493,13 @@ final class NativePlacementContinuity {
 					if(realization.key().layoutKind()
 						!= PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE)
 						continue;
+					if(realization.supportClauses() instanceof NativeContinuitySupportClauses product) {
+						if(product.clauseWitness() != null && product.clauseLayoutExact()
+							&& PlacementIdentity.samePhysicalWorkerPool(
+								product.clauseWitness(), action.durableAnchor()))
+							return true;
+						continue;
+					}
 					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 						DurableAnchorKey pool = realization.provenWorkerPoolForOwnedClause(clause);
 						if(pool != null && clause.nativeWorkerPoolLayoutExact()
@@ -3994,6 +4004,17 @@ final class NativePlacementContinuity {
 		CandidateEmissionRealization realization = candidateRealization(reference);
 		if(realization == null)
 			return new FixedPoolNode(List.of());
+		if(realization.supportClauses() instanceof NativeContinuitySupportClauses product) {
+			DurableAnchorKey pool = realization.anchor() != null
+				? realization.anchor() : product.clauseWitness();
+			if(pool != null) {
+				boolean exact = realization.anchor() != null || product.clauseLayoutExact();
+				// Every member is the same grounded pool leaf in this metadata graph.
+				// Exact source/proof authority remains owned by the original relation.
+				return new FixedPoolNode(List.of(new FixedPoolClause(
+					new FixedValueMapPool(pool, exact, exact), List.of())));
+			}
+		}
 		List<FixedPoolClause> clauses = new ArrayList<>();
 		for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 			DurableAnchorKey nativePool = realization.nativeWorkerPoolResidencyForOwnedClause(clause);

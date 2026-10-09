@@ -67,6 +67,41 @@ import org.junit.Test;
 /** Behavior lock for revision-shared fixed-pool graph/worklist resolution. */
 public class NativeFixedPoolWorklistTest {
 	@Test
+	public void nativePoolMetadataPreservesExplicitResolutionAndAuthorityWithoutHandles() throws Exception {
+		var template = NativeContinuitySupportFixtureBridge.realization("fixed-native-metadata", 20, 20);
+		var axes = template.nativeContinuitySupportProduct().orElseThrow().axes();
+		DurableAnchorKey pool = rowPool("native-pool", "a:9000", "b:9000", 4, 2);
+		for(boolean exact : List.of(false, true)) {
+			Node leaf = node("native-leaf-" + exact, 0, FType.ROW);
+			CandidateRuleKey leafRule = rule(leaf, 2);
+			var nativeRelation = NativeContinuitySupportFixtureBridge.nativeRelation(
+				template.key(), leaf.key(), pool, pool, exact, axes);
+			var explicit = NativeContinuitySupportFixtureBridge.explicitNativeRelation(
+				template.key(), leaf.key(), pool, pool, exact, axes);
+			GraphBuilder builder = new GraphBuilder();
+			AliasShell alias = builder.aliasShell("native-alias-" + exact, 1);
+			builder.realize(alias, List.of(List.of(CandidateRealizationReference.of(leafRule, nativeRelation))));
+			List<Node> nodes = List.of(leaf, alias.node());
+			var expected = continuity(nodes, List.of(fact(leafRule, explicit), alias.element().fact()));
+			var actual = continuity(nodes, List.of(fact(leafRule, nativeRelation), alias.element().fact()));
+			Assert.assertEquals(expected.fixedValueMapResolution(alias.reference()),
+				actual.fixedValueMapResolution(alias.reference()));
+			Assert.assertEquals(0, NativeContinuitySupportFixtureBridge.materialized(nativeRelation));
+
+			var action = org.mockito.Mockito.mock(PlacementIdentity.DerivedFoutMaterializationActionKey.class);
+			org.mockito.Mockito.when(action.durableAnchorOwner()).thenReturn(leaf.key());
+			org.mockito.Mockito.when(action.durableAnchorOwnerFType()).thenReturn(FType.ROW);
+			org.mockito.Mockito.when(action.durableAnchor()).thenReturn(pool);
+			var authority = NativePlacementContinuity.class.getDeclaredMethod(
+				"declaresExactNativeOwnerAuthority", PlacementIdentity.DerivedFoutMaterializationActionKey.class);
+			authority.setAccessible(true);
+			Assert.assertEquals(exact, authority.invoke(expected, action));
+			Assert.assertEquals(exact, authority.invoke(actual, action));
+			Assert.assertEquals(0, NativeContinuitySupportFixtureBridge.materialized(nativeRelation));
+		}
+	}
+
+	@Test
 	public void fixedPoolWorkCountersStayLinearAndCachedQueriesDoNoWork() {
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		Graph graph = longDiamondGraph(metrics);
