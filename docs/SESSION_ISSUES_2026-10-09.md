@@ -771,3 +771,27 @@
 - **수정 파일/위험**: 새NativeDurableProductPairObserver.java, PlacementRelationClosure.java, SearchSpaceMetrics.java, 새observertest, NativeMixedExactnessPartitionTest.java. MetricsON에는제한된diagnostic비용이추가되며OFF제어경로가바뀌지않도록회귀/독립검토한다. 독립productionCLEAR,최종helper/focused/fullgate/실측은남아있다.20초목표미달/전체MLrule-directedcoverage미완료.
 - **v38 targeted 최종**: helperfixture는추가로DURABLE_MAP에nonnullclausewitness를붙여기존생성자검증에서6회실패했다. 관측규칙이나생성자제약을완화하지않고모든durablefixture를nullwitness/exact로고쳤으며불법clausemetadata는생성자거절회귀로분리했다. 최종8helper+7mixedactualbinder+2multiseed+6singleaxisunion **23testsPASS(0.443초)**. FirstA/sameA/B/B에서B는worker/geometry가같고placementId만다른fullseed이며첫exemplar가교체되지않음을검사한다. 네budget의emissionreset뒤누적성과partialcomparisonUNKNOWN도검증했다.
 - **다음 통합**: fetch에서origin/main ff34db737a/c56087b543의fromAlreadyCanonicalSupportClauses native-relation rebinding보존수정을발견했다. 자체diagnostic변경을targeted상태로localcommit한뒤병합하여fresh선택fullgate를한번수행한다. 현재v38원격게시/전체gate/실측성공을주장하지않는다.
+
+#### 원격 native rebind 검증 이력 (병합 보존)
+
+
+
+### v21 / 실제 GLM donor 오류 수정 및 native emission rebind 전개 제거 (검증중)
+
+- **증상/실제 근거**: v20 봉인 `3fff3de32e`의 LogReg planning 392.941539468초, GLM은 `Native product union lost exact member authority`로 실패했다. 실패 attempt `cofee-50k128-v20-validation/candidate-glm-run0/attempts/runtime/01791526415942541456-131d4aff`의 planning timer는 -1이다. Numeric/receipt parity를 실패 실행에서 추정하지 않는다. 비교 SHA `8079f2dc1c2f7ba96b2963f4398dee1301a65894194e6e44ad21e456b41c70fb`.
+- **원인/해결**: worklist의 IdentityHashMap은 현재 union 축 객체를 키로 사용한다. 외부 predicate를 donor clone에 재적용하면 동등한 source/owner의 살아 있는 donor를 제거한다. 최신 origin/main `6c5dc4a76e`의 실제 fixed-point 회귀·exact donor projection·보존 예산을 병합했다. 별도 lane에서 독립 확인한 같은 수정은 중복 구현하지 않고 추가 identity-predicate 회귀만 통합했다.
+- **추가 전개 지점**: `CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses`가 rebind 때 native relation 전체를 일반 canonical list로 복사했다. 이미 canonical인 NativeContinuitySupportClauses 객체를 그대로 생성자에 전달하여 압축·exact member authority를 보존한다. 생성자는 기존 witness/FType 검사를 수행한다. Oracle/privacy/runtime 의미를 수정하지 않는다.
+- **수정 파일**: PlacementAnalysis.java, NativeSupportRebindTest.java, NativeSingleAxisProductUnionTest.java. Incoming NativeContinuitySupportClauses/NativePlacementContinuity의 donor budget 및 Closure immutable fact projection도 보존한다.
+- **검증**: rebind 관계 identity/선택된 clause identity/handle 수와 잘못된 COL emission 거부를 검사하는 새 2개 회귀의 수정 전 RED를 `evidence/native-rebind-red-2`에 보존했다. 첫 focused 명령의 존재하지 않는 suite 이름은 초기화 오류로 별도 보존했고 실제 suite로 수정 후 41개 PASS(0.515초). 독립 donor/rebind/upstream 검토 CLEAR. 통합 전체 gate와 실제 GLM→LogReg 순서 검증은 진행 중이다.
+- **빌드 격리 문제**: 병렬 lane의 `cp -al`로 mutable engine-v19/engine-v20 gate classes가 공유되어 이후 javac가 다른 lane 바이트코드를 덮어썼다. 해당 gate 디렉터리를 재사용하지 않는다. 실제 봉인 v20 `evidence/candidate-engine-native-union-v20-20261009/classes`는 manifest의 4,627개 파일 모두 해시 일치(불일치0)를 다시 확인했다. v21은 이 봉인본에서 hardlink 없는 copytree로 별도 gate를 생성했다. 원본 runtime 증거와 봉인 디렉터리를 수정하지 않는다.
+- **잔여/위험**: 20초 목표 미달. 다중 header prototype은 별도 lane에 보존하며 실제 GLM 오류 수정 검증보다 먼저 통합하지 않는다. 새 rebind fast path는 native marker만 다루므로 다른 canonical list 계약은 그대로다. 증거 보존·source hash·실행 전후 class hash 및 실제 runtime receipt로 회귀를 감지한다.
+
+- **통합 gate의 계측 회귀**: 1,201개 중 1개가 `factorizedClauses=131`과 `receiptRelationSlots=137`의 같음을 기대해 실패했다. `factorizedClauses`는 최종 explicit interning 방문 수이고 native relation 보존 경로는 이를 의도적으로 건너뛴다. Native rebind가 유지한 6개 논리 슬롯을 더하지 않은 기존 fixture 가정이었다. Production counter 의미를 바꾸지 않고, fixture에서 무전개로 계산한 native 슬롯이 양수이고 `explicit interning + native logical slots == receipt slots`인지 검사하도록 수정한다. 실패 원본은 `evidence/native-authority-rebind-full-red-v21`에 보존했다. 수정 후 focused/full 검증은 별도 기록한다.
+
+- **v21 통합 최종 gate**: 수정 후 focused22개 PASS(38.212초), fresh 전체 selected FedPlanner1,201개 PASS(189.430초), 실행전후7,793 class/resource 변경0/source SHA불일치0. 별도 compile한 receipt/probe9개 PASS(1.180초). 근거 `evidence/native-authority-rebind-full-gate-v21`, `evidence/v21-probe-gate`. 이는 전체 저장소 Maven 검증이 아니며 실제 GLM/LogReg와20초목표는 다음 봉인 실행으로 판단한다. 통합 당시 origin/main6c5dc4a76e를 fast-forward 병합했다.
+
+
+- **v21 GLM 완료**: 봉인 c56087b543 / JAR c5485cb570c29a440be3156e8608619828dbc268a49b6fde3dc2d56d1a13cc43에서 planning123.244710929초(Analysis83.053, Model4.521, Cost7.922, Optimizer23.847), 실행7.172초. Numeric PASS/audit mismatch0/비용rawbits4655470428781502442/선택 receipt 정상 기준 동일. v20의 donor 오류는 재발하지 않았다. 각1회 관측이며20초미달. 이 봉인에는 후속origin0338eb6597의 세 query reuse 변경이 포함되지 않는다. 해당 변경은별도병합gate한다. LogReg 실행중이다.
+
+- **후속 main 병합**: origin/main0338eb6597의 warm closed-schedule edge count 재사용, positive clause identity lookup 우선 및 witness cached-hash 비교를 병합했다. 보수적/cold/filtered 경로와 negative 뒤 lazy native handle 검사는 유지한다. 별도 `engine-post-v21-merge-gate`의 관련178개 PASS(1.672초, 기존skip1). Root 소스 검토에서 합법성 변경 없음. 현재 실행 중인 v21 Docker 엔진은 변경하지 않았다.
+- **v38 통합 최종 gate**: 원격native rebind의관계/선택clauseidentity·1-not-12handles·ROW→COL검증·restricteduniondonor·실제compositionnative receipt회귀를포함해fresh159selectedclasses **1,321tests/failure0/error0/skip1**, package BUILD SUCCESS08:52:44. 자체diagnostic최종legalfixture/실제binder 및incomingnative-rebind 독립검토CLEAR. 단순계측성공을20초최적화성공으로보고하지않으며다음봉인Docker에서pairincidences를읽는다.

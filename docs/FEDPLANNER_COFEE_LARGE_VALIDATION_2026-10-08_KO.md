@@ -2,7 +2,7 @@
 
 ## 상태
 
-동일 COFEE 50K×128 W1 조건의 v19 실제 실행까지 완료했다. 최신 게시본은 `fe44101e97`이며, 실측 v19는 그 직전 `b31cc2bf67` 봉인본이다. **20초 목표는 달성하지 못했다.** 아래 값은 학습 실행 시간이 아니라 `planningFullInitialNanos`로 측정한 전체 초기 플래닝 시간이다.
+동일 COFEE 50K×128 W1 조건의 v20 실제 실행에서 LogReg는 완료했지만 GLM은 correctness 오류로 실패했다. v20 실측 봉인본은 `3fff3de32e`이며, 최신 병합 기준 `6c5dc4a76e`에는 이 donor 오류 수정이 포함된다. 수정 후 v21 실제 검증을 준비 중이다. **20초 목표는 달성하지 못했다.** 아래 값은 학습 실행 시간이 아니라 `planningFullInitialNanos`로 측정한 전체 초기 플래닝 시간이다.
 
 | 엔진 | LogReg | GLM | 검증 상태 |
 |---|---:|---:|---|
@@ -12,6 +12,13 @@
 | v17 | 386.944초 | 132.663초 | Numeric/audit 및 v16 선택 receipt·비용 raw bits 동일; 전체 시간 증가 |
 | v18 | 385.223초 | 128.050초 | Numeric/audit 및 v17 선택 receipt·비용 raw bits·전체 fingerprint 동일 |
 | v19 | 383.841초 | 127.505초 | Numeric/audit 및 v18 선택 receipt·비용 raw bits 동일; LogReg costSurface 표현 hash 변경 |
+| v20 | 392.942초 | 실패: 유효 timing 없음 | LogReg numeric/audit·선택 parity PASS. GLM donor authority 복원 예외 |
+
+v20 LogReg는 v19보다 9.100초 느렸다. Analysis 300.348초, Optimizer 77.554초이며 coordinator peak는 9,347,125,248B다. 소비 proof는 16,223,571개, 생성 Clause는 2,484,028개다. Overlay lookup 3,696,664회 중 resident hit는 0이며, 분할 product의 scalar 소비 8,530,130개 중 8,530,128개는 OUTPUT_COLLISION 때문이다. 이는 서로 다른 seed/header가 같은 출력에 도달할 때 압축 publication을 포기하는 경로가 실제로 크다는 증거다. 전체 시간 차이를 한 변경에 귀속하거나 반복 검증된 성능 차이로 해석하지 않는다.
+
+v20 GLM은 `Native product union lost exact member authority`로 실패했다. 전체 planning timer는 -1이며 시간·numeric·선택 parity 성공으로 계산하지 않는다. 원인은 union 객체에 대한 identity 기반 생존 검사를 donor의 별도 binding 객체에 재적용한 것이다. 수정은 생존한 union 축을 exact source/owner 조건으로 donor에 투영하며, authority를 대표 객체로 대체하지 않는다. 추가로 emission rebind에서 native relation을 일반 list로 복사하여 전개하던 경로를 제거한다. 기존 생성자의 witness/layout 검사는 그대로 실행한다.
+
+v20 실패와 성공을 분리 봉인한 근거: `evidence/cofee-50k128-v20-validation/v19-v20-comparison.json`, SHA256 `8079f2dc1c2f7ba96b2963f4398dee1301a65894194e6e44ad21e456b41c70fb`; runtime binding SHA256 `462534665d87abe11ee21a6cb009981b1c2a669ebe6bd5650baf93743a1ded24`. 이전 1,190개 단위 회귀 통과를 실제 GLM 성공으로 대체하지 않는다.
 
 v19의 단계별 실제 관측은 다음과 같다. 각 workload 1회이며 반복 검증된 성능 개선으로 해석하지 않는다.
 
@@ -34,7 +41,7 @@ LogReg의 소비한 proof는 v18보다 555,460개 줄었지만, 전체 초기 pl
 
 근거: `evidence/cofee-50k128-v19-validation/v18-v19-comparison.json`, SHA256 `13d5290f488267500e4d6bc7c1efd27cd8eafb01197eb7f6b9088f690043aa81`; frozen runtime binding SHA256 `fad547ba4d3dc528ba1b08101a11720b8d223663308d4e01ca4d2e910e9d48ce`. v19는 single-mixed-axis publication, constant finite numeric certificate, fixed-boundary overlay memo를 포함하며 이후 `e24fb093bd`의 acyclic footprint reuse는 포함하지 않는다. 전체 1,166개 회귀 PASS 및 실행 중 class/resource 변경 0을 확인한 봉인본이다.
 
-다음 수정은 같은 authority/header를 가진 한 축 차이의 native product union을 전개 없이 유지하고, TRead/TWrite replay 설명 문자열의 eager support 전개를 미루는 범위다. 서로 다른 authority, 여러 축의 상관관계, sparse hole은 기존 exact fallback을 유지한다. 분할 fallback의 원인별 소비량과 overlay 실제 hit/row 수를 정상 계측으로 추가하여 적용 범위를 확인한다. 이 후속 변경의 실제 성능은 아직 검증 전이다.
+다음 수정은 같은 authority/header를 가진 한 축 차이의 native product union을 전개 없이 유지하고, TRead/TWrite replay 설명 문자열의 eager support 전개를 미루는 범위다. 서로 다른 authority, 여러 축의 상관관계, sparse hole은 기존 exact fallback을 유지한다. 분할 fallback의 원인별 소비량과 overlay 실제 hit/row 수를 정상 계측으로 추가하여 적용 범위를 확인한다. 이 변경을 포함한 v20 실제 결과는 위 실패 기록을 따른다.
 
 v18은 LogReg 1.721초, GLM 4.612초 줄었지만 단일 관측이며, proof 소비량은 각각 16,848,259개와 2,210,823개로 v17과 같다. Public/native memo hit는 LogReg 31,312→98,777, GLM 12,197→42,049로 증가했다. Coordinator peak는 LogReg 9,326,448,640B, GLM 5,456,707,584B였다. 메모리나 전체 시간의 반복 검증된 개선으로 보고하지 않는다. 근거: `evidence/cofee-50k128-v18-validation/v17-v18-comparison.json`, SHA256 `6ffe1ab1da692805748c9981dff1c73a86c46fa82592099fbdb2ebea2e11ee47`.
 
