@@ -2,7 +2,24 @@
 
 ## 상태
 
-최신 실측 v6(`9fb272e355`, JAR `f1eedaa2…`)은 동일 COFEE50K×128 W1에서 LogReg **422.957952127초**, GLM **151.734634551초**에 전체 최초 planning을 완료했다. 두 workload의 숫자 비교와 runtime audit(mismatch0)은 통과했고 v5와 선택한 plan fingerprint도 같았다. 하지만 v5의403.786041598초/142.960651865초보다 느렸으며 **20초 목표는 미달**이다. 각 엔진·workload1회 관측이므로 반복 측정의 통계적 성능 개선으로 해석하지 않는다.
+최신 완료 실측은 v7(`c6be0b6916`, JAR `5172e29a…`)이다. 같은 COFEE50K×128 W1에서 LogReg **460.486971960초**, GLM **236.147365008초**로, v6보다 느렸고 **20초 목표는 여전히 미달**이다. 두 workload 모두 숫자 비교 PASS, runtime audit mismatch0, v5/v6와 동일한 선택 plan fingerprint를 확인했다. 이 v7 봉인본은 d27의 native projection/revision 재사용과 metadata/SCC 개선을 포함하지만, 이후 main에 반영한 689의 topology bucket 선형 검사와 v8의 sparse DP conditioning은 포함하지 않는다. 복합 변경의 각 원인별 속도 기여를 분리 측정하지 않았으므로 Analysis 악화를 downstream SCC 변경 때문이라고 단정하지 않는다.
+
+| v7 완료 측정 | LogReg | GLM |
+|---|---:|---:|
+| 전체 최초 planning (`receipt.planningFullInitialNanos`) | 460.486971960초 | 236.147365008초 |
+| 내부 Analysis | 372.203410278초 | 190.022935095초 |
+| Physical Model | 4.464905928초 | 6.317207005초 |
+| Cost Surface | 6.894105908초 | 9.871215495초 |
+| Optimizer | 73.826497478초 | 25.564320545초 |
+| 실제 실행 | 4.633276577초 | 7.012426216초 |
+| coordinator cgroup peak | 9,110,831,104B | 5,587,062,784B |
+| worker cgroup peak | 746,065,920B | 761,516,032B |
+
+근거는 `evidence/cofee-50k128-v7-validation/candidate-{logreg,glm}-run0/timing-evidence.json`이며 SHA256은 각각 `d22330c3e8beb0f721ea92d13f187d41d4e7b8c17d453c120cd6cc8676490da6`, `a595a6b74894b2c1cd42df02f4f5beeee1022a875139e7619973bebfa5f8eca2`다. 각1회 성공 관측으로 반복 성능 검증은 아니다. 명백하게20초를 초과하므로 같은 느린 엔진을3회 반복해 성공 근거처럼 집계하지 않는다. v8은 동일 조건의 실제 검증 중이다.
+
+아래는 v6까지의 이전 완료 기록이다.
+
+이전 실측 v6(`9fb272e355`, JAR `f1eedaa2…`)은 동일 COFEE50K×128 W1에서 LogReg **422.957952127초**, GLM **151.734634551초**에 전체 최초 planning을 완료했다. 두 workload의 숫자 비교와 runtime audit(mismatch0)은 통과했고 v5와 선택한 plan fingerprint도 같았다. 하지만 v5의403.786041598초/142.960651865초보다 느렸으며 **20초 목표는 미달**이다. 각 엔진·workload1회 관측이므로 반복 측정의 통계적 성능 개선으로 해석하지 않는다.
 
 | v5 → v6 실제 관측 | LogReg | GLM |
 |---|---:|---:|
@@ -35,7 +52,7 @@ v6는 variable-length native relation의 생성 전개를 없앴지만, 후속 v
 
 사용자 지시대로 DML·Y 위치·전처리·privacy·seed·cost profile·자원을 유지했다. 최신 main `ac0b5e6028` + native support/DP 통합 회귀 **1,006 JUnit PASS**, source/class hash mismatch0, independent review CLEAR다. 실제 runtime 근거는 `evidence/cofee-50k128-v5-validation/candidate-logreg-run1`, 범위가 명확한 시간 근거는 각 run 아래 `timing-evidence.json`이다. 두 완료 결과를 묶은 근거는 `evidence/cofee-50k128-v5-validation/first-valid-both-workloads.json`이다. 신규 profiling/JFR는 사용하지 않았다.
 
-v7 후보는 남은 metadata 조회의 native relation 직접 소비와 SCC rank gate의 sparse/functional 표현이다. 별도 Physical multi-member compaction은 동일-cost 선택에서 receipt가 달라지는 반례 때문에 제외했다. Proof topology 자체를 입력별 선택 그래프로 표현하는 후속 수정은 별도로 검증한다. 실제 v7 성능 검증 전에는 개선 시간을 주장하지 않는다.
+v7에는 남은 metadata 조회의 native relation 직접 소비와 SCC rank gate의 sparse/functional 표현을 포함했다. 별도 Physical multi-member compaction은 동일-cost 선택에서 receipt가 달라지는 반례 때문에 제외했다. Proof topology 자체를 입력별 선택 그래프로 표현하는 후속 수정은 별도로 검증한다. 완료된 v7 실제 시간은 위와 같이 악화됐으며 개선 성공으로 보고하지 않는다.
 
 ## 현재 병목: pruning 누락과 조합 전개를 구분
 

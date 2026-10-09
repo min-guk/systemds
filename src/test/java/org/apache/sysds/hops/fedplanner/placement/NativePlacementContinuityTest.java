@@ -3839,6 +3839,291 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void nativeRectangularTopologyUsesAxisGatesWithoutChangingExactProofs() {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+		Ref seed = full.source("gate-seed", pool);
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Ref left = full.unary("gate-left", OpOp1.LOG, seed, false);
+		Ref right = full.unary("gate-right", OpOp1.LOG, seed, false);
+		DurableAnchorKey leftA = new DurableAnchorKey(
+			"gate-left-a", FType.FULL, pool.partitions());
+		DurableAnchorKey leftB = new DurableAnchorKey(
+			"gate-left-b", FType.FULL, pool.partitions());
+		DurableAnchorKey leftC = new DurableAnchorKey(
+			"gate-left-c", FType.FULL, pool.partitions());
+		DurableAnchorKey leftD = new DurableAnchorKey(
+			"gate-left-d", FType.FULL, pool.partitions());
+		full.samePoolRealizations(left, unary, leftA, leftB, leftC, leftD);
+		full.samePoolRealizations(right, unary,
+			new DurableAnchorKey("gate-right-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("gate-right-b", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("gate-right-c", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("gate-right-d", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("gate-right-e", FType.FULL, pool.partitions()));
+		Ref consumer = full.binary("gate-consumer", OpOp2.PLUS, left, right, false);
+		List<CandidateInputState> binary = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+		CandidateRealizationReference staging = full.reference(consumer, binary);
+		NativePlacementContinuity.CandidateSupportResult generated =
+			full.resolver(new SearchSpaceMetrics(), 0, 0).proveCandidateSupport(staging, pool);
+		Assert.assertNotNull(generated.supportProduct());
+		Assert.assertEquals(20, generated.proofs().size());
+		NativeContinuitySupportClauses explicitRelation = new NativeContinuitySupportClauses(
+			consumer.key, generated.supportProduct(), pool, true);
+		CandidateRealizationReference explicitPublished = full.withClauses(
+			consumer, binary, List.copyOf(explicitRelation));
+		SearchSpaceMetrics explicitMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity.CandidateSupportResult explicit =
+			full.resolver(explicitMetrics, 0, 0).proveCandidateSupport(explicitPublished, pool);
+		NativeContinuitySupportClauses ambiguousRelation = new NativeContinuitySupportClauses(
+			consumer.key, generated.supportProduct(), pool, true);
+		CandidateRealizationReference ambiguousPublished = full.withClauses(
+			consumer, binary, ambiguousRelation);
+		CandidateRuleFact duplicatedAuthority = full.fact(consumer, binary);
+		full.candidates.add(duplicatedAuthority);
+		NativePlacementContinuity.CandidateSupportResult ambiguous =
+			full.resolver(new SearchSpaceMetrics(), 0, 0)
+				.proveCandidateSupport(ambiguousPublished, pool);
+		Assert.assertEquals("ambiguous matching rows use the exact legacy topology",
+			explicit.proofs().stream()
+				.map(NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+			ambiguous.proofs().stream()
+				.map(NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+		Assert.assertEquals(20, ambiguousRelation.materializedHandleCount());
+		full.candidates.remove(full.candidates.size() - 1);
+
+		NativeContinuitySupportClauses relation = new NativeContinuitySupportClauses(
+			consumer.key, generated.supportProduct(), pool, true);
+		CandidateRealizationReference published = full.withClauses(consumer, binary, relation);
+		Assert.assertEquals(PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE,
+			published.realization().layoutKind());
+		Assert.assertSame(relation, full.fact(consumer, binary).allowedEmissionFacts().get(0)
+			.realizations().get(0).supportClauses());
+		Assert.assertEquals(0, relation.materializedHandleCount());
+		SearchSpaceMetrics factoredMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity.CandidateSupportResult factored =
+			full.resolver(factoredMetrics, 0, 0).proveCandidateSupport(published, pool);
+		Assert.assertEquals("proof graph builds from one representative member",
+			1, relation.materializedHandleCount());
+
+		Assert.assertEquals(explicit.proofs().stream()
+			.map(NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+			factored.proofs().stream()
+				.map(NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+		Assert.assertEquals("topology construction needs one authoritative member only: "
+			+ factoredMetrics.snapshot(),
+			1, relation.materializedHandleCount());
+		Assert.assertEquals("logical support cardinality is unchanged", 20, relation.size());
+		Assert.assertTrue("axis gates visit O(sum of domains) graph alternatives",
+			factoredMetrics.snapshot().proofAlternativesBuilt()
+				< explicitMetrics.snapshot().proofAlternativesBuilt());
+		Assert.assertTrue("axis gates visit fewer graph dependency edges",
+			factoredMetrics.snapshot().proofDependencyEdgesBuilt()
+				< explicitMetrics.snapshot().proofDependencyEdgesBuilt());
+		Assert.assertTrue("the native root never enters the flat topology row cache",
+			factoredMetrics.snapshot().topologyRowsBuilt()
+				< explicitMetrics.snapshot().topologyRowsBuilt());
+		Assert.assertEquals(Set.of(consumer.key, left.key, right.key, seed.key),
+			factored.dependencyOccurrences());
+
+		full.samePoolRealizations(left, unary, leftA);
+		NativePlacementContinuity.CandidateSupportResult oneDeadOption =
+			full.resolver(new SearchSpaceMetrics(), 0, 0).proveCandidateSupport(published, pool);
+		Assert.assertEquals("one dead source removes only its gate option", 5,
+			oneDeadOption.proofs().size());
+		Assert.assertEquals(1, relation.materializedHandleCount());
+		full.candidates.removeIf(candidate -> candidate.key().parentOccurrence() == left.key);
+		Assert.assertTrue("an empty source axis kills the consumer AND gate",
+			full.resolver(new SearchSpaceMetrics(), 0, 0)
+				.proveCandidateSupport(published, pool).proofs().isEmpty());
+		Assert.assertEquals(1, relation.materializedHandleCount());
+	}
+
+	@Test
+	public void randomizedNativeAxisGatesMatchExplicitRectanglesAfterSourceWithdrawal() {
+		java.util.Random random = new java.util.Random(0x6e61746976654cL);
+		for(int trial = 0; trial < 20; trial++) {
+			Fixture full = new Fixture(FType.FULL);
+			DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+			Ref seed = full.source(String.format("random-gate-seed-%02d", trial), pool);
+			List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+			int axisCount = 1 + random.nextInt(4);
+			Ref[] producers = new Ref[axisCount];
+			DurableAnchorKey[][] choices = new DurableAnchorKey[axisCount][];
+			int logicalSize = 1;
+			for(int axis = 0; axis < axisCount; axis++) {
+				producers[axis] = full.unary(String.format("random-gate-%02d-axis-%02d",
+					trial, axis), OpOp1.LOG, seed, false);
+				int width = 1 + random.nextInt(4);
+				logicalSize *= width;
+				choices[axis] = new DurableAnchorKey[width];
+				for(int option = 0; option < width; option++)
+					choices[axis][option] = new DurableAnchorKey(String.format(
+						"random-gate-%02d-axis-%02d-option-%02d", trial, axis, option),
+						FType.FULL, pool.partitions());
+				full.samePoolRealizations(producers[axis], unary, choices[axis]);
+			}
+
+			Ref consumer = full.nary(String.format("random-gate-%02d-consumer", trial),
+				OpOpN.MULT, false, producers);
+			List<CandidateInputState> inputs = java.util.Collections.nCopies(
+				axisCount, CandidateInputState.present(FType.FULL));
+			NativePlacementContinuity.CandidateSupportResult generated = full.resolver()
+				.proveCandidateSupport(full.reference(consumer, inputs), pool);
+			Assert.assertNotNull("trial " + trial, generated.supportProduct());
+			boolean exact = (trial & 1) == 0;
+			NativePlacementContinuity.NativeSupportProduct product = exact
+				? generated.supportProduct()
+				: NativePlacementContinuity.NativeSupportProduct.tryCreate(
+					pool, pool, false, generated.supportProduct().axes());
+			Assert.assertNotNull("dynamic trial " + trial, product);
+			Assert.assertEquals(logicalSize, product.size());
+
+			NativeContinuitySupportClauses explicitRelation =
+				new NativeContinuitySupportClauses(consumer.key, product, pool, exact);
+			CandidateRealizationReference explicitPublished = full.withClauses(
+				consumer, inputs, List.copyOf(explicitRelation));
+
+			boolean empty = false;
+			for(int axis = 0; axis < axisCount; axis++) {
+				int keep = trial % 5 == 0 && axis == axisCount - 1
+					? 0 : random.nextInt(choices[axis].length + 1);
+				if(keep == 0) {
+					empty = true;
+					CompiledHopKey owner = producers[axis].key;
+					full.candidates.removeIf(candidate ->
+						candidate.key().parentOccurrence() == owner);
+				}
+				else
+					full.samePoolRealizations(producers[axis], unary,
+						java.util.Arrays.copyOf(choices[axis], keep));
+			}
+
+			NativePlacementContinuity.CandidateSupportResult explicit = full.resolver()
+				.proveCandidateSupport(explicitPublished, pool);
+			NativeContinuitySupportClauses factoredRelation =
+				new NativeContinuitySupportClauses(consumer.key, product, pool, exact);
+			CandidateRealizationReference factoredPublished = full.withClauses(
+				consumer, inputs, factoredRelation);
+			NativePlacementContinuity.CandidateSupportResult factored = full.resolver()
+				.proveCandidateSupport(factoredPublished, pool);
+
+			Assert.assertEquals("ordered proof parity at trial " + trial,
+				explicit.proofs().stream().map(
+					NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+				factored.proofs().stream().map(
+					NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+			assertIdentitySetEquals(explicit.dependencyOccurrences(),
+				factored.dependencyOccurrences());
+			Assert.assertEquals("empty-axis parity at trial " + trial,
+				empty, factored.proofs().isEmpty());
+			Assert.assertTrue("a factored proof graph materializes at most one member at trial "
+				+ trial, factoredRelation.materializedHandleCount() <= 1);
+			Assert.assertEquals("partition-range proof mode is preserved at trial " + trial,
+				explicit.proofs().stream().map(
+					NativePlacementContinuity.NativeContinuityProof::exactPartitionRanges).toList(),
+				factored.proofs().stream().map(
+					NativePlacementContinuity.NativeContinuityProof::exactPartitionRanges).toList());
+		}
+	}
+
+	@Test
+	public void nativeAxisGateKeepsPinnedRootRecurrenceInsideCycleAnalysis() {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+		Ref seed = full.source("gate-cycle-seed", pool);
+		Ref consumer = full.unary("gate-cycle", OpOp1.LOG, seed, false);
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		CandidateRealizationReference staging = full.reference(consumer, inputs);
+		List<List<CandidateRealizationInputBinding>> axes = List.of(List.of(
+			CandidateRealizationInputBinding.direct(0, staging)));
+		NativePlacementContinuity.NativeSupportProduct product =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(pool, pool, true, axes);
+		Assert.assertNotNull(product);
+		NativeContinuitySupportClauses relation = new NativeContinuitySupportClauses(
+			consumer.key, product, null, true);
+		CandidateRealizationReference published = full.withClauses(consumer, inputs, relation);
+		full.edges.removeIf(edge -> edge.consumer() == consumer.key);
+		full.edges.add(new CompiledInputEdgeFact(consumer.key, consumer.key, 0));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		List<String> factored = full.resolver(metrics, 0, 0)
+			.proveCandidateSupport(published, pool).proofs().stream()
+			.map(NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList();
+		Assert.assertTrue("synthetic gates participate in the existing SCC traversal",
+			metrics.snapshot().cyclicProofGraphs() > 0);
+		Assert.assertEquals("cycle analysis needs only the exact representative",
+			1, relation.materializedHandleCount());
+		CandidateRealizationReference explicit = full.withClauses(
+			consumer, inputs, List.copyOf(relation));
+		SearchSpaceMetrics explicitMetrics = new SearchSpaceMetrics();
+		List<String> reference = full.resolver(explicitMetrics, 0, 0)
+			.proveCandidateSupport(explicit, pool).proofs().stream()
+			.map(NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList();
+		Assert.assertEquals("axis gates preserve the legacy SCC fixed-point semantics",
+			reference, factored);
+		Assert.assertTrue(explicitMetrics.snapshot().cyclicProofGraphs() > 0);
+	}
+
+	@Test
+	public void nestedNativeAxisGateRetainsEveryRealOwnerInItsInvalidationFootprint() {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+		Ref seed = full.source("nested-gate-seed", pool);
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Ref left = full.unary("nested-gate-left", OpOp1.LOG, seed, false);
+		Ref right = full.unary("nested-gate-right", OpOp1.LOG, seed, false);
+		DurableAnchorKey leftA = new DurableAnchorKey(
+			"nested-gate-left-a", FType.FULL, pool.partitions());
+		DurableAnchorKey leftB = new DurableAnchorKey(
+			"nested-gate-left-b", FType.FULL, pool.partitions());
+		full.samePoolRealizations(left, unary, leftA, leftB);
+		full.samePoolRealizations(right, unary,
+			new DurableAnchorKey("nested-gate-right-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("nested-gate-right-b", FType.FULL, pool.partitions()));
+		Ref child = full.binary("nested-gate-child", OpOp2.PLUS, left, right, false);
+		List<CandidateInputState> binary = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+		NativePlacementContinuity.CandidateSupportResult generatedChild = full.resolver()
+			.proveCandidateSupport(full.reference(child, binary), pool);
+		Assert.assertNotNull(generatedChild.supportProduct());
+		NativeContinuitySupportClauses explicitChild = new NativeContinuitySupportClauses(
+			child.key, generatedChild.supportProduct(), pool, true);
+		full.withClauses(child, binary, List.copyOf(explicitChild));
+
+		Ref outer = full.unary("nested-gate-outer", OpOp1.LOG, child, false);
+		NativePlacementContinuity.CandidateSupportResult generatedOuter = full.resolver()
+			.proveCandidateSupport(full.reference(outer, unary), pool);
+		Assert.assertNotNull(generatedOuter.supportProduct());
+		NativeContinuitySupportClauses explicitOuter = new NativeContinuitySupportClauses(
+			outer.key, generatedOuter.supportProduct(), pool, true);
+		CandidateRealizationReference explicitPublished = full.withClauses(
+			outer, unary, List.copyOf(explicitOuter));
+		List<String> reference = full.resolver().proveCandidateSupport(explicitPublished, pool)
+			.proofs().stream().map(
+				NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList();
+		NativeContinuitySupportClauses childRelation = new NativeContinuitySupportClauses(
+			child.key, generatedChild.supportProduct(), pool, true);
+		full.withClauses(child, binary, childRelation);
+		NativeContinuitySupportClauses outerRelation = new NativeContinuitySupportClauses(
+			outer.key, generatedOuter.supportProduct(), pool, true);
+		CandidateRealizationReference published = full.withClauses(outer, unary, outerRelation);
+		NativePlacementContinuity.CandidateSupportResult nested =
+			full.resolver().proveCandidateSupport(published, pool);
+		Assert.assertEquals(reference, nested.proofs().stream().map(
+			NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+		Assert.assertEquals(Set.of(outer.key, child.key, left.key, right.key, seed.key),
+			nested.dependencyOccurrences());
+		Assert.assertEquals(1, childRelation.materializedHandleCount());
+		Assert.assertEquals(1, outerRelation.materializedHandleCount());
+		full.samePoolRealizations(left, unary, leftA);
+		Assert.assertFalse(full.resolver().proveCandidateSupport(published, pool).proofs().isEmpty());
+		full.candidates.removeIf(candidate -> candidate.key().parentOccurrence() == left.key);
+		Assert.assertTrue("a changed nested gate owner invalidates the outer proof",
+			full.resolver().proveCandidateSupport(published, pool).proofs().isEmpty());
+	}
+
+	@Test
 	public void conflictingClausePinsForOneProducerAreRejectedBeforeGrounding() throws Exception {
 		Fixture full = new Fixture(FType.FULL);
 		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));

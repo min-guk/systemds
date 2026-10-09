@@ -342,3 +342,14 @@
 - **의미/회귀 위험**: +0/+INF hard relation만 새 경로를 쓴다. 변수 identity/order와 source 관계의 정확한 feasible cells를 보존한다. Seed의 기존 conceptual cell/resource limit 판정은 sparse 처리 전 동일하게 적용하며, 조건부 비용/공유 비용 수식은 변경하지 않는다. 따라서 이전에 conceptual limit으로 거절된 sparse case를 새로 통과시키는 개선은 아직 없다. 실제 workload 시간/peak와 full gate는 별도 확인한다.
 
 - **v8 DP conditioning 통합 gate**: fresh main/test compile 및1,038 JUnit PASS(180.381초), source SHA mismatch0, independent static review CLEAR. 증거 `evidence/sparse-conditioning-full-green-1038`. 본 snapshot은689760의 linear topology check를 포함하나 별도 개발 중인 synthetic axis gate는 아직 포함하지 않는다.
+
+
+### COFEE v7 완료 및 native axis gate 후속 검증
+
+- **실제 결과**: 정확한 c6be/JAR5172e29a 봉인본의 LogReg fullInitial460.486971960초, GLM236.147365008초로 v6보다 느렸다. Analysis372.203410278/190.022935095초, optimizer73.826497478/25.564320545초다. 숫자 비교 PASS, audit mismatch0, v5/v6와 동일 plan fingerprint. Coordinator peak9,110,831,104/5,587,062,784B. 실제 소스에는 이후689 linear topology check와 sparse conditioning이 없으므로 이를 v7에 소급 포함하지 않는다. `evidence/cofee-50k128-v7-validation` 보존.20초 목표는 미달이다.
+- **후속 변경**: pinned native realization proof를 clause별 OR로 펼치는 대신 consumer AND와 입력별 OR gate로 유지한다. 기존 full product/distinct source owner/native authority 검사를 통과한 관계만 적용하며 기존 dependency skeleton에서 invariant와 owner별 pinned dependency를 분리한다. 실제 선택 exact authority는 원래 relation에 남기고 gate 자체는 authority가 아니다. query-local gate identity와 SCC/footprint 처리를 사용하며 mixed/ambiguous/unsupported 관계는 기존 경로로 돌아간다.
+- **검증 범위**: 기존20member product가 같은 ordered proof와 identity footprint를 유지하며 clause handle20→1, graph work가 감소한다. Representative1개는 dependency skeleton 추출용이며 전체경로0materialization으로 주장하지 않는다. 죽은 axis, self-cycle, nested source invalidation과 duplicate authority fallback을 검사했다. 고정 seed20회,1–4축/폭1–4의 exact/dynamic relation과 source withdrawal을 explicit reference에 비교했다. Random test independent review CLEAR. logical 조합 수는 그대로이며 줄인 것은 표현/작업이다.
+- **중간 실행**: 첫 integration JUnit 명령은 잘못된 test FQCN으로 initialization error였다(`evidence/native-axis-gate-integration-launch-error`). 실제 테스트 실패로 해석하지 않는다. 올바른 suite로 재실행한213tests는4.266초 PASS(`evidence/native-axis-gate-integration-green-213`). Random parity를 더한 fresh full gate는 별도로 실행한다.
+- **적용 제한**: 이 후보의 fast path는 exact source로 pinned된 state에 한정된다. Generated root가 unpinned native child를 읽는 경로는 아직 전체 topology를 펼칠 수 있어 별도 후속 수정/검증으로 분리했다. Physical multi-member 압축은 equal-cost receipt 반례 때문에 계속 제외한다.
+
+- **Pinned axis gate 최종 gate**: fresh main/test compile,1,042 JUnit PASS(168.145초), source SHA mismatch0, production/randomized test independent review CLEAR. 증거 `evidence/native-axis-gate-full-green-1042`. Unpinned 후속 경로와 actual workload 성능은 이 테스트 결과에 포함하지 않는다.
