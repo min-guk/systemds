@@ -130,6 +130,64 @@ public class NativeHybridUnpinnedTopologyTest {
 	}
 
 	@Test
+	public void publicOrdinaryPinFallsBackExactlyForDuplicateRealizationAuthority()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		NativeContinuitySupportClauses eagerRelation = scenario.install(true);
+		CandidateRuleFact eagerInstalled = installedChildFact(scenario);
+		CandidateEmissionFact eagerEmission = eagerInstalled.allowedEmissionFacts().get(0);
+		CandidateRealizationReference eagerPin = scenario.installedReference("a-choice");
+		CandidateEmissionRealization eagerOrdinary = eagerEmission.realizations().stream()
+			.filter(realization -> realization.key().equals(eagerPin.realization()))
+			.findFirst().orElseThrow();
+		CandidateRuleFact eagerOrdinaryFact = singleRealizationFact(
+			eagerInstalled, eagerEmission, eagerOrdinary);
+		CandidateRuleFact eagerNativeFact = singleRealizationFact(eagerInstalled, eagerEmission,
+			new CandidateEmissionRealization(eagerOrdinary.key(), List.copyOf(eagerRelation)));
+		NativePlacementContinuity.CandidateSupportResult eagerOrdinaryFirst =
+			queryInstalledWithOwnerFacts(scenario, "a-choice",
+				List.of(eagerOrdinaryFact, eagerNativeFact), new SearchSpaceMetrics());
+		NativePlacementContinuity.CandidateSupportResult eagerNativeFirst =
+			queryInstalledWithOwnerFacts(scenario, "a-choice",
+				List.of(eagerNativeFact, eagerOrdinaryFact), new SearchSpaceMetrics());
+
+		NativeContinuitySupportClauses lazy = scenario.install(false);
+		CandidateRuleFact lazyInstalled = installedChildFact(scenario);
+		CandidateEmissionFact lazyEmission = lazyInstalled.allowedEmissionFacts().get(0);
+		CandidateRealizationReference lazyPin = scenario.installedReference("a-choice");
+		CandidateEmissionRealization lazyOrdinary = lazyEmission.realizations().stream()
+			.filter(realization -> realization.key().equals(lazyPin.realization()))
+			.findFirst().orElseThrow();
+		CandidateRuleFact lazyOrdinaryFact = singleRealizationFact(
+			lazyInstalled, lazyEmission, lazyOrdinary);
+		CandidateRuleFact lazyNativeFact = singleRealizationFact(lazyInstalled, lazyEmission,
+			new CandidateEmissionRealization(lazyOrdinary.key(), lazy));
+		SearchSpaceMetrics ordinaryFirstMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity.CandidateSupportResult ordinaryFirst =
+			queryInstalledWithOwnerFacts(scenario, "a-choice",
+				List.of(lazyOrdinaryFact, lazyNativeFact), ordinaryFirstMetrics);
+		SearchSpaceMetrics nativeFirstMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity.CandidateSupportResult nativeFirst =
+			queryInstalledWithOwnerFacts(scenario, "a-choice",
+				List.of(lazyNativeFact, lazyOrdinaryFact), nativeFirstMetrics);
+
+		Assert.assertFalse(ordinaryFirst.proofs().isEmpty());
+		Assert.assertFalse(nativeFirst.proofs().isEmpty());
+		Assert.assertEquals(signatures(eagerOrdinaryFirst), signatures(ordinaryFirst));
+		Assert.assertEquals(signatures(eagerNativeFirst), signatures(nativeFirst));
+		assertBindingSourceIdentity(eagerOrdinaryFirst, ordinaryFirst);
+		assertBindingSourceIdentity(eagerNativeFirst, nativeFirst);
+		assertIdentitySetEquals(eagerOrdinaryFirst.dependencyOccurrences(),
+			ordinaryFirst.dependencyOccurrences());
+		assertIdentitySetEquals(eagerNativeFirst.dependencyOccurrences(),
+			nativeFirst.dependencyOccurrences());
+		Assert.assertTrue("ordinary-first ambiguity must retain the ordinary fallback",
+			directWork(ordinaryFirstMetrics, "NATIVE_PINNED_REJECT_ORDINARY") > 0);
+		Assert.assertTrue("native-first ambiguity must retain duplicate fallback",
+			directWork(nativeFirstMetrics, "NATIVE_PINNED_REJECT_DUPLICATE") > 0);
+	}
+
+	@Test
 	public void nativeInventoryRejectsForeignOwnerAndDoesNotSurviveRevisionReplacement()
 		throws Exception {
 		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
@@ -239,7 +297,12 @@ public class NativeHybridUnpinnedTopologyTest {
 		assertIdentitySetEquals(metricsOff.dependencyOccurrences(), metricsOn.dependencyOccurrences());
 		Assert.assertEquals("the accepted native pin does not expand beyond the representative",
 			1, lazy.materializedHandleCount());
+		assertNativePinnedCounts(metrics);
 
+		// Keep the legacy topology counters on an explicitly materialized fixture.
+		// Selective ordinary projection has its own coverage and intentionally bypasses
+		// this fallback route when a lazy native sibling is present.
+		scenario.install(true);
 		NativePlacementContinuity ordinaryResolver = (NativePlacementContinuity)invoke(
 			scenario.fixture(), "resolver", metrics, 128, 2048L);
 		NativePlacementContinuity.CandidateSupportResult metricsOnOrdinaryA =
@@ -248,7 +311,6 @@ public class NativeHybridUnpinnedTopologyTest {
 			scenario.queryInstalled("z-choice", ordinaryResolver);
 		assertResultParity(eagerOrdinaryA, metricsOffOrdinaryA, metricsOnOrdinaryA);
 		assertResultParity(eagerOrdinaryZ, metricsOffOrdinaryZ, metricsOnOrdinaryZ);
-		assertPinnedCounts(metrics);
 		assertAcyclicRootTopologyCounts(metrics);
 
 		metrics.reset();
@@ -266,12 +328,541 @@ public class NativeHybridUnpinnedTopologyTest {
 	}
 
 	@Test
+	public void ordinaryPinsReusePartialTopologyWithoutExpandingTheNativeProduct()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		Assert.assertEquals("the fixture must expose a genuine two-by-three native product",
+			6, scenario.product().size());
+
+		scenario.install(true);
+		NativePlacementContinuity eagerResolver =
+			(NativePlacementContinuity)invoke(scenario.fixture(), "resolver");
+		NativePlacementContinuity.CandidateSupportResult eagerA =
+			scenario.queryInstalled("a-choice", eagerResolver);
+		NativePlacementContinuity.CandidateSupportResult eagerZ =
+			scenario.queryInstalled("z-choice", eagerResolver);
+
+		scenario.install(false);
+		NativePlacementContinuity offResolver =
+			(NativePlacementContinuity)invoke(scenario.fixture(), "resolver");
+		NativePlacementContinuity.CandidateSupportResult offA =
+			scenario.queryInstalled("a-choice", offResolver);
+		NativePlacementContinuity.CandidateSupportResult offZ =
+			scenario.queryInstalled("z-choice", offResolver);
+
+		NativeContinuitySupportClauses lazy = scenario.install(false);
+		Assert.assertEquals("candidate construction reads exactly one representative",
+			1, lazy.materializedHandleCount());
+		List<CandidateRuleFact> unchangedFacts = List.copyOf(candidateFacts(scenario.fixture()));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 128, 2048L);
+
+		NativePlacementContinuity.CandidateSupportResult actualA =
+			scenario.queryInstalled("a-choice", resolver);
+		assertResultParity(eagerA, offA, actualA);
+		Assert.assertEquals("projecting the first ordinary pin must not enumerate the product",
+			1, lazy.materializedHandleCount());
+		NativePlacementContinuity.CandidateSupportResult actualZ =
+			scenario.queryInstalled("z-choice", resolver);
+		assertResultParity(eagerZ, offZ, actualZ);
+		Assert.assertEquals("a second ordinary pin must also avoid native product expansion",
+			1, lazy.materializedHandleCount());
+
+		NativePlacementContinuity.CandidateSupportResult replayA =
+			scenario.queryInstalled("a-choice", resolver);
+		assertResultParity(eagerA, offA, replayA);
+		Assert.assertEquals("a warm replay must retain the representative-only relation",
+			1, lazy.materializedHandleCount());
+
+		NativePlacementContinuity unchanged = resolver.nextRevisionWithCompleteCandidateDelta(
+			unchangedFacts, Set.of());
+		NativePlacementContinuity.CandidateSupportResult revisedZ =
+			scenario.queryInstalled("z-choice", unchanged);
+		assertResultParity(eagerZ, offZ, revisedZ);
+		Assert.assertEquals("an exact unmodified revision must retain lazy projected authority",
+			1, lazy.materializedHandleCount());
+	}
+
+	@Test
+	public void ordinaryPartialTopologyIsSharedAcrossPinsAndUpgradedForGenericTraversal()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		NativeContinuitySupportClauses lazy = scenario.install(false);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 0, 0L);
+
+		NativePlacementContinuity.CandidateSupportResult first =
+			scenario.queryInstalled("a-choice", resolver);
+		Assert.assertFalse(first.proofs().isEmpty());
+		Object partial = residentTopology(resolver, scenario.childKey(), scenario.pool());
+		Assert.assertNotNull("the first ordinary pin admits one owner-wide partial topology", partial);
+		Assert.assertTrue("the admitted topology is tagged ordinary-only", ordinaryOnly(partial));
+		Assert.assertTrue("the first build indexes the first ordinary handle",
+			topologyContainsHandle(partial,
+				candidateHandle(resolver, scenario.installedReference("a-choice"))));
+		Assert.assertTrue("the same build indexes every other declared ordinary handle",
+			topologyContainsHandle(partial,
+				candidateHandle(resolver, scenario.installedReference("z-choice"))));
+		Assert.assertFalse("ordinary-only topology excludes the native sibling handle",
+			topologyContainsHandle(partial,
+				candidateHandle(resolver, scenario.installedReference("m-choice"))));
+		long attempts = directWork(metrics, "ORDINARY_TOPOLOGY_BUILD_ATTEMPTS");
+		long admissions = directWork(metrics, "ORDINARY_TOPOLOGY_ADMISSIONS");
+		long hits = directWork(metrics, "ORDINARY_TOPOLOGY_RESIDENT_HITS");
+		Assert.assertTrue(attempts > 0);
+		Assert.assertTrue(admissions > 0);
+		Assert.assertTrue("the native family is skipped by logical cardinality",
+			directWork(metrics, "ORDINARY_TOPOLOGY_NATIVE_LOGICAL_MEMBERS_SKIPPED")
+				>= scenario.product().size());
+
+		NativePlacementContinuity.CandidateSupportResult second =
+			scenario.queryInstalled("z-choice", resolver);
+		Assert.assertFalse(second.proofs().isEmpty());
+		Assert.assertSame("a different ordinary handle shares the owner-wide partial topology",
+			partial, residentTopology(resolver, scenario.childKey(), scenario.pool()));
+		Assert.assertEquals("the second pin must not rebuild the partial topology", attempts,
+			directWork(metrics, "ORDINARY_TOPOLOGY_BUILD_ATTEMPTS"));
+		Assert.assertEquals(admissions, directWork(metrics, "ORDINARY_TOPOLOGY_ADMISSIONS"));
+		Assert.assertTrue(directWork(metrics, "ORDINARY_TOPOLOGY_RESIDENT_HITS") > hits);
+		hits = directWork(metrics, "ORDINARY_TOPOLOGY_RESIDENT_HITS");
+		scenario.queryInstalled("a-choice", resolver);
+		Assert.assertSame(partial, residentTopology(resolver, scenario.childKey(), scenario.pool()));
+		Assert.assertTrue("a repeated first pin also hits the same resident topology",
+			directWork(metrics, "ORDINARY_TOPOLOGY_RESIDENT_HITS") > hits);
+		Assert.assertEquals(1, lazy.materializedHandleCount());
+
+		Object complete = genericCandidateTopology(resolver, scenario.childKey(), scenario.pool());
+		Assert.assertNotSame("generic traversal replaces rather than reuses an incomplete topology",
+			partial, complete);
+		Assert.assertFalse("generic traversal upgrades the resident entry to complete",
+			ordinaryOnly(complete));
+		Assert.assertSame(complete,
+			residentTopology(resolver, scenario.childKey(), scenario.pool()));
+		Assert.assertTrue("the complete replacement restores the native sibling handle",
+			topologyContainsHandle(complete,
+				candidateHandle(resolver, scenario.installedReference("m-choice"))));
+		Assert.assertTrue("the generic request records one complete-upgrade attempt",
+			directWork(metrics, "ORDINARY_TOPOLOGY_COMPLETE_UPGRADE_ATTEMPTS") > 0);
+		Assert.assertEquals("complete legacy traversal materializes the six native members",
+			scenario.product().size(), lazy.materializedHandleCount());
+	}
+
+	@Test
+	public void failedCompleteUpgradeKeepsTheResidentOrdinaryPartialTopology()
+		throws Exception {
+		synchronized(NativeHybridUnpinnedTopologyTest.class) {
+			String entriesKey = "sysds.fedplanner.continuityTopology.maxEntries";
+			String rowsKey = "sysds.fedplanner.continuityTopology.maxRows";
+			String oldEntries = System.getProperty(entriesKey);
+			String oldRows = System.getProperty(rowsKey);
+			try {
+				Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+				scenario.install(true);
+				NativePlacementContinuity eagerResolver =
+					(NativePlacementContinuity)invoke(scenario.fixture(), "resolver");
+				NativePlacementContinuity.CandidateSupportResult eagerA =
+					scenario.queryInstalled("a-choice", eagerResolver);
+				NativePlacementContinuity.CandidateSupportResult eagerZ =
+					scenario.queryInstalled("z-choice", eagerResolver);
+
+				System.setProperty(entriesKey, "8");
+				// The two ordinary rows and their dependency topologies fit; the
+				// eight-row complete owner topology alone exceeds this shared budget.
+				System.setProperty(rowsKey, "7");
+				NativeContinuitySupportClauses lazy = scenario.install(false);
+				SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+				NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+					scenario.fixture(), "resolver", metrics, 0, 0L);
+
+				NativePlacementContinuity.CandidateSupportResult actualA =
+					scenario.queryInstalled("a-choice", resolver);
+				assertResultParity(eagerA, actualA, actualA);
+				Object partial = residentTopology(resolver, scenario.childKey(), scenario.pool());
+				Assert.assertNotNull(partial);
+				Assert.assertTrue(ordinaryOnly(partial));
+				Assert.assertEquals(1, lazy.materializedHandleCount());
+
+				long bypasses = metrics.snapshot().topologyCacheBypasses();
+				Object complete = genericCandidateTopology(resolver,
+					scenario.childKey(), scenario.pool());
+				Assert.assertNotSame(partial, complete);
+				Assert.assertFalse("the caller still receives the complete traversal",
+					ordinaryOnly(complete));
+				Assert.assertTrue("the complete traversal contains the native sibling",
+					topologyContainsHandle(complete,
+						candidateHandle(resolver, scenario.installedReference("m-choice"))));
+				Assert.assertSame("a failed complete admission must not evict the useful partial",
+					partial, residentTopology(resolver, scenario.childKey(), scenario.pool()));
+				Assert.assertTrue(ordinaryOnly(
+					residentTopology(resolver, scenario.childKey(), scenario.pool())));
+				Assert.assertTrue(directWork(metrics,
+					"ORDINARY_TOPOLOGY_COMPLETE_UPGRADE_ATTEMPTS") > 0);
+				Assert.assertTrue(metrics.snapshot().topologyCacheBypasses() > bypasses);
+				Assert.assertEquals("the deliberate complete traversal materializes all members",
+					scenario.product().size(), lazy.materializedHandleCount());
+
+				NativePlacementContinuity.CandidateSupportResult actualZ =
+					scenario.queryInstalled("z-choice", resolver);
+				assertResultParity(eagerZ, actualZ, actualZ);
+				Assert.assertSame("the next ordinary pin reuses the surviving partial topology",
+					partial, residentTopology(resolver, scenario.childKey(), scenario.pool()));
+			}
+			finally {
+				restoreProperty(entriesKey, oldEntries);
+				restoreProperty(rowsKey, oldRows);
+			}
+		}
+	}
+
+	@Test
+	public void ordinaryPartialTopologyPreservesParityWithAnalysisAndResolverLocalHandles()
+		throws Exception {
+		synchronized(NativeHybridUnpinnedTopologyTest.class) {
+			String arenaKey = "sysds.fedplanner.structuralArena.maxEntries";
+			String oldArena = System.getProperty(arenaKey);
+			try {
+				for(boolean exhaustArena : List.of(false, true)) {
+					System.setProperty(arenaKey, exhaustArena ? "0" : "1024");
+					SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+					PlacementIdentity.beginAnalysisScope(metrics);
+					try {
+						Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+						scenario.install(true);
+						NativePlacementContinuity.CandidateSupportResult eager =
+							scenario.queryInstalled("a-choice",
+								(NativePlacementContinuity)invoke(scenario.fixture(), "resolver"));
+						NativeContinuitySupportClauses lazy = scenario.install(false);
+						CandidateRealizationReference pinned =
+							scenario.installedReference("a-choice");
+						Integer analysisHandle = PlacementIdentity.structuralHandle(pinned);
+						if(exhaustArena)
+							Assert.assertNull("the exhausted arena selects resolver-local handle identity",
+								analysisHandle);
+						else
+							Assert.assertNotNull("the active arena supplies the shared structural identity",
+								analysisHandle);
+
+						NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+							scenario.fixture(), "resolver", metrics, 0, 0L);
+						NativePlacementContinuity.CandidateSupportResult actual =
+							scenario.queryInstalled("a-choice", resolver);
+						Assert.assertEquals(signatures(eager), signatures(actual));
+						assertBindingSourceIdentity(eager, actual);
+						assertIdentitySetEquals(eager.dependencyOccurrences(),
+							actual.dependencyOccurrences());
+						Assert.assertEquals("either handle authority keeps the native family compressed",
+							1, lazy.materializedHandleCount());
+						Object partial = residentTopology(resolver,
+							scenario.childKey(), scenario.pool());
+						Assert.assertNotNull(partial);
+						Assert.assertTrue(ordinaryOnly(partial));
+					}
+					finally {
+						PlacementIdentity.endAnalysisScope();
+					}
+				}
+			}
+			finally {
+				PlacementIdentity.endAnalysisScope();
+				restoreProperty(arenaKey, oldArena);
+			}
+		}
+	}
+
+	@Test
+	public void disabledTopologyBudgetsBypassPartialAdmissionAndKeepExactFallback()
+		throws Exception {
+		synchronized(NativeHybridUnpinnedTopologyTest.class) {
+			String entriesKey = "sysds.fedplanner.continuityTopology.maxEntries";
+			String rowsKey = "sysds.fedplanner.continuityTopology.maxRows";
+			String oldEntries = System.getProperty(entriesKey);
+			String oldRows = System.getProperty(rowsKey);
+			try {
+				for(String[] budget : List.of(
+					new String[] {"0", "2048"}, new String[] {"2048", "0"})) {
+					Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+					scenario.install(true);
+					NativePlacementContinuity.CandidateSupportResult eager = scenario.queryInstalled(
+						"a-choice", (NativePlacementContinuity)invoke(scenario.fixture(), "resolver"));
+					System.setProperty(entriesKey, budget[0]);
+					System.setProperty(rowsKey, budget[1]);
+					NativeContinuitySupportClauses lazy = scenario.install(false);
+					SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+					NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+						scenario.fixture(), "resolver", metrics, 128, 2048L);
+					NativePlacementContinuity.CandidateSupportResult actual =
+						scenario.queryInstalled("a-choice", resolver);
+					Assert.assertEquals(signatures(eager), signatures(actual));
+					assertBindingSourceIdentity(eager, actual);
+					assertIdentitySetEquals(eager.dependencyOccurrences(), actual.dependencyOccurrences());
+					Assert.assertNull(
+						residentTopology(resolver, scenario.childKey(), scenario.pool()));
+					Assert.assertEquals(0, directWork(metrics, "ORDINARY_TOPOLOGY_ADMISSIONS"));
+					Assert.assertTrue(directWork(metrics, "ORDINARY_TOPOLOGY_BYPASSES") > 0);
+					Assert.assertEquals("disabled topology admission preserves complete legacy fallback",
+						scenario.product().size(), lazy.materializedHandleCount());
+					restoreProperty(entriesKey, oldEntries);
+					restoreProperty(rowsKey, oldRows);
+				}
+			}
+			finally {
+				restoreProperty(entriesKey, oldEntries);
+				restoreProperty(rowsKey, oldRows);
+			}
+		}
+	}
+
+	@Test
+	public void insufficientRowBudgetRejectsPartialAdmissionWithoutChangingAuthority()
+		throws Exception {
+		synchronized(NativeHybridUnpinnedTopologyTest.class) {
+			String entriesKey = "sysds.fedplanner.continuityTopology.maxEntries";
+			String rowsKey = "sysds.fedplanner.continuityTopology.maxRows";
+			String oldEntries = System.getProperty(entriesKey);
+			String oldRows = System.getProperty(rowsKey);
+			try {
+				Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+				scenario.install(true);
+				NativePlacementContinuity.CandidateSupportResult eager = scenario.queryInstalled(
+					"a-choice", (NativePlacementContinuity)invoke(scenario.fixture(), "resolver"));
+				System.setProperty(entriesKey, "8");
+				System.setProperty(rowsKey, "1");
+				NativeContinuitySupportClauses lazy = scenario.install(false);
+				SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+				NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+					scenario.fixture(), "resolver", metrics, 128, 2048L);
+				NativePlacementContinuity.CandidateSupportResult actual =
+					scenario.queryInstalled("a-choice", resolver);
+				Assert.assertEquals(signatures(eager), signatures(actual));
+				assertBindingSourceIdentity(eager, actual);
+				assertIdentitySetEquals(eager.dependencyOccurrences(), actual.dependencyOccurrences());
+				Assert.assertNull(
+					residentTopology(resolver, scenario.childKey(), scenario.pool()));
+				// A different, dynamic witness may still admit an empty ordinary
+				// topology. The exact witness above must not be resident.
+				Assert.assertTrue(directWork(metrics, "ORDINARY_TOPOLOGY_BYPASSES") > 0);
+				Assert.assertEquals("a rejected partial entry must fall back to complete enumeration",
+					scenario.product().size(), lazy.materializedHandleCount());
+			}
+			finally {
+				restoreProperty(entriesKey, oldEntries);
+				restoreProperty(rowsKey, oldRows);
+			}
+		}
+	}
+
+	@Test
+	public void ordinaryOnlyTopologyIsRebuiltRatherThanMigratedAcrossRevision()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		NativeContinuitySupportClauses lazy = scenario.install(false);
+		List<CandidateRuleFact> unchangedFacts = List.copyOf(candidateFacts(scenario.fixture()));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 0, 0L);
+		scenario.queryInstalled("a-choice", resolver);
+		Object original = residentTopology(resolver, scenario.childKey(), scenario.pool());
+		Assert.assertNotNull(original);
+		Assert.assertTrue(ordinaryOnly(original));
+		long admissions = directWork(metrics, "ORDINARY_TOPOLOGY_ADMISSIONS");
+
+		NativePlacementContinuity revision = resolver.nextRevisionWithCompleteCandidateDelta(
+			unchangedFacts, Set.of());
+		Assert.assertNull("ordinary-only topology entries are revision-local",
+			residentTopology(revision, scenario.childKey(), scenario.pool()));
+		scenario.queryInstalled("z-choice", revision);
+		Object rebuilt = residentTopology(revision, scenario.childKey(), scenario.pool());
+		Assert.assertNotNull(rebuilt);
+		Assert.assertNotSame(original, rebuilt);
+		Assert.assertTrue(ordinaryOnly(rebuilt));
+		Assert.assertTrue("the first query in the revision admits a fresh partial topology",
+			directWork(metrics, "ORDINARY_TOPOLOGY_ADMISSIONS") > admissions);
+		Assert.assertEquals(1, lazy.materializedHandleCount());
+	}
+
+	@Test
+	public void ordinaryPinRetainsHiddenValueMapMetadataAcrossWithdrawalAndRestoration()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Object hiddenSeed = invoke(scenario.fixture(), "source",
+			"pinned-hidden-seed", scenario.pool());
+		Object hidden = invoke(scenario.fixture(), "unary", "pinned-hidden-owner",
+			OpOp1.LOG, hiddenSeed, false);
+		invoke(scenario.fixture(), "samePoolRealizations", hidden, unary,
+			new DurableAnchorKey[] {scenario.pool()});
+		CompiledHopKey hiddenOwner = (CompiledHopKey)invoke(hidden, "key");
+		CandidateRealizationReference hiddenReference = (CandidateRealizationReference)invoke(
+			scenario.fixture(), "reference", hidden, unary);
+		CandidateEmissionRealization valueMap = CandidateEmissionRealization.valueMap(
+			scenario.childEmission().emissionState(), "pinned-hidden-value-map",
+			List.of(new CandidateRealizationSupportClause(List.of(),
+				List.of(CandidateRealizationInputBinding.direct(0, hiddenReference)))));
+
+		scenario.install(true, List.of(valueMap));
+		NativePlacementContinuity.CandidateSupportResult eager = scenario.queryInstalled(
+			"a-choice", (NativePlacementContinuity)invoke(scenario.fixture(), "resolver"));
+		scenario.install(false, List.of(valueMap));
+		NativePlacementContinuity.CandidateSupportResult off = scenario.queryInstalled(
+			"a-choice", (NativePlacementContinuity)invoke(scenario.fixture(), "resolver"));
+		NativeContinuitySupportClauses lazy = scenario.install(false, List.of(valueMap));
+		List<CandidateRuleFact> activeFacts = List.copyOf(candidateFacts(scenario.fixture()));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 128, 2048L);
+		NativePlacementContinuity.CandidateSupportResult active =
+			scenario.queryInstalled("a-choice", resolver);
+		assertResultParity(eager, off, active);
+		Assert.assertTrue("the unselected VALUE_MAP metadata owner remains in the footprint",
+			active.dependencyOccurrences().stream().anyMatch(owner -> owner == hiddenOwner));
+		Assert.assertFalse("the hidden metadata owner is outside the native product axes",
+			lazy.commonAxes().stream().flatMap(List::stream)
+				.anyMatch(binding -> binding.source().rule().parentOccurrence() == hiddenOwner));
+		Assert.assertEquals("the ordinary pin must not expand the native product",
+			1, lazy.materializedHandleCount());
+
+		List<CandidateRuleFact> withdrawnFacts = activeFacts.stream()
+			.filter(fact -> fact.key().parentOccurrence() != hiddenOwner).toList();
+		Assert.assertEquals(activeFacts.size() - 1, withdrawnFacts.size());
+		long beforeWithdrawal = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity withdrawn = resolver.nextRevisionWithCompleteCandidateDelta(
+			withdrawnFacts, Set.of(hiddenOwner));
+		NativePlacementContinuity.CandidateSupportResult withdrawnActual =
+			scenario.queryInstalled("a-choice", withdrawn);
+		NativePlacementContinuity.CandidateSupportResult withdrawnCold =
+			queryInstalledWithCandidateFacts(scenario, "a-choice", withdrawnFacts);
+		Assert.assertEquals(signatures(withdrawnCold), signatures(withdrawnActual));
+		assertBindingSourceIdentity(withdrawnCold, withdrawnActual);
+		assertIdentitySetEquals(withdrawnCold.dependencyOccurrences(),
+			withdrawnActual.dependencyOccurrences());
+		Assert.assertTrue("the conservative footprint must retain the withdrawn metadata identity",
+			withdrawnActual.dependencyOccurrences().stream().anyMatch(owner -> owner == hiddenOwner));
+		Assert.assertTrue("withdrawing only hidden metadata must invalidate completed support",
+			metrics.snapshot().proofGraphsBuilt() > beforeWithdrawal);
+		Assert.assertEquals(1, lazy.materializedHandleCount());
+
+		long beforeRestoration = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity restored = withdrawn.nextRevisionWithCompleteCandidateDelta(
+			activeFacts, Set.of(hiddenOwner));
+		NativePlacementContinuity.CandidateSupportResult restoredActual =
+			scenario.queryInstalled("a-choice", restored);
+		NativePlacementContinuity.CandidateSupportResult restoredCold =
+			queryInstalledWithCandidateFacts(scenario, "a-choice", activeFacts);
+		Assert.assertEquals(signatures(eager), signatures(restoredActual));
+		Assert.assertEquals(signatures(restoredCold), signatures(restoredActual));
+		assertBindingSourceIdentity(eager, restoredActual);
+		assertIdentitySetEquals(restoredCold.dependencyOccurrences(),
+			restoredActual.dependencyOccurrences());
+		Assert.assertTrue(restoredActual.dependencyOccurrences().stream()
+			.anyMatch(owner -> owner == hiddenOwner));
+		Assert.assertTrue("restoring only hidden metadata must invalidate withdrawn support",
+			metrics.snapshot().proofGraphsBuilt() > beforeRestoration);
+		Assert.assertEquals("withdrawal and restoration must preserve lazy projected authority",
+			1, lazy.materializedHandleCount());
+	}
+
+	@Test
+	public void ordinaryPinRetainsInvalidDerivedMetadataAcrossWithdrawalAndRestoration()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Object hiddenSeed = invoke(scenario.fixture(), "source",
+			"pinned-derived-hidden-seed", scenario.pool());
+		Object hidden = invoke(scenario.fixture(), "unary", "pinned-derived-hidden-owner",
+			OpOp1.LOG, hiddenSeed, false);
+		CompiledHopKey hiddenOwner = (CompiledHopKey)invoke(hidden, "key");
+		invoke(scenario.fixture(), "withClauses", hidden, unary,
+			List.of(new CandidateRealizationSupportClause(List.of(new PlacementProofKey(
+				PlacementProofKind.NATIVE_CONTINUITY, hiddenOwner,
+				"pinned-derived-hidden-authority")), List.of(), scenario.pool(), true)));
+
+		scenario.installDerived(true, hiddenOwner);
+		List<CandidateRuleFact> eagerValidFacts = List.copyOf(candidateFacts(scenario.fixture()));
+		List<CandidateRuleFact> eagerInvalidFacts = eagerValidFacts.stream()
+			.filter(fact -> fact.key().parentOccurrence() != hiddenOwner).toList();
+		NativePlacementContinuity.CandidateSupportResult eagerValid =
+			queryInstalledWithCandidateFacts(scenario, "a-choice", eagerValidFacts);
+		NativePlacementContinuity.CandidateSupportResult eagerInvalid =
+			queryInstalledWithCandidateFacts(scenario, "a-choice", eagerInvalidFacts);
+
+		NativeContinuitySupportClauses lazy = scenario.installDerived(false, hiddenOwner);
+		List<CandidateRuleFact> validFacts = List.copyOf(candidateFacts(scenario.fixture()));
+		List<CandidateRuleFact> invalidFacts = validFacts.stream()
+			.filter(fact -> fact.key().parentOccurrence() != hiddenOwner).toList();
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity invalid = resolverWithCandidateFacts(
+			scenario, invalidFacts, metrics);
+		NativePlacementContinuity.CandidateSupportResult invalidActual =
+			scenario.queryInstalled("a-choice", invalid);
+		NativePlacementContinuity.CandidateSupportResult invalidCold =
+			queryInstalledWithCandidateFacts(scenario, "a-choice", invalidFacts);
+		Assert.assertEquals(signatures(eagerInvalid), signatures(invalidActual));
+		Assert.assertEquals(signatures(invalidCold), signatures(invalidActual));
+		assertBindingSourceIdentity(eagerInvalid, invalidActual);
+		assertIdentitySetEquals(invalidCold.dependencyOccurrences(),
+			invalidActual.dependencyOccurrences());
+		Assert.assertTrue("an invalid unselected derived row still owns conservative metadata",
+			invalidActual.dependencyOccurrences().stream().anyMatch(owner -> owner == hiddenOwner));
+		Assert.assertFalse("the hidden derived owner is outside every native product axis",
+			lazy.commonAxes().stream().flatMap(List::stream)
+				.anyMatch(binding -> binding.source().rule().parentOccurrence() == hiddenOwner));
+		Assert.assertEquals("invalid sibling metadata must not force native product expansion",
+			1, lazy.materializedHandleCount());
+
+		long beforeValidation = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity valid = invalid.nextRevisionWithCompleteCandidateDelta(
+			validFacts, Set.of(hiddenOwner));
+		NativePlacementContinuity.CandidateSupportResult validActual =
+			scenario.queryInstalled("a-choice", valid);
+		NativePlacementContinuity.CandidateSupportResult validCold =
+			queryInstalledWithCandidateFacts(scenario, "a-choice", validFacts);
+		Assert.assertEquals(signatures(eagerValid), signatures(validActual));
+		Assert.assertEquals(signatures(validCold), signatures(validActual));
+		assertBindingSourceIdentity(eagerValid, validActual);
+		assertIdentitySetEquals(validCold.dependencyOccurrences(), validActual.dependencyOccurrences());
+		Assert.assertTrue(validActual.dependencyOccurrences().stream()
+			.anyMatch(owner -> owner == hiddenOwner));
+		Assert.assertTrue("validating only the hidden owner must invalidate pinned support",
+			metrics.snapshot().proofGraphsBuilt() > beforeValidation);
+		Assert.assertEquals(1, lazy.materializedHandleCount());
+
+		long beforeWithdrawal = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity withdrawn = valid.nextRevisionWithCompleteCandidateDelta(
+			invalidFacts, Set.of(hiddenOwner));
+		NativePlacementContinuity.CandidateSupportResult withdrawnActual =
+			scenario.queryInstalled("a-choice", withdrawn);
+		Assert.assertEquals(signatures(eagerInvalid), signatures(withdrawnActual));
+		assertBindingSourceIdentity(eagerInvalid, withdrawnActual);
+		Assert.assertTrue(withdrawnActual.dependencyOccurrences().stream()
+			.anyMatch(owner -> owner == hiddenOwner));
+		Assert.assertTrue("withdrawing hidden derived authority must invalidate pinned support",
+			metrics.snapshot().proofGraphsBuilt() > beforeWithdrawal);
+
+		long beforeRestoration = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity restored = withdrawn.nextRevisionWithCompleteCandidateDelta(
+			validFacts, Set.of(hiddenOwner));
+		NativePlacementContinuity.CandidateSupportResult restoredActual =
+			scenario.queryInstalled("a-choice", restored);
+		Assert.assertEquals(signatures(eagerValid), signatures(restoredActual));
+		assertBindingSourceIdentity(eagerValid, restoredActual);
+		assertIdentitySetEquals(validCold.dependencyOccurrences(),
+			restoredActual.dependencyOccurrences());
+		Assert.assertTrue("restoring hidden derived authority must invalidate pinned support",
+			metrics.snapshot().proofGraphsBuilt() > beforeRestoration);
+		Assert.assertEquals("every lifecycle wave preserves the native representative only",
+			1, lazy.materializedHandleCount());
+	}
+
+	@Test
 	public void directAlternativeSeamObservesColdThenResidentFallbackTopology() throws Exception {
 		// The public-query regression above intentionally covers support-query key prewarming.
 		// This narrow seam enters alternatives directly to observe the fallback's own
 		// cold-to-resident transition without relabeling it as public root behavior.
 		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
-		scenario.install(false);
+		// This seam deliberately measures the unchanged legacy fallback topology.
+		scenario.install(true);
 		CandidateRealizationReference first = scenario.installedReference("a-choice");
 		CandidateRealizationReference second = scenario.installedReference("z-choice");
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
@@ -280,18 +871,20 @@ public class NativeHybridUnpinnedTopologyTest {
 
 		Assert.assertFalse("the first ordinary pin retains its exact legacy fallback",
 			candidateAlternatives(resolver, scenario.childKey(), first, scenario.pool()).isEmpty());
+		long builds = metrics.snapshot().topologyExpansionBuilds();
+		long hits = metrics.snapshot().topologyExpansionHits();
+		Assert.assertTrue("the first explicit fallback constructs its complete topology",
+			builds > 0);
 		Assert.assertFalse("the second ordinary pin reuses the resident fallback topology",
 			candidateAlternatives(resolver, scenario.childKey(), second, scenario.pool()).isEmpty());
-		Assert.assertEquals(2, directWork(metrics, "NATIVE_PINNED_REQUESTS"));
-		Assert.assertEquals(2, directWork(metrics, "NATIVE_PINNED_REJECT_ORDINARY"));
-		Assert.assertEquals(1, directWork(metrics, "NATIVE_PINNED_ORDINARY_COLD_TOPOLOGY"));
-		Assert.assertEquals(1, directWork(metrics, "NATIVE_PINNED_ORDINARY_RESIDENT_TOPOLOGY"));
+		Assert.assertEquals("the resident explicit topology is not rebuilt",
+			builds, metrics.snapshot().topologyExpansionBuilds());
+		Assert.assertTrue("the second explicit fallback records a resident topology hit",
+			metrics.snapshot().topologyExpansionHits() > hits);
+		Assert.assertEquals("an owner without a native relation bypasses pinned classification",
+			0, directWork(metrics, "NATIVE_PINNED_REQUESTS"));
 		Assert.assertEquals("the narrow non-root seam bypasses acyclic-root preprocessing",
 			0, directWork(metrics, "ACYCLIC_ROOT_TOPOLOGY_REQUESTS"));
-		long classified = 0;
-		for(String outcome : PINNED_OUTCOMES)
-			classified += directWork(metrics, outcome);
-		Assert.assertEquals(2, classified);
 	}
 
 	@Test
@@ -696,7 +1289,7 @@ public class NativeHybridUnpinnedTopologyTest {
 			directWork(metrics, "NATIVE_HYBRID_REQUESTS"), classified);
 	}
 
-	private static void assertPinnedCounts(SearchSpaceMetrics metrics) {
+	private static void assertNativePinnedCounts(SearchSpaceMetrics metrics) {
 		long requests = directWork(metrics, "NATIVE_PINNED_REQUESTS");
 		long classified = 0;
 		for(String outcome : PINNED_OUTCOMES)
@@ -706,11 +1299,9 @@ public class NativeHybridUnpinnedTopologyTest {
 		long ordinary = directWork(metrics, "NATIVE_PINNED_REJECT_ORDINARY");
 		long cold = directWork(metrics, "NATIVE_PINNED_ORDINARY_COLD_TOPOLOGY");
 		long resident = directWork(metrics, "NATIVE_PINNED_ORDINARY_RESIDENT_TOPOLOGY");
-		Assert.assertTrue("the public fixture must issue ordinary pinned requests", ordinary > 0);
-		Assert.assertEquals("support-query key preprocessing warms topology before pinned classification",
-			0, cold);
-		Assert.assertEquals("every public ordinary pin observes the prewarmed resident topology",
-			ordinary, resident);
+		Assert.assertEquals("the separate native query must not mix ordinary fallback outcomes", 0, ordinary);
+		Assert.assertEquals(0, cold);
+		Assert.assertEquals(0, resident);
 		Assert.assertEquals("every completed pinned request has exactly one outcome",
 			requests, classified);
 	}
@@ -781,6 +1372,68 @@ public class NativeHybridUnpinnedTopologyTest {
 		return method.invoke(resolver, owner, pinned, witness, fixed);
 	}
 
+	@SuppressWarnings("unchecked")
+	private static Object residentTopology(NativePlacementContinuity resolver,
+		CompiledHopKey owner, DurableAnchorKey pool) throws Exception {
+		Method witnessMethod = NativePlacementContinuity.class.getDeclaredMethod(
+			"nativeWitness", DurableAnchorKey.class);
+		witnessMethod.setAccessible(true);
+		Object targetWitness = witnessMethod.invoke(resolver, pool);
+		Field field = NativePlacementContinuity.class.getDeclaredField("candidateTopologies");
+		field.setAccessible(true);
+		Map<Object,Object> topologies = (Map<Object,Object>)field.get(resolver);
+		for(var entry : topologies.entrySet()) {
+			Field occurrence = entry.getKey().getClass().getDeclaredField("occurrence");
+			occurrence.setAccessible(true);
+			Field witness = entry.getKey().getClass().getDeclaredField("witness");
+			witness.setAccessible(true);
+			if(occurrence.get(entry.getKey()) == owner
+				&& targetWitness.equals(witness.get(entry.getKey())))
+				return entry.getValue();
+		}
+		return null;
+	}
+
+	private static boolean ordinaryOnly(Object topology) throws Exception {
+		Field field = topology.getClass().getDeclaredField("ordinaryOnly");
+		field.setAccessible(true);
+		return field.getBoolean(topology);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static boolean topologyContainsHandle(Object topology, int handle) throws Exception {
+		Field field = topology.getClass().getDeclaredField("rowsByHandle");
+		field.setAccessible(true);
+		return ((Map<Integer,?>)field.get(topology)).containsKey(handle);
+	}
+
+	private static int candidateHandle(NativePlacementContinuity resolver,
+		CandidateRealizationReference reference) throws Exception {
+		Method method = NativePlacementContinuity.class.getDeclaredMethod(
+			"candidateHandle", CandidateRealizationReference.class);
+		method.setAccessible(true);
+		return (int)method.invoke(resolver, reference);
+	}
+
+	private static Object genericCandidateTopology(NativePlacementContinuity resolver,
+		CompiledHopKey owner, DurableAnchorKey pool) throws Exception {
+		Method witnessMethod = NativePlacementContinuity.class.getDeclaredMethod(
+			"nativeWitness", DurableAnchorKey.class);
+		witnessMethod.setAccessible(true);
+		Object witness = witnessMethod.invoke(resolver, pool);
+		Method topology = NativePlacementContinuity.class.getDeclaredMethod(
+			"candidateTopology", CompiledHopKey.class, nested("NativePoolWitness"));
+		topology.setAccessible(true);
+		return topology.invoke(resolver, owner, witness);
+	}
+
+	private static void restoreProperty(String key, String value) {
+		if(value == null)
+			System.clearProperty(key);
+		else
+			System.setProperty(key, value);
+	}
+
 	private static CandidateRuleFact installedChildFact(Scenario scenario) throws Exception {
 		return candidateFacts(scenario.fixture()).stream()
 			.filter(fact -> fact.key().parentOccurrence() == scenario.childKey())
@@ -813,6 +1466,15 @@ public class NativeHybridUnpinnedTopologyTest {
 		Map<CompiledHopKey,List<CandidateRuleFact>> replacement = new IdentityHashMap<>(current);
 		replacement.put(owner, facts);
 		field.set(resolver, java.util.Collections.unmodifiableMap(replacement));
+	}
+
+	private static NativePlacementContinuity.CandidateSupportResult queryInstalledWithOwnerFacts(
+		Scenario scenario, String lineage, List<CandidateRuleFact> ownerFacts,
+		SearchSpaceMetrics metrics) throws Exception {
+		NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 128, 2048L);
+		replaceOwnerFacts(resolver, scenario.childKey(), ownerFacts);
+		return scenario.queryInstalled(lineage, resolver);
 	}
 
 	@SuppressWarnings("unchecked")
@@ -917,6 +1579,13 @@ public class NativeHybridUnpinnedTopologyTest {
 			live.clear();
 			live.addAll(prior);
 		}
+	}
+
+	private static NativePlacementContinuity.CandidateSupportResult queryInstalledWithCandidateFacts(
+		Scenario scenario, String lineage, List<CandidateRuleFact> facts) throws Exception {
+		NativePlacementContinuity resolver = resolverWithCandidateFacts(
+			scenario, facts, new SearchSpaceMetrics());
+		return scenario.queryInstalled(lineage, resolver);
 	}
 
 	private static Object newFixture(FType type) throws Exception {
