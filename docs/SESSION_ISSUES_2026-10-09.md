@@ -721,3 +721,6 @@
 - origin/main9892c03ee0 통합: successor schedule reuse 및 overlay/topology 공유 budget을 보존했다. 중복 overlay 계측은 기존 ADMISSIONS/HITS/ROWS_VISITED로 통일하고 root LOOKUPS와 PARTITIONED fallback reason을 추가한다. ADMISSIONS는 모든 계산이 아니라 캐시 보존 성공 수다. Root lazy signature 변경은70dd42a510로 먼저 보존했으며 신규 union과 함께 통합 회귀를 수행한다.
 
 - origin9892 병합 targeted gate190개 PASS(1.333초, 기존skip1). Shared budget/schedule, replay/region 지연 signature, split retained/singleton 계측을 포함한다. 실제 v20 Docker는 최종 native union/full gate 완료 후 봉인한다.
+
+- **v20 native union 통합**: 동일 consumer owner identity/seed/output witness/layout에서 한 축만 다른 native product를 직접 union한다. 첫 donor의 exact clause/source/proof를 기존 ordinal에서 복원하며 추가 donor는 새 option scope만 보유한다. Restriction/withdrawal 후 재추가된 option이 과거 donor 권한을 되살리지 않도록 scope를 줄인다. 두 축 변경, 다른 header/foreign owner, sparse holes, rank budget 초과는 scalar fallback. Closure retained-union 성공은 PUBLISHED, 실패만 RETAINED_UNION으로 계측한다.
+- **v20 검증**: isolated engine-v20-exclusive-gate에서 fresh FedPlanner selected full1190개 PASS(154.893초), 전체7791 class/resource 실행전후변경0/source SHA불일치0. 별도 경로에 새로 컴파일한 receipt/probe9개 PASS(1.242초). 근거 evidence/native-union-lazy-full-gate-v20 및 evidence/v20-probe-gate. Scoped donor/실제binder/Physical Local·Exact cost·receipt parity 관련 agent82개 PASS, 독립최종review CLEAR. 실제 performance는 다음봉인Docker에서판단하며20초성공으로보고하지않는다.

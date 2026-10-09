@@ -5941,32 +5941,32 @@ final class PlacementRelationClosure {
 							if(productPublications != null && productPublications.size() == 2) {
 								// Both parts are prepared before any publication. Distinct output keys
 								// let one stay lazy even when the other needs its exact scalar union.
-								NativePublicationOutcome exactAdmission = nativeProductAdmission(
+								NativeProductAdmission exactAdmission = nativeProductAdmission(
 									productPublications.get(0), grounded,
 									productPublications.get(0).supportClauses().size() > 1,
 									prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1);
-								NativePublicationOutcome nativeAdmission = nativeProductAdmission(
+								NativeProductAdmission nativeAdmission = nativeProductAdmission(
 									productPublications.get(1), grounded,
 									productPublications.get(1).supportClauses().size() > 1, true);
-								if(admittedNativeProduct(exactAdmission) || admittedNativeProduct(nativeAdmission)) {
+								if(exactAdmission.admitted() || nativeAdmission.admitted()) {
 									if(publicationTrace != null)
 										complexityMetrics.recordNativePublication(
 											NativePublicationOutcome.PARTITIONED, supportResult.proofs().size());
 									for(int part = 0; part < 2; part++) {
 										CandidateEmissionRealization publication = productPublications.get(part);
-										NativePublicationOutcome admission = part == 0 ? exactAdmission : nativeAdmission;
-										if(admission == NativePublicationOutcome.COVERED_RETAINED)
+										NativeProductAdmission admission = part == 0 ? exactAdmission : nativeAdmission;
+										if(admission.covered())
 											coveredByRetained = true;
-										else if(admission == NativePublicationOutcome.PUBLISHED)
-											bound.add(publication);
+										else if(admission.publication() != null)
+											bound.add(admission.publication());
 										else {
 											NativePlacementContinuity.NativeSupportProduct product =
 												((NativeContinuitySupportClauses)publication.supportClauses()).product();
 											if(complexityMetrics != null)
 												complexityMetrics.recordDirectWork(
-													admission == NativePublicationOutcome.OUTPUT_COLLISION
+													admission.outcome() == NativePublicationOutcome.OUTPUT_COLLISION
 														? DirectWork.PARTITIONED_COLLISION_PROOFS
-														: admission == NativePublicationOutcome.RETAINED_UNION
+														: admission.outcome() == NativePublicationOutcome.RETAINED_UNION
 															? DirectWork.PARTITIONED_RETAINED_PROOFS
 															: DirectWork.PARTITIONED_SINGLETON_PROOFS,
 													product.size());
@@ -6007,17 +6007,18 @@ final class PlacementRelationClosure {
 								boolean disjointRequest = productPublication.key().layoutKind()
 									== PlacementLayoutKind.NATIVE_LINEAGE
 									|| prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1;
-								NativePublicationOutcome admission = nativeProductAdmission(
+								NativeProductAdmission admission = nativeProductAdmission(
 									productPublication, grounded, worthwhile, disjointRequest);
 								if(publicationTrace != null)
-									publicationTrace.outcome = admission;
-								if(admittedNativeProduct(admission)) {
-									if(admission == NativePublicationOutcome.COVERED_RETAINED)
+									publicationTrace.outcome = admission.outcome();
+								if(admission.admitted()) {
+									if(admission.covered())
 										coveredByRetained = true;
 									else
-										bound.add(productPublication);
+										bound.add(admission.publication());
 									if(publicationTrace != null)
-										complexityMetrics.recordNativePublication(admission, supportResult.proofs().size());
+										complexityMetrics.recordNativePublication(
+											admission.outcome(), supportResult.proofs().size());
 									continue;
 								}
 							}
@@ -6402,21 +6403,38 @@ final class PlacementRelationClosure {
 		return new CandidateEmissionRealization(output.realizationKey(), clauses);
 	}
 
-	private static NativePublicationOutcome nativeProductAdmission(CandidateEmissionRealization publication,
+	private static NativeProductAdmission nativeProductAdmission(CandidateEmissionRealization publication,
 		GroundedNativePreparation grounded, boolean worthwhile, boolean disjointRequest) {
 		if(!worthwhile)
-			return NativePublicationOutcome.SINGLETON_OUTPUT;
+			return NativeProductAdmission.rejected(NativePublicationOutcome.SINGLETON_OUTPUT);
 		if(!disjointRequest)
-			return NativePublicationOutcome.OUTPUT_COLLISION;
+			return NativeProductAdmission.rejected(NativePublicationOutcome.OUTPUT_COLLISION);
 		if(grounded.coversRetainedNativeProduct(publication))
-			return NativePublicationOutcome.COVERED_RETAINED;
-		return grounded.hasRetainedAuthority(publication.key())
-			? NativePublicationOutcome.RETAINED_UNION : NativePublicationOutcome.PUBLISHED;
+			return NativeProductAdmission.coveredRetained();
+		if(!grounded.hasRetainedAuthority(publication.key()))
+			return NativeProductAdmission.published(publication);
+		NativeRetainedUnion union = grounded.unionRetainedNativeProduct(publication);
+		if(union == null)
+			return NativeProductAdmission.rejected(NativePublicationOutcome.RETAINED_UNION);
+		return union.covered()
+			? NativeProductAdmission.coveredRetained()
+			: NativeProductAdmission.published(union.publication());
 	}
 
-	private static boolean admittedNativeProduct(NativePublicationOutcome outcome) {
-		return outcome == NativePublicationOutcome.PUBLISHED || outcome == NativePublicationOutcome.COVERED_RETAINED;
+	private record NativeProductAdmission(NativePublicationOutcome outcome,
+		CandidateEmissionRealization publication, boolean covered) {
+		private static NativeProductAdmission rejected(NativePublicationOutcome outcome) {
+			return new NativeProductAdmission(outcome, null, false);
+		}
+		private static NativeProductAdmission published(CandidateEmissionRealization publication) {
+			return new NativeProductAdmission(NativePublicationOutcome.PUBLISHED, publication, false);
+		}
+		private static NativeProductAdmission coveredRetained() {
+			return new NativeProductAdmission(NativePublicationOutcome.COVERED_RETAINED, null, true);
+		}
+		private boolean admitted() { return covered || publication != null; }
 	}
+	private record NativeRetainedUnion(CandidateEmissionRealization publication, boolean covered) { }
 
 	private static DirectNativeOutput directNativeOutput(
 		NativePlacementContinuity.NativeContinuityProof proof,
@@ -6513,6 +6531,36 @@ final class PlacementRelationClosure {
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> clauses = prior.get(key);
 			// Staging-only keys have an empty prior map, not grounded authority.
 			return clauses != null && !clauses.isEmpty() || nativeProducts.containsKey(key);
+		}
+		private NativeRetainedUnion unionRetainedNativeProduct(
+			CandidateEmissionRealization candidate) {
+			if(hasStaging || hasConflictingEqualAuthority
+				|| !(candidate.supportClauses() instanceof NativeContinuitySupportClauses relation))
+				return null;
+			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> explicit =
+				prior.get(candidate.key());
+			if(explicit != null && !explicit.isEmpty())
+				return null;
+			List<NativeContinuitySupportClauses> retainedRelations =
+				nativeProducts.get(candidate.key());
+			if(retainedRelations == null || retainedRelations.isEmpty())
+				return null;
+			NativeContinuitySupportClauses union = retainedRelations.get(0);
+			for(int index = 1; index < retainedRelations.size(); index++) {
+				var next = union.oneAxisUnion(retainedRelations.get(index));
+				if(next.isEmpty())
+					return null;
+				union = next.get();
+			}
+			var merged = union.oneAxisUnion(relation);
+			if(merged.isEmpty())
+				return null;
+			union = merged.get();
+			for(NativeContinuitySupportClauses retainedRelation : retainedRelations)
+				if(union == retainedRelation)
+					return new NativeRetainedUnion(null, true);
+			return new NativeRetainedUnion(
+				new CandidateEmissionRealization(candidate.key(), union), false);
 		}
 		private boolean coversRetainedNative(
 			NativePlacementContinuity.NativeContinuityProof proof, CompiledHopKey owner,

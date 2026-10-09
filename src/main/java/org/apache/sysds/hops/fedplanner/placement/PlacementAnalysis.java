@@ -2388,6 +2388,29 @@ public final class PlacementAnalysis {
 							|| rightClauses instanceof NativeContinuitySupportClauses ? right : left);
 				}
 				if((metrics == null || !metrics.hasDuplicateMergeDiagnostics())
+					&& leftClauses instanceof NativeContinuitySupportClauses leftNative
+					&& rightClauses instanceof NativeContinuitySupportClauses rightNative) {
+					Optional<NativeContinuitySupportClauses> nativeUnion =
+						leftNative.oneAxisUnion(rightNative);
+					if(nativeUnion.isPresent()) {
+						NativeContinuitySupportClauses union = nativeUnion.get();
+						long uniqueClauses = union.size();
+						long duplicateClauses = (long)leftClauses.size()
+							+ rightClauses.size() - uniqueClauses;
+						if(metrics != null) {
+							metrics.recordRealizationMergeInput();
+							metrics.recordRealizationMergeInput();
+							metrics.recordRealizationMergeClauses(uniqueClauses, duplicateClauses);
+						}
+						if(union == leftNative) {
+							if(metrics != null)
+								metrics.recordRealizationMergeReuse();
+							return List.of(left);
+						}
+						return List.of(new CandidateEmissionRealization(left.key(), union));
+					}
+				}
+				if((metrics == null || !metrics.hasDuplicateMergeDiagnostics())
 					&& leftClauses instanceof FactorizedSupportClauses leftFactorized
 					&& rightClauses instanceof FactorizedSupportClauses rightFactorized) {
 					Optional<FactorizedSupportClauses> factorizedUnion =
@@ -2607,6 +2630,10 @@ public final class PlacementAnalysis {
 
 		private static CandidateEmissionRealization mergeRealizationGroup(
 			List<CandidateEmissionRealization> group, SearchSpaceMetrics metrics) {
+			CandidateEmissionRealization nativeProduct =
+				mergeNativeRealizationGroup(group, metrics);
+			if(nativeProduct != null)
+				return nativeProduct;
 			CandidateEmissionRealization factorized = mergeFactorizedRealizationGroup(group, metrics);
 			if(factorized != null)
 				return factorized;
@@ -2681,6 +2708,36 @@ public final class PlacementAnalysis {
 			}
 			return CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(first.key(),
 				new SharedCanonicalList<>(List.copyOf(union), List.copyOf(unionKeys)));
+		}
+
+		private static CandidateEmissionRealization mergeNativeRealizationGroup(
+			List<CandidateEmissionRealization> group, SearchSpaceMetrics metrics) {
+			if(metrics != null && metrics.hasDuplicateMergeDiagnostics())
+				return null;
+			NativeContinuitySupportClauses union = null;
+			long inputClauses = 0;
+			for(CandidateEmissionRealization realization : group) {
+				if(!(realization.supportClauses() instanceof NativeContinuitySupportClauses relation))
+					return null;
+				inputClauses += relation.size();
+				if(union == null)
+					union = relation;
+				else {
+					Optional<NativeContinuitySupportClauses> next = union.oneAxisUnion(relation);
+					if(next.isEmpty())
+						return null;
+					union = next.get();
+				}
+			}
+			if(metrics != null)
+				metrics.recordRealizationMergeClauses(union.size(), inputClauses - union.size());
+			for(CandidateEmissionRealization realization : group)
+				if(union == realization.supportClauses()) {
+					if(metrics != null)
+						metrics.recordRealizationMergeReuse();
+					return realization;
+				}
+			return new CandidateEmissionRealization(group.get(0).key(), union);
 		}
 
 		private static CandidateEmissionRealization mergeFactorizedRealizationGroup(
