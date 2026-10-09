@@ -2,7 +2,29 @@
 
 ## 상태
 
-최신 완료 실측은 **v27 (`90898b932b`)**다. 동일 COFEE 50K×128 W1에서 LogReg **373.091833772초**, GLM **117.126525936초**였다. v25 대비 각각 +6.344초 / −5.388초이며 각 1회 관측이다. **20초 목표는 미달이고, 두 workload 전체에서 일관된 개선은 확인되지 않았다.**
+최신 완료 실측은 **v29 (`cbb0f62535`)**다. 동일 입력·seed·privacy·cost profile·JVM·CPU/메모리 조건의 COFEE 50K×128 W1 결과이며, 각 버전별 1회 관측이다. **20초 목표는 미달이다.**
+
+| 엔진 | LogReg 전체 초기 planning | GLM 전체 초기 planning |
+|---|---:|---:|
+| v27 | 373.092초 | 117.127초 |
+| v28 | 359.976초 | 116.389초 |
+| v29 | 361.813초 | 123.207초 |
+
+세 버전 모두 numeric comparison, runtime audit, objective raw bits, assignment, 전체 선택 문자열과 receipt/section 동등성을 v19 기준과 비교해 통과했다. v29의 CostSurface 및 aggregate final fingerprint도 v28과 같다. 실제 workload의 모든 cost cell 전수 검증을 뜻하지는 않는다.
+
+v28의 carrier 기반 seed support 전파와 native boundary projection은 v27보다 전체 시간이 줄었다. v29의 반복 seed plan 재사용은 Analysis가 줄었지만 Model·Cost·Optimizer 시간이 늘어 전체 시간은 LogReg +1.837초, GLM +6.818초였다. 합성 fixture에서 120회 준비를 1회로 줄인 효과를 실제 전체 성능 향상으로 일반화하지 않는다.
+
+v29는 전체 1,320개와 probe 9개를 통과해 origin/main에 게시했다. 다음 v30은 재사용한 acyclic summary의 재생성을 생략하며 전체 1,322개와 probe 9개를 통과했다. 다중 입력 exactness complement는 아직 별도 lane에서 검증 중이다.
+
+- v19-v29 비교 SHA `d1cfa787229b2c8e25397cb48817b9ee2b43a1c96cab5dadce936c9a8bedbc71`
+- v29 regression binding SHA `171936bd1f672165ba6a14a66a2f3f6025fe9c5c51ad0302e1b26941fef57686`
+- v29 evaluator FAIL SHA `4cd092ac4d26877e223ded34a3f0896109b3f386ed160db9514f95f8e74450e4`
+
+동일 엔진 3회씩 모두 20초 이하와 parity라는 완료 조건은 충족되지 않았다. 실패 checkpoint를 기록했고, 완료로 표시하지 않았다.
+
+이하 v27 및 이전 상세 관측이다.
+
+v27 실측은 **v27 (`90898b932b`)**다. 동일 COFEE 50K×128 W1에서 LogReg **373.091833772초**, GLM **117.126525936초**였다. v25 대비 각각 +6.344초 / −5.388초이며 각 1회 관측이다. **20초 목표는 미달이고, 두 workload 전체에서 일관된 개선은 확인되지 않았다.**
 
 | v27 관측 | LogReg | GLM |
 |---|---:|---:|

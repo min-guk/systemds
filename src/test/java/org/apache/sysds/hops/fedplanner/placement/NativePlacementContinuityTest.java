@@ -1331,6 +1331,10 @@ public class NativePlacementContinuityTest {
 			assertIdentitySetEquals(cold.dependencyOccurrences(), actual.dependencyOccurrences());
 			Assert.assertTrue("the second root must reuse the retained one-row child summary",
 				secondStates < firstStates);
+			Assert.assertEquals("a reused grounded summary must not rescan its rows", 64,
+				metrics.directWorkCount(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_SUPPORTED_ROWS_EXAMINED));
+			Assert.assertTrue("readmission must preserve the exact existing immutable summary",
+				summaries.values().stream().anyMatch(summary -> summary == sharedSummary));
 			Assert.assertTrue(metrics.directWorkCount(
 				SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_REUSE_HITS) > 0);
 			Assert.assertTrue(metrics.directWorkCount(

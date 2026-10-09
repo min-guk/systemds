@@ -1011,3 +1011,16 @@
 
 - **v29 전체 gate**: selected FedPlanner1,320개PASS(179.467초). 7,849 class/resource 실행 전후 변경0/source SHA 불일치0. 근거 `evidence/native-seed-prepared-full-gate-v29/validation.json`. Prepared 구조 재사용의 focused52개와 독립 검토를 포함한다.
 - **v28 LogReg 선행 결과**: fullInitial359.976439287초(analysis272.775/model5.937/cost6.407/optimizer71.268), runtime4.781초. Numeric/audit0/objective/selection 검사PASS. v27보다13.115초 줄어든 단일관측이고20초 목표는 미달이다. GLM/최종 cross-version selected raw parity는 이어서 검증한다.
+
+
+### v30 / 재사용된 acyclic summary의 재생성 제거 (진행중)
+
+- **원인/계획**: traversal이 이미 검증된 component summary를 재사용해도 admission에서 같은 grounded row와 dedup key 및 owner footprint를 다시 만든다. 현재 query가 사용한 exact summary, pruning 후 동일한 viable list, 동일 owner footprint 객체와 retained-state 수가 모두 같은 경우에만 기존 객체를 다시 admission한다. Generated-root exclusion과 cache budget/LRU는 기존 경로를 그대로 거친다. 다른 list·footprint·상태에는 기존 재계산을 유지한다.
+- **검증**: 기존 실제 64-clause→1 summary fixture의 두 번째 root에서 row 재검사 및 객체 재생성이 없어야 한다. Cold ordered proof/owner identity parity, 기존 cache eviction/revision/고정 owner/SCC 회귀를 유지한다. Reused negative summary와 list/footprint 변경도 별도 검사한다.
+- **잔여/위험**: 이 변경은 dependency pruning과 admission의 중복 작업만 제거하며 큰 overlay 시간이 사라진다고 주장하지 않는다. 다축 complement 별도 lane과는 다른 함수에 한정한다.
+
+- **v30 RED→GREEN**: 기존 실제64-clause→1 summary fixture의 두 번째 root에서 row 재검사65/기대64로 RED(162개중1실패,1.908초). 변경 후164개PASS(1.038초,기존ignore1). Same summary identity/cold ordered proof/owner footprint parity, negative summary, copied viable list, metadata owner 추가, filtered empty, generated root 동일·동등하지만 별도 identity, lookup 후 eviction을 검증했다. 최초 compile에서 signature 변경에 맞춘 두 caller 치환이 누락됐고 명시적으로 수정했다. Production SHA `ea2431825dafedd93a700a7179909e19aaeace65181907858b13b0c283277f6a`, tests SHA `9391065dc2fdfa743f8012cb2a4f1840bde84dba4c1eafcf1632546ae017e016`. 전체 회귀/독립 검토 진행 중이다.
+
+- **v30 전체 gate/독립 검토**: selected FedPlanner1,322개PASS(177.495초),7,849 class/resource 변경0/source SHA 불일치0, probe9개PASS(1.503초). Exact identity/상태/footprint가 모두 같은 경우만 기존 summary 객체를 재사용하고 cache admission을 그대로 실행한다는 production 검토 CLEAR. 근거 `evidence/native-summary-readmission-full-gate-v30/validation.json`.
+- **v29 실제 최종**: LogReg361.813119299초 / GLM123.207초. 두 workload numeric/audit0/objective/selected raw 및 receipt/section parity PASS, CostSurface/aggregate fingerprint도 v28과 동일. v28 대비 각각+1.837초/+6.818초이며 준비 재사용을 전체 성능 향상으로 보고하지 않는다. Evaluator FAIL/checkpoint를 기록했다.
+- **다음 origin 통합**: cd9b3fbecd의 sparse native skeleton transfer는 전체 relation 대신 보존된 donor clause의 exact ordinal만 조회한다. v30을 먼저 commit하여 보존하고 incoming을 별도 통합·검증한다. 검증되지 않은 conditional complement는 아직 포함하지 않는다.

@@ -2571,7 +2571,7 @@ final class NativePlacementContinuity {
 				// boundaries. Only physical dependency viability is needed here.
 				supported = viableCandidateStates(viable);
 			cacheAcyclicRootChildren(independentChildren, viable, supported,
-				generation == null ? null : root.key());
+				generation == null ? null : root.key(), traversal);
 			}
 			else {
 				Map<CandidateProofState,AcyclicComponentFootprint> childFootprints =
@@ -2588,7 +2588,7 @@ final class NativePlacementContinuity {
 				// In a DAG every surviving row reaches a direct leaf after dead pruning.
 				supported = viableCandidateStates(viable);
 			cacheAcyclicRootChildren(childFootprints, viable, supported,
-				generation == null ? null : root.key());
+				generation == null ? null : root.key(), traversal);
 			}
 			if(metrics != null)
 				metrics.recordProofGraphPath(traversal.cycleDetected, acyclicRemoved);
@@ -3402,13 +3402,27 @@ final class NativePlacementContinuity {
 	private void cacheAcyclicRootChildren(
 		Map<CandidateProofState,AcyclicComponentFootprint> childFootprints,
 		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
-		Set<CandidateProofState> supported, CompiledHopKey generatedRoot) {
+		Set<CandidateProofState> supported, CompiledHopKey generatedRoot,
+		CandidateProofTraversal traversal) {
 		if(acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
 			|| acyclicComponentMaxAlternatives == 0)
 			return;
 		for(var entry : childFootprints.entrySet())
-			if(generatedRoot == null || !entry.getValue().occurrences.contains(generatedRoot))
-				cacheAcyclicComponent(entry.getKey(), entry.getValue(), viable, supported);
+			if(generatedRoot == null || !entry.getValue().occurrences.contains(generatedRoot)) {
+				CandidateProofState child = entry.getKey();
+				AcyclicComponentFootprint footprint = entry.getValue();
+				AcyclicComponentSummary reused = traversal.reusedComponents.get(child);
+				// This exact grounded boundary already has canonical, distinct rows.
+				// Preserve admission/eviction order, including after an intervening
+				// eviction, but do not reconstruct an unchanged summary or footprint.
+				if(reused != null && viable.get(child) == reused.supportedAlternatives
+					&& supported.contains(child) == !reused.supportedAlternatives.isEmpty()
+					&& footprint.occurrences == reused.occurrences
+					&& footprint.retainedStates == reused.retainedStates)
+					cacheAcyclicSummary(child, reused);
+				else
+					cacheAcyclicComponent(child, footprint, viable, supported);
+			}
 	}
 
 	private void cacheAcyclicComponent(CandidateProofState child, AcyclicComponentFootprint footprint,
