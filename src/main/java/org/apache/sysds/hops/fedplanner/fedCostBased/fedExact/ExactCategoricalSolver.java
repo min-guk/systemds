@@ -166,6 +166,71 @@ public final class ExactCategoricalSolver {
 				&& scope.get(1).domainSize() == mapping.columns ? mapping : null;
 		}
 
+		/** Fix singleton boundary values without expanding a sparse hard relation. Null requests the numeric fallback. */
+		Factor conditionSupport(int[] boundary) {
+			FunctionalMap mapping = functionalMapping();
+			if(!(evaluator instanceof FiniteSupport) && mapping == null)
+				return null;
+			if(boundary.length != scope.size())
+				throw new IllegalArgumentException("EXACT_VE_CONDITION_BOUNDARY_SIZE_INVALID");
+			List<Variable> free = new ArrayList<>();
+			for(int axis = 0; axis < boundary.length; axis++) {
+				if(boundary[axis] < -1 || boundary[axis] >= scope.get(axis).domainSize())
+					throw new IllegalArgumentException("EXACT_VE_CONDITION_BOUNDARY_VALUE_INVALID");
+				if(boundary[axis] < 0)
+					free.add(scope.get(axis));
+			}
+			if(free.size() == scope.size())
+				return this;
+			if(mapping != null) {
+				if(boundary[0] >= 0) {
+					int target = mapping.target(boundary[0]);
+					boolean allowed = target >= 0 && (boundary[1] < 0 || boundary[1] == target);
+					return finiteSupport(free, allowed ? new int[] {boundary[1] < 0 ? target : 0} : new int[0]);
+				}
+				int count = 0;
+				for(int row = 0; row < mapping.rows(); row++)
+					if(mapping.target(row) == boundary[1]) count++;
+				int[] rows = PlannerResourceGuard.allocateInts(count, "exact-functional-condition");
+				int output = 0;
+				for(int row = 0; row < mapping.rows(); row++)
+					if(mapping.target(row) == boundary[1]) rows[output++] = row;
+				return finiteSupport(free, rows);
+			}
+			FiniteSupport support = (FiniteSupport)evaluator;
+			int[] freeStrides = new int[boundary.length];
+			int stride = 1;
+			for(int axis = boundary.length - 1; axis >= 0; axis--)
+				if(boundary[axis] < 0) {
+					freeStrides[axis] = stride;
+					stride = Math.multiplyExact(stride, support.dimensions[axis]);
+				}
+			int count = 0;
+			for(int cell : support.finiteCells)
+				if(conditionedCell(cell, support.dimensions, boundary, freeStrides) >= 0) count++;
+			int[] projected = PlannerResourceGuard.allocateInts(count, "exact-finite-support-condition");
+			int output = 0;
+			for(int cell : support.finiteCells) {
+				int selected = conditionedCell(cell, support.dimensions, boundary, freeStrides);
+				if(selected >= 0) projected[output++] = selected;
+			}
+			// Surviving tuples agree on every removed coordinate. Their projection is
+			// injective and preserves row-major order, including the zero-axis case.
+			return finiteSupport(free, projected);
+		}
+
+		private static int conditionedCell(int cell, int[] dimensions, int[] boundary, int[] freeStrides) {
+			int projected = 0;
+			for(int axis = boundary.length - 1; axis >= 0; axis--) {
+				int value = cell % dimensions[axis];
+				cell /= dimensions[axis];
+				if(boundary[axis] >= 0 && boundary[axis] != value)
+					return -1;
+				projected += value * freeStrides[axis];
+			}
+			return projected;
+		}
+
 		/** Null requests the ordinary projection when the target projection is not injective. */
 		Factor projectFunctionalMap(List<Variable> projectedScope, int[] rows, int[] columns) {
 			FunctionalMap mapping = functionalMapping();

@@ -332,3 +332,13 @@
 - **v23 full gate 결과**: fresh package **1,117 selected tests/failure0/error0/skip1**, BUILD SUCCESS02:46:46. 독립architect productionreview CLEAR이며봉인후게시한다. Widefixture에서정확히64visits와실제rawsameidentity를직접assert하는보강은후속test변경으로분리한다(현재oldcode복잡도red는유효). 기존Exact/PCA supplemental gap은해결주장하지않는다.
 
 - **추가 원격 병합/게시**: c6be0b6916 push는 원격689760d079가 먼저 갱신되어 fast-forward 거부됐다. 강제 push하지 않고 fbc30a527c로 병합, docs 양쪽 보존 및 NPC production/test 자동 통합. 변경 범위 continuity/revision/pruning focused188PASS(4.508초), source SHA mismatch0, independent review CLEAR. 앞선 통합1,033PASS와 함께 검증 근거로 보존한다(`evidence/native-v7-689-focused-green-188`). 실제 v7는 이미 봉인한 정확한 c6be/JAR5172e29a를 계속 사용하며 이 추가 커밋을 소급 포함하지 않는다.
+
+
+### DP 부분 고정 시 sparse relation의 dense 재전개 제거 (v8 후보)
+
+- **문제/근거**: SharedRegionalPreparation.condition은 boundary 밖 입력을 고정한 뒤 남은 free 축 product를 lazy wrapper+freeze로 전부 평가했다. IncrementalRegionalSeed.condition도 같은 product의 double[]를 만들었다. 원본이 FiniteSupport/FunctionalMap이어도 표현을 잃었다. 실제 optimizer74.5초 중 이 경로의 기여도를 새 profiling으로 측정한 것은 아니다.
+- **해결/파일**: ExactCategoricalSolver.Factor.conditionSupport는 sparse admitted row만 filter/project한다. 고정된 singleton 축을 제거하는 projection은 injective이며 row-major 정렬을 유지한다. FunctionalMap은 source 고정 시0/1개 target, target 고정 시정렬된 source preimage, 양쪽 고정 시scalar true/false로 처리한다. SharedRegionalPreparation/IncrementalRegionalSeed가 먼저 이 경로를 소비하고 일반 numeric/conditional relation은 기존 fallback을 유지한다.
+- **검증**: 기존 구현은 새4tests 중3개 sparse 표현 유지 검사에서 실패(`evidence/sparse-conditioning-red-4`). 수정 후6suites55PASS(1.357초), independent review CLEAR(`evidence/sparse-conditioning-focused-green-55`).160,000 free cells의 예제가 sparse3rows를 유지한다.35fixed-seed random 관계의 모든 작은 boundary·sparse holes·zero axes, functional -1/unmapped/frozen map, raw cost bits와 exact canonical minimum을 explicit table과 비교한다. Regional preparation/seed lift/incremental 회귀도 통과했다.
+- **의미/회귀 위험**: +0/+INF hard relation만 새 경로를 쓴다. 변수 identity/order와 source 관계의 정확한 feasible cells를 보존한다. Seed의 기존 conceptual cell/resource limit 판정은 sparse 처리 전 동일하게 적용하며, 조건부 비용/공유 비용 수식은 변경하지 않는다. 따라서 이전에 conceptual limit으로 거절된 sparse case를 새로 통과시키는 개선은 아직 없다. 실제 workload 시간/peak와 full gate는 별도 확인한다.
+
+- **v8 DP conditioning 통합 gate**: fresh main/test compile 및1,038 JUnit PASS(180.381초), source SHA mismatch0, independent static review CLEAR. 증거 `evidence/sparse-conditioning-full-green-1038`. 본 snapshot은689760의 linear topology check를 포함하나 별도 개발 중인 synthetic axis gate는 아직 포함하지 않는다.

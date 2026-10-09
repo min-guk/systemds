@@ -485,6 +485,9 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 	}
 
 	private static Factor condition(Factor source, int[] boundary) {
+		Factor support = source.conditionSupport(boundary);
+		if(support != null)
+			return support;
 		List<Variable> free = new ArrayList<>();
 		int[] stride = new int[boundary.length];
 		int cells = 1;
