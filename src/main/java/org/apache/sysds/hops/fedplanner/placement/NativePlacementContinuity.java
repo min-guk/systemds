@@ -3332,9 +3332,26 @@ final class NativePlacementContinuity {
 			retainedStates++;
 			if(retainedStates > acyclicComponentMaxStates)
 				return null;
-			for(SelectedCandidateProof alternative : graph.getOrDefault(state, List.of()))
-				for(CandidateProofDependency dependency : alternative.dependencies)
-					pending.addLast(dependency.state());
+			List<SelectedCandidateProof> alternatives = graph.getOrDefault(state, List.of());
+			if(alternatives instanceof DefaultAlternativeList defaults) {
+				// Graph construction already prepared this exact immutable schedule.
+				// Full-state, first-encounter deduplication removes only repeated queue
+				// entries; ordinary overlay and filtered lists keep the original walk.
+				DefaultTraversalSchedule schedule = defaults.traversalSchedule(null);
+				if(metrics != null) {
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_SCHEDULES);
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_RAW_EDGES,
+						schedule.rawDependencyCount);
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_UNIQUE_EDGES,
+						schedule.uniqueSuccessors.size());
+				}
+				for(CandidateProofState successor : schedule.uniqueSuccessors)
+					pending.addLast(successor);
+			}
+			else
+				for(SelectedCandidateProof alternative : alternatives)
+					for(CandidateProofDependency dependency : alternative.dependencies)
+						pending.addLast(dependency.state());
 		}
 		retainedStates = Math.max(retainedStates, occurrences.size());
 		return retainedStates > acyclicComponentMaxStates ? null
@@ -3572,18 +3589,32 @@ final class NativePlacementContinuity {
 		DefaultAlternativeList prior = fixedBoundaryOverlays.remove(key);
 		if(prior != null)
 			fixedBoundaryOverlayRetainedRows -= prior.size();
-		while(!fixedBoundaryOverlays.isEmpty()
-			&& (fixedBoundaryOverlays.size() >= topologyMaxEntries
-				|| fixedBoundaryOverlayRetainedRows + rows > topologyMaxRows)) {
-			var oldest = fixedBoundaryOverlays.entrySet().iterator().next();
-			fixedBoundaryOverlayRetainedRows -= oldest.getValue().size();
-			fixedBoundaryOverlays.remove(oldest.getKey());
-		}
+		evictOptionalOverlaysForTopologyBudget(1, rows);
+		// Optional overlays share the original topology budget, rather than receiving
+		// a second copy of it. Never evict topology just to retain an overlay.
+		if(!hasTopologyBudgetFor(1, rows))
+			return;
 		fixedBoundaryOverlays.put(key, overlay);
 		fixedBoundaryOverlayRetainedRows += rows;
 		fixedBoundaryOverlayBuilds++;
 		if(metrics != null)
-			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_BUILDS);
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_ADMISSIONS);
+	}
+
+	private boolean hasTopologyBudgetFor(int additionalEntries, long additionalRows) {
+		return (long)candidateTopologies.size() + fixedBoundaryOverlays.size() + additionalEntries
+				<= topologyMaxEntries
+			&& topologyRetainedRows + topologyRetainedOwnerReads
+				+ fixedBoundaryOverlayRetainedRows + additionalRows <= topologyMaxRows;
+	}
+
+	private void evictOptionalOverlaysForTopologyBudget(int additionalEntries, long additionalRows) {
+		while(!fixedBoundaryOverlays.isEmpty()
+			&& !hasTopologyBudgetFor(additionalEntries, additionalRows)) {
+			var oldest = fixedBoundaryOverlays.entrySet().iterator().next();
+			fixedBoundaryOverlayRetainedRows -= oldest.getValue().size();
+			fixedBoundaryOverlays.remove(oldest.getKey());
+		}
 	}
 
 	/** Snapshot-local representation check; it carries no source or proof authority. */
@@ -4112,10 +4143,9 @@ final class NativePlacementContinuity {
 			topologyRetainedRows -= prior.rows.size();
 			topologyRetainedOwnerReads -= prior.metadataOwnerReads.size();
 		}
+		evictOptionalOverlaysForTopologyBudget(1, rows + ownerReads);
 		while(!candidateTopologies.isEmpty()
-			&& (candidateTopologies.size() >= topologyMaxEntries
-				|| topologyRetainedRows + topologyRetainedOwnerReads + rows + ownerReads
-					> topologyMaxRows)) {
+			&& !hasTopologyBudgetFor(1, rows + ownerReads)) {
 			var oldest = candidateTopologies.entrySet().iterator().next();
 			topologyRetainedRows -= oldest.getValue().rows.size();
 			topologyRetainedOwnerReads -= oldest.getValue().metadataOwnerReads.size();

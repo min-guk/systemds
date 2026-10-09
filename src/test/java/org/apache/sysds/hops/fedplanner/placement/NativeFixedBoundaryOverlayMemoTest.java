@@ -14,17 +14,106 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.NativePlacementContinuity.CandidateSupportResult;
+import org.apache.sysds.hops.fedplanner.placement.NativePlacementContinuity.NativeContinuityProof;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class NativeFixedBoundaryOverlayMemoTest {
+	@Test
+	public void repeatedAnalysisScopedLoopQueryReusesRealFixedBoundaryOverlay()
+		throws Exception {
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.beginAnalysisScope(metrics);
+		try {
+			Object fixture = fixture();
+			DurableAnchorKey entryPool = anchor("analysis-loop-entry", "worker1:8001");
+			Object entry = fixtureCall(fixture, "source",
+				new Class<?>[] {String.class, DurableAnchorKey.class},
+				"analysis-loop-entry", entryPool);
+			Object read = fixtureCall(fixture, "logicalRead",
+				new Class<?>[] {String.class}, "analysis-loop-read");
+			Object body = fixtureCall(fixture, "unary",
+				new Class<?>[] {String.class, OpOp1.class, refClass(), boolean.class},
+				"analysis-loop-body", OpOp1.LOG, read, false);
+			Object write = fixtureCall(fixture, "write",
+				new Class<?>[] {String.class, refClass(), NodeKind.class, boolean.class},
+				"analysis-loop-write", body, NodeKind.LOOP_PHI, false);
+			@SuppressWarnings("unchecked")
+			Map<CompiledHopKey,List<CompiledHopKey>> reaching =
+				(Map<CompiledHopKey,List<CompiledHopKey>>)field(fixture, "reaching");
+			reaching.put((CompiledHopKey)field(read, "key"), List.of(
+				(CompiledHopKey)field(entry, "key"), (CompiledHopKey)field(write, "key")));
+			List<CandidateInputState> inputs =
+				List.of(CandidateInputState.present(FType.FULL));
+			CandidateRealizationReference reference = (CandidateRealizationReference)fixtureCall(
+				fixture, "reference", new Class<?>[] {refClass(), List.class}, body, inputs);
+			NativePlacementContinuity continuity = (NativePlacementContinuity)fixtureCall(
+				fixture, "resolver",
+				new Class<?>[] {SearchSpaceMetrics.class, int.class, long.class},
+				metrics, 0, 0L);
+
+			CandidateSupportResult first = continuity.proveCandidateSupport(reference, entryPool);
+			Assert.assertFalse("the initialized loop must have grounded native support",
+				first.proofs().isEmpty());
+			Assert.assertTrue(longField(continuity, "fixedBoundaryOverlayBuilds") > 0);
+			long hits = longField(continuity, "fixedBoundaryOverlayHits");
+			CandidateSupportResult repeated = continuity.proveCandidateSupport(reference, entryPool);
+			Assert.assertTrue("the second cyclic query must consume a real fixed-root overlay",
+				longField(continuity, "fixedBoundaryOverlayHits") > hits);
+			Assert.assertEquals(longField(continuity, "fixedBoundaryOverlayHits"),
+				metrics.directWorkCount(
+					SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_HITS));
+			Assert.assertTrue(((Map<?,?>)field(continuity, "candidateTopologies")).size() > 0);
+			Assert.assertTrue(((Map<?,?>)field(continuity, "fixedBoundaryOverlays")).size() > 0);
+			Assert.assertTrue("the fixture must execute the cyclic proof fixed point",
+				metrics.snapshot().cyclicProofGraphs() > 0);
+			assertResultAuthority(first, repeated);
+
+			NativePlacementContinuity cold = (NativePlacementContinuity)fixtureCall(fixture,
+				"resolver", new Class<?>[] {SearchSpaceMetrics.class, int.class, long.class},
+				null, 0, 0L);
+			assertResultAuthority(cold.proveCandidateSupport(reference, entryPool), repeated);
+
+			DurableAnchorKey changedPool = anchor("analysis-loop-changed", "worker2:8002");
+			CandidateSupportResult changed = continuity.proveCandidateSupport(reference, changedPool);
+			NativePlacementContinuity changedCold = (NativePlacementContinuity)fixtureCall(fixture,
+				"resolver", new Class<?>[] {SearchSpaceMetrics.class, int.class, long.class},
+				null, 0, 0L);
+			assertResultAuthority(
+				changedCold.proveCandidateSupport(reference, changedPool), changed);
+			assertTopologyDisabledParity(fixture, reference, entryPool, first,
+				"sysds.fedplanner.continuityTopology.maxEntries");
+			assertTopologyDisabledParity(fixture, reference, entryPool, first,
+				"sysds.fedplanner.continuityTopology.maxRows");
+
+			@SuppressWarnings("unchecked")
+			List<PlacementAnalysis.CandidateRuleFact> candidates = List.copyOf(
+				(List<PlacementAnalysis.CandidateRuleFact>)field(fixture, "candidates"));
+			NativePlacementContinuity revision = continuity.nextRevision(candidates);
+			CandidateSupportResult revised = revision.proveCandidateSupport(reference, entryPool);
+			NativePlacementContinuity revisionCold = (NativePlacementContinuity)fixtureCall(fixture,
+				"resolver", new Class<?>[] {SearchSpaceMetrics.class, int.class, long.class},
+				null, 0, 0L);
+			assertResultAuthority(
+				revisionCold.proveCandidateSupport(reference, entryPool), revised);
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+		}
+	}
 	@Test
 	public void exactBoundaryReusesOverlayAndTraversalScheduleWithReferenceParity()
 		throws Exception {
@@ -61,6 +150,12 @@ public class NativeFixedBoundaryOverlayMemoTest {
 		Assert.assertEquals(2L, longField(cached, "fixedBoundaryOverlayRetainedRows"));
 		Assert.assertEquals("the hit must not revisit either topology row", 2L,
 			longField(cached, "fixedBoundaryOverlayRowsVisited"));
+		Assert.assertEquals(1L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_HITS));
+		Assert.assertEquals(1L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_ADMISSIONS));
+		Assert.assertEquals(2L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_ROWS_VISITED));
 		Assert.assertEquals(1L, metrics.snapshot().proofDefaultScheduleBuilds());
 		Assert.assertEquals(1L, metrics.snapshot().proofDefaultScheduleHits());
 		Assert.assertEquals(2L, metrics.directWorkCount(
@@ -68,7 +163,7 @@ public class NativeFixedBoundaryOverlayMemoTest {
 		Assert.assertEquals(1L, metrics.directWorkCount(
 			SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_HITS));
 		Assert.assertEquals(1L, metrics.directWorkCount(
-			SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_BUILDS));
+			SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_ADMISSIONS));
 		Assert.assertEquals(2L, metrics.directWorkCount(
 			SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_ROWS_VISITED));
 		assertMetadataOwner(firstTraversal, metadataOwner);
@@ -191,14 +286,112 @@ public class NativeFixedBoundaryOverlayMemoTest {
 	}
 
 	@Test
+	public void topologyThenOverlayAdmissionSharesRowAndEntryBudgets() throws Exception {
+		for(int[] budget : List.of(new int[] {8, 4}, new int[] {1, 100})) {
+			String entriesKey = "sysds.fedplanner.continuityTopology.maxEntries";
+			String rowsKey = "sysds.fedplanner.continuityTopology.maxRows";
+			String oldEntries = System.getProperty(entriesKey), oldRows = System.getProperty(rowsKey);
+			try {
+				System.setProperty(entriesKey, Integer.toString(budget[0]));
+				System.setProperty(rowsKey, Integer.toString(budget[1]));
+				Object witness = witness();
+				CompiledHopKey root = owner("topology-first-root-" + budget[0]);
+				CompiledHopKey fixedOwner = owner("topology-first-fixed-" + budget[0]);
+				CompiledHopKey metadataOwner = owner("topology-first-metadata-" + budget[0]);
+				Object firstRow = topologyRow(reference(root, "topology-first-a"),
+					List.of(skeleton(fixedOwner, witness, 0)), witness);
+				Object secondRow = topologyRow(reference(root, "topology-first-b"),
+					List.of(skeleton(fixedOwner, witness, 0)), witness);
+				NativePlacementContinuity continuity = empty(null);
+				installTopology(continuity, topologyKey(root, witness),
+					topology(List.of(firstRow, secondRow), Map.of(), Set.of(metadataOwner)));
+				assertCombinedBudget(continuity, budget[0], budget[1]);
+
+				CandidateRealizationReference exact = reference(fixedOwner,
+					"topology-first-exact-" + budget[0]);
+				Object traversal = traversal();
+				List<?> actual = alternatives(continuity, root, null, 0, witness, false,
+					fixedBoundary(fixedOwner, exact, 41), traversal);
+				Assert.assertEquals(2, actual.size());
+				assertMetadataOwner(traversal, metadataOwner);
+				for(Object alternative : actual) {
+					Object dependency = ((List<?>)field(alternative, "dependencies")).get(0);
+					Assert.assertSame(exact, field(dependency, "realization"));
+					Assert.assertEquals(41, field(dependency, "realizationHandle"));
+				}
+				assertCombinedBudget(continuity, budget[0], budget[1]);
+			}
+			finally {
+				restoreProperty(entriesKey, oldEntries);
+				restoreProperty(rowsKey, oldRows);
+			}
+		}
+	}
+
+	@Test
+	public void topologyGrowthEvictsOptionalOverlayBeforeResidentTopologies() throws Exception {
+		for(int[] budget : List.of(new int[] {8, 4}, new int[] {2, 100})) {
+			String entriesKey = "sysds.fedplanner.continuityTopology.maxEntries";
+			String rowsKey = "sysds.fedplanner.continuityTopology.maxRows";
+			String oldEntries = System.getProperty(entriesKey), oldRows = System.getProperty(rowsKey);
+			try {
+				System.setProperty(entriesKey, Integer.toString(budget[0]));
+				System.setProperty(rowsKey, Integer.toString(budget[1]));
+				Object witness = witness();
+				CompiledHopKey rootA = owner("growth-a-" + budget[0]);
+				CompiledHopKey fixedOwner = owner("growth-fixed-" + budget[0]);
+				Object rowA = topologyRow(reference(rootA, "growth-a"),
+					List.of(skeleton(fixedOwner, witness, 0)), witness);
+				NativePlacementContinuity continuity = empty(null);
+				installTopology(continuity, topologyKey(rootA, witness),
+					topology(List.of(rowA), Map.of(), Set.of()));
+				CandidateRealizationReference exact = reference(fixedOwner,
+					"growth-exact-" + budget[0]);
+				Object boundary = fixedBoundary(fixedOwner, exact, 51);
+				List<?> firstOverlay = alternatives(continuity, rootA, null, 0, witness,
+					false, boundary, traversal());
+				Assert.assertEquals(1, firstOverlay.size());
+				Assert.assertEquals(1, ((Map<?,?>)field(continuity,
+					"fixedBoundaryOverlays")).size());
+				assertCombinedBudget(continuity, budget[0], budget[1]);
+
+				CompiledHopKey rootB = owner("growth-b-" + budget[0]);
+				CompiledHopKey metadataOwner = owner("growth-metadata-" + budget[0]);
+				Object rowB0 = topologyRow(reference(rootB, "growth-b-0"), List.of(), witness);
+				Object rowB1 = topologyRow(reference(rootB, "growth-b-1"), List.of(), witness);
+				installTopology(continuity, topologyKey(rootB, witness),
+					topology(List.of(rowB0, rowB1), Map.of(), Set.of(metadataOwner)));
+				Assert.assertEquals("topology admission has priority over optional overlays", 0,
+					((Map<?,?>)field(continuity, "fixedBoundaryOverlays")).size());
+				Assert.assertEquals(2,
+					((Map<?,?>)field(continuity, "candidateTopologies")).size());
+				assertCombinedBudget(continuity, budget[0], budget[1]);
+
+				List<?> rebuilt = alternatives(continuity, rootA, null, 0, witness,
+					false, boundary, traversal());
+				Assert.assertNotSame(firstOverlay, rebuilt);
+				Assert.assertEquals("shared-budget eviction cannot change canonical authority",
+					firstOverlay, rebuilt);
+				Object dependency = ((List<?>)field(rebuilt.get(0), "dependencies")).get(0);
+				Assert.assertSame(exact, field(dependency, "realization"));
+				assertCombinedBudget(continuity, budget[0], budget[1]);
+			}
+			finally {
+				restoreProperty(entriesKey, oldEntries);
+				restoreProperty(rowsKey, oldRows);
+			}
+		}
+	}
+
+	@Test
 	public void boundedOverlayMemoEvictsLeastRecentlyUsedAuthorityWithoutChangingRows()
 		throws Exception {
 		String entriesKey = "sysds.fedplanner.continuityTopology.maxEntries";
 		String rowsKey = "sysds.fedplanner.continuityTopology.maxRows";
 		String oldEntries = System.getProperty(entriesKey), oldRows = System.getProperty(rowsKey);
 		try {
-			System.setProperty(entriesKey, "2");
-			System.setProperty(rowsKey, "4");
+			System.setProperty(entriesKey, "3");
+			System.setProperty(rowsKey, "6");
 			Object witness = witness();
 			CompiledHopKey root = owner("bounded-root"), fixedOwner = owner("bounded-fixed");
 			Object row0 = topologyRow(reference(root, "bounded-0"),
@@ -208,14 +401,17 @@ public class NativeFixedBoundaryOverlayMemoTest {
 			NativePlacementContinuity continuity = empty(null);
 			installTopology(continuity, topologyKey(root, witness),
 				topology(List.of(row0, row1), Map.of(), Set.of()));
+			assertCombinedBudget(continuity, 3, 6);
 			Object first = fixedBoundary(fixedOwner, reference(fixedOwner, "bounded-first"), 11);
 			Object second = fixedBoundary(fixedOwner, reference(fixedOwner, "bounded-second"), 12);
 			Object third = fixedBoundary(fixedOwner, reference(fixedOwner, "bounded-third"), 13);
 			List<?> firstRows = alternatives(continuity, root, null, 0, witness, false, first, traversal());
 			List<?> secondRows = alternatives(continuity, root, null, 0, witness, false, second, traversal());
+			assertCombinedBudget(continuity, 3, 6);
 			Assert.assertSame(firstRows,
 				alternatives(continuity, root, null, 0, witness, false, first, traversal()));
 			alternatives(continuity, root, null, 0, witness, false, third, traversal());
+			assertCombinedBudget(continuity, 3, 6);
 			Assert.assertEquals(2, ((Map<?,?>)field(continuity, "fixedBoundaryOverlays")).size());
 			Assert.assertEquals(4L, longField(continuity, "fixedBoundaryOverlayRetainedRows"));
 			Assert.assertSame("touching the first authority keeps it resident", firstRows,
@@ -226,6 +422,7 @@ public class NativeFixedBoundaryOverlayMemoTest {
 			Assert.assertEquals("eviction changes storage, not canonical authority", secondRows, rebuiltSecond);
 			Assert.assertEquals(4L, longField(continuity, "fixedBoundaryOverlayBuilds"));
 			Assert.assertEquals(4L, longField(continuity, "fixedBoundaryOverlayRetainedRows"));
+			assertCombinedBudget(continuity, 3, 6);
 		}
 		finally {
 			if(oldEntries == null) System.clearProperty(entriesKey);
@@ -261,6 +458,109 @@ public class NativeFixedBoundaryOverlayMemoTest {
 			(Map<Object,Set<CompiledHopKey>>)field(traversal, "hiddenOwnerReadsByState");
 		Assert.assertEquals(1, reads.size());
 		Assert.assertTrue(reads.values().iterator().next().stream().anyMatch(read -> read == owner));
+	}
+
+	private static void assertResultAuthority(CandidateSupportResult expected,
+		CandidateSupportResult actual) {
+		Assert.assertEquals(expected.proofs(), actual.proofs());
+		Assert.assertEquals(expected.proofs().size(), actual.proofs().size());
+		for(int proof = 0; proof < expected.proofs().size(); proof++) {
+			NativeContinuityProof left = expected.proofs().get(proof);
+			NativeContinuityProof right = actual.proofs().get(proof);
+			Assert.assertEquals(left.immediateBindings().size(), right.immediateBindings().size());
+			for(int binding = 0; binding < left.immediateBindings().size(); binding++) {
+				Assert.assertEquals(left.immediateBindings().get(binding).source(),
+					right.immediateBindings().get(binding).source());
+				Assert.assertSame(left.immediateBindings().get(binding).source().rule().parentOccurrence(),
+					right.immediateBindings().get(binding).source().rule().parentOccurrence());
+			}
+		}
+		Assert.assertEquals(expected.dependencyOccurrences().size(),
+			actual.dependencyOccurrences().size());
+		for(CompiledHopKey owner : expected.dependencyOccurrences())
+			Assert.assertTrue(actual.dependencyOccurrences().stream()
+				.anyMatch(candidate -> candidate == owner));
+	}
+
+	private static void assertTopologyDisabledParity(Object fixture,
+		CandidateRealizationReference reference, DurableAnchorKey witness,
+		CandidateSupportResult expected, String disabledProperty) throws Exception {
+		String prior = System.getProperty(disabledProperty);
+		try {
+			System.setProperty(disabledProperty, "0");
+			NativePlacementContinuity disabled = (NativePlacementContinuity)fixtureCall(fixture,
+				"resolver", new Class<?>[] {SearchSpaceMetrics.class, int.class, long.class},
+				null, 0, 0L);
+			CandidateSupportResult first = disabled.proveCandidateSupport(reference, witness);
+			CandidateSupportResult second = disabled.proveCandidateSupport(reference, witness);
+			assertResultAuthority(expected, first);
+			assertResultAuthority(first, second);
+			Assert.assertTrue(((Map<?,?>)field(disabled, "candidateTopologies")).isEmpty());
+			Assert.assertTrue(((Map<?,?>)field(disabled, "fixedBoundaryOverlays")).isEmpty());
+			Assert.assertEquals(0L, longField(disabled, "fixedBoundaryOverlayBuilds"));
+		}
+		finally {
+			restoreProperty(disabledProperty, prior);
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private static void assertCombinedBudget(NativePlacementContinuity continuity,
+		long maxEntries, long maxRows) throws Exception {
+		Map<Object,Object> topologies =
+			(Map<Object,Object>)field(continuity, "candidateTopologies");
+		Map<Object,List<?>> overlays =
+			(Map<Object,List<?>>)(Map<?,?>)field(continuity, "fixedBoundaryOverlays");
+		long topologyRows = 0;
+		long ownerReads = 0;
+		for(Object topology : topologies.values()) {
+			topologyRows += ((List<?>)field(topology, "rows")).size();
+			ownerReads += ((Set<?>)field(topology, "metadataOwnerReads")).size();
+		}
+		long overlayRows = overlays.values().stream().mapToLong(List::size).sum();
+		Assert.assertEquals(topologyRows, longField(continuity, "topologyRetainedRows"));
+		Assert.assertEquals(ownerReads, longField(continuity, "topologyRetainedOwnerReads"));
+		Assert.assertEquals(overlayRows,
+			longField(continuity, "fixedBoundaryOverlayRetainedRows"));
+		Assert.assertTrue("combined topology and overlay entries exceed the configured cap",
+			topologies.size() + overlays.size() <= maxEntries);
+		Assert.assertTrue("combined topology, hidden-owner, and overlay rows exceed the cap",
+			topologyRows + ownerReads + overlayRows <= maxRows);
+
+		Map<CompiledHopKey,Map<Object,Object>> index =
+			(Map<CompiledHopKey,Map<Object,Object>>)(Map<?,?>)field(
+				continuity, "candidateTopologyKeysByOwner");
+		List<Object> indexedKeys = index.values().stream()
+			.flatMap(byWitness -> byWitness.values().stream()).toList();
+		Assert.assertEquals("resident topology key index must have no stale or missing entry",
+			topologies.size(), indexedKeys.size());
+		for(Object key : indexedKeys)
+			Assert.assertTrue(topologies.keySet().stream().anyMatch(resident -> resident == key));
+	}
+
+	private static void restoreProperty(String key, String value) {
+		if(value == null)
+			System.clearProperty(key);
+		else
+			System.setProperty(key, value);
+	}
+
+	private static Object fixture() throws Exception {
+		Class<?> fixture = Class.forName(NativePlacementContinuityTest.class.getName() + "$Fixture");
+		Constructor<?> constructor = fixture.getDeclaredConstructor(FType.class);
+		constructor.setAccessible(true);
+		return constructor.newInstance(FType.FULL);
+	}
+
+	private static Class<?> refClass() throws Exception {
+		return Class.forName(NativePlacementContinuityTest.class.getName() + "$Ref");
+	}
+
+	private static Object fixtureCall(Object fixture, String name, Class<?>[] types,
+		Object... arguments) throws Exception {
+		Method method = fixture.getClass().getDeclaredMethod(name, types);
+		method.setAccessible(true);
+		return method.invoke(fixture, arguments);
 	}
 
 	private static List<?> alternatives(NativePlacementContinuity continuity,
@@ -342,6 +642,11 @@ public class NativeFixedBoundaryOverlayMemoTest {
 			FType.class, List.class, List.class, boolean.class);
 		constructor.setAccessible(true);
 		return constructor.newInstance(FType.FULL, List.of("worker:8001"), List.of(), true);
+	}
+
+	private static DurableAnchorKey anchor(String id, String worker) {
+		return new DurableAnchorKey(id, FType.FULL,
+			List.of(new AnchorPartition(worker, List.of(0L, 0L), List.of(50L, 2L))));
 	}
 
 	private static NativePlacementContinuity empty(SearchSpaceMetrics metrics) {
