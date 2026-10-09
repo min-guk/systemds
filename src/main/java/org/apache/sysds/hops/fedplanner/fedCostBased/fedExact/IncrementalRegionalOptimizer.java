@@ -184,6 +184,7 @@ final class IncrementalRegionalOptimizer {
 	private final Consumer<Checkpoint> observer;
 	private final ExactCategoricalSolver.BoundaryMergeCounters mergeCounters;
 	private final BoundaryMerger boundaryMerger;
+	private final RegionalSearchProblem.PreparedFactorEvaluation reducedFactorEvaluation;
 	private final BitSet coverOwners;
 	private final List<Node> active = new ArrayList<>();
 	private final List<Node> sealed = new ArrayList<>();
@@ -210,6 +211,8 @@ final class IncrementalRegionalOptimizer {
 		this.problem = problem; this.root = root; this.variables = root.variables();
 		this.limits = limits; this.options = options; this.observer = observer;
 		this.mergeCounters = mergeCounters; this.boundaryMerger = boundaryMerger;
+		this.reducedFactorEvaluation =
+			RegionalSearchProblem.PreparedFactorEvaluation.prepare(variables, root.factors());
 		this.coverOwners = new BitSet(root.factors().size());
 		for(int i=0; i<variables.size(); i++) positions.put(variables.get(i),i);
 		seedPreparation = IncrementalRegionalSeed.prepare(root);
@@ -876,8 +879,8 @@ final class IncrementalRegionalOptimizer {
 		try {
 			List<Integer> reduced = Arrays.stream(assignment).boxed().toList();
 			List<Integer> encoded = root.expandAssignment(reduced);
-			double frozen = RegionalSearchProblem.evaluateFactors(variables,root.factors(),reduced);
-			double original = RegionalSearchProblem.evaluateFactors(problem.variables(),problem.factors(),encoded);
+			double frozen = reducedFactorEvaluation.evaluate(reduced);
+			double original = problem.evaluatePreparedFactors(encoded);
 			double canonical = problem.evaluate(encoded.subList(0,problem.decisionCount()));
 			if(!Double.isFinite(canonical) || Double.doubleToRawLongBits(frozen) != Double.doubleToRawLongBits(canonical)
 				|| Double.doubleToRawLongBits(original) != Double.doubleToRawLongBits(canonical))

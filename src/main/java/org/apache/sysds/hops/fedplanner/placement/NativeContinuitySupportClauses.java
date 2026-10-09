@@ -212,13 +212,28 @@ final class NativeContinuitySupportClauses
 	}
 	java.util.Optional<NativeContinuitySupportClauses> oneAxisUnion(
 		NativeContinuitySupportClauses that) {
-		if(conditionalComplement() || that != null && that.conditionalComplement())
-			return sameExactAuthority(that) ? java.util.Optional.of(this)
-				: java.util.Optional.empty();
 		if(that == null || owner != that.owner
 			|| clauseLayoutExact != that.clauseLayoutExact
 			|| !Objects.equals(clauseWitness, that.clauseWitness))
 			return java.util.Optional.empty();
+		if(conditionalComplement() || that.conditionalComplement()) {
+			if(!conditionalComplement() || !that.conditionalComplement()
+				|| products.size() != 1 || that.products.size() != 1
+				|| !that.authorityDonors.isEmpty())
+				return sameExactAuthority(that) ? java.util.Optional.of(this)
+					: java.util.Optional.empty();
+			var conditional = products.get(0).conditionalUnion(that.products.get(0));
+			if(conditional.isEmpty())
+				return java.util.Optional.empty();
+			if(conditional.get().unchanged())
+				return java.util.Optional.of(this);
+			List<AuthorityDonor> donors = new java.util.ArrayList<>(authoritySources());
+			donors.add(new AuthorityDonor(that, conditional.get().rightOnly()));
+			if(!withinAuthorityRetentionBudget(List.of(conditional.get().product()), donors))
+				return java.util.Optional.empty();
+			return java.util.Optional.of(new NativeContinuitySupportClauses(owner,
+				conditional.get().product(), clauseWitness, clauseLayoutExact, donors));
+		}
 		if(products.size() != 1 || that.products.size() != 1)
 			return multiHeaderAxisUnion(that);
 		var product = products.get(0);
@@ -348,9 +363,17 @@ final class NativeContinuitySupportClauses
 		if(relations.isEmpty())
 			return java.util.Optional.empty();
 		NativeContinuitySupportClauses first = relations.get(0);
-		if(relations.stream().anyMatch(NativeContinuitySupportClauses::conditionalComplement))
-			return relations.stream().allMatch(first::sameExactAuthority)
-				? java.util.Optional.of(first) : java.util.Optional.empty();
+		if(relations.stream().anyMatch(NativeContinuitySupportClauses::conditionalComplement)) {
+			if(relations.stream().anyMatch(relation -> !relation.conditionalComplement()))
+				return java.util.Optional.empty();
+			NativeContinuitySupportClauses union = first;
+			for(int index = 1; index < relations.size(); index++) {
+				union = union.oneAxisUnion(relations.get(index)).orElse(null);
+				if(union == null)
+					return java.util.Optional.empty();
+			}
+			return java.util.Optional.of(union);
+		}
 		java.util.Map<HeaderAuthority,NativeContinuitySupportClauses> byHeader =
 			new java.util.LinkedHashMap<>();
 		for(NativeContinuitySupportClauses relation : relations) {

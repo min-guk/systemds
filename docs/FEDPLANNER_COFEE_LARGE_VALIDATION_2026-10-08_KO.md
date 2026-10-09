@@ -27,6 +27,8 @@ v32는 여러 입력 축에 exact/inexact source가 섞인 관계를 `전체 pro
 
 v33 (`409b9fe4a9`)은 canonical run 정렬 최적화를 병합한 버전이며 selected FedPlanner 1,335개/probe 9개를 통과해 origin/main에 게시했다. 별도 실제 workload 측정은 생략했다. v34는 이미 보존된 exact 영역의 재열거를 피하고, 상세 진단이 켜져 있어도 기존 native union을 유지한다. 두 수정은 독립 검토를 통과했으며 최신 origin 병합 후 selected FedPlanner 1,349개/probe 9개를 통과했다. 실제 workload 측정은 다음 단계다. 실제 v32에서는 상세 중복 진단이 OFF였으므로 진단 경로 변경은 이 성능 병목을 설명하지 않는다. liveMetrics와 상세 중복 진단은 별개다. Physical Model과 복잡한 conditional union의 exact fallback은 남아 있다.
 
+v35는 검증된 derived-FOUT row를 기존 권한 검사로 처리하면서 다른 native 관계의 압축을 유지하고, 같은 base/header의 conditional union과 반복 DP 비용 검증 인덱스를 재사용한다. 독립 검토와 selected FedPlanner 1,361개를 통과했다. 단위 검사에서의 생성량 감소를 실제 ML 성능으로 확대하지 않으며 v34/v35 실측과 전체 후보 동등성 검증을 이어간다.
+
 - v19-v32 비교 SHA `004bb8d3ef4df8f6b642521a6cc21f9b5b9aa4512225f03fb1797f8bff932d7a`
 - v31-v32 비교 SHA `17204be378baa67517dd9f6ff4281150e664433cf1bd9797a19adfca942385bf`
 - v32 evaluator FAIL SHA `5b77dbcae20e371342f3b15b9ef6f81b9ad59c165b38f6665106ccfcb8358137`

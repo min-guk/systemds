@@ -23,6 +23,7 @@ final class RegionalSearchProblem {
 	private final List<Factor> factors;
 	private final int decisionCount;
 	private final ToDoubleFunction<List<Integer>> evaluator;
+	private final PreparedFactorEvaluation preparedFactors;
 	private ExactPhysicalReducedSolver.CompactModel reducedRoot;
 	private Limits reducedRootLimits;
 	private long reducedRootNanos;
@@ -88,19 +89,30 @@ final class RegionalSearchProblem {
 			if(positions.put(variable, i) != null || !keys.add(variable.key()))
 				throw new IllegalArgumentException("REGIONAL_SEARCH_DUPLICATE_VARIABLE");
 		}
-		for(Factor factor : factors) {
+		int[][] factorPositions = new int[this.factors.size()][];
+		for(int factorIndex = 0; factorIndex < this.factors.size(); factorIndex++) {
+			Factor factor = this.factors.get(factorIndex);
 			Set<Integer> unique = new LinkedHashSet<>();
-			for(Variable variable : factor.scope()) {
+			int[] scopePositions = new int[factor.scope().size()];
+			for(int local = 0; local < factor.scope().size(); local++) {
+				Variable variable = factor.scope().get(local);
 				Integer index = positions.get(variable);
 				if(index == null || !unique.add(index))
 					throw new IllegalArgumentException("REGIONAL_SEARCH_FACTOR_SCOPE_INVALID");
+				scopePositions[local] = index;
 			}
+			factorPositions[factorIndex] = scopePositions;
 		}
+		preparedFactors = new PreparedFactorEvaluation(this.variables, this.factors, factorPositions);
 	}
 
 	List<Variable> variables() { return variables; }
 	List<Factor> factors() { return factors; }
 	int decisionCount() { return decisionCount; }
+	PreparedFactorEvaluation preparedFactors() { return preparedFactors; }
+	double evaluatePreparedFactors(List<Integer> assignment) {
+		return preparedFactors.evaluate(assignment);
+	}
 
 	long domainValues() {
 		return variables.stream().mapToLong(Variable::domainSize).sum();
@@ -158,6 +170,71 @@ final class RegionalSearchProblem {
 			sum.addBits(Double.doubleToRawLongBits(cost), "REGIONAL_COST_INVALID", "REGIONAL_TOTAL_INVALID");
 		}
 		return Double.longBitsToDouble(sum.totalBits("REGIONAL_TOTAL_INVALID"));
+	}
+
+	/**
+	 * Immutable scope-to-variable ordinals for repeated evaluation of one factor list.
+	 * Factor order and each factor's local axis order remain exactly as supplied.
+	 */
+	static final class PreparedFactorEvaluation {
+		private final List<Variable> variables;
+		private final List<Factor> factors;
+		private final int[][] factorPositions;
+
+		private PreparedFactorEvaluation(List<Variable> variables, List<Factor> factors,
+			int[][] factorPositions) {
+			this.variables = variables;
+			this.factors = factors;
+			this.factorPositions = factorPositions;
+		}
+
+		static PreparedFactorEvaluation prepare(List<Variable> variables, List<Factor> factors) {
+			IdentityHashMap<Variable,Integer> positions = new IdentityHashMap<>();
+			Set<String> keys = new LinkedHashSet<>();
+			for(int index = 0; index < variables.size(); index++) {
+				Variable variable = variables.get(index);
+				if(positions.put(variable, index) != null || !keys.add(variable.key()))
+					throw new IllegalArgumentException("REGIONAL_VARIABLE_DUPLICATE");
+			}
+			int[][] factorPositions = new int[factors.size()][];
+			for(int factorIndex = 0; factorIndex < factors.size(); factorIndex++) {
+				Factor factor = factors.get(factorIndex);
+				Set<Integer> unique = new LinkedHashSet<>();
+				int[] scopePositions = new int[factor.scope().size()];
+				for(int local = 0; local < scopePositions.length; local++) {
+					Integer position = positions.get(factor.scope().get(local));
+					if(position == null || !unique.add(position))
+						throw new IllegalArgumentException("REGIONAL_FACTOR_SCOPE_INVALID");
+					scopePositions[local] = position;
+				}
+				factorPositions[factorIndex] = scopePositions;
+			}
+			return new PreparedFactorEvaluation(
+				List.copyOf(variables), List.copyOf(factors), factorPositions);
+		}
+
+		double evaluate(List<Integer> assignment) {
+			if(assignment == null || assignment.size() != variables.size())
+				throw new IllegalArgumentException("REGIONAL_ASSIGNMENT_SIZE_INVALID");
+			for(int index = 0; index < variables.size(); index++) {
+				Integer value = assignment.get(index);
+				if(value == null || value < 0 || value >= variables.get(index).domainSize())
+					throw new IllegalArgumentException("REGIONAL_ASSIGNMENT_VALUE_INVALID");
+			}
+			ExactCompensatedCostSum sum = new ExactCompensatedCostSum();
+			for(int factorIndex = 0; factorIndex < factors.size(); factorIndex++) {
+				int[] positions = factorPositions[factorIndex];
+				int[] values = new int[positions.length];
+				for(int local = 0; local < positions.length; local++)
+					values[local] = assignment.get(positions[local]);
+				double cost = factors.get(factorIndex).cost(values);
+				if(cost == Double.POSITIVE_INFINITY)
+					return cost;
+				sum.addBits(Double.doubleToRawLongBits(cost),
+					"REGIONAL_COST_INVALID", "REGIONAL_TOTAL_INVALID");
+			}
+			return Double.longBitsToDouble(sum.totalBits("REGIONAL_TOTAL_INVALID"));
+		}
 	}
 
 	static boolean isResourceLimit(IllegalArgumentException failure) {
