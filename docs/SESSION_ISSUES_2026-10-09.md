@@ -315,3 +315,9 @@
 - **계측/리뷰**: shared/reindexed rows는 cache admission에 성공한 행만 계수한다. Positive path shared>0/reindexed0을assert하고 negative namespace기존회귀유지. v21/v22 production 독립review CLEAR. Equal-but-foreign productsource identity추가assert를 포함해 fresh133class package를 수행한다.
 - **v20 실측**: LogReg/GLM detailed모두60초 timeout/no finalreceipt. LogReg39,037graphs/4.328Mstates/54.283Malternatives/91.784Medges, GLM74,589graphs/375,852states/6.445Malternatives. Partialprogress라이전버전과전체속도비교로환산하지않는다. v22의가변길이 productrank, 축projection, topologyrawsharing효과는다음봉인측정에서확인한다.
 - **v22 full gate**: incoming9fb + v21/v22의 fresh133class package BUILD SUCCESS02:39:48, failure0/error0/skip1. Source/JAR 봉인 후 origin/main에 merge 게시를 재시도한다. Supplemental Exact/PCA 기존 실패는 여전히 위 별도항목이며 전체repository green으로 주장하지 않는다. Pin guard mutation은실제고장1개를검출했고 privateproduct의equal-but-foreign source identity까지fullgate에포함했다.
+
+
+- **v7 최신 main 병합**:2290e8b2f3의1,017PASS 수정본에 origin/main d27fa82b44를8ac7604a68로 병합했다. Production은 자동 통합됐고 docs append 충돌은 양쪽 기록을 보존했다. 첫 focused142 중1실패는 upstream 테스트의 metadata1handle 기대값이 신규0handle 경로와 달랐기 때문이다. 의미 비교는 그대로 유지하고 두 작업량 기대값만0으로 갱신했다. 실패 `evidence/native-v7-d27-merge-red-142` 보존.
+- **Revision authority 후속 검증**: native product externalSeed만 바뀌고 실행 metadata가 같은 revision에서 warm/cold ordered proofs·identity footprint를 양쪽 query seed로 비교했다. 공개 proof는 현재 query seed를 가지며 각 relation의 exact member proof history는 서로 다르다. Focused143PASS(2.061초), independent review CLEAR. 증거 `evidence/native-v7-d27-focused-green-143`; 최종 전체 gate에는 query 후0handle 추가 assertion도 포함한다.
+
+- **v7 최종 통합 gate**: d27fa82b44 병합 및 seed-history regression 포함 fresh compile,1,033 JUnit PASS(161.85초), source SHA mismatch0, independent static review CLEAR. 증거 `evidence/native-v7-d27-full-green-1033`. 이 봉인본을 동일 COFEE 설정으로 실행하며20초 달성 여부는 실제 receipt로 판정한다.

@@ -3218,8 +3218,8 @@ public class NativePlacementContinuityTest {
 		Assert.assertFalse(warmed.proofs().isEmpty());
 		assertGeneratedRootCertificate(first, warm.proposed(), warm.hidden().key, false);
 		int handlesAtKnownMetadataBoundary = warmFirstRelation.materializedHandleCount();
-		Assert.assertEquals("the existing metadata lookup materializes only its selected member",
-			1, handlesAtKnownMetadataBoundary);
+		Assert.assertEquals("native metadata lookup must not materialize members",
+			0, handlesAtKnownMetadataBoundary);
 		List<CandidateRuleFact> warmEqualFacts = replaceFact(
 			warmFirstFacts, warmFirstFact, warmEqualFact);
 		NativePlacementContinuity equalRevision = first.nextRevision(warmEqualFacts);
@@ -3244,8 +3244,8 @@ public class NativePlacementContinuityTest {
 		Assert.assertEquals(coldEqual.proofs(), equalSupport.proofs());
 		assertIdentitySetEquals(coldEqual.dependencyOccurrences(), equalSupport.dependencyOccurrences());
 		int replacementHandlesAfterSupportQuery = warmEqualRelation.materializedHandleCount();
-		Assert.assertEquals("the support query may select its one required product member",
-			1, replacementHandlesAfterSupportQuery);
+		Assert.assertEquals("uniform native metadata preserves the support query without members",
+			0, replacementHandlesAfterSupportQuery);
 
 		CandidateRuleFact withdrawnRoot = warm.withdrawnFacts().stream()
 			.filter(fact -> fact.key().parentOccurrence() == warm.root().key).findFirst().orElseThrow();
@@ -3297,6 +3297,49 @@ public class NativePlacementContinuityTest {
 			firstRelation.materializedHandleCount());
 		Assert.assertEquals(explicitOracle.size(), explicitOracle.materializedHandleCount());
 		Assert.assertEquals(0, firstRelation.materializedHandleCount());
+	}
+
+	@Test
+	public void nativeProductSeedHistoryRevisionMatchesColdCurrentProofAuthority() throws Exception {
+		GeneratedHiddenRootFixture warm = generatedHiddenRootFixture(false);
+		CandidateRuleFact template = warm.activeRoot();
+		CandidateEmissionFact emission = template.allowedEmissionFacts().get(0);
+		DurableAnchorKey pool = warm.seed().anchor;
+		List<List<CandidateRealizationInputBinding>> axes = List.of(List.of(
+			CandidateRealizationInputBinding.direct(0, warm.proposed())));
+		var firstRelation = productClauses(warm.root().key, pool, axes, pool, true);
+		var firstFact = productFact(template, emission, firstRelation);
+		List<CandidateRuleFact> firstFacts = replaceFact(warm.activeFacts(), template, firstFact);
+		var first = new NativePlacementContinuity(warm.full().nodes, warm.full().origins,
+			firstFacts, warm.full().edges, warm.full().reaching, Set.of(), warm.full().privacy);
+		Assert.assertFalse(first.proveGeneratedCandidateSupport(firstFact,
+			firstFact.allowedEmissionFacts().get(0), warm.proposed(), pool).proofs().isEmpty());
+
+		DurableAnchorKey nextSeed = new DurableAnchorKey("changed-seed-history", pool.fType(), pool.partitions());
+		var nextProduct = NativePlacementContinuity.NativeSupportProduct.tryCreate(nextSeed, pool, true, axes);
+		Assert.assertNotNull(nextProduct);
+		var nextRelation = new NativeContinuitySupportClauses(warm.root().key, nextProduct, pool, true);
+		var nextFact = productFact(template, emission, nextRelation);
+		List<CandidateRuleFact> nextFacts = replaceFact(firstFacts, firstFact, nextFact);
+		Assert.assertEquals(continuityProjection(List.of(firstFact)), continuityProjection(List.of(nextFact)));
+		Assert.assertEquals(0, nextRelation.materializedHandleCount());
+		var reused = first.nextRevision(nextFacts);
+		var cold = new NativePlacementContinuity(warm.full().nodes, warm.full().origins,
+			nextFacts, warm.full().edges, warm.full().reaching, Set.of(), warm.full().privacy);
+		for(DurableAnchorKey querySeed : List.of(pool, nextSeed)) {
+			var expected = cold.proveGeneratedCandidateSupport(nextFact,
+				nextFact.allowedEmissionFacts().get(0), warm.proposed(), querySeed);
+			var actual = reused.proveGeneratedCandidateSupport(nextFact,
+				nextFact.allowedEmissionFacts().get(0), warm.proposed(), querySeed);
+			Assert.assertFalse(expected.proofs().isEmpty());
+			Assert.assertEquals(expected.proofs(), actual.proofs());
+			assertIdentitySetEquals(expected.dependencyOccurrences(), actual.dependencyOccurrences());
+			for(var proof : actual.proofs())
+				Assert.assertEquals(querySeed, proof.externalSeed());
+		}
+		Assert.assertEquals(0, nextRelation.materializedHandleCount());
+		Assert.assertNotEquals("stored member authority retains its current seed history",
+			firstRelation.get(0).proofDependencies(), nextRelation.get(0).proofDependencies());
 	}
 
 	@Test
