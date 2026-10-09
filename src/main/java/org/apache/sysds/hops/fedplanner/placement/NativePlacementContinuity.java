@@ -5922,6 +5922,29 @@ final class NativePlacementContinuity {
 			return that != null && exactPartitionRanges == that.exactPartitionRanges
 				&& outputWorkerPoolWitness.equals(that.outputWorkerPoolWitness);
 		}
+		List<List<CandidateRealizationInputBinding>> exactAuthorityIntersectionAxes(
+			NativeSupportProduct that) {
+			if(that == null || excludedExactProduct != null || that.excludedExactProduct != null
+				|| !sameHeaderAuthority(that) || axes.size() != that.axes.size())
+				return null;
+			List<List<CandidateRealizationInputBinding>> intersection = new ArrayList<>(axes.size());
+			for(int axis = 0; axis < axes.size(); axis++) {
+				List<CandidateRealizationInputBinding> left = axes.get(axis);
+				List<CandidateRealizationInputBinding> right = that.axes.get(axis);
+				if(left.isEmpty() || right.isEmpty()
+					|| left.get(0).inputPosition() != right.get(0).inputPosition()
+					|| left.get(0).source().rule().parentOccurrence()
+						!= right.get(0).source().rule().parentOccurrence())
+					return null;
+				Set<CandidateRealizationInputBinding> retained = new HashSet<>(right);
+				List<CandidateRealizationInputBinding> common = left.stream()
+					.filter(retained::contains).toList();
+				if(common.isEmpty())
+					return null;
+				intersection.add(common);
+			}
+			return List.copyOf(intersection);
+		}
 		String headerAuthoritySignature() {
 			return externalSeed.normalizedSignature()
 				+ "|outputPool=" + outputWorkerPoolWitness.normalizedSignature()

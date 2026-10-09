@@ -50,6 +50,7 @@ public class DuplicateMergeDiagnosticsTest {
 			Assert.assertEquals(2, diagnostics.immutableListReplayClauses());
 			Assert.assertEquals(1, diagnostics.sharedClauseReplayClauses());
 			Assert.assertEquals(3, diagnostics.equalDistinctClauseClauses());
+			Assert.assertEquals(0, diagnostics.nativeRelationDuplicateMembers());
 			Assert.assertEquals(3, diagnostics.provenanceUnresolvedClauses());
 			Assert.assertEquals(4, diagnostics.traces().size());
 			Assert.assertTrue(diagnostics.traces().stream().allMatch(trace ->
@@ -58,6 +59,33 @@ public class DuplicateMergeDiagnosticsTest {
 		finally {
 			PlacementIdentity.setActiveMetrics(null);
 		}
+	}
+
+	@Test
+	public void nativeLogicalBucketRespectsTraceBoundsAndReset() {
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(1);
+		metrics.recordNativeRelationMergeDiagnostics("NATIVE_A", 2, 5, 4, false);
+		metrics.recordNativeRelationMergeDiagnostics("NATIVE_B", 3, 8, 7, true);
+		SearchSpaceMetrics.DuplicateMergeDiagnosticsSnapshot diagnostics =
+			metrics.duplicateMergeDiagnosticsSnapshot();
+		Assert.assertEquals(2, diagnostics.observedDuplicateClauses());
+		Assert.assertEquals(2, diagnostics.nativeRelationDuplicateMembers());
+		Assert.assertEquals(0, diagnostics.equalDistinctClauseClauses());
+		Assert.assertEquals(1, diagnostics.traces().size());
+		Assert.assertEquals(1, diagnostics.traces().get(0).nativeRelationDuplicateMembers());
+		Assert.assertEquals(1, diagnostics.droppedTraceEvents());
+		metrics.reset();
+		diagnostics = metrics.duplicateMergeDiagnosticsSnapshot();
+		Assert.assertEquals(0, diagnostics.observedDuplicateClauses());
+		Assert.assertEquals(0, diagnostics.nativeRelationDuplicateMembers());
+		Assert.assertTrue(diagnostics.traces().isEmpty());
+
+		SearchSpaceMetrics noTrace = new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(0);
+		noTrace.recordNativeRelationMergeDiagnostics("NATIVE_ZERO", 2, 2, 1, false);
+		Assert.assertEquals(1,
+			noTrace.duplicateMergeDiagnosticsSnapshot().nativeRelationDuplicateMembers());
+		Assert.assertTrue(noTrace.duplicateMergeDiagnosticsSnapshot().traces().isEmpty());
+		Assert.assertEquals(1, noTrace.duplicateMergeDiagnosticsSnapshot().droppedTraceEvents());
 	}
 
 	@Test

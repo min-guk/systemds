@@ -38,6 +38,237 @@ import org.junit.Test;
 
 public class NativeSingleAxisProductUnionTest {
 	@Test
+	public void diagnosticsKeepTwoWayNativeUnionsLazyAndCountLogicalDuplicates() {
+		CompiledHopKey owner = key("diagnostic-consumer");
+		CompiledHopKey source = key("diagnostic-source");
+		DurableAnchorKey seed = pool("diagnostic-seed");
+		DurableAnchorKey output = pool("diagnostic-output");
+		var a = direct(0, "diagnostic-a", source);
+		var b = direct(0, "diagnostic-b", source);
+		var c = direct(0, "diagnostic-c", source);
+		PlacementRealizationKey key = PlacementRealizationKey.nativeLineage(
+			emission(), "diagnostic-output");
+		NativeContinuitySupportClauses shared = relation(
+			owner, seed, output, List.of(sorted(a, b)));
+		CandidateEmissionRealization sharedRealization =
+			new CandidateEmissionRealization(key, shared);
+		SearchSpaceMetrics sharedMetrics =
+			new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(4);
+		PlacementIdentity.setActiveMetrics(sharedMetrics);
+		try {
+			new CandidateEmissionFact(emission(), FType.ROW, null,
+				List.of(sharedRealization, sharedRealization));
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
+		Assert.assertEquals(0, shared.materializedHandleCount());
+		Assert.assertEquals(2,
+			sharedMetrics.duplicateMergeDiagnosticsSnapshot().nativeRelationDuplicateMembers());
+
+		NativeContinuitySupportClauses identicalLeft = relation(
+			owner, seed, output, List.of(sorted(a, b)));
+		NativeContinuitySupportClauses identicalRight = relation(
+			owner, seed, output, List.of(sorted(directLike(a), directLike(b))));
+		SearchSpaceMetrics identicalMetrics =
+			new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(4);
+		PlacementIdentity.setActiveMetrics(identicalMetrics);
+		CandidateEmissionFact identical;
+		try {
+			identical = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+				new CandidateEmissionRealization(key, identicalLeft),
+				new CandidateEmissionRealization(key, identicalRight)));
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
+		Assert.assertSame(identicalLeft, identical.realizations().get(0).supportClauses());
+		Assert.assertEquals(0, identicalLeft.materializedHandleCount());
+		Assert.assertEquals(0, identicalRight.materializedHandleCount());
+		var identicalDiagnostics = identicalMetrics.duplicateMergeDiagnosticsSnapshot();
+		Assert.assertEquals(2, identicalDiagnostics.nativeRelationDuplicateMembers());
+		Assert.assertEquals(2, identicalDiagnostics.observedDuplicateClauses());
+		Assert.assertEquals(2, identicalDiagnostics.legacyDuplicateClauses());
+		Assert.assertEquals("TWO_NATIVE_RELATION_UNION",
+			identicalDiagnostics.traces().get(0).mergeShape());
+		Assert.assertTrue(identicalDiagnostics.traces().get(0).reusedRealization());
+
+		NativeContinuitySupportClauses overlapLeft = relation(
+			owner, seed, output, List.of(sorted(a, b)));
+		NativeContinuitySupportClauses overlapRight = relation(
+			owner, seed, output, List.of(sorted(directLike(b), c)));
+		SearchSpaceMetrics overlapMetrics =
+			new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(4);
+		PlacementIdentity.setActiveMetrics(overlapMetrics);
+		CandidateEmissionFact overlap;
+		try {
+			overlap = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+				new CandidateEmissionRealization(key, overlapLeft),
+				new CandidateEmissionRealization(key, overlapRight)));
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
+		NativeContinuitySupportClauses union = (NativeContinuitySupportClauses)
+			overlap.realizations().get(0).supportClauses();
+		Assert.assertEquals(3, union.size());
+		Assert.assertEquals(0, overlapLeft.materializedHandleCount());
+		Assert.assertEquals(0, overlapRight.materializedHandleCount());
+		Assert.assertEquals(0, union.materializedHandleCount());
+		Assert.assertEquals(1,
+			overlapMetrics.duplicateMergeDiagnosticsSnapshot().nativeRelationDuplicateMembers());
+		Assert.assertEquals("diagnostic merge must not construct member clauses", 0,
+			overlapMetrics.objectCreationSnapshot().explicitSupportClauses());
+		Assert.assertEquals(0, overlapMetrics.objectCreationSnapshot().indexedSupportHandles());
+	}
+
+	@Test
+	public void diagnosticsKeepFullMultiHeaderAxisGrowthLazy() {
+		CompiledHopKey owner = key("diagnostic-header-axis-consumer");
+		CompiledHopKey source = key("diagnostic-header-axis-source");
+		DurableAnchorKey output = pool("diagnostic-header-axis-output");
+		var a = direct(0, "diagnostic-header-axis-a", source);
+		var b = direct(0, "diagnostic-header-axis-b", source);
+		var c = direct(0, "diagnostic-header-axis-c", source);
+		NativeContinuitySupportClauses left = relation(owner,
+			pool("diagnostic-header-axis-seed-a"), output, List.of(sorted(a, b)))
+			.multiHeaderUnion(relation(owner, pool("diagnostic-header-axis-seed-b"),
+				output, List.of(sorted(directLike(a), directLike(b))))).orElseThrow();
+		NativeContinuitySupportClauses right = relation(owner,
+			pool("diagnostic-header-axis-seed-a"), output,
+			List.of(sorted(directLike(b), c)))
+			.multiHeaderUnion(relation(owner, pool("diagnostic-header-axis-seed-b"),
+				output, List.of(sorted(directLike(b), directLike(c))))).orElseThrow();
+		PlacementRealizationKey key = PlacementRealizationKey.nativeLineage(
+			emission(), "diagnostic-header-axis-output");
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(4);
+		PlacementIdentity.setActiveMetrics(metrics);
+		CandidateEmissionFact merged;
+		try {
+			merged = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+				new CandidateEmissionRealization(key, left),
+				new CandidateEmissionRealization(key, right)));
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
+		NativeContinuitySupportClauses union = (NativeContinuitySupportClauses)
+			merged.realizations().get(0).supportClauses();
+		Assert.assertEquals(2, union.headerCount());
+		Assert.assertEquals(6, union.size());
+		Assert.assertEquals(0, left.materializedHandleCount());
+		Assert.assertEquals(0, right.materializedHandleCount());
+		Assert.assertEquals(0, union.materializedHandleCount());
+		Assert.assertEquals(2,
+			metrics.duplicateMergeDiagnosticsSnapshot().nativeRelationDuplicateMembers());
+	}
+
+	@Test
+	public void diagnosticsKeepKWayMultiHeaderNativeUnionLazy() {
+		CompiledHopKey owner = key("diagnostic-k-consumer");
+		CompiledHopKey source = key("diagnostic-k-source");
+		DurableAnchorKey output = pool("diagnostic-k-output");
+		var a = direct(0, "diagnostic-k-a", source);
+		var b = direct(0, "diagnostic-k-b", source);
+		List<List<CandidateRealizationInputBinding>> axes = List.of(sorted(a, b));
+		NativeContinuitySupportClauses first = relation(
+			owner, pool("diagnostic-k-seed-a"), output, axes);
+		NativeContinuitySupportClauses duplicate = relation(owner,
+			pool("diagnostic-k-seed-a"), output,
+			List.of(sorted(directLike(a), directLike(b))));
+		NativeContinuitySupportClauses secondHeader = relation(owner,
+			pool("diagnostic-k-seed-b"), output,
+			List.of(sorted(directLike(a), directLike(b))));
+		PlacementRealizationKey key = PlacementRealizationKey.nativeLineage(
+			emission(), "diagnostic-k-output");
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(4);
+		PlacementIdentity.setActiveMetrics(metrics);
+		CandidateEmissionFact merged;
+		try {
+			merged = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+				new CandidateEmissionRealization(key, first),
+				new CandidateEmissionRealization(key, duplicate),
+				new CandidateEmissionRealization(key, secondHeader)));
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
+		NativeContinuitySupportClauses union = (NativeContinuitySupportClauses)
+			merged.realizations().get(0).supportClauses();
+		Assert.assertEquals(4, union.size());
+		Assert.assertEquals(2, union.headerCount());
+		Assert.assertEquals(0, first.materializedHandleCount());
+		Assert.assertEquals(0, duplicate.materializedHandleCount());
+		Assert.assertEquals(0, secondHeader.materializedHandleCount());
+		Assert.assertEquals(0, union.materializedHandleCount());
+		var diagnostics = metrics.duplicateMergeDiagnosticsSnapshot();
+		Assert.assertEquals(2, diagnostics.nativeRelationDuplicateMembers());
+		Assert.assertEquals(2, diagnostics.observedDuplicateClauses());
+		Assert.assertEquals("K_NATIVE_RELATION_UNION", diagnostics.traces().get(0).mergeShape());
+	}
+
+	@Test
+	public void diagnosticsPreserveForeignOwnerAndConditionalFallbacks() {
+		CompiledHopKey owner = key("diagnostic-fallback-consumer");
+		CompiledHopKey source = key("diagnostic-fallback-source");
+		CompiledHopKey foreignSource = cloneKey(source);
+		DurableAnchorKey seed = pool("diagnostic-fallback-seed");
+		DurableAnchorKey output = pool("diagnostic-fallback-output");
+		var a = direct(0, "diagnostic-fallback-a", source);
+		NativeContinuitySupportClauses left = relation(
+			owner, seed, output, List.of(List.of(a)));
+		NativeContinuitySupportClauses foreign = relation(owner, seed, output,
+			List.of(List.of(direct(0, "diagnostic-fallback-a", foreignSource))));
+		Assert.assertTrue(left.oneAxisUnion(foreign).isEmpty());
+		Assert.assertTrue(left.multiHeaderUnion(foreign).isEmpty());
+		Assert.assertTrue(NativeContinuitySupportClauses.unionSameAxesHeaderGroup(
+			List.of(left, foreign)).isEmpty());
+		PlacementRealizationKey key = PlacementRealizationKey.nativeLineage(
+			emission(), "diagnostic-fallback-output");
+		SearchSpaceMetrics foreignMetrics =
+			new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(4);
+		PlacementIdentity.setActiveMetrics(foreignMetrics);
+		CandidateEmissionFact foreignMerged;
+		try {
+			foreignMerged = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+				new CandidateEmissionRealization(key, left),
+				new CandidateEmissionRealization(key, foreign)));
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
+		Assert.assertSame("failed native union keeps the legacy exact left authority",
+			left, foreignMerged.realizations().get(0).supportClauses());
+		Assert.assertEquals(1, left.materializedHandleCount());
+		Assert.assertEquals(1, foreign.materializedHandleCount());
+		Assert.assertEquals(0,
+			foreignMetrics.duplicateMergeDiagnosticsSnapshot().nativeRelationDuplicateMembers());
+
+		var b = direct(0, "diagnostic-fallback-b", source);
+		NativePlacementContinuity.NativeSupportProduct base =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				seed, output, true, List.of(sorted(a, b)));
+		NativeContinuitySupportClauses conditional = NativeContinuitySupportClauses.exactComplement(
+			owner, base, List.of(List.of(a)), output, true);
+		Assert.assertNotNull(conditional);
+		SearchSpaceMetrics conditionalMetrics =
+			new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(4);
+		PlacementIdentity.setActiveMetrics(conditionalMetrics);
+		CandidateEmissionFact conditionalMerged;
+		try {
+			conditionalMerged = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+				new CandidateEmissionRealization(key, left),
+				new CandidateEmissionRealization(key, conditional)));
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
+		Assert.assertFalse(conditionalMerged.realizations().get(0).supportClauses()
+			instanceof NativeContinuitySupportClauses);
+		Assert.assertEquals(0,
+			conditionalMetrics.duplicateMergeDiagnosticsSnapshot().nativeRelationDuplicateMembers());
+	}
+	@Test
 	public void oneAxisUnionRetainsFirstClauseAuthorityInCanonicalOrder() {
 		CompiledHopKey owner = key("consumer");
 		CompiledHopKey leftOwner = key("left");

@@ -1096,3 +1096,23 @@
 - **v33 통합 gate 완료**: selected FedPlanner1,335개PASS(195.373초),7,855 class/resource 실행 전후 변경0/source SHA 불일치0. 근거 `evidence/native-canonical-complement-merge-full-gate-v33/validation.json`. Incoming canonical run17LOC·conditional complement·summary 재사용·sparse transfer의 통합 회귀이며 독립 incoming/integration 검토 CLEAR. 별도 probe 뒤 origin/main에 게시한다. v32 actual은 별도 봉인 엔진으로 진행 중이다.
 
 - **v33 probe**: 별도9개PASS(1.871초). 통합1,335 selected tests와 source/class 무결성 검증을 마친 버전을 게시·봉인한다.
+
+
+### 조건부 relation의 대규모 생성량 회귀 검사 (완료)
+
+- **문제/방법**: 작은9-member 동등성 검증과 별도로, 수십만 논리 support에서 relation 생성·hash가 임시 Clause를 만들지 않는지 확인한다. NativeConditionalSupportScaleTest는512×512 product에서256×256 rectangle을 제외한196,608개 support를 생성한다. 기존 object constructor 계측을 사용하며 timing을 실제 ML 성능 근거로 삼지 않는다.
+- **검증 결과**: 별도1testPASS(0.396초). 생성과 전체 list hash 후 explicit Clause0/handle0; 처음·중간·마지막3개를 선택하면 실제 Clause3개만 생성하고 반복 선택은 같은 객체를 반환한다. Exact hole 제외와 sparse ordinal역조회/owner identity도 검사했다. 기존 source relation은0handle. 근거 `engine-conditional-scale-root-gate/tests.log`.
+- **범위/잔여 위험**: 이 검사는 논리 후보 감소가 아니라 constructor 호출 감소를 검증한다. 실제 v32 LogReg는357.011653369초로 v31보다2.656초 느렸고 numeric/audit/objective PASS다. 전체 성능 향상으로 일반화하지 않으며 normal counters로 후단 전개를 확인한다.
+
+
+### v34 / 진단 중 native union 보존 및 retained rectangle 재열거 제거 (통합 중)
+
+- **문제/원인**: v32의 mixed-multiple 전개 제거에도 후속 PARTITIONED 전개와 explicit Clause가 증가했다. 상세 중복 진단이 기존 native union을 우회하고, retained native rectangle을 scalar fallback에서 다시 소비하는 경로를 확인했다. Constructor의 native origin 제외는 이미 있어 별도 원인으로 주장하지 않는다.
+- **변경/보존**: PlacementAnalysis/SearchSpaceMetrics는 기존 성공하는 native union의 순서·authority·cap을 유지하면서 논리 중복 수를 별도 nativeRelationDuplicateMembers로 기록한다. 기존 explicit identity/provenance bucket은 유지한다. NativePlacementContinuity/NativeContinuitySupportClauses/PlacementRelationClosure는 같은 owner/header/source authority의 단일 ordinary retained product 교집합만 빼서 exact residual을 소비한다. Conditional/multi-retained/불확실한 authority는 기존 fallback을 유지한다.
+- **사전 검증**: retained residual actual binder RED consumed6→GREEN3(logical6 유지), fixed-seed/owner authority 등71개 PASS. 진단 union은60개 PASS, native handle/explicit/indexed member 생성0 및 trace cap/reset 검증. 두 production patch 독립 검토 CLEAR. 통합 전체 gate를 새 build에서 수행한다.
+- **지문 검증**: ExactConditionalNativeProductPhysicalParityTest에 explicit/native exact fact 전체 equality와 서로 다른 표현 지문을 함께 검증했다. 별도2개 PASS(4.092초). 첫 시도는 없는 normalizedSignature API로 compile 실패했고 structural equality로 수정했다. 다음 runner는 tests-command.json 누락으로 실패해 정확한 기존 JUnit 명령을 복원한 뒤 재실행했다. Production 변경은 없으며 실제 workload의 전체 비용 동등성을 이 작은 fixture로 대신하지 않는다.
+- **잔여/위험**: 상세 진단 native duplicate는 논리 overlap이며 실제 생성 Clause가 아니다. Constructor/Clause/proof 소비 counters와 분리해 보고한다. Closure header forwarding의 별도 진단 guard, conditional union, Physical exact fallback은 남는다. v32 actual은 LogReg357.012초/GLM122.062초이며 목표 미달, 전체 cost fingerprint 차이는 별도 보조 검증 중이다.
+
+- **실측 경로 정정**: fixed v32 command는 liveMetrics=true이며 상세 duplicate diagnostics는 OFF다. DMLTranslator.productionSearchSpaceMetrics는 단순 new SearchSpaceMetrics이고 frozen main source에는 enableDuplicateMergeDiagnostics 호출이 없다. 따라서 진단 guard 수정은 유효한 기능 개선이지만 실제357초 병목의 원인/해결로 귀속하지 않는다. 실제 retained residual과 conditional fallback 최적화를 우선한다.
+
+- **v34 통합 gate 완료**: selected FedPlanner1,344개 PASS(185.876초),7,859 class/resource 실행 전후 변경0/source SHA 불일치0. 근거 evidence/native-retained-diagnostic-native-full-gate-v34/validation.json. 최신 origin0fb33a7fff의 conditional length-rank bounds 및 기존 경로 exit counter 변경은 독립 검토 CLEAR이며 병합 후 fresh gate로 검증한다.

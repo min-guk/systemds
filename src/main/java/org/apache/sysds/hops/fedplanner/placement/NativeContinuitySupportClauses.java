@@ -160,6 +160,35 @@ final class NativeContinuitySupportClauses
 	DurableAnchorKey clauseWitness() { return clauseWitness; }
 	boolean clauseLayoutExact() { return clauseLayoutExact; }
 	boolean hasGroundedBindings() { return !commonAxes().isEmpty(); }
+	ExactAuthorityResidual exactAuthorityResidualAfter(NativeContinuitySupportClauses retained) {
+		if(retained == null || owner != retained.owner
+			|| clauseLayoutExact != retained.clauseLayoutExact
+			|| !Objects.equals(clauseWitness, retained.clauseWitness))
+			return null;
+		var candidateProduct = singleProduct().orElse(null);
+		var retainedProduct = retained.singleProduct().orElse(null);
+		if(candidateProduct == null || retainedProduct == null)
+			return null;
+		List<List<CandidateRealizationInputBinding>> intersection =
+			candidateProduct.exactAuthorityIntersectionAxes(retainedProduct);
+		if(intersection == null)
+			return null;
+		long covered = 1;
+		try {
+			for(List<CandidateRealizationInputBinding> axis : intersection)
+				covered = Math.multiplyExact(covered, axis.size());
+		}
+		catch(ArithmeticException overflow) {
+			return null;
+		}
+		if(covered == candidateProduct.size())
+			return new ExactAuthorityResidual(null, covered);
+		var residual = NativePlacementContinuity.NativeSupportProduct
+			.tryCreateExactComplement(candidateProduct, intersection);
+		return residual == null ? null : new ExactAuthorityResidual(residual, covered);
+	}
+	record ExactAuthorityResidual(
+		NativePlacementContinuity.NativeSupportProduct product, long coveredMembers) { }
 	java.util.Optional<NativeContinuitySupportClauses> restrictBindings(
 		Predicate<CandidateRealizationInputBinding> supported) {
 		List<List<CandidateRealizationInputBinding>> axes = commonAxes().stream()

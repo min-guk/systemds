@@ -1095,6 +1095,14 @@ public final class SearchSpaceMetrics {
 			equalDistinctClauseClauses, provenance, reusedRealization);
 	}
 
+	void recordNativeRelationMergeDiagnostics(String mergeShape, int inputRealizations,
+		long inputMembers, long uniqueMembers, boolean reusedRealization) {
+		if(duplicateMergeDiagnostics == null)
+			return;
+		duplicateMergeDiagnostics.recordNativeRelation(mergeShape, inputRealizations,
+			inputMembers, uniqueMembers, reusedRealization);
+	}
+
 	public DuplicateMergeDiagnosticsSnapshot duplicateMergeDiagnosticsSnapshot() {
 		return duplicateMergeDiagnostics == null ? DuplicateMergeDiagnosticsSnapshot.DISABLED
 			: duplicateMergeDiagnostics.snapshot(realizationMergeDuplicateClauses);
@@ -1163,6 +1171,7 @@ public final class SearchSpaceMetrics {
 	public record DuplicateMergeTrace(String callSite, String mergeShape, int inputRealizations,
 		long duplicateClauses, long immutableListReplayClauses,
 		long sharedClauseReplayClauses, long equalDistinctClauseClauses,
+		long nativeRelationDuplicateMembers,
 		long sameBatchClauses, long sameRouteSameRevisionClauses,
 		long crossRouteClauses, long unchangedRevisionReplayClauses,
 		long provenanceUnresolvedClauses, boolean reusedRealization) { }
@@ -1170,7 +1179,8 @@ public final class SearchSpaceMetrics {
 	public record DuplicateMergeDiagnosticsSnapshot(boolean enabled,
 		long observedDuplicateClauses, long legacyDuplicateClauses,
 		long immutableListReplayClauses, long sharedClauseReplayClauses,
-		long equalDistinctClauseClauses, long sameBatchClauses,
+		long equalDistinctClauseClauses, long nativeRelationDuplicateMembers,
+		long sameBatchClauses,
 		long sameRouteSameRevisionClauses, long crossRouteClauses,
 		long unchangedRevisionReplayClauses, long provenanceUnresolvedClauses,
 		long originEntries, long originEntryOverflows,
@@ -1178,7 +1188,7 @@ public final class SearchSpaceMetrics {
 		List<DuplicateOriginTransition> originTransitions,
 		List<DuplicateMergeTrace> traces) {
 		private static final DuplicateMergeDiagnosticsSnapshot DISABLED =
-			new DuplicateMergeDiagnosticsSnapshot(false, 0, 0, 0, 0, 0,
+			new DuplicateMergeDiagnosticsSnapshot(false, 0, 0, 0, 0, 0, 0,
 				0, 0, 0, 0, 0, 0, 0, 0, 0, List.of(), List.of());
 	}
 
@@ -1197,6 +1207,7 @@ public final class SearchSpaceMetrics {
 		private long immutableListReplayClauses;
 		private long sharedClauseReplayClauses;
 		private long equalDistinctClauseClauses;
+		private long nativeRelationDuplicateMembers;
 		private long sameBatchClauses;
 		private long sameRouteSameRevisionClauses;
 		private long crossRouteClauses;
@@ -1221,6 +1232,7 @@ public final class SearchSpaceMetrics {
 			immutableListReplayClauses = 0;
 			sharedClauseReplayClauses = 0;
 			equalDistinctClauseClauses = 0;
+			nativeRelationDuplicateMembers = 0;
 			sameBatchClauses = 0;
 			sameRouteSameRevisionClauses = 0;
 			crossRouteClauses = 0;
@@ -1321,20 +1333,37 @@ public final class SearchSpaceMetrics {
 				return;
 			}
 			traces.add(new DuplicateMergeTrace(resolveCallSite(), mergeShape, inputRealizations,
-				duplicates, immutableListReplay, sharedClauseReplay, equalDistinctClause,
+				duplicates, immutableListReplay, sharedClauseReplay, equalDistinctClause, 0,
 				provenance.sameBatchClauses(), provenance.sameRouteSameRevisionClauses(),
 				provenance.crossRouteClauses(), provenance.unchangedRevisionReplayClauses(),
 				provenance.unresolvedClauses(), reusedRealization));
 		}
 
+		private void recordNativeRelation(String mergeShape, int inputRealizations,
+			long inputMembers, long uniqueMembers, boolean reusedRealization) {
+			if(inputMembers < 0 || uniqueMembers < 0 || uniqueMembers > inputMembers)
+				throw new IllegalArgumentException("NATIVE_RELATION_DUPLICATE_MEMBER_COUNT");
+			long duplicates = inputMembers - uniqueMembers;
+			if(duplicates == 0)
+				return;
+			nativeRelationDuplicateMembers = Math.addExact(
+				nativeRelationDuplicateMembers, duplicates);
+			if(traces.size() >= traceLimit) {
+				droppedTraceEvents++;
+				return;
+			}
+			traces.add(new DuplicateMergeTrace(resolveCallSite(), mergeShape, inputRealizations,
+				duplicates, 0, 0, 0, duplicates, 0, 0, 0, 0, 0, reusedRealization));
+		}
+
 		private DuplicateMergeDiagnosticsSnapshot snapshot(long legacyDuplicateClauses) {
 			long observed = immutableListReplayClauses + sharedClauseReplayClauses
-				+ equalDistinctClauseClauses;
+				+ equalDistinctClauseClauses + nativeRelationDuplicateMembers;
 			List<DuplicateOriginTransition> transitions = originTransitions.entrySet().stream()
 				.map(entry -> entry.getKey().snapshot(entry.getValue())).toList();
 			return new DuplicateMergeDiagnosticsSnapshot(true, observed, legacyDuplicateClauses,
 				immutableListReplayClauses, sharedClauseReplayClauses,
-				equalDistinctClauseClauses, sameBatchClauses,
+				equalDistinctClauseClauses, nativeRelationDuplicateMembers, sameBatchClauses,
 				sameRouteSameRevisionClauses, crossRouteClauses,
 				unchangedRevisionReplayClauses, unresolvedClauses,
 				clauseOrigins.size(), originEntryOverflows,
