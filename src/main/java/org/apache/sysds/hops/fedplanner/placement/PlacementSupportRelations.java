@@ -766,7 +766,8 @@ final class PlacementSupportRelations {
 		}
 		private long invalidate(NativeFixedPointOption option) {
 			option.live = false;
-			long removed = 1;
+			// Each common-axis tuple owns one distinct clause per proof header.
+			long removed = original.headerCount();
 			for(int axis = 0; axis < liveByAxis.size(); axis++)
 				if(axis != option.axis)
 					removed *= liveByAxis.get(axis);

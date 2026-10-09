@@ -29,6 +29,19 @@ import org.junit.Test;
 
 public class NativeProductAuthorityRetentionTest {
 	@Test
+	public void multiHeaderIndexChargesRetainedAuthorityText() {
+		CompiledHopKey owner = key("header-consumer");
+		CompiledHopKey source = key("header-source");
+		var axes = List.of(List.of(direct(0, "a", source), direct(0, "b", source)));
+		var first = relation(owner, pool("a".repeat(600_000)), pool("output"), axes);
+		var second = relation(owner, pool("b".repeat(600_000)), pool("output"), axes);
+		Assert.assertTrue("the family index retains over one million header characters",
+			first.multiHeaderUnion(second).isEmpty());
+		Assert.assertEquals(0, first.materializedHandleCount());
+		Assert.assertEquals(0, second.materializedHandleCount());
+	}
+
+	@Test
 	public void growingPrefixesDeclineUnboundedDonorHistoryAndKeepExactFallback() {
 		CompiledHopKey owner = key("consumer");
 		CompiledHopKey source = key("source");
