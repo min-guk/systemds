@@ -6665,7 +6665,8 @@ final class PlacementRelationClosure {
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause>> prior,
 		IdentityHashMap<PlacementIdentity.PlacementRealizationKey,
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause>> priorByIdentity,
-		boolean hasStaging, boolean hasConflictingEqualAuthority,
+		boolean hasStaging, Set<PlacementIdentity.PlacementRealizationKey> stagingKeys,
+		boolean hasConflictingEqualAuthority,
 		Map<PlacementIdentity.PlacementRealizationKey,
 			Map<Integer,List<RetainedNativeCoverage>>> nativeCoverage,
 		Map<PlacementIdentity.PlacementRealizationKey,
@@ -6730,7 +6731,9 @@ final class PlacementRelationClosure {
 		}
 		private NativeRetainedResidual retainedNativeResidual(
 			CandidateEmissionRealization candidate) {
-			if(hasStaging || hasConflictingEqualAuthority
+			// Staging under another realization key cannot merge with this exact residual.
+			// Whole-emission reuse and retained-product union keep the global staging guard.
+			if(stagingKeys.contains(candidate.key()) || hasConflictingEqualAuthority
 				|| !(candidate.supportClauses() instanceof NativeContinuitySupportClauses relation))
 				return null;
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> explicit =
@@ -6841,6 +6844,7 @@ final class PlacementRelationClosure {
 		Map<PlacementIdentity.PlacementRealizationKey,
 			List<NativeContinuitySupportClauses>> nativeProducts = new HashMap<>();
 		boolean hasStaging = false;
+		Set<PlacementIdentity.PlacementRealizationKey> stagingKeys = new HashSet<>();
 		boolean hasConflictingEqualAuthority = false;
 		int indexedNativeClauses = 0;
 		for(CandidateEmissionRealization candidate : emission.realizations()) {
@@ -6851,6 +6855,7 @@ final class PlacementRelationClosure {
 			if(candidate.supportClauses() instanceof NativeContinuitySupportClauses product) {
 				if(!product.hasGroundedBindings()) {
 					hasStaging = true;
+					stagingKeys.add(candidate.key());
 					continue;
 				}
 				retained.add(candidate);
@@ -6861,6 +6866,7 @@ final class PlacementRelationClosure {
 			for(CandidateRealizationSupportClause clause : candidate.supportClauses()) {
 				if(clause.inputBindings().isEmpty()) {
 					hasStaging = true;
+					stagingKeys.add(candidate.key());
 					continue;
 				}
 				grounded.add(clause);
@@ -6900,7 +6906,7 @@ final class PlacementRelationClosure {
 			immutableProducts = new HashMap<>();
 		nativeProducts.forEach((key, value) -> immutableProducts.put(key, List.copyOf(value)));
 		return new GroundedNativePreparation(List.copyOf(retained), prior, priorByIdentity,
-			hasStaging, hasConflictingEqualAuthority, nativeCoverage,
+			hasStaging, Set.copyOf(stagingKeys), hasConflictingEqualAuthority, nativeCoverage,
 			Map.copyOf(immutableProducts), metrics);
 	}
 

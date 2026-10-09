@@ -72,7 +72,7 @@ public class NativeHybridUnpinnedTopologyTest {
 	}
 
 	@Test
-	public void pinnedNativeAndOrdinaryRowsClassifyColdAndResidentTopologyWithoutChangingAuthority()
+	public void pinnedNativeAndOrdinaryRowsStayFactoredWithoutChangingAuthority()
 		throws Exception {
 		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
 		Assert.assertEquals("the fixture must expose a genuine two-by-three native product",
@@ -123,6 +123,10 @@ public class NativeHybridUnpinnedTopologyTest {
 			scenario.queryInstalled("z-choice", ordinaryResolver);
 		assertResultParity(eagerOrdinaryA, metricsOffOrdinaryA, metricsOnOrdinaryA);
 		assertResultParity(eagerOrdinaryZ, metricsOffOrdinaryZ, metricsOnOrdinaryZ);
+		Assert.assertEquals("ordinary pins must not expand their native sibling",
+			1, lazy.materializedHandleCount());
+		Assert.assertEquals("ordinary pins never populate the full-owner topology bucket",
+			0, topologyCount(ordinaryResolver, scenario.childKey(), 0));
 		assertPinnedCounts(metrics);
 		assertAcyclicRootTopologyCounts(metrics);
 
@@ -141,32 +145,108 @@ public class NativeHybridUnpinnedTopologyTest {
 	}
 
 	@Test
-	public void directAlternativeSeamObservesColdThenResidentFallbackTopology() throws Exception {
-		// The public-query regression above intentionally covers support-query key prewarming.
-		// This narrow seam enters alternatives directly to observe the fallback's own
-		// cold-to-resident transition without relabeling it as public root behavior.
+	public void directOrdinaryPinsReuseOneBoundedTopologyPerHandle() throws Exception {
 		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
-		scenario.install(false);
+		NativeContinuitySupportClauses relation = scenario.install(false);
 		CandidateRealizationReference first = scenario.installedReference("a-choice");
 		CandidateRealizationReference second = scenario.installedReference("z-choice");
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.beginAnalysisScope(metrics);
+		try {
+			NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+				scenario.fixture(), "resolver", metrics, 128, 2048L);
+
+			List<?> firstCold = candidateAlternatives(
+				resolver, scenario.childKey(), first, scenario.pool());
+			List<?> secondCold = candidateAlternatives(
+				resolver, scenario.childKey(), second, scenario.pool());
+			Assert.assertFalse("the first ordinary pin retains its exact authority", firstCold.isEmpty());
+			Assert.assertFalse("the second ordinary pin retains its exact authority", secondCold.isEmpty());
+			Assert.assertEquals("the warm first pin preserves its ordered alternatives", firstCold,
+				candidateAlternatives(resolver, scenario.childKey(), first, scenario.pool()));
+			Assert.assertEquals("the warm second pin preserves its ordered alternatives", secondCold,
+				candidateAlternatives(resolver, scenario.childKey(), second, scenario.pool()));
+			Assert.assertEquals("restricted buckets do not read the unrelated native product",
+				1, relation.materializedHandleCount());
+			Assert.assertEquals(0, topologyCount(resolver, scenario.childKey(), 0));
+			Assert.assertEquals(2, topologyCount(resolver, scenario.childKey(), 1));
+			Assert.assertEquals(0, directWork(metrics, "NATIVE_PINNED_REQUESTS"));
+			Assert.assertEquals(0, directWork(metrics, "NATIVE_PINNED_REJECT_ORDINARY"));
+			Assert.assertEquals(0, directWork(metrics, "NATIVE_HYBRID_REQUESTS"));
+			Assert.assertEquals(0, directWork(metrics, "NATIVE_HYBRID_ACCEPTED"));
+			Assert.assertEquals(2, directWork(metrics, "NATIVE_PINNED_ORDINARY_COLD_TOPOLOGY"));
+			Assert.assertEquals(2, directWork(metrics, "NATIVE_PINNED_ORDINARY_RESIDENT_TOPOLOGY"));
+			Assert.assertEquals("the narrow non-root seam bypasses acyclic-root preprocessing",
+				0, directWork(metrics, "ACYCLIC_ROOT_TOPOLOGY_REQUESTS"));
+
+			NativePlacementContinuity revised = resolver.nextRevisionWithCompleteCandidateDelta(
+				List.copyOf(candidateFacts(scenario.fixture())), Set.of());
+			Assert.assertEquals("restricted handles are never carried across revisions",
+				0, topologyCount(revised, scenario.childKey(), 1));
+			Assert.assertEquals(firstCold, candidateAlternatives(
+				revised, scenario.childKey(), first, scenario.pool()));
+			Assert.assertEquals(1, topologyCount(revised, scenario.childKey(), 1));
+			Assert.assertEquals(3,
+				directWork(metrics, "NATIVE_PINNED_ORDINARY_COLD_TOPOLOGY"));
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+		}
+	}
+
+	@Test
+	public void restrictedAndFullTopologiesShareOneEntryBudget() throws Exception {
+		String property = "sysds.fedplanner.continuityTopology.maxEntries";
+		String prior = System.getProperty(property);
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		scenario.install(false);
+		CandidateRealizationReference ordinary = scenario.installedReference("a-choice");
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.beginAnalysisScope(metrics);
+		try {
+			System.setProperty(property, "1");
+			NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+				scenario.fixture(), "resolver", metrics, 128, 2048L);
+			Assert.assertFalse(candidateAlternatives(
+				resolver, scenario.childKey(), ordinary, scenario.pool()).isEmpty());
+			Assert.assertEquals(1, topologyCount(resolver, scenario.childKey(), 1));
+			populateFullTopology(resolver, scenario.childKey(), scenario.pool());
+			Assert.assertEquals("the full entry evicts the restricted entry under one shared cap",
+				0, topologyCount(resolver, scenario.childKey(), 1));
+			Assert.assertEquals(1, topologyCount(resolver, scenario.childKey(), 0));
+			Assert.assertTrue(metrics.snapshot().topologyCacheEvictions() > 0);
+			long cold = directWork(metrics, "NATIVE_PINNED_ORDINARY_COLD_TOPOLOGY");
+			Assert.assertFalse(candidateAlternatives(
+				resolver, scenario.childKey(), ordinary, scenario.pool()).isEmpty());
+			Assert.assertEquals("eviction removes the restricted resident index",
+				cold + 1, directWork(metrics, "NATIVE_PINNED_ORDINARY_COLD_TOPOLOGY"));
+			Assert.assertEquals(1, topologyCount(resolver, scenario.childKey(), 1));
+			Assert.assertEquals(0, topologyCount(resolver, scenario.childKey(), 0));
+		}
+		finally {
+			if(prior == null)
+				System.clearProperty(property);
+			else
+				System.setProperty(property, prior);
+			PlacementIdentity.endAnalysisScope();
+		}
+	}
+
+	@Test
+	public void overflowLocalOrdinaryHandleRemainsQueryLocal() throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		scenario.install(false);
+		CandidateRealizationReference ordinary = scenario.installedReference("a-choice");
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
 			scenario.fixture(), "resolver", metrics, 128, 2048L);
-
-		Assert.assertFalse("the first ordinary pin retains its exact legacy fallback",
-			candidateAlternatives(resolver, scenario.childKey(), first, scenario.pool()).isEmpty());
-		Assert.assertFalse("the second ordinary pin reuses the resident fallback topology",
-			candidateAlternatives(resolver, scenario.childKey(), second, scenario.pool()).isEmpty());
-		Assert.assertEquals(2, directWork(metrics, "NATIVE_PINNED_REQUESTS"));
-		Assert.assertEquals(2, directWork(metrics, "NATIVE_PINNED_REJECT_ORDINARY"));
-		Assert.assertEquals(1, directWork(metrics, "NATIVE_PINNED_ORDINARY_COLD_TOPOLOGY"));
-		Assert.assertEquals(1, directWork(metrics, "NATIVE_PINNED_ORDINARY_RESIDENT_TOPOLOGY"));
-		Assert.assertEquals("the narrow non-root seam bypasses acyclic-root preprocessing",
-			0, directWork(metrics, "ACYCLIC_ROOT_TOPOLOGY_REQUESTS"));
-		long classified = 0;
-		for(String outcome : PINNED_OUTCOMES)
-			classified += directWork(metrics, outcome);
-		Assert.assertEquals(2, classified);
+		Assert.assertFalse(candidateAlternatives(
+			resolver, scenario.childKey(), ordinary, scenario.pool()).isEmpty());
+		Assert.assertFalse(candidateAlternatives(
+			resolver, scenario.childKey(), ordinary, scenario.pool()).isEmpty());
+		Assert.assertEquals(0, topologyCount(resolver, scenario.childKey(), 1));
+		Assert.assertEquals(2, metrics.snapshot().topologyExpansionBuilds());
+		Assert.assertEquals(0, metrics.snapshot().topologyExpansionHits());
 	}
 
 	@Test
@@ -581,11 +661,9 @@ public class NativeHybridUnpinnedTopologyTest {
 		long ordinary = directWork(metrics, "NATIVE_PINNED_REJECT_ORDINARY");
 		long cold = directWork(metrics, "NATIVE_PINNED_ORDINARY_COLD_TOPOLOGY");
 		long resident = directWork(metrics, "NATIVE_PINNED_ORDINARY_RESIDENT_TOPOLOGY");
-		Assert.assertTrue("the public fixture must issue ordinary pinned requests", ordinary > 0);
-		Assert.assertEquals("support-query key preprocessing warms topology before pinned classification",
-			0, cold);
-		Assert.assertEquals("every public ordinary pin observes the prewarmed resident topology",
-			ordinary, resident);
+		Assert.assertEquals("ordinary pins bypass the native circuit", 0, ordinary);
+		Assert.assertEquals(0, cold);
+		Assert.assertEquals(0, resident);
 		Assert.assertEquals("every completed pinned request has exactly one outcome",
 			requests, classified);
 	}
@@ -594,16 +672,15 @@ public class NativeHybridUnpinnedTopologyTest {
 		long requests = directWork(metrics, "ACYCLIC_ROOT_TOPOLOGY_REQUESTS");
 		long cold = directWork(metrics, "ACYCLIC_ROOT_TOPOLOGY_COLD");
 		long resident = directWork(metrics, "ACYCLIC_ROOT_TOPOLOGY_RESIDENT");
-		Assert.assertEquals("support-query key construction already warmed the ordinary root topology", 0, cold);
-		Assert.assertTrue("the acyclic root observes the resident topology",
-			resident > 0);
+		Assert.assertEquals(0, cold);
+		Assert.assertEquals(0, resident);
 		Assert.assertEquals("acyclic root topology requests are exactly partitioned",
 			requests, cold + resident);
 		long queryRequests = directWork(metrics, "SUPPORT_QUERY_TOPOLOGY_REQUESTS");
 		long queryCold = directWork(metrics, "SUPPORT_QUERY_TOPOLOGY_COLD");
 		long queryResident = directWork(metrics, "SUPPORT_QUERY_TOPOLOGY_RESIDENT");
-		Assert.assertTrue("the first support-query key builds its ordinary root topology", queryCold > 0);
-		Assert.assertTrue("a later support-query key observes the resident topology", queryResident > 0);
+		Assert.assertEquals(0, queryCold);
+		Assert.assertEquals(0, queryResident);
 		Assert.assertEquals("support-query topology requests are exactly partitioned",
 			queryRequests, queryCold + queryResident);
 	}
@@ -620,8 +697,38 @@ public class NativeHybridUnpinnedTopologyTest {
 		assertIdentitySetEquals(metricsOff.dependencyOccurrences(), metricsOn.dependencyOccurrences());
 	}
 
+	@SuppressWarnings("unchecked")
+	private static int topologyCount(NativePlacementContinuity resolver,
+		CompiledHopKey owner, int pinnedKind) throws Exception {
+		Field field = NativePlacementContinuity.class.getDeclaredField("candidateTopologies");
+		field.setAccessible(true);
+		int count = 0;
+		for(Object key : ((Map<Object,Object>)field.get(resolver)).keySet()) {
+			Field occurrence = key.getClass().getDeclaredField("occurrence");
+			occurrence.setAccessible(true);
+			Field pinnedHandle = key.getClass().getDeclaredField("pinnedHandle");
+			pinnedHandle.setAccessible(true);
+			int handle = pinnedHandle.getInt(key);
+			if(occurrence.get(key) == owner && (pinnedKind == 0 ? handle == 0 : handle > 0))
+				count++;
+		}
+		return count;
+	}
+
 	private static long directWork(SearchSpaceMetrics metrics, String name) {
 		return metrics.directWorkCount(SearchSpaceMetrics.DirectWork.valueOf(name));
+	}
+
+	private static void populateFullTopology(NativePlacementContinuity resolver,
+		CompiledHopKey owner, DurableAnchorKey pool) throws Exception {
+		Method witnessMethod = NativePlacementContinuity.class.getDeclaredMethod(
+			"nativeWitness", DurableAnchorKey.class);
+		witnessMethod.setAccessible(true);
+		Object witness = witnessMethod.invoke(resolver, pool);
+		Method topology = NativePlacementContinuity.class.getDeclaredMethod(
+			"candidateTopology", CompiledHopKey.class, nested("NativePoolWitness"));
+		topology.setAccessible(true);
+		topology.invoke(resolver, owner, witness);
 	}
 
 	@SuppressWarnings("unchecked")
