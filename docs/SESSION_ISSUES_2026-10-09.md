@@ -549,3 +549,37 @@
 
 - **Durable topology 최종 gate**: DURABLE_MAP의 pinned/unpinned 축 gate를 통합한 fresh main/test compile 및 전체 FedPlanner 회귀 **1,091 tests PASS(155.313초)**, source SHA mismatch 0. 증거 `evidence/main52ef-durable-gates-full-green-1091`. 정확한 anchor/clause grounding, source withdrawal, 동적 proof 및 source identity를 보존하면서 2×3 fixture의 materialized handle을 6→1로 줄였다. 합법 후보 수를 줄였다는 의미는 아니다. 최신 main 병합을 포함한 v16 엔진으로 별도 봉인하며 실제 workload 효과는 아직 측정 전이다.
 - **v15 실제 GLM**: 전체 초기 planning **126.728496870초**, Analysis86.086초, optimizer24.170초. v11/v14와 선택 receipt 전체·6개 section·objectiveRawBits4655470428781502442가 동일하고 numeric/audit PASS다. v14 대비 약10.218초 감소한 단일 관측이며 20초에는 미달한다. 이 v15는 main52ef 병합 및 durable topology gate 전 엔진이므로 최신 변경의 효과로 귀속하지 않는다. LogReg 실행을 계속한다.
+
+### Incremental DP의 factor별 최적성 증명 (검증중)
+
+- **문제/변경**: rejected neighborhood의 조건부 문제를 매번 compact/compile하던 경로에서, 정확히 같은 root와 고정 source 경계의 incumbent가 모든 알려진 +0/+INF 제약의0 cell을 만족하면 기존 선택을 그대로 반환한다. 개별 factor가 모두 최솟값0을 달성하므로 공동 최솟값도0임을 증명한다. 기존3인자 준비 경로를 reference로 유지하고 numeric/unknown factor, sparse hole, 다른 경계는 기존 solve를 따른다.
+- **범위**: strict improvement 때만 incumbent를 바꾸는 기존 정책과 exact auxiliary witness를 유지한다. Resource preflight도 증명 전에 수행한다. 현재 구현은 conditioning 후 compilation을 생략하며, relation-native root에서 conditioning 자체도 생략할 수 있는 후속 최적화를 검토한다.
+- **검증**: 독립 lane91tests와 reviewer CLEAR에 더해 root57tests PASS(1.755초). Root는 hard table/functional map/conditional support 각각을 고정 경계/전체 block으로 검사하여 objective raw bits와 exact incumbent receipt를 비교했다. 전체 회귀는 실행 중이다. 이 결과를 실제 ML 시간 개선으로 주장하지 않는다.
+
+- **DP 회귀/조기 증명 보강**: conditioning 후 certificate 버전의 fresh 전체1,099tests PASS(156.798초), source mismatch0를 `evidence/incremental-factorwise-full-green-1099`에 보존했다. 이후 root relation에서 증명할 수 있으면 conditioning도 생략하도록 확장했다. 새회귀는 변경전 실제conditioned table1개를 만들어 실패했고, 수정후57focused PASS(1.580초)로0개를 확인했다. Numeric→hard 조건부 slice는 기존 후단 증명 경로를 유지한다.
+- **v15 두 workload 완료**: LogReg384.003407355초/GLM126.728496870초, numeric/audit PASS. v14 대비 LogReg는12.780초 늘고GLM은10.218초 줄었다. 각1회·probe버전도달라일괄성능개선으로보고하지않는다. GLM selected receipt/rawbits는v11/v14와동일하다. LogReg aggregatehash는eccd516e…로기존ebd0db19…와달라, 새probe의v14 baseline과비교하기전선택receipt의버전간동등성을확정하지않는다. v16실측을진행한다.
+
+### Topology 반복 할당 및 계측 handle 최적화 (통합 검증중)
+
+- **변경**: query마다 생성하던 singleton owner/reference/handle map2개를 identity 경계 객체1개로 바꿨다. Topology LRU에 실제로 남아 있는 key만 보조 identity-owner/value-witness index에 보관하여 cache hit의 임시 key 생성을 없앤다. 기존 LRU/entry/row/owner-read 예산은 그대로이고 eviction/revision/authority를 보존한다.
+- **계측**: PROOF_TOPOLOGY의 PhaseToken 생성만 primitive handle로 바꾼다. 호출 수, 중첩 wall/CPU/allocation, live snapshot 및 알 수 없는 측정값 처리는 유지한다. 수집기 owner prefix와 순번으로 cross-collector/stale handle을 거절한다. 리뷰에서 발견된 수집기당2^32호출 상한은 prefix rollover로 제거했고, rollover 중 active parent도 기존 handle로 정확히 종료한다. 계측을 끄거나 sampling하지 않는다.
+- **검증**: topology 독립181tests(기존skip1), phase 독립19tests(기존skip1) 및 root 통합focused218tests PASS(4.253초,기존ignored1). Root에는 조기DP certificate도 포함된다. 전체 gate 실행 중이다. 줄어드는 것은 객체 생성과 반복 조회이며 논리적 합법 후보 수 감소가 아니다. 실제 시간과 메모리 효과는 아직 측정 전이다.
+- **v16 GLM 실측**:130.794740209초로v15보다4.066초 늘어난 단일 관측이다. Numeric/audit 및v15와전체selected receipt/objective certificate/planhash가동일하다. LogReg 실행을이어간다.
+
+- **통합 전체 gate 실패 보존**: 1,112tests/5fail(181.366초)를 `evidence/topology-phase-dp-full-red-1112`에 저장했다. 4개는 singleton boundary private API 변경 후 오래된 reflection signature였으며 테스트를 새 boundary/cache admission 경로로 갱신했다. 기존 합법성 assertion을 낮추지 않고, production에 없던 null pin fixture는 명시적 constructor 거절과 실제 owner identity 회귀로 바꿨다. 3개 관련 suite 독립12tests PASS.
+- **추가로 확인한 실제 전개**: `ExactFiniteSupportInputFactorTest`의 20,000×20,000 sparse support(저장 행3개)가5초 timeout됐다. `sparseRangeSafe`가400,000,000 logical cells에 binary search를 반복하고 있었다. 저장된 numeric values만 검사하고 정확한 +0/+INF conditional relation은 논리적 cardinality를 전개하지 않도록 수정했다. 동일5초 제한의 conditional3region 회귀를 추가하고 sparse/DD 비용 및 rawbits 동등성을 검사한다. 시간 제한을 늘리거나 실패를 삭제하지 않는다.
+
+### 입력 exactness와 무관한 native 출력의 product 유지
+
+- **실제 원인**: v16 정상 종료 로그의 LogReg MIXED_EXACTNESS는14,404,944 consumed proofs, OUTPUT_COLLISION은2,362,130이다. GLM은각681,653/1,358,208이다. 이는 실제 소비한 proof 수이며 논리적 후보 수나 객체 생성 수와 구분한다. 추가 profiling은 실행하지 않았다.
+- **수정**: `directNativeOutput`이 입력 exactness를 읽어DURABLE_MAP과NATIVE_LINEAGE를 나누는 경우는 output anchor가 있고 proof partition이exact인 경우뿐이다. 따라서 그 경우에만 mixed input exactness product를 거절한다. Output anchor가없거나proof가dynamic이면입력exactness와무관하게동일한native권한/출력이므로product를유지한다. 서로다른authority를대표하나로교체하지않고모든입력옵션과proof를보존한다.
+- **검증**: 실제DirectSourceIndex에같은owner의exact+dynamic DIRECT realization을넣어압축publication2개옵션/0handles를확인한다. exact+anchor는기존fallback이다. Root는각멤버를기존explicit directNativePublication으로생성한key/clause와대조하고source owner identity도검증한다. 전체cost/DP 및실제workload gate는이어진다.
+- **남은 전개**: 서로다른seed가같은출력key를공유하는OUTPUT_COLLISION과RETAINED_UNION은exact fallback이다. Exact+dynamic proof-region union은독립후보169tests까지검증했지만public memo 재사용이감소할가능성이있어이번봉인본에섞지않는다.
+
+- **LogReg 버전간 선택·비용 검증 해결**: 같은post-timer probe로 v14를 재실행했다. v14/v15/v16의전체candidate/emission/materialization/relocation/shared receipt, assignment, maxFactorCells0 및objectiveRawBits4653340210026796583이모두동일했다. Aggregatehash ebd0db19→eccd516e 변화는costSurface4064b2a0→66b21979 표현변경에서발생했다. 숫자/audit도PASS다. 근거 `cofee-50k128-v16-validation/logreg-receipt-parity-v14-v16.json`, SHA256 a2d521100896a6e11721055c9a36198084c22faac6ea8b87b65e71bbb649eada. v14추가실행370.098255750초는동일probe의parity 검증용단일관측이다.
+
+### v17 통합 회귀 완료 및 실측 준비
+
+- **검증**: mixed exactness publication, sparse range 검사, topology identity/cache 및 primitive phase handle, 조기 DP certificate를 함께 fresh compile하여 **1,119 tests PASS(172.578초)**, source SHA mismatch 0을 확인했다. 증거 `evidence/mixed-sparse-topology-dp-full-green-1119`. 추가 실제 Incremental neighborhood/replay 통합 회귀 2개와 기존27개 및 관련1개를 포함한 별도 suite **30 tests PASS(1.016초)**; 증거 `evidence/incremental-certificate-integration-root`. 전체 Maven 검증으로 확대해 표현하지 않는다.
+- **정확성**: mixed product의 각 member를 기존 explicit publication의 key/clause/source owner와 비교했고, DP certificate는 numeric/shared cost 등 증명 불가능한 경로를 기존 solve에 남겼다. 독립 검토에서 topology/계측/DP/sparse/mixed gate의 correctness blocker는 발견되지 않았다.
+- **남은 문제/위험**: v16 실측은 LogReg381.267538321초/GLM130.794740209초로 목표 미달이다. 이번 코드의 workload 개선은 아직 미측정이다. 최신 origin/main의 retained-output-key 변경은 별도 병합·검증하며 v17 봉인본의 증거와 섞지 않는다. 기존 실패 로그와 미추적 작업은 보존한다.

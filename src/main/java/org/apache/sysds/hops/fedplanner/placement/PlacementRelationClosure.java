@@ -6272,9 +6272,11 @@ final class PlacementRelationClosure {
 		}
 		if(coveredRequiredPositions.size() != requiredByPosition.size())
 			return rejectedNativeProduct(trace, NativePublicationOutcome.REQUIRED_INPUTS);
-		// Exactness is a conjunction over selected bindings. It is uniform only if
-		// every option is exact, or one complete axis is inexact for every tuple.
-		if(!everyBindingExact && !hasAlwaysInexactAxis)
+		// Input-layout exactness selects DURABLE_MAP only for an exact product with
+		// a concrete output anchor. Native-lineage outputs do not encode this bit,
+		// so mixed source layouts remain one exact product relation there.
+		if(outputAnchor != null && product.exactPartitionRanges()
+			&& !everyBindingExact && !hasAlwaysInexactAxis)
 			return rejectedNativeProduct(trace, NativePublicationOutcome.MIXED_EXACTNESS);
 		NativePlacementContinuity.NativeSupportProduct filtered = product.withAxes(filteredAxes);
 		if(filtered == null)
