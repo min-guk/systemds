@@ -30,6 +30,19 @@ import org.junit.Test;
 
 public class NativeContinuitySupportClausesTest {
 	@Test
+	public void inverseRankRejectsStructurallyEqualForeignBindingIdentity() {
+		CompiledHopKey sourceOwner = key("source");
+		var owned = direct(0, "a", sourceOwner);
+		var product = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			pool("seed"), pool("output"), true, List.of(List.of(owned)));
+		Assert.assertNotNull(product);
+		var foreign = direct(0, "a", cloneKey(sourceOwner));
+		Assert.assertEquals(owned, foreign);
+		Assert.assertNotSame(owned, foreign);
+		Assert.assertEquals(-1, product.ordinalOfBindings(List.of(foreign)));
+	}
+
+	@Test
 	public void rectangularProductRestoresEveryExactMemberLazilyInCanonicalOrder() {
 		CompiledHopKey owner = key("owner");
 		DurableAnchorKey seed = pool("seed");
@@ -50,9 +63,12 @@ public class NativeContinuitySupportClausesTest {
 
 		List<CandidateRealizationSupportClause> explicit =
 			explicitClauses(owner, seed, output, axes);
-		for(int ordinal = 0; ordinal < explicit.size(); ordinal++)
+		for(int ordinal = 0; ordinal < explicit.size(); ordinal++) {
 			Assert.assertEquals(explicit.get(ordinal).normalizedSignature(),
 				relation.get(ordinal).normalizedSignature());
+			Assert.assertEquals(ordinal,
+				product.ordinalOfBindings(product.bindingsAt(ordinal)));
+		}
 		Assert.assertEquals(6, relation.materializedHandleCount());
 	}
 
@@ -175,7 +191,8 @@ public class NativeContinuitySupportClausesTest {
 				CompiledHopKey sourceOwner = key("source-" + iteration + '-' + position);
 				List<CandidateRealizationInputBinding> options = new ArrayList<>();
 				for(int option = 0; option < 1 + random.nextInt(4); option++)
-					options.add(direct(position, "option-" + option, sourceOwner));
+					options.add(direct(position, "option-" + option + '-'
+						+ "x".repeat(1 + random.nextInt(12)), sourceOwner));
 				Collections.shuffle(options, random);
 				options.sort(PlacementAnalysis.canonicalComparator());
 				axes.add(List.copyOf(options));
@@ -187,29 +204,137 @@ public class NativeContinuitySupportClausesTest {
 			List<CandidateRealizationSupportClause> explicit =
 				explicitClauses(owner, seed, output, axes);
 			Assert.assertEquals(explicit.size(), relation.size());
-			for(int ordinal = 0; ordinal < explicit.size(); ordinal++)
+			for(int ordinal = 0; ordinal < explicit.size(); ordinal++) {
 				Assert.assertEquals(explicit.get(ordinal).normalizedSignature(),
 					relation.get(ordinal).normalizedSignature());
+				Assert.assertEquals(ordinal,
+					product.ordinalOfBindings(product.bindingsAt(ordinal)));
+			}
 		}
 	}
 
 	@Test
-	public void variableLengthBindingAuthorityFallsBackToExplicitClauses() {
+	public void variableLengthBindingAuthorityMatchesIndependentCanonicalOrder() {
+		CompiledHopKey owner = key("consumer");
 		CompiledHopKey leftOwner = key("left-source");
 		CompiledHopKey rightOwner = key("right-source");
+		DurableAnchorKey seed = pool("seed");
+		DurableAnchorKey output = pool("output");
+		List<List<CandidateRealizationInputBinding>> axes = List.of(
+			List.of(direct(0, "left-a", leftOwner), direct(0, "left-b", leftOwner)),
+			List.of(direct(1, "a", rightOwner),
+				direct(1, "medium-source-lineage", rightOwner),
+				direct(1, "a-much-longer-source-lineage-than-the-others", rightOwner))
+				.stream().sorted(PlacementAnalysis.canonicalComparator()).toList());
+		var product = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			seed, output, true, axes);
+		Assert.assertNotNull(product);
+		var relation = new NativeContinuitySupportClauses(owner, product, output, true);
+		List<CandidateRealizationSupportClause> explicit = explicitClauses(
+			owner, seed, output, axes);
+		List<CandidateRealizationSupportClause> rowMajor = enumeratedClauses(
+			owner, seed, output, axes);
+		Assert.assertEquals(6, explicit.size());
+		Assert.assertNotEquals(rowMajor.stream().map(
+			CandidateRealizationSupportClause::normalizedSignature).toList(), explicit.stream().map(
+				CandidateRealizationSupportClause::normalizedSignature).toList());
+		for(int ordinal = 0; ordinal < explicit.size(); ordinal++) {
+			Assert.assertEquals(explicit.get(ordinal).normalizedSignature(),
+				relation.get(ordinal).normalizedSignature());
+			Assert.assertEquals(ordinal,
+				product.ordinalOfBindings(product.bindingsAt(ordinal)));
+		}
+	}
+
+	@Test
+	public void canonicalLengthStateBudgetFallsBackWithoutEnumeratingMembers() {
+		CompiledHopKey sourceOwner = key("source");
+		List<CandidateRealizationInputBinding> axis = List.of(
+			direct(0, "a", sourceOwner), direct(0, "medium-name", sourceOwner),
+			direct(0, "a-very-long-source-lineage", sourceOwner))
+			.stream().sorted(PlacementAnalysis.canonicalComparator()).toList();
 		Assert.assertNull(NativePlacementContinuity.NativeSupportProduct.tryCreate(
-			pool("seed"), pool("output"), true, List.of(
-				List.of(direct(0, "left-a", leftOwner), direct(0, "left-b", leftOwner)),
-				List.of(direct(1, "short", rightOwner),
-					direct(1, "a-much-longer-source-lineage", rightOwner)))));
+			pool("seed"), pool("output"), true, List.of(axis), 2));
+		Assert.assertNotNull(NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			pool("seed"), pool("output"), true, List.of(axis)));
+	}
+
+	@Test
+	public void uniformLengthFastPathDoesNotSpendSuffixIndexBudget() {
+		CompiledHopKey sourceOwner = key("source");
+		List<CandidateRealizationInputBinding> axis = List.of(
+			direct(0, "a", sourceOwner), direct(0, "b", sourceOwner));
+		Assert.assertNotNull(NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			pool("seed"), pool("output"), true, List.of(axis), 0, 0));
+	}
+
+	@Test
+	public void equalLengthOptionsShareOneSuffixTransition() {
+		CompiledHopKey sourceOwner = key("source");
+		List<CandidateRealizationInputBinding> axis = List.of(
+			direct(0, "a", sourceOwner), direct(0, "b", sourceOwner),
+			direct(0, "a-much-longer-lineage", sourceOwner))
+			.stream().sorted(PlacementAnalysis.canonicalComparator()).toList();
+		Assert.assertNotNull(NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			pool("seed"), pool("output"), true, List.of(axis), 8, 2));
+		Assert.assertNull(NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			pool("seed"), pool("output"), true, List.of(axis), 8, 1));
+	}
+
+	@Test
+	public void suffixTransitionBudgetFallsBackBeforeProductWorkExpands() {
+		CompiledHopKey leftOwner = key("left");
+		CompiledHopKey rightOwner = key("right");
+		List<CandidateRealizationInputBinding> left = List.of(
+			direct(0, "a", leftOwner), direct(0, "a-long-left-lineage", leftOwner))
+			.stream().sorted(PlacementAnalysis.canonicalComparator()).toList();
+		List<CandidateRealizationInputBinding> right = List.of(
+			direct(1, "a", rightOwner), direct(1, "medium-right", rightOwner),
+			direct(1, "a-much-longer-right-lineage", rightOwner))
+			.stream().sorted(PlacementAnalysis.canonicalComparator()).toList();
+		Assert.assertNull(NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			pool("seed"), pool("output"), true, List.of(left, right), 32, 8));
+		Assert.assertNotNull(NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			pool("seed"), pool("output"), true, List.of(left, right), 32, 9));
+	}
+
+	@Test
+	public void decimalAuthorityLengthPrefixOrderMatchesExplicitReference() {
+		CompiledHopKey owner = key("consumer");
+		CompiledHopKey sourceOwner = key("source");
+		DurableAnchorKey seed = pool("seed");
+		DurableAnchorKey output = pool("output");
+		List<CandidateRealizationInputBinding> axis = List.of(
+			direct(0, "a", sourceOwner), direct(0, "x".repeat(10_000), sourceOwner))
+			.stream().sorted(PlacementAnalysis.canonicalComparator()).toList();
+		var product = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			seed, output, true, List.of(axis));
+		Assert.assertNotNull(product);
+		var relation = new NativeContinuitySupportClauses(owner, product, output, true);
+		List<CandidateRealizationSupportClause> explicit = explicitClauses(
+			owner, seed, output, List.of(axis));
+		Assert.assertNotEquals(Integer.toString(explicit.get(0).proofDependencies().get(0)
+			.authoritySignature().length()).length(), Integer.toString(explicit.get(1)
+				.proofDependencies().get(0).authoritySignature().length()).length());
+		for(int ordinal = 0; ordinal < explicit.size(); ordinal++)
+			Assert.assertEquals(explicit.get(ordinal).normalizedSignature(),
+				relation.get(ordinal).normalizedSignature());
 	}
 
 	private static List<CandidateRealizationSupportClause> explicitClauses(
 		CompiledHopKey owner, DurableAnchorKey seed, DurableAnchorKey output,
 		List<List<CandidateRealizationInputBinding>> axes) {
+		List<CandidateRealizationSupportClause> explicit = enumeratedClauses(
+			owner, seed, output, axes);
+		explicit.sort(PlacementAnalysis.canonicalComparator());
+		return explicit;
+	}
+
+	private static List<CandidateRealizationSupportClause> enumeratedClauses(
+		CompiledHopKey owner, DurableAnchorKey seed, DurableAnchorKey output,
+		List<List<CandidateRealizationInputBinding>> axes) {
 		List<CandidateRealizationSupportClause> explicit = new ArrayList<>();
 		enumerateExplicit(owner, seed, output, axes, 0, new ArrayList<>(), explicit);
-		explicit.sort(PlacementAnalysis.canonicalComparator());
 		return explicit;
 	}
 

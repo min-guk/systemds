@@ -225,3 +225,26 @@
 - **통합 v5 중간 gate**: 수정 후 focused168 PASS(39.343초), 전체998 PASS(160.254초), 컴파일된 소스와 현재 SHA mismatch0, independent metadata/metric review CLEAR. 증거 `evidence/merged-native-focused-green-168`, `evidence/merged-native-full-green-998`. 추가 upstream `ac0b5e6028`이 도착해 이 검증본을 먼저 커밋하고 최신 변경을 병합·재검증한 뒤 게시한다.
 
 - **最新 main 통합 gate**: `ac0b5e6028`을 `b115ee00e8`로 병합했다. Production/test는 충돌 없이 reviewer의3-way preview와 byte-for-byte 일치했고, 문서는 두 evidence block을 모두 보존했다. Fresh compile 및 **1,006 tests PASS(167.58초)**, source SHA mismatch0, independent review CLEAR. 증거 `evidence/merged-ac0-native-full-green-1006`. 이 봉인본으로 실제 COFEE v5를 실행하며 아직20초 달성 주장은 없다.
+
+
+### COFEE v5 실제 LogReg 완료: DP overflow 해소, 20초 미달
+
+- **봉인/게시**: main `bd00913e2140dd3ee79998def43925a2a790780c`, compiled source `b115ee00e8`, JAR `b843129dd14ac6ad318edbb6d9fa6c8725ad33b6e22851b22d5df2287cfb5db7`; 4,607 class files, 301 pinned dependencies, source/class hash mismatch0. `origin/main` remote SHA까지 확인했다.
+- **실제 완료**: COFEE 50K×128 W1 원래 LogReg에서 최종 receipt의 `planningFullInitialNanos` 기준 full initial planning **403.786041598초**. 앞서402.603192964초로 보고한 값은 내부 FedPlanner stage의 `totalNanos`였으므로 전체 최초 planning과 구분한다. Stage별 Analysis316.871011623, model4.295588934, costSurface6.496764345, optimizer73.494074889, conversion1.092545917초다. 전체 cell wall435.229669초와 planning을 구분한다. 숫자 comparator의 decoded output/tree hash가 byte-identical이고 runtime audit MATCH다. 이전 DP overflow를 넘어서 실제 실행까지 도달했지만20초에는 크게 미달한다.
+- **분석 지표**: 별도 Analysis 계측316.829011823초/CPU309.962초, 누적 thread allocation203,291,735,248B. 이는 peak memory가 아니다. keys27,442/facts217,553/explicitClauses2,534,754/indexedHandles2,276. supportLeaves3,919,362/logical uniqueProofs3,941,087/duplicate0: 생성 전개가 대부분 남아 있다. descriptorExpanded176,081는 성공한 완전 압축 수가 아니며, alternatives357,839,547/edges614,085,692는 재사용 summary 크기도 포함하므로 실제 새 객체 생성 수로 해석하지 않는다.
+- **비교 한계**: v4는 Analysis333.489초 후 DP 실패였으므로 v5 전체403.786초와 v4 실패 wall/process를 속도비로 비교하지 않는다. Analysis의 감소도 각1회 관측이며 paired 전체 성공 workload 개선율이 아니다.
+- **운영 증거**: `evidence/cofee-50k128-v5-validation/candidate-logreg-run1`. run0는 mutually-exclusive CLI filter 때문에 runtime 시작 전 실패했으며 별도 setup-failure로 보존했다. 후속 명령은 runtime-selection만 사용한다. 실제 so007/so006 read-only contention 기록은 owned coordinator/worker와 정상 서비스만 보였고, 별도 controller의 다른 Maven은 remote timing 경합으로 계산하지 않는다. 새 profiling/JFR는 실행하지 않았다.
+- **다음 단계**: 동일 봉인본 GLM을 검증한다. 별도 다음 후보는 variable-length canonical native relation과 Physical compact 소비다. v5 데이터/스크립트/Y/privacy/seed/cost profile/자원은 변경하지 않는다.
+
+### 다음 후보의 canonical rank 경계 검증
+
+- 동일 길이 binding 축 제한을 없애되, proof authority의 decimal length-prefix 순서와 binding lexical 순서를 suffix-length count로 정확히 rank/unrank한다. 독립 explicit sort, fixed-seed1–4축, decimal prefix 경계, 모든 member 역변환과 structurally-equal foreign binding 거부를 검증한다.
+- 첫 검토에서 한 suffix map을 완성한 뒤 budget을 검사하는 문제가 발견되었다. 새 state 삽입 전65,536 retained-state 한계, unique length×suffix transition 실행 전1,000,000 한계를 검사하고 같은 길이는 multiplicity로 묶었다. Arithmetic overflow는 exact fallback이다. 균일 길이는 suffix map 없이 기존 row-major를 사용하되 전체 authority length overflow를 먼저 검사한다.
+- 최종 focused6suites **145 PASS(7.868초)**, static independent review CLEAR. 초기 수정본144 PASS 로그와 최종145 PASS 로그를 각각 보존했다. 이것은 아직 전체 gate나 실제 v6 성능 결과가 아니다. Suffix index의 retained memory는 기존 factor-option 계측에 별도로 반영되지 않는 제한이 남는다.
+
+
+- **v5 GLM 완료**: 동일 b843129d 엔진, 원래 COFEE50K×128/W1 설정에서 `planningFullInitialNanos=142960651865` (**142.960651865초**), 내부 candidateE2E141.119558688초. Analysis97.882653608/model5.263575227/cost7.829526596/optimizer27.836522795/conversion1.763625567초, execution6.781784437초다. Comparator PASS, audit mismatch0, initial/final plan fingerprint 일치, OOM0. Coordinator peak5,284,954,112B, worker760,602,624B. 각1회 성공이며20초 미달이 명백해 v5 반복3회를 성능 채택 증거처럼 실행하지 않았다.
+- **정확한 범위 보정**: LogReg의 전체 최초 planning은403.786041598초다. 앞선402.603192964초는 candidateE2E.totalNanos였다. 둘의 field/source를 timing-evidence.json에 분리했다. LogReg coordinator peak9,286,393,856B/worker739,753,984B. Combined evidence `evidence/cofee-50k128-v5-validation/first-valid-both-workloads.json`, SHA03dec9e724012dce2b63f4b6f5b4a81c8fbc4add2fff2875396271e4ba0407a7. Full goal evaluator는20초 초과로FAIL이며 native goal은 active로 유지한다.
+- **Physical 후속 제한**: 강제 선택한 모든 tuple의 비용/receipt 동등성만으로는 unconstrained optimizer의 동일-cost tie 순서까지 보장하지 못한다. Consumer clause domain을 축소할 때 canonical member 순서와 producer domain 순서가 달라질 수 있어, free Local/Exact 동률 반례 및 보존 조건을 추가 검증한다. 검증 전 Physical 변경을 실제 성능 엔진에 포함하지 않는다. Rank 단독 후보는 별도 전체 gate를 진행한다.
+
+- **Rank 단독 통합 gate**: fresh main/test compile, **1,012 JUnit PASS(177.301초)**, source SHA mismatch0, static independent review CLEAR. Evidence `evidence/native-variable-rank-full-green-1012`. Multi-member Physical compaction은 동률 receipt 반례 때문에 제외했고, 이 검증본만 v6로 게시·봉인·실측한다.
