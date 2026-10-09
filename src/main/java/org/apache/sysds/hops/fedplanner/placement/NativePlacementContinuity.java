@@ -3250,8 +3250,8 @@ final class NativePlacementContinuity {
 		for(SelectedCandidateProof alternative : graph.getOrDefault(root, List.of()))
 			for(CandidateProofDependency dependency : alternative.dependencies)
 				if(dependency.state().axisGate() == null && !dependency.state().equals(root))
-					footprints.computeIfAbsent(dependency.state(), child ->
-						acyclicComponentFootprint(child, graph, traversal));
+					rememberAcyclicComponentFootprint(dependency.state(), graph, traversal, footprints);
+		footprints.values().removeIf(Objects::isNull);
 		return footprints;
 	}
 
@@ -3269,15 +3269,47 @@ final class NativePlacementContinuity {
 			for(CandidateProofDependency dependency : alternative.dependencies) {
 				CandidateProofState child = dependency.state();
 				if(child.axisGate() == null && components.componentOf(child.key()) != rootComponent)
-					footprints.computeIfAbsent(child, state ->
-						acyclicComponentFootprint(state, graph, traversal));
+					rememberAcyclicComponentFootprint(child, graph, traversal, footprints);
 			}
+		footprints.values().removeIf(Objects::isNull);
 		return footprints;
+	}
+
+	private void rememberAcyclicComponentFootprint(CandidateProofState child,
+		Map<CandidateProofState,List<SelectedCandidateProof>> graph,
+		CandidateProofTraversal traversal,
+		Map<CandidateProofState,AcyclicComponentFootprint> footprints) {
+		// The completed query graph is unchanged during collection. Null means this
+		// boundary exceeds the existing budget, not that it needs another walk for
+		// each duplicate root alternative. Remove these local negatives before admission.
+		if(footprints.containsKey(child)) {
+			if(metrics != null && footprints.get(child) == null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_NEGATIVE_REPROBES_AVOIDED);
+			return;
+		}
+		footprints.put(child, acyclicComponentFootprint(child, graph, traversal));
 	}
 
 	private AcyclicComponentFootprint acyclicComponentFootprint(CandidateProofState child,
 		Map<CandidateProofState,List<SelectedCandidateProof>> graph,
 		CandidateProofTraversal traversal) {
+		if(metrics != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_REQUESTS);
+		AcyclicComponentSummary boundary = traversal.reusedComponents.get(child);
+		if(boundary != null) {
+			// The original traversal stops at this boundary without adding visible or
+			// hidden graph rows. Its summary already owns the complete immutable identity
+			// footprint; sharing it avoids copying every transitive owner again.
+			long retainedStates = Math.max(boundary.retainedStates, boundary.occurrences.size());
+			if(retainedStates > acyclicComponentMaxStates)
+				return null;
+			if(metrics != null) {
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_REUSED_BOUNDARIES);
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_REUSED_OWNERS,
+					boundary.occurrences.size());
+			}
+			return new AcyclicComponentFootprint(boundary.occurrences, retainedStates);
+		}
 		Set<CandidateProofState> states = new java.util.HashSet<>();
 		Set<CompiledHopKey> occurrences = Collections.newSetFromMap(new IdentityHashMap<>());
 		java.util.ArrayDeque<CandidateProofState> pending = new java.util.ArrayDeque<>();
