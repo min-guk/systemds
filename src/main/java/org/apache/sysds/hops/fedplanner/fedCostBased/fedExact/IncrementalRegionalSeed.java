@@ -32,9 +32,43 @@ final class IncrementalRegionalSeed {
 		long conditionalRevisions;
 		long functionalRowsVisited;
 		long sparseCellsVisited;
+		long supportPlanBuilds;
 	}
 	private record SupportFactor(ExactCategoricalSolver.Factor factor, int[] scopeIndex) { }
-	private record SupportPlan(SupportFactor[] factors, int[][] incident, boolean[][] supported) { }
+	private record SupportPlan(SupportFactor[] factors, int[][] incident, int[] supportWidths) { }
+
+	/** Root-owned immutable topology. Every lift still owns fresh mutable scratch. */
+	static final class Prepared {
+		private final ExactPhysicalReducedSolver.CompactModel root;
+		private final Map<ExactCategoricalSolver.Variable,Integer> index = new IdentityHashMap<>();
+		private final SupportPlan plan;
+
+		private Prepared(ExactPhysicalReducedSolver.CompactModel root, SupportStatistics statistics) {
+			this.root = Objects.requireNonNull(root, "root");
+			for(int variable = 0; variable < root.variables().size(); variable++)
+				index.put(root.variables().get(variable), variable);
+			plan = compileSupportPlan(root.factors(), index, root.variables().size());
+			if(statistics != null)
+				statistics.supportPlanBuilds++;
+		}
+
+		int[] lift(List<Integer> originalAssignment, ExactCategoricalSolver.Limits limits) {
+			return lift(originalAssignment, limits, null);
+		}
+
+		int[] lift(List<Integer> originalAssignment, ExactCategoricalSolver.Limits limits,
+			SupportStatistics statistics) {
+			return IncrementalRegionalSeed.lift(root, this, originalAssignment, limits, statistics);
+		}
+	}
+
+	static Prepared prepare(ExactPhysicalReducedSolver.CompactModel root) {
+		return prepare(root, null);
+	}
+
+	static Prepared prepare(ExactPhysicalReducedSolver.CompactModel root, SupportStatistics statistics) {
+		return new Prepared(root, statistics);
+	}
 
 	/** Ascending live prefixes avoid rescanning the mostly fixed original domains. */
 	private static final class ActiveDomains {
@@ -71,6 +105,12 @@ final class IncrementalRegionalSeed {
 	static int[] lift(ExactPhysicalReducedSolver.CompactModel root,
 		List<Integer> originalAssignment, ExactCategoricalSolver.Limits limits,
 		SupportStatistics statistics) {
+		return lift(root, null, originalAssignment, limits, statistics);
+	}
+
+	private static int[] lift(ExactPhysicalReducedSolver.CompactModel root, Prepared prepared,
+		List<Integer> originalAssignment, ExactCategoricalSolver.Limits limits,
+		SupportStatistics statistics) {
 		Objects.requireNonNull(root, "root");
 		Objects.requireNonNull(originalAssignment, "originalAssignment");
 		Objects.requireNonNull(limits, "limits");
@@ -80,12 +120,14 @@ final class IncrementalRegionalSeed {
 		if(variables.size() < root.originalDecisionCount())
 			throw new IllegalArgumentException("INCREMENTAL_REGIONAL_SEED_MODEL_INVALID");
 
-		Map<ExactCategoricalSolver.Variable, Integer> index = new IdentityHashMap<>();
+		Map<ExactCategoricalSolver.Variable, Integer> index = prepared == null
+			? new IdentityHashMap<>() : prepared.index;
 		boolean[][] active = new boolean[variables.size()][];
 		int[] assignment = new int[variables.size()];
 		Arrays.fill(assignment, -1);
 		for(int variable = 0; variable < variables.size(); variable++) {
-			index.put(variables.get(variable), variable);
+			if(prepared == null)
+				index.put(variables.get(variable), variable);
 			active[variable] = new boolean[variables.get(variable).domainSize()];
 			Arrays.fill(active[variable], true);
 		}
@@ -101,8 +143,11 @@ final class IncrementalRegionalSeed {
 			assignment[variable] = reducedValue;
 		}
 
-		propagateFiniteSupport(compileSupportPlan(root.factors(), index, variables.size()), active,
-			statistics);
+		SupportPlan plan = prepared == null
+			? compileSupportPlan(root.factors(), index, variables.size()) : prepared.plan;
+		if(prepared == null && statistics != null)
+			statistics.supportPlanBuilds++;
+		propagateFiniteSupport(plan, active, statistics);
 		for(int variable = root.originalDecisionCount(); variable < variables.size(); variable++) {
 			int singleton = singleton(active[variable]);
 			if(singleton >= 0)
@@ -160,12 +205,13 @@ final class IncrementalRegionalSeed {
 		for(int ordinal = 0; ordinal < compiled.length; ordinal++)
 			for(int variable : compiled[ordinal].scopeIndex())
 				incident[variable][incidentCounts[variable]++] = ordinal;
-		boolean[][] supported = Arrays.stream(supportWidths).mapToObj(boolean[]::new).toArray(boolean[][]::new);
-		return new SupportPlan(compiled, incident, supported);
+		return new SupportPlan(compiled, incident, supportWidths);
 	}
 
 	private static void propagateFiniteSupport(SupportPlan plan, boolean[][] active,
 		SupportStatistics statistics) {
+		boolean[][] supported = Arrays.stream(plan.supportWidths())
+			.mapToObj(boolean[]::new).toArray(boolean[][]::new);
 		ActiveDomains live = new ActiveDomains(active);
 		boolean[] dirty = new boolean[plan.factors().length];
 		Arrays.fill(dirty, true);
@@ -180,11 +226,11 @@ final class IncrementalRegionalSeed {
 				for(int position = 0; position < factor.scopeIndex().length; position++) {
 					int variable = factor.scopeIndex()[position];
 					for(int offset = 0; offset < live.sizes[variable]; offset++)
-						plan.supported()[position][live.values[variable][offset]] = false;
+						supported[position][live.values[variable][offset]] = false;
 				}
 				if(statistics != null)
 					statistics.factorRevisions++;
-				boolean finite = markStoredSupports(factor, active, live, plan.supported(), statistics);
+				boolean finite = markStoredSupports(factor, active, live, supported, statistics);
 				if(!finite)
 					throw new IllegalArgumentException(INFEASIBLE);
 				for(int position = 0; position < factor.scopeIndex().length; position++) {
@@ -193,7 +239,7 @@ final class IncrementalRegionalSeed {
 					int previousSize = live.sizes[variable];
 					for(int offset = 0; offset < previousSize; offset++) {
 						int value = live.values[variable][offset];
-						if(plan.supported()[position][value])
+						if(supported[position][value])
 							live.values[variable][retained++] = value;
 						else
 							active[variable][value] = false;

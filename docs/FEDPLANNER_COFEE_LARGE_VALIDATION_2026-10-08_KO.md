@@ -2,7 +2,37 @@
 
 ## 상태
 
-최신 완료 실측은 **v25 (`287d4224d6`)**다. 동일 COFEE 50K×128 W1에서 LogReg **366.748230696초**, GLM **122.514772752초**였다. v24 대비 각각−1.430초/+1.805초이며단일실행이다. **20초 목표는 미달이며 유의미한 전체 성능 개선은 확인하지 못했다.** v26은이후origin병합회귀검증본으로,별도실측하지않았다.
+최신 완료 실측은 **v27 (`90898b932b`)**다. 동일 COFEE 50K×128 W1에서 LogReg **373.091833772초**, GLM **117.126525936초**였다. v25 대비 각각 +6.344초 / −5.388초이며 각 1회 관측이다. **20초 목표는 미달이고, 두 workload 전체에서 일관된 개선은 확인되지 않았다.**
+
+| v27 관측 | LogReg | GLM |
+|---|---:|---:|
+| 전체 초기 planning | 373.092초 | 117.127초 |
+| Analysis | 281.036초 | 73.329초 |
+| Physical Model | 7.216초 | 4.468초 |
+| Cost Surface | 7.035초 | 8.650초 |
+| Optimizer | 74.025초 | 26.495초 |
+| 실제 실행 | 4.707초 | 6.985초 |
+| Coordinator peak | 8,958,070,784B | 4,902,350,848B |
+| Worker peak | 723,922,944B | 737,427,456B |
+| 생성 explicit Clause | 2,492,530 | 1,117,561 |
+| 생성 rule fact | 217,665 | 135,574 |
+
+두 workload 모두 numeric·runtime audit(mismatch/missing 0)·objective raw bits·assignment·전체 selected candidate 문자열·section counts/hashes가 v19와 같다. v25와는 CostSurface 및 aggregate final-selection fingerprint도 같다. 실제 workload의 모든 cost cell을 전수 비교했다는 뜻은 아니다.
+
+LogReg structural handle 조회는 125,371,517→106,487,659회, 변경 없는 행 검사 생략은 99,436,045회였다. Clause·proof 소비·graph·row·canonical sort 수는 그대로다. 검사 생략을 불법 후보 pruning이나 객체 생성 감소로 해석하지 않는다.
+GLM structural handle 조회는 34,527,044→11,089,199회, 변경 없는 행 검사 생략은 262,195회였다. Clause·proof 소비·graph·row·canonical sort 수는 그대로다. 검사 생략을 불법 후보 pruning이나 객체 생성 감소로 해석하지 않는다.
+
+v28은 seed support의 conditional/functional/sparse relation을 직접 소비하도록 변경했고, 원격 native boundary projection을 병합했다. 전체 1,316개와 probe 9개를 통과한 `e883603113`을 origin/main에 게시하고 동일 Docker 검증을 시작했다. 다중 입력 exactness complement는 별도 lane에서 검증 중이며 이 실측에 포함되지 않는다.
+
+- 근거 `v19-v27-comparison.json` SHA `dba3957ec5d05f33920de247b43e1127a71991783b5197370dc563c1ccef9775`
+- 근거 `v25-v27-comparison.json` SHA `e8e7d208e529d057580d73c97822532f2cea64e167f61327971779cdd0c281df`
+- 근거 `v25-v27-metric-summary.json` SHA `c983916cf0987a5edc2e06061529a47943563be77a79ba1577ae47969a297a1a`
+
+v27 JAR SHA `909136c86818ba3efc8b813ac96591bb01933770ced50101afd1119fde56e36e`, freeze SHA `24f7116a5ac541f930b3c072a55d3f20527303c5f9977da2b32f9eed8305e1c1`. Evaluator FAIL 및 validation_failed checkpoint를 기록했다.
+
+이하 v25 및 이전 관측이다.
+
+v25 실측은 **v25 (`287d4224d6`)**다. 동일 COFEE 50K×128 W1에서 LogReg **366.748230696초**, GLM **122.514772752초**였다. v24 대비 각각−1.430초/+1.805초이며단일실행이다. **20초 목표는 미달이며 유의미한 전체 성능 개선은 확인하지 못했다.** v26은이후origin병합회귀검증본으로,별도실측하지않았다.
 
 | v25 관측 | LogReg | GLM |
 |---|---:|---:|

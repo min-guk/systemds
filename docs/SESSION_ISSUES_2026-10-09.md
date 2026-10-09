@@ -995,3 +995,19 @@
 - **v27 LogReg 선행 결과**: exact90898b/JAR909136으로 전체 planning373.091833772초, analysis281.036초/model7.216초/cost7.035초/optimizer74.025초/runtime4.707초. Numeric/audit0/objective bits는 정상이나 직전366.748초보다 느리므로 성능 개선으로 보고하지 않는다. GLM 및 최종 selected raw parity 비교는 진행 중이다.
 
 - **v28 전체 gate 완료**: 원격 boundary projection·v27와 seed carrier dispatch 통합 selected FedPlanner **1,316 tests PASS(160.469초)**. 7,847 class/resource 실행 전후 변경0/source SHA 불일치0. 근거 `evidence/native-seed-support-full-gate-v28/validation.json`. Production 독립 검토 CLEAR. 별도 probe와 실제 Docker 검증을 이어서 수행한다. 전체 저장소 Maven 통과로 확대하지 않는다.
+
+
+### v29 / 반복 seed lift의 불변 support plan 재사용 (진행중)
+
+- **증상/원인**: 같은 immutable reduced root를 사용하는 initial/conditional lift마다 variable identity map, factor scope index, incidence와 support width를 다시 계산한다. 입력값에 의존하는 부분은 active/support/dirty mask와 assignment인데 구조까지 다시 만들고 있었다.
+- **계획/보존 근거**: optimizer가 정확한 root에 연결된 Prepared seed plan 하나를 소유하게 한다. 기존 `lift(root, ...)`는 매번 준비하는 reference entry로 유지하며, 반복 경로만 `lift(prepared, ...)`를 사용한다. Mutable scratch는 호출마다 새로 만든다. 전역 cache·budget 확대 없이 lifetime은 optimizer와 같다. Float 합산·factor 순서·오류 및 resource limit·tie 선택은 유지한다.
+- **검증 계획**: 한 prepared root에서 다른 seed, infeasible seed 뒤 재시도, 서로 다른 resource limit, fixed-seed 관계의 반복 lift를 fresh reference와 비교한다. 두 root/서로 다른 owner identity를 공유하지 않는지, 입력 caller list 변경 및 결과 array 변경이 다음 lift에 새지 않는지 확인한다. 기존 seed/optimizer 회귀를 유지한 뒤 전체 통합 검증한다.
+- **잔여/위험**: 실제 conditional lift 횟수에 따라 효과가 작을 수 있다. Prepared 구조는 immutable root의 기존 factor/variable reference와 O(scope incidence) index를 보유한다. Actual 시간 개선은 다음 Docker 검증 이전에 주장하지 않는다.
+
+- **v29 focused 검증/독립 검토**: 관련52개PASS(1.435초). 같은 root에서120회 lift의 plan 구성은120→1회, assignment와 propagation 방문량은 동일했다.100 fixed-seed 모델의 반복 seed·불가능 seed·resource limit 실패 후 회복·caller/result 변경·동일한 variable 값을 가진 별도 root를 검사했다. Production SHA `ff395b5723fdb792201ddb79b0d3cce20870479b473c0517f146c566174f6997`, test SHA `3d303ab38e5d262082e7f374933fa4b9726097fd9f7615e70195e7e67aab1d93` 독립 검토 CLEAR. 추가 보존 상태는 immutable root lifetime의 O(scope incidence)이며 호출별 scratch를 공유하지 않는다.
+
+- **v27 실제 최종**: LogReg373.091833772초 / GLM117.126525936초. v25 대비 +6.344초 / −5.388초인 단일 관측이며20초 목표는 미달이다. 두 workload의 numeric/audit0/objective/assignment/전체 selected raw 및 section hash는 v19/v25와 동일하다. v25와 CostSurface/aggregate fingerprint도 동일하다. Structural handle 조회는 LR125,371,517→106,487,659, GLM34,527,044→11,089,199로 줄었으나 Clause/proof/graph/row/정렬 수는 변하지 않았다. Peak coordinator8,958,070,784B/4,902,350,848B. `v25-v27-comparison.json` SHA `e8e7d208e529d057580d73c97822532f2cea64e167f61327971779cdd0c281df`. Evaluator FAIL/checkpoint 기록 완료.
+- **v28 게시·실측 시작**: 1,316 selected tests와 probe9개(1.289초), 독립 검토를 통과한 e883603113을 origin/main에 push하고 원격 head 일치를 확인했다. JAR SHA `a49ebd7b8408066fff3084b5efb236f5f37db95bbe1cd4d6bb35e1e10058086d`, freeze SHA `2a4a59d8085e04f41d46910a7b2c861bb67a769ea94ca5ac9a27563cc0282595`. 같은 Docker 입력/profile/JVM/probe로 LogReg→GLM을 실행한다. 다축 complement WIP는 포함하지 않았다.
+
+- **v29 전체 gate**: selected FedPlanner1,320개PASS(179.467초). 7,849 class/resource 실행 전후 변경0/source SHA 불일치0. 근거 `evidence/native-seed-prepared-full-gate-v29/validation.json`. Prepared 구조 재사용의 focused52개와 독립 검토를 포함한다.
+- **v28 LogReg 선행 결과**: fullInitial359.976439287초(analysis272.775/model5.937/cost6.407/optimizer71.268), runtime4.781초. Numeric/audit0/objective/selection 검사PASS. v27보다13.115초 줄어든 단일관측이고20초 목표는 미달이다. GLM/최종 cross-version selected raw parity는 이어서 검증한다.
