@@ -472,9 +472,9 @@ public class NativeContinuitySupportClausesTest {
 			excluded, output, true);
 		Assert.assertFalse(first.sameExactAuthority(second));
 		Assert.assertTrue(first.oneAxisUnion(second).isEmpty());
-		Assert.assertTrue(first.multiHeaderUnion(second).isEmpty());
-		Assert.assertTrue(NativeContinuitySupportClauses.unionSameAxesHeaderGroup(
-			List.of(first, second)).isEmpty());
+		Assert.assertEquals(2, first.multiHeaderUnion(second).orElseThrow().headerCount());
+		Assert.assertEquals(2, NativeContinuitySupportClauses.unionSameAxesHeaderGroup(
+			List.of(first, second)).orElseThrow().headerCount());
 		Assert.assertEquals(0, first.materializedHandleCount() + second.materializedHandleCount());
 		List<CandidateRealizationSupportClause> expected = new ArrayList<>();
 		for(var seed : List.of(firstSeed, secondSeed))

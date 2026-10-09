@@ -6057,6 +6057,42 @@ final class PlacementRelationClosure {
 											admission.outcome(), supportResult.proofs().size());
 									continue;
 								}
+								if(admission.outcome() == NativePublicationOutcome.RETAINED_UNION) {
+									NativeRetainedResidual residual =
+										grounded.retainedNativeResidual(productPublication);
+									if(residual != null) {
+										if(publicationTrace != null)
+											complexityMetrics.recordNativePublication(
+												NativePublicationOutcome.RETAINED_UNION,
+												supportResult.proofs().size());
+										if(residual.product() == null)
+											coveredByRetained = true;
+										else {
+											NativePlacementContinuity.NativeSupportProduct product =
+												residual.product();
+											boolean directInputsExact = productPublication.key().layoutKind()
+												== PlacementLayoutKind.DURABLE_MAP;
+											for(int ordinal = 0; ordinal < product.size(); ordinal++) {
+												if(complexityMetrics != null) {
+													complexityMetrics.recordNativePublicationProofConsumed(
+														NativePublicationOutcome.RETAINED_UNION);
+													complexityMetrics.recordDirectWork(DirectWork.PROOFS_CONSUMED);
+												}
+												var proof = new NativePlacementContinuity.NativeContinuityProof(
+													product.externalSeed(), product.outputWorkerPoolWitness(),
+													product.exactPartitionRanges(), product.bindingsAt(ordinal));
+												CandidateEmissionRealization scalar = directNativePublication(proof,
+													fact.key().parentOccurrence(), emission.emissionState(),
+													outputAnchor, nativeLineage, directInputsExact, grounded);
+												if(scalar == null)
+													coveredByRetained = true;
+												else
+													bound.add(scalar);
+											}
+										}
+										continue;
+									}
+								}
 
 							}
 							if(publicationTrace != null)
@@ -11566,7 +11602,8 @@ final class PlacementRelationClosure {
 				PlacementProofKey proof = new PlacementProofKey(PlacementProofKind.DURABLE_ANCHOR,
 					fact.key().parentOccurrence(),"derived-fout:" + action.normalizedSignature());
 				for(CandidateEmissionRealization realization : emission.realizations())
-					if(realization.anchor() != null && realization.supportClauses().stream()
+					if(realization.anchor() != null && !nativeSupportCannotContainProof(realization, proof)
+						&& realization.supportClauses().stream()
 						.anyMatch(clause -> clause.proofDependencies().contains(proof)))
 						for(CompiledHopKey owner : exactTransientWriteOutputAliases(action.producer()))
 							exact.add(new NeutralPlacementGraph.DerivedFoutOutputAuthority(
@@ -11640,7 +11677,8 @@ final class PlacementRelationClosure {
 			// An action may change without changing its output map. Exact current
 			// action ownership is required even for tentative support retention.
 			List<CandidateRealizationSupportClause> owned =
-				prior.supportClauses() instanceof FactorizedSupportClauses product
+				nativeSupportCannotContainProof(prior, proof) ? List.of()
+				: prior.supportClauses() instanceof FactorizedSupportClauses product
 					? product.proofs().contains(proof) ? product : List.of()
 					: prior.supportClauses().stream()
 						.filter(clause -> clause.proofDependencies().contains(proof)).toList();
@@ -11649,6 +11687,15 @@ final class PlacementRelationClosure {
 					: CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(prior.key(), owned));
 		}
 		return normalized;
+	}
+
+	private static boolean nativeSupportCannotContainProof(
+		CandidateEmissionRealization realization, PlacementProofKey proof) {
+		// Every native relation member owns one NATIVE_CONTINUITY proof, including
+		// donor-backed, conditional, and multi-header members. Keep this shortcut
+		// strict to the incompatible durable-action certificate used by this path.
+		return proof.kind() == PlacementProofKind.DURABLE_ANCHOR
+			&& realization.supportClauses() instanceof NativeContinuitySupportClauses;
 	}
 
 	/** Source availability depends on the pool, not on a choice of its ancestor support. */
@@ -12106,6 +12153,12 @@ final class PlacementRelationClosure {
 			for(int realizationIndex = 0; realizationIndex < oldEmission.realizations().size(); realizationIndex++) {
 				CandidateEmissionRealization oldRealization = oldEmission.realizations().get(realizationIndex);
 				CandidateEmissionRealization newRealization = newEmission.realizations().get(realizationIndex);
+				if(oldRealization.supportClauses() instanceof NativeContinuitySupportClauses oldNative
+					&& newRealization.supportClauses() instanceof NativeContinuitySupportClauses newNative
+					&& oldNative.sameExactAuthority(newNative))
+					// Native products contain DIRECT bindings only. Exact relation authority
+					// therefore proves every owner identity without expanding its members.
+					continue;
 				if(oldRealization.supportClauses() instanceof FactorizedSupportClauses oldProduct
 					&& newRealization.supportClauses() instanceof FactorizedSupportClauses newProduct) {
 					// Structural equality above proves matching ordered axes. Check each
