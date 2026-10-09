@@ -376,3 +376,15 @@
 - **검증 계획**: 신규 DerivedFoutRankRelationTest/ExactSupportConditioningTest 포함135classes fresh package 및 독립 merge review를 진행한다. 원본 v24 seal은 보존하고 병합본을 별도 봉인한다.
 - **잔여/위험**: 기존 Exact/PCA supplemental width 실패와20초 미달은 남아 있다. Incoming native metadata의0handle 동작은 기존1handle fixture기대를 갱신하되 ordered proof/identity-footprint authority 대조는 유지한다. 후보/합법성/privacy 규칙은 완화하지 않는다.
 - **병합 gate 완료**: fresh135class package **1,135 selected tests/failure0/error0/skip1**, BUILD SUCCESS03:04:12. 독립 integration review CLEAR; duplicate branch 제거를 확인했다. Incoming metadata와 sparse DP 회귀 및 v24 observer의 cold/warm/identity/LRU parity를 함께 검증했다. 병합본만 `candidate-v25-merged`로 따로 봉인·실측한다.
+
+
+### Pinned gate 원격 게시, 순환 overlay 반례, unpinned 경로 수정
+
+- **게시**: pinned gate ab4b54e0ba와 origin29b68fc0b4를6a7096f34b로 병합했다. 전체1,042PASS 뒤 병합범위144PASS(0.972초), source SHA mismatch0을 확인하고 origin/main remote SHA를 검증했다. 첫 병합 test 명령은2개 잘못된 FQCN으로 initialization error였고 올바른 이름으로 재실행했다(`evidence/native-axis-gate-merge-launch-error`, `native-axis-gate-merge-green-144`).
+- **후속 정확성 반례**: 별도 root 검토에서, native product의 입력 source owner가 현재 query root일 때 historical pin을 현재 root pin으로 대체하는 기존 overlay 의미를 새 gate filter가 강화할 수 있음을 확인했다. Grounded recurrence explicit reference는 proof1개, native gate는0개였다(`nativeRootOverlayPreservesGroundedRecurrenceWithDifferentPublishedPin`, `evidence/native-axis-root-overlay-red-124`). 해당 fixed owner 축은 native gate를 사용하지 않고 정확한 기존 topology로 돌아가도록 수정했다. v9 c489728b 봉인본은 실제 실행 전에 excluded로 표시하고 acceptance에 사용하지 않는다.
+- **Unpinned 생성 경로**: 모든 matching executable realization이 독립 native product일 때만 realization별 OR와 입력별 gate를 만든다. Derived action/mixed VALUE_MAP/중복 authority/지원 불가 관계는 전체 기존 경로로 fallback한다. 기존4×5 fixture에서20개,2×3 fixture에서6개 handle을 생성하던 red를 확보했다. 여러 native realization의 canonical ordered proof, source withdrawal, empty axes, dynamic witness를 explicit와 비교한다.
+- **테스트 fixture 보정**: 첫 multi-family fixture는 explicit reference가 사용한 lazy relation을 그대로 재사용하여 기존6handles를 새 query 작업으로 잘못 셌다. Reference와 candidate relation을 분리했다. Duplicate realization은 constructor가 dedup하므로 중복 fact를 넣어 실제 ambiguous authority를 만들었다. 최초 recurrence fixture의 historical pin은 current와 같아서 별도 lineage로 고쳤다. 이 setup 실패를 production 의미 회귀로 계산하지 않는다. 최종 별도 lineage 반례의 실제 proof 차이만 정확성 회귀 근거다.
+- **검토 제한**: 병렬 구현/독립 reviewer/workload 에이전트가 사용량 제한으로 종료되어 root가 남은 구현과 검증을 이어받았다. 앞선 pinned core/random test의 독립 CLEAR와 새 unpinned 수정의 root 검토를 구분한다.
+- **실제 v8 완료**: LogReg398.232339626초/GLM124.946316443초, numeric PASS, audit mismatch0, 동일plan이다. Peak9,141,903,360/5,134,458,880B. 동일DML/Y/자원/profile/seed이며 v8에는 gate 변경이 없다. 각1회이며 evaluator는20초 초과로FAIL이다.
+
+- **Unpinned/overlay 통합 gate**: fresh main/test compile,1,053 JUnit PASS(184.653초), source SHA mismatch0(`evidence/native-unpinned-overlay-full-green-1053`). 새 grounded recurrence 반례, generated unpinned child, multi-family/duplicate/mixed fallback 및 fixed-seed exact/dynamic source withdrawal이 포함된다. 이 수정본을v10으로 별도 봉인하여 실제 실행한다.

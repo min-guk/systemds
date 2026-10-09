@@ -2,7 +2,23 @@
 
 ## 상태
 
-최신 완료 실측은 v7(`c6be0b6916`, JAR `5172e29a…`)이다. 같은 COFEE50K×128 W1에서 LogReg **460.486971960초**, GLM **236.147365008초**로, v6보다 느렸고 **20초 목표는 여전히 미달**이다. 두 workload 모두 숫자 비교 PASS, runtime audit mismatch0, v5/v6와 동일한 선택 plan fingerprint를 확인했다. 이 v7 봉인본은 d27의 native projection/revision 재사용과 metadata/SCC 개선을 포함하지만, 이후 main에 반영한 689의 topology bucket 선형 검사와 v8의 sparse DP conditioning은 포함하지 않는다. 복합 변경의 각 원인별 속도 기여를 분리 측정하지 않았으므로 Analysis 악화를 downstream SCC 변경 때문이라고 단정하지 않는다.
+최신 완료 v8(`3d8e59378f`, JAR `b502242c…`)의 전체 최초 planning은 LogReg **398.232339626초**, GLM **124.946316443초**다. v7의460.487/236.147초보다 줄었지만 **20초 목표는 미달**이다. 두 workload 모두 숫자 비교 PASS, runtime audit mismatch0, 이전과 동일한 plan fingerprint다. v8은 topology bucket 선형 검사와 sparse DP conditioning을 포함하며, 이후 native axis gate 변경은 포함하지 않는다. 각1회 관측이고 변경별 효과를 분리하거나 반복 분산을 측정하지 않았다.
+
+| v8 완료 측정 | LogReg | GLM |
+|---|---:|---:|
+| 전체 최초 planning | 398.232339626초 | 124.946316443초 |
+| Analysis | 314.122215976초 | 84.310379781초 |
+| Physical Model | 4.428272890초 | 4.722888971초 |
+| Cost Surface | 6.590263639초 | 8.143038708초 |
+| Optimizer | 70.332101081초 | 23.857477980초 |
+| coordinator cgroup peak | 9,141,903,360B | 5,134,458,880B |
+| worker cgroup peak | 725,753,856B | 769,208,320B |
+
+정확한 단계별 원본은 `evidence/cofee-50k128-v8-validation/candidate-{logreg,glm}-run0/timing-evidence.json`이다. Acceptance evaluator도 각 실행을20초 초과로 거절했다. 검증 조건은 그대로이며 새 profiling/JFR는 실행하지 않았다.
+
+아래는 v7까지의 이전 완료 기록이다.
+
+이전 완료 실측은 v7(`c6be0b6916`, JAR `5172e29a…`)이다. 같은 COFEE50K×128 W1에서 LogReg **460.486971960초**, GLM **236.147365008초**로, v6보다 느렸고 **20초 목표는 여전히 미달**이다. 두 workload 모두 숫자 비교 PASS, runtime audit mismatch0, v5/v6와 동일한 선택 plan fingerprint를 확인했다. 이 v7 봉인본은 d27의 native projection/revision 재사용과 metadata/SCC 개선을 포함하지만, 이후 main에 반영한 689의 topology bucket 선형 검사와 v8의 sparse DP conditioning은 포함하지 않는다. 복합 변경의 각 원인별 속도 기여를 분리 측정하지 않았으므로 Analysis 악화를 downstream SCC 변경 때문이라고 단정하지 않는다.
 
 | v7 완료 측정 | LogReg | GLM |
 |---|---:|---:|
@@ -15,7 +31,7 @@
 | coordinator cgroup peak | 9,110,831,104B | 5,587,062,784B |
 | worker cgroup peak | 746,065,920B | 761,516,032B |
 
-근거는 `evidence/cofee-50k128-v7-validation/candidate-{logreg,glm}-run0/timing-evidence.json`이며 SHA256은 각각 `d22330c3e8beb0f721ea92d13f187d41d4e7b8c17d453c120cd6cc8676490da6`, `a595a6b74894b2c1cd42df02f4f5beeee1022a875139e7619973bebfa5f8eca2`다. 각1회 성공 관측으로 반복 성능 검증은 아니다. 명백하게20초를 초과하므로 같은 느린 엔진을3회 반복해 성공 근거처럼 집계하지 않는다. v8은 동일 조건의 실제 검증 중이다.
+근거는 `evidence/cofee-50k128-v7-validation/candidate-{logreg,glm}-run0/timing-evidence.json`이며 SHA256은 각각 `d22330c3e8beb0f721ea92d13f187d41d4e7b8c17d453c120cd6cc8676490da6`, `a595a6b74894b2c1cd42df02f4f5beeee1022a875139e7619973bebfa5f8eca2`다. 각1회 성공 관측으로 반복 성능 검증은 아니다. 명백하게20초를 초과하므로 같은 느린 엔진을3회 반복해 성공 근거처럼 집계하지 않는다. v8 완료 결과는 문서 상단에 기록했다.
 
 아래는 v6까지의 이전 완료 기록이다.
 
