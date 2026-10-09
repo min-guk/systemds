@@ -134,14 +134,18 @@ public class NativeMultiSeedPublicationTest {
 				null, null, null, false, PrivacyEvidenceMode.NONE, false), grownSource, consumer,
 				sourceHop, consumerHop, Map.of(firstPool, 5, secondPool, 5),
 				new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
-			Assert.assertEquals("unsupported multi-header axis growth must match cold exact authority",
+			Assert.assertTrue("multi-header one-axis growth must remain compressed",
+				realizations(grown).get(0).supportClauses() instanceof NativeContinuitySupportClauses);
+			Assert.assertEquals("growth must not restore any member before a consumer asks", 0,
+				realizations(grown).get(0).fullyMaterializedSupportClauseCount());
+			Assert.assertEquals("multi-header axis growth must match cold exact authority",
 				expandedOrderedClauses(cold), expandedOrderedClauses(grown));
 			List<CandidateRealizationSupportClause> grownMembers = realizations(grown).get(0).supportClauses();
 			Assert.assertEquals(10, grownMembers.size());
 			for(CandidateRealizationSupportClause prior : priorMembers)
-				Assert.assertTrue("fallback must retain every old exact clause identity",
+				Assert.assertTrue("growth must retain every old exact clause identity",
 					grownMembers.stream().anyMatch(member -> member == prior));
-			Assert.assertEquals("only fallback visits the two five-member products", 10L,
+			Assert.assertEquals("supported growth must not visit the two five-member products", 0L,
 				metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
 		}
 	}

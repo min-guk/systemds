@@ -2,6 +2,10 @@
 
 ## 상태
 
+최신 v22 LogReg는 **550.015104341초**로 v21보다152.731초 느리다. Analysis457.407초, Model8.038초, Cost8.501초, Optimizer72.614초, 실행4.518초다. Numeric/audit·선택receipt·objective rawbits는 통과했지만 성능 개선으로 채택하지 않는다. GLM도 정상 완료했으며121.673794515초로 v21보다1.571초 줄었다. 각1회 관측이고20초목표는 미달이다.
+
+정상 계측 비교에서 proof 소비는16,100,378→8,192,479, proof alternatives는247,130,556→200,723,023으로 줄었다. Fixed-point14회/direct closure4,464회/Oracle25,186회는 같다. 반면 CLOSURE_REPLAY exclusive 시간은28.191→211.061초로 늘었다. 새 native relation의 List.hashCode가 모든 member를 복원하는 코드 경로가 남아 있어 수정 중이며, 시간 회귀의 인과관계는 다음 봉인 실측으로 판단한다.
+
 동일 COFEE 50K×128 W1 조건의 v21은 두 workload 모두 정상 완료했다. v20 GLM 오류를 수정했고, v21 봉인본은 `c56087b543`이다. 이후 origin/main의 query 재사용 변경을 병합한 `ff34db737a`까지 게시했다. **20초 목표는 달성하지 못했다.** 아래 값은 학습 실행 시간이 아니라 `planningFullInitialNanos`로 측정한 전체 초기 플래닝 시간이다.
 
 | 엔진 | LogReg | GLM | 검증 상태 |
@@ -14,6 +18,7 @@
 | v19 | 383.841초 | 127.505초 | Numeric/audit 및 v18 선택 receipt·비용 raw bits 동일; LogReg costSurface 표현 hash 변경 |
 | v20 | 392.942초 | 실패: 유효 timing 없음 | LogReg numeric/audit·선택 parity PASS. GLM donor authority 복원 예외 |
 | v21 | 397.284초 | 123.245초 | 두 workload numeric/audit·선택 권한·비용 raw bits PASS. LogReg 악화 |
+| v22 | 550.015초 | 121.674초 | 두 workload numeric/audit·선택 권한·비용 raw bits PASS. LogReg 심각한 시간 회귀 |
 
 v21 LogReg는 v19보다 13.443초, v20보다 4.343초 느렸고, GLM은 마지막 정상 v19보다 4.260초 빨랐다. 각1회 관측이며 반복 검증된 성능 개선이 아니다. 두 workload의 objective bits, assignment, exact selected candidates 및 선택 section counts/hashes는 v19와 같다. Cost-surface/aggregate fingerprint 변화는 별도로 기록했고 전체 cost cell parity로 확대하지 않는다.
 
