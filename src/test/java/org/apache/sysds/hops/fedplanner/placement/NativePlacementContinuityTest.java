@@ -3552,6 +3552,19 @@ public class NativePlacementContinuityTest {
 		Assert.assertEquals("projection and hashing must not enumerate Cartesian members",
 			0, firstRelation.materializedHandleCount());
 		Assert.assertEquals(0, equalRelation.materializedHandleCount());
+		NativePlacementContinuity.NativeSupportProduct conditionalBase =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(pool, pool, true, axes);
+		NativeContinuitySupportClauses firstMask = NativeContinuitySupportClauses.exactComplement(
+			owner.key, conditionalBase,
+			List.of(List.of(leftAxis.get(0)), List.of(rightAxis.get(0))), pool, true);
+		NativeContinuitySupportClauses changedMask = NativeContinuitySupportClauses.exactComplement(
+			owner.key, conditionalBase,
+			List.of(List.of(leftAxis.get(1)), List.of(rightAxis.get(0))), pool, true);
+		Assert.assertNotEquals("the excluded identity mask is revision authority",
+			continuityProjection(List.of(productFact(template, emission, firstMask))),
+			continuityProjection(List.of(productFact(template, emission, changedMask))));
+		Assert.assertEquals(0, firstMask.materializedHandleCount());
+		Assert.assertEquals(0, changedMask.materializedHandleCount());
 
 		GeneratedHiddenRootFixture warm = generatedHiddenRootFixture(false);
 		CandidateRuleFact warmTemplate = warm.activeRoot();
@@ -3602,6 +3615,57 @@ public class NativePlacementContinuityTest {
 				warmEqualFact.allowedEmissionFacts().get(0), warm.proposed(), warm.seed().anchor);
 		Assert.assertEquals(coldEqual.proofs(), equalSupport.proofs());
 		assertIdentitySetEquals(coldEqual.dependencyOccurrences(), equalSupport.dependencyOccurrences());
+
+		CandidateRealizationReference alternate = CandidateRealizationReference.of(
+			warmTemplate.key(), CandidateEmissionRealization.nativeLineage(
+				warmEmission.emissionState(), "changed-mask-alternate", List.of(), List.of()));
+		CandidateRealizationInputBinding proposedBinding =
+			CandidateRealizationInputBinding.direct(0, warm.proposed());
+		CandidateRealizationInputBinding alternateBinding =
+			CandidateRealizationInputBinding.direct(0, alternate);
+		List<CandidateRealizationInputBinding> maskAxis = List.of(
+			proposedBinding, alternateBinding).stream().sorted().toList();
+		NativePlacementContinuity.NativeSupportProduct maskBase =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				warm.seed().anchor, warm.seed().anchor, true, List.of(maskAxis));
+		NativeContinuitySupportClauses oldMask = NativeContinuitySupportClauses.exactComplement(
+			warm.root().key, maskBase, List.of(List.of(proposedBinding)),
+			warm.seed().anchor, true);
+		NativeContinuitySupportClauses newMask = NativeContinuitySupportClauses.exactComplement(
+			warm.root().key, maskBase, List.of(List.of(alternateBinding)),
+			warm.seed().anchor, true);
+		CandidateRuleFact oldMaskFact = productFact(warmTemplate, warmEmission, oldMask);
+		CandidateRuleFact newMaskFact = productFact(warmTemplate, warmEmission, newMask);
+		List<CandidateRuleFact> oldMaskFacts = replaceFact(
+			warm.activeFacts(), warmTemplate, oldMaskFact);
+		List<CandidateRuleFact> newMaskFacts = replaceFact(
+			warm.activeFacts(), warmTemplate, newMaskFact);
+		NativePlacementContinuity maskWarm = new NativePlacementContinuity(
+			warm.full().nodes, warm.full().origins, oldMaskFacts, warm.full().edges,
+			warm.full().reaching, Set.of(), warm.full().privacy);
+		CandidateRealizationReference oldMaskReference = CandidateRealizationReference.of(
+			oldMaskFact.key(), oldMaskFact.allowedEmissionFacts().get(0).realizations().get(0));
+		maskWarm.proveCandidateSupport(oldMaskReference, warm.seed().anchor);
+		NativePlacementContinuity maskRevised = maskWarm.nextRevision(newMaskFacts);
+		NativePlacementContinuity maskCold = new NativePlacementContinuity(
+			warm.full().nodes, warm.full().origins, newMaskFacts, warm.full().edges,
+			warm.full().reaching, Set.of(), warm.full().privacy);
+		CandidateRealizationReference newMaskReference = CandidateRealizationReference.of(
+			newMaskFact.key(), newMaskFact.allowedEmissionFacts().get(0).realizations().get(0));
+		var revisedMaskSupport = maskRevised.proveCandidateSupport(
+			newMaskReference, warm.seed().anchor);
+		var coldMaskSupport = maskCold.proveCandidateSupport(
+			newMaskReference, warm.seed().anchor);
+		Assert.assertEquals("a changed exact mask cannot reuse stale warm proof authority",
+			coldMaskSupport.proofs(), revisedMaskSupport.proofs());
+		assertIdentitySetEquals(coldMaskSupport.dependencyOccurrences(),
+			revisedMaskSupport.dependencyOccurrences());
+		Assert.assertTrue(maskRevised.revisionComparisonSnapshot()
+			.continuityProjectionsCompared() > 0);
+		Assert.assertTrue("warm topology may inspect only one representative",
+			oldMask.materializedHandleCount() <= 1);
+		Assert.assertTrue("cold and revised topology may inspect only one representative",
+			newMask.materializedHandleCount() <= 1);
 		int replacementHandlesAfterSupportQuery = warmEqualRelation.materializedHandleCount();
 		Assert.assertEquals("uniform native metadata preserves the support query without members",
 			0, replacementHandlesAfterSupportQuery);
@@ -4318,6 +4382,58 @@ public class NativePlacementContinuityTest {
 			full.resolver(new SearchSpaceMetrics(), 0, 0)
 				.proveCandidateSupport(published, pool).proofs().isEmpty());
 		Assert.assertEquals(1, relation.materializedHandleCount());
+	}
+
+	@Test
+	public void conditionalNativeTopologyUsesFirstInexactGatesWithoutFlatteningMembers() {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "conditional-gate:8001", 0, 50);
+		Ref seed = full.source("conditional-gate-seed", pool);
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Ref left = full.unary("conditional-gate-left", OpOp1.LOG, seed, false);
+		Ref right = full.unary("conditional-gate-right", OpOp1.LOG, seed, false);
+		full.samePoolRealizations(left, unary,
+			new DurableAnchorKey("conditional-left-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("conditional-left-b-long", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("conditional-left-c", FType.FULL, pool.partitions()));
+		full.samePoolRealizations(right, unary,
+			new DurableAnchorKey("conditional-right-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("conditional-right-b-much-longer", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("conditional-right-c", FType.FULL, pool.partitions()));
+		Ref consumer = full.binary("conditional-gate-consumer", OpOp2.PLUS, left, right, false);
+		List<CandidateInputState> binary = List.of(CandidateInputState.present(FType.FULL),
+			CandidateInputState.present(FType.FULL));
+		CandidateRealizationReference staging = full.reference(consumer, binary);
+		var generated = full.resolver(new SearchSpaceMetrics(), 0, 0)
+			.proveCandidateSupport(staging, pool);
+		var base = generated.supportProduct();
+		Assert.assertNotNull(base);
+		List<List<CandidateRealizationInputBinding>> exactAxes = base.axes().stream()
+			.map(axis -> List.of(axis.get(0))).toList();
+		NativeContinuitySupportClauses explicitRelation =
+			NativeContinuitySupportClauses.exactComplement(consumer.key, base, exactAxes, pool, true);
+		Assert.assertNotNull(explicitRelation);
+		CandidateRealizationReference explicitPublished = full.withClauses(
+			consumer, binary, List.copyOf(explicitRelation));
+		var explicit = full.resolver(new SearchSpaceMetrics(), 0, 0)
+			.proveCandidateSupport(explicitPublished, pool);
+
+		NativeContinuitySupportClauses relation =
+			NativeContinuitySupportClauses.exactComplement(consumer.key, base, exactAxes, pool, true);
+		CandidateRealizationReference published = full.withClauses(consumer, binary, relation);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		var factored = full.resolver(metrics, 0, 0).proveCandidateSupport(published, pool);
+		Assert.assertEquals(explicit.proofs().stream()
+			.map(NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+			factored.proofs().stream()
+				.map(NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+		Assert.assertEquals(base.size() - 1, factored.proofs().size());
+		Assert.assertEquals(1, relation.materializedHandleCount());
+		Assert.assertNotNull("proofs=" + factored.proofs().getClass().getName()
+			+ " metrics=" + metrics.snapshot(), factored.supportProduct());
+		Assert.assertTrue(factored.supportProduct().conditionalComplement());
+		Assert.assertEquals(Set.of(consumer.key, left.key, right.key, seed.key),
+			factored.dependencyOccurrences());
 	}
 
 	@Test
@@ -6030,6 +6146,26 @@ public class NativePlacementContinuityTest {
 			proposed, product, Set.of(root.key), 32L, true);
 		Assert.assertTrue("product certification reads its factor axis, not Cartesian members",
 			(boolean)classifier.invoke(batch, productEntry));
+
+		CandidateRealizationReference secondRoot = CandidateRealizationReference.of(base.key(),
+			CandidateEmissionRealization.nativeLineage(
+				emission.emissionState(), "root-binding-second", List.of(), List.of()));
+		CandidateRealizationInputBinding secondRootBinding =
+			CandidateRealizationInputBinding.direct(0, secondRoot);
+		Object twoOptionProduct = productFactory.invoke(null, pool, true,
+			List.of(List.of(rootBinding, secondRootBinding).stream().sorted().toList()));
+		Assert.assertNotNull(twoOptionProduct);
+		Class<?> conditionalClass = Class.forName(
+			NativePlacementContinuity.class.getName()
+				+ "$CandidateConditionalSupportTemplateProduct");
+		Constructor<?> conditionalConstructor = conditionalClass.getDeclaredConstructors()[0];
+		conditionalConstructor.setAccessible(true);
+		Object conditional = conditionalConstructor.newInstance(
+			twoOptionProduct, List.of(List.of(rootBinding)), 1);
+		Object conditionalEntry = entryConstructor.newInstance(
+			proposed, conditional, Set.of(root.key), 64L, true);
+		Assert.assertTrue("a retained conditional root option is detected without enumeration",
+			(boolean)classifier.invoke(batch, conditionalEntry));
 
 		Object query = supportKey(resolver, proposed, pool, true);
 		@SuppressWarnings("unchecked")

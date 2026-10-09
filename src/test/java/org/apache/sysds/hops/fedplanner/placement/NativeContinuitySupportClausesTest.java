@@ -321,6 +321,172 @@ public class NativeContinuitySupportClausesTest {
 				relation.get(ordinal).normalizedSignature());
 	}
 
+	@Test
+	public void exactRectangleComplementMatchesIndependentCanonicalListAndHash() {
+		CompiledHopKey owner = key("conditional-owner");
+		CompiledHopKey leftOwner = key("conditional-left");
+		CompiledHopKey rightOwner = key("conditional-right");
+		DurableAnchorKey seed = pool("conditional-seed");
+		DurableAnchorKey output = pool("conditional-output");
+		var leftExact = direct(0, "a", leftOwner);
+		var leftInexact = direct(0, "left-name-with-variable-width", leftOwner);
+		var rightExact = direct(1, "b", rightOwner);
+		var rightInexactA = direct(1, "right-short", rightOwner);
+		var rightInexactB = direct(1, "right-name-much-longer-than-short", rightOwner);
+		List<List<CandidateRealizationInputBinding>> axes = List.of(
+			List.of(leftExact, leftInexact).stream().sorted().toList(),
+			List.of(rightExact, rightInexactA, rightInexactB).stream().sorted().toList());
+		var base = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			seed, output, true, axes);
+		var relation = NativeContinuitySupportClauses.exactComplement(owner, base,
+			List.of(List.of(leftExact), List.of(rightExact)), output, true);
+		Assert.assertNotNull(relation);
+		List<CandidateRealizationSupportClause> explicit = enumeratedClauses(
+			owner, seed, output, axes).stream().filter(clause ->
+				clause.inputBindings().get(0) != leftExact
+					|| clause.inputBindings().get(1) != rightExact).sorted(
+						PlacementAnalysis.canonicalComparator()).toList();
+		Assert.assertEquals(5, explicit.size());
+		Assert.assertEquals(explicit.hashCode(), relation.hashCode());
+		Assert.assertEquals(0, relation.materializedHandleCount());
+		for(int ordinal = 0; ordinal < explicit.size(); ordinal++)
+			Assert.assertEquals("sparse transfer uses the retained member's hole-adjusted ordinal",
+				ordinal, relation.ordinalOfExactAuthorityClause(explicit.get(ordinal)));
+		CandidateRealizationSupportClause excludedClause = enumeratedClauses(owner, seed, output, axes)
+			.stream().filter(clause -> clause.inputBindings().get(0) == leftExact
+				&& clause.inputBindings().get(1) == rightExact).findFirst().orElseThrow();
+		Assert.assertEquals("sparse transfer cannot restore an excluded exact member", -1,
+			relation.ordinalOfExactAuthorityClause(excludedClause));
+		Assert.assertEquals("authority lookup must not materialize conditional handles", 0,
+			relation.materializedHandleCount());
+		for(int ordinal = 0; ordinal < explicit.size(); ordinal++) {
+			Assert.assertEquals(explicit.get(ordinal).normalizedSignature(),
+				relation.get(ordinal).normalizedSignature());
+			Assert.assertEquals(ordinal,
+				relation.product().ordinalOfExactAuthorityBindings(
+					relation.get(ordinal).inputBindings()));
+			Assert.assertEquals(ordinal, relation.ordinalOfExactAuthorityMember(
+				base, relation.get(ordinal).inputBindings()));
+		}
+		Assert.assertEquals(-1, relation.product().ordinalOfExactAuthorityBindings(
+			List.of(leftExact, rightExact)));
+		Assert.assertEquals(-1, relation.ordinalOfExactAuthorityMember(
+			base, List.of(leftExact, rightExact)));
+	}
+
+	@Test
+	public void complementRestrictionCollapsesOrDiesWithoutInventingHoles() {
+		CompiledHopKey owner = key("restrict-owner");
+		CompiledHopKey leftOwner = key("restrict-left");
+		CompiledHopKey rightOwner = key("restrict-right");
+		DurableAnchorKey seed = pool("restrict-seed");
+		DurableAnchorKey output = pool("restrict-output");
+		var leftExact = direct(0, "exact-left", leftOwner);
+		var leftInexact = direct(0, "inexact-left", leftOwner);
+		var rightExact = direct(1, "exact-right", rightOwner);
+		var rightInexact = direct(1, "inexact-right", rightOwner);
+		var base = NativePlacementContinuity.NativeSupportProduct.tryCreate(seed, output, true,
+			List.of(List.of(leftExact, leftInexact).stream().sorted().toList(),
+				List.of(rightExact, rightInexact).stream().sorted().toList()));
+		var relation = NativeContinuitySupportClauses.exactComplement(owner, base,
+			List.of(List.of(leftExact), List.of(rightExact)), output, true);
+		Assert.assertTrue(relation.conditionalComplement());
+		var fullRectangle = relation.restrictBindings(binding -> binding != leftExact).orElseThrow();
+		Assert.assertFalse(fullRectangle.conditionalComplement());
+		Assert.assertEquals(2, fullRectangle.size());
+		Assert.assertTrue(relation.restrictBindings(binding ->
+			binding == leftExact || binding == rightExact).isEmpty());
+	}
+
+	@Test
+	public void complementMaskNeverBorrowsEqualDistinctBindingAuthority() {
+		CompiledHopKey owner = key("identity-owner");
+		CompiledHopKey sourceOwner = key("identity-source");
+		DurableAnchorKey seed = pool("identity-seed");
+		DurableAnchorKey output = pool("identity-output");
+		var ownedExact = direct(0, "same", sourceOwner);
+		var ownedInexact = direct(0, "other", sourceOwner);
+		var base = NativePlacementContinuity.NativeSupportProduct.tryCreate(seed, output, true,
+			List.of(List.of(ownedInexact, ownedExact).stream().sorted().toList()));
+		var equalDistinct = direct(0, "same", sourceOwner);
+		Assert.assertEquals(ownedExact, equalDistinct);
+		Assert.assertNotSame(ownedExact, equalDistinct);
+		Assert.assertNull(NativeContinuitySupportClauses.exactComplement(owner, base,
+			List.of(List.of(equalDistinct)), output, true));
+
+		var first = NativeContinuitySupportClauses.exactComplement(owner, base,
+			List.of(List.of(ownedExact)), output, true);
+		var secondExact = direct(0, "same", sourceOwner);
+		var secondInexact = direct(0, "other", sourceOwner);
+		var secondBase = NativePlacementContinuity.NativeSupportProduct.tryCreate(seed, output, true,
+			List.of(List.of(secondInexact, secondExact).stream().sorted().toList()));
+		var second = NativeContinuitySupportClauses.exactComplement(owner, secondBase,
+			List.of(List.of(secondExact)), output, true);
+		Assert.assertNotNull(first);
+		Assert.assertNotNull(second);
+		Assert.assertFalse(first.sameExactAuthority(second));
+		Assert.assertTrue(first.oneAxisUnion(second).isEmpty());
+	}
+
+	@Test
+	public void firstCanonicalHoleAndSeededComplementsPreserveEveryRankAndHash() {
+		Random random = new Random(0xc0ffeeL);
+		for(int iteration = 0; iteration < 24; iteration++) {
+			CompiledHopKey owner = key("random-complement-owner-" + iteration);
+			DurableAnchorKey seed = pool("random-complement-seed-" + iteration);
+			DurableAnchorKey output = pool("random-complement-output-" + iteration);
+			List<List<CandidateRealizationInputBinding>> axes = new ArrayList<>();
+			List<List<CandidateRealizationInputBinding>> exact = new ArrayList<>();
+			for(int axis = 0; axis < 2 + random.nextInt(3); axis++) {
+				CompiledHopKey sourceOwner = key("random-complement-source-" + iteration + '-' + axis);
+				List<CandidateRealizationInputBinding> options = new ArrayList<>();
+				for(int option = 0; option < 2 + random.nextInt(3); option++)
+					options.add(direct(axis, option == 0 ? "a" : option == 1
+						? "emoji-\ud83d\ude42-" + "x".repeat(9 + axis)
+						: "long-" + "z".repeat(90 + option), sourceOwner));
+				options.sort(PlacementAnalysis.canonicalComparator());
+				axes.add(List.copyOf(options));
+				exact.add(List.of(options.get(0)));
+			}
+			var base = NativePlacementContinuity.NativeSupportProduct.tryCreate(seed, output, true, axes);
+			var relation = NativeContinuitySupportClauses.exactComplement(
+				owner, base, exact, output, true);
+			Assert.assertNotNull(relation);
+			List<CandidateRealizationSupportClause> explicit = enumeratedClauses(owner,
+				seed, output, axes).stream().filter(clause -> {
+					for(int axis = 0; axis < exact.size(); axis++)
+						if(clause.inputBindings().get(axis) != exact.get(axis).get(0))
+							return true;
+					return false;
+				}).sorted(PlacementAnalysis.canonicalComparator()).toList();
+			Assert.assertEquals(explicit.hashCode(), relation.hashCode());
+			for(int ordinal = 0; ordinal < explicit.size(); ordinal++) {
+				Assert.assertEquals(explicit.get(ordinal).normalizedSignature(),
+					relation.get(ordinal).normalizedSignature());
+				Assert.assertEquals(ordinal, relation.product().ordinalOfExactAuthorityBindings(
+					relation.get(ordinal).inputBindings()));
+			}
+			Assert.assertEquals(-1, relation.product().ordinalOfExactAuthorityBindings(
+				exact.stream().map(axis -> axis.get(0)).toList()));
+		}
+	}
+
+	@Test
+	public void complementCombinedIndexBudgetFallsBackBeforeAdmission() {
+		CompiledHopKey left = key("budget-left");
+		CompiledHopKey right = key("budget-right");
+		var leftExact = direct(0, "a", left);
+		var rightExact = direct(1, "a", right);
+		var base = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			pool("budget-seed"), pool("budget-output"), true, List.of(
+				List.of(leftExact, direct(0, "b", left)),
+				List.of(rightExact, direct(1, "b", right))));
+		Assert.assertNull(NativePlacementContinuity.NativeSupportProduct.tryCreateExactComplement(
+			base, List.of(List.of(leftExact), List.of(rightExact)), 8, 9));
+		Assert.assertNotNull(NativePlacementContinuity.NativeSupportProduct.tryCreateExactComplement(
+			base, List.of(List.of(leftExact), List.of(rightExact)), 9, 10));
+	}
+
 	private static List<CandidateRealizationSupportClause> explicitClauses(
 		CompiledHopKey owner, DurableAnchorKey seed, DurableAnchorKey output,
 		List<List<CandidateRealizationInputBinding>> axes) {

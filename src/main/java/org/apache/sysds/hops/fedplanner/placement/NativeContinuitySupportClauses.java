@@ -46,6 +46,15 @@ final class NativeContinuitySupportClauses
 		DurableAnchorKey clauseWitness, boolean clauseLayoutExact) {
 		this(owner, product, clauseWitness, clauseLayoutExact, List.of());
 	}
+	static NativeContinuitySupportClauses exactComplement(CompiledHopKey owner,
+		NativePlacementContinuity.NativeSupportProduct base,
+		List<List<CandidateRealizationInputBinding>> exactAxes,
+		DurableAnchorKey clauseWitness, boolean clauseLayoutExact) {
+		var conditional = NativePlacementContinuity.NativeSupportProduct
+			.tryCreateExactComplement(base, exactAxes);
+		return conditional == null ? null : new NativeContinuitySupportClauses(
+			owner, conditional, clauseWitness, clauseLayoutExact);
+	}
 
 	private NativeContinuitySupportClauses(CompiledHopKey owner,
 		NativePlacementContinuity.NativeSupportProduct product,
@@ -140,6 +149,13 @@ final class NativeContinuitySupportClauses
 			: java.util.Optional.empty();
 	}
 	List<List<CandidateRealizationInputBinding>> commonAxes() { return products.get(0).axes(); }
+	boolean conditionalComplement() { return products.get(0).conditionalComplement(); }
+	List<List<CandidateRealizationInputBinding>> excludedExactAxes() {
+		return products.get(0).excludedExactAxes();
+	}
+	boolean isExcludedExactBinding(int axis, CandidateRealizationInputBinding binding) {
+		return products.get(0).isExcludedExactBinding(axis, binding);
+	}
 	int headerCount() { return products.size(); }
 	DurableAnchorKey clauseWitness() { return clauseWitness; }
 	boolean clauseLayoutExact() { return clauseLayoutExact; }
@@ -167,6 +183,9 @@ final class NativeContinuitySupportClauses
 	}
 	java.util.Optional<NativeContinuitySupportClauses> oneAxisUnion(
 		NativeContinuitySupportClauses that) {
+		if(conditionalComplement() || that != null && that.conditionalComplement())
+			return sameExactAuthority(that) ? java.util.Optional.of(this)
+				: java.util.Optional.empty();
 		if(that == null || owner != that.owner
 			|| clauseLayoutExact != that.clauseLayoutExact
 			|| !Objects.equals(clauseWitness, that.clauseWitness))
@@ -253,6 +272,9 @@ final class NativeContinuitySupportClauses
 	}
 	java.util.Optional<NativeContinuitySupportClauses> multiHeaderUnion(
 		NativeContinuitySupportClauses that) {
+		if(conditionalComplement() || that != null && that.conditionalComplement())
+			return sameExactAuthority(that) ? java.util.Optional.of(this)
+				: java.util.Optional.empty();
 		if(that == null || owner != that.owner
 			|| clauseLayoutExact != that.clauseLayoutExact
 			|| !Objects.equals(clauseWitness, that.clauseWitness)
@@ -297,6 +319,9 @@ final class NativeContinuitySupportClauses
 		if(relations.isEmpty())
 			return java.util.Optional.empty();
 		NativeContinuitySupportClauses first = relations.get(0);
+		if(relations.stream().anyMatch(NativeContinuitySupportClauses::conditionalComplement))
+			return relations.stream().allMatch(first::sameExactAuthority)
+				? java.util.Optional.of(first) : java.util.Optional.empty();
 		java.util.Map<HeaderAuthority,NativeContinuitySupportClauses> byHeader =
 			new java.util.LinkedHashMap<>();
 		for(NativeContinuitySupportClauses relation : relations) {
@@ -467,6 +492,9 @@ final class NativeContinuitySupportClauses
 			.map(NativePlacementContinuity.NativeSupportProduct::headerAuthoritySignature).toList()
 			+ "|axes=" + commonAxes().stream().map(axis -> axis.stream()
 				.map(CandidateRealizationInputBinding::normalizedSignature).toList()).toList()
+			+ (conditionalComplement() ? "|excludeExact=" + excludedExactAxes().stream()
+				.map(axis -> axis.stream().map(CandidateRealizationInputBinding::normalizedSignature)
+					.toList()).toList() : "")
 			+ "|clausePool=" + (clauseWitness == null ? "-" : clauseWitness.normalizedSignature())
 			+ "|clauseLayout=" + (clauseLayoutExact ? "exact" : "dynamic");
 	}
@@ -542,6 +570,10 @@ final class NativeContinuitySupportClauses
 			throw new IllegalArgumentException("Native relation requires at least one proof header");
 		List<NativePlacementContinuity.NativeSupportProduct> canonical =
 			new java.util.ArrayList<>(supplied);
+		if(canonical.stream().anyMatch(
+			NativePlacementContinuity.NativeSupportProduct::conditionalComplement)
+			&& canonical.size() != 1)
+			throw new IllegalArgumentException("Conditional native relation requires one proof header");
 		canonical.sort(java.util.Comparator.comparing(
 			NativePlacementContinuity.NativeSupportProduct::headerAuthoritySignature));
 		for(int index = 1; index < canonical.size(); index++)

@@ -99,7 +99,7 @@ public class NativeMixedAxisSplitPublicationTest {
 	}
 
 	@Test
-	public void twoMixedAxesFallBackAndSingletonDescriptorsRemainDisjoint() throws Exception {
+	public void twoMixedAxesUseExactRectangleComplementAndSingletonDescriptorsRemainDisjoint() throws Exception {
 		CompiledHopKey consumer = key("fallback-consumer");
 		Axis first = axis(key("fallback-first"), 0, "first", 1, 1);
 		Axis second = axis(key("fallback-second"), 1, "second", 1, 1);
@@ -108,9 +108,18 @@ public class NativeMixedAxisSplitPublicationTest {
 				anchor("fallback-seed"), anchor("fallback-proof"), true,
 				List.of(first.bindings(), second.bindings()));
 		Assert.assertNotNull(twoMixed);
-		Assert.assertNull(pluralPublication(closure(), twoMixed, consumer,
+		List<CandidateEmissionRealization> multiple = pluralPublication(closure(), twoMixed, consumer,
 			anchor("fallback-output"), "two-mixed",
-			directSources(List.of(first.fact(), second.fact()))));
+			directSources(List.of(first.fact(), second.fact())));
+		Assert.assertNotNull(multiple);
+		Assert.assertEquals(2, multiple.size());
+		Assert.assertEquals(4, multiple.stream().mapToInt(value -> value.supportClauses().size()).sum());
+		CandidateEmissionRealization nativePart = multiple.stream().filter(value ->
+			value.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE).findFirst().orElseThrow();
+		Assert.assertTrue(nativePart.supportClauses() instanceof NativeContinuitySupportClauses);
+		Assert.assertTrue(((NativeContinuitySupportClauses)nativePart.supportClauses())
+			.conditionalComplement());
+		Assert.assertEquals(0, nativePart.fullyMaterializedSupportClauseCount());
 
 		Axis singletonMixed = axis(key("singleton-source"), 0, "singleton", 1, 1);
 		NativePlacementContinuity.NativeSupportProduct singletonRegions =

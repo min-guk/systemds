@@ -35,6 +35,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAncho
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
@@ -320,6 +321,53 @@ public class PlacementSupportDeletionWorklistTest {
 			result.facts(), List.of()).isEmpty());
 		PlacementSupportRelations.verifyPublishedRelocationRealizations(result.facts(), List.of());
 		Assert.assertEquals(0, relation.materializedClauseCount());
+	}
+
+	@Test
+	public void conditionalNativeProductDiesWhenOnlyExcludedExactRectangleRemains() {
+		CandidateRuleKey leftRule = rule("conditional-left");
+		CandidateRuleKey rightRule = rule("conditional-right");
+		CandidateRuleKey consumer = rule("conditional-consumer");
+		CandidateEmissionRealization leftExact = durable("conditional-left-exact");
+		CandidateEmissionRealization leftInexact = durable("conditional-left-inexact");
+		CandidateEmissionRealization rightExact = durable("conditional-right-exact");
+		CandidateEmissionRealization rightInexact = durable("conditional-right-inexact");
+		var leftExactBinding = CandidateRealizationInputBinding.direct(0,
+			ref(leftRule, leftExact));
+		var leftInexactBinding = CandidateRealizationInputBinding.direct(0,
+			ref(leftRule, leftInexact));
+		var rightExactBinding = CandidateRealizationInputBinding.direct(1,
+			ref(rightRule, rightExact));
+		var rightInexactBinding = CandidateRealizationInputBinding.direct(1,
+			ref(rightRule, rightInexact));
+		DurableAnchorKey pool = anchor("conditional-product");
+		var base = NativePlacementContinuity.NativeSupportProduct.tryCreate(pool, pool, true,
+			List.of(List.of(leftExactBinding, leftInexactBinding).stream().sorted().toList(),
+				List.of(rightExactBinding, rightInexactBinding).stream().sorted().toList()));
+		var relation = NativeContinuitySupportClauses.exactComplement(
+			consumer.parentOccurrence(), base,
+			List.of(List.of(leftExactBinding), List.of(rightExactBinding)), pool, true);
+		Assert.assertNotNull(relation);
+		CandidateEmissionRealization dependent = new CandidateEmissionRealization(
+			PlacementRealizationKey.nativeLineage(ROW, "conditional-product"), relation);
+		List<CandidateRuleFact> complete = List.of(
+			fact(leftRule, ROW, List.of(leftExact, leftInexact)),
+			fact(rightRule, ROW, List.of(rightExact, rightInexact)),
+			fact(consumer, ROW, List.of(dependent)));
+		var retained = PlacementSupportRelations.pruneUnsupportedRealizationsToFixedPointWithWork(
+			complete, null, null, null);
+		Assert.assertSame(complete.get(2), retained.facts().get(2));
+		Assert.assertEquals(0, relation.materializedHandleCount());
+
+		List<CandidateRuleFact> exactOnly = List.of(
+			fact(leftRule, ROW, List.of(leftExact)), fact(rightRule, ROW, List.of(rightExact)),
+			fact(consumer, ROW, List.of(dependent)));
+		var removed = PlacementSupportRelations.pruneUnsupportedRealizationsToFixedPointWithWork(
+			exactOnly, null, null, null);
+		Assert.assertEquals(CandidateEvaluationStatus.PROFILE_ERROR,
+			removed.facts().get(2).status());
+		Assert.assertTrue(removed.work().deletedRealizations() >= 1);
+		Assert.assertEquals(0, relation.materializedHandleCount());
 	}
 
 	@Test

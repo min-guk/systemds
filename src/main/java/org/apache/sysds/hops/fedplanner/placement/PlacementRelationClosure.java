@@ -6385,14 +6385,42 @@ final class PlacementRelationClosure {
 		// so mixed source layouts remain one exact product relation there.
 		if(outputAnchor != null && product.exactPartitionRanges()
 			&& !everyBindingExact && !hasAlwaysInexactAxis) {
-			if(mixedAxes != 1)
-				return rejectedNativeProduct(trace, NativePublicationOutcome.MIXED_EXACTNESS_MULTIPLE_AXES);
 			// Scalar validation checks executability only at required positions. A
 			// split must not silently discard a non-required staging obligation.
 			if(droppedNonRequiredOption)
 				return rejectedNativeProduct(trace, NativePublicationOutcome.REQUIRED_INPUTS);
 			if(trace != null)
-				trace.outcome = NativePublicationOutcome.MIXED_EXACTNESS_SINGLE_AXIS;
+				trace.outcome = mixedAxes == 1
+					? NativePublicationOutcome.MIXED_EXACTNESS_SINGLE_AXIS
+					: NativePublicationOutcome.PARTITIONED;
+			if(mixedAxes > 1) {
+				List<List<CandidateRealizationInputBinding>> exactAxes = new ArrayList<>();
+				for(List<CandidateRealizationInputBinding> axis : filteredAxes) {
+					List<CandidateRealizationInputBinding> exact = new ArrayList<>();
+					for(CandidateRealizationInputBinding binding : axis) {
+						CandidateEmissionRealization source = sources.nativeRealization(binding.source());
+						if(source != null && Boolean.TRUE.equals(exactSourceLayouts.get(source)))
+							exact.add(binding);
+					}
+					if(exact.isEmpty())
+						return rejectedNativeProduct(trace,
+							NativePublicationOutcome.PRODUCT_RECONSTRUCTION);
+					exactAxes.add(List.copyOf(exact));
+				}
+				NativePlacementContinuity.NativeSupportProduct filtered = product.withAxes(filteredAxes);
+				NativePlacementContinuity.NativeSupportProduct exact = product.withAxes(exactAxes);
+				if(filtered == null || exact == null)
+					return rejectedNativeProduct(trace,
+						NativePublicationOutcome.PRODUCT_RECONSTRUCTION);
+				CandidateEmissionRealization durable = nativeProductPublication(exact, owner,
+					emissionState, outputAnchor, nativeLineage, true);
+				CandidateEmissionRealization complement = nativeComplementPublication(filtered,
+					exactAxes, owner, emissionState, outputAnchor, nativeLineage);
+				if(complement == null)
+					return rejectedNativeProduct(trace,
+						NativePublicationOutcome.PRODUCT_RECONSTRUCTION);
+				return List.of(durable, complement);
+			}
 			List<CandidateRealizationInputBinding> exactOptions = new ArrayList<>();
 			List<CandidateRealizationInputBinding> inexactOptions = new ArrayList<>();
 			for(CandidateRealizationInputBinding binding : filteredAxes.get(mixedAxis)) {
@@ -6416,6 +6444,19 @@ final class PlacementRelationClosure {
 			return rejectedNativeProduct(trace, NativePublicationOutcome.PRODUCT_RECONSTRUCTION);
 		return List.of(nativeProductPublication(filtered, owner, emissionState,
 			outputAnchor, nativeLineage, everyBindingExact));
+	}
+
+	private static CandidateEmissionRealization nativeComplementPublication(
+		NativePlacementContinuity.NativeSupportProduct product,
+		List<List<CandidateRealizationInputBinding>> exactAxes, CompiledHopKey owner,
+		PlacementEmissionState emissionState, DurableAnchorKey outputAnchor,
+		String nativeLineage) {
+		DirectNativeOutput output = directNativeOutput(product, emissionState,
+			outputAnchor, nativeLineage, false);
+		NativeContinuitySupportClauses clauses = NativeContinuitySupportClauses.exactComplement(
+			owner, product, exactAxes, output.clauseNativePool(), output.clauseLayoutExact());
+		return clauses == null ? null
+			: new CandidateEmissionRealization(output.realizationKey(), clauses);
 	}
 
 	private static CandidateEmissionRealization nativeProductPublication(

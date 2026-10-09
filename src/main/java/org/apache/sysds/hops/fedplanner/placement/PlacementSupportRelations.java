@@ -746,6 +746,7 @@ final class PlacementSupportRelations {
 		private final FixedPointRealization realization;
 		private final NativeContinuitySupportClauses original;
 		private final List<Integer> liveByAxis;
+		private final List<Integer> liveExactByAxis;
 		private final Map<CandidateRealizationInputBinding,NativeFixedPointOption> options =
 			new IdentityHashMap<>();
 		private NativeFixedPointSupport(FixedPointRealization realization,
@@ -754,24 +755,42 @@ final class PlacementSupportRelations {
 			this.original = original;
 			liveByAxis = new ArrayList<>(Collections.nCopies(
 				original.commonAxes().size(), 0));
+			liveExactByAxis = new ArrayList<>(Collections.nCopies(
+				original.commonAxes().size(), 0));
 		}
 		private NativeFixedPointOption add(int axis, CandidateRealizationInputBinding binding) {
 			NativeFixedPointOption option = new NativeFixedPointOption(this, axis, binding);
 			options.put(binding, option);
 			liveByAxis.set(axis, liveByAxis.get(axis) + 1);
+			if(original.isExcludedExactBinding(axis, binding))
+				liveExactByAxis.set(axis, liveExactByAxis.get(axis) + 1);
 			return option;
 		}
 		private boolean hasLiveProduct() {
-			return liveByAxis.stream().allMatch(count -> count > 0);
+			return liveByAxis.stream().allMatch(count -> count > 0)
+				&& (!original.conditionalComplement() || hasLiveInexactOption());
+		}
+		private boolean hasLiveInexactOption() {
+			for(int axis = 0; axis < liveByAxis.size(); axis++)
+				if(liveByAxis.get(axis) > liveExactByAxis.get(axis))
+					return true;
+			return false;
 		}
 		private long invalidate(NativeFixedPointOption option) {
 			option.live = false;
-			// Each common-axis tuple owns one distinct clause per proof header.
 			long removed = original.headerCount();
+			long all = 1, excluded = 1;
 			for(int axis = 0; axis < liveByAxis.size(); axis++)
-				if(axis != option.axis)
-					removed *= liveByAxis.get(axis);
+				if(axis != option.axis) {
+					all = Math.multiplyExact(all, liveByAxis.get(axis));
+					excluded = Math.multiplyExact(excluded, liveExactByAxis.get(axis));
+				}
+			removed = Math.multiplyExact(removed,
+				original.conditionalComplement() && original.isExcludedExactBinding(
+					option.axis, option.binding) ? all - excluded : all);
 			liveByAxis.set(option.axis, liveByAxis.get(option.axis) - 1);
+			if(original.isExcludedExactBinding(option.axis, option.binding))
+				liveExactByAxis.set(option.axis, liveExactByAxis.get(option.axis) - 1);
 			return removed;
 		}
 		private NativeContinuitySupportClauses restricted() {
