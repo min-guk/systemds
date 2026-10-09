@@ -1624,6 +1624,24 @@ public final class ExactCategoricalSolver {
 			+ "|representation=" + representation;
 	}
 
+	/** Failure-only context: never evaluates a factor or serializes its full scope keys. */
+	static String factorOverflowContext(int ordinal, Factor factor) {
+		StringBuilder context = new StringBuilder(compressedFactorOverflow(ordinal, factor));
+		context.append("|evaluator=").append(factor.evaluator == null ? "stored"
+			: factor.evaluator.getClass().getName()).append("|keys=[");
+		for(int axis = 0; axis < Math.min(8, factor.scope.size()); axis++) {
+			if(axis > 0)
+				context.append(',');
+			String key = factor.scope.get(axis).key();
+			if(key.length() <= 96)
+				context.append(key);
+			else
+				context.append(key, 0, 48).append("...")
+					.append(key, key.length() - 48, key.length());
+		}
+		return context.append(']').toString();
+	}
+
 	static Factor freezeValidatedFactor(Factor factor) {
 		Objects.requireNonNull(factor, "factor");
 		if(factor.denseValues != null || factor.hardValues != null

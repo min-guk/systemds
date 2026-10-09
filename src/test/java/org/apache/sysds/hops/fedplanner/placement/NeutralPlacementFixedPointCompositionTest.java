@@ -219,8 +219,11 @@ public class NeutralPlacementFixedPointCompositionTest {
 			0, first.ownerCompactionElementsScanned());
 		Assert.assertEquals(0, first.alternativesRemoved());
 		Assert.assertTrue(first.alternativesRemoved() <= first.proofAlternativesBuilt());
-		Assert.assertTrue(first.supportLeaves() >= first.uniqueProofs());
-		Assert.assertEquals(first.supportLeaves(), first.uniqueProofs() + first.duplicateProofs());
+		long logicalProofs = Math.addExact(first.uniqueProofs(), first.duplicateProofs());
+		Assert.assertTrue("factorized products may count logical proofs without visiting every leaf",
+			first.supportLeaves() <= logicalProofs);
+		if(first.supportLeaves() < logicalProofs)
+			Assert.assertTrue(first.supportProductDescriptorsExpanded() > 0);
 		Assert.assertTrue(first.factorizedClauses() > 0);
 		Assert.assertEquals("receipt slots preserve every clause without eager receipt objects",
 			first.factorizedClauses(), first.receiptRelationSlots());

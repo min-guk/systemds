@@ -1574,6 +1574,12 @@ public final class ExactPhysicalCostModel {
 				if(product != null)
 					return product.nativeWorkerPoolWitness() != null && product.nativeWorkerPoolLayoutExact()
 						? anchor(type, product.nativeWorkerPoolWitness()) : new InputLayout(type, List.of(), false);
+				var nativeProduct = source.nativeContinuitySupportProduct().orElse(null);
+				if(nativeProduct != null)
+					return nativeProduct.nativeWorkerPoolWitness() != null
+						&& nativeProduct.nativeWorkerPoolLayoutExact()
+						? anchor(type, nativeProduct.nativeWorkerPoolWitness())
+						: new InputLayout(type, List.of(), false);
 				var clause = source.supportClauses().get(0);
 				return clause.nativeWorkerPoolWitness() != null && clause.nativeWorkerPoolLayoutExact()
 					? anchor(type, clause.nativeWorkerPoolWitness()) : new InputLayout(type, List.of(), false);
@@ -3282,6 +3288,10 @@ public final class ExactPhysicalCostModel {
 		PlacementAnalysis.CandidateEmissionRealization realization, PhysicalWorkerCounts physicalWorkerCounts) {
 		if(realization.anchor() != null)
 			return physicalWorkerCounts.count(realization.anchor());
+		var nativeProduct = realization.nativeContinuitySupportProduct().orElse(null);
+		if(nativeProduct != null)
+			return nativeProduct.nativeWorkerPoolWitness() == null ? null
+				: physicalWorkerCounts.count(nativeProduct.nativeWorkerPoolWitness());
 		var product = realization.factorizedSupportProduct().orElse(null);
 		if(product == null)
 			return null;
@@ -3512,6 +3522,16 @@ public final class ExactPhysicalCostModel {
 			var independent = realization.independentSupportProduct().orElse(null);
 			if(independent != null)
 				return scanSingletonProduct(independent, anchors, pending, queued, budget);
+			var nativeProduct = realization.nativeContinuitySupportProduct().orElse(null);
+			if(nativeProduct != null) {
+				if(nativeProduct.nativeWorkerPoolWitness() != null)
+					return acceptSingletonAnchor(nativeProduct.nativeWorkerPoolWitness(), anchors, budget);
+				for(var axis : nativeProduct.axes())
+					for(var binding : axis)
+						if(!scanSingletonBinding(binding, anchors, pending, queued, budget))
+							return false;
+				return true;
+			}
 			var factorized = realization.factorizedSupportProduct().orElse(null);
 			if(factorized != null) {
 				if(factorized.nativeWorkerPoolWitness() != null)

@@ -234,6 +234,7 @@ final class PhysicalSemanticDagFingerprint {
 			node.child("key", realizationKey(realization.key()));
 			node.integer("clauses", realization.supportClauses().size());
 			var product = realization.factorizedSupportProduct().orElse(null);
+			var nativeProduct = realization.nativeContinuitySupportProduct().orElse(null);
 			if(product != null) {
 				// Frame the stored relation itself. Expanding clauses here defeats
 				// factorized model construction before the optimizer even starts.
@@ -246,6 +247,16 @@ final class PhysicalSemanticDagFingerprint {
 				node.bool("nativePoolLayoutExact", product.nativeWorkerPoolLayoutExact());
 				node.integer("axes", product.factors().size());
 				for(var axis : product.factors()) {
+					node.integer("options", axis.size());
+					for(CandidateRealizationInputBinding option : axis)
+						node.child("binding", binding(option));
+				}
+			}
+			else if(nativeProduct != null) {
+				node.text("supportEncoding", "NATIVE_CONTINUITY_PRODUCT_V1");
+				node.text("authority", nativeProduct.authoritySignature());
+				node.integer("axes", nativeProduct.axes().size());
+				for(var axis : nativeProduct.axes()) {
 					node.integer("options", axis.size());
 					for(CandidateRealizationInputBinding option : axis)
 						node.child("binding", binding(option));

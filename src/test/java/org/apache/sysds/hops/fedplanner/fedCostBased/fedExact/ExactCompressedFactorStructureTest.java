@@ -16,6 +16,32 @@ import org.junit.Test;
 /** Structural preflight contracts for compressed exact factors. */
 public class ExactCompressedFactorStructureTest {
 	@Test
+	public void residualOverflowRetainsErrorAndReportsBoundedOriginWithoutEvaluation() {
+		var first = new ExactCategoricalSolver.Variable("long-origin-".repeat(1_000), 1_500);
+		var second = new ExactCategoricalSolver.Variable("second", 1_500);
+		var third = new ExactCategoricalSolver.Variable("third", 1_500);
+		AtomicInteger evaluations = new AtomicInteger();
+		var relation = ExactCategoricalSolver.Factor.lazy(List.of(first, second, third), values -> {
+			evaluations.incrementAndGet();
+			return 0d;
+		});
+		IllegalArgumentException failure = Assert.assertThrows(IllegalArgumentException.class,
+			() -> ExactPhysicalReducedSolver.reducedModel(3, List.of(first, second, third),
+				List.of(relation), new ExactCategoricalSolver.Limits(Long.MAX_VALUE, Long.MAX_VALUE)));
+		Assert.assertEquals("EXACT_VE_FACTOR_CELL_OVERFLOW", failure.getMessage());
+		Assert.assertEquals(0, evaluations.get());
+		Assert.assertEquals(1, failure.getSuppressed().length);
+		String context = failure.getSuppressed()[0].getMessage();
+		Assert.assertTrue(context, context.contains("EXACT_REDUCTION_INPUT_OVERFLOW"));
+		Assert.assertTrue(context, context.contains("factor=0"));
+		Assert.assertTrue(context, context.contains("domains=[1500,1500,1500]"));
+		Assert.assertTrue(context, context.contains("ExactCompressedFactorStructureTest"));
+		Assert.assertTrue(context, context.contains("second"));
+		Assert.assertTrue(context, context.length() < 4_096);
+		Assert.assertFalse(context, context.contains(first.key()));
+	}
+
+	@Test
 	public void reductionPreflightAcceptsHugeFunctionalRelationByStoredSupport() {
 		var source = new ExactCategoricalSolver.Variable("source", 50_000);
 		var target = new ExactCategoricalSolver.Variable("target", 50_000);

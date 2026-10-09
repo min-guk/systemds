@@ -508,7 +508,7 @@ public class ExactInputAuthorityOptimizationTest {
 	}
 
 	@Test
-	public void solverHardFactorEncodingsExactlyProjectCanonicalTruth() throws Exception {
+	public void solverObservationEncodingsExactlyProjectCanonicalTruth() throws Exception {
 		ExactPhysicalModel model = ExactPhysicalModel.build(logregAnalysis());
 		var statistics = model.hardFactorizationStatistics();
 		Assert.assertFalse("fixture must exercise solver-only hard factorization: " + statistics,
@@ -525,6 +525,11 @@ public class ExactInputAuthorityOptimizationTest {
 				model.hardFactors().get(encoding.canonicalOrdinal()));
 			var canonical = encoding.canonicalFactor();
 			var decomposition = encoding.decomposition();
+			// This oracle enumerates one category per canonical input axis. Pool-proof
+			// circuits have a different auxiliary graph, tested by exhaustive existential
+			// projection and forced optimizer parity in DerivedFoutAnchorPartialHardTest.
+			if(!decomposition.isObservationStar())
+				continue;
 			List<int[]> observations = decomposition.observations();
 			int[][] representatives = observationRepresentatives(decomposition);
 			int categoryCells = decomposition.auxiliaryVariables().stream().mapToInt(

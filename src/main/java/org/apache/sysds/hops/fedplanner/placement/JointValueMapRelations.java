@@ -435,6 +435,61 @@ public final class JointValueMapRelations {
 			return new Grounding(analysis, owner);
 		}
 
+		/** Root query for the fixed-pool proof selected by one exact owner receipt. */
+		public ProofQuery fixedPoolProofQuery(CandidateSelectionReceipt receipt) {
+			if(fixedPoolOwner == null)
+				throw new IllegalStateException("Correlated-row grounding does not own a fixed-pool query");
+			Objects.requireNonNull(receipt, "receipt");
+			if(receipt.rule().parentOccurrence() != fixedPoolOwner)
+				throw new IllegalArgumentException("Fixed-pool receipt owner mismatch");
+			CandidateRealizationReference reference =
+				CandidateRealizationReference.of(receipt.rule(), receipt.realization());
+			return new ProofQuery(reference, fixedPoolOwner, fixedPoolOwner, null);
+		}
+
+		/**
+		 * One exact transition of the fixed-pool graph used by {@link #matchesFixedPool}.
+		 * The returned constants and guarded children preserve source, rule, realization,
+		 * and owned-clause identity; callers still decide which concrete pool is expected.
+		 */
+		public ProofStep fixedPoolProofStep(ProofQuery query, CandidateSelectionReceipt selected) {
+			if(fixedPoolOwner == null)
+				throw new IllegalStateException("Correlated-row grounding does not own a fixed-pool query");
+			Objects.requireNonNull(query, "query");
+			if(selected == null || query.projectedAlias()
+				|| query.decisionOwner() != selected.rule().parentOccurrence()
+				|| query.reference().rule() != selected.rule()
+				|| !selected.realization().ownsSupportClauseIdentity(selected.supportClause()))
+				return invalidProofStep();
+			var fact = analysis.candidateRuleFacts().requireExact(
+				selected.rule().parentOccurrence(), selected.rule().orderedInputs());
+			if(fact.key() != selected.rule()
+				|| analysis.requireExactCandidateRealization(query.reference()) != selected.realization())
+				return invalidProofStep();
+			DurableAnchorKey exact = exactPool(selected.realization(), selected.supportClause());
+			if(exact != null)
+				return new ProofStep(false, exact, List.of(), List.of());
+			if(selected.realization().key().layoutKind()
+				!= PlacementIdentity.PlacementLayoutKind.VALUE_MAP
+				|| selected.supportClause().requiredInputSupport().isEmpty())
+				return invalidProofStep();
+			List<DurableAnchorKey> constants = new ArrayList<>();
+			List<ProofEdge> edges = new ArrayList<>();
+			for(CandidateRealizationReference reference :
+				selected.supportClause().requiredInputSupport()) {
+				DurableAnchorKey invariant = allSourceInvariantPool(reference,
+					new java.util.HashSet<>());
+				if(invariant != null)
+					constants.add(invariant);
+				else {
+					ProofQuery child = new ProofQuery(reference,
+						reference.rule().parentOccurrence(), fixedPoolOwner, null);
+					edges.add(new ProofEdge(child, reference));
+				}
+			}
+			return new ProofStep(false, null, constants, edges);
+		}
+
 		private boolean sameObservedPool(DurableAnchorKey left, DurableAnchorKey right) {
 			// Joint hard legality observes worker alignment and the partitioned axis.
 			// Cost projections additionally observe all extents; do not reuse the

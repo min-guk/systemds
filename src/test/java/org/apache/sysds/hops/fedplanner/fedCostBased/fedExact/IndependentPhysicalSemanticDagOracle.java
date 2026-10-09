@@ -155,11 +155,12 @@ final class IndependentPhysicalSemanticDagOracle {
 			node.child("key", realizationKey(realization.key()));
 			node.integer("clauses", realization.supportClauses().size());
 			var product = realization.factorizedSupportProduct().orElse(null);
-			if(product == null) {
+			var nativeProduct = realization.nativeContinuitySupportProduct().orElse(null);
+			if(product == null && nativeProduct == null) {
 				for(CandidateRealizationSupportClause clause : realization.supportClauses())
 					node.child("clause", clause(clause));
 			}
-			else {
+			else if(product != null) {
 				node.text("supportEncoding", "INDEPENDENT_PRODUCT_V1");
 				node.integer("proofs", product.proofDependencies().size());
 				product.proofDependencies().forEach(value -> node.child("proof", proof(value)));
@@ -168,6 +169,15 @@ final class IndependentPhysicalSemanticDagOracle {
 				node.bool("nativePoolLayoutExact", product.nativeWorkerPoolLayoutExact());
 				node.integer("axes", product.factors().size());
 				product.factors().forEach(axis -> {
+					node.integer("options", axis.size());
+					axis.forEach(value -> node.child("binding", binding(value)));
+				});
+			}
+			else {
+				node.text("supportEncoding", "NATIVE_CONTINUITY_PRODUCT_V1");
+				node.text("authority", nativeProduct.authoritySignature());
+				node.integer("axes", nativeProduct.axes().size());
+				nativeProduct.axes().forEach(axis -> {
 					node.integer("options", axis.size());
 					axis.forEach(value -> node.child("binding", binding(value)));
 				});
