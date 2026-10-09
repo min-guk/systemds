@@ -336,6 +336,24 @@ public final class PlacementAnalysis {
 			rightCursor.reset(right);
 			int compared = 0;
 			while(compared < left.length && compared < right.length) {
+				CanonicalText leftChild = leftCursor.pendingChild;
+				CanonicalText rightChild = rightCursor.pendingChild;
+				if(leftChild != null || rightChild != null) {
+					// Compare child identities before either cursor descends. A shared
+					// immutable subtree is equal without allocating deeper cursor frames.
+					if(leftChild == rightChild) {
+						compared += leftChild.length;
+						leftCursor.advanceText();
+						rightCursor.advanceText();
+					}
+					else {
+						if(leftChild != null)
+							leftCursor.descendChild();
+						if(rightChild != null)
+							rightCursor.descendChild();
+					}
+					continue;
+				}
 				int shared = leftCursor.skipSharedSubtree(rightCursor);
 				if(shared != 0) {
 					compared += shared;
@@ -344,10 +362,10 @@ public final class PlacementAnalysis {
 				String leftText = leftCursor.text();
 				String rightText = rightCursor.text();
 				// Structural caches deliberately share immutable child signatures. When
-				// two texts reach the same whole segment, its complete UTF-16 contents
+				// two texts reach the same segment offset, its remaining UTF-16 contents
 				// are equal by identity and need not be rescanned character by character.
-				if(leftCursor.offset() == 0 && rightCursor.offset() == 0 && leftText == rightText) {
-					compared += leftText.length();
+				if(leftCursor.offset() == rightCursor.offset() && leftText == rightText) {
+					compared += leftText.length() - leftCursor.offset();
 					leftCursor.skipText();
 					rightCursor.skipText();
 					continue;
@@ -395,10 +413,17 @@ public final class PlacementAnalysis {
 		private CanonicalText[] nodes = new CanonicalText[8];
 		private int[] indices = new int[8];
 		private int depth;
+		private CanonicalText pendingChild;
 		private String text;
 		private int offset;
 
-		private String text() { return text; }
+		private String text() {
+			// Standalone materialization still consumes literals eagerly; the paired
+			// comparator resolves shared pending children before requesting a literal.
+			while(pendingChild != null)
+				descendChild();
+			return text;
+		}
 		private int offset() { return offset; }
 
 		private void reset(CanonicalText root) {
@@ -412,6 +437,7 @@ public final class PlacementAnalysis {
 				nodes[--depth] = null;
 				indices[depth] = 0;
 			}
+			pendingChild = null;
 			text = null;
 			offset = 0;
 		}
@@ -450,6 +476,11 @@ public final class PlacementAnalysis {
 
 		private void skipText() { advanceText(); }
 
+		private void descendChild() {
+			push(pendingChild);
+			advanceText();
+		}
+
 		/** Skip a shared immutable rope suffix only when both cursors are at the same position in it. */
 		private int skipSharedSubtree(CanonicalTextCursor that) {
 			if(text == null || text != that.text || offset != that.offset)
@@ -484,6 +515,7 @@ public final class PlacementAnalysis {
 		}
 
 		private void advanceText() {
+			pendingChild = null;
 			text = null;
 			offset = 0;
 			while(depth != 0) {
@@ -497,10 +529,13 @@ public final class PlacementAnalysis {
 				Object piece = node.pieces[index];
 				indices[position] = index + 1;
 				if(piece instanceof String literal) {
+					if(literal.isEmpty())
+						continue;
 					text = literal;
 					return;
 				}
-				push((CanonicalText) piece);
+				pendingChild = (CanonicalText) piece;
+				return;
 			}
 		}
 	}
