@@ -2304,6 +2304,13 @@ final class NativePlacementContinuity {
 		// avoids flattening the product solely to discover that exact row.
 		if(hasNativeContinuityRelation(source.rule().parentOccurrence(), source))
 			return new CandidateSupportQueryKey(source, sourceHandle, witness, true, false);
+		if(metrics != null) {
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.SUPPORT_QUERY_TOPOLOGY_REQUESTS);
+			CandidateTopologyKey resident = residentTopologyKey(source.rule().parentOccurrence(), witness);
+			metrics.recordDirectWork(resident != null && candidateTopologies.containsKey(resident)
+				? SearchSpaceMetrics.DirectWork.SUPPORT_QUERY_TOPOLOGY_RESIDENT
+				: SearchSpaceMetrics.DirectWork.SUPPORT_QUERY_TOPOLOGY_COLD);
+		}
 		CandidateTopology topology = candidateTopology(source.rule().parentOccurrence(), witness);
 		boolean exactTopologyRow = topology.rowsByHandle.containsKey(sourceHandle);
 		return new CandidateSupportQueryKey(source, sourceHandle, witness, exactTopologyRow, generated);
@@ -2522,6 +2529,13 @@ final class NativePlacementContinuity {
 		// for it would first enumerate every tuple and defeat that representation.
 		if(hasNativeContinuityRelation(occurrence, source))
 			return null;
+		if(metrics != null) {
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.ACYCLIC_ROOT_TOPOLOGY_REQUESTS);
+			CandidateTopologyKey resident = residentTopologyKey(occurrence, witness);
+			metrics.recordDirectWork(resident != null && candidateTopologies.containsKey(resident)
+				? SearchSpaceMetrics.DirectWork.ACYCLIC_ROOT_TOPOLOGY_RESIDENT
+				: SearchSpaceMetrics.DirectWork.ACYCLIC_ROOT_TOPOLOGY_COLD);
+		}
 		CandidateTopology topology = candidateTopology(occurrence, witness);
 		int handle = candidateHandle(source);
 		List<CandidateTopologyRow> rows = topology.rowsByHandle.get(handle);
@@ -3804,12 +3818,17 @@ final class NativePlacementContinuity {
 	private NativeFactoredProofAlternatives nativeFactoredProofAlternatives(
 		CompiledHopKey key, CandidateRealizationReference pinned,
 		NativePoolWitness witness, FixedCandidateBoundary fixed) {
+		if(metrics != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_PINNED_REQUESTS);
 		Node node = nodesByKey.get(key);
 		Hop hop = originsByKey.get(key);
 		if(node == null || hop == null || incompleteSources.contains(key)
 			|| node.legalAlternatives().stream().noneMatch(state ->
-				state.output() == FederatedOutput.FOUT && state.fType() == witness.fType))
+				state.output() == FederatedOutput.FOUT && state.fType() == witness.fType)) {
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_PINNED_REJECT_CONTEXT);
 			return null;
+		}
 		CandidateRuleFact matchedFact = null;
 		CandidateEmissionRealization matchedRealization = null;
 		NativeContinuitySupportClauses matchedRelation = null;
@@ -3830,20 +3849,44 @@ final class NativePlacementContinuity {
 						CandidateRealizationReference.of(fact.key(), realization);
 					if(reference.rule().parentOccurrence() != key || !reference.equals(pinned))
 						continue;
-					if(matchedRealization != null
-						|| !(realization.supportClauses() instanceof NativeContinuitySupportClauses relation)
-						|| !nativeContinuityProductLayout(realization))
+					if(matchedRealization != null) {
+						if(metrics != null)
+							metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_PINNED_REJECT_DUPLICATE);
 						return null;
+					}
+					if(!(realization.supportClauses() instanceof NativeContinuitySupportClauses relation)) {
+						if(metrics != null) {
+							metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_PINNED_REJECT_ORDINARY);
+							// Observe the existing cache without populating or changing its eviction order.
+							CandidateTopologyKey resident = residentTopologyKey(key, witness);
+							metrics.recordDirectWork(resident != null && candidateTopologies.containsKey(resident)
+								? SearchSpaceMetrics.DirectWork.NATIVE_PINNED_ORDINARY_RESIDENT_TOPOLOGY
+								: SearchSpaceMetrics.DirectWork.NATIVE_PINNED_ORDINARY_COLD_TOPOLOGY);
+						}
+						return null;
+					}
+					if(!nativeContinuityProductLayout(realization)) {
+						if(metrics != null)
+							metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_PINNED_REJECT_LAYOUT);
+						return null;
+					}
 					matchedFact = fact;
 					matchedRealization = realization;
 					matchedRelation = relation;
 				}
 			}
 		}
-		if(matchedRealization == null || matchedRelation == null || matchedRelation.isEmpty())
+		if(matchedRealization == null || matchedRelation == null || matchedRelation.isEmpty()) {
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_PINNED_REJECT_MISSING);
 			return null;
-		return nativeFactoredProofAlternativesResolved(key, pinned, witness, fixed,
+		}
+		NativeFactoredProofAlternatives resolved = nativeFactoredProofAlternativesResolved(key, pinned, witness, fixed,
 			node, hop, matchedFact, matchedRealization, matchedRelation);
+		if(metrics != null)
+			metrics.recordDirectWork(resolved == null ? SearchSpaceMetrics.DirectWork.NATIVE_PINNED_REJECT_PRODUCT
+				: SearchSpaceMetrics.DirectWork.NATIVE_PINNED_ACCEPTED);
+		return resolved;
 	}
 
 	/** Builds the circuit for an exact inventory row already validated by its caller. */
@@ -4108,8 +4151,9 @@ final class NativePlacementContinuity {
 				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_REJECT_NO_NATIVE);
 			return null;
 		}
-		rows.sort((left, right) -> PlacementAnalysis.canonicalComparator()
-			.compare(left.reference(), right.reference()));
+		java.util.Comparator<CandidateRealizationReference> referenceOrder =
+			PlacementAnalysis.canonicalComparator();
+		rows.sort((left, right) -> referenceOrder.compare(left.reference(), right.reference()));
 		List<SelectedCandidateProof> alternatives = new ArrayList<>(rows.size() + 1);
 		boolean nodeDirectGround = node.legalAlternatives().stream().anyMatch(state ->
 			state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
