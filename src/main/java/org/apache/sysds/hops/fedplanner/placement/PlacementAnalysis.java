@@ -2040,6 +2040,8 @@ public final class PlacementAnalysis {
 
 		/** Exact independent product view when every axis has invariant relocation authority. */
 		public Optional<IndependentSupportProduct> independentSupportProduct() {
+			// Native proof headers stay relation-native in Closure, but their member-specific
+			// canonical tie rank is not represented by one compact Physical alternative.
 			return key.layoutKind() != PlacementIdentity.PlacementLayoutKind.VALUE_MAP
 				&& supportClauses instanceof FactorizedSupportClauses factorized
 				? factorized.independentRelocationProduct() : Optional.empty();
@@ -2281,11 +2283,29 @@ public final class PlacementAnalysis {
 		}
 		public String authoritySignature() { return relation.authoritySignature(); }
 		public List<List<CandidateRealizationInputBinding>> axes() {
-			return relation.product().axes();
+			return relation.commonAxes();
+		}
+		public List<NativeContinuityHeader> headers() {
+			return relation.products().stream().map(product -> new NativeContinuityHeader(
+				product.externalSeed(), product.outputWorkerPoolWitness(),
+				product.exactPartitionRanges())).toList();
+		}
+		public int headerCount() { return relation.headerCount(); }
+		public CandidateRealizationSupportClause representativeClause() { return relation.get(0); }
+		public CandidateRealizationSupportClause select(
+			List<CandidateRealizationInputBinding> bindings) {
+			return relation.firstCanonicalMemberForBindings(bindings);
 		}
 		public DurableAnchorKey nativeWorkerPoolWitness() { return relation.clauseWitness(); }
 		public boolean nativeWorkerPoolLayoutExact() { return relation.clauseLayoutExact(); }
 		public int logicalClauseCount() { return relation.size(); }
+	}
+	public record NativeContinuityHeader(DurableAnchorKey externalSeed,
+		DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges) {
+		public NativeContinuityHeader {
+			Objects.requireNonNull(externalSeed, "native external seed");
+			Objects.requireNonNull(outputWorkerPoolWitness, "native output worker pool");
+		}
 	}
 
 	/** One exact immutable rule/profile emission with its executable physical realizations. */
@@ -2395,6 +2415,8 @@ public final class PlacementAnalysis {
 					&& rightClauses instanceof NativeContinuitySupportClauses rightNative) {
 					Optional<NativeContinuitySupportClauses> nativeUnion =
 						leftNative.oneAxisUnion(rightNative);
+					if(nativeUnion.isEmpty())
+						nativeUnion = leftNative.multiHeaderUnion(rightNative);
 					if(nativeUnion.isPresent()) {
 						NativeContinuitySupportClauses union = nativeUnion.get();
 						long uniqueClauses = union.size();
@@ -2727,6 +2749,8 @@ public final class PlacementAnalysis {
 					union = relation;
 				else {
 					Optional<NativeContinuitySupportClauses> next = union.oneAxisUnion(relation);
+					if(next.isEmpty())
+						next = union.multiHeaderUnion(relation);
 					if(next.isEmpty())
 						return null;
 					union = next.get();

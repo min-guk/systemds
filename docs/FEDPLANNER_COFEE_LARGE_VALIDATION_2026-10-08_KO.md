@@ -2,7 +2,7 @@
 
 ## 상태
 
-동일 COFEE 50K×128 W1 조건의 v20 실제 실행에서 LogReg는 완료했지만 GLM은 correctness 오류로 실패했다. v20 실측 봉인본은 `3fff3de32e`이며, 최신 병합 기준 `6c5dc4a76e`에는 이 donor 오류 수정이 포함된다. 수정 후 v21 실제 검증을 준비 중이다. **20초 목표는 달성하지 못했다.** 아래 값은 학습 실행 시간이 아니라 `planningFullInitialNanos`로 측정한 전체 초기 플래닝 시간이다.
+동일 COFEE 50K×128 W1 조건의 v21은 두 workload 모두 정상 완료했다. v20 GLM 오류를 수정했고, v21 봉인본은 `c56087b543`이다. 이후 origin/main의 query 재사용 변경을 병합한 `ff34db737a`까지 게시했다. **20초 목표는 달성하지 못했다.** 아래 값은 학습 실행 시간이 아니라 `planningFullInitialNanos`로 측정한 전체 초기 플래닝 시간이다.
 
 | 엔진 | LogReg | GLM | 검증 상태 |
 |---|---:|---:|---|
@@ -13,6 +13,28 @@
 | v18 | 385.223초 | 128.050초 | Numeric/audit 및 v17 선택 receipt·비용 raw bits·전체 fingerprint 동일 |
 | v19 | 383.841초 | 127.505초 | Numeric/audit 및 v18 선택 receipt·비용 raw bits 동일; LogReg costSurface 표현 hash 변경 |
 | v20 | 392.942초 | 실패: 유효 timing 없음 | LogReg numeric/audit·선택 parity PASS. GLM donor authority 복원 예외 |
+| v21 | 397.284초 | 123.245초 | 두 workload numeric/audit·선택 권한·비용 raw bits PASS. LogReg 악화 |
+
+v21 LogReg는 v19보다 13.443초, v20보다 4.343초 느렸고, GLM은 마지막 정상 v19보다 4.260초 빨랐다. 각1회 관측이며 반복 검증된 성능 개선이 아니다. 두 workload의 objective bits, assignment, exact selected candidates 및 선택 section counts/hashes는 v19와 같다. Cost-surface/aggregate fingerprint 변화는 별도로 기록했고 전체 cost cell parity로 확대하지 않는다.
+
+| v21 관측 | LogReg | GLM |
+|---|---:|---:|
+| 전체 초기 planning | 397.284169359초 | 123.244710929초 |
+| Analysis | 303.844초 | 83.053초 |
+| Physical Model | 5.169초 | 4.521초 |
+| Cost Surface | 6.442초 | 7.922초 |
+| Optimizer | 80.468초 | 23.847초 |
+| 실제 실행 | 4.493초 | 7.172초 |
+| Coordinator peak | 9,460,985,856B | 5,487,534,080B |
+| Worker peak | 739,840,000B | 761,286,656B |
+| 소비 proof member | 16,100,378 | 1,926,919 |
+| 생성 explicit Clause | 2,484,848 | 1,121,113 |
+
+v21 LogReg는 proof 소비가 감소해도 전체 시간·메모리가 늘었다. PARTITIONED logical10,636,868 중9,956,456은 scalar 소비가 남았고 overlay resident hit는 두 workload 모두0이었다. 다음 v22는 같은 출력의 서로 다른 header를 Closure/native topology에서 유지한다. Physical/DP의 새 native compaction은 동일비용 tie-rank 동등성이 증명되지 않아 제외했으며 기존 exact 경로를 유지한다.
+
+v22 통합 검증은 전체 FedPlanner selected 1,218개 PASS(152.031초), class/resource 변경0, source SHA 불일치0이며 별도 probe9개도 통과했다. 실제 workload는 이 검증본을 봉인해 LogReg→GLM 순서로 측정한다. 단위 테스트 통과를 실제 성능 개선으로 보고하지 않는다.
+
+v21 근거: `evidence/cofee-50k128-v21-validation/v19-v21-comparison.json` SHA `3fcda9b543808dac66ad68222cd57235ff9c9cd33b6f33488a127f1a060d6e55`; binding SHA `a6eef7efa7a8b50740aead95343ac31fa2cf0728688121ffaa9d5770ed07020c`. Goal evaluator FAIL 및 checkpoint를 기록했다.
 
 v20 LogReg는 v19보다 9.100초 느렸다. Analysis 300.348초, Optimizer 77.554초이며 coordinator peak는 9,347,125,248B다. 소비 proof는 16,223,571개, 생성 Clause는 2,484,028개다. Overlay lookup 3,696,664회 중 resident hit는 0이며, 분할 product의 scalar 소비 8,530,130개 중 8,530,128개는 OUTPUT_COLLISION 때문이다. 이는 서로 다른 seed/header가 같은 출력에 도달할 때 압축 publication을 포기하는 경로가 실제로 크다는 증거다. 전체 시간 차이를 한 변경에 귀속하거나 반복 검증된 성능 차이로 해석하지 않는다.
 

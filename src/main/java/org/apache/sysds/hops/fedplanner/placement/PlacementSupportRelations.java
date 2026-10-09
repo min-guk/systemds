@@ -430,8 +430,8 @@ final class PlacementSupportRelations {
 			else if(slot.realization.supportClauses() instanceof NativeContinuitySupportClauses product) {
 				NativeFixedPointSupport support = new NativeFixedPointSupport(slot, product);
 				slot.nativeSupport = support;
-				for(int axis = 0; axis < product.product().axes().size(); axis++)
-					for(CandidateRealizationInputBinding binding : product.product().axes().get(axis)) {
+				for(int axis = 0; axis < product.commonAxes().size(); axis++)
+					for(CandidateRealizationInputBinding binding : product.commonAxes().get(axis)) {
 						FixedPointReference source = references.get(binding.source());
 						if(source == null || source.liveSlots == 0)
 							continue;
@@ -753,7 +753,7 @@ final class PlacementSupportRelations {
 			this.realization = realization;
 			this.original = original;
 			liveByAxis = new ArrayList<>(Collections.nCopies(
-				original.product().axes().size(), 0));
+				original.commonAxes().size(), 0));
 		}
 		private NativeFixedPointOption add(int axis, CandidateRealizationInputBinding binding) {
 			NativeFixedPointOption option = new NativeFixedPointOption(this, axis, binding);
@@ -914,7 +914,7 @@ final class PlacementSupportRelations {
 				axis.forEach(consumer);
 		}
 		else if(realization.supportClauses() instanceof NativeContinuitySupportClauses product) {
-			for(List<CandidateRealizationInputBinding> axis : product.product().axes())
+			for(List<CandidateRealizationInputBinding> axis : product.commonAxes())
 				axis.forEach(consumer);
 		}
 		else if(realization.supportClauses() instanceof IndexedSupportClauses indexed)

@@ -4280,6 +4280,61 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void multiHeaderNativeTopologyUsesCommonAxisGatesWithoutFlatteningMembers() {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "multi-header-gate:8001", 0, 50);
+		Ref seed = full.source("multi-header-gate-seed", pool);
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Ref left = full.unary("multi-header-left", OpOp1.LOG, seed, false);
+		Ref right = full.unary("multi-header-right", OpOp1.LOG, seed, false);
+		full.samePoolRealizations(left, unary,
+			new DurableAnchorKey("multi-left-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("multi-left-b", FType.FULL, pool.partitions()));
+		full.samePoolRealizations(right, unary,
+			new DurableAnchorKey("multi-right-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("multi-right-b", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("multi-right-c", FType.FULL, pool.partitions()));
+		Ref consumer = full.binary("multi-header-consumer", OpOp2.PLUS, left, right, false);
+		List<CandidateInputState> binary = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+		CandidateRealizationReference staging = full.reference(consumer, binary);
+		NativePlacementContinuity.CandidateSupportResult generated = full.resolver()
+			.proveCandidateSupport(staging, pool);
+		NativePlacementContinuity.NativeSupportProduct firstProduct = generated.supportProduct();
+		Assert.assertNotNull(firstProduct);
+		NativePlacementContinuity.NativeSupportProduct secondProduct =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				new DurableAnchorKey("other-header", FType.FULL, pool.partitions()),
+				firstProduct.outputWorkerPoolWitness(), firstProduct.exactPartitionRanges(),
+				firstProduct.axes());
+		Assert.assertNotNull(secondProduct);
+		NativeContinuitySupportClauses explicitRelation =
+			new NativeContinuitySupportClauses(consumer.key, firstProduct, pool, true)
+				.multiHeaderUnion(new NativeContinuitySupportClauses(
+					consumer.key, secondProduct, pool, true)).orElseThrow();
+		CandidateRealizationReference explicitPublished = full.withClauses(
+			consumer, binary, List.copyOf(explicitRelation));
+		NativePlacementContinuity.CandidateSupportResult explicit = full.resolver()
+			.proveCandidateSupport(explicitPublished, pool);
+		NativeContinuitySupportClauses relation =
+			new NativeContinuitySupportClauses(consumer.key, firstProduct, pool, true)
+				.multiHeaderUnion(new NativeContinuitySupportClauses(
+					consumer.key, secondProduct, pool, true)).orElseThrow();
+		CandidateRealizationReference published = full.withClauses(consumer, binary, relation);
+		Assert.assertEquals(0, relation.materializedHandleCount());
+		NativePlacementContinuity.CandidateSupportResult factored = full.resolver()
+			.proveCandidateSupport(published, pool);
+		Assert.assertEquals(explicit.proofs().stream().map(
+			NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+			factored.proofs().stream().map(
+				NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+		assertIdentitySetEquals(explicit.dependencyOccurrences(), factored.dependencyOccurrences());
+		Assert.assertEquals("multi-header topology must read one member, not both rectangles",
+			1, relation.materializedHandleCount());
+		Assert.assertEquals(12, relation.size());
+	}
+
+	@Test
 	public void durableNativeRectanglesUseAxisGatesWithLegacyGroundingParity() {
 		Fixture full = new Fixture(FType.FULL);
 		DurableAnchorKey pool = anchor(FType.FULL, "durable-gate-worker:8001", 0, 50);

@@ -1488,7 +1488,7 @@ final class NativePlacementContinuity {
 	private static NativeProductContinuityProjection continuityProductProjectionOwned(
 		NativeContinuitySupportClauses product, RealizationProjectionMemo memo,
 		RealizationProjectionMemo donorMemo) {
-		List<List<ContinuityBindingProjection>> axes = product.product().axes().stream()
+		List<List<ContinuityBindingProjection>> axes = product.commonAxes().stream()
 			.map(axis -> axis.stream()
 				.map(binding -> continuityBindingProjectionOwned(binding, memo, donorMemo))
 				.toList())
@@ -1573,7 +1573,7 @@ final class NativePlacementContinuity {
 
 	private static NativeProductContinuityProjection continuityProductProjection(
 		NativeContinuitySupportClauses product) {
-		List<List<ContinuityBindingProjection>> axes = product.product().axes().stream()
+		List<List<ContinuityBindingProjection>> axes = product.commonAxes().stream()
 			.map(axis -> axis.stream().map(ContinuityBindingProjection::new).toList())
 			.toList();
 		return new NativeProductContinuityProjection(
@@ -3748,8 +3748,8 @@ final class NativePlacementContinuity {
 		}
 		if(matchedRealization == null || matchedRelation == null || matchedRelation.isEmpty())
 			return null;
-		NativeSupportProduct product = matchedRelation.product();
-		if(product.axes().isEmpty())
+		List<List<CandidateRealizationInputBinding>> axes = matchedRelation.commonAxes();
+		if(axes.isEmpty())
 			return null;
 
 		// One authoritative member supplies the existing rule-derived dependency
@@ -3764,8 +3764,8 @@ final class NativePlacementContinuity {
 		Map<CompiledHopKey,Integer> ownerAxes = new IdentityHashMap<>();
 		Map<CompiledHopKey,CandidateRealizationReference> representativeSources =
 			new IdentityHashMap<>();
-		for(int axis = 0; axis < product.axes().size(); axis++) {
-			List<CandidateRealizationInputBinding> options = product.axes().get(axis);
+		for(int axis = 0; axis < axes.size(); axis++) {
+			List<CandidateRealizationInputBinding> options = axes.get(axis);
 			if(options.isEmpty())
 				return null;
 			CompiledHopKey owner = options.get(0).source().rule().parentOccurrence();
@@ -3786,8 +3786,8 @@ final class NativePlacementContinuity {
 			return null;
 
 		List<CandidateDependencySkeleton> invariant = new ArrayList<>();
-		List<List<CandidateDependencySkeleton>> affected = new ArrayList<>(product.axes().size());
-		for(int axis = 0; axis < product.axes().size(); axis++)
+		List<List<CandidateDependencySkeleton>> affected = new ArrayList<>(axes.size());
+		for(int axis = 0; axis < axes.size(); axis++)
 			affected.add(new ArrayList<>());
 		for(CandidateDependencySkeleton skeleton : representativeSkeletons) {
 			Integer axis = ownerAxes.get(skeleton.key());
@@ -3805,8 +3805,8 @@ final class NativePlacementContinuity {
 		}
 		if(affected.stream().anyMatch(List::isEmpty))
 			return null;
-		for(int axis = 0; axis < product.axes().size(); axis++) {
-			int position = product.axes().get(axis).get(0).inputPosition();
+		for(int axis = 0; axis < axes.size(); axis++) {
+			int position = axes.get(axis).get(0).inputPosition();
 			boolean exposesPosition = false;
 			for(CandidateDependencySkeleton skeleton : affected.get(axis)) {
 				if(skeleton.inputPosition() < 0)
@@ -3822,10 +3822,10 @@ final class NativePlacementContinuity {
 		}
 
 		List<CandidateProofDependency> consumerDependencies =
-			new ArrayList<>(invariant.size() + product.axes().size());
+			new ArrayList<>(invariant.size() + axes.size());
 		consumerDependencies.addAll(overlayDependencies(invariant, fixed));
-		for(int axis = 0; axis < product.axes().size(); axis++) {
-			List<CandidateRealizationInputBinding> options = product.axes().get(axis);
+		for(int axis = 0; axis < axes.size(); axis++) {
+			List<CandidateRealizationInputBinding> options = axes.get(axis);
 			CompiledHopKey owner = options.get(0).source().rule().parentOccurrence();
 			List<SelectedCandidateProof> gateAlternatives = new ArrayList<>(options.size());
 			for(CandidateRealizationInputBinding option : options) {
@@ -5624,6 +5624,20 @@ final class NativePlacementContinuity {
 				units = Math.addExact(units, axis.size());
 			return units;
 		}
+		boolean sameHeaderAuthority(NativeSupportProduct that) {
+			return that != null && exactPartitionRanges == that.exactPartitionRanges
+				&& externalSeed.equals(that.externalSeed)
+				&& outputWorkerPoolWitness.equals(that.outputWorkerPoolWitness);
+		}
+		boolean sameOutputHeaderAuthority(NativeSupportProduct that) {
+			return that != null && exactPartitionRanges == that.exactPartitionRanges
+				&& outputWorkerPoolWitness.equals(that.outputWorkerPoolWitness);
+		}
+		String headerAuthoritySignature() {
+			return externalSeed.normalizedSignature()
+				+ "|outputPool=" + outputWorkerPoolWitness.normalizedSignature()
+				+ "|partitionRanges=" + (exactPartitionRanges ? "exact" : "dynamic");
+		}
 		static NativeSupportProduct tryCreate(DurableAnchorKey externalSeed,
 			DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
 			List<List<CandidateRealizationInputBinding>> axes) {
@@ -5725,6 +5739,14 @@ final class NativePlacementContinuity {
 					return false;
 			return true;
 		}
+		boolean sameExactAxes(NativeSupportProduct that) {
+			if(that == null || axes.size() != that.axes.size())
+				return false;
+			for(int axis = 0; axis < axes.size(); axis++)
+				if(!sameExactAxis(axes.get(axis), that.axes.get(axis)))
+					return false;
+			return true;
+		}
 
 		private static List<CandidateRealizationInputBinding> mergeExactAxis(
 			List<CandidateRealizationInputBinding> left,
@@ -5782,24 +5804,47 @@ final class NativePlacementContinuity {
 			return canonicalIndex.ordinalOfBindings(axes, bindings);
 		}
 		int ordinalOfExactAuthorityBindings(List<CandidateRealizationInputBinding> bindings) {
-			if(bindings.size() != axes.size())
+			List<CandidateRealizationInputBinding> owned = exactOwnedBindings(bindings);
+			if(owned == null)
 				return -1;
+			return canonicalIndex.ordinalOfBindings(axes, owned);
+		}
+		int bindingLength(List<CandidateRealizationInputBinding> bindings) {
+			List<CandidateRealizationInputBinding> owned = exactOwnedBindings(bindings);
+			return owned == null ? -1 : canonicalIndex.bindingLength(axes, owned);
+		}
+		int rankWithinBindingLength(List<CandidateRealizationInputBinding> bindings) {
+			List<CandidateRealizationInputBinding> owned = exactOwnedBindings(bindings);
+			return owned == null ? -1 : canonicalIndex.rankWithinBindingLength(axes, owned);
+		}
+		private List<CandidateRealizationInputBinding> exactOwnedBindings(
+			List<CandidateRealizationInputBinding> bindings) {
+			if(bindings.size() != axes.size())
+				return null;
 			List<CandidateRealizationInputBinding> owned = new ArrayList<>(axes.size());
 			for(int axis = 0; axis < axes.size(); axis++) {
-				CandidateRealizationInputBinding selected = bindings.get(axis);
 				CandidateRealizationInputBinding match = null;
 				for(CandidateRealizationInputBinding candidate : axes.get(axis))
-					if(sameExactBindingAuthority(candidate, selected)) {
+					if(sameExactBindingAuthority(candidate, bindings.get(axis))) {
 						if(match != null)
-							return -1;
+							return null;
 						match = candidate;
 					}
 				if(match == null)
-					return -1;
+					return null;
 				owned.add(match);
 			}
-			return canonicalIndex.ordinalOfBindings(axes, owned);
+			return PlacementAnalysis.sharedAlreadyCanonicalComparableList(
+				owned, "native exact owned binding");
 		}
+		List<CandidateRealizationInputBinding> bindingsAtLengthRank(
+			int bindingLength, int rank) {
+			return canonicalIndex.bindingsAtLengthRank(axes, bindingLength, rank);
+		}
+		java.util.Map<Integer,Integer> bindingLengthCounts() {
+			return canonicalIndex.bindingLengthCounts();
+		}
+		int fixedAuthorityLength() { return canonicalIndex.fixedAuthorityLength(); }
 		private static List<CandidateRealizationInputBinding> rowMajorBindingsAt(
 			List<List<CandidateRealizationInputBinding>> axes, int size, int ordinal) {
 			Objects.checkIndex(ordinal, size);
@@ -5829,15 +5874,22 @@ final class NativePlacementContinuity {
 		private final List<int[]> optionLengths;
 		private final List<java.util.Map<Integer,Integer>> suffixLengthCounts;
 		private final List<NativeCanonicalLengthBucket> orderedLengths;
+		private final int fixedAuthorityLength;
+		private final java.util.Map<Integer,Integer> bindingLengthCounts;
 
 		private NativeCanonicalProductIndex(boolean rowMajor,
 			List<int[]> optionLengths,
 			List<java.util.Map<Integer,Integer>> suffixLengthCounts,
-			List<NativeCanonicalLengthBucket> orderedLengths) {
+			List<NativeCanonicalLengthBucket> orderedLengths, int fixedAuthorityLength) {
 			this.rowMajor = rowMajor;
 			this.optionLengths = optionLengths;
 			this.suffixLengthCounts = suffixLengthCounts;
 			this.orderedLengths = orderedLengths;
+			this.fixedAuthorityLength = fixedAuthorityLength;
+			java.util.Map<Integer,Integer> counts = new java.util.LinkedHashMap<>();
+			for(NativeCanonicalLengthBucket bucket : orderedLengths)
+				counts.put(bucket.bindingLength(), bucket.count());
+			bindingLengthCounts = java.util.Map.copyOf(counts);
 		}
 
 		private long retainedMetadataUnits() {
@@ -5884,7 +5936,10 @@ final class NativePlacementContinuity {
 					for(int[] lengths : optionLengths)
 						authorityLength = Math.addExact(authorityLength, lengths[0]);
 					return new NativeCanonicalProductIndex(true, List.copyOf(optionLengths),
-						List.of(), List.of());
+						List.of(), List.of(new NativeCanonicalLengthBucket(
+							authorityLength - fixedAuthorityLength,
+							axes.stream().mapToInt(List::size).reduce(1, Math::multiplyExact),
+							Integer.toString(authorityLength) + ':')), fixedAuthorityLength);
 				}
 
 				List<java.util.Map<Integer,Integer>> suffix = new ArrayList<>(
@@ -5929,11 +5984,16 @@ final class NativePlacementContinuity {
 				}
 				ordered.sort(java.util.Comparator.comparing(NativeCanonicalLengthBucket::lengthPrefix));
 				return new NativeCanonicalProductIndex(false, List.copyOf(optionLengths),
-					List.copyOf(suffix), List.copyOf(ordered));
+					List.copyOf(suffix), List.copyOf(ordered), fixedAuthorityLength);
 			}
 			catch(ArithmeticException overflow) {
 				return null;
 			}
+		}
+
+		private int fixedAuthorityLength() { return fixedAuthorityLength; }
+		private java.util.Map<Integer,Integer> bindingLengthCounts() {
+			return bindingLengthCounts;
 		}
 
 		private List<CandidateRealizationInputBinding> bindingsAt(
@@ -5953,6 +6013,17 @@ final class NativePlacementContinuity {
 			if(bindingLength < 0)
 				throw new IllegalStateException("Native support ordinal exceeds canonical length index");
 
+			return bindingsAtLengthRank(axes, bindingLength, withinLength);
+		}
+
+		private List<CandidateRealizationInputBinding> bindingsAtLengthRank(
+			List<List<CandidateRealizationInputBinding>> axes, int bindingLength, int rank) {
+			Integer bucketCount = bindingLengthCounts().get(bindingLength);
+			if(bucketCount == null || rank < 0 || rank >= bucketCount)
+				throw new IndexOutOfBoundsException("Native binding-length rank outside relation");
+			if(rowMajor)
+				return NativeSupportProduct.rowMajorBindingsAt(axes, bucketCount, rank);
+			int withinLength = rank;
 			CandidateRealizationInputBinding[] selected =
 				new CandidateRealizationInputBinding[axes.size()];
 			int remainingLength = bindingLength;
@@ -5980,6 +6051,34 @@ final class NativePlacementContinuity {
 				throw new IllegalStateException("Native canonical support member was not fully consumed");
 			return PlacementAnalysis.sharedAlreadyCanonicalComparableList(
 				java.util.Arrays.asList(selected), "native support product binding");
+		}
+
+		private int bindingLength(List<List<CandidateRealizationInputBinding>> axes,
+			List<CandidateRealizationInputBinding> bindings) {
+			if(bindings.size() != axes.size())
+				return -1;
+			int length = 0;
+			for(int axis = 0; axis < axes.size(); axis++) {
+				int option = identityIndexOf(axes.get(axis), bindings.get(axis));
+				if(option < 0)
+					return -1;
+				length = Math.addExact(length, optionLengths.get(axis)[option]);
+			}
+			return length;
+		}
+
+		private int rankWithinBindingLength(List<List<CandidateRealizationInputBinding>> axes,
+			List<CandidateRealizationInputBinding> bindings) {
+			int ordinal = ordinalOfBindings(axes, bindings);
+			int length = bindingLength(axes, bindings);
+			if(ordinal < 0 || length < 0)
+				return -1;
+			for(NativeCanonicalLengthBucket bucket : orderedLengths) {
+				if(bucket.bindingLength() == length)
+					return ordinal;
+				ordinal -= bucket.count();
+			}
+			return -1;
 		}
 
 		private int ordinalOfBindings(List<List<CandidateRealizationInputBinding>> axes,

@@ -50,6 +50,103 @@ public class NativeMultiSeedPublicationTest {
 		new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false), false);
 
 	@Test
+	public void identicalBindingAxesAcrossCollidingSeedHeadersStayCompressed() throws Exception {
+		assertCollidingHeadersStayCompressed(false);
+	}
+
+	@Test
+	public void mixedExactnessKeepsCollidingDurableHeadersAndNativePartsCompressed() throws Exception {
+		assertCollidingHeadersStayCompressed(true);
+	}
+
+	private static void assertCollidingHeadersStayCompressed(boolean mixed) throws Exception {
+		CompiledHopKey sourceOwner = fixtureKey("header-collision-source");
+		CompiledHopKey consumerOwner = fixtureKey("header-collision-consumer");
+		DurableAnchorKey firstPool = new DurableAnchorKey("header-first", FType.ROW, List.of(
+			new AnchorPartition("shared-worker", List.of(0L, 0L), List.of(8L, 2L))));
+		DurableAnchorKey secondPool = new DurableAnchorKey("header-second", FType.ROW, List.of(
+			new AnchorPartition("shared-worker", List.of(0L, 0L), List.of(8L, 5L))));
+		List<CandidateEmissionRealization> variants = new ArrayList<>(List.of(
+			exactSource(sourceOwner, firstPool, "first-1"),
+			exactSource(sourceOwner, firstPool, "first-2"),
+			exactSource(sourceOwner, secondPool, "second-1"),
+			exactSource(sourceOwner, secondPool, "second-2")));
+		if(mixed) {
+			CandidateRuleKey sourceRule = new CandidateRuleKey(sourceOwner, List.of());
+			for(int index : List.of(0, 2))
+				variants.add(CandidateEmissionRealization.valueMap(ROW_EMISSION, "mapped-" + index,
+					List.of(new CandidateRealizationSupportClause(List.of(), List.of(
+						CandidateRealizationInputBinding.logicalTransient(0,
+							CandidateRealizationReference.of(sourceRule, variants.get(index))))))));
+		}
+		CandidateRuleFact source = sourceFact(sourceOwner, variants);
+		CandidateRuleFact consumer = consumerFact(consumerOwner);
+		DataOp sourceHop = new DataOp("header-collision-source", DataType.MATRIX,
+			ValueType.FP64, OpOpData.TRANSIENTREAD, "header-collision-source", 8, 2, 16, 1000);
+		UnaryOp consumerHop = new UnaryOp("header-collision-consumer", DataType.MATRIX,
+			ValueType.FP64, OpOp1.LOG, sourceHop);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		Map<SeedSourceProof,PlacementProofKey> expected = new LinkedHashMap<>();
+		CandidateRuleFact rebound = bind(new PlacementRelationClosure(
+			null, null, metrics, false, PrivacyEvidenceMode.NONE, false), source, consumer,
+			sourceHop, consumerHop, Map.of(firstPool, variants.size(), secondPool, variants.size()),
+			new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2), expected);
+
+		Assert.assertEquals(mixed ? 3 : 1, realizations(rebound).size());
+		Assert.assertEquals(2 * variants.size(), realizations(rebound).stream()
+			.mapToInt(realization -> realization.supportClauses().size()).sum());
+		CandidateEmissionRealization publication = realizations(rebound).stream()
+			.filter(realization -> realization.key().layoutKind()
+				== PlacementIdentity.PlacementLayoutKind.DURABLE_MAP).findFirst().orElseThrow();
+		Assert.assertEquals(8, publication.supportClauses().size());
+		Assert.assertTrue("different seed headers with identical axes must remain compressed",
+			publication.supportClauses() instanceof NativeContinuitySupportClauses);
+		Assert.assertEquals("collision publication must not create any member handle", 0,
+			publication.fullyMaterializedSupportClauseCount());
+		Assert.assertEquals(0L, metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+		Set<PlacementProofKey> actual = new java.util.HashSet<>();
+		for(CandidateRealizationSupportClause clause : realizations(rebound).stream()
+			.flatMap(realization -> realization.supportClauses().stream()).toList()) {
+			Assert.assertEquals(1, clause.proofDependencies().size());
+			Assert.assertSame(consumerOwner, clause.proofDependencies().get(0).owner());
+			Assert.assertSame(sourceOwner, clause.inputBindings().get(0).source().rule().parentOccurrence());
+			actual.add(clause.proofDependencies().get(0));
+		}
+		Assert.assertEquals(Set.copyOf(expected.values()), actual);
+		CandidateRuleFact repeated = bind(new PlacementRelationClosure(
+			null, null, metrics, false, PrivacyEvidenceMode.NONE, false), source, rebound,
+			sourceHop, consumerHop, Map.of(firstPool, variants.size(), secondPool, variants.size()),
+			new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+		Assert.assertSame("the next closure wave must retain the exact multi-header authority",
+			publication, realizations(repeated).stream()
+				.filter(realization -> realization.key().equals(publication.key())).findFirst().orElseThrow());
+		Assert.assertEquals("covered headers must not be consumed on the next wave", 0L,
+			metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+		if(!mixed) {
+			List<CandidateRealizationSupportClause> priorMembers = List.copyOf(publication.supportClauses());
+			variants.add(exactSource(sourceOwner, firstPool, "first-added"));
+			CandidateRuleFact grownSource = sourceFact(sourceOwner, variants);
+			CandidateRuleFact grown = bind(new PlacementRelationClosure(
+				null, null, metrics, false, PrivacyEvidenceMode.NONE, false), grownSource, repeated,
+				sourceHop, consumerHop, Map.of(firstPool, 5, secondPool, 5),
+				new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+			CandidateRuleFact cold = bind(new PlacementRelationClosure(
+				null, null, null, false, PrivacyEvidenceMode.NONE, false), grownSource, consumer,
+				sourceHop, consumerHop, Map.of(firstPool, 5, secondPool, 5),
+				new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+			Assert.assertEquals("unsupported multi-header axis growth must match cold exact authority",
+				expandedOrderedClauses(cold), expandedOrderedClauses(grown));
+			List<CandidateRealizationSupportClause> grownMembers = realizations(grown).get(0).supportClauses();
+			Assert.assertEquals(10, grownMembers.size());
+			for(CandidateRealizationSupportClause prior : priorMembers)
+				Assert.assertTrue("fallback must retain every old exact clause identity",
+					grownMembers.stream().anyMatch(member -> member == prior));
+			Assert.assertEquals("only fallback visits the two five-member products", 10L,
+				metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+		}
+	}
+
+	@Test
 	public void multiSeedProductsPublishPerLayoutAndRetainedAuthorityIsKeyScoped()
 		throws Exception {
 		CompiledHopKey sourceOwner = fixtureKey("multi-seed-source");

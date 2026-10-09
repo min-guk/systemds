@@ -302,6 +302,67 @@ public class NativeSingleAxisProductUnionTest {
 	}
 
 	@Test
+	public void fixedPointWithdrawalRestrictsEveryCommonAxisHeaderWithoutFlattening() {
+		CompiledHopKey consumerOwner = key("multi-header-fixed-point-consumer");
+		CompiledHopKey alternativesOwner = key("multi-header-alternative-source");
+		DurableAnchorKey output = pool("multi-header-fixed-point-output");
+		CandidateRuleKey missingKey = new CandidateRuleKey(key("multi-header-missing"), List.of());
+		CandidateRealizationReference missing = new CandidateRealizationReference(
+			missingKey, sourceRealization("multi-header-missing").key());
+		CandidateRuleKey doomedKey = new CandidateRuleKey(key("multi-header-doomed"),
+			List.of(CandidateInputState.present(FType.ROW)));
+		CandidateEmissionRealization doomedRealization = dependentSourceRealization(
+			"multi-header-doomed", CandidateRealizationInputBinding.direct(0, missing));
+		CandidateRuleFact doomedSource = fact(doomedKey,
+			new CandidateEmissionFact(emission(), FType.ROW, null, List.of(doomedRealization)));
+		CandidateRuleKey alternativesKey = new CandidateRuleKey(alternativesOwner,
+			List.of(CandidateInputState.present(FType.ROW)));
+		CandidateEmissionRealization doomedAlternative = dependentSourceRealization(
+			"multi-header-a", CandidateRealizationInputBinding.direct(0,
+				CandidateRealizationReference.of(doomedKey, doomedRealization)));
+		CandidateEmissionRealization liveAlternative = sourceRealization("multi-header-b");
+		CandidateRuleFact alternatives = fact(alternativesKey,
+			new CandidateEmissionFact(emission(), FType.ROW, null,
+				List.of(doomedAlternative, liveAlternative)));
+		CandidateRealizationInputBinding a = sourceBinding(0, alternatives, doomedAlternative);
+		CandidateRealizationInputBinding b = sourceBinding(0, alternatives, liveAlternative);
+		NativeContinuitySupportClauses first = relation(consumerOwner, pool("header-a"), output,
+			List.of(sorted(a, b)));
+		NativeContinuitySupportClauses second = relation(consumerOwner, pool("header-b"), output,
+			List.of(sorted(directLike(a), directLike(b))));
+		CandidateRealizationSupportClause firstB = first.get(
+			first.product().ordinalOfExactAuthorityBindings(List.of(b)));
+		CandidateRealizationSupportClause secondB = second.get(
+			second.product().ordinalOfExactAuthorityBindings(List.of(directLike(b))));
+		NativeContinuitySupportClauses union = first.multiHeaderUnion(second).orElseThrow();
+		PlacementRealizationKey outputKey =
+			PlacementRealizationKey.nativeLineage(emission(), "multi-header-fixed-point-output");
+		CandidateEmissionFact emission = new CandidateEmissionFact(emission(), FType.ROW, null,
+			List.of(new CandidateEmissionRealization(outputKey, union)));
+		CandidateRuleFact consumer = fact(new CandidateRuleKey(consumerOwner,
+			List.of(CandidateInputState.present(FType.ROW))), emission);
+		PlacementSupportRelations.WorklistResult fixedPoint = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPointWithWork(
+				List.of(doomedSource, alternatives, consumer), null, List.of(), Map.of());
+		CandidateEmissionRealization retained = fixedPoint.facts().stream()
+			.filter(candidate -> candidate.key().parentOccurrence() == consumerOwner)
+			.flatMap(candidate -> candidate.allowedEmissionFacts().stream())
+			.flatMap(candidate -> candidate.realizations().stream())
+			.filter(candidate -> candidate.key().equals(outputKey)).findFirst().orElseThrow();
+		NativeContinuitySupportClauses restricted =
+			(NativeContinuitySupportClauses)retained.supportClauses();
+		Assert.assertEquals(2, restricted.size());
+		java.util.Set<CandidateRealizationSupportClause> expected =
+			java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+		expected.add(firstB);
+		expected.add(secondB);
+		for(int ordinal = 0; ordinal < restricted.size(); ordinal++)
+			Assert.assertTrue("each header retains its exact donor through the real worklist",
+				expected.remove(restricted.get(ordinal)));
+		Assert.assertTrue(expected.isEmpty());
+	}
+
+	@Test
 	public void differentHeadersForeignOwnersAndTwoChangedAxesFallBack() {
 		CompiledHopKey owner = key("consumer");
 		CompiledHopKey foreignOwner = cloneKey(owner);

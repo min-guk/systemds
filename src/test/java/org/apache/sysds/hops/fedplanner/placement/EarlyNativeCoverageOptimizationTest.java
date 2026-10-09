@@ -713,7 +713,7 @@ public class EarlyNativeCoverageOptimizationTest {
 	}
 
 	@Test
-	public void collidingDurableSeedOutputsKeepTheExactExplicitUnion() throws Exception {
+	public void collidingDurableSeedOutputsKeepTheExactUnionWithoutMemberExpansion() throws Exception {
 		CompiledHopKey sourceOwner = (CompiledHopKey)seedFixture("key",
 			new Class<?>[] {String.class}, "collision-source");
 		CompiledHopKey consumerOwner = (CompiledHopKey)seedFixture("key",
@@ -800,22 +800,24 @@ public class EarlyNativeCoverageOptimizationTest {
 		CandidateRuleFact actualFact = boundFacts(bind.invoke(closure, index, List.of(consumer),
 			origins, shapes, continuity, dirty)).get(0);
 		CandidateEmissionFact actual = actualFact.allowedEmissionFacts().get(0);
-		Assert.assertTrue("same durable output authority must take the exact fallback",
-			actual.realizations().stream().noneMatch(realization ->
+		Assert.assertTrue("common-axis colliding headers retain their exact native relation",
+			actual.realizations().stream().allMatch(realization ->
 				realization.nativeContinuitySupportProduct().isPresent()));
 		Assert.assertEquals(1, actual.realizations().size());
 		CandidateEmissionRealization actualRealization = actual.realizations().get(0);
 		Assert.assertEquals(PlacementIdentity.PlacementLayoutKind.DURABLE_MAP,
 			actualRealization.key().layoutKind());
-		Assert.assertTrue(actualRealization.supportClauses().size() >= 2);
-		Assert.assertTrue("colliding products must consume exact proof members",
-			directMetric(metrics, "PROOFS_CONSUMED") > 0);
+		Assert.assertEquals(4, actualRealization.supportClauses().size());
+		Assert.assertEquals(2, actualRealization.nativeContinuitySupportProduct().orElseThrow().headerCount());
+		Assert.assertEquals(0, actualRealization.fullyMaterializedSupportClauseCount());
+		Assert.assertEquals("compressed publication must not visit exact proof members", 0,
+			directMetric(metrics, "PROOFS_CONSUMED"));
 		SearchSpaceMetrics.NativePublicationCount collision = metrics.nativePublicationSnapshot().stream()
-			.filter(row -> row.outcome() == SearchSpaceMetrics.NativePublicationOutcome.OUTPUT_COLLISION)
+			.filter(row -> row.outcome() == SearchSpaceMetrics.NativePublicationOutcome.PUBLISHED)
 			.findFirst().orElseThrow();
 		Assert.assertEquals(2, collision.queries());
 		Assert.assertEquals(4, collision.logicalProofs());
-		Assert.assertEquals(4, collision.consumedProofs());
+		Assert.assertEquals(0, collision.consumedProofs());
 
 		CandidateRealizationReference output = new CandidateRealizationReference(
 			consumer.key(), actualRealization.key());
@@ -831,7 +833,7 @@ public class EarlyNativeCoverageOptimizationTest {
 					"explicit-collision-reference", true));
 		CandidateEmissionFact reference = new CandidateEmissionFact(baseEmission.emissionState(),
 			baseEmission.executionFType(), baseEmission.derivedFoutAction(), explicit);
-		Assert.assertEquals("collision fallback preserves canonical proof/source authority",
+		Assert.assertEquals("compressed collision union preserves canonical proof/source authority",
 			reference.realizations(), actual.realizations());
 	}
 
