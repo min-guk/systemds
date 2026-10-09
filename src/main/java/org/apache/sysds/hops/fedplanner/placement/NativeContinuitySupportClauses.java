@@ -216,6 +216,57 @@ final class NativeContinuitySupportClauses
 		return java.util.Optional.of(new NativeContinuitySupportClauses(owner, merged,
 			clauseWitness, clauseLayoutExact, donors));
 	}
+	/** Complete-key union: finish each proof header before comparing shared domains. */
+	static java.util.Optional<NativeContinuitySupportClauses> unionSameAxesHeaderGroup(
+		List<NativeContinuitySupportClauses> relations) {
+		if(relations.isEmpty())
+			return java.util.Optional.empty();
+		NativeContinuitySupportClauses first = relations.get(0);
+		java.util.Map<HeaderAuthority,NativeContinuitySupportClauses> byHeader =
+			new java.util.LinkedHashMap<>();
+		for(NativeContinuitySupportClauses relation : relations) {
+			if(relation.owner != first.owner || relation.clauseLayoutExact != first.clauseLayoutExact
+				|| !Objects.equals(relation.clauseWitness, first.clauseWitness))
+				return java.util.Optional.empty();
+			for(var product : relation.products) {
+				HeaderAuthority header = new HeaderAuthority(product.externalSeed(),
+					product.outputWorkerPoolWitness(), product.exactPartitionRanges());
+				NativeContinuitySupportClauses retained = byHeader.get(header);
+				if(retained == null && byHeader.size() >= MAX_AUTHORITY_DONORS)
+					return java.util.Optional.empty();
+				NativeContinuitySupportClauses member = relation.singleHeaderView(product);
+				if(member == null)
+					return java.util.Optional.empty();
+				if(retained != null) {
+					member = retained.oneAxisUnion(member).orElse(null);
+					if(member == null)
+						return java.util.Optional.empty();
+				}
+				byHeader.put(header, member);
+			}
+		}
+		NativeContinuitySupportClauses union = null;
+		for(NativeContinuitySupportClauses member : byHeader.values()) {
+			union = union == null ? member : union.multiHeaderUnion(member).orElse(null);
+			if(union == null)
+				return java.util.Optional.empty();
+		}
+		return java.util.Optional.of(union.sameExactAuthority(first) ? first : union);
+	}
+	private NativeContinuitySupportClauses singleHeaderView(
+		NativePlacementContinuity.NativeSupportProduct product) {
+		if(products.size() == 1)
+			return this;
+		// Keep original leaf handles and scope ownership, never the family itself
+		// as a donor. Reconstructing from just the product would lose first authority.
+		List<AuthorityDonor> donors = authorityDonors.stream()
+			.filter(donor -> donor.scope().sameHeaderAuthority(product)).toList();
+		return donors.isEmpty() ? null : new NativeContinuitySupportClauses(
+			owner, product, clauseWitness, clauseLayoutExact, donors);
+	}
+	private record HeaderAuthority(DurableAnchorKey seed, DurableAnchorKey output,
+		boolean exactRanges) { }
+
 	private List<AuthorityDonor> authoritySources() {
 		return authorityDonors.isEmpty()
 			? products.stream().map(product -> new AuthorityDonor(this, product)).toList()

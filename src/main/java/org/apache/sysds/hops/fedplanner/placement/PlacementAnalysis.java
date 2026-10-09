@@ -2417,6 +2417,9 @@ public final class PlacementAnalysis {
 						leftNative.oneAxisUnion(rightNative);
 					if(nativeUnion.isEmpty())
 						nativeUnion = leftNative.multiHeaderUnion(rightNative);
+					if(nativeUnion.isEmpty())
+						nativeUnion = NativeContinuitySupportClauses.unionSameAxesHeaderGroup(
+							List.of(leftNative, rightNative));
 					if(nativeUnion.isPresent()) {
 						NativeContinuitySupportClauses union = nativeUnion.get();
 						long uniqueClauses = union.size();
@@ -2739,23 +2742,18 @@ public final class PlacementAnalysis {
 			List<CandidateEmissionRealization> group, SearchSpaceMetrics metrics) {
 			if(metrics != null && metrics.hasDuplicateMergeDiagnostics())
 				return null;
-			NativeContinuitySupportClauses union = null;
+			List<NativeContinuitySupportClauses> relations = new ArrayList<>(group.size());
 			long inputClauses = 0;
 			for(CandidateEmissionRealization realization : group) {
 				if(!(realization.supportClauses() instanceof NativeContinuitySupportClauses relation))
 					return null;
 				inputClauses += relation.size();
-				if(union == null)
-					union = relation;
-				else {
-					Optional<NativeContinuitySupportClauses> next = union.oneAxisUnion(relation);
-					if(next.isEmpty())
-						next = union.multiHeaderUnion(relation);
-					if(next.isEmpty())
-						return null;
-					union = next.get();
-				}
+				relations.add(relation);
 			}
+			NativeContinuitySupportClauses union =
+				NativeContinuitySupportClauses.unionSameAxesHeaderGroup(relations).orElse(null);
+			if(union == null)
+				return null;
 			if(metrics != null)
 				metrics.recordRealizationMergeClauses(union.size(), inputClauses - union.size());
 			for(CandidateEmissionRealization realization : group)

@@ -5953,10 +5953,10 @@ final class PlacementRelationClosure {
 								NativeProductAdmission exactAdmission = nativeProductAdmission(
 									productPublications.get(0), grounded,
 									productPublications.get(0).supportClauses().size() > 1,
-									prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1 || losslessProduct);
+									prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1 || losslessProduct, losslessProduct);
 								NativeProductAdmission nativeAdmission = nativeProductAdmission(
 									productPublications.get(1), grounded,
-									productPublications.get(1).supportClauses().size() > 1, true);
+									productPublications.get(1).supportClauses().size() > 1, true, losslessProduct);
 								if(exactAdmission.admitted() || nativeAdmission.admitted()) {
 									if(publicationTrace != null)
 										complexityMetrics.recordNativePublication(
@@ -6017,7 +6017,7 @@ final class PlacementRelationClosure {
 									== PlacementLayoutKind.NATIVE_LINEAGE
 									|| prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1 || losslessProduct;
 								NativeProductAdmission admission = nativeProductAdmission(
-									productPublication, grounded, worthwhile, disjointRequest);
+									productPublication, grounded, worthwhile, disjointRequest, losslessProduct);
 								if(publicationTrace != null)
 									publicationTrace.outcome = admission.outcome();
 								if(admission.admitted()) {
@@ -6432,6 +6432,21 @@ final class PlacementRelationClosure {
 	}
 
 	private static NativeProductAdmission nativeProductAdmission(CandidateEmissionRealization publication,
+		GroundedNativePreparation grounded, boolean worthwhile, boolean disjointRequest,
+		boolean losslessProduct) {
+		NativeProductAdmission admission = nativeProductAdmission(
+			publication, grounded, worthwhile, disjointRequest);
+		// A single wider header can temporarily break a family's rectangular domain.
+		// Keep this exact operand for the existing final emission merge, where all
+		// headers may have grown. Never bypass staging/explicit/foreign authority,
+		// and never forward a filtered query in place of legacy scalar validation.
+		if(admission.outcome() == NativePublicationOutcome.RETAINED_UNION && losslessProduct
+			&& grounded.hasOnlyNativeRetainedAuthority(publication.key()))
+			return NativeProductAdmission.published(publication);
+		return admission;
+	}
+
+	private static NativeProductAdmission nativeProductAdmission(CandidateEmissionRealization publication,
 		GroundedNativePreparation grounded, boolean worthwhile, boolean disjointRequest) {
 		if(!worthwhile)
 			return NativeProductAdmission.rejected(NativePublicationOutcome.SINGLETON_OUTPUT);
@@ -6565,6 +6580,14 @@ final class PlacementRelationClosure {
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> clauses = prior.get(key);
 			// Staging-only keys have an empty prior map, not grounded authority.
 			return clauses != null && !clauses.isEmpty() || nativeProducts.containsKey(key);
+		}
+		private boolean hasOnlyNativeRetainedAuthority(PlacementIdentity.PlacementRealizationKey key) {
+			if(hasStaging || hasConflictingEqualAuthority)
+				return false;
+			var explicit = prior.get(key);
+			var nativeRelations = nativeProducts.get(key);
+			return (explicit == null || explicit.isEmpty())
+				&& nativeRelations != null && !nativeRelations.isEmpty();
 		}
 		private NativeRetainedUnion unionRetainedNativeProduct(
 			CandidateEmissionRealization candidate) {
