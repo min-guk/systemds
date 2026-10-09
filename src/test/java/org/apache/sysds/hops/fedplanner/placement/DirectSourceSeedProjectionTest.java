@@ -817,20 +817,23 @@ public class DirectSourceSeedProjectionTest {
 			nested("NativePublicationTrace"));
 		publish.setAccessible(true);
 
-		CandidateEmissionRealization unanchored = (CandidateEmissionRealization)publish.invoke(
+		CandidateEmissionRealization unanchored = ((List<CandidateEmissionRealization>)publish.invoke(
 			closure, exactProduct, consumer, ROW_EMISSION, null, "mixed-axis-unanchored",
-			List.of(), sources, new IdentityHashMap<>(), null);
-		CandidateEmissionRealization dynamic = (CandidateEmissionRealization)publish.invoke(
+			List.of(), sources, new IdentityHashMap<>(), null)).get(0);
+		CandidateEmissionRealization dynamic = ((List<CandidateEmissionRealization>)publish.invoke(
 			closure, dynamicProduct, consumer, ROW_EMISSION, output, "mixed-axis-dynamic-output",
-			List.of(), sources, new IdentityHashMap<>(), null);
-		CandidateEmissionRealization durableCandidate = (CandidateEmissionRealization)publish.invoke(
+			List.of(), sources, new IdentityHashMap<>(), null)).get(0);
+		List<CandidateEmissionRealization> durableCandidate = (List<CandidateEmissionRealization>)publish.invoke(
 			closure, exactProduct, consumer, ROW_EMISSION, output, "mixed-axis-durable-output",
 			List.of(), sources, new IdentityHashMap<>(), null);
 
 		Assert.assertNotNull("unanchored native authority admits the mixed source axis", unanchored);
 		Assert.assertNotNull("dynamic output authority admits the mixed source axis", dynamic);
-		Assert.assertNull("exact anchored output must preserve the explicit durable/native split",
-			durableCandidate);
+		Assert.assertEquals("exact anchored output preserves both durable/native parts", 2, durableCandidate.size());
+		Assert.assertEquals(PlacementIdentity.PlacementLayoutKind.DURABLE_MAP,
+			durableCandidate.get(0).key().layoutKind());
+		Assert.assertEquals(PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE,
+			durableCandidate.get(1).key().layoutKind());
 		Method explicit = PlacementRelationClosure.class.getDeclaredMethod("directNativePublication",
 			NativePlacementContinuity.NativeContinuityProof.class, CompiledHopKey.class,
 			PlacementEmissionState.class, DurableAnchorKey.class, String.class, boolean.class);
