@@ -2626,11 +2626,8 @@ final class NativePlacementContinuity {
 						break;
 					}
 					List<CandidateRealizationReference> options = supportedReferences.computeIfAbsent(
-						dependency.state(), state -> canonicalReferences(viable.getOrDefault(state, List.of()).stream()
-							.filter(option -> option.realization != null)
-							.filter(option -> (option.directGround || !option.dependencies.isEmpty())
-								&& option.dependencies.stream().allMatch(child -> supported.contains(child.state())))
-							.map(SelectedCandidateProof::realization).toList()));
+						dependency.state(), state -> canonicalSupportedReferences(
+							viable.getOrDefault(state, List.of()), supported));
 					if(options.isEmpty()) {
 						if(!directlySupported.computeIfAbsent(dependency.state(), state -> viable
 							.getOrDefault(state, List.of()).stream().anyMatch(option -> option.directGround))) {
@@ -2763,6 +2760,23 @@ final class NativePlacementContinuity {
 		}
 		detail.append(']');
 		FederatedPlannerTrace.log(owner, "Native-EmptyCandidateSupport", detail.toString());
+	}
+
+	private static List<CandidateRealizationReference> canonicalSupportedReferences(
+		List<SelectedCandidateProof> alternatives, Set<CandidateProofState> supported) {
+		if(alternatives instanceof DefaultAlternativeList defaults) {
+			DefaultTraversalSchedule schedule = defaults.traversalSchedule(null);
+			// Recheck query viability before using immutable row-only metadata. A later
+			// query may have withdrawn a successor even when this exact list is reused.
+			if(schedule.filteredAlternatives == defaults
+				&& schedule.uniqueSuccessors.stream().allMatch(supported::contains))
+				return defaults.canonicalRealizations();
+		}
+		return canonicalReferences(alternatives.stream()
+			.filter(option -> option.realization != null)
+			.filter(option -> (option.directGround || !option.dependencies.isEmpty())
+				&& option.dependencies.stream().allMatch(child -> supported.contains(child.state())))
+			.map(SelectedCandidateProof::realization).toList());
 	}
 
 	private static List<CandidateRealizationReference> canonicalReferences(
@@ -2998,6 +3012,27 @@ final class NativePlacementContinuity {
 		// Only replace values so graph key order and revision-invalidation footprint stay intact.
 		for(CandidateProofState state : completionOrder) {
 			List<SelectedCandidateProof> alternatives = graph.getOrDefault(state, List.of());
+			DefaultTraversalSchedule schedule = alternatives instanceof DefaultAlternativeList defaults
+				? defaults.schedule : null;
+			if(schedule != null && schedule.filteredAlternatives == alternatives) {
+				boolean allSuccessorsLive = true;
+				for(CandidateProofState successor : schedule.uniqueSuccessors) {
+					List<SelectedCandidateProof> child = graph.get(successor);
+					if(child == null || child.isEmpty()) {
+						allSuccessorsLive = false;
+						break;
+					}
+				}
+				if(allSuccessorsLive) {
+					// DFS completed these children before this owner. Every original row
+					// therefore survives; retain its exact order and authority without a row scan.
+					if(metrics != null)
+						metrics.recordDirectWork(
+							SearchSpaceMetrics.DirectWork.PRUNE_UNCHANGED_OWNER_SLOTS_SKIPPED,
+							alternatives.size());
+					continue;
+				}
+			}
 			if(metrics != null)
 				metrics.recordOwnerElementsScanned(alternatives.size());
 			List<SelectedCandidateProof> survivors = null;
@@ -5203,6 +5238,9 @@ final class NativePlacementContinuity {
 		private final Map<Integer,List<SelectedCandidateProof>> defaultAlternativesByHandle;
 		private final Set<CompiledHopKey> dependencyOwners;
 		private final Set<CompiledHopKey> metadataOwnerReads;
+		private final CandidateRealizationReference[] structuralHandleReferences;
+		private final int[] structuralHandleValues;
+		private final boolean structuralHandleAuthorityValid;
 
 		private CandidateTopology(boolean eligible, boolean nodeDirectGround,
 			List<CandidateTopologyRow> rows, Map<Integer,List<CandidateTopologyRow>> rowsByHandle) {
@@ -5231,6 +5269,55 @@ final class NativePlacementContinuity {
 			Set<CompiledHopKey> metadata = Collections.newSetFromMap(new IdentityHashMap<>());
 			metadata.addAll(metadataOwnerReads);
 			this.metadataOwnerReads = Collections.unmodifiableSet(metadata);
+			IdentityHashMap<CandidateRealizationReference,Integer> structuralHandles =
+				new IdentityHashMap<>();
+			List<CandidateRealizationReference> structuralReferences = new ArrayList<>();
+			List<Integer> structuralValues = new ArrayList<>();
+			boolean validStructuralAuthority = true;
+			int indexedRows = 0;
+			for(var bucket : this.rowsByHandle.entrySet()) {
+				int rowHandle = bucket.getKey();
+				if(rowHandle <= 0)
+					validStructuralAuthority = false;
+				for(CandidateTopologyRow row : bucket.getValue()) {
+					indexedRows++;
+					validStructuralAuthority &= addStructuralHandleAuthority(structuralHandles,
+						structuralReferences, structuralValues, row.reference, rowHandle);
+					for(CandidateDependencySkeleton dependency : row.dependencies) {
+						if(dependency.clausePinned == null) {
+							if(dependency.clausePinnedHandle != 0)
+								validStructuralAuthority = false;
+						}
+						else if(dependency.clausePinnedHandle <= 0)
+							validStructuralAuthority = false;
+						else
+							validStructuralAuthority &= addStructuralHandleAuthority(structuralHandles,
+								structuralReferences, structuralValues, dependency.clausePinned,
+								dependency.clausePinnedHandle);
+					}
+				}
+			}
+			if(indexedRows != this.rows.size())
+				validStructuralAuthority = false;
+			structuralHandleReferences = structuralReferences.toArray(
+				CandidateRealizationReference[]::new);
+			structuralHandleValues = new int[structuralValues.size()];
+			for(int index = 0; index < structuralValues.size(); index++)
+				structuralHandleValues[index] = structuralValues.get(index);
+			structuralHandleAuthorityValid = validStructuralAuthority;
+		}
+
+		private static boolean addStructuralHandleAuthority(
+			IdentityHashMap<CandidateRealizationReference,Integer> handles,
+			List<CandidateRealizationReference> references, List<Integer> values,
+			CandidateRealizationReference reference, int expectedHandle) {
+			Integer prior = handles.get(reference);
+			if(prior != null)
+				return prior == expectedHandle;
+			handles.put(reference, expectedHandle);
+			references.add(reference);
+			values.add(expectedHandle);
+			return true;
 		}
 
 		private boolean hasFixedDependency(CompiledHopKey fixedOwner) {
@@ -5238,32 +5325,13 @@ final class NativePlacementContinuity {
 		}
 
 		private boolean hasStableStructuralHandles(NativePlacementContinuity destination) {
-			int visited = 0;
-			// Both private builders index every exact row once. Walk those buckets
-			// directly: searching the same realization bucket for each row is quadratic.
-			for(var bucket : rowsByHandle.entrySet()) {
-				if(bucket.getKey() <= 0)
+			if(!structuralHandleAuthorityValid)
+				return false;
+			for(int index = 0; index < structuralHandleReferences.length; index++)
+				if(destination.candidateHandle(structuralHandleReferences[index])
+					!= structuralHandleValues[index])
 					return false;
-				for(CandidateTopologyRow row : bucket.getValue()) {
-					if(destination.candidateHandle(row.reference) != bucket.getKey())
-						return false;
-					visited++;
-					for(CandidateDependencySkeleton dependency : row.dependencies) {
-						if(dependency.clausePinned == null) {
-							if(dependency.clausePinnedHandle != 0)
-								return false;
-						}
-						else {
-							int dependencyHandle = destination.candidateHandle(dependency.clausePinned);
-							// Equal negative numbers in two revisions are not shared authority.
-							if(dependencyHandle <= 0
-								|| dependencyHandle != dependency.clausePinnedHandle)
-								return false;
-						}
-					}
-				}
-			}
-			return visited == rows.size();
+			return true;
 		}
 	}
 
@@ -5276,6 +5344,7 @@ final class NativePlacementContinuity {
 		private static final int MAX_PRUNING_ORDINAL_EDGES = 65_536;
 		private final List<SelectedCandidateProof> alternatives;
 		private volatile DefaultTraversalSchedule schedule;
+		private volatile List<CandidateRealizationReference> canonicalRealizations;
 		private volatile boolean pruningOrdinalsAttempted;
 		private volatile int[] pruningDependencyOrdinals;
 
@@ -5301,6 +5370,22 @@ final class NativePlacementContinuity {
 			if(metrics != null)
 				metrics.recordDefaultTraversalSchedule(built, current.rawDependencyCount,
 					current.uniqueSuccessors.size());
+			return current;
+		}
+
+		/** At most one reference per row, bounded by this list's existing row budget. */
+		private List<CandidateRealizationReference> canonicalRealizations() {
+			List<CandidateRealizationReference> current = canonicalRealizations;
+			if(current == null)
+				synchronized(this) {
+					current = canonicalRealizations;
+					if(current == null) {
+						current = canonicalReferences(alternatives.stream()
+							.map(SelectedCandidateProof::realization)
+							.filter(Objects::nonNull).toList());
+						canonicalRealizations = current;
+					}
+				}
 			return current;
 		}
 
