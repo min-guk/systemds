@@ -529,7 +529,22 @@ public final class SearchSpaceMetrics {
 	private final long[] exclusiveCpuNanos = new long[Phase.values().length];
 	private final long[] inclusiveAllocatedBytes = new long[Phase.values().length];
 	private final long[] exclusiveAllocatedBytes = new long[Phase.values().length];
-	private final ArrayDeque<PhaseToken> phaseStack = new ArrayDeque<>();
+	private static final int INITIAL_PHASE_DEPTH = 16;
+	private static final long MAX_PHASE_OWNER = Integer.MAX_VALUE;
+	private static final long MAX_PHASE_SEQUENCE = 0xffff_ffffL;
+	private static final java.util.concurrent.atomic.AtomicLong PHASE_OWNER_SEQUENCE =
+		new java.util.concurrent.atomic.AtomicLong();
+	private long phaseOwner = allocatePhaseOwner();
+	private int[] activePhaseOrdinals = new int[INITIAL_PHASE_DEPTH];
+	private long[] activePhaseHandles = new long[INITIAL_PHASE_DEPTH];
+	private long[] activeStartedWallNanos = new long[INITIAL_PHASE_DEPTH];
+	private long[] activeStartedCpuNanos = new long[INITIAL_PHASE_DEPTH];
+	private long[] activeStartedAllocatedBytes = new long[INITIAL_PHASE_DEPTH];
+	private long[] activeChildWallNanos = new long[INITIAL_PHASE_DEPTH];
+	private long[] activeChildCpuNanos = new long[INITIAL_PHASE_DEPTH];
+	private long[] activeChildAllocatedBytes = new long[INITIAL_PHASE_DEPTH];
+	private int activePhaseDepth;
+	private long nextPhaseSequence;
 	private final boolean liveMetrics = Boolean.getBoolean("sysds.fedplanner.liveMetrics");
 	private final long liveIntervalNanos = Math.max(1L,
 		Long.getLong("sysds.fedplanner.liveMetricsIntervalMs", 5000L)) * 1_000_000L;
@@ -540,7 +555,7 @@ public final class SearchSpaceMetrics {
 	private static final java.lang.management.ThreadMXBean CPU_BEAN = cpuBean();
 
 	void reset() {
-		if(!phaseStack.isEmpty())
+		if(activePhaseDepth != 0)
 			throw new IllegalStateException("SEARCH_SPACE_PHASE_RESET_WHILE_ACTIVE");
 		exactRuleCalls = evidenceReuses = evidenceOverflow = 0;
 		headerRequests = headerReuses = profileRequests = profileReuses = 0;
@@ -621,42 +636,65 @@ public final class SearchSpaceMetrics {
 	}
 
 	static final class PhaseToken {
-		private final Phase phase;
-		private final long startedWallNanos;
-		private final long startedCpuNanos;
-		private final long startedAllocatedBytes;
-		private long childWallNanos;
-		private long childCpuNanos;
-		private long childAllocatedBytes;
+		private final SearchSpaceMetrics owner;
+		private final long handle;
 
-		private PhaseToken(Phase phase, long startedWallNanos, long startedCpuNanos,
-			long startedAllocatedBytes) {
-			this.phase = phase;
-			this.startedWallNanos = startedWallNanos;
-			this.startedCpuNanos = startedCpuNanos;
-			this.startedAllocatedBytes = startedAllocatedBytes;
+		private PhaseToken(SearchSpaceMetrics owner, long handle) {
+			this.owner = owner;
+			this.handle = handle;
 		}
 	}
 
 	PhaseToken startPhase(Phase phase) {
-		PhaseToken token = new PhaseToken(phase, System.nanoTime(), currentThreadCpuNanos(),
-			currentThreadAllocatedBytes());
-		phaseStack.push(token);
+		return new PhaseToken(this,startPhaseHandle(phase));
+	}
+
+	/** Allocation-free phase handle for extremely hot instrumentation sites. */
+	long startPhaseHandle(Phase phase) {
+		if(phase == null)
+			throw new IllegalArgumentException("SEARCH_SPACE_PHASE_NULL");
+		if(nextPhaseSequence == MAX_PHASE_SEQUENCE) {
+			// Keep active frames and stale handles unique without limiting the
+			// lifetime number of phases on this collector. Existing frames retain
+			// their original complete handles until they close.
+			phaseOwner = allocatePhaseOwner();
+			nextPhaseSequence = 0L;
+		}
+		ensurePhaseCapacity(activePhaseDepth + 1);
+		long handle = phaseOwner << 32 | ++nextPhaseSequence;
+		int depth = activePhaseDepth++;
+		activePhaseOrdinals[depth] = phase.ordinal();
+		activePhaseHandles[depth] = handle;
+		activeStartedWallNanos[depth] = System.nanoTime();
+		activeStartedCpuNanos[depth] = currentThreadCpuNanos();
+		activeStartedAllocatedBytes[depth] = currentThreadAllocatedBytes();
+		activeChildWallNanos[depth] = 0L;
+		activeChildCpuNanos[depth] = 0L;
+		activeChildAllocatedBytes[depth] = 0L;
 		if(liveMetrics)
 			emitLiveMetrics(false);
-		return token;
+		return handle;
 	}
 
 	void finishPhase(Phase phase, PhaseToken token) {
-		if(token == null || token.phase != phase || phaseStack.peek() != token)
+		if(token == null || token.owner != this)
 			throw new IllegalStateException("SEARCH_SPACE_PHASE_ORDER:" + phase);
-		long wall = delta(token.startedWallNanos, System.nanoTime());
-		long cpu = delta(token.startedCpuNanos, currentThreadCpuNanos());
-		long allocation = delta(token.startedAllocatedBytes, currentThreadAllocatedBytes());
-		phaseStack.pop();
-		long exclusiveWall = subtractChild(wall, token.childWallNanos);
-		long exclusiveCpu = subtractChild(cpu, token.childCpuNanos);
-		long exclusiveAllocation = subtractChild(allocation, token.childAllocatedBytes);
+		finishPhase(phase,token.handle);
+	}
+
+	/** Complete a phase opened by {@link #startPhaseHandle(Phase)}. */
+	void finishPhase(Phase phase, long handle) {
+		int depth = activePhaseDepth - 1;
+		if(phase == null || depth < 0 || activePhaseOrdinals[depth] != phase.ordinal()
+			|| activePhaseHandles[depth] != handle)
+			throw new IllegalStateException("SEARCH_SPACE_PHASE_ORDER:" + phase);
+		long wall = delta(activeStartedWallNanos[depth], System.nanoTime());
+		long cpu = delta(activeStartedCpuNanos[depth], currentThreadCpuNanos());
+		long allocation = delta(activeStartedAllocatedBytes[depth], currentThreadAllocatedBytes());
+		long exclusiveWall = subtractChild(wall, activeChildWallNanos[depth]);
+		long exclusiveCpu = subtractChild(cpu, activeChildCpuNanos[depth]);
+		long exclusiveAllocation = subtractChild(allocation, activeChildAllocatedBytes[depth]);
+		activePhaseDepth = depth;
 		int ordinal = phase.ordinal();
 		phaseCalls[ordinal]++;
 		inclusiveWallNanos[ordinal] += wall;
@@ -665,14 +703,35 @@ public final class SearchSpaceMetrics {
 		exclusiveCpuNanos[ordinal] = addKnown(exclusiveCpuNanos[ordinal], exclusiveCpu);
 		inclusiveAllocatedBytes[ordinal] = addKnown(inclusiveAllocatedBytes[ordinal], allocation);
 		exclusiveAllocatedBytes[ordinal] = addKnown(exclusiveAllocatedBytes[ordinal], exclusiveAllocation);
-		PhaseToken parent = phaseStack.peek();
-		if(parent != null) {
-			parent.childWallNanos += wall;
-			parent.childCpuNanos = addKnown(parent.childCpuNanos, cpu);
-			parent.childAllocatedBytes = addKnown(parent.childAllocatedBytes, allocation);
+		if(depth > 0) {
+			int parent = depth - 1;
+			activeChildWallNanos[parent] += wall;
+			activeChildCpuNanos[parent] = addKnown(activeChildCpuNanos[parent], cpu);
+			activeChildAllocatedBytes[parent] = addKnown(activeChildAllocatedBytes[parent], allocation);
 		}
 		if(liveMetrics)
-			emitLiveMetrics(phaseStack.isEmpty());
+			emitLiveMetrics(activePhaseDepth == 0);
+	}
+
+	private void ensurePhaseCapacity(int required) {
+		if(required <= activePhaseHandles.length)
+			return;
+		int capacity = Math.max(required,Math.multiplyExact(activePhaseHandles.length,2));
+		activePhaseOrdinals = Arrays.copyOf(activePhaseOrdinals,capacity);
+		activePhaseHandles = Arrays.copyOf(activePhaseHandles,capacity);
+		activeStartedWallNanos = Arrays.copyOf(activeStartedWallNanos,capacity);
+		activeStartedCpuNanos = Arrays.copyOf(activeStartedCpuNanos,capacity);
+		activeStartedAllocatedBytes = Arrays.copyOf(activeStartedAllocatedBytes,capacity);
+		activeChildWallNanos = Arrays.copyOf(activeChildWallNanos,capacity);
+		activeChildCpuNanos = Arrays.copyOf(activeChildCpuNanos,capacity);
+		activeChildAllocatedBytes = Arrays.copyOf(activeChildAllocatedBytes,capacity);
+	}
+
+	private static long allocatePhaseOwner() {
+		long owner = PHASE_OWNER_SEQUENCE.incrementAndGet();
+		if(owner <= 0 || owner > MAX_PHASE_OWNER)
+			throw new IllegalStateException("SEARCH_SPACE_PHASE_OWNER_EXHAUSTED");
+		return owner;
 	}
 
 	/** Live diagnostic only; inclusive phases overlap, exclusive self times do not. */
@@ -688,23 +747,23 @@ public final class SearchSpaceMetrics {
 		long[] allocation = inclusiveAllocatedBytes.clone(), selfAllocation = exclusiveAllocatedBytes.clone();
 		long[] active = new long[phaseCalls.length];
 		long activeChildWall = 0, activeChildCpu = 0, activeChildAllocation = 0;
-		// ArrayDeque iteration is innermost to outermost. Subtract both completed
+		// Walk innermost to outermost. Subtract both completed
 		// children and the one still-active child, without changing timer state.
-		for(PhaseToken token : phaseStack) {
-			int i = token.phase.ordinal();
-			long openWall = delta(token.startedWallNanos, wallNow);
-			long openCpu = delta(token.startedCpuNanos, cpuNow);
-			long openAllocation = delta(token.startedAllocatedBytes, allocationNow);
+		for(int depth = activePhaseDepth - 1; depth >= 0; depth--) {
+			int i = activePhaseOrdinals[depth];
+			long openWall = delta(activeStartedWallNanos[depth], wallNow);
+			long openCpu = delta(activeStartedCpuNanos[depth], cpuNow);
+			long openAllocation = delta(activeStartedAllocatedBytes[depth], allocationNow);
 			active[i]++;
 			wall[i] = addKnown(wall[i], openWall);
 			cpu[i] = addKnown(cpu[i], openCpu);
 			allocation[i] = addKnown(allocation[i], openAllocation);
 			selfWall[i] = addKnown(selfWall[i], subtractChild(openWall,
-				addKnown(token.childWallNanos, activeChildWall)));
+				addKnown(activeChildWallNanos[depth], activeChildWall)));
 			selfCpu[i] = addKnown(selfCpu[i], subtractChild(openCpu,
-				addKnown(token.childCpuNanos, activeChildCpu)));
+				addKnown(activeChildCpuNanos[depth], activeChildCpu)));
 			selfAllocation[i] = addKnown(selfAllocation[i], subtractChild(openAllocation,
-				addKnown(token.childAllocatedBytes, activeChildAllocation)));
+				addKnown(activeChildAllocatedBytes[depth], activeChildAllocation)));
 			activeChildWall = openWall;
 			activeChildCpu = openCpu;
 			activeChildAllocation = openAllocation;
@@ -1517,7 +1576,7 @@ public final class SearchSpaceMetrics {
 	}
 
 	public AttributionSnapshot attributionSnapshot() {
-		if(!phaseStack.isEmpty())
+		if(activePhaseDepth != 0)
 			throw new IllegalStateException("SEARCH_SPACE_PHASES_STILL_ACTIVE");
 		List<PhaseMeasurement> phases = new ArrayList<>(Phase.values().length);
 		for(Phase phase : Phase.values()) {

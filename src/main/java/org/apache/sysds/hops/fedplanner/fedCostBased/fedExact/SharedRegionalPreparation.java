@@ -30,6 +30,7 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 	private final boolean compact;
 	private final ExactEliminationOrderPolicy.Configuration orderPolicy;
 	private ExactPhysicalReducedSolver.CompactModel root;
+	private final IdentityHashMap<Variable,Integer> positions = new IdentityHashMap<>();
 	private final List<int[]> scopes = new ArrayList<>();
 	private final List<List<Integer>> incidence = new ArrayList<>();
 	private Conditioned[] cache;
@@ -39,6 +40,7 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 	private long conditionNanos;
 	private long blockPreparationNanos;
 	private long blocks;
+	private long factorwiseCertifiedPreparations;
 	private long fallbacks;
 	private long fastBlockOrderAccepted;
 	private long fastBlockOrderFallbacks;
@@ -67,7 +69,13 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 	}
 
 	private record PreparedSlice(LocalCategoricalOptimizer.PreparedBlockSolver solver,
-		int[] indexes, int[] originalBlock) { }
+		int[] indexes, int[] originalBlock, int[] certifiedAssignment) {
+		private PreparedSlice {
+			indexes = indexes.clone();
+			originalBlock = originalBlock.clone();
+			certifiedAssignment = certifiedAssignment == null ? null : certifiedAssignment.clone();
+		}
+	}
 
 	SharedRegionalPreparation(RegionalSearchProblem problem, Limits limits, boolean compact) {
 		this(problem,limits,limits,0L,-1L,compact);
@@ -117,7 +125,6 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 		LocalCategoricalOptimizer.tracePreparation("shared-root", root.preparationStatistics());
 		if(root.variables().size() != problem.variables().size())
 			throw new IllegalStateException("REGIONAL_SHARED_ROOT_VARIABLE_REMOVAL");
-		IdentityHashMap<Variable,Integer> positions = new IdentityHashMap<>();
 		for(int i = 0; i < root.variables().size(); i++) {
 			positions.put(root.variables().get(i), i);
 			incidence.add(new ArrayList<>());
@@ -171,14 +178,20 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 
 	PreparedConditionalSolver prepareConditional(int[] assignment, int[] block,
 		ExactPhysicalReducedSolver.CompactModel expectedRoot) {
+		return prepareConditional(assignment,block,expectedRoot,null);
+	}
+
+	/** Incremental-only path: certify an already optimal compact incumbent before block compilation. */
+	PreparedConditionalSolver prepareConditional(int[] assignment, int[] block,
+		ExactPhysicalReducedSolver.CompactModel expectedRoot, int[] incumbent) {
 		long started = System.nanoTime();
 		lastFallbackReason = null;
 		try {
 			initialize();
-			PreparedSlice prepared = prepareReduced(assignment, block);
 			boolean mapped = expectedRoot != null && root == expectedRoot;
+			PreparedSlice prepared = prepareReduced(assignment, block, mapped ? incumbent : null);
 			int[] fixedSource = assignment.clone();
-			return incumbent -> solvePrepared(prepared, fixedSource, incumbent, mapped);
+			return solveIncumbent -> solvePrepared(prepared, fixedSource, solveIncumbent, mapped);
 		}
 		catch(IllegalArgumentException failure) {
 			if(!RegionalSearchProblem.isResourceLimit(failure))
@@ -234,7 +247,7 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 		}
 	}
 
-	private PreparedSlice prepareReduced(int[] assignment, int[] block) {
+	private PreparedSlice prepareReduced(int[] assignment, int[] block, int[] incumbent) {
 		int decisions = problem.decisionCount();
 		boolean[] free = new boolean[root.variables().size()];
 		boolean[] selected = new boolean[scopes.size()];
@@ -285,6 +298,17 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 				indexes.add(auxiliary);
 		List<Variable> variables = indexes.stream().map(root.variables()::get).toList();
 		Limits solveLimits = conditionalLimits(selected,free);
+		boolean matchingBoundary = incumbentMatchesFixedBoundary(assignment,free,decisions,incumbent);
+		// A feasible incumbent already attains zero in each selected hard root
+		// relation. Fixing the same boundary cannot lower that minimum, so no
+		// conditioned relation or elimination plan needs to be constructed.
+		int[] certified = matchingBoundary
+			? factorwiseOptimalIncumbent(root.factors(),selected,incumbent) : null;
+		if(certified != null) {
+			factorwiseCertifiedPreparations++;
+			return new PreparedSlice(null,indexes.stream().mapToInt(Integer::intValue).toArray(),
+				block,certified);
+		}
 		List<Factor> factors = new ArrayList<>();
 		long conditionStarted = System.nanoTime();
 		for(int factor = 0; factor < selected.length; factor++) {
@@ -316,6 +340,12 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 			}
 		}
 		conditionNanos += System.nanoTime() - conditionStarted;
+		certified = matchingBoundary ? factorwiseOptimalIncumbent(factors,null,incumbent) : null;
+		if(certified != null) {
+			factorwiseCertifiedPreparations++;
+			return new PreparedSlice(null,indexes.stream().mapToInt(Integer::intValue).toArray(),
+				block,certified);
+		}
 		LocalCategoricalOptimizer.PreparedBlockSolver solver;
 		if(compact) {
 			// This additional reduction is conditional and belongs only to this solver.
@@ -358,13 +388,76 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 		}
 		blocks++;
 		return new PreparedSlice(solver, indexes.stream().mapToInt(Integer::intValue).toArray(),
-			block.clone());
+			block,null);
+	}
+
+	private int[] factorwiseOptimalIncumbent(List<Factor> factors, boolean[] selected, int[] incumbent) {
+		if(incumbent == null || incumbent.length != root.variables().size())
+			return null;
+		for(int variable = 0; variable < incumbent.length; variable++)
+			if(incumbent[variable] < 0
+				|| incumbent[variable] >= root.variables().get(variable).domainSize())
+				return null;
+		for(int index = 0; index < factors.size(); index++) {
+			if(selected != null && !selected[index])
+				continue;
+			Factor factor = factors.get(index);
+			if(!(factor.isHardTable() || factor.isFiniteSupport()
+				|| factor.isConditionalSupport() || factor.functionalMapping() != null))
+				return null;
+			int[] values = new int[factor.scope().size()];
+			for(int axis = 0; axis < values.length; axis++) {
+				Integer position = positions.get(factor.scope().get(axis));
+				if(position == null)
+					throw new IllegalStateException("REGIONAL_SHARED_FACTOR_VARIABLE_UNKNOWN");
+				values[axis] = incumbent[position];
+			}
+			// Every recognized representation is an exact +0/+INF relation. A zero
+			// incumbent cell therefore attains this factor's global minimum.
+			if(Double.doubleToRawLongBits(factor.cost(values))
+				!= Double.doubleToRawLongBits(0d))
+				return null;
+		}
+		return incumbent.clone();
+	}
+
+	/**
+	 * A compact incumbent is a certificate only for the source boundary that was
+	 * conditioned above.  Matching the root object and assignment length is not
+	 * sufficient: a tied zero-cost cell from another boundary could otherwise be
+	 * returned in place of the canonical conditional tuple.
+	 */
+	private boolean incumbentMatchesFixedBoundary(int[] assignment, boolean[] free,
+		int decisions, int[] incumbent) {
+		if(incumbent == null || incumbent.length != root.variables().size()
+			|| assignment.length != decisions)
+			return false;
+		for(int original = 0; original < decisions; original++) {
+			if(free[original])
+				continue;
+			int reduced = incumbent[original];
+			if(reduced < 0 || reduced >= root.variables().get(original).domainSize()
+				|| root.sourceValue(original,reduced) != assignment[original])
+				return false;
+		}
+		return true;
 	}
 
 	private ConditionalResult solvePrepared(PreparedSlice prepared, int[] sourceAssignment,
 		int[] incumbent, boolean mapped) {
-		ExactCategoricalSolver.Result solved = prepared.solver().solve();
-		List<Integer> solvedLocal = solved.assignmentInVariableOrder();
+		int[] certified = prepared.certifiedAssignment();
+		ExactCategoricalSolver.Result solved;
+		List<Integer> solvedLocal;
+		if(certified == null) {
+			solved = prepared.solver().solve();
+			solvedLocal = solved.assignmentInVariableOrder();
+		}
+		else {
+			solvedLocal = Arrays.stream(prepared.indexes()).map(index -> certified[index])
+				.boxed().toList();
+			solved = new ExactCategoricalSolver.Result(0d,solvedLocal,
+				new ExactCategoricalSolver.Statistics(List.of(),0,0L,0L,0L,0L));
+		}
 		int[] block = prepared.originalBlock();
 		if(solvedLocal.size() < block.length)
 			throw new IllegalStateException("REGIONAL_CONDITIONAL_RESULT_SIZE_MISMATCH");
@@ -519,6 +612,7 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 	long cacheHits() { return cacheHits; }
 	long tableBuilds() { return tableBuilds; }
 	long blocks() { return blocks; }
+	long factorwiseCertifiedPreparations() { return factorwiseCertifiedPreparations; }
 	long fallbacks() { return fallbacks; }
 	long fastBlockOrderAccepted() { return fastBlockOrderAccepted; }
 	long fastBlockOrderFallbacks() { return fastBlockOrderFallbacks; }
@@ -532,6 +626,7 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 					+ " rootPreparationNanos=" + problem.reducedRootNanos()
 					+ " conditionNanos=" + conditionNanos + " blockPreparationNanos=" + blockPreparationNanos
 					+ " blocks=" + blocks + " unchangedTables=" + unchangedTables
+					+ " factorwiseCertifiedPreparations=" + factorwiseCertifiedPreparations
 					+ " conditionedTableBuilds=" + tableBuilds + " conditionedTableHits=" + cacheHits
 					+ " resourceOrUnsupportedBoundaryFallbacks=" + fallbacks
 					+ " originalDomainValues=" + originalDomainValues

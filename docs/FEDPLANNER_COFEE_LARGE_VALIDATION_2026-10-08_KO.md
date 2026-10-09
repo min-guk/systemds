@@ -2,7 +2,21 @@
 
 ## 상태
 
-최신 완료 v14(`592818109f`, JAR `d6f68baa…`)의 전체 최초 planning은 LogReg **371.222976558초**, GLM **136.946062790초**다. 같은 COFEE50K×128 W1 조건이며 각1회다. v12 대비 LogReg31.284초(7.77%) 줄었지만 GLM은0.807초 감소에 그쳤다. **20초 목표는 미달**이며 반복 측정으로 확인한 개선율은 아니다. 숫자 결과/raw hash와 runtime audit는 모두PASS다.
+최신 게시 코드는 `89c017a094`(v16)이며, 동일 COFEE 50K×128 W1 조건으로 실제 실행을 검증 중이다. **20초 목표는 달성하지 못했다.** 아래 값은 학습 실행 시간이 아니라 `planningFullInitialNanos`로 측정한 전체 초기 플래닝 시간이다.
+
+| 엔진 | LogReg | GLM | 검증 상태 |
+|---|---:|---:|---|
+| v14 | 371.223초 | 136.946초 | Numeric/audit PASS. GLM 선택 receipt·비용은 v11과 동일 |
+| v15 | 384.003초 | 126.728초 | Numeric/audit PASS. GLM 선택 receipt·비용은 v11/v14와 동일 |
+| v16 | 381.268초 | 130.795초 | 두 workload numeric/audit, v15와 전체 선택 receipt·certificate 동일 |
+
+각 버전은 workload별 1회 관측이다. v15는 GLM이 빨라졌지만 LogReg가 느려졌고, v16 GLM도 v15보다 느렸다. 따라서 객체 생성이나 proof 방문량 감소를 전체 ML 플래닝 시간 개선으로 일반화하지 않는다. 동일 probe의 추가 비교에서 LogReg v14·v15·v16의 전체 선택 receipt, assignment 및 비용 raw bits `4653340210026796583`이 모두 같았다. GLM도 v11·v14·v15·v16의 선택과 비용이 같다. Aggregate plan hash 차이는 비용 표면의 표현 hash에서 발생했으며, 선택 의미의 차이는 발견되지 않았다. LogReg 근거는 `evidence/cofee-50k128-v16-validation/logreg-receipt-parity-v14-v16.json` (SHA256 `a2d521100896a6e11721055c9a36198084c22faac6ea8b87b65e71bbb649eada`)이다.
+
+게시 이후 후속 코드에서는 DP의 증명 가능한 조건부 최적값 재계산과 proof 조회 임시 객체 생성을 줄였다. 218개 관련 회귀 뒤 전체 gate에서 오래된 private 테스트 호출부 4건과 sparse range 검사 시간 초과 1건을 발견했다. 실패 로그를 보존하고 수정했으며, 대형 sparse/conditional 검사를 포함한 후속 45개 테스트가 1.642초에 통과했다. 수정 후 전체 FedPlanner 회귀 1,119개가 172.578초에 통과했고 source SHA 불일치는 0이다. 추가 DP 실행·replay 통합 회귀 2개를 포함한 별도 30개 테스트도 1.016초에 통과했다. 이 검증본을 v17로 봉인하여 실제 실행을 진행한다. 입력, DML, privacy, cost profile, seed, JVM 및 CPU/메모리 제한은 변경하지 않았다.
+
+아래는 버전별 상세 이력이다.
+
+이전 완료 v14(`592818109f`, JAR `d6f68baa…`)의 전체 최초 planning은 LogReg **371.222976558초**, GLM **136.946062790초**다. 같은 COFEE50K×128 W1 조건이며 각1회다. v12 대비 LogReg31.284초(7.77%) 줄었지만 GLM은0.807초 감소에 그쳤다. **20초 목표는 미달**이며 반복 측정으로 확인한 개선율은 아니다. 숫자 결과/raw hash와 runtime audit는 모두PASS다.
 
 | v14 관측 | LogReg | GLM |
 |---|---:|---:|
@@ -375,3 +389,5 @@ Frozen v2 engine을 보존하고 별도 `engine-integration-v3`에서 다음 두
 v15 GLM 전체 초기 planning은 **126.728496870초**였다. Analysis86.086초, optimizer24.170초이며 v14의136.946062790초 대비10.218초 감소한 단일 관측이다. 선택 candidate receipt 전체,6개 section hash,objectiveRawBits4655470428781502442가 v11/v14와 동일하고 numeric/audit PASS다. 비용 표면의 표현 hash는 달라졌지만 선택 결과는 같다. LogReg는 실행 중이며 20초 목표는 미달이다.
 
 main52ef 병합 후 DURABLE_MAP의 압축 support를 pinned/unpinned proof 축 gate로 읽도록 확장했다. 기존 exact anchor/clause grounding과 source identity를 유지한다. Fresh compile 및 **1,091 tests PASS(155.313초)**, source hash mismatch0이며 `evidence/main52ef-durable-gates-full-green-1091`에 보존했다. 2×3 회귀 fixture는 materialized handle6→1을 확인하며 논리적 후보는 동일하다. 이 버전(v16)의 실제 workload 시간은 아직 측정하지 않았다.
+
+최종 v15 LogReg는 **384.003407355초**(Analysis296.200초, optimizer74.794초)였다. v14보다12.780초 늘었으며 numeric/audit는 통과했다. GLM의 단일 관측 개선과 함께 보면 v15를 전반적인 성능 개선으로 판단할 수 없다. LogReg aggregate hash가 달라 canonical receipt를 저장하는 동일 probe의 v14 baseline과 추가 비교한다. 20초 목표는 여전히 미달이다.

@@ -774,4 +774,92 @@ public class DirectSourceSeedProjectionTest {
 		method.setAccessible(true);
 		method.invoke(index, facts, changed);
 	}
+	@Test
+	public void mixedExactSourceAxisPublishesOnlyWhenOutputAuthorityIgnoresExactness()
+		throws Exception {
+		CompiledHopKey exactOwner = key("mixed-axis-source-a");
+		CompiledHopKey consumer = key("mixed-axis-consumer");
+		DurableAnchorKey pool = pool("mixed-axis-pool", FType.ROW, "worker", 8);
+		DurableAnchorKey output = pool("mixed-axis-output", FType.ROW, "worker", 8);
+		CandidateRuleFact exactFact = nativeFact(exactOwner, "mixed-axis-layout-a", pool, 1);
+		CandidateRuleKey dynamicRule = exactFact.key();
+		CandidateEmissionRealization dynamicRealization =
+			CandidateEmissionRealization.nativeLineageDynamicLayout(ROW_EMISSION,
+				"mixed-axis-layout-b", pool, List.of(new PlacementProofKey(
+					PlacementProofKind.NATIVE_CONTINUITY, exactOwner, "proof-0")),
+				List.of());
+		CandidateEmissionRealization exactRealization = exactFact.allowedEmissionFacts()
+			.get(0).realizations().get(0);
+		CandidateEmissionFact combinedEmission = new CandidateEmissionFact(
+			ROW_EMISSION, FType.ROW, null, List.of(exactRealization, dynamicRealization));
+		CandidateRuleFact combinedFact = new CandidateRuleFact(exactFact.key(), exactFact.status(),
+			exactFact.capability(), exactFact.shapeProof(), exactFact.profile(),
+			List.of(combinedEmission), exactFact.failureCode());
+		List<List<CandidateRealizationInputBinding>> axes = List.of(List.of(
+			CandidateRealizationInputBinding.direct(0,
+				CandidateRealizationReference.of(dynamicRule, exactRealization)),
+			CandidateRealizationInputBinding.direct(0,
+				CandidateRealizationReference.of(dynamicRule, dynamicRealization))));
+		NativePlacementContinuity.NativeSupportProduct exactProduct =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(pool, pool, true, axes);
+		NativePlacementContinuity.NativeSupportProduct dynamicProduct =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(pool, pool, false, axes);
+		Assert.assertNotNull(exactProduct);
+		Assert.assertNotNull(dynamicProduct);
+
+		PlacementRelationClosure closure = new PlacementRelationClosure(
+			null, null, null, true, NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
+		Object sources = sourceIndex(List.of(combinedFact));
+		Method publish = PlacementRelationClosure.class.getDeclaredMethod(
+			"directNativeProductPublication", NativePlacementContinuity.NativeSupportProduct.class,
+			CompiledHopKey.class, PlacementEmissionState.class, DurableAnchorKey.class,
+			String.class, List.class, nested("DirectSourceIndex"), Map.class,
+			nested("NativePublicationTrace"));
+		publish.setAccessible(true);
+
+		CandidateEmissionRealization unanchored = (CandidateEmissionRealization)publish.invoke(
+			closure, exactProduct, consumer, ROW_EMISSION, null, "mixed-axis-unanchored",
+			List.of(), sources, new IdentityHashMap<>(), null);
+		CandidateEmissionRealization dynamic = (CandidateEmissionRealization)publish.invoke(
+			closure, dynamicProduct, consumer, ROW_EMISSION, output, "mixed-axis-dynamic-output",
+			List.of(), sources, new IdentityHashMap<>(), null);
+		CandidateEmissionRealization durableCandidate = (CandidateEmissionRealization)publish.invoke(
+			closure, exactProduct, consumer, ROW_EMISSION, output, "mixed-axis-durable-output",
+			List.of(), sources, new IdentityHashMap<>(), null);
+
+		Assert.assertNotNull("unanchored native authority admits the mixed source axis", unanchored);
+		Assert.assertNotNull("dynamic output authority admits the mixed source axis", dynamic);
+		Assert.assertNull("exact anchored output must preserve the explicit durable/native split",
+			durableCandidate);
+		Method explicit = PlacementRelationClosure.class.getDeclaredMethod("directNativePublication",
+			NativePlacementContinuity.NativeContinuityProof.class, CompiledHopKey.class,
+			PlacementEmissionState.class, DurableAnchorKey.class, String.class, boolean.class);
+		explicit.setAccessible(true);
+		for(CandidateEmissionRealization published : List.of(unanchored, dynamic)) {
+			Assert.assertEquals(PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE,
+				published.key().layoutKind());
+			Assert.assertTrue(published.supportClauses() instanceof NativeContinuitySupportClauses);
+			NativeContinuitySupportClauses relation =
+				(NativeContinuitySupportClauses)published.supportClauses();
+			Assert.assertEquals(2, relation.size());
+			Assert.assertEquals("publication must retain the product without member handles",
+				0, relation.materializedHandleCount());
+			Assert.assertEquals(axes, relation.product().axes());
+			for(int ordinal = 0; ordinal < relation.size(); ordinal++) {
+				List<CandidateRealizationInputBinding> bindings = relation.product().bindingsAt(ordinal);
+				boolean sourceExact = bindings.get(0).source().realization().equals(exactRealization.key());
+				NativePlacementContinuity.NativeContinuityProof proof =
+					new NativePlacementContinuity.NativeContinuityProof(pool,pool,
+						published == unanchored,bindings);
+				CandidateEmissionRealization member = (CandidateEmissionRealization)explicit.invoke(
+					closure,proof,consumer,ROW_EMISSION,published == unanchored ? null : output,
+					published == unanchored ? "mixed-axis-unanchored" : "mixed-axis-dynamic-output",
+					sourceExact);
+				Assert.assertEquals(member.key(),published.key());
+				Assert.assertEquals(member.supportClauses().get(0),relation.get(ordinal));
+				Assert.assertSame(exactOwner,relation.get(ordinal).inputBindings().get(0)
+					.source().rule().parentOccurrence());
+			}
+		}
+	}
 }

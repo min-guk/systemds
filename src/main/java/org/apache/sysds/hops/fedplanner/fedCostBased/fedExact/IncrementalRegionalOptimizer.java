@@ -609,67 +609,70 @@ final class IncrementalRegionalOptimizer {
 			? new SharedRegionalPreparation(problem,limits,limits,
 				options.maximumMergeAssignments(),options.maximumRetainedSlots(),compact)
 			: new SharedRegionalPreparation(problem,limits,compact);
-		for(Neighborhood neighborhood : rejectedNeighborhoods.values().stream()
-			.sorted(NEIGHBORHOOD_ORDER).toList()) {
-			if(options.earlyStop() && relativeGap(lower,upper)<=options.relativeGap())
-				return;
-			if(options.boundedTest() && options.timeMillis() > 0
-				&& (System.nanoTime()-started)/1_000_000 >= options.timeMillis())
-				return;
-			List<Integer> expanded = root.expandAssignment(Arrays.stream(incumbent).boxed().toList());
-			int[] source = expanded.subList(0,problem.decisionCount()).stream()
-				.mapToInt(Integer::intValue).toArray();
-			if(FederatedPlannerTrace.isEnabled())
-				FederatedPlannerTrace.logGlobal("DP-ConditionalNeighborhood",
-					"potential=" + neighborhood.potential() + " originalVariables="
-						+ neighborhood.block().length + " estimatedAssignments="
-						+ neighborhood.assignments() + " interactionDepth="
-						+ neighborhood.interactionDepth() + " block=" + Arrays.toString(neighborhood.block()));
-			boolean replayed = conditionalReplayCache.applyIfPresent(source,neighborhood.block());
-			SharedRegionalPreparation.PreparedConditionalSolver solver = null;
-			if(!replayed) {
-				solver = preparation.prepareConditional(source,neighborhood.block(),root);
-				if(solver == null) {
-					if(FederatedPlannerTrace.isEnabled())
-						FederatedPlannerTrace.logGlobal("DP-ConditionalNeighborhoodRejected",
-							"interactionDepth=" + neighborhood.interactionDepth()
-								+ " reason=" + preparation.lastFallbackReason());
-					continue;
-				}
-				conditionalAttempts++;
-			}
-			int priorImprovements = improvements;
-			try {
-				List<Integer> solvedValues = null;
-				boolean skipLegacyLift = false;
+		try {
+			for(Neighborhood neighborhood : rejectedNeighborhoods.values().stream()
+				.sorted(NEIGHBORHOOD_ORDER).toList()) {
+				if(options.earlyStop() && relativeGap(lower,upper)<=options.relativeGap())
+					return;
+				if(options.boundedTest() && options.timeMillis() > 0
+					&& (System.nanoTime()-started)/1_000_000 >= options.timeMillis())
+					return;
+				List<Integer> expanded = root.expandAssignment(Arrays.stream(incumbent).boxed().toList());
+				int[] source = expanded.subList(0,problem.decisionCount()).stream()
+					.mapToInt(Integer::intValue).toArray();
+				if(FederatedPlannerTrace.isEnabled())
+					FederatedPlannerTrace.logGlobal("DP-ConditionalNeighborhood",
+						"potential=" + neighborhood.potential() + " originalVariables="
+							+ neighborhood.block().length + " estimatedAssignments="
+							+ neighborhood.assignments() + " interactionDepth="
+							+ neighborhood.interactionDepth() + " block=" + Arrays.toString(neighborhood.block()));
+				boolean replayed = conditionalReplayCache.applyIfPresent(source,neighborhood.block());
+				SharedRegionalPreparation.PreparedConditionalSolver solver = null;
 				if(!replayed) {
-					SharedRegionalPreparation.ConditionalResult conditional = solver.solve(incumbent);
-					ExactCategoricalSolver.Result solved = conditional.block();
-					if(solved.assignmentInVariableOrder().size()!=neighborhood.block().length)
-						throw new IllegalStateException("INCREMENTAL_CONDITIONAL_RESULT_SIZE_MISMATCH");
-					solvedValues = solved.assignmentInVariableOrder();
-					for(int index=0; index<neighborhood.block().length; index++)
-						source[neighborhood.block()[index]] = solvedValues.get(index);
-					int[] witness = conditional.rootWitness();
-					skipLegacyLift = witness != null && mappedWitnessProvesNoImprovement(witness);
+					solver = preparation.prepareConditional(source,neighborhood.block(),root,incumbent);
+					if(solver == null) {
+						if(FederatedPlannerTrace.isEnabled())
+							FederatedPlannerTrace.logGlobal("DP-ConditionalNeighborhoodRejected",
+								"interactionDepth=" + neighborhood.interactionDepth()
+									+ " reason=" + preparation.lastFallbackReason());
+						continue;
+					}
+					conditionalAttempts++;
 				}
-				// Conditioning can turn a canonical improvement/tie into a rounded
-				// local tie. Preserve the incumbent unless the full objective improves.
-				if(!skipLegacyLift)
-					accept(IncrementalRegionalSeed.lift(root,
-						Arrays.stream(source).boxed().toList(),conditionalLimits),false);
-				if(!replayed)
-					conditionalReplayCache.rememberSuccessful(source,neighborhood.block(),solvedValues);
+				int priorImprovements = improvements;
+				try {
+					List<Integer> solvedValues = null;
+					boolean skipLegacyLift = false;
+					if(!replayed) {
+						SharedRegionalPreparation.ConditionalResult conditional = solver.solve(incumbent);
+						ExactCategoricalSolver.Result solved = conditional.block();
+						if(solved.assignmentInVariableOrder().size()!=neighborhood.block().length)
+							throw new IllegalStateException("INCREMENTAL_CONDITIONAL_RESULT_SIZE_MISMATCH");
+						solvedValues = solved.assignmentInVariableOrder();
+						for(int index=0; index<neighborhood.block().length; index++)
+							source[neighborhood.block()[index]] = solvedValues.get(index);
+						int[] witness = conditional.rootWitness();
+						skipLegacyLift = witness != null && mappedWitnessProvesNoImprovement(witness);
+					}
+					// Conditioning can turn a canonical improvement/tie into a rounded
+					// local tie. Preserve the incumbent unless the full objective improves.
+					if(!skipLegacyLift)
+						accept(IncrementalRegionalSeed.lift(root,
+							Arrays.stream(source).boxed().toList(),conditionalLimits),false);
+					if(!replayed)
+						conditionalReplayCache.rememberSuccessful(source,neighborhood.block(),solvedValues);
+				}
+				catch(IllegalArgumentException failure) {
+					if(!RegionalSearchProblem.isResourceLimit(failure))
+						throw failure;
+				}
+				if(improvements > priorImprovements)
+					conditionalImprovements++;
+				if(phase != null)
+					checkpoint(phase);
 			}
-			catch(IllegalArgumentException failure) {
-				if(!RegionalSearchProblem.isResourceLimit(failure))
-					throw failure;
-			}
-			if(improvements > priorImprovements)
-				conditionalImprovements++;
-			if(phase != null)
-				checkpoint(phase);
 		}
+		finally { preparation.trace(); }
 	}
 
 	/** Preserve the certified scalar bound, then release its no-longer-needed messages. */

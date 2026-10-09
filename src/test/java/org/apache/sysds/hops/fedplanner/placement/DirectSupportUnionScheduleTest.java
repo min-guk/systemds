@@ -173,6 +173,36 @@ public class DirectSupportUnionScheduleTest {
 	}
 
 	@Test
+	public void mixedSourceExactnessMattersOnlyForExactAnchoredDurableSelection() throws Exception {
+		CompiledHopKey source = key("mixed-source-exactness-source");
+		CompiledHopKey owner = key("mixed-source-exactness-owner");
+		List<CandidateRealizationInputBinding> axis = supportFact(source, owner)
+			.allowedEmissionFacts().get(0).realizations().get(0)
+			.supportClauses().get(0).inputBindings();
+		DurableAnchorKey pool = anchor("mixed-source-exactness-pool", 4, 2);
+		DurableAnchorKey output = anchor("mixed-source-exactness-output", 4, 2);
+		NativePlacementContinuity.NativeSupportProduct exact =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				pool, pool, true, List.of(axis));
+		NativePlacementContinuity.NativeSupportProduct dynamic =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				pool, pool, false, List.of(axis));
+		Assert.assertNotNull(exact);
+		Assert.assertNotNull(dynamic);
+		PlacementEmissionState emission = new PlacementEmissionState(new PlacementState(
+			ExecType.FED, FederatedOutput.FOUT, FType.ROW, false), false);
+		Assert.assertEquals("source exactness cannot change unanchored native authority",
+			directNativeProductOutput(exact, emission, null, false),
+			directNativeProductOutput(exact, emission, null, true));
+		Assert.assertEquals("source exactness cannot change dynamic native authority",
+			directNativeProductOutput(dynamic, emission, output, false),
+			directNativeProductOutput(dynamic, emission, output, true));
+		Assert.assertNotEquals("exact anchored output selects native versus durable authority",
+			directNativeProductOutput(exact, emission, output, false),
+			directNativeProductOutput(exact, emission, output, true));
+	}
+
+	@Test
 	public void groundedPreparationMatchesLegacyCarryAndMembership() throws Exception {
 		CompiledHopKey firstSource = key("prep-first"), secondSource = key("prep-second");
 		CandidateEmissionFact first = supportFact(firstSource, key("prep-owner"))
@@ -670,6 +700,18 @@ public class DirectSupportUnionScheduleTest {
 		method.setAccessible(true);
 		return (CandidateEmissionRealization)method.invoke(closure, proof, owner, emission,
 			outputAnchor, lineage, directInputsExact);
+	}
+
+	private static Object directNativeProductOutput(
+		NativePlacementContinuity.NativeSupportProduct product,
+		PlacementEmissionState emission, DurableAnchorKey outputAnchor,
+		boolean directInputsExact) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod("directNativeOutput",
+			NativePlacementContinuity.NativeSupportProduct.class, PlacementEmissionState.class,
+			DurableAnchorKey.class, String.class, boolean.class);
+		method.setAccessible(true);
+		return method.invoke(null, product, emission, outputAnchor,
+			"mixed-source-exactness", directInputsExact);
 	}
 
 	private static DurableAnchorKey anchor(String id, long rows, long columns) {

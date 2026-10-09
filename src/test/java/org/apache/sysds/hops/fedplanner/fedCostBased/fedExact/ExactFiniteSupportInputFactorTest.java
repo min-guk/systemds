@@ -16,6 +16,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.ConditionalRegion;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Limits;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Result;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Variable;
@@ -73,6 +74,24 @@ public class ExactFiniteSupportInputFactorTest {
 		Result result = ExactCategoricalSolver.solve(List.of(left, right), List.of(support), storedRowLimits);
 		Assert.assertEquals(List.of(0, 0), result.assignmentInVariableOrder());
 		Assert.assertEquals(0L, Double.doubleToRawLongBits(result.objective()));
+		Assert.assertTrue(result.statistics().maximumFactorCells() <= storedRowLimits.maximumFactorCells());
+		Assert.assertTrue(result.statistics().materializedFactorCells()
+			<= storedRowLimits.maximumMaterializedCells());
+	}
+
+	@Test(timeout = 5000)
+	public void hugeConditionalRelationCertifiesRangeWithoutScanningImplicitCells() {
+		Variable selector = new Variable("large-conditional-selector",20_000);
+		Variable value = new Variable("large-conditional-value",20_000);
+		Factor support = Factor.conditionalSupport(List.of(selector,value),0,
+			java.util.stream.IntStream.range(0,20_000).toArray(),List.of(
+				new ConditionalRegion(0,new int[][] {null,{0}}),
+				new ConditionalRegion(10_000,new int[][] {null,{10_000}}),
+				new ConditionalRegion(19_999,new int[][] {null,{19_999}})));
+		Limits storedRowLimits = new Limits(100_000,200_000);
+		Result result = ExactCategoricalSolver.solve(List.of(selector,value),List.of(support),storedRowLimits);
+		Assert.assertEquals(List.of(0,0),result.assignmentInVariableOrder());
+		Assert.assertEquals(0L,Double.doubleToRawLongBits(result.objective()));
 		Assert.assertTrue(result.statistics().maximumFactorCells() <= storedRowLimits.maximumFactorCells());
 		Assert.assertTrue(result.statistics().materializedFactorCells()
 			<= storedRowLimits.maximumMaterializedCells());

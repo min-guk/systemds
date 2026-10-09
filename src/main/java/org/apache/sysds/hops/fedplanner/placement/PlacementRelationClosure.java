@@ -6283,9 +6283,9 @@ final class PlacementRelationClosure {
 		}
 		if(coveredRequiredPositions.size() != requiredByPosition.size())
 			return rejectedNativeProduct(trace, NativePublicationOutcome.REQUIRED_INPUTS);
-		// Input exactness distinguishes durable from native output only when the
-		// output anchor and proof ranges are exact. Otherwise all tuples publish
-		// the same native metadata, even when their source exactness differs.
+		// Input-layout exactness selects DURABLE_MAP only for an exact product with
+		// a concrete output anchor. Native-lineage outputs do not encode this bit,
+		// so mixed source layouts remain one exact product relation there.
 		if(outputAnchor != null && product.exactPartitionRanges()
 			&& !everyBindingExact && !hasAlwaysInexactAxis)
 			return rejectedNativeProduct(trace, trace == null ? NativePublicationOutcome.MIXED_EXACTNESS
