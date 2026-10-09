@@ -11,8 +11,10 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -21,15 +23,18 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmi
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
@@ -62,23 +67,137 @@ public class NativeHybridUnpinnedTopologyTest {
 	}
 
 	@Test
-	public void derivedHybridAttemptIsClassifiedBeforeLegacyFullProofFallback() throws Exception {
+	public void invalidDerivedRowDoesNotDisableOtherwiseValidHybridAuthority() throws Exception {
 		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
-		NativeContinuitySupportClauses relation = scenario.installDerived();
+		Object foreignSeed = invoke(scenario.fixture(), "source", "invalid-derived-seed",
+			pool("other-worker:9000", 0, 50));
+		Object foreign = invoke(scenario.fixture(), "unary", "invalid-derived-owner",
+			OpOp1.LOG, foreignSeed, false);
+		CompiledHopKey foreignOwner = (CompiledHopKey)invoke(foreign, "key");
+		scenario.installDerived(true, foreignOwner);
+		NativePlacementContinuity.CandidateSupportResult eager = scenario.queryCurrent();
+		NativeContinuitySupportClauses relation = scenario.installDerived(false, foreignOwner);
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
 			scenario.fixture(), "resolver", metrics, 128, 2048L);
 		NativePlacementContinuity.CandidateSupportResult metricsOn = scenario.queryCurrent(resolver);
 		NativePlacementContinuity.CandidateSupportResult metricsOff = scenario.queryCurrent();
 
-		Assert.assertEquals("derived authority must retain the complete legacy fallback",
-			3, metricsOn.proofs().size());
+		Assert.assertEquals(signatures(eager), signatures(metricsOn));
 		Assert.assertEquals(signatures(metricsOff), signatures(metricsOn));
+		assertBindingSourceIdentity(eager, metricsOn);
 		assertBindingSourceIdentity(metricsOff, metricsOn);
 		assertIdentitySetEquals(metricsOff.dependencyOccurrences(), metricsOn.dependencyOccurrences());
-		Assert.assertEquals("the legacy fallback, not diagnostics, expands every native member",
-			relation.size(), relation.materializedHandleCount());
-		assertHybridCounts(metrics, "NATIVE_HYBRID_REJECT_DERIVED", "NATIVE_HYBRID_REJECT_DERIVED");
+		Assert.assertTrue("failed derived validation still reads its hidden anchor owner",
+			metricsOn.dependencyOccurrences().stream().anyMatch(owner -> owner == foreignOwner));
+		Assert.assertEquals("invalid derived metadata must not flatten valid native authority",
+			1, relation.materializedHandleCount());
+		assertHybridCounts(metrics, "NATIVE_HYBRID_ACCEPTED", "NATIVE_HYBRID_REJECT_NO_NATIVE");
+		Assert.assertEquals(0, directWork(metrics, "NATIVE_HYBRID_REJECT_DERIVED"));
+	}
+
+	@Test
+	public void hiddenDerivedAnchorAuthorityAddsAndWithdrawsOneExactHybridRow()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Object hiddenSeed = invoke(scenario.fixture(), "source", "derived-hidden-seed", scenario.pool());
+		Object hidden = invoke(scenario.fixture(), "unary", "derived-hidden-owner",
+			OpOp1.LOG, hiddenSeed, false);
+		CompiledHopKey hiddenOwner = (CompiledHopKey)invoke(hidden, "key");
+		invoke(scenario.fixture(), "withClauses", hidden, unary,
+			List.of(new CandidateRealizationSupportClause(List.of(new PlacementProofKey(
+				PlacementProofKind.NATIVE_CONTINUITY, hiddenOwner,
+				"derived-hidden-native-authority")), List.of(), scenario.pool(), true)));
+
+		scenario.installDerived(true, hiddenOwner);
+		List<CandidateRuleFact> eagerValidFacts = List.copyOf(candidateFacts(scenario.fixture()));
+		NativePlacementContinuity.CandidateSupportResult eagerValid = scenario.queryCurrent();
+		List<CandidateRuleFact> eagerInvalidFacts = eagerValidFacts.stream()
+			.filter(fact -> fact.key().parentOccurrence() != hiddenOwner).toList();
+		NativePlacementContinuity.CandidateSupportResult eagerInvalid =
+			queryWithCandidateFacts(scenario, eagerInvalidFacts);
+
+		NativeContinuitySupportClauses lazy = scenario.installDerived(false, hiddenOwner);
+		List<CandidateRuleFact> validFacts = List.copyOf(candidateFacts(scenario.fixture()));
+		List<CandidateRuleFact> invalidFacts = validFacts.stream()
+			.filter(fact -> fact.key().parentOccurrence() != hiddenOwner).toList();
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity invalid = resolverWithCandidateFacts(scenario, invalidFacts, metrics);
+		NativePlacementContinuity.CandidateSupportResult invalidActual = scenario.queryCurrent(invalid);
+		Assert.assertEquals(signatures(eagerInvalid), signatures(invalidActual));
+		assertBindingSourceIdentity(eagerInvalid, invalidActual);
+		assertIdentitySetEquals(eagerInvalid.dependencyOccurrences(),
+			invalidActual.dependencyOccurrences());
+		Assert.assertTrue(invalidActual.dependencyOccurrences().stream()
+			.anyMatch(owner -> owner == hiddenOwner));
+
+		long beforeValid = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity valid = invalid.nextRevisionWithCompleteCandidateDelta(
+			validFacts, Set.of(hiddenOwner));
+		NativePlacementContinuity.CandidateSupportResult validActual = scenario.queryCurrent(valid);
+		Assert.assertEquals(signatures(eagerValid), signatures(validActual));
+		assertBindingSourceIdentity(eagerValid, validActual);
+		assertIdentitySetEquals(eagerValid.dependencyOccurrences(), validActual.dependencyOccurrences());
+		Assert.assertTrue(validActual.dependencyOccurrences().stream()
+			.anyMatch(owner -> owner == hiddenOwner));
+		Assert.assertEquals("one validated derived action adds exactly one ordered proof row",
+			invalidActual.proofs().size() + 1, validActual.proofs().size());
+		Assert.assertTrue("the added proof selects the exact durable derived realization",
+			validActual.proofs().stream().flatMap(proof -> proof.immediateBindings().stream())
+				.anyMatch(binding -> binding.source().rule().parentOccurrence() == scenario.childKey()
+					&& binding.source().realization().layoutKind() == PlacementLayoutKind.DURABLE_MAP
+					&& scenario.pool().equals(binding.source().realization().durableAnchor())));
+		Assert.assertTrue(metrics.snapshot().proofGraphsBuilt() > beforeValid);
+
+		long beforeWithdraw = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity withdrawn = valid.nextRevisionWithCompleteCandidateDelta(
+			invalidFacts, Set.of(hiddenOwner));
+		NativePlacementContinuity.CandidateSupportResult withdrawnActual =
+			scenario.queryCurrent(withdrawn);
+		Assert.assertEquals(signatures(eagerInvalid), signatures(withdrawnActual));
+		assertBindingSourceIdentity(eagerInvalid, withdrawnActual);
+		assertIdentitySetEquals(eagerInvalid.dependencyOccurrences(),
+			withdrawnActual.dependencyOccurrences());
+		Assert.assertTrue(metrics.snapshot().proofGraphsBuilt() > beforeWithdraw);
+
+		long beforeRestore = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity restored = withdrawn.nextRevisionWithCompleteCandidateDelta(
+			validFacts, Set.of(hiddenOwner));
+		NativePlacementContinuity.CandidateSupportResult restoredActual =
+			scenario.queryCurrent(restored);
+		Assert.assertEquals(signatures(eagerValid), signatures(restoredActual));
+		assertBindingSourceIdentity(eagerValid, restoredActual);
+		assertIdentitySetEquals(eagerValid.dependencyOccurrences(),
+			restoredActual.dependencyOccurrences());
+		Assert.assertTrue(metrics.snapshot().proofGraphsBuilt() > beforeRestore);
+		Assert.assertEquals("all lifecycle waves retain the lazy native representative",
+			1, lazy.materializedHandleCount());
+		Assert.assertTrue("the hidden certificate owner must not be a literal anchor",
+			fixtureNode(scenario.fixture(), hiddenOwner).anchors().isEmpty());
+		Assert.assertFalse("the derived anchor owner is metadata, never a native product axis",
+			lazy.commonAxes().stream().flatMap(List::stream).anyMatch(binding ->
+				binding.source().rule().parentOccurrence() == hiddenOwner));
+		assertHybridCounts(metrics,
+			"NATIVE_HYBRID_ACCEPTED", "NATIVE_HYBRID_REJECT_NO_NATIVE",
+			"NATIVE_HYBRID_ACCEPTED", "NATIVE_HYBRID_REJECT_NO_NATIVE",
+			"NATIVE_HYBRID_ACCEPTED", "NATIVE_HYBRID_REJECT_NO_NATIVE",
+			"NATIVE_HYBRID_ACCEPTED", "NATIVE_HYBRID_REJECT_NO_NATIVE");
+
+		NativeContinuitySupportClauses ordinaryFirst =
+			scenario.installDerived(false, hiddenOwner, false);
+		SearchSpaceMetrics orderingMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity.CandidateSupportResult ordinaryFirstActual = scenario.queryCurrent(
+			(NativePlacementContinuity)invoke(
+				scenario.fixture(), "resolver", orderingMetrics, 128, 2048L));
+		Assert.assertEquals("derived validation is independent of emission encounter order",
+			signatures(eagerValid), signatures(ordinaryFirstActual));
+		assertBindingSourceIdentity(eagerValid, ordinaryFirstActual);
+		assertIdentitySetEquals(eagerValid.dependencyOccurrences(),
+			ordinaryFirstActual.dependencyOccurrences());
+		Assert.assertEquals(1, ordinaryFirst.materializedHandleCount());
+		assertHybridCounts(orderingMetrics,
+			"NATIVE_HYBRID_ACCEPTED", "NATIVE_HYBRID_REJECT_NO_NATIVE");
 	}
 
 	@Test
@@ -267,33 +386,42 @@ public class NativeHybridUnpinnedTopologyTest {
 			return relation;
 		}
 
-		private NativeContinuitySupportClauses installDerived() throws Exception {
-			NativeContinuitySupportClauses relation = install(false);
+		private NativeContinuitySupportClauses installDerived(boolean explicit,
+			CompiledHopKey anchorOwner) throws Exception {
+			return installDerived(explicit, anchorOwner, true);
+		}
+
+		private NativeContinuitySupportClauses installDerived(boolean explicit,
+			CompiledHopKey anchorOwner, boolean derivedFirst) throws Exception {
+			NativeContinuitySupportClauses relation = install(explicit);
 			CandidateRuleFact installed = candidateFacts(fixture).stream()
 				.filter(fact -> fact.key().parentOccurrence() == childKey).findFirst().orElseThrow();
 			CandidateEmissionFact ordinary = installed.allowedEmissionFacts().get(0);
 			PlacementState target = ordinary.emissionState().placementState();
 			PlacementState source = new PlacementState(
-				target.execType(), FederatedOutput.LOUT, target.fType(), target.shapeDependent());
+				ExecType.FED, FederatedOutput.LOUT, target.fType(), target.shapeDependent());
+			PlacementEmissionState sourceState = new PlacementEmissionState(source, false);
 			PlacementEmissionState derivedState = new PlacementEmissionState(target, true);
-			ValueVersionKey version = new ValueVersionKey(childKey.programFingerprint(),
-				"hybrid-derived", childKey.controlRegion(), 0, VersionKind.ORDINARY, List.of());
+			ValueVersionKey version = fixtureNode(fixture, childKey).valueVersion();
 			DerivedFoutMaterializationActionKey action =
 				new DerivedFoutMaterializationActionKey(childKey, version, installed.key(),
-					source, target, pool, childKey, FType.FULL, FType.FULL,
+					source, target, pool, anchorOwner, FType.FULL, FType.FULL,
 					childKey.controlRegion().normalizedSignature());
-			List<CandidateEmissionRealization> derived = ordinary.realizations().stream()
-				.map(realization -> new CandidateEmissionRealization(
-					PlacementRealizationKey.nativeLineage(
-						derivedState, realization.key().nativeLineage()),
-					realization.supportClauses())).toList();
+			CandidateEmissionFact sourceEmission = new CandidateEmissionFact(
+				sourceState, null, null, List.of(new CandidateEmissionRealization(
+					PlacementRealizationKey.local(sourceState),
+					List.of(new CandidateRealizationSupportClause(List.of(), List.of())))));
+			CandidateEmissionRealization derived = new CandidateEmissionRealization(
+				PlacementRealizationKey.durable(derivedState, pool),
+				List.of(new CandidateRealizationSupportClause(List.of(new PlacementProofKey(
+					PlacementProofKind.DURABLE_ANCHOR, childKey,
+					"derived-fout:" + action.normalizedSignature())), List.of())));
 			CandidateEmissionFact derivedEmission = new CandidateEmissionFact(
-				derivedState, FType.FULL, action, derived);
+				derivedState, FType.FULL, action, List.of(derived));
 			CandidateRuleFact replacement = new CandidateRuleFact(installed.key(), installed.status(),
 				installed.capability(), installed.shapeProof(), installed.profile(),
-				// The invalid derived action must still refuse the hybrid route, while
-				// ordinary native/explicit rows remain available through legacy topology.
-				List.of(derivedEmission, ordinary), installed.failureCode());
+				derivedFirst ? List.of(sourceEmission, derivedEmission, ordinary)
+					: List.of(sourceEmission, ordinary, derivedEmission), installed.failureCode());
 			replaceFact(candidateFacts(fixture), installed, replacement);
 			return relation;
 		}
@@ -363,6 +491,29 @@ public class NativeHybridUnpinnedTopologyTest {
 		Field candidatesField = fixture.getClass().getDeclaredField("candidates");
 		candidatesField.setAccessible(true);
 		return (List<CandidateRuleFact>)candidatesField.get(fixture);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Node fixtureNode(Object fixture, CompiledHopKey key) throws Exception {
+		Field field = fixture.getClass().getDeclaredField("nodes");
+		field.setAccessible(true);
+		return ((Map<CompiledHopKey,Node>)field.get(fixture)).get(key);
+	}
+
+	private static NativePlacementContinuity resolverWithCandidateFacts(Scenario scenario,
+		List<CandidateRuleFact> facts, SearchSpaceMetrics metrics) throws Exception {
+		List<CandidateRuleFact> live = candidateFacts(scenario.fixture());
+		List<CandidateRuleFact> prior = List.copyOf(live);
+		try {
+			live.clear();
+			live.addAll(facts);
+			return (NativePlacementContinuity)invoke(
+				scenario.fixture(), "resolver", metrics, 128, 2048L);
+		}
+		finally {
+			live.clear();
+			live.addAll(prior);
+		}
 	}
 
 	private static NativePlacementContinuity.CandidateSupportResult queryWithCandidateFacts(
