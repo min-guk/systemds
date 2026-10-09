@@ -1023,6 +1023,20 @@
 
 - **v29 전체 gate**: selected FedPlanner1,320개PASS(179.467초). 7,849 class/resource 실행 전후 변경0/source SHA 불일치0. 근거 `evidence/native-seed-prepared-full-gate-v29/validation.json`. Prepared 구조 재사용의 focused52개와 독립 검토를 포함한다.
 - **v28 LogReg 선행 결과**: fullInitial359.976439287초(analysis272.775/model5.937/cost6.407/optimizer71.268), runtime4.781초. Numeric/audit0/objective/selection 검사PASS. v27보다13.115초 줄어든 단일관측이고20초 목표는 미달이다. GLM/최종 cross-version selected raw parity는 이어서 검증한다.
+
+
+### v30 / 재사용된 acyclic summary의 재생성 제거 (진행중)
+
+- **원인/계획**: traversal이 이미 검증된 component summary를 재사용해도 admission에서 같은 grounded row와 dedup key 및 owner footprint를 다시 만든다. 현재 query가 사용한 exact summary, pruning 후 동일한 viable list, 동일 owner footprint 객체와 retained-state 수가 모두 같은 경우에만 기존 객체를 다시 admission한다. Generated-root exclusion과 cache budget/LRU는 기존 경로를 그대로 거친다. 다른 list·footprint·상태에는 기존 재계산을 유지한다.
+- **검증**: 기존 실제 64-clause→1 summary fixture의 두 번째 root에서 row 재검사 및 객체 재생성이 없어야 한다. Cold ordered proof/owner identity parity, 기존 cache eviction/revision/고정 owner/SCC 회귀를 유지한다. Reused negative summary와 list/footprint 변경도 별도 검사한다.
+- **잔여/위험**: 이 변경은 dependency pruning과 admission의 중복 작업만 제거하며 큰 overlay 시간이 사라진다고 주장하지 않는다. 다축 complement 별도 lane과는 다른 함수에 한정한다.
+
+- **v30 RED→GREEN**: 기존 실제64-clause→1 summary fixture의 두 번째 root에서 row 재검사65/기대64로 RED(162개중1실패,1.908초). 변경 후164개PASS(1.038초,기존ignore1). Same summary identity/cold ordered proof/owner footprint parity, negative summary, copied viable list, metadata owner 추가, filtered empty, generated root 동일·동등하지만 별도 identity, lookup 후 eviction을 검증했다. 최초 compile에서 signature 변경에 맞춘 두 caller 치환이 누락됐고 명시적으로 수정했다. Production SHA `ea2431825dafedd93a700a7179909e19aaeace65181907858b13b0c283277f6a`, tests SHA `9391065dc2fdfa743f8012cb2a4f1840bde84dba4c1eafcf1632546ae017e016`. 전체 회귀/독립 검토 진행 중이다.
+
+- **v30 전체 gate/독립 검토**: selected FedPlanner1,322개PASS(177.495초),7,849 class/resource 변경0/source SHA 불일치0, probe9개PASS(1.503초). Exact identity/상태/footprint가 모두 같은 경우만 기존 summary 객체를 재사용하고 cache admission을 그대로 실행한다는 production 검토 CLEAR. 근거 `evidence/native-summary-readmission-full-gate-v30/validation.json`.
+- **v29 실제 최종**: LogReg361.813119299초 / GLM123.207초. 두 workload numeric/audit0/objective/selected raw 및 receipt/section parity PASS, CostSurface/aggregate fingerprint도 v28과 동일. v28 대비 각각+1.837초/+6.818초이며 준비 재사용을 전체 성능 향상으로 보고하지 않는다. Evaluator FAIL/checkpoint를 기록했다.
+- **다음 origin 통합**: cd9b3fbecd의 sparse native skeleton transfer는 전체 relation 대신 보존된 donor clause의 exact ordinal만 조회한다. v30을 먼저 commit하여 보존하고 incoming을 별도 통합·검증한다. 검증되지 않은 conditional complement는 아직 포함하지 않는다.
+
 - **v44 upstream 통합**: 검증된 로컬cd9b3fbecd를 유지하고 cbb0f62535까지 병합(215f22ffe2)했다. NPC 변경은 서로 다른 함수라 자동 병합됐으며 문서 append 충돌만 양쪽 보존으로 해결했다. Incoming은 immutable topology의 unique reference→positive handle 검증, default row의 canonical reference 재사용, acyclic 전체 successor 생존 시 반복 row 순회 회피, regional seed의 compressed conditional/functional/sparse support 전파 및 root-local prepared topology를 포함한다. 추가/변경된5 test classes까지 명시한 fresh182class gate를 실행한다.
 - **Incoming DP 검토 범위**: 독립 정적 검토에서 exact relation/dirty 순서/원래 seed 고정과 objective/tie 보존, root identity별 prepared topology와 매 lift의 새 active mask 확인으로 blocker 없음. `visitedCells`는 이제 residual Cartesian 평가량이며 conditional/functional/sparse 작업은 별도 계수이므로 전체 작업 절감 수치로 혼합하지 않는다. Prepared topology는 cover release 후에도 optimizer 자체의 수명까지 남는 명시적 retention이며 global cache가 아니다. 같은 Docker의 실제 완료시간은 아직 미측정이다.
 - **v44 병합 최종 gate**: fresh182selectedclasses **1,428tests/failure0/error0/skip1**, Maven package BUILD SUCCESS(2026-10-09 11:19:47+02,2:31). Incoming native 및 DP actual 독립 정적 검토 모두 CLEAR. Native authority 배열은 distinct row/pin reference identity 수, 즉 **rows + retained dependency occurrences**에 선형이며 rows만의 함수라고 과장하지 않는다. Canonical reference list는 wrapper row 수 이하이고 기존 topology/overlay 수명에 묶인다. DFS acyclic/완료 순서 및 현재 query의 successor support 확인 후에만 반복 순회를 생략한다. 기존 supplemental 실패는 선택 gate 밖에 남아 있으며 전체 저장소 성공을 주장하지 않는다. 동일 Docker 실측 전에 외부 Maven이 관측되어 종료를 기다린다.
@@ -1040,3 +1054,12 @@
 - **검증**: sealed V44 클래스 기준 RED55tests/2expected failures(1,152 clauses 재검사1,151comparisons, subset-only2). 변경 후 canonicalization + duplicate diagnostics **59PASS**. 48×24 ordered run과 shared/equal-distinct 경계 중복은 최대47비교/0sort이며 첫 clause·descriptor identity를 유지한다. Subset-only K=3은 첫 realization 그대로/0비교/0sort. 기존 K=3 강제 descriptor tie, K=4 interleaved/deep-prefix fallback, UTF-16/decimal-prefix byte oracle도 통과했다.
 - **잔여 이슈/회귀 위험**: full cumulative gate 및 Docker 재측정 진행 중. 입력 clause list의 기존 canonical 계약에 의존한다(기존 2-way merge와 동일). `canonicalSortCalls/Elements`는 이제 실제 수행한 sort만 세며 boundary 비교는 canonicalComparisons에 포함한다. 일반 k-way heap 도입과 cache presizing은 근거 부족으로 보류했다. 20초 목표 달성·전체 ML route 확대·실제 완료 wall-time 절감은 주장하지 않는다.
 - **V45 로컬 검증 완료**: independent actual-diff review CLEAR. Fresh182selectedclasses **1,429tests/failure0/error0/skip1**, package BUILD SUCCESS(11:42:45+02). origin/main에 incoming acyclic summary readmission 변경(7b167fc172, merge0232ad22fb)이 있어 병합 후 다시 gate를 실행한다. 전체 저장소 테스트 완료를 뜻하지 않는다.
+
+### v31 / 검증된 summary 재사용과 sparse skeleton 전파 통합 (진행중)
+
+- **문제/원인**: v30의 재사용된 acyclic summary 재생성 제거와 원격 cd9b3fbecd의 sparse donor 전파가 별도 checkout에 있었다. Native relation의 전체 member를 읽고 donor를 찾는 작업은 보존된 donor 수만큼의 exact authority 조회로 대체할 수 있다.
+- **해결/변경 파일**: NativePlacementContinuity의 skeleton transfer가 donor clause의 exact ordinal을 조회해 canonical 순서로 복원한다. NativeContinuitySupportClauses는 proof owner identity, authority header, witness/layout, exact source binding이 일치할 때만 ordinal을 제공한다. 기존 donor ambiguity 검사와 cache budget은 유지한다. 원격 문서 충돌은 양쪽 append를 보존했고 source는 자동 병합됐다.
+- **검증**: v30의1,322 selected tests/probe9 및 incoming 독립 authority 검토 CLEAR에 이어, 병합된 실제 source에서 별도 v31 classes/test-classes를 복사해 fresh 전체 gate를 실행한다. 빌드 디렉터리는 hardlink를 사용하지 않는다. 통합 gate 및 probe가 통과한 경우에만 봉인·게시·같은 COFEE Docker 검증을 진행한다.
+- **잔여/회귀 위험**: sparse 조회는 donor보다 relation이 클 때만 적용하며 없는/다른 authority를 수용하지 않는다. 다축 conditional complement는 별도 WIP라 이 버전에 포함하지 않는다. v30 단독 실측은 생략하고 두 변경의 통합 결과를 v31에서 측정하므로 각각의 실제 시간 효과를 분리해서 주장하지 않는다.20초 목표는 아직 미달이다.
+
+- **v31 통합 gate 완료**: selected FedPlanner1,325개PASS(187.558초),7,852 class/resource 실행 전후 변경0/source SHA 불일치0. 별도 probe9개PASS(1.565초). 근거 `evidence/native-sparse-transfer-merge-full-gate-v31/validation.json`. 통합 버전을 봉인해 실제 Docker로 검증하며 전체 저장소 Maven 통과나20초 달성으로 확대하지 않는다.

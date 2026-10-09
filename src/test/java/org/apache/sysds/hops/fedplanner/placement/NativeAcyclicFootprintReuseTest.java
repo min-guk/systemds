@@ -83,6 +83,100 @@ public class NativeAcyclicFootprintReuseTest {
 		}
 	}
 
+	@Test
+	public void summaryReadmissionPreservesNegativeResultsAndFallsBackOnChangedAuthority() throws Exception {
+		for(int mode = 0; mode < 6; mode++) {
+			NativePlacementContinuity continuity = new NativePlacementContinuity(
+				Map.of(), Map.of(), List.of(), List.of(), Map.of());
+			CompiledHopKey owner = key("readmission-owner");
+			Object witness = invoke(continuity, "nativeWitness", new Class<?>[] {DurableAnchorKey.class}, pool("readmission"));
+			Object child = state(owner, witness, 7);
+			Object row = construct(nested("SelectedCandidateProof"), new Class<?>[] {
+				PlacementIdentity.CandidateRealizationReference.class, List.class, boolean.class, witness.getClass()},
+				null, List.of(), true, witness);
+			Object summary = construct(nested("AcyclicComponentSummary"),
+				new Class<?>[] {List.class, Set.class, long.class}, mode == 0 ? List.of() : List.of(row), Set.of(owner), 1L);
+			@SuppressWarnings("unchecked")
+			List<Object> rows = (List<Object>)invokeAccessor(summary, "supportedAlternatives");
+			@SuppressWarnings("unchecked")
+			Set<CompiledHopKey> owners = (Set<CompiledHopKey>)invokeAccessor(summary, "occurrences");
+			Set<CompiledHopKey> changedOwners = Collections.newSetFromMap(new IdentityHashMap<>());
+			changedOwners.addAll(owners);
+			CompiledHopKey addedOwner = key("new-metadata-owner");
+			changedOwners.add(addedOwner);
+			Object footprint = construct(nested("AcyclicComponentFootprint"),
+				new Class<?>[] {Set.class, long.class}, mode == 2 ? changedOwners : owners, mode == 2 ? 2L : 1L);
+			List<Object> viableRows = mode == 1 ? new java.util.ArrayList<>(rows) : mode == 3 ? List.of() : rows;
+			Object traversal = construct(nested("CandidateProofTraversal"), new Class<?>[0]);
+			mutableMap(traversal, "reusedComponents").put(child, summary);
+			invoke(continuity, "cacheAcyclicRootChildren", new Class<?>[] {Map.class, Map.class, Set.class,
+				CompiledHopKey.class, traversal.getClass()}, Map.of(child, footprint), Map.of(child, viableRows),
+				viableRows.isEmpty() ? Set.of() : Set.of(child), mode == 4 ? owner : mode == 5 ? key("readmission-owner") : null,
+				traversal);
+			Map<Object,Object> memo = mutableMap(continuity, "acyclicComponentMemo");
+			if(mode == 4) {
+				Assert.assertTrue("generated root in exact footprint still prohibits admission", memo.isEmpty());
+				continue;
+			}
+			Object admitted = memo.get(child);
+			Assert.assertNotNull(admitted);
+			if(mode == 0 || mode == 5)
+				Assert.assertSame("negative summaries and identity-distinct fixed owners preserve original authority", summary, admitted);
+			else
+				Assert.assertNotSame("changed list or footprint must use ordinary reconstruction", summary, admitted);
+			Assert.assertEquals(viableRows.size(), ((List<?>)invokeAccessor(admitted, "supportedAlternatives")).size());
+			if(mode == 2) {
+				Assert.assertTrue(((Set<?>)invokeAccessor(admitted, "occurrences")).contains(addedOwner));
+				Assert.assertEquals(2L, invokeAccessor(admitted, "retainedStates"));
+			}
+		}
+	}
+
+	@Test
+	public void summaryReadmissionAfterInterveningEvictionUsesExistingBudgetAndOrder() throws Exception {
+		String property = "sysds.fedplanner.continuityAcyclicComponent.maxEntries";
+		String previous = System.getProperty(property);
+		System.setProperty(property, "1");
+		try {
+			NativePlacementContinuity continuity = new NativePlacementContinuity(
+				Map.of(), Map.of(), List.of(), List.of(), Map.of());
+			CompiledHopKey owner = key("evicted-owner"), otherOwner = key("other-owner");
+			Object witness = invoke(continuity, "nativeWitness", new Class<?>[] {DurableAnchorKey.class}, pool("evicted"));
+			Object child = state(owner, witness, 7), other = state(otherOwner, witness, 8);
+			Object summary = construct(nested("AcyclicComponentSummary"),
+				new Class<?>[] {List.class, Set.class, long.class}, List.of(), Set.of(owner), 1L);
+			Object otherSummary = construct(nested("AcyclicComponentSummary"),
+				new Class<?>[] {List.class, Set.class, long.class}, List.of(), Set.of(otherOwner), 1L);
+			Class<?>[] cacheTypes = {child.getClass(), summary.getClass()};
+			invoke(continuity, "cacheAcyclicSummary", cacheTypes, child, summary);
+			Object traversal = construct(nested("CandidateProofTraversal"), new Class<?>[0]);
+			mutableMap(traversal, "reusedComponents").put(child, summary);
+			invoke(continuity, "cacheAcyclicSummary", cacheTypes, other, otherSummary);
+			Map<Object,Object> memo = mutableMap(continuity, "acyclicComponentMemo");
+			Assert.assertEquals(List.of(other), List.copyOf(memo.keySet()));
+			Object footprint = construct(nested("AcyclicComponentFootprint"),
+				new Class<?>[] {Set.class, long.class}, invokeAccessor(summary, "occurrences"), 1L);
+			invoke(continuity, "cacheAcyclicRootChildren", new Class<?>[] {Map.class, Map.class, Set.class,
+				CompiledHopKey.class, traversal.getClass()}, Map.of(child, footprint),
+				Map.of(child, invokeAccessor(summary, "supportedAlternatives")), Set.of(), null, traversal);
+			Assert.assertEquals(List.of(child), List.copyOf(memo.keySet()));
+			Assert.assertSame(summary, memo.get(child));
+			Field retained = NativePlacementContinuity.class.getDeclaredField("acyclicComponentRetainedStates");
+			retained.setAccessible(true);
+			Assert.assertEquals(1L, retained.getLong(continuity));
+		}
+		finally {
+			if(previous == null) System.clearProperty(property); else System.setProperty(property, previous);
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Map<Object,Object> mutableMap(Object target, String name) throws Exception {
+		Field field = target.getClass().getDeclaredField(name);
+		field.setAccessible(true);
+		return (Map<Object,Object>)field.get(target);
+	}
+
 	@SuppressWarnings({"rawtypes", "unchecked"})
 	private static long directWork(SearchSpaceMetrics metrics, String name) throws Exception {
 		Class<? extends Enum> type = (Class<? extends Enum>)Class.forName(
