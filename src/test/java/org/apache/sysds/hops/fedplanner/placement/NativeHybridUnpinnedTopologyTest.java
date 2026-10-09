@@ -9,7 +9,9 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.AbstractList;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -23,6 +25,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmi
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
@@ -50,6 +53,128 @@ public class NativeHybridUnpinnedTopologyTest {
 		"NATIVE_PINNED_REJECT_DUPLICATE", "NATIVE_PINNED_REJECT_ORDINARY",
 		"NATIVE_PINNED_REJECT_LAYOUT", "NATIVE_PINNED_REJECT_MISSING",
 		"NATIVE_PINNED_REJECT_PRODUCT");
+
+	@Test
+	public void nativeInventoryReadsExplicitOwnerFactsOnceAcrossRepeatedLookups()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		NativeContinuitySupportClauses lazy = scenario.install(false);
+		CandidateRuleFact installed = installedChildFact(scenario);
+		CandidateRealizationReference nativePin = scenario.installedReference("m-choice");
+		CandidateRealizationReference ordinaryPin = scenario.installedReference("a-choice");
+		List<CandidateRuleFact> ownerFacts = new ArrayList<>();
+		for(int arity = 1; arity <= 32; arity++)
+			ownerFacts.add(ruleVariant(installed, java.util.Collections.nCopies(
+				arity, CandidateInputState.absentLocal())));
+		ownerFacts.add(installed);
+		CountingFactList counted = new CountingFactList(ownerFacts);
+		NativePlacementContinuity resolver =
+			(NativePlacementContinuity)invoke(scenario.fixture(), "resolver");
+		replaceOwnerFacts(resolver, scenario.childKey(), counted);
+
+		Assert.assertTrue(hasNativeContinuityRelation(resolver, scenario.childKey(), nativePin));
+		for(int repeat = 0; repeat < 4; repeat++)
+			Assert.assertNotNull(nativeFactoredAlternatives(
+				resolver, scenario.childKey(), nativePin, scenario.pool()));
+		Assert.assertFalse(hasNativeContinuityRelation(resolver, scenario.childKey(), ordinaryPin));
+		Assert.assertNull(nativeFactoredAlternatives(
+			resolver, scenario.childKey(), ordinaryPin, scenario.pool()));
+		CandidateRealizationReference missing = new CandidateRealizationReference(
+			nativePin.rule(), PlacementRealizationKey.nativeLineage(
+				nativePin.realization().emissionState(), "missing-pinned-inventory-row"));
+		Assert.assertFalse(hasNativeContinuityRelation(resolver, scenario.childKey(), missing));
+		Assert.assertNull(nativeFactoredAlternatives(
+			resolver, scenario.childKey(), missing, scenario.pool()));
+
+		Assert.assertEquals("the owner inventory snapshots explicit facts once, not once per query",
+			ownerFacts.size(), counted.gets());
+		Assert.assertEquals("inventory lookup must not enumerate the native Cartesian product",
+			1, lazy.materializedHandleCount());
+	}
+
+	@Test
+	public void nativeInventoryPreservesFirstMatchingFactAndDuplicateClassification()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		NativeContinuitySupportClauses relation = scenario.install(false);
+		CandidateRuleFact installed = installedChildFact(scenario);
+		CandidateEmissionFact emission = installed.allowedEmissionFacts().get(0);
+		CandidateRealizationReference ordinaryPin = scenario.installedReference("a-choice");
+		CandidateEmissionRealization ordinary = emission.realizations().stream()
+			.filter(realization -> realization.key().equals(ordinaryPin.realization()))
+			.findFirst().orElseThrow();
+		CandidateEmissionRealization nativeAlias = new CandidateEmissionRealization(
+			ordinary.key(), relation);
+		CandidateRuleFact ordinaryFact = singleRealizationFact(installed, emission, ordinary);
+		CandidateRuleFact nativeFact = singleRealizationFact(installed, emission, nativeAlias);
+
+		SearchSpaceMetrics ordinaryMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity ordinaryFirst = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", ordinaryMetrics, 128, 2048L);
+		replaceOwnerFacts(ordinaryFirst, scenario.childKey(), List.of(ordinaryFact, nativeFact));
+		Assert.assertNull(nativeFactoredAlternatives(
+			ordinaryFirst, scenario.childKey(), ordinaryPin, scenario.pool()));
+		Assert.assertEquals(1, directWork(ordinaryMetrics, "NATIVE_PINNED_REJECT_ORDINARY"));
+		Assert.assertEquals(0, directWork(ordinaryMetrics, "NATIVE_PINNED_REJECT_DUPLICATE"));
+
+		SearchSpaceMetrics duplicateMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity nativeFirst = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", duplicateMetrics, 128, 2048L);
+		replaceOwnerFacts(nativeFirst, scenario.childKey(), List.of(nativeFact, ordinaryFact));
+		Assert.assertNull(nativeFactoredAlternatives(
+			nativeFirst, scenario.childKey(), ordinaryPin, scenario.pool()));
+		Assert.assertEquals(0, directWork(duplicateMetrics, "NATIVE_PINNED_REJECT_ORDINARY"));
+		Assert.assertEquals(1, directWork(duplicateMetrics, "NATIVE_PINNED_REJECT_DUPLICATE"));
+		Assert.assertEquals("classification must not enumerate either native alias",
+			1, relation.materializedHandleCount());
+	}
+
+	@Test
+	public void nativeInventoryRejectsForeignOwnerAndDoesNotSurviveRevisionReplacement()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		scenario.install(false);
+		CandidateRuleFact installed = installedChildFact(scenario);
+		CandidateRealizationReference nativePin = scenario.installedReference("m-choice");
+		NativePlacementContinuity resolver =
+			(NativePlacementContinuity)invoke(scenario.fixture(), "resolver");
+		Assert.assertTrue(hasNativeContinuityRelation(resolver, scenario.childKey(), nativePin));
+
+		CandidateRealizationReference equalRule = new CandidateRealizationReference(
+			new CandidateRuleKey(scenario.childKey(), nativePin.rule().orderedInputs()),
+			nativePin.realization());
+		Assert.assertTrue("equal rule and realization keys retain the exact owner identity",
+			hasNativeContinuityRelation(resolver, scenario.childKey(), equalRule));
+		CompiledHopKey owner = scenario.childKey();
+		CompiledHopKey foreignOwner = new CompiledHopKey(owner.programFingerprint(),
+			owner.functionNamespace(), owner.callSitePath(), owner.recompileContext(),
+			owner.controlRegion(), owner.emittedHopInstance(), owner.canonicalSourceOrigin());
+		Assert.assertEquals(owner, foreignOwner);
+		Assert.assertNotSame(owner, foreignOwner);
+		CandidateRealizationReference foreignPin = new CandidateRealizationReference(
+			new CandidateRuleKey(foreignOwner, nativePin.rule().orderedInputs()),
+			nativePin.realization());
+		Assert.assertFalse("structurally equal foreign owners never acquire inventory authority",
+			hasNativeContinuityRelation(resolver, foreignOwner, foreignPin));
+		IllegalArgumentException foreign = Assert.assertThrows(IllegalArgumentException.class,
+			() -> resolver.proveCandidateSupport(foreignPin, scenario.pool()));
+		Assert.assertEquals("unknown owner identity", foreign.getMessage());
+
+		CandidateEmissionFact emission = installed.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization ordinary = emission.realizations().stream()
+			.filter(realization -> !(realization.supportClauses()
+				instanceof NativeContinuitySupportClauses)).findFirst().orElseThrow();
+		CandidateRuleFact ordinaryOnly = singleRealizationFact(installed, emission, ordinary);
+		List<CandidateRuleFact> revisedFacts = new ArrayList<>(candidateFacts(scenario.fixture()));
+		int position = revisedFacts.indexOf(installed);
+		Assert.assertTrue(position >= 0);
+		revisedFacts.set(position, ordinaryOnly);
+		NativePlacementContinuity revision = resolver.nextRevisionWithCompleteCandidateDelta(
+			List.copyOf(revisedFacts), Set.of(owner));
+		Assert.assertFalse("a revision must build a fresh owner inventory from replacement facts",
+			hasNativeContinuityRelation(revision, owner, nativePin));
+		Assert.assertNull(nativeFactoredAlternatives(revision, owner, nativePin, scenario.pool()));
+	}
 
 	@Test
 	public void metricsClassifyAcceptedHybridWithoutChangingProofAuthority() throws Exception {
@@ -624,6 +749,72 @@ public class NativeHybridUnpinnedTopologyTest {
 		return metrics.directWorkCount(SearchSpaceMetrics.DirectWork.valueOf(name));
 	}
 
+	private static boolean hasNativeContinuityRelation(NativePlacementContinuity resolver,
+		CompiledHopKey owner, CandidateRealizationReference pinned) throws Exception {
+		Method method = NativePlacementContinuity.class.getDeclaredMethod(
+			"hasNativeContinuityRelation", CompiledHopKey.class,
+			CandidateRealizationReference.class);
+		method.setAccessible(true);
+		return (boolean)method.invoke(resolver, owner, pinned);
+	}
+
+	private static Object nativeFactoredAlternatives(NativePlacementContinuity resolver,
+		CompiledHopKey owner, CandidateRealizationReference pinned, DurableAnchorKey pool)
+		throws Exception {
+		Method handleMethod = NativePlacementContinuity.class.getDeclaredMethod(
+			"candidateHandle", CandidateRealizationReference.class);
+		handleMethod.setAccessible(true);
+		int handle = (int)handleMethod.invoke(resolver, pinned);
+		Method witnessMethod = NativePlacementContinuity.class.getDeclaredMethod(
+			"nativeWitness", DurableAnchorKey.class);
+		witnessMethod.setAccessible(true);
+		Object witness = witnessMethod.invoke(resolver, pool);
+		Class<?> fixedType = nested("FixedCandidateBoundary");
+		Constructor<?> fixedConstructor = fixedType.getDeclaredConstructor(
+			CompiledHopKey.class, CandidateRealizationReference.class, int.class);
+		fixedConstructor.setAccessible(true);
+		Object fixed = fixedConstructor.newInstance(owner, pinned, handle);
+		Method method = NativePlacementContinuity.class.getDeclaredMethod(
+			"nativeFactoredProofAlternatives", CompiledHopKey.class,
+			CandidateRealizationReference.class, nested("NativePoolWitness"), fixedType);
+		method.setAccessible(true);
+		return method.invoke(resolver, owner, pinned, witness, fixed);
+	}
+
+	private static CandidateRuleFact installedChildFact(Scenario scenario) throws Exception {
+		return candidateFacts(scenario.fixture()).stream()
+			.filter(fact -> fact.key().parentOccurrence() == scenario.childKey())
+			.findFirst().orElseThrow();
+	}
+
+	private static CandidateRuleFact ruleVariant(CandidateRuleFact template,
+		List<CandidateInputState> inputs) {
+		return new CandidateRuleFact(new CandidateRuleKey(
+			template.key().parentOccurrence(), inputs), template.status(), template.capability(),
+			template.shapeProof(), template.profile(), template.allowedEmissionFacts(),
+			template.failureCode());
+	}
+
+	private static CandidateRuleFact singleRealizationFact(CandidateRuleFact template,
+		CandidateEmissionFact emission, CandidateEmissionRealization realization) {
+		CandidateEmissionFact single = new CandidateEmissionFact(emission.emissionState(),
+			emission.executionFType(), emission.derivedFoutAction(), List.of(realization));
+		return new CandidateRuleFact(template.key(), template.status(), template.capability(),
+			template.shapeProof(), template.profile(), List.of(single), template.failureCode());
+	}
+
+	@SuppressWarnings("unchecked")
+	private static void replaceOwnerFacts(NativePlacementContinuity resolver,
+		CompiledHopKey owner, List<CandidateRuleFact> facts) throws Exception {
+		Field field = NativePlacementContinuity.class.getDeclaredField("candidateFactsByKey");
+		field.setAccessible(true);
+		Map<CompiledHopKey,List<CandidateRuleFact>> current =
+			(Map<CompiledHopKey,List<CandidateRuleFact>>)field.get(resolver);
+		Map<CompiledHopKey,List<CandidateRuleFact>> replacement = new IdentityHashMap<>(current);
+		replacement.put(owner, facts);
+		field.set(resolver, java.util.Collections.unmodifiableMap(replacement));
+	}
+
 	@SuppressWarnings("unchecked")
 	private static List<?> candidateAlternatives(NativePlacementContinuity resolver,
 		CompiledHopKey owner, CandidateRealizationReference pinned, DurableAnchorKey pool)
@@ -782,5 +973,29 @@ public class NativeHybridUnpinnedTopologyTest {
 		Assert.assertEquals(expected.size(), actual.size());
 		for(CompiledHopKey key : expected)
 			Assert.assertTrue(actual.stream().anyMatch(candidate -> candidate == key));
+	}
+
+	private static final class CountingFactList extends AbstractList<CandidateRuleFact> {
+		private final List<CandidateRuleFact> facts;
+		private int gets;
+
+		private CountingFactList(List<CandidateRuleFact> facts) {
+			this.facts = List.copyOf(facts);
+		}
+
+		@Override
+		public CandidateRuleFact get(int index) {
+			gets++;
+			return facts.get(index);
+		}
+
+		@Override
+		public int size() {
+			return facts.size();
+		}
+
+		private int gets() {
+			return gets;
+		}
 	}
 }

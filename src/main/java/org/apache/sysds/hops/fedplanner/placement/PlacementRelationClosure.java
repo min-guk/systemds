@@ -11862,6 +11862,32 @@ final class PlacementRelationClosure {
 				List<CandidateEmissionRealization> exact = new ArrayList<>();
 				for(CandidateEmissionRealization realization : emission.realizations()) {
 					if(emission.derivedFoutAction() == null
+						&& realization.supportClauses() instanceof FactorizedSupportClauses factorized) {
+						Optional<Boolean> relocationFree = relocationFreeUniformFactorizedProduct(factorized);
+						if(complexityMetrics != null) {
+							complexityMetrics.recordDirectWork(DirectWork.RELOCATION_FACTOR_FILTER_REQUESTS);
+							complexityMetrics.recordDirectWork(relocationFree.isEmpty()
+								? DirectWork.RELOCATION_FACTOR_FILTER_FALLBACK
+								: relocationFree.get()
+									? DirectWork.RELOCATION_FACTOR_FILTER_KEEP_ALL
+									: DirectWork.RELOCATION_FACTOR_FILTER_DROP_ALL);
+							if(relocationFree.isPresent())
+								complexityMetrics.recordDirectWork(
+									DirectWork.RELOCATION_FACTOR_FILTER_LOGICAL_CLAUSES_BYPASSED,
+									factorized.size());
+						}
+						if(relocationFree.isPresent()) {
+							if(relocationFree.get()
+								&& (realization.key().layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
+									|| factorized.nativeWorkerPoolWitness() != null
+									|| !factorized.factors().isEmpty()
+									|| fact.key().orderedInputs().stream()
+										.noneMatch(CandidateInputState::present)))
+								exact.add(realization);
+							continue;
+						}
+					}
+					if(emission.derivedFoutAction() == null
 						&& realization.supportClauses() instanceof NativeContinuitySupportClauses) {
 						// The native product factory admits DIRECT bindings only. With no
 						// derived action there is no relocation authority to strip or rebind.
@@ -12011,6 +12037,25 @@ final class PlacementRelationClosure {
 		}
 		relocationProducts = currentProducts;
 		return List.copyOf(currentFacts);
+	}
+
+	/**
+	 * Proves whether relocation filtering keeps or drops an entire factorized relation.
+	 * A mixed axis retains the exact member-wise fallback and its clause identities.
+	 */
+	private static Optional<Boolean> relocationFreeUniformFactorizedProduct(
+		FactorizedSupportClauses factorized) {
+		boolean mixed = false;
+		for(List<CandidateRealizationInputBinding> factor : factorized.factors()) {
+			boolean relocation = factor.get(0).kind() == CandidateInputBindingKind.RELOCATION;
+			boolean uniform = true;
+			for(CandidateRealizationInputBinding binding : factor)
+				uniform &= (binding.kind() == CandidateInputBindingKind.RELOCATION) == relocation;
+			if(uniform && relocation)
+				return Optional.of(false);
+			mixed |= !uniform;
+		}
+		return mixed ? Optional.empty() : Optional.of(true);
 	}
 
 	/** Index immutable action authority once per relocation transfer. */

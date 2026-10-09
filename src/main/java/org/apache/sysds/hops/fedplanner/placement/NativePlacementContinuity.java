@@ -104,7 +104,7 @@ final class NativePlacementContinuity {
 	private final Map<CompiledHopKey,Hop> originsByKey;
 	private final CandidateFactsSnapshot candidateFactsSnapshot;
 	private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByKey;
-	private final Map<CompiledHopKey,Boolean> nativeRelationOwners = new IdentityHashMap<>();
+	private final Map<CompiledHopKey,NativeRelationInventory> nativeRelationOwners = new IdentityHashMap<>();
 	private Map<CompiledHopKey,List<CompiledHopKey>> boundCandidateReadersBySource;
 	private long boundSourceProjectionScans;
 	private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edgesByConsumer;
@@ -3733,18 +3733,87 @@ final class NativePlacementContinuity {
 
 	/** Snapshot-local representation check; it carries no source or proof authority. */
 	private boolean hasNativeRelationOwner(CompiledHopKey owner) {
+		return nativeRelationInventory(owner).hasNativeRelation();
+	}
+
+	private NativeRelationInventory nativeRelationInventory(CompiledHopKey owner) {
 		List<CandidateRuleFact> facts = candidateFactsByKey.get(owner);
 		if(facts == null)
-			return false;
-		Boolean known = nativeRelationOwners.get(owner);
+			return NativeRelationInventory.EMPTY;
+		NativeRelationInventory known = nativeRelationOwners.get(owner);
 		if(known != null)
 			return known;
-		boolean nativeRelation = facts.stream().flatMap(fact -> fact.allowedEmissionFacts().stream())
-			.flatMap(emission -> emission.realizations().stream())
-			.anyMatch(realization -> realization.supportClauses() instanceof NativeContinuitySupportClauses);
-		// At most one Boolean per immutable snapshot owner. Revisions get a fresh map.
-		nativeRelationOwners.put(owner, nativeRelation);
-		return nativeRelation;
+		NativeRelationInventory inventory = new NativeRelationInventory(facts);
+		nativeRelationOwners.put(owner, inventory);
+		return inventory;
+	}
+
+	/**
+	 * Indexes only explicit immutable inventory, never logical support members or
+	 * query eligibility. Encounter-ordered buckets retain duplicate authority for
+	 * the original query-time checks. Each resolver revision owns a fresh index.
+	 */
+	private static final class NativeRelationInventory {
+		private static final NativeRelationInventory EMPTY = new NativeRelationInventory(List.of());
+		private final List<CandidateRuleFact> facts;
+		private Boolean nativeRelation;
+		private Map<CandidateRuleKey,List<CandidateRuleFact>> factsByRule;
+		private Map<CandidateEmissionFact,Map<PlacementRealizationKey,List<CandidateEmissionRealization>>>
+			realizationsByEmission;
+
+		private NativeRelationInventory(List<CandidateRuleFact> facts) {
+			this.facts = facts;
+			if(facts.isEmpty()) {
+				nativeRelation = false;
+				factsByRule = Map.of();
+				realizationsByEmission = Map.of();
+			}
+		}
+
+		private boolean hasNativeRelation() {
+			if(nativeRelation == null)
+				nativeRelation = facts.stream().flatMap(fact -> fact.allowedEmissionFacts().stream())
+					.flatMap(emission -> emission.realizations().stream()).anyMatch(realization ->
+						realization.supportClauses() instanceof NativeContinuitySupportClauses);
+			return nativeRelation;
+		}
+
+		private List<CandidateRuleFact> matchingFacts(CandidateRuleKey rule) {
+			index();
+			return factsByRule.getOrDefault(rule, List.of());
+		}
+
+		private List<CandidateEmissionRealization> matchingRealizations(
+			CandidateEmissionFact emission, PlacementRealizationKey realization) {
+			return realizationsByEmission.get(emission).getOrDefault(realization, List.of());
+		}
+
+		private void index() {
+			if(factsByRule != null)
+				return;
+			Map<CandidateRuleKey,List<CandidateRuleFact>> byRule = new HashMap<>();
+			Map<CandidateEmissionFact,Map<PlacementRealizationKey,List<CandidateEmissionRealization>>>
+				byEmission = new IdentityHashMap<>();
+			boolean foundNative = false;
+			for(CandidateRuleFact fact : facts) {
+				byRule.computeIfAbsent(fact.key(), ignored -> new ArrayList<>()).add(fact);
+				for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+					if(byEmission.containsKey(emission))
+						continue;
+					Map<PlacementRealizationKey,List<CandidateEmissionRealization>> byRealization = new HashMap<>();
+					for(CandidateEmissionRealization realization : emission.realizations()) {
+						byRealization.computeIfAbsent(realization.key(), ignored -> new ArrayList<>()).add(realization);
+						foundNative |= realization.supportClauses() instanceof NativeContinuitySupportClauses;
+					}
+					byEmission.put(emission, byRealization);
+				}
+			}
+			// These private buckets are never mutated after publication. Their size is
+			// bounded by explicit facts/emissions/realizations, not requested pin count.
+			realizationsByEmission = byEmission;
+			factsByRule = byRule;
+			nativeRelation = foundNative;
+		}
 	}
 
 	private List<SelectedCandidateProof> generatedRootAlternative(CompiledHopKey key,
@@ -3793,16 +3862,15 @@ final class NativePlacementContinuity {
 
 	private boolean hasNativeContinuityRelation(CompiledHopKey key,
 		CandidateRealizationReference pinned) {
-		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
+		NativeRelationInventory inventory = nativeRelationInventory(key);
+		for(CandidateRuleFact fact : inventory.matchingFacts(pinned.rule())) {
 			if(fact.status() != CandidateEvaluationStatus.AVAILABLE
 				|| fact.key().parentOccurrence() != key || !fact.key().equals(pinned.rule()))
 				continue;
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
-				for(CandidateEmissionRealization realization : emission.realizations()) {
-					CandidateRealizationReference reference =
-						CandidateRealizationReference.of(fact.key(), realization);
-					if(reference.rule().parentOccurrence() == key && reference.equals(pinned)
-						&& realization.supportClauses() instanceof NativeContinuitySupportClauses)
+				for(CandidateEmissionRealization realization : inventory.matchingRealizations(
+					emission, pinned.realization())) {
+					if(realization.supportClauses() instanceof NativeContinuitySupportClauses)
 						return true;
 				}
 		}
@@ -3832,7 +3900,8 @@ final class NativePlacementContinuity {
 		CandidateRuleFact matchedFact = null;
 		CandidateEmissionRealization matchedRealization = null;
 		NativeContinuitySupportClauses matchedRelation = null;
-		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
+		NativeRelationInventory inventory = nativeRelationInventory(key);
+		for(CandidateRuleFact fact : inventory.matchingFacts(pinned.rule())) {
 			if(fact.status() != CandidateEvaluationStatus.AVAILABLE
 				|| fact.key().parentOccurrence() != key || !fact.key().equals(pinned.rule())
 				|| isBroadcastRowProvablyUnselectable(fact)
@@ -3844,11 +3913,8 @@ final class NativePlacementContinuity {
 					|| state.fType() != witness.fType || emission.executionFType() != witness.fType
 					|| emission.derivedFoutAction() != null)
 					continue;
-				for(CandidateEmissionRealization realization : emission.realizations()) {
-					CandidateRealizationReference reference =
-						CandidateRealizationReference.of(fact.key(), realization);
-					if(reference.rule().parentOccurrence() != key || !reference.equals(pinned))
-						continue;
+				for(CandidateEmissionRealization realization : inventory.matchingRealizations(
+					emission, pinned.realization())) {
 					if(matchedRealization != null) {
 						if(metrics != null)
 							metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_PINNED_REJECT_DUPLICATE);
