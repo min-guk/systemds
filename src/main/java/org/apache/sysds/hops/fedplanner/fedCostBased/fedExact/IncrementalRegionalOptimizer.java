@@ -176,6 +176,7 @@ final class IncrementalRegionalOptimizer {
 
 	private final RegionalSearchProblem problem;
 	private final ExactPhysicalReducedSolver.CompactModel root;
+	private final IncrementalRegionalSeed.Prepared seedPreparation;
 	private final List<Variable> variables;
 	private final Map<Variable,Integer> positions = new HashMap<>();
 	private final Limits limits;
@@ -211,7 +212,8 @@ final class IncrementalRegionalOptimizer {
 		this.mergeCounters = mergeCounters; this.boundaryMerger = boundaryMerger;
 		this.coverOwners = new BitSet(root.factors().size());
 		for(int i=0; i<variables.size(); i++) positions.put(variables.get(i),i);
-		incumbent = IncrementalRegionalSeed.lift(root, originalSeed, limits);
+		seedPreparation = IncrementalRegionalSeed.prepare(root);
+		incumbent = seedPreparation.lift(originalSeed, limits);
 		upper = validate(incumbent);
 	}
 
@@ -663,7 +665,7 @@ final class IncrementalRegionalOptimizer {
 					// Conditioning can turn a canonical improvement/tie into a rounded
 					// local tie. Preserve the incumbent unless the full objective improves.
 					if(!skipLegacyLift)
-						accept(IncrementalRegionalSeed.lift(root,
+						accept(seedPreparation.lift(
 							Arrays.stream(source).boxed().toList(),conditionalLimits),false);
 					if(!replayed)
 						conditionalReplayCache.rememberSuccessful(source,neighborhood.block(),solvedValues);

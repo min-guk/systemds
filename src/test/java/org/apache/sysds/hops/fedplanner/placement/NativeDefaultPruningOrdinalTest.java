@@ -36,6 +36,108 @@ public class NativeDefaultPruningOrdinalTest {
 		"native-default-ordinal", "main", List.of("root"), "root", "compiled");
 
 	@Test
+	public void acyclicWarmLiveDefaultsCheckOnlyUniqueSuccessors() throws Exception {
+		Object witness = witness();
+		CompiledHopKey leftKey = key("acyclic-left"), rightKey = key("acyclic-right");
+		Object left = state(leftKey, 1, witness), right = state(rightKey, 2, witness);
+		Object root = state(key("acyclic-root"), 3, witness);
+		Object ground = alternative(List.of(), true, witness);
+		List<Object> rows = new ArrayList<>();
+		for(int index = 0; index < 128; index++)
+			rows.add(alternative(List.of(dependency(leftKey, 1, witness),
+				dependency(rightKey, 2, witness), dependency(leftKey, 1, witness)), false, witness));
+		List<?> defaults = defaultList(rows);
+		ordinals(defaults); // Same schedule already warmed by production graph traversal.
+		CountingGraph graph = new CountingGraph();
+		graph.put(left, List.of(ground)); graph.put(right, List.of(ground)); graph.put(root, defaults);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		Assert.assertEquals(0, acyclicPrune(metrics, graph, List.of(left,right,root)));
+		Assert.assertEquals("warm DAG pruning checks unique child states, not 384 repeated edges",
+			2, graph.lookups);
+		Assert.assertSame(defaults, graph.get(root));
+		Assert.assertEquals(128, directMetric(metrics, "PRUNE_UNCHANGED_OWNER_SLOTS_SKIPPED"));
+
+		List<?> groundedDefaults = defaultList(List.of(ground));
+		ordinals(groundedDefaults);
+		CountingGraph isolated = new CountingGraph(); isolated.put(root, groundedDefaults);
+		Assert.assertEquals(0, acyclicPrune(null, isolated, List.of(root)));
+		Assert.assertEquals("a direct ground with zero successors is already live", 0, isolated.lookups);
+	}
+
+	@Test
+	public void acyclicColdFilteredMissingAndDeadChildrenKeepLegacyRows() throws Exception {
+		Object witness = witness();
+		CompiledHopKey childKey = key("acyclic-control-child");
+		Object child = state(childKey, 1, witness), root = state(key("acyclic-control-root"), 2, witness);
+		Object ground = alternative(List.of(), true, witness);
+		Object conditional = alternative(List.of(dependency(childKey, 1, witness)), false, witness);
+		Object empty = alternative(List.of(), false, witness);
+		for(int mode = 0; mode < 4; mode++) {
+			List<?> rows = mode == 1 ? List.of(conditional,empty,ground) : List.of(conditional,ground);
+			List<?> defaults = defaultList(rows);
+			if(mode != 0) ordinals(defaults);
+			Map<Object,List<?>> plain = new LinkedHashMap<>(), actual = new LinkedHashMap<>();
+			if(mode != 2) {
+				plain.put(child, mode == 3 ? List.of() : List.of(ground));
+				actual.put(child, mode == 3 ? List.of() : List.of(ground));
+			}
+			plain.put(root, rows); actual.put(root, defaults);
+			List<Object> order = mode == 2 ? List.of(root) : List.of(child,root);
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			Assert.assertEquals(acyclicPrune(null, plain, order), acyclicPrune(metrics, actual, order));
+			assertIdenticalGraph("acyclic fallback mode " + mode, plain, actual);
+			Assert.assertEquals(0, directMetric(metrics, "PRUNE_UNCHANGED_OWNER_SLOTS_SKIPPED"));
+			if(mode == 0) Assert.assertNull("cold pruning must not build optional metadata", field(defaults, "schedule"));
+		}
+	}
+
+	@Test
+	public void randomizedAcyclicPruningMatchesPlainRowsWithWarmAndColdSchedules() throws Exception {
+		Random random = new Random(270340L);
+		Object witness = witness();
+		for(int trial = 0; trial < 120; trial++) {
+			List<CompiledHopKey> owners = new ArrayList<>();
+			List<Object> states = new ArrayList<>();
+			Map<Object,List<?>> plain = new LinkedHashMap<>(), actual = new LinkedHashMap<>();
+			for(int owner = 0; owner < 10; owner++) {
+				owners.add(key("acyclic-random-" + trial + '-' + owner));
+				states.add(state(owners.get(owner), owner + 1, witness));
+				List<Object> rows = new ArrayList<>();
+				for(int row = 0, count = random.nextInt(8); row < count; row++) {
+					List<Object> dependencies = new ArrayList<>();
+					if(owner > 0)
+						for(int edge = 0, countEdges = random.nextInt(5); edge < countEdges; edge++) {
+							int source = random.nextInt(owner);
+							dependencies.add(dependency(owners.get(source), source + 1, witness));
+						}
+					rows.add(alternative(dependencies, dependencies.isEmpty(), witness));
+				}
+				List<?> defaults = defaultList(rows);
+				if(random.nextBoolean()) ordinals(defaults);
+				plain.put(states.get(owner), List.copyOf(rows)); actual.put(states.get(owner), defaults);
+			}
+			SearchSpaceMetrics plainMetrics = new SearchSpaceMetrics(), actualMetrics = new SearchSpaceMetrics();
+			Assert.assertEquals(acyclicPrune(plainMetrics, plain, states), acyclicPrune(actualMetrics, actual, states));
+			assertIdenticalGraph("acyclic random trial " + trial, plain, actual);
+			Assert.assertEquals(plainMetrics.snapshot().alternativesRemoved(), actualMetrics.snapshot().alternativesRemoved());
+		}
+	}
+
+	private static long acyclicPrune(SearchSpaceMetrics metrics, Map<Object,List<?>> graph,
+		List<Object> order) throws Exception {
+		NativePlacementContinuity continuity = new NativePlacementContinuity(
+			Map.of(), Map.of(), List.of(), List.of(), Map.of(), metrics);
+		Method method = NativePlacementContinuity.class.getDeclaredMethod(
+			"pruneDeadAcyclicAlternatives", Map.class, List.class);
+		method.setAccessible(true); return (long)method.invoke(continuity, graph, order);
+	}
+
+	private static final class CountingGraph extends LinkedHashMap<Object,List<?>> {
+		private int lookups;
+		@Override public List<?> get(Object key) { lookups++; return super.get(key); }
+	}
+
+	@Test
 	public void ordinalCacheIsStableAndPreservesOriginalDependencyOrder() throws Exception {
 		Object witness = witness();
 		CompiledHopKey left = key("order-left"), right = key("order-right");

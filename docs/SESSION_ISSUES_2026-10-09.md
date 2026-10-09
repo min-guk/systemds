@@ -945,6 +945,24 @@
 - **v26 원격 통합 계획**: v25봉인287d4224d6은그대로실측한다. 원격e9bfb2fb16/df0af6c987의high-arity iterative suffix hash 및CanonicalText shared-child descent 회피를병합했다. NPC의v25hybrid와suffixhash는서로다른함수이며자동병합;이슈문서의두append구간은모두보존했다. LegacyList hash·UTF16순서/공유signature·deep기존회귀와전체gate로검증한후게시한다. v25실제결과를이후merge엔진결과로혼동하지않는다.
 
 - **v26 upstream 병합 gate**: e9bfb2fb16/df0af6c987와v25의통합selectedFedPlanner **1,275testsPASS(156.917초)**,7,841class/resource실행전후변경0/sourceSHA불일치0. Iterativehash의기존suffixstates/순서/Javaoverflow 및CanonicalText의pendingchild/empty/UTF16/부분offset보존독립검토CLEAR. 근거 `evidence/native-upstream-full-gate-v26/validation.json`. 실제진행중v25와버전을구분하며20초성공을주장하지않는다.
+
+### v27 / immutable default proof rows의 canonical source 재사용 (진행중)
+
+- **증상/원인**: supportedReferences는query마다같은immutableDefaultAlternativeList를다시dependency필터·canonicaldedup·sort한다. v24schedulehit12,871,146,canonicalcomparison15,098,415이지만전체정렬이이경로에속한다고단정하지않는다.
+- **계획/근거**: schedule.filteredAlternatives가원래defaults그자체이고모든uniqueSuccessor가현재supported인경우만기존필터가nonnullrealization으로축약됨을이용한다. 이때원래canonicalReferences로만든immutablelist를정확히해당DefaultAlternativeList에1개보관한다. 매querysuccessor검사는유지하며failed/filtered/cyclicunsupported/fixed별도list는기존경로다. RootIndependent를pre-prune graph로옮기는안은deadedge제거후값이달라질수있어채택하지않았다.
+- **보존량/검증**: 추가캐시는listrow수이하reference slots이며global/per-handlelist각각상수배로기존topology·overlay row-budget에묶인다. 새로운query별cache나budget확대는없다. Nullground/empty nonground/unsupported후다시supported/equalforeignowner/duplicatefirstauthority/cycle를검사하며cold반복sort와hot무sort를RED→GREEN으로검증한다. 독립설계검토CLEAR; 실제효과미검증.
+
+- **v27 canonical refs RED→GREEN**: behavior-preserving helper에서169개중2개가반복384edge조회/새list생성으로RED(1.741초). 조건부immutablecache후169개PASS(1.069초,기존ignore1). 반복128row×3dependency조회384→unique2, hotcanonicalcomparison0, 동일리스트재사용을검증했다.120개fixedseed×16supportmask에서orderedreference/firstauthorityidentity가explicitfilter와같고,cache후withdraw/foreignowner/emptyrow/nullground반례를통과했다. GREENfixture의dependency는명시적source reference를사용하도록보강했다. Source후보숫자는같으며retention은최대rows개reference slots/list다. 근거 `evidence/canonical-supported-refs-{red,green}-v27`.
+
+- **v25 실제 최종**: LogReg366.748230696초(v24−1.430초),GLM122.514772752초(v24+1.805초),두workloadnumeric/audit0/objective/assignment/selectedraw/sectionparityPASS. LRClause2,492,530/proof소비6,774,679그대로이고rows19,629,431만조금감소. Coordpeak9,186,689,024B/4,998,062,080B. Synthetic개선을실제coverage확대로보고하지않으며20초evaluatorFAIL이다. Evidencev24-v25 SHA1ecc1264935c2bd93c387b89453c200cadcce66a0c15ca4b6adf7b90c1c49907. 다음v27에서v26원격개선과revision/sourcecanonical반복제거를함께검증한다.
+
+- **v27 topology revision 통합**: CandidateTopology 생성시에identity-unique reference/expectedpositivehandle 배열을만들고revision에서는한번씩검증한다. Equal-but-distinct는별도로검증하고conflicting/nonpositive/null-nonzero값은재색인fallback한다. 기존sourcefact·metadataOwnerReads선행검증은그대로다. Actualwarm nextRevision128authorityoccurrence→65unique검사,retainedbucket조회0,같은topology객체/orderedproof/sourceidentity/metadatafootprint coldparity검증.164testsPASS/독립CLEAR. ProductionSHAe90407c54561d25a86ae6f049db901291c5ec3fd6fb7b81892f643561a960838/testsb64556235bd7163490d97ef7d28ae6f08098aa8280cd6f9828f9cd788e33e7d4. 추가ref+int배열은기존row/dependencyidentity수에묶이지만topologyMaxRows는고차원dependency별bytes를직접계산하지않는기존계측한계가있다.
+- **v27 acyclic pruning 계획**: cyclicworklist에만있던반복dependency검사회피를DAG경로에도확장한다. 이미warm이고unfiltered인DefaultAlternativeList의uniqueSuccessor가모두현재nonnull/nonempty인경우원래row별검사는제거0이므로그대로건너뛴다. Cold/filtered/dead/missing/generic은기존경로이며새cache는없다. Actual경로는DFScompletionorder를쓰며pruning결과/순서는보존한다. 감소한row방문은기존unchanged-owner계수로구분하고removed개수는그대로다. 설계독립CLEAR,RED회귀후적용한다.
+
+- **v27 acyclic RED→GREEN 및통합검토**: 기존행검사에서182개중1개가384childlookup/기대2로RED(1.432초). Warm schedule skip후identityuniqueauthority회귀까지합친184개PASS(1.414초,기존ignore1).120fixedseedDAG의rowidentity/order/제거수,missing/dead/filtered/cold/zero-successor제어를통과했다. CombinedproductionSHA2575eb34c4a1d8d4a8e33d9ff21326de011aa5b022b8ff91f9fcee78eefde339/test24b0b8cc41ddc83ce899835cc775b7ea7aa2620ecec65c44b52c9077d5c1181c 독립검토CLEAR. 새pruning계수는불법후보제거수가아닌검사생략된생존row수이며명확히구분한다.
+
+- **v27 전체 gate 완료**: selectedFedPlanner **1,284testsPASS(164.200초)**,7,845class/resource실행전후변경0/sourceSHA불일치0. 별도receipt/probe9개PASS(1.395초). 세변경및상호작용독립검토CLEAR. 근거 `evidence/native-revision-reference-full-gate-v27/validation.json`, `evidence/v27-probe-gate`. 같은입력·privacy·costprofile·JVM·CPU/메모리·probe로다음COFEE실측을실행하며20초목표는아직미달이다.
+
 - **v42 병합 게시/실측**: e9bfb2fb16a10ab40a73c8be6acd955253d51f01 origin/main 확인/JAR7d737297d329dfa96cb1ccf2933ba860bd16abfb9bcab41939d33eab6e320e22. Preflight heavy process 없음, own build/parser와 겹치지 않은 OFF/detailed네 Docker 모두60초watchdog/no fullInitial receipt/containers제거. OFF LogReg2,499samples/direct1,341/support1,457/peak5.580GB; GLM2,651samples/canonical8.98%/joint6.37%/peak3.906GB. Partial scalar LogReg1,213,204(PARTITIONED352,493/MIXEDSINGLE391,447/MIXEDMULTI314,576/RETAINED127,555), GLM587,352(RETAINED275,503/MIXEDMULTI226,840). 완료시간 개선이나20초 성공으로 해석하지 않는다. Nativeget callstack85개가LogicalBoundaryRealizations.addOptions의 전체clause 전개로 이어져, 전체관계/선택receipt는 유지하면서 uniform pool 분석 중복을 줄일 수 있는지 다음 검토한다.
 
 ### v43 / native logical-boundary 분석의 균일 Option 중복 제거 (검증중)
@@ -972,3 +990,36 @@
 - **범위/위험**: 어떤 candidate/support도 삭제하지 않으며 추가 persistent cache/index나 cache budget 증가는 없다. 임시 ordinal 집합은 기존 cached clause 수 이하이다. Seed를 무시하는 first-member lookup이나 old clause 직접 설치는 금지했다. 미래의 native proof 표현이 바뀌면 정확한 조회와 legacy 이관 parity를 재검증해야 한다. Oracle/privacy/TR/TW/recompile/runtime/Physical tie 변경 없음; 실제20초 및 전체ML coverage는 미완료다.
 - **v44 최종 회귀/독립 검토**: typed/untyped 조회, 같은 endpoint이지만 다른 full seed 식별자, proof/source owner의 equal-but-distinct identity, 추가/잘못된 proof, witness/exactness 변경을 무전개로 검사한다. 실제 revision에서 header 삭제와 binding 제한은 이관1개/handle1개만 남고 제거된 member는 -1이다. 단일 donor fact에 equal-distinct clause 두 개가 있으면 fresh structural handle은 carry0, 현재 관계가 exact 원본 handle을 보존하면 carry1/reuse1/build0으로 기존 ambiguity 우선순위를 유지한다. 최종3tests PASS(0.356초), actual production/test 독립검토 CLEAR. Fresh177selectedclass gate 진행중이다.
 - **v44 로컬 최종 gate**: fresh177selectedclasses **1,408tests/failure0/error0/skip1**, Maven package BUILD SUCCESS(2026-10-09 11:15:49+02,2:31). Actual production/test 독립검토 CLEAR. Publish 직전 fetch에서 origin/main이cbb0f62535로 전진했으므로 로컬 검증본을 별도 커밋하고 upstream topology authority/row 재사용 및 regional seed 압축 전파·prepared topology를 병합해 다시 검증한다. 로컬 gate를 병합본 성공으로 재사용하지 않는다.
+
+
+### v28 / Regional seed에서 압축 support 직접 전파 (진행중)
+
+- **증상/원인**: `IncrementalRegionalSeed.markFiniteSupports`가 이미 conditional/functional/sparse relation으로 보존된 hard factor도 active Cartesian product로 재검사한다. 이 경로는 기존 `conditionalSupportedValues`의 정확한 generalized-arc support API를 사용하지 않았다.
+- **계획/근거**: Conditional은 기존 support API를 그대로 재사용하고, functional map은 현재 살아 있는 source row의 target만 검사한다. Sparse relation은 저장된 합법 cell 수가 active product보다 작거나 같은 경우만 합법 cell을 순회한다. 일반 numeric/hard factor는 기존 계산 순서를 유지한다. 후보 합법성, float 비용 합산, auxiliary exact solve와 resource limit은 바꾸지 않는다.
+- **검증 계획**: 기존 dense Cartesian reference와 exhaustive small-domain 및 fixed-seed randomized support fixed-point를 비교한다. Wildcard, constrained selector holes, overlapping regions, empty support, unary/zero-axis sparse, source/target 역방향 전파와 반복 호출을 포함한다. 실제 reduced root lift의 assignment 및 objective raw bits도 비교하고 생성/방문 계수 RED→GREEN 후 전체 회귀를 수행한다.
+- **잔여/위험**: relation 보존 coverage에 따라 실제 효과가 제한될 수 있다. Conditional support API는 domain 크기만큼 scratch를 만들며 일반 cost의 비분리 Cartesian 검사는 남는다. Workload 효과는 다음 동일 Docker 봉인 실행으로만 판단한다.
+- **원격 병합**: v27 푸시 도중 main이86625619ef로 전진했다. Native boundary의 uniform non-VALUE_MAP metadata를 첫 원본 clause로 투영하는 변경을 병합했고, 문서 양쪽 기록을 보존했다. Merge60e56aa295는 통합 검증 전이며 아직 게시하지 않았다.
+
+- **v28 focused RED→GREEN**: 최초 test seam의 functional factor는 freeze하지 않아 기존 dense reader 예외가 발생했다. Production 계약처럼 `freezeValidatedFactor`로 고친 authoritative RED는15개중2개가 방문량 assertion으로 실패(0.591초): conditional262,148/functional16,642 Cartesian cell 방문. 변경 후 관련71개PASS(1.707초). 160 fixed-seed 관계×63 nonempty domain mask의 explicit dense fixed-point/failure/revision count parity, wildcard/holes/겹치는 regions/역방향 cascade/scalar support, 실제 reduced root lift assignment·objective raw bits를 검사했다. Counters는 Cartesian cell, sparse cell, functional row, conditional revision을 구분한다. 전체 gate와 실측 전이며 논리적 후보가 줄었다고 주장하지 않는다.
+- **v28 원격 변경 독립 검토**: LogicalBoundaryRealizations의 native 대표 projection은 uniform metadata만 사용하는 non-VALUE_MAP에 한정되고, selected receipt는 원본 exact clause를 직접 사용한다. 독립 검토 CLEAR, incoming 두 test suite를 포함한 focused GREEN을 확인했다.
+
+- **v28 production 독립 검토**: patch SHA `ec8c95eb775876b2012b024707f1e17d72f0472d6ad2d375c86c84a5c12a3178` CLEAR. Carrier 지원 mask를 먼저 완성한 뒤 기존 제거 loop를 실행하므로 동시 제거와 dirty 순서를 보존한다. Sparse 임계 곱은 이전 값이 int 저장 cell 수보다 작을 때만 계산해 long overflow가 없다. Empty/zero-axis 및 inactive 좌표의 stale scratch도 검사했다. 추가 실제 root counter와 bounded row/finite-cell assertions를 포함한 최종 focused71개PASS(1.331초). 전체 회귀 진행 중.
+- **v27 LogReg 선행 결과**: exact90898b/JAR909136으로 전체 planning373.091833772초, analysis281.036초/model7.216초/cost7.035초/optimizer74.025초/runtime4.707초. Numeric/audit0/objective bits는 정상이나 직전366.748초보다 느리므로 성능 개선으로 보고하지 않는다. GLM 및 최종 selected raw parity 비교는 진행 중이다.
+
+- **v28 전체 gate 완료**: 원격 boundary projection·v27와 seed carrier dispatch 통합 selected FedPlanner **1,316 tests PASS(160.469초)**. 7,847 class/resource 실행 전후 변경0/source SHA 불일치0. 근거 `evidence/native-seed-support-full-gate-v28/validation.json`. Production 독립 검토 CLEAR. 별도 probe와 실제 Docker 검증을 이어서 수행한다. 전체 저장소 Maven 통과로 확대하지 않는다.
+
+
+### v29 / 반복 seed lift의 불변 support plan 재사용 (진행중)
+
+- **증상/원인**: 같은 immutable reduced root를 사용하는 initial/conditional lift마다 variable identity map, factor scope index, incidence와 support width를 다시 계산한다. 입력값에 의존하는 부분은 active/support/dirty mask와 assignment인데 구조까지 다시 만들고 있었다.
+- **계획/보존 근거**: optimizer가 정확한 root에 연결된 Prepared seed plan 하나를 소유하게 한다. 기존 `lift(root, ...)`는 매번 준비하는 reference entry로 유지하며, 반복 경로만 `lift(prepared, ...)`를 사용한다. Mutable scratch는 호출마다 새로 만든다. 전역 cache·budget 확대 없이 lifetime은 optimizer와 같다. Float 합산·factor 순서·오류 및 resource limit·tie 선택은 유지한다.
+- **검증 계획**: 한 prepared root에서 다른 seed, infeasible seed 뒤 재시도, 서로 다른 resource limit, fixed-seed 관계의 반복 lift를 fresh reference와 비교한다. 두 root/서로 다른 owner identity를 공유하지 않는지, 입력 caller list 변경 및 결과 array 변경이 다음 lift에 새지 않는지 확인한다. 기존 seed/optimizer 회귀를 유지한 뒤 전체 통합 검증한다.
+- **잔여/위험**: 실제 conditional lift 횟수에 따라 효과가 작을 수 있다. Prepared 구조는 immutable root의 기존 factor/variable reference와 O(scope incidence) index를 보유한다. Actual 시간 개선은 다음 Docker 검증 이전에 주장하지 않는다.
+
+- **v29 focused 검증/독립 검토**: 관련52개PASS(1.435초). 같은 root에서120회 lift의 plan 구성은120→1회, assignment와 propagation 방문량은 동일했다.100 fixed-seed 모델의 반복 seed·불가능 seed·resource limit 실패 후 회복·caller/result 변경·동일한 variable 값을 가진 별도 root를 검사했다. Production SHA `ff395b5723fdb792201ddb79b0d3cce20870479b473c0517f146c566174f6997`, test SHA `3d303ab38e5d262082e7f374933fa4b9726097fd9f7615e70195e7e67aab1d93` 독립 검토 CLEAR. 추가 보존 상태는 immutable root lifetime의 O(scope incidence)이며 호출별 scratch를 공유하지 않는다.
+
+- **v27 실제 최종**: LogReg373.091833772초 / GLM117.126525936초. v25 대비 +6.344초 / −5.388초인 단일 관측이며20초 목표는 미달이다. 두 workload의 numeric/audit0/objective/assignment/전체 selected raw 및 section hash는 v19/v25와 동일하다. v25와 CostSurface/aggregate fingerprint도 동일하다. Structural handle 조회는 LR125,371,517→106,487,659, GLM34,527,044→11,089,199로 줄었으나 Clause/proof/graph/row/정렬 수는 변하지 않았다. Peak coordinator8,958,070,784B/4,902,350,848B. `v25-v27-comparison.json` SHA `e8e7d208e529d057580d73c97822532f2cea64e167f61327971779cdd0c281df`. Evaluator FAIL/checkpoint 기록 완료.
+- **v28 게시·실측 시작**: 1,316 selected tests와 probe9개(1.289초), 독립 검토를 통과한 e883603113을 origin/main에 push하고 원격 head 일치를 확인했다. JAR SHA `a49ebd7b8408066fff3084b5efb236f5f37db95bbe1cd4d6bb35e1e10058086d`, freeze SHA `2a4a59d8085e04f41d46910a7b2c861bb67a769ea94ca5ac9a27563cc0282595`. 같은 Docker 입력/profile/JVM/probe로 LogReg→GLM을 실행한다. 다축 complement WIP는 포함하지 않았다.
+
+- **v29 전체 gate**: selected FedPlanner1,320개PASS(179.467초). 7,849 class/resource 실행 전후 변경0/source SHA 불일치0. 근거 `evidence/native-seed-prepared-full-gate-v29/validation.json`. Prepared 구조 재사용의 focused52개와 독립 검토를 포함한다.
+- **v28 LogReg 선행 결과**: fullInitial359.976439287초(analysis272.775/model5.937/cost6.407/optimizer71.268), runtime4.781초. Numeric/audit0/objective/selection 검사PASS. v27보다13.115초 줄어든 단일관측이고20초 목표는 미달이다. GLM/최종 cross-version selected raw parity는 이어서 검증한다.

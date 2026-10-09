@@ -2424,7 +2424,7 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
-	public void stableHandleCheckVisitsOneWideReferenceBucketLinearly() throws Exception {
+	public void stableHandleCheckVisitsEachReferenceIdentityOnce() throws Exception {
 		PlacementIdentity.beginAnalysisScope(null);
 		try {
 			Fixture full = new Fixture(FType.FULL);
@@ -2455,7 +2455,8 @@ public class NativePlacementContinuityTest {
 			}
 			CandidateRealizationReference reference =
 				full.withClauses(root, rootInputs, clauses);
-			NativePlacementContinuity first = full.resolver();
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity first = full.resolver(metrics, 128, 1024);
 			Assert.assertFalse(first.proveCandidateAlternatives(reference, pool).isEmpty());
 
 			@SuppressWarnings("unchecked")
@@ -2495,15 +2496,42 @@ public class NativePlacementContinuityTest {
 				accessibleField(topology.getClass(), "nodeDirectGround").getBoolean(topology),
 				rows, countedIndex,
 				accessibleField(topology.getClass(), "metadataOwnerReads").get(topology));
+			topologies.clear();
 			topologies.put(topologyKey, countedTopology);
 			countedBucket.reset();
-
+			int uniqueAuthorities = 0;
+			int rawAuthorityOccurrences = 0;
+			for(Object cachedTopology : topologies.values()) {
+				uniqueAuthorities += ((Object[])accessibleField(cachedTopology.getClass(),
+					"structuralHandleReferences").get(cachedTopology)).length;
+				@SuppressWarnings("unchecked")
+				List<Object> cachedRows = (List<Object>)accessibleField(
+					cachedTopology.getClass(), "rows").get(cachedTopology);
+				for(Object cachedRow : cachedRows) {
+					rawAuthorityOccurrences++;
+					@SuppressWarnings("unchecked")
+					List<Object> dependencies = (List<Object>)accessibleField(
+						cachedRow.getClass(), "dependencies").get(cachedRow);
+					for(Object dependency : dependencies)
+						if(accessibleField(dependency.getClass(), "clausePinned").get(dependency) != null)
+							rawAuthorityOccurrences++;
+				}
+			}
+			for(String memo : List.of("completedSupportMemo", "acyclicRootSupportMemo",
+				"completedProofMemo", "acyclicComponentMemo", "replayOwnerRevisionTokens"))
+				((Map<?,?>)accessibleField(NativePlacementContinuity.class, memo).get(first)).clear();
 			List<CandidateRuleFact> equalNewFacts = full.candidates.stream().map(fact ->
 				new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
 					fact.profile(), fact.allowedEmissionFacts(), fact.failureCode())).toList();
 			NativePlacementContinuity revised = first.nextRevision(equalNewFacts);
-			Assert.assertEquals("each indexed row must be checked exactly once",
-				rows.size(), countedBucket.gets());
+			Assert.assertEquals("one row identity plus every distinct source identity", 65,
+				uniqueAuthorities);
+			Assert.assertEquals("legacy validation revisited row and pin authority per row", 128,
+				rawAuthorityOccurrences);
+			Assert.assertTrue("shared row and pin identities must collapse repeated validations",
+				uniqueAuthorities < rawAuthorityOccurrences);
+			Assert.assertEquals("warm validation must not rescan the retained row buckets",
+				0, countedBucket.gets());
 			Assert.assertSame("the wide topology must actually be shared", countedTopology,
 				((Map<?,?>)accessibleField(NativePlacementContinuity.class,
 					"candidateTopologies").get(revised)).get(topologyKey));
@@ -2513,6 +2541,15 @@ public class NativePlacementContinuityTest {
 				full.nodes, full.origins, equalNewFacts, full.edges, full.reaching, Set.of(), full.privacy)
 				.proveCandidateSupport(reference, pool);
 			Assert.assertEquals(fresh.proofs(), actual.proofs());
+			for(int proof = 0; proof < fresh.proofs().size(); proof++) {
+				Assert.assertEquals(fresh.proofs().get(proof).normalizedSignature(),
+					actual.proofs().get(proof).normalizedSignature());
+				for(int binding = 0;
+					binding < fresh.proofs().get(proof).immediateBindings().size(); binding++)
+					Assert.assertSame("warm revision retains exact source-reference authority",
+						fresh.proofs().get(proof).immediateBindings().get(binding).source(),
+						actual.proofs().get(proof).immediateBindings().get(binding).source());
+			}
 			assertIdentitySetEquals(fresh.dependencyOccurrences(), actual.dependencyOccurrences());
 		}
 		finally {
