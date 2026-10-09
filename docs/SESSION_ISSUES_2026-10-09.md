@@ -388,3 +388,12 @@
 - **실제 v8 완료**: LogReg398.232339626초/GLM124.946316443초, numeric PASS, audit mismatch0, 동일plan이다. Peak9,141,903,360/5,134,458,880B. 동일DML/Y/자원/profile/seed이며 v8에는 gate 변경이 없다. 각1회이며 evaluator는20초 초과로FAIL이다.
 
 - **Unpinned/overlay 통합 gate**: fresh main/test compile,1,053 JUnit PASS(184.653초), source SHA mismatch0(`evidence/native-unpinned-overlay-full-green-1053`). 새 grounded recurrence 반례, generated unpinned child, multi-family/duplicate/mixed fallback 및 fixed-seed exact/dynamic source withdrawal이 포함된다. 이 수정본을v10으로 별도 봉인하여 실제 실행한다.
+
+
+### Conditional support의 부분 고정 시 union-of-products 유지
+
+- **문제**: v8은 finite support와 functional map만 부분 고정 시 압축을 유지했다. ConditionalSupport는 원래 region 표현을 잃고 남은 축의 product를 다시 평가했다.
+- **변경**: selector가 free인 경우 각 region을 고정된 축의 membership으로 필터링한 뒤 고정 축만 제거한다. 원래 constrained selector 집합을 그대로 보존하여 모든 region을 잃은 selector가 wildcard가 되는 오류를 방지한다. Selector까지 고정된 경우는 selector-free union 표현이 없어 기존 exact fallback을 유지한다. 숫자 factor와 seed의 기존 resource preflight는 그대로다.
+- **검증**: 기존 구현에서6tests 중2개 표현 검사 실패(`evidence/conditional-conditioning-red-6`), 수정 후6PASS(0.332초).480,000셀 관계의 선택 목록 저장은20개 미만이며 wildcard/forbidden selector와 sparse holes를 검사한다. 고정 seed30관계에서 모든 작은 boundary, selector 위치0/1/2, 빈/겹친 region, selector까지 고정된 fallback을 explicit table과 비교하여 raw cost 및 canonical Exact optimum/assignment parity를 확인했다. 두 실제 conditioning consumer를 모두 통과시켰다. 이 수치를 실제 workload 시간 개선으로 일반화하지 않는다. 전체 gate는 별도로 기록한다.
+
+- **Conditional conditioning 전체 gate**: fresh compile,1,055 JUnit PASS(185.656초), source SHA mismatch0. 증거 `evidence/conditional-conditioning-full-green-1055`. v10 실제 실행은 기존 봉인본 그대로 유지하며 이 후속 변경은 별도 엔진에 포함한다.
