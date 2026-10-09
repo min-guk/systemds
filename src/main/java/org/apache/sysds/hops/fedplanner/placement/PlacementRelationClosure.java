@@ -5674,6 +5674,8 @@ final class PlacementRelationClosure {
 		int retainedDirectInputBindings = 0;
 		// One metrics-only carrier per pass; never inspect skipped publication paths.
 		NativePublicationTrace publicationTrace = complexityMetrics == null ? null : new NativePublicationTrace();
+		NativeDurableProductPairObserver productPairs = complexityMetrics == null ? null
+			: new NativeDurableProductPairObserver(complexityMetrics);
 		List<CandidateRuleFact> rebound = new ArrayList<>(facts.size());
 		Map<CompiledHopKey,Set<CompiledHopKey>> dependencyOccurrences = new IdentityHashMap<>();
 		Set<CompiledHopKey> incompleteDependencyOccurrences =
@@ -5716,6 +5718,8 @@ final class PlacementRelationClosure {
 			List<CandidateEmissionFact> emissions = new ArrayList<>();
 			boolean unchangedEmissions = true;
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+				if(productPairs != null)
+					productPairs.beginEmission();
 				if(complexityMetrics != null)
 					complexityMetrics.recordDirectWork(DirectWork.EMISSION_VISITS);
 				CandidateEmissionFact templateEmission = templateByKey.get(new DirectTemplateKey(
@@ -5940,6 +5944,9 @@ final class PlacementRelationClosure {
 								productPublications = directNativeProductPublication(supportProduct,
 									fact.key().parentOccurrence(), emission.emissionState(), outputAnchor,
 									nativeLineage, requiredInputs, sources, exactSourceLayouts, publicationTrace);
+							if(productPairs != null && productPublications != null)
+								for(CandidateEmissionRealization publication : productPublications)
+									productPairs.observe(factOccurrence, publication);
 							if(productPublications != null && productPublications.size() == 2) {
 								// Both parts are prepared before any publication. Distinct output keys
 								// let one stay lazy even when the other needs its exact scalar union.

@@ -173,6 +173,7 @@ public class NativeMixedExactnessPartitionTest {
 		Assert.assertEquals(0, metrics.nativePublicationSnapshot().stream()
 			.filter(row -> row.outcome().name().equals("PARTITIONED"))
 			.mapToLong(SearchSpaceMetrics.NativePublicationCount::queries).sum());
+		assertDurablePairObservation(metrics, 1);
 	}
 
 	@Test
@@ -205,6 +206,7 @@ public class NativeMixedExactnessPartitionTest {
 				SearchSpaceMetrics.DirectWork.PARTITIONED_COLLISION_PROOFS));
 			Assert.assertEquals(0L, metrics.directWorkCount(
 				SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS));
+			assertDurablePairObservation(metrics, widths[0]);
 		}
 	}
 
@@ -289,12 +291,20 @@ public class NativeMixedExactnessPartitionTest {
 		Assert.assertEquals(1, partitioned.queries());
 		Assert.assertEquals(4, partitioned.logicalProofs());
 		Assert.assertEquals(0, partitioned.consumedProofs());
+		assertDurablePairObservation(metrics, 2);
 		BoundResult metricsOff = bind(fixture, new PlacementRelationClosure(
 			null, null, null, false, PrivacyEvidenceMode.NONE, false));
 		Assert.assertEquals(rebound.allowedEmissionFacts(),
 			metricsOff.fact().allowedEmissionFacts());
 		Assert.assertEquals(footprintSignature(bound.footprint()),
 			footprintSignature(metricsOff.footprint()));
+		for(CandidateEmissionRealization realization : metricsOff.fact().allowedEmissionFacts().get(0).realizations())
+			for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+				Assert.assertSame(fixture.consumer().key().parentOccurrence(),
+					clause.proofDependencies().get(0).owner());
+				Assert.assertSame(fixture.sourceOwner(),
+					clause.inputBindings().get(0).source().rule().parentOccurrence());
+			}
 	}
 
 	@Test
@@ -348,6 +358,24 @@ public class NativeMixedExactnessPartitionTest {
 			SearchSpaceMetrics.DirectWork.PARTITIONED_COLLISION_PROOFS));
 		Assert.assertEquals(0L, fallbackMetrics.directWorkCount(
 			SearchSpaceMetrics.DirectWork.PARTITIONED_SINGLETON_PROOFS));
+		assertDurablePairObservation(fallbackMetrics, 2);
+	}
+
+	private static void assertDurablePairObservation(SearchSpaceMetrics metrics, int logicalMembers) {
+		Assert.assertEquals("observe the prepared durable part before either admission/fallback",
+			1L, pairMetric(metrics, "NATIVE_PAIR_OBSERVED"));
+		Assert.assertEquals(1L, pairMetric(metrics, "NATIVE_PAIR_FIRST"));
+		Assert.assertEquals(logicalMembers, pairMetric(metrics, "NATIVE_PAIR_LOGICAL_MEMBERS"));
+		Assert.assertEquals(0L, pairMetric(metrics, "NATIVE_PAIR_DISTINCT_SEED"));
+	}
+
+	private static long pairMetric(SearchSpaceMetrics metrics, String name) {
+		try {
+			return metrics.directWorkCount(Enum.valueOf(SearchSpaceMetrics.DirectWork.class, name));
+		}
+		catch(IllegalArgumentException absentBeforeObserver) {
+			return 0;
+		}
 	}
 
 	private static void assertLazyExactPart(CandidateEmissionRealization part,
