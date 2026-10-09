@@ -5742,9 +5742,9 @@ final class PlacementRelationClosure {
 							List.of(), List.of())) : templateEmission.realizations();
 				GroundedNativePreparation grounded = recomputeNative
 					? prepareGroundedNativeSupport(emission, complexityMetrics) : null;
-				NativePlacementContinuity.GeneratedSupportBatchObserver generatedBatchObserver =
-					complexityMetrics != null && recomputeNative
-						? continuity.generatedSupportBatchObserver(fact, emission) : null;
+				NativePlacementContinuity.GeneratedSupportBatch generatedBatch =
+					recomputeNative
+						? continuity.generatedSupportBatch(fact, emission) : null;
 				List<CandidateEmissionRealization> realizations = new ArrayList<>();
 				if(grounded != null)
 					realizations.addAll(grounded.retained());
@@ -5883,7 +5883,7 @@ final class PlacementRelationClosure {
 							// newly available input alternatives or make raw reset history matter.
 							supportResult = recomputeNative
 								? continuity.proveGeneratedCandidateSupport(
-									fact, emission, output, seed, generatedBatchObserver)
+									fact, emission, output, seed, generatedBatch)
 								: continuity.provePrimitiveCandidateSupport(output, seed);
 						}
 						finally {
