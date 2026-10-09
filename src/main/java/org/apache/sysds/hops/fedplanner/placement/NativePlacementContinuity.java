@@ -5259,7 +5259,9 @@ final class NativePlacementContinuity {
 				&& fact == trustedBase && emission == baseEmission
 				&& proposedOutput.rule().parentOccurrence() == root
 				&& (!reuseEnabled || proposedOutput.realization().layoutKind()
-					== PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE);
+					== PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE
+					|| proposedOutput.realization().layoutKind()
+						== PlacementIdentity.PlacementLayoutKind.DURABLE_MAP);
 		}
 
 		private void recordWork(SearchSpaceMetrics.DirectWork work) {
@@ -5278,6 +5280,8 @@ final class NativePlacementContinuity {
 			// Certification excludes root history and every returned binding owned
 			// by this root. Changing only the prospective output authority therefore
 			// leaves the complete ordered template relation and footprint unchanged.
+			// The generated root reads the recipe and witness, not a prospective
+			// durable anchor. That anchor remains owned by the current query wrapper.
 			// Rebase the memo wrapper, not the product members, so publication stays lazy.
 			SupportMemoEntry rebound = new SupportMemoEntry(source, certified.templates,
 				certified.occurrences, certified.estimatedBytes, true);

@@ -4962,6 +4962,20 @@ public class NativePlacementContinuityTest {
 
 	@Test
 	public void certifiedGeneratedBatchReusesGraphsAndRetainsLazyProductAuthority() {
+		assertCertifiedGeneratedBatchProductAuthority(0);
+	}
+
+	@Test
+	public void certifiedGeneratedBatchReusesDurableProposalsWithoutBorrowingAuthority() {
+		assertCertifiedGeneratedBatchProductAuthority(1);
+	}
+
+	@Test
+	public void certifiedGeneratedBatchSharesRecipeAcrossNativeAndDurableProposals() {
+		assertCertifiedGeneratedBatchProductAuthority(2);
+	}
+
+	private void assertCertifiedGeneratedBatchProductAuthority(int outputMode) {
 		for(int trial = 0; trial < 8; trial++) {
 			Fixture full = new Fixture(FType.FULL);
 			DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
@@ -4990,9 +5004,15 @@ public class NativePlacementContinuityTest {
 			Assert.assertNotNull("optimization remains available without metrics", silentBatch);
 			long firstGraphs = -1;
 			for(int proposal = 0; proposal < 4; proposal++) {
+				boolean durable = outputMode == 1 || outputMode == 2 && proposal % 2 == 1;
+				CandidateEmissionRealization proposed = durable
+					? CandidateEmissionRealization.durable(emission.emissionState(),
+						new DurableAnchorKey("batch-durable-" + proposal, FType.FULL,
+							pool.partitions()), List.of(), List.of())
+					: CandidateEmissionRealization.nativeLineage(emission.emissionState(),
+						"batch-proposal-" + proposal, List.of(), List.of());
 				CandidateRealizationReference source = CandidateRealizationReference.of(base.key(),
-					CandidateEmissionRealization.nativeLineage(emission.emissionState(),
-						"batch-proposal-" + proposal, List.of(), List.of()));
+					proposed);
 				DurableAnchorKey querySeed = new DurableAnchorKey("batch-seed-alias-" + proposal,
 					FType.FULL, pool.partitions());
 				var expected = full.resolver(null, 0, 0).proveGeneratedCandidateSupport(
@@ -5062,7 +5082,74 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void certifiedDurableBatchKeepsWorkerPoolAndPartitionWitnessesSeparate() {
+		for(FType type : List.of(FType.ROW, FType.COL, FType.FULL, FType.BROADCAST)) {
+			Fixture fixture = new Fixture(type);
+			DurableAnchorKey pool = anchor(type, "worker1:8001", 0, 50);
+			Ref seed = fixture.source("durable-witness-seed", pool);
+			Ref root = fixture.unary("durable-witness-root", OpOp1.LOG, seed, false);
+			CandidateRuleFact base = fixture.fact(root, List.of(CandidateInputState.present(type)));
+			CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity resolver = fixture.resolver(metrics, 128, 2048);
+			var batch = resolver.generatedSupportBatch(base, emission);
+			List<DurableAnchorKey> seeds = List.of(pool,
+				anchor(type, "worker2:8002", 0, 50), anchor(type, "worker1:8001", 0, 25),
+				new DurableAnchorKey("same-pool-new-seed-authority", type, pool.partitions()));
+			for(int index = 0; index < seeds.size(); index++) {
+				DurableAnchorKey querySeed = seeds.get(index);
+				var output = CandidateEmissionRealization.durable(emission.emissionState(),
+					new DurableAnchorKey("durable-witness-output-" + index, type,
+						querySeed.partitions()), List.of(), List.of());
+				var source = CandidateRealizationReference.of(base.key(), output);
+				var expected = fixture.resolver(null, 0, 0).proveGeneratedCandidateSupport(
+					base, emission, source, querySeed);
+				var actual = resolver.proveGeneratedCandidateSupport(base, emission, source, querySeed, batch);
+				Assert.assertEquals(type + " witness " + index, expected.proofs(), actual.proofs());
+				assertIdentitySetEquals(expected.dependencyOccurrences(), actual.dependencyOccurrences());
+				if(index == 0) Assert.assertFalse("fixture has grounded support", actual.proofs().isEmpty());
+				if(index == 1) Assert.assertTrue("a foreign worker pool is unsupported", actual.proofs().isEmpty());
+			}
+			Assert.assertTrue(shadowWork(metrics, "GENERATED_BATCH_REUSED_GRAPHS") > 0);
+		}
+	}
+
+	@Test
+	public void certifiedDurableBatchRejectsHiddenRootHistory() {
+		for(boolean derived : List.of(false, true)) {
+			GeneratedHiddenRootFixture fixture = generatedHiddenRootFixture(derived);
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity resolver = fixture.full().resolver(metrics, 128, 2048);
+			var batch = resolver.generatedSupportBatch(fixture.activeRoot(), fixture.activeEmission());
+			for(int proposal = 0; proposal < 3; proposal++) {
+				DurableAnchorKey seed = fixture.seed().anchor;
+				var output = CandidateEmissionRealization.durable(fixture.activeEmission().emissionState(),
+					new DurableAnchorKey("hidden-durable-" + proposal, seed.fType(), seed.partitions()),
+					List.of(), List.of());
+				var source = CandidateRealizationReference.of(fixture.activeRoot().key(), output);
+				var expected = fixture.full().resolver(null, 0, 0).proveGeneratedCandidateSupport(
+					fixture.activeRoot(), fixture.activeEmission(), source, seed);
+				var actual = resolver.proveGeneratedCandidateSupport(fixture.activeRoot(),
+					fixture.activeEmission(), source, seed, batch);
+				Assert.assertEquals(expected.proofs(), actual.proofs());
+				assertIdentitySetEquals(expected.dependencyOccurrences(), actual.dependencyOccurrences());
+			}
+			Assert.assertTrue(shadowWork(metrics, "GENERATED_BATCH_ROOT_HISTORY_REJECTIONS") > 0);
+			Assert.assertEquals(0, shadowWork(metrics, "GENERATED_BATCH_REUSED_GRAPHS"));
+		}
+	}
+
+	@Test
 	public void certifiedGeneratedBatchDoesNotReuseEvictedWitness() {
+		assertCertifiedGeneratedBatchEviction(false);
+	}
+
+	@Test
+	public void certifiedDurableBatchDoesNotReuseEvictedWitness() {
+		assertCertifiedGeneratedBatchEviction(true);
+	}
+
+	private void assertCertifiedGeneratedBatchEviction(boolean durable) {
 		String property = "sysds.fedplanner.continuitySupportMemo.maxEntries";
 		String previous = System.getProperty(property);
 		try {
@@ -5079,9 +5166,14 @@ public class NativePlacementContinuityTest {
 			var batch = resolver.generatedSupportBatch(base, emission);
 			int proposal = 0;
 			for(DurableAnchorKey querySeed : List.of(first, other, first)) {
+				CandidateEmissionRealization output = durable
+					? CandidateEmissionRealization.durable(emission.emissionState(),
+						new DurableAnchorKey("eviction-durable-" + proposal++, FType.BROADCAST,
+							querySeed.partitions()), List.of(), List.of())
+					: CandidateEmissionRealization.nativeLineage(emission.emissionState(),
+						"eviction-proposal-" + proposal++, List.of(), List.of());
 				var source = CandidateRealizationReference.of(base.key(),
-					CandidateEmissionRealization.nativeLineage(emission.emissionState(),
-						"eviction-proposal-" + proposal++, List.of(), List.of()));
+					output);
 				var expected = full.resolver(null, 0, 0).proveGeneratedCandidateSupport(base, emission, source, querySeed);
 				var actual = resolver.proveGeneratedCandidateSupport(base, emission, source, querySeed, batch);
 				Assert.assertEquals(expected.proofs(), actual.proofs());

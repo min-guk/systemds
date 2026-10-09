@@ -444,3 +444,19 @@
 - **잔여/위험**: 다중 seed·retained relation·DURABLE_MAP publication의 exact union과 Physical/DP materialization이 남는다. v10 normal terminal log에서 proof consumption52.13초, topology62.74초, overlay exclusive68.79초, dependency pruning42.13초였다. Inclusive 시간을 중복 합산하지 않는다.20초 목표는 여전히 미달이다.
 
 - **병합 검증 완료**: fresh main/test compile,1,063 JUnit PASS(152.813초), source SHA mismatch0, 독립 review CLEAR. 증거 `evidence/generated-batch-summary-merge-green-1063`. 이 병합본은v13으로 분리하여 봉인한다.
+
+
+### Generated batch의 durable proposal 적용 범위 확장 (검증중)
+
+- **문제/원인**: batch 재사용은 NATIVE_LINEAGE proposal에서만 활성화되어, 같은 generator rule/emission/witness의 DURABLE_MAP 요청은 여전히 그래프를 재계산한다. Generated root는 trusted recipe와 witness로 dependency skeleton을 만들고 proposed output은 opaque pinned reference로 사용한다. Output anchor를 proof 권한 대신 채택하지 않는다.
+- **설계/보존 조건**: 기존 root-history independence, returned root-owner binding 부재, exact resolver/fact/emission/root identity, 전체 NativePoolWitness 및 resident cache gate는 그대로 유지한다. 검증되는 두 proposal layout만 허용하고 unknown layout은 fallback한다. Template wrapper만 현재 proposal로 rebase하여 external seed와 exact member source/proof는 현재 요청으로 복원한다.
+- **검증 계획**: 기존 cold explicit reference와 native/durable/mixed proposal별 ordered proof·identity footprint·lazy product를 비교한다. Empty result 및 metrics OFF도 포함하고, durable에서도 hidden root history/worker-layout mismatch/eviction이 공유되지 않는지 확인한다. 먼저 원래 guard에서 durable/mixed graph-work red를 확보한다.
+- **잔여/위험**: query root의 durable identity를 metadata legality에 사용하면서 history certificate에 기록하지 않는 새 경로가 생기면 잘못 공유할 수 있다. Hidden VALUE_MAP/derived 및 cold reference 대조로 감지한다. 실제 성능 개선은 후속 봉인 실측 전 미확인이다.
+
+- **중간 검증**: 기존 guard에서151tests 중 durable/mixed graph 재계산 검사2개가 red였고 ordered proof/footprint 비교는 통과했다(`durable-batch-red-151`). 확장 후 native·product·revision4suites160PASS(1.439초). ROW/COL/FULL/BROADCAST의 다른 worker/partition 및 동일 layout의 다른 seed authority를 cold reference와 대조했다. Durable hidden VALUE_MAP/derived history는 재사용0, capacity1의 witness eviction도 재사용0이다. 전체 gate와 독립 검토를 이어간다.
+
+- **v12 실제 검증의 계획 차이 발견**: LogReg402.506716391초/GLM137.753315043초, 숫자와runtime audit는PASS. 그러나GLM의initial/final planfp가둘다113d2d19…로v10의ebf0cc31…와다르다. Analysisfp5409cf1e…는동일하다. 같은실행안의initial==final만으로버전간계획동등성을PASS로간주하지않는다. Objectivebits/costfingerprint가정상receipt/log에없어동일비용도미확인이다. v11단독ConditionalSupport 엔진을분리실행하고Local heuristic/resource/tie영향을조사한다. v13실행도계속기록하되계획보존성공으로보고하지않는다.
+
+- **Durable batch 전체 gate**: fresh compile1,068PASS(165.143초), source SHA mismatch0. 증거 `evidence/durable-batch-full-green-1068`. 이 검증은 기존v12GLM의선택fingerprint 차이를해결했다는의미가아니다.
+
+- **Durable batch 독립 review CLEAR**: generated root의empty clause dependency 생성, prospective output의emissionFType 외 anchor 미참조, non-recipe/hidden root history flag, root recurrence 및 returned root binding certificate를 별도 reviewer가 확인했다. 기존v12의GLM plan차이는별도미해결항목으로유지한다.

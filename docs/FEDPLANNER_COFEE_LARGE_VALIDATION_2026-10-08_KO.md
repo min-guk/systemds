@@ -2,6 +2,20 @@
 
 ## 상태
 
+최신 완료 v12(`95ed3daeb2`, JAR `3ee4db4e…`)의 전체 최초 planning은 LogReg **402.506716391초**, GLM **137.753315043초**다. 각1회이며 **20초 미달**이다. Numeric/raw-output 비교와 runtime audit mismatch0은 통과했다. LogReg 선택 fingerprint는 이전과 같지만, **GLM 선택 fingerprint는 `ebf0cc31…`에서 `113d2d19…`로 달라져 버전 간 계획 동등성은 미검증/불일치 상태**다. Analysis fingerprint는 같다. 공개 receipt/log에 objective raw bits와 cost fingerprint가 없어 동일 비용이라고 추정하지 않는다. DP conditional conditioning 단독v11 분리 실행과 코드 검토로 원인을 확인한다.
+
+| v12 관측 | LogReg | GLM |
+|---|---:|---:|
+| 전체 최초 planning | 402.506716391초 | 137.753315043초 |
+| Analysis | 319.203979525초 | 93.232초 |
+| Optimizer | 69.676초 | 25.568초 |
+| coordinator cgroup peak | 9,262,444,544B | 5,275,860,992B |
+| 실제 batch graph 재사용 | 24,191 | 51,564 |
+
+실제 재사용과 기존 v10의 certified repeat potential을 구분한다. v12의 durable proposal은 아직 재사용하지 않으며 다음 수정에서 별도로 검증한다. v12에는 최신 main의 component-summary 중복 제거가 포함되지 않는다. 그 병합본v13(`9bfccd8d96`,1,063PASS,독립 review CLEAR)은 별도 봉인·실측한다.
+
+아래는 v10 및 이전 기록이다.
+
 최신 완료 v10(`d59fa583c5`, JAR `b5973fad…`)은 LogReg **440.740278892초**, GLM **140.992530652초**다. 두 workload의 숫자 비교, runtime audit mismatch0, 이전과 같은 plan fingerprint는 통과했다. 그러나 v8의398.232/124.946초보다 느렸으며20초에는 미달했다. Pinned/unpinned native axis gate의 작은 fixture 압축 효과를 실제 workload 개선으로 채택하지 않는다. v10에는 이후 conditional DP 수정이 포함되지 않았다.
 
 실제 LogReg 정상 로그에서 generated graph miss147,551 중92,253건은 같은 fact/emission/witness의 certified support가 resident였다. 이는 재사용 가능성 계측이며 실제 회피한 graph 수가 아니다. 다음 후보는 이 범위의 generated template 재사용과 native representation이 없는 owner의 반복 gate eligibility 검사 생략이다. Root history/returned root binding/source-action authority를 보존하는 테스트와 별도 실측을 수행한다.
