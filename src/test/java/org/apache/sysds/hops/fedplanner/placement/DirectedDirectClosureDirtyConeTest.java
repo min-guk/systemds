@@ -112,6 +112,55 @@ public class DirectedDirectClosureDirtyConeTest {
 	}
 
 	@Test
+	public void unvisitedNoQueryOwnerNeedsNoFallbackButKeepsNoObservedReceipt() throws Exception {
+		Node source = node("static-source"), bridge = node("static-bridge");
+		Node noQuery = node("static-no-query");
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential = dependencies(
+			source, bridge, bridge, noQuery);
+		Class<?> type = Class.forName(PlacementRelationClosure.class.getName() + "$DirectQuerySubscriptions");
+		Constructor<?> constructor = type.getDeclaredConstructor(Set.class, boolean.class);
+		constructor.setAccessible(true);
+		Method complete = type.getDeclaredMethod("complete", CompiledHopKey.class);
+		complete.setAccessible(true);
+		for(boolean measured : List.of(false, true)) {
+			Object subscriptions = constructor.newInstance(keys(noQuery), measured);
+			SearchSpaceMetrics metrics = measured ? new SearchSpaceMetrics() : null;
+			assertSameKeys(keys(source, bridge), required(keys(source), potential, Map.of(), Map.of(),
+				Map.of(), subscriptions, metrics, Set.of()));
+			Assert.assertFalse("static no-query authority must not manufacture an observed receipt",
+				(boolean)complete.invoke(subscriptions, noQuery.key()));
+			assertSameKeys(keys(noQuery), required(keys(noQuery), Map.of(), Map.of(), Map.of(),
+				Map.of(), subscriptions));
+			if(metrics != null) {
+				Assert.assertEquals(0, directMetric(metrics,
+					"INVALIDATION_INCOMPLETE_NEW_NO_BINDING_OWNERS"));
+				Assert.assertEquals(1, directMetric(metrics, "STATIC_NO_QUERY_NEW_PENDING_SKIPS"));
+			}
+		}
+		// Eligibility is recomputed for each closure; there is no cross-invocation certificate.
+		Object next = constructor.newInstance(Set.of(), false);
+		assertSameKeys(keys(source, bridge, noQuery), required(keys(source), potential, Map.of(),
+			Map.of(), Map.of(), next));
+	}
+
+	@Test
+	public void staticNoQueryCertificateNeverSuppressesPendingOrEligibleSccMembers() throws Exception {
+		Node pending = node("static-pending"), eligible = node("static-eligible");
+		Node noQuery = node("static-sibling");
+		Class<?> type = Class.forName(PlacementRelationClosure.class.getName() + "$DirectQuerySubscriptions");
+		Constructor<?> constructor = type.getDeclaredConstructor(Set.class, boolean.class);
+		constructor.setAccessible(true);
+		Object subscriptions = constructor.newInstance(keys(noQuery), false);
+		PlacementDependencyComponents schedule = supportSchedule(List.of(pending, eligible, noQuery),
+			dependencies(pending, eligible, eligible, noQuery, noQuery, pending), Map.of());
+		assertSameKeys(keys(pending, eligible), ready(schedule, keys(pending), subscriptions));
+		assertSameKeys(keys(pending, eligible, noQuery), ready(schedule, keys(noQuery), subscriptions));
+		Assert.assertTrue(ready(schedule, Set.of(), subscriptions).isEmpty());
+		PlacementDependencyComponents sole = supportSchedule(List.of(noQuery), Map.of(), Map.of());
+		assertSameKeys(keys(noQuery), ready(sole, keys(noQuery), subscriptions));
+	}
+
+	@Test
 	public void diamondVisitsOnlyChangedRowAndItsConsumers() throws Exception {
 		Node a = node("A"), b = node("B"), c = node("C"), d = node("D");
 		List<Node> nodes = List.of(a, b, c, d);
@@ -361,10 +410,10 @@ public class DirectedDirectClosureDirtyConeTest {
 		assertSameKeys(conservativeRequired, required(committedChanged, potential, Map.of(), Map.of(),
 			Map.of(), conservativeUnmeasured));
 
-		// Withdrawing the query receipt disables the shortcut. Restoring the exact receipt
-		// on the next revision re-enables it without changing fact order or identity.
+		// Static no-query authority is independent of observed receipt replacement;
+		// no observed query result is manufactured.
 		replace.invoke(certified, keys(noBinding), Map.of(), keys(noBinding));
-		assertSameKeys(conservativeRequired, required(committedChanged, potential, Map.of(), Map.of(),
+		assertSameKeys(certifiedRequired, required(committedChanged, potential, Map.of(), Map.of(),
 			Map.of(), certified));
 		replace.invoke(certified, keys(noBinding), Map.of(noBinding.key(), keys(noBinding)), Set.of());
 		invalidate.invoke(certified, keys(noBinding));

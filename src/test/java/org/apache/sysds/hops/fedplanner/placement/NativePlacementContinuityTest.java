@@ -2151,6 +2151,150 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void equalNewFactRevisionSharesTopologyWithStableDestinationHandles() throws Exception {
+		PlacementIdentity.beginAnalysisScope(null);
+		try {
+			Fixture full = new Fixture(FType.FULL);
+			Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+			Ref source = full.unary("source", OpOp1.LOG, seed, false);
+			CandidateRealizationReference reference = full.reference(source,
+				List.of(CandidateInputState.present(FType.FULL)));
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity first = full.resolver(metrics, 128, 1024);
+			NativePlacementContinuity.CandidateSupportResult initial =
+				first.proveCandidateSupport(reference, seed.anchor);
+			Assert.assertFalse(initial.proofs().isEmpty());
+			@SuppressWarnings("unchecked")
+			Map<Object,Object> before = (Map<Object,Object>)accessibleField(
+				NativePlacementContinuity.class, "candidateTopologies").get(first);
+			Assert.assertFalse(before.isEmpty());
+
+			List<CandidateRuleFact> equalNewFacts = full.candidates.stream().map(fact ->
+				new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+					fact.profile(), fact.allowedEmissionFacts(), fact.failureCode())).toList();
+			NativePlacementContinuity revised = first.nextRevision(equalNewFacts);
+			Field snapshot = accessibleField(NativePlacementContinuity.class, "candidateFactsSnapshot");
+			Assert.assertNotSame("equal new facts must create distinct snapshot authority",
+				snapshot.get(first), snapshot.get(revised));
+			@SuppressWarnings("unchecked")
+			Map<Object,Object> after = (Map<Object,Object>)accessibleField(
+				NativePlacementContinuity.class, "candidateTopologies").get(revised);
+
+			Assert.assertEquals(before.size(), after.size());
+			Assert.assertTrue(metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.TOPOLOGY_REVISION_SHARED_ROWS) > 0);
+			Assert.assertEquals(0, metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.TOPOLOGY_REVISION_REINDEXED_ROWS));
+			for(var entry : before.entrySet())
+				Assert.assertSame("semantic equality and destination-stable handles retain topology",
+					entry.getValue(), after.get(entry.getKey()));
+			NativePlacementContinuity.CandidateSupportResult actual =
+				revised.proveCandidateSupport(reference, seed.anchor);
+			NativePlacementContinuity.CandidateSupportResult fresh = new NativePlacementContinuity(
+				full.nodes, full.origins, equalNewFacts, full.edges, full.reaching, Set.of(), full.privacy)
+				.proveCandidateSupport(reference, seed.anchor);
+			Assert.assertEquals(fresh.proofs(), actual.proofs());
+			assertIdentitySetEquals(fresh.dependencyOccurrences(), actual.dependencyOccurrences());
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+		}
+	}
+
+	@Test
+	public void factRevisionReindexesTopologyWhenStructuralArenaHandlesShift() throws Exception {
+		assertRevisionTopologyHandleDrift(false);
+		assertRevisionTopologyHandleDrift(true);
+	}
+
+	private static void assertRevisionTopologyHandleDrift(boolean preserveRootHandle) throws Exception {
+		Fixture full;
+		Ref seed;
+		Ref source;
+		CandidateRealizationReference reference;
+		CandidateRealizationReference producerReference;
+		NativePlacementContinuity first;
+		Map<Object,Object> before;
+		Object rootTopologyKey;
+		int priorRootHandle;
+		int priorProducerHandle;
+		PlacementIdentity.beginAnalysisScope(null);
+		try {
+			full = new Fixture(FType.FULL);
+			seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+			Ref producer = full.unary("producer", OpOp1.LOG, seed, false);
+			List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+			producerReference = full.withClauses(producer, inputs,
+				List.of(new CandidateRealizationSupportClause(List.of(), List.of())));
+			source = full.unary("source", OpOp1.EXP, producer, false);
+			reference = full.withClauses(source, inputs,
+				List.of(new CandidateRealizationSupportClause(List.of(),
+					List.of(CandidateRealizationInputBinding.direct(0, producerReference)))));
+			first = full.resolver();
+			Assert.assertFalse(first.proveCandidateAlternatives(reference, seed.anchor).isEmpty());
+			Method candidateHandle = NativePlacementContinuity.class.getDeclaredMethod(
+				"candidateHandle", CandidateRealizationReference.class);
+			candidateHandle.setAccessible(true);
+			priorRootHandle = (int)candidateHandle.invoke(first, reference);
+			priorProducerHandle = (int)candidateHandle.invoke(first, producerReference);
+			Assert.assertTrue(priorRootHandle > 0);
+			@SuppressWarnings("unchecked")
+			Map<Object,Object> cached = (Map<Object,Object>)accessibleField(
+				NativePlacementContinuity.class, "candidateTopologies").get(first);
+			before = cached;
+			Field occurrence = accessibleField(cached.keySet().iterator().next().getClass(), "occurrence");
+			rootTopologyKey = cached.keySet().stream().filter(key -> {
+				try {
+					return occurrence.get(key) == source.key;
+				}
+				catch(IllegalAccessException exception) {
+					throw new AssertionError(exception);
+				}
+			}).findFirst().orElseThrow();
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+		}
+
+		PlacementIdentity.beginAnalysisScope(null);
+		try {
+			// Force either row-and-pin drift or pin-only drift with an identical row ID.
+			int prefix = preserveRootHandle ? priorRootHandle - 1
+				: Math.max(priorRootHandle, priorProducerHandle);
+			for(int handle = 0; handle < prefix; handle++)
+				Assert.assertNotNull(PlacementIdentity.structuralHandle(new Object()));
+			if(preserveRootHandle) {
+				Assert.assertEquals(priorRootHandle,
+					PlacementIdentity.structuralHandle(reference).intValue());
+				for(int handle = 0; handle <= priorProducerHandle; handle++)
+					Assert.assertNotNull(PlacementIdentity.structuralHandle(new Object()));
+			}
+			Assert.assertNotEquals(priorProducerHandle,
+				PlacementIdentity.structuralHandle(producerReference).intValue());
+			List<CandidateRuleFact> equalNewFacts = full.candidates.stream().map(fact ->
+				new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+					fact.profile(), fact.allowedEmissionFacts(), fact.failureCode())).toList();
+			NativePlacementContinuity revised = first.nextRevision(equalNewFacts);
+			@SuppressWarnings("unchecked")
+			Map<Object,Object> after = (Map<Object,Object>)accessibleField(
+				NativePlacementContinuity.class, "candidateTopologies").get(revised);
+			Assert.assertNotSame("cross-arena handle drift requires destination reindexing",
+				before.get(rootTopologyKey), after.get(rootTopologyKey));
+
+			NativePlacementContinuity.CandidateSupportResult actual =
+				revised.proveCandidateSupport(reference, seed.anchor);
+			NativePlacementContinuity.CandidateSupportResult fresh = new NativePlacementContinuity(
+				full.nodes, full.origins, equalNewFacts, full.edges, full.reaching, Set.of(), full.privacy)
+				.proveCandidateSupport(reference, seed.anchor);
+			Assert.assertEquals(fresh.proofs(), actual.proofs());
+			assertIdentitySetEquals(fresh.dependencyOccurrences(), actual.dependencyOccurrences());
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+		}
+	}
+
+	@Test
 	public void revisionReindexesClausePinnedFallbackHandlesWithTopologyRows() throws Exception {
 		Fixture full = new Fixture(FType.FULL);
 		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
@@ -3011,6 +3155,216 @@ public class NativePlacementContinuityTest {
 			.proveCandidateAlternatives(reference, seed.anchor), changedActual);
 		Assert.assertTrue("an exact input binding changes the private relation",
 			metrics.snapshot().proofGraphsBuilt() > built);
+	}
+
+	@Test
+	public void nativeProductRevisionProjectionIsExactWithoutEnumeratingDuringProjection()
+		throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+		Ref left = full.federatedSource("left", pool);
+		Ref right = full.federatedSource("right", pool);
+		List<CandidateInputState> sourceInputs = List.of(
+			CandidateInputState.absentLocal(), CandidateInputState.absentLocal());
+		full.samePoolRealizations(left, sourceInputs, pool,
+			new DurableAnchorKey("left-second", FType.FULL, pool.partitions()));
+		full.samePoolRealizations(right, sourceInputs, pool,
+			new DurableAnchorKey("right-second", FType.FULL, pool.partitions()));
+		Ref owner = full.binary("owner", OpOp2.PLUS, left, right, false);
+		CandidateRuleFact template = full.fact(owner, List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL)));
+		CandidateEmissionFact emission = template.allowedEmissionFacts().get(0);
+
+		List<CandidateRealizationInputBinding> leftAxis = productAxis(full, left, sourceInputs, 0);
+		List<CandidateRealizationInputBinding> rightAxis = productAxis(full, right, sourceInputs, 1);
+		List<List<CandidateRealizationInputBinding>> axes = List.of(leftAxis, rightAxis);
+		NativeContinuitySupportClauses firstRelation = productClauses(
+			owner.key, pool, axes, pool, true);
+		NativeContinuitySupportClauses equalRelation = productClauses(
+			owner.key, pool, axes.stream().map(List::copyOf).toList(), pool, true);
+		CandidateRuleFact firstFact = productFact(template, emission, firstRelation);
+		CandidateRuleFact equalFact = productFact(template, emission, equalRelation);
+
+		Object firstProjection = continuityProjection(List.of(firstFact));
+		Object equalProjection = continuityProjection(List.of(equalFact));
+		Assert.assertEquals("distinct exact products have one structural projection",
+			firstProjection, equalProjection);
+		Assert.assertEquals(firstProjection.hashCode(), equalProjection.hashCode());
+		Assert.assertEquals("projection and hashing must not enumerate Cartesian members",
+			0, firstRelation.materializedHandleCount());
+		Assert.assertEquals(0, equalRelation.materializedHandleCount());
+
+		GeneratedHiddenRootFixture warm = generatedHiddenRootFixture(false);
+		CandidateRuleFact warmTemplate = warm.activeRoot();
+		CandidateEmissionFact warmEmission = warmTemplate.allowedEmissionFacts().get(0);
+		List<List<CandidateRealizationInputBinding>> warmAxes = List.of(List.of(
+			CandidateRealizationInputBinding.direct(0, warm.proposed())));
+		NativeContinuitySupportClauses warmFirstRelation = productClauses(
+			warm.root().key, warm.seed().anchor, warmAxes, warm.seed().anchor, true);
+		NativeContinuitySupportClauses warmEqualRelation = productClauses(
+			warm.root().key, warm.seed().anchor, warmAxes, warm.seed().anchor, true);
+		CandidateRuleFact warmFirstFact = productFact(
+			warmTemplate, warmEmission, warmFirstRelation);
+		CandidateRuleFact warmEqualFact = productFact(
+			warmTemplate, warmEmission, warmEqualRelation);
+		List<CandidateRuleFact> warmFirstFacts = replaceFact(
+			warm.activeFacts(), warmTemplate, warmFirstFact);
+		NativePlacementContinuity first = new NativePlacementContinuity(
+			warm.full().nodes, warm.full().origins, warmFirstFacts, warm.full().edges,
+			warm.full().reaching, Set.of(), warm.full().privacy);
+		NativePlacementContinuity.CandidateSupportResult warmed = first
+			.proveGeneratedCandidateSupport(warmFirstFact,
+				warmFirstFact.allowedEmissionFacts().get(0), warm.proposed(), warm.seed().anchor);
+		Assert.assertFalse(warmed.proofs().isEmpty());
+		assertGeneratedRootCertificate(first, warm.proposed(), warm.hidden().key, false);
+		int handlesAtKnownMetadataBoundary = warmFirstRelation.materializedHandleCount();
+		Assert.assertEquals("the existing metadata lookup materializes only its selected member",
+			1, handlesAtKnownMetadataBoundary);
+		List<CandidateRuleFact> warmEqualFacts = replaceFact(
+			warmFirstFacts, warmFirstFact, warmEqualFact);
+		NativePlacementContinuity equalRevision = first.nextRevision(warmEqualFacts);
+		NativePlacementContinuity secondEqualRevision =
+			equalRevision.nextRevision(warmFirstFacts);
+		Assert.assertTrue(equalRevision.revisionComparisonSnapshot()
+			.continuityProjectionsCompared() > 0);
+		Assert.assertTrue(secondEqualRevision.revisionComparisonSnapshot()
+			.continuityProjectionsCompared() > 0);
+		Assert.assertEquals("revision projection must not materialize another member",
+			handlesAtKnownMetadataBoundary,
+			warmFirstRelation.materializedHandleCount());
+		Assert.assertEquals(0, warmEqualRelation.materializedHandleCount());
+		NativePlacementContinuity.CandidateSupportResult equalSupport = equalRevision
+			.proveGeneratedCandidateSupport(warmEqualFact,
+				warmEqualFact.allowedEmissionFacts().get(0), warm.proposed(), warm.seed().anchor);
+		NativePlacementContinuity.CandidateSupportResult coldEqual = new NativePlacementContinuity(
+			warm.full().nodes, warm.full().origins, warmEqualFacts, warm.full().edges,
+			warm.full().reaching, Set.of(), warm.full().privacy)
+			.proveGeneratedCandidateSupport(warmEqualFact,
+				warmEqualFact.allowedEmissionFacts().get(0), warm.proposed(), warm.seed().anchor);
+		Assert.assertEquals(coldEqual.proofs(), equalSupport.proofs());
+		assertIdentitySetEquals(coldEqual.dependencyOccurrences(), equalSupport.dependencyOccurrences());
+		int replacementHandlesAfterSupportQuery = warmEqualRelation.materializedHandleCount();
+		Assert.assertEquals("the support query may select its one required product member",
+			1, replacementHandlesAfterSupportQuery);
+
+		CandidateRuleFact withdrawnRoot = warm.withdrawnFacts().stream()
+			.filter(fact -> fact.key().parentOccurrence() == warm.root().key).findFirst().orElseThrow();
+		List<CandidateRuleFact> withdrawnFacts = replaceFact(
+			warmEqualFacts, warmEqualFact, withdrawnRoot);
+		NativePlacementContinuity withdrawn = equalRevision.nextRevision(withdrawnFacts);
+		NativePlacementContinuity.CandidateSupportResult withdrawnSupport = withdrawn
+			.proveGeneratedCandidateSupport(withdrawnRoot,
+				withdrawnRoot.allowedEmissionFacts().get(0), warm.proposed(), warm.seed().anchor);
+		NativePlacementContinuity.CandidateSupportResult coldWithdrawn = new NativePlacementContinuity(
+			warm.full().nodes, warm.full().origins, withdrawnFacts, warm.full().edges,
+			warm.full().reaching, Set.of(), warm.full().privacy)
+			.proveGeneratedCandidateSupport(withdrawnRoot,
+				withdrawnRoot.allowedEmissionFacts().get(0), warm.proposed(), warm.seed().anchor);
+		Assert.assertEquals(coldWithdrawn.proofs(), withdrawnSupport.proofs());
+		assertIdentitySetEquals(
+			coldWithdrawn.dependencyOccurrences(), withdrawnSupport.dependencyOccurrences());
+		NativePlacementContinuity restored = withdrawn.nextRevision(warmFirstFacts);
+		NativePlacementContinuity.CandidateSupportResult restoredSupport = restored
+			.proveGeneratedCandidateSupport(warmFirstFact,
+				warmFirstFact.allowedEmissionFacts().get(0), warm.proposed(), warm.seed().anchor);
+		Assert.assertEquals(warmed.proofs(), restoredSupport.proofs());
+		assertIdentitySetEquals(warmed.dependencyOccurrences(), restoredSupport.dependencyOccurrences());
+		Assert.assertEquals(handlesAtKnownMetadataBoundary,
+			warmFirstRelation.materializedHandleCount());
+		Assert.assertEquals(replacementHandlesAfterSupportQuery,
+			warmEqualRelation.materializedHandleCount());
+
+		NativePlacementContinuity.NativeContinuityProof explicitProof =
+			new NativePlacementContinuity.NativeContinuityProof(pool, pool, true,
+				List.of(leftAxis.get(0), rightAxis.get(0)));
+		CandidateRealizationSupportClause explicitClause = new CandidateRealizationSupportClause(
+			List.of(explicitProof.continuityProofKey(owner.key)),
+			explicitProof.immediateBindings(), pool, true);
+		CandidateRuleFact explicitFact = productFact(template, emission, List.of(explicitClause));
+		Assert.assertNotEquals("an explicit subset cannot equal its complete product",
+			firstProjection, continuityProjection(List.of(explicitFact)));
+		Assert.assertNotEquals("comparison must remain symmetric",
+			continuityProjection(List.of(explicitFact)), firstProjection);
+		NativeContinuitySupportClauses explicitOracle = productClauses(
+			owner.key, pool, axes, pool, true);
+		List<CandidateRealizationSupportClause> completeExplicit = new ArrayList<>(explicitOracle);
+		CandidateRuleFact completeExplicitFact = productFact(
+			template, emission, completeExplicit);
+		Assert.assertEquals(firstRelation.size(), completeExplicit.size());
+		Assert.assertNotEquals("cross-representation equality is deliberately conservative",
+			firstProjection, continuityProjection(List.of(completeExplicitFact)));
+		Assert.assertEquals("only the isolated explicit oracle may materialize", 0,
+			firstRelation.materializedHandleCount());
+		Assert.assertEquals(explicitOracle.size(), explicitOracle.materializedHandleCount());
+		Assert.assertEquals(0, firstRelation.materializedHandleCount());
+	}
+
+	@Test
+	public void nativeProductRevisionProjectionDistinguishesEveryStructuralAxis() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+		Ref left = full.federatedSource("left", pool);
+		Ref right = full.federatedSource("right", pool);
+		Ref foreign = full.federatedSource("foreign", pool);
+		List<CandidateInputState> sourceInputs = List.of(
+			CandidateInputState.absentLocal(), CandidateInputState.absentLocal());
+		int sourceOrdinal = 0;
+		for(Ref source : List.of(left, right, foreign))
+			full.samePoolRealizations(source, sourceInputs, pool,
+				new DurableAnchorKey("source-second-" + sourceOrdinal++, FType.FULL, pool.partitions()));
+		Ref owner = full.binary("owner", OpOp2.PLUS, left, right, false);
+		CandidateRuleFact template = full.fact(owner, List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL)));
+		CandidateEmissionFact emission = template.allowedEmissionFacts().get(0);
+		List<CandidateRealizationInputBinding> leftAxis = productAxis(full, left, sourceInputs, 0);
+		List<CandidateRealizationInputBinding> rightAxis = productAxis(full, right, sourceInputs, 1);
+		List<List<CandidateRealizationInputBinding>> axes = List.of(leftAxis, rightAxis);
+		Object baseline = continuityProjection(List.of(productFact(template, emission,
+			productClauses(owner.key, pool, axes, pool, true))));
+
+		List<List<List<CandidateRealizationInputBinding>>> distinctAxes = List.of(
+			List.of(List.of(leftAxis.get(0)), rightAxis),
+			List.of(leftAxis, List.of(rightAxis.get(1))),
+			List.of(repositionAxis(leftAxis, 1), repositionAxis(rightAxis, 2)),
+			List.of(productAxis(full, foreign, sourceInputs, 0), rightAxis));
+		for(List<List<CandidateRealizationInputBinding>> candidateAxes : distinctAxes)
+			Assert.assertNotEquals(baseline, continuityProjection(List.of(productFact(template, emission,
+				productClauses(owner.key, pool, candidateAxes, pool, true)))));
+
+		CompiledHopKey twin = new CompiledHopKey(left.key.programFingerprint(),
+			left.key.functionNamespace(), left.key.callSitePath(), left.key.recompileContext(),
+			left.key.controlRegion(), left.key.emittedHopInstance(), left.key.canonicalSourceOrigin());
+		Assert.assertEquals(left.key, twin);
+		Assert.assertNotSame(left.key, twin);
+		List<CandidateRealizationInputBinding> twinAxis = leftAxis.stream().map(binding ->
+			CandidateRealizationInputBinding.direct(binding.inputPosition(),
+				new CandidateRealizationReference(new CandidateRuleKey(twin, sourceInputs),
+					binding.source().realization()))).toList();
+		Assert.assertNotEquals("equal-but-foreign source identity is not projection authority", baseline,
+			continuityProjection(List.of(productFact(template, emission,
+				productClauses(owner.key, pool, List.of(twinAxis, rightAxis), pool, true)))));
+
+		DurableAnchorKey otherPool = anchor(FType.FULL, "worker2:8002", 0, 50);
+		Assert.assertNotEquals("clause witness is projection authority", baseline,
+			continuityProjection(List.of(productFact(template, emission,
+				productClauses(owner.key, pool, axes, otherPool, true)))));
+		Assert.assertNotEquals("clause exactness is projection authority", baseline,
+			continuityProjection(List.of(productFact(template, emission,
+				productClauses(owner.key, pool, axes, pool, false)))));
+
+		CandidateEmissionRealization baselineRealization = productFact(template, emission,
+			productClauses(owner.key, pool, axes, pool, true)).allowedEmissionFacts().get(0)
+			.realizations().get(0);
+		CandidateRuleFact differentKeyFact = productFact(template, emission,
+			new CandidateEmissionRealization(PlacementIdentity.PlacementRealizationKey.nativeLineage(
+				emission.emissionState(), "different-product-key"),
+				baselineRealization.supportClauses()));
+		Assert.assertNotEquals("realization identity remains projection authority", baseline,
+			continuityProjection(List.of(differentKeyFact)));
+		for(CandidateRuleFact fact : List.of(template, differentKeyFact))
+			for(CandidateEmissionRealization realization : fact.allowedEmissionFacts().get(0).realizations())
+				if(realization.supportClauses() instanceof NativeContinuitySupportClauses relation)
+					Assert.assertEquals(0, relation.materializedHandleCount());
 	}
 
 	@Test
@@ -4801,6 +5155,62 @@ public class NativePlacementContinuityTest {
 		Assert.assertNotNull("WDIVMM LEFT transposes the exact COL partition axis into output ROW", leftProof);
 		Assert.assertTrue(leftProof.exactPartitionRanges());
 		Assert.assertEquals(FType.ROW, leftProof.outputWorkerPoolWitness().fType());
+	}
+
+	private static List<CandidateRealizationInputBinding> productAxis(Fixture fixture,
+		Ref source, List<CandidateInputState> inputs, int inputPosition) {
+		CandidateRuleFact fact = fixture.fact(source, inputs);
+		return fact.allowedEmissionFacts().get(0).realizations().stream()
+			.map(realization -> CandidateRealizationInputBinding.direct(inputPosition,
+				CandidateRealizationReference.of(fact.key(), realization)))
+			.sorted().toList();
+	}
+
+	private static List<CandidateRealizationInputBinding> repositionAxis(
+		List<CandidateRealizationInputBinding> axis, int inputPosition) {
+		return axis.stream().map(binding -> CandidateRealizationInputBinding.direct(
+			inputPosition, binding.source())).sorted().toList();
+	}
+
+	private static NativeContinuitySupportClauses productClauses(CompiledHopKey owner,
+		DurableAnchorKey outputPool, List<List<CandidateRealizationInputBinding>> axes,
+		DurableAnchorKey clauseWitness, boolean clauseLayoutExact) {
+		NativePlacementContinuity.NativeSupportProduct product =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				outputPool, outputPool, true, axes);
+		Assert.assertNotNull("fixture must remain an admissible independent product", product);
+		return new NativeContinuitySupportClauses(
+			owner, product, clauseWitness, clauseLayoutExact);
+	}
+
+	private static CandidateRuleFact productFact(CandidateRuleFact template,
+		CandidateEmissionFact emission, List<CandidateRealizationSupportClause> clauses) {
+		return productFact(template, emission,
+			new CandidateEmissionRealization(emission.realizations().get(0).key(), clauses));
+	}
+
+	private static CandidateRuleFact productFact(CandidateRuleFact template,
+		CandidateEmissionFact emission, CandidateEmissionRealization realization) {
+		CandidateEmissionFact replacement = new CandidateEmissionFact(emission.emissionState(),
+			emission.executionFType(), emission.derivedFoutAction(), List.of(realization));
+		return new CandidateRuleFact(template.key(), template.status(), template.capability(),
+			template.shapeProof(), template.profile(), List.of(replacement), template.failureCode());
+	}
+
+	private static Object continuityProjection(List<CandidateRuleFact> facts) throws Exception {
+		Method projection = NativePlacementContinuity.class.getDeclaredMethod(
+			"continuityProjection", List.class);
+		projection.setAccessible(true);
+		return projection.invoke(null, facts);
+	}
+
+	private static List<CandidateRuleFact> replaceFact(List<CandidateRuleFact> facts,
+		CandidateRuleFact before, CandidateRuleFact after) {
+		List<CandidateRuleFact> replaced = new ArrayList<>(facts);
+		int index = replaced.indexOf(before);
+		Assert.assertTrue("fixture fact must be present", index >= 0);
+		replaced.set(index, after);
+		return List.copyOf(replaced);
 	}
 
 	private static final class Fixture {

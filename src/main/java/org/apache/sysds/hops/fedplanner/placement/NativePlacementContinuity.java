@@ -610,8 +610,7 @@ final class NativePlacementContinuity {
 		Map<CompiledHopKey,Boolean> unchangedRows = new IdentityHashMap<>();
 		Map<CompiledHopKey,Boolean> unchangedGeneratedRoots = new IdentityHashMap<>();
 		RevisionComparisonWork comparisonWork = new RevisionComparisonWork();
-		boolean sharedExactAuthority = structuralContext == next.structuralContext
-			&& candidateFactsSnapshot == next.candidateFactsSnapshot;
+		boolean sharedStructuralAuthority = structuralContext == next.structuralContext;
 		boolean hasReusableEntries = !candidateTopologies.isEmpty() || !completedSupportMemo.isEmpty()
 			|| !acyclicRootSupportMemo.isEmpty() || !completedProofMemo.isEmpty()
 			|| !acyclicComponentMemo.isEmpty() || !replayOwnerRevisionTokens.isEmpty();
@@ -636,10 +635,19 @@ final class NativePlacementContinuity {
 				!unchangedRows.computeIfAbsent(owner, key -> unchangedContinuityFacts(
 					next, key, changedOccurrences, comparisonWork, boundOwnerImpact))))
 				continue;
-			CandidateTopology migrated = sharedExactAuthority && topology.hasStableStructuralHandles()
-				? topology : next.reindexTopology(topology);
-			if(next.cacheTopology(entry.getKey(), migrated))
+			// The complete execution/metadata checks above authorize the old references.
+			// A fresh fact snapshot alone does not require rebuilding immutable rows:
+			// only their destination-local handle indexes can still have changed.
+			boolean shareRows = sharedStructuralAuthority && topology.hasStableStructuralHandles(next);
+			CandidateTopology migrated = shareRows ? topology : next.reindexTopology(topology);
+			if(next.cacheTopology(entry.getKey(), migrated)) {
 				reused++;
+				if(metrics != null)
+					metrics.recordDirectWork(shareRows
+						? SearchSpaceMetrics.DirectWork.TOPOLOGY_REVISION_SHARED_ROWS
+						: SearchSpaceMetrics.DirectWork.TOPOLOGY_REVISION_REINDEXED_ROWS,
+						migrated.rows.size());
+			}
 		}
 		long supportReused = 0;
 		for(var entry : completedSupportMemo.entrySet()) {
@@ -1447,6 +1455,11 @@ final class NativePlacementContinuity {
 			memo.remember(realization, current);
 		}
 		if(current.projection == null) {
+			if(realization.supportClauses() instanceof NativeContinuitySupportClauses product) {
+				current.projection = new ContinuityRealizationProjection(realization.key(), Set.of(),
+					continuityProductProjectionOwned(product, current, donor));
+				return current.projection;
+			}
 			Set<ContinuityClauseProjection> clauses = new java.util.HashSet<>();
 			for(CandidateRealizationSupportClause clause : realization.supportClauses())
 				clauses.add(continuityClauseProjectionOwned(clause, current, donor));
@@ -1454,6 +1467,30 @@ final class NativePlacementContinuity {
 				realization.key(), cachedSet(clauses));
 		}
 		return current.projection;
+	}
+
+	private static NativeProductContinuityProjection continuityProductProjectionOwned(
+		NativeContinuitySupportClauses product, RealizationProjectionMemo memo,
+		RealizationProjectionMemo donorMemo) {
+		List<List<ContinuityBindingProjection>> axes = product.product().axes().stream()
+			.map(axis -> axis.stream()
+				.map(binding -> continuityBindingProjectionOwned(binding, memo, donorMemo))
+				.toList())
+			.toList();
+		return new NativeProductContinuityProjection(
+			axes, product.clauseWitness(), product.clauseLayoutExact());
+	}
+
+	private static ContinuityBindingProjection continuityBindingProjectionOwned(
+		CandidateRealizationInputBinding binding, RealizationProjectionMemo memo,
+		RealizationProjectionMemo donorMemo) {
+		ContinuityBindingProjection projection = memo.bindings.get(binding);
+		if(projection == null && donorMemo != null)
+			projection = donorMemo.bindings.get(binding);
+		if(projection == null)
+			projection = new ContinuityBindingProjection(binding);
+		memo.bindings.put(binding, projection);
+		return projection;
 	}
 
 	private static ContinuityClauseProjection continuityClauseProjectionOwned(
@@ -1474,15 +1511,8 @@ final class NativePlacementContinuity {
 			return exactDonor;
 		}
 		List<ContinuityBindingProjection> bindings = new ArrayList<>(clause.inputBindings().size());
-		for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
-			ContinuityBindingProjection projection = memo.bindings.get(binding);
-			if(projection == null && donorMemo != null)
-				projection = donorMemo.bindings.get(binding);
-			if(projection == null)
-				projection = new ContinuityBindingProjection(binding);
-			bindings.add(projection);
-			memo.bindings.put(binding, projection);
-		}
+		for(CandidateRealizationInputBinding binding : clause.inputBindings())
+			bindings.add(continuityBindingProjectionOwned(binding, memo, donorMemo));
 		current = new ContinuityClauseProjection(List.copyOf(bindings),
 			clause.nativeWorkerPoolWitness(), clause.nativeWorkerPoolLayoutExact());
 		memo.clauses.put(clause, current);
@@ -1501,23 +1531,37 @@ final class NativePlacementContinuity {
 		boolean includePublishedRealizations) {
 		Set<ContinuityEmissionProjection> emissions = new java.util.HashSet<>();
 		for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
-				Set<ContinuityRealizationProjection> realizations = new java.util.HashSet<>();
-				for(CandidateEmissionRealization realization : includePublishedRealizations
-					? emission.realizations() : List.<CandidateEmissionRealization>of()) {
-					Set<ContinuityClauseProjection> clauses = new java.util.HashSet<>();
-					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
-						List<ContinuityBindingProjection> bindings = clause.inputBindings().stream()
-							.map(ContinuityBindingProjection::new).toList();
-						clauses.add(new ContinuityClauseProjection(bindings,
-							clause.nativeWorkerPoolWitness(), clause.nativeWorkerPoolLayoutExact()));
-					}
-					realizations.add(new ContinuityRealizationProjection(
-						realization.key(), cachedSet(clauses)));
+			Set<ContinuityRealizationProjection> realizations = new java.util.HashSet<>();
+			for(CandidateEmissionRealization realization : includePublishedRealizations
+				? emission.realizations() : List.<CandidateEmissionRealization>of()) {
+				if(realization.supportClauses() instanceof NativeContinuitySupportClauses product) {
+					realizations.add(new ContinuityRealizationProjection(realization.key(), Set.of(),
+						continuityProductProjection(product)));
+					continue;
 				}
+				Set<ContinuityClauseProjection> clauses = new java.util.HashSet<>();
+				for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+					List<ContinuityBindingProjection> bindings = clause.inputBindings().stream()
+						.map(ContinuityBindingProjection::new).toList();
+					clauses.add(new ContinuityClauseProjection(bindings,
+						clause.nativeWorkerPoolWitness(), clause.nativeWorkerPoolLayoutExact()));
+				}
+				realizations.add(new ContinuityRealizationProjection(
+					realization.key(), cachedSet(clauses)));
+			}
 			emissions.add(new ContinuityEmissionProjection(emission.emissionState(),
 				emission.executionFType(), emission.derivedFoutAction(), cachedSet(realizations)));
 		}
 		return new ContinuityFactProjection(fact.key(), fact.status(), cachedSet(emissions));
+	}
+
+	private static NativeProductContinuityProjection continuityProductProjection(
+		NativeContinuitySupportClauses product) {
+		List<List<ContinuityBindingProjection>> axes = product.product().axes().stream()
+			.map(axis -> axis.stream().map(ContinuityBindingProjection::new).toList())
+			.toList();
+		return new NativeProductContinuityProjection(
+			axes, product.clauseWitness(), product.clauseLayoutExact());
 	}
 
 	private static <E> Set<E> cachedSet(Set<E> ownedElements) {
@@ -1556,7 +1600,16 @@ final class NativePlacementContinuity {
 		DerivedFoutMaterializationActionKey action,
 		Set<ContinuityRealizationProjection> realizations) { }
 	private record ContinuityRealizationProjection(PlacementRealizationKey key,
-		Set<ContinuityClauseProjection> clauses) { }
+		Set<ContinuityClauseProjection> clauses,
+		NativeProductContinuityProjection nativeProduct) {
+		private ContinuityRealizationProjection(PlacementRealizationKey key,
+			Set<ContinuityClauseProjection> clauses) {
+			this(key, clauses, null);
+		}
+	}
+	private record NativeProductContinuityProjection(
+		List<List<ContinuityBindingProjection>> axes,
+		DurableAnchorKey clauseWitness, boolean clauseLayoutExact) { }
 	private record ContinuityClauseProjection(List<ContinuityBindingProjection> bindings,
 		DurableAnchorKey nativeWorkerPoolWitness, boolean nativeWorkerPoolLayoutExact) { }
 	private static final class ContinuityBindingProjection {
@@ -2703,6 +2756,30 @@ final class NativePlacementContinuity {
 		int retainedOwnerAlternativeWidth = 0;
 		int owner = 0, slot = 0, edge = 0;
 		for(List<SelectedCandidateProof> alternatives : graph.values()) {
+			int[] dependencyOrdinals = null;
+			int[] denseSuccessors = null;
+			if(alternatives instanceof DefaultAlternativeList defaults) {
+				dependencyOrdinals = defaults.pruningDependencyOrdinals();
+				if(dependencyOrdinals != null) {
+					List<CandidateProofState> uniqueSuccessors = defaults.traversalSchedule(null).uniqueSuccessors;
+					try {
+						denseSuccessors = new int[uniqueSuccessors.size()];
+						for(int successor = 0; successor < uniqueSuccessors.size(); successor++)
+							denseSuccessors[successor] = stateIds.get(uniqueSuccessors.get(successor));
+					}
+					catch(OutOfMemoryError optionalDenseIndexAllocationFailure) {
+						dependencyOrdinals = null;
+						denseSuccessors = null;
+					}
+					if(denseSuccessors != null && metrics != null) {
+						metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.PRUNE_DEFAULT_ORDINAL_EDGES,
+							dependencyOrdinals.length);
+						metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.PRUNE_DEFAULT_DENSE_RESOLUTIONS,
+							denseSuccessors.length);
+					}
+				}
+			}
+			int ownerDependency = 0;
 			int ownerWidth = alternatives.size();
 			if(ownerWidth > 1) {
 				// IdentityHashMap.clear scans its retained backing array. Avoid paying for a
@@ -2725,7 +2802,10 @@ final class NativePlacementContinuity {
 				alternativeOwners[removalId] = owner;
 				List<CandidateProofDependency> dependencies = alternative.dependencies;
 				for(int dependencyIndex = 0; dependencyIndex < dependencies.size(); dependencyIndex++) {
-					int dependency = stateIds.get(dependencies.get(dependencyIndex).state());
+					int dependency = denseSuccessors == null
+						? stateIds.get(dependencies.get(dependencyIndex).state())
+						: denseSuccessors[dependencyOrdinals[ownerDependency]];
+					ownerDependency++;
 					// The legacy reverse index deduplicates dependencies per original list
 					// slot, not per shared alternative object or per owner.
 					if(lastSlot[dependency] == slot)
@@ -2774,8 +2854,18 @@ final class NativePlacementContinuity {
 		Map<CandidateProofState,List<SelectedCandidateProof>> viable =
 			new java.util.LinkedHashMap<>(graph);
 		slot = 0;
+		owner = 0;
 		for(var entry : graph.entrySet()) {
 			List<SelectedCandidateProof> alternatives = entry.getValue();
+			// Every first removal decrements this owner, even for shared object
+			// slots. An unchanged count proves that the original list survives.
+			if(liveCounts[owner++] == alternatives.size()) {
+				if(metrics != null)
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.PRUNE_UNCHANGED_OWNER_SLOTS_SKIPPED,
+						alternatives.size());
+				slot += alternatives.size();
+				continue;
+			}
 			List<SelectedCandidateProof> survivors = null;
 			for(int index = 0; index < alternatives.size(); index++) {
 				if(removed[slotRemovalIds[slot + index]]) {
@@ -4490,10 +4580,10 @@ final class NativePlacementContinuity {
 			return false;
 		}
 
-		private boolean hasStableStructuralHandles() {
+		private boolean hasStableStructuralHandles(NativePlacementContinuity destination) {
 			for(CandidateTopologyRow row : rows) {
-				Integer rowHandle = PlacementIdentity.structuralHandle(row.reference);
-				if(rowHandle == null || rowsByHandle.getOrDefault(rowHandle, List.of()).stream()
+				int rowHandle = destination.candidateHandle(row.reference);
+				if(rowHandle <= 0 || rowsByHandle.getOrDefault(rowHandle, List.of()).stream()
 					.noneMatch(indexed -> indexed == row))
 					return false;
 				for(CandidateDependencySkeleton dependency : row.dependencies) {
@@ -4502,9 +4592,9 @@ final class NativePlacementContinuity {
 							return false;
 					}
 					else {
-						Integer dependencyHandle =
-							PlacementIdentity.structuralHandle(dependency.clausePinned);
-						if(dependencyHandle == null
+						int dependencyHandle = destination.candidateHandle(dependency.clausePinned);
+						// Equal negative numbers in two revisions are not shared authority.
+						if(dependencyHandle <= 0
 							|| dependencyHandle != dependency.clausePinnedHandle)
 							return false;
 					}
@@ -4520,8 +4610,11 @@ final class NativePlacementContinuity {
 	/** Original topology list plus its one lazy, immutable DFS schedule. */
 	private static final class DefaultAlternativeList extends AbstractList<SelectedCandidateProof>
 		implements java.util.RandomAccess {
+		private static final int MAX_PRUNING_ORDINAL_EDGES = 65_536;
 		private final List<SelectedCandidateProof> alternatives;
 		private volatile DefaultTraversalSchedule schedule;
+		private volatile boolean pruningOrdinalsAttempted;
+		private volatile int[] pruningDependencyOrdinals;
 
 		private DefaultAlternativeList(List<SelectedCandidateProof> alternatives) {
 			this.alternatives = List.copyOf(alternatives);
@@ -4569,6 +4662,39 @@ final class NativePlacementContinuity {
 			}
 			return new DefaultTraversalSchedule(filtered == null ? this : List.copyOf(filtered),
 				List.copyOf(successors), rawDependencies);
+		}
+
+		private int[] pruningDependencyOrdinals() {
+			if(!pruningOrdinalsAttempted)
+				synchronized(this) {
+					if(!pruningOrdinalsAttempted) {
+						try {
+							DefaultTraversalSchedule current = traversalSchedule(null);
+							long edges = current.rawDependencyCount;
+							if(current.filteredAlternatives == this && edges <= MAX_PRUNING_ORDINAL_EDGES
+								&& edges <= 8L * alternatives.size()
+								&& current.uniqueSuccessors.size() < edges) {
+								Map<CandidateProofState,Integer> ordinalBySuccessor =
+									new HashMap<>(current.uniqueSuccessors.size());
+								for(int ordinal = 0; ordinal < current.uniqueSuccessors.size(); ordinal++)
+									ordinalBySuccessor.put(current.uniqueSuccessors.get(ordinal), ordinal);
+								int[] ordinals = new int[(int)edges];
+								int edge = 0;
+								for(SelectedCandidateProof alternative : alternatives)
+									for(CandidateProofDependency dependency : alternative.dependencies)
+										ordinals[edge++] = ordinalBySuccessor.get(dependency.state());
+								pruningDependencyOrdinals = ordinals;
+							}
+						}
+						catch(OutOfMemoryError optionalOrdinalAllocationFailure) {
+							pruningDependencyOrdinals = null;
+						}
+						finally {
+							pruningOrdinalsAttempted = true;
+						}
+					}
+				}
+			return pruningDependencyOrdinals;
 		}
 	}
 

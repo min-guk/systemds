@@ -8,6 +8,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
+import java.util.AbstractList;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -90,6 +91,39 @@ public class NativePlacementPruneOwnerTest {
 
 		Assert.assertSame("a graph with no dead seed or missing dependency needs no copy", graph, pruned);
 		Assert.assertEquals(2, metrics.snapshot().ownerCompactionElementsScanned());
+	}
+
+	@Test
+	public void untouchedWideOwnerSkipsCompactionWorkBesideRemovedPeer() throws Exception {
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		Object witness = witness();
+		CompiledHopKey deadKey = key("untouched-wide-dead");
+		Object dead = state(deadKey, 1, witness);
+		CompiledHopKey liveKey = key("untouched-wide-live");
+		Object live = state(liveKey, 2, witness);
+		Object grounded = alternative(List.of(), witness);
+		Object wideOwner = state(key("untouched-wide-owner"), 3, witness);
+		Object doomedOwner = state(key("untouched-wide-doomed"), 4, witness);
+		Object doomed = alternative(List.of(dependency(deadKey, 1, witness)), witness);
+		List<Object> alternatives = new ArrayList<>();
+		for(int slot = 0; slot < 512; slot++)
+			alternatives.add(alternative(List.of(dependency(liveKey, 2, witness)), witness));
+		CountingList<Object> wide = new CountingList<>(alternatives);
+		Map<Object,List<Object>> input = graph(
+			dead, List.of(), live, List.of(grounded), wideOwner, wide, doomedOwner, List.of(doomed));
+
+		Map<?,?> actual = prune(continuity(metrics), input);
+
+		Assert.assertSame("an owner with no removed alternative must retain its exact list",
+			wide, actual.get(wideOwner));
+		Assert.assertTrue("the peer that reads the dead state must still be removed",
+			((List<?>)actual.get(doomedOwner)).isEmpty());
+		Assert.assertEquals("only the two dense-index construction passes read the live alternatives",
+			2 * wide.size(), wide.getCount());
+		Assert.assertEquals(wide.size() + 2,
+			metrics.snapshot().ownerCompactionElementsScanned());
+		Assert.assertEquals(wide.size() + 1,
+			directMetric(metrics, "PRUNE_UNCHANGED_OWNER_SLOTS_SKIPPED"));
 	}
 
 	@Test
@@ -418,8 +452,41 @@ public class NativePlacementPruneOwnerTest {
 
 	private record LegacyDependent(Object owner, Object alternative) { }
 
+	private static final class CountingList<T> extends AbstractList<T> {
+		private final List<T> values;
+		private int gets;
+
+		private CountingList(List<T> values) {
+			this.values = List.copyOf(values);
+		}
+
+		@Override
+		public T get(int index) {
+			gets++;
+			return values.get(index);
+		}
+
+		@Override
+		public int size() {
+			return values.size();
+		}
+
+		private int getCount() {
+			return gets;
+		}
+	}
+
 	private static NativePlacementContinuity continuity(SearchSpaceMetrics metrics) {
 		return new NativePlacementContinuity(Map.of(), Map.of(), List.of(), List.of(), Map.of(), metrics);
+	}
+
+	private static long directMetric(SearchSpaceMetrics metrics, String name) {
+		try {
+			return metrics.directWorkCount(Enum.valueOf(SearchSpaceMetrics.DirectWork.class, name));
+		}
+		catch(IllegalArgumentException missingBeforeProductionChange) {
+			return 0;
+		}
 	}
 
 	@SuppressWarnings("unchecked")

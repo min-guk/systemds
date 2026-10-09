@@ -177,6 +177,25 @@
 - **잔여/위험**: 신규 전용 end-to-end boundary cancellation fixture는 아직 없다. 기존 full fixed-point output differential 및 실제 Docker로 보완하며, partial counter 감소를 전체20초 달성으로 해석하지 않는다. Legal candidate/privacy/runtime/oracle/DP arithmetic 변경은 없다.
 - **v15/v16 full gate**: source freeze 후 focused144PASS, fresh Maven **1,028 selected tests/failure0/error0/skip1**, BUILD SUCCESS01:59:12. 독립 production review 양쪽 CLEAR. Native memo certificate assertion도 직접 검증했다. v16 JAR `0ce7f074aa9b2eb62a6c235a6424babdbe200b59cb7f2b83785563ccbffa6988`을 봉인하고 동일 Docker detailed 진단을 시작했다. 새 전용 boundary end-to-end fixture 부재는 위 제한대로 유지한다.
 
+### v16 실측 및 v17/v19 다음 work 제거 (진행중)
+
+- **게시/측정**: v15/v16를 `ac0b5e602844a9ea3d1d2db175e417fc2dd1e132`로 origin/main 게시/remote 확인. 두 workload 여전히60초 timeout/no receipt. GLM no-binding incomplete-new7,559/other914가 그대로이고, LogReg graph38,789이며 전체20초 미달이다. v16 source/JAR가 봉인된 뒤 v17 tests-only 변경은 별도 미커밋 상태로 분리했다.
+- **v19 재분석**: zero eligible slot owner는 한번 selected되면 binder dependency entry가 생길 수 없어 기본 exact-self receipt를 받고, v16에서는 이후 invalidate도 이를 유지한다. 남은 no-binding incomplete owner는 현재 closure에서 미방문한 항등 direct transfer다. 따라서 observed `complete()`와 별개인 `schedulingComplete()`에 static no-query certificate를 허용할 수 있다. 독립 architect가 초기 pending, empty dirty, mixed SCC, 첫 mandatory boundary 실행과 boundary 독립 입력 계약을 재검토했다. 이전 no-precompletion은 안전상 필수가 아닌 보수적 work policy였다.
+- **v19 변경/테스트**: 초기 pending/changed/self/immediate/subscriber/alias/support와 전체 affected-cone 탐색은 그대로 두고 ready/fallback 두 위치만 schedulingComplete를 사용한다. 가짜 receipt를 넣지 않는다. Sparse unvisited, mixed SCC, pending zero-query/empty pending, closure-local lifetime, metrics ON/OFF 및 observed receipt 부재를 잠그며 기존 v16에서43tests 중3개 기대 실패를 확인했다. Static certificate가 있는 수동 incomplete receipt fixture의 queue 기대만 명시적으로 갱신한다.
+- **v17 계획**: dead propagation 후 liveCounts[owner]==원래 list.size이면 어느 alternative도 제거되지 않았다. 최종 survivor scan만 생략하고 list identity/기존 logical counters/duplicate-object 의미를 유지한다. 최초 CountingList 테스트는 기존 loop가 untouched list.get을 하지 않아 red가 아니었다(10PASS); 이를 수정 전후 work 감소 증거로 사용하지 않는다. 새 aggregate skipped-slot 계측과 mixed removed/untouched fixture로 실제 skip을 검증한다.
+- **잔여/위험**: 세부 skip이 전체 speedup/20초를 보장하지 않는다. 구조/eligibility가 closure 중 바뀌면 static certificate가 깨지므로 all-slot classification 및 실제 full fixed-point differential을 계속 실행한다. 실제 boundary-session 전용 새 fixture 부재는 유지하며 source proof와 기존 composition suite를 보완 근거로 명시한다.
+
+### v18 default dependency ordinal 재사용 계획 (진행중)
+
+- **실측/범위**: v16 LogReg JFR에서 dead pruning12.12%, NativePoolWitness.equals7.19%의 inclusive samples가 남아 있다. Default schedule 전체 raw successor88,682,624/unique27,032,864지만 이는 DAG 포함 집계이며 cyclic-dead subset의 절감으로 단정하지 않는다. DefaultAlternativeList는 Cartesian relation이 아니라 상관관계를 보존한 flat immutable list다; 임의 축 분해는 하지 않는다.
+- **계획**: 기존 schedule.uniqueSuccessors의 ordinal만 optional immutable int[]로 저장한다. 실제 dead-seed pruning reverse-index에서 unique successor마다 query-local dense ID를 한 번 조회하고 원래 edge 순서의 ordinal로 참조한다. Existing per-slot dependency dedup/duplicate object removal/edge overflow 및 fallback 의미는 그대로다.
+- **메모리/수명**: 원래 DefaultAlternativeList가 필터링되지 않은 경우만, E<=65,536 및 E<=8*alternativeCount 및 U<E를 만족할 때 채택한다. Dead pruning core에 진입하기 전에는 만들지 않고, optional allocation 실패는 기존 exact 경로로 복귀한다. Query-local ID/removed flag/survivor는 캐시하지 않는다. Topology lifetime과 row budget의 제한을 따르며 새로운 전역 캐시는 없다.
+- **회귀/증거**: 최초3tests 모두 기대 missing-private-method red. Ordinal 순서/중복/warm identity, filter/density/absolute cap bypass, query dense-ID 순서가 다른 duplicate-object graph parity부터 잠갔다. Random default-vs-plain graph differential, no-dead lazy path 및 aggregate E/U resolution 계측을 추가한다. v17 corrected work assertion은10tests 중1 expected red, 적용 후 v17+v19 focused53PASS; v19+실제 composition suite55PASS이다.
+- **잔여/위험**: Dense ID를 잘못 retained하거나 필터 후 좌표를 혼동하면 stale edges가 된다. 원래 list identity gate와 reordered-query differential로 검출한다. 구조적 후보 압축/전체20초 달성을 주장하지 않는다.
+- **v17/v18/v19 gate**: full source freeze 후 focused162PASS, fresh Maven **1,037 selected tests/failure0/error0/skip1**, BUILD SUCCESS02:12:59. 독립 검토 세 slice 모두 CLEAR. 봉인 JAR `3940a9054a927d54451311cccd97e46968cda44034280d04d5bdea089bde6f53`. 이후 production 변경 없이 certified entry+metrics OFF 전용 회귀1개를 추가했으며 Docker 종료 후 별도 targeted 검증한다. Optional allocation-failure의 결정적 fault injection은 아직 없고 cap fallback만 직접 시험했다.
+- **v19 실측/추가 검증**: 상세 Docker는 양쪽60초 timeout/no receipt로20초 미달이다. LogReg에서 ordinal edge44,923,734를 unique dense resolution7,731,137로 처리했고, untouched-owner slot26,640,152의 survivor scan을 생략했다. GLM static no-query new-pending skip12,916, 잔여 no-binding incomplete-new0/other977이며 direct passes2,079이다(v16 partial2,894와 작업 진행도가 달라 wall speedup으로 환산하지 않는다). Native witness equality inclusive sample 비율은7.19%→1.80%, dead pruning12.12%→7.40%지만 전체 completion 개선 증거는 아니다.
+- **seal 이후 tests-only 보강**: production source는 봉인 그대로다. Certified entry+metrics OFF 포함 새 suite7tests를 별도 javac/JUnit으로 실행해7PASS를 확인했다(`evidence/v19-supplemental*.log`). Full package의1,037 selected 결과와 supplemental7을 중복 합산해 전체 test count로 보고하지 않는다. 계측 OFF/JFR 대조를 추가한다.
+
 ## Incoming native-support integration evidence (retained)
 
 
@@ -226,6 +245,22 @@
 
 - **最新 main 통합 gate**: `ac0b5e6028`을 `b115ee00e8`로 병합했다. Production/test는 충돌 없이 reviewer의3-way preview와 byte-for-byte 일치했고, 문서는 두 evidence block을 모두 보존했다. Fresh compile 및 **1,006 tests PASS(167.58초)**, source SHA mismatch0, independent review CLEAR. 증거 `evidence/merged-ac0-native-full-green-1006`. 이 봉인본으로 실제 COFEE v5를 실행하며 아직20초 달성 주장은 없다.
 
+### v19 이후 origin/main native relation 통합 (검증중)
+
+- **상태/원인**: local v19 commit `8487f28f61` push는 upstream5commits 선행으로 non-fast-forward 거절됐다. 강제 push 없이 `bd00913e2140dd3ee79998def43925a2a790780c`와 merge-base `ac0b5e6028` 기준으로3-way 병합한다. Native/Closure 및 모든 test는 자동 병합됐고, 유일한 문서 append 충돌은 양쪽 증거 block을 모두 유지했다.
+- **Incoming 범위**: native DIRECT support product를 Closure/metadata/cost까지 압축 유지하는 `fd5a7988d2`, derived-FOUT exact grounding circuit `0e71e6e792`와 관련 회귀를 통합한다. 기존 v17/v18 ordinal/compaction, v19 static scheduling 및 해당 테스트/계측은 삭제하지 않는다. 오직 두 commit 간 단순 diff에서만 보이는 '삭제'를 실제 incoming 변경으로 오해하지 않는다.
+- **검증 계획**: 기존 v19 selector에 새 native metadata/product tests 및 직접 소비자/canonical cost 회귀를 추가한134classes를 fresh package한다. 양쪽 parent 대비 독립 semantic integration 검토 후 publish한다. 현재 병합본20초 결과는 없다.
+- **v19 OFF 대조**: 계측 OFF/JFR도 LogReg/GLM 모두60초 timeout/no receipt였다. 실제 timed runner는 병합 전에 종료하고 own container 정리를 확인했다. 선택적 static/no-query 및 ordinal work 감소가 전체20초를 아직 달성하지 못했다는 제한을 유지한다.
+
+### 병합 확장 gate의 기존 실패 분리 (진단 완료, Exact 잔여)
+
+- **증상**: 새134class 확장 검증1,114tests에서 ContinuityRefreshReuseTest1failure와 ExactPhysicalModelCertificateTest1error, skip1을 발견했다. `evidence/candidate-v20-merged-package.log`의 최초 실패 로그는 `candidate-v20-merged-supplemental-package.log`로 보존한다.
+- **원인/대조**: sealed v19 JAR를 첫 classpath로 동일9tests를 실행해 두 실패가 동일하게 재현됐다(`v19-expanded-failures-baseline.log`). No linkage errors. v19와 merged 별도 probe 모두 full misses4/hits27, incremental misses4/hits23, fingerprint/facts parity=true다. 따라서 fixture의 literal3만 stale이고 incremental rebuild 회귀가 아니다. 기대값은 정확히4로 수정하며 full/incremental equality, hit>0 및 semantic assertions는 유지한다.
+- **Exact 잔여**: PCA 실패는 analyze가 아니라 optimizer(line47)에서 기존10M 한도를 넘는594,284,544-cell separator다. 원래4decision의84*56*47*21에 exact-get 관측7Boolean이 곱해진다. 원인은 activation encoding/elimination width이며 한도 확대, 후보 삭제 또는 테스트 @Ignore로 우회하지 않는다. DP우선 원칙에 따라 이 미변경 suite는 supplemental의 명시적 기존 실패로 분리하고 main mandatory gate는 나머지133classes로 수행한다. 전체 repository tests green이라고 보고하지 않는다.
+- **파일/검증**: ContinuityRefreshReuseTest의 fixture literal만 보정한다. 두 probe 로그 `evidence/{v19,merged}-continuity-probe.log` 및 baseline JAR hash는 기존 seal에 있다. 독립 debugger가 scope/근거를 재검증했다.
+- **위험/후속**: Exact optimizer 대형PCA는 아직 실패한다. 후순위 Exact width개선 시 유지된 회귀로 재검증한다. Merge 자체의 semantic review는 양쪽 독립 CLEAR이나20초 성능 목표는 계속 미달이다.
+- **병합 mandatory gate 결과**:133classes의 fresh package는 **1,106 selected tests/failure0/error0/skip1**, BUILD SUCCESS02:29:10. 원래134class 확장 실패와 preexisting Exact/PCA gap은 위에 별도로 보존한다. v20-merged JAR/source를 봉인한 후 동일Docker로 측정하며 아직20초 성공 증거는 없다.
+
 
 ### COFEE v5 실제 LogReg 완료: DP overflow 해소, 20초 미달
 
@@ -266,3 +301,17 @@
 - **제외/잔여 위험**: multi-member Physical compaction은 unconstrained equal-cost canonical receipt 반례가 있어 제외했다. Physical exact fallback과 proof topology member 전개는 남는다. AND(per-axis OR) proof graph 설계는 full rectangle/DIRECT/distinct owner만 대상으로 하며 SCC·cache·fixed pin·authority 검증 전에는 통합하지 않는다. Metadata shortcut의 회귀는 dynamic layout/FEDERATED fallback/explicit parity 및 전체 회귀로 감지한다.
 
 - **v7 병합 전 gate**: fresh compile 및1,017 JUnit PASS(185.856초), source SHA mismatch0, independent static review CLEAR. Encoded Local과 Exact의 canonical assignment/raw objective parity까지 통과했다. 증거 `evidence/native-metadata-sparse-full-green-1017`. 이후 도착한 origin/main d27fa82b44의 pruning ordinal/native projection 변경을 병합하여 재검증한다.
+
+### v21 product projection / v22 topology 재사용 계획 (진행중)
+
+- **문제/근거**: incoming native support product가 publication에서 압축돼도 continuity projection이 모든 Cartesian clause를 펼친다. 기존 v19 OFF GLM sample에서 topology revision reindex가237/2,884(8.2%)를 차지한다. 동일 실행 relation을 유지하는 proof-history revision도 snapshot identity가 달라 모든 topology row/default edge를 재생성한다.
+- **v21 변경 계획**: private continuity realization projection에서 native product의 identity-sensitive binding axes와 clause witness/exactness만 O(sum axis widths)로 보존한다. Explicit와 product 표현 사이의 비교는 보수적으로 unequal, 동일product만 동일 projection을 허용한다. 기존 metadata footprint/public replay authority 및 root-history 정책은 변경하지 않는다. Static/owned/donor projection을 검증하되 별도 skeleton migration 전체가 zero-materialization이라고 주장하지 않는다.
+- **v21 red**: sealedv20에서는 variable-length product fixture가 admission실패했고, incoming9fb의 Native만 isolated compile한 첫red는 native proof가 없는 invalidfixture1개+실제0vs4materialization1개였다. Fixture를 owned proof로 고친 최종red는106tests에서2개 모두 기대0vs4materialization실패다(`v21-corrected-red-test.log`). 앞선 fixture 오류를 성능 회귀 증거로 사용하지 않는다.
+- **v22 계획/안전 경계**: unchanged owner+metadata authority gate는 그대로 유지하고 동일structuralContext 안에서 destination의 모든 row/pin handle이 기존과 같은 양수arena ID인 경우에만 raw topology를 공유한다. Revision-local 음수ID는 일치해도 재색인한다. `reindexTopology`도 이전row reference/pin을 그대로 유지하므로 snapshot 객체 동일성은 별도 authority보호가 아니며, destination mapping검사가 실제필요조건이다. Independent debugger가 existingnegative/foreign-owner/collision/crossarena 경로를 검토했다. 기존 fallback 및 shifted-arena differential을 잠근 뒤 구현한다.
+- **게시 경합**: e8e5e08f5e push중 incoming9fb272e355가 먼저 게시돼 다시 non-fast-forward 거절됐다. 강제push없이 native variable-length canonical rank index를 추가3-way병합한다. v20봉인bin은 그대로 두고 incoming+v21/v22를 다음freshgate로 검증한다.20초 목표는 미달이다.
+- **잔여/위험**: 표현 비교가 더 엄격해 cachemiss가 증가할 수 있으나 합법후보를 제거하지 않는다. 잘못된 handle공유는 pinned dependency를 바꿀 수 있으므로 음수/crossarena/foreign identity회귀 및 warm/cold ordered proof대조로 검출한다.
+- **v21 경계 fixture 보정**: static projection은0handles가 맞지만 hidden native metadata warming은 기존 owner-authority lookup에서1member를 선택한다. 따라서 integration은 warming의1을 기록한 뒤 owned/donor revision이 old product에 추가0/replacement product0임을 검사한다. 이후 실제 cold/warm support query가 replacement의1member를 고르는 것은 별도로 기록하며 전체경로0materialization이라고 주장하지 않는다. Withdrawal/restoration proof+identity-footprint parity는 그대로 잠갔다.
+- **v22 회귀 검증**: equal-new snapshot의 raw topology identity-sharing은 적용 전108tests에서 기대실패했다. Cross-arena row+pin drift 외에 row ID는 같고 pin ID만 다른 경우를 추가하고, pin-equality guard만 제거한 외부 임시 mutant에서108tests 중 바로 이회귀1개가 실패했다. Production은변경하지않은 mutation이다. 올바른코드는 focused4suites133tests/skip1통과. Arena prefix의 초기 fixture는 우연히pinID2가같아 setup assertion실패했으며, 전체old IDprefix를 점유하도록 고쳐정확한drift를강제했다.
+- **계측/리뷰**: shared/reindexed rows는 cache admission에 성공한 행만 계수한다. Positive path shared>0/reindexed0을assert하고 negative namespace기존회귀유지. v21/v22 production 독립review CLEAR. Equal-but-foreign productsource identity추가assert를 포함해 fresh133class package를 수행한다.
+- **v20 실측**: LogReg/GLM detailed모두60초 timeout/no finalreceipt. LogReg39,037graphs/4.328Mstates/54.283Malternatives/91.784Medges, GLM74,589graphs/375,852states/6.445Malternatives. Partialprogress라이전버전과전체속도비교로환산하지않는다. v22의가변길이 productrank, 축projection, topologyrawsharing효과는다음봉인측정에서확인한다.
+- **v22 full gate**: incoming9fb + v21/v22의 fresh133class package BUILD SUCCESS02:39:48, failure0/error0/skip1. Source/JAR 봉인 후 origin/main에 merge 게시를 재시도한다. Supplemental Exact/PCA 기존 실패는 여전히 위 별도항목이며 전체repository green으로 주장하지 않는다. Pin guard mutation은실제고장1개를검출했고 privateproduct의equal-but-foreign source identity까지fullgate에포함했다.

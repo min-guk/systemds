@@ -48,7 +48,7 @@ public class ContinuityRefreshReuseTest {
 			observed.candidateRuleFacts().orderedFacts(), observed.graph().relocationActions());
 		Object fullClosure = PlacementBuilderTestAccess.relationClosure(fullBuilder);
 		Object observedClosure = PlacementBuilderTestAccess.relationClosure(observedBuilder);
-		Assert.assertEquals("the fixture has three distinct structural continuity contexts", 3,
+		Assert.assertEquals("the fixture requires four structural continuity rebuilds", 4,
 			intField(fullClosure, "nativeContextMisses"));
 		Assert.assertEquals("incremental scheduling must not add structural continuity rebuilds",
 			intField(fullClosure, "nativeContextMisses"),

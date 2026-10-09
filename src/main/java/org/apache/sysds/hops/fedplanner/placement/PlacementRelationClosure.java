@@ -4902,6 +4902,13 @@ final class PlacementRelationClosure {
 			return dependenciesByOwner.containsKey(owner);
 		}
 
+		private boolean schedulingComplete(CompiledHopKey owner) {
+			// Zero eligible slots prove an identity direct transfer even before a
+			// visit. This is not an observed query receipt. Pending/changed owners
+			// and the independent boundary session still run unconditionally.
+			return noDirectBindingOwners.contains(owner) || complete(owner);
+		}
+
 		private Set<CompiledHopKey> subscribers(CompiledHopKey dependency) {
 			return ownersByDependency.getOrDefault(dependency, Set.of());
 		}
@@ -5146,7 +5153,7 @@ final class PlacementRelationClosure {
 			queue.addAll(aliases.getOrDefault(owner, List.of()));
 		}
 		for(CompiledHopKey owner : affected)
-			if(!querySubscriptions.complete(owner)) {
+			if(!querySubscriptions.schedulingComplete(owner)) {
 				boolean addedOnlyByIncompleteFallback = required.add(owner);
 				if(metrics != null)
 					metrics.recordDirectWork(
@@ -5161,6 +5168,9 @@ final class PlacementRelationClosure {
 					querySubscriptions.recordIncompleteNewPending(owner, metrics);
 				}
 			}
+			else if(metrics != null && !querySubscriptions.complete(owner)
+				&& !required.contains(owner) && pending != null && !pending.contains(owner))
+				metrics.recordDirectWork(DirectWork.STATIC_NO_QUERY_NEW_PENDING_SKIPS);
 		if(metrics != null) {
 			long uniqueExtraOwners = 0;
 			long newPendingOwners = 0;
@@ -5222,7 +5232,7 @@ final class PlacementRelationClosure {
 		for(var component : components.topologicalOrder())
 			if(dirty.contains(component) && !blocked.contains(component))
 				for(CompiledHopKey owner : component.owners())
-					if(pending.contains(owner) || subscriptions == null || !subscriptions.complete(owner))
+					if(pending.contains(owner) || subscriptions == null || !subscriptions.schedulingComplete(owner))
 						selected.add(owner);
 		return selected;
 	}
