@@ -222,6 +222,92 @@ public class NativeDefaultPruningOrdinalTest {
 			defaults, graph.get(root));
 	}
 
+	@Test
+	public void certifiedCountingReusesOnlyAnExistingUnfilteredDefaultSchedule() throws Exception {
+		for(boolean filtered : List.of(false, true)) {
+			Object witness = witness();
+			CompiledHopKey liveOwner = key("count-live");
+			Object live = state(liveOwner, 1, witness);
+			Object root = state(key("count-root"), 2, witness);
+			Object dead = state(key("count-dead"), 3, witness);
+			Object row = alternative(List.of(dependency(liveOwner, 1, witness)), false, witness);
+			Object second = filtered ? alternative(List.of(), false, witness)
+				: alternative(List.of(dependency(liveOwner, 1, witness)), false, witness);
+			CountingAlternatives backing = new CountingAlternatives(List.of(row, second));
+			List<?> defaults = defaultList(backing);
+			java.lang.reflect.Field field = nested("DefaultAlternativeList").getDeclaredField("alternatives");
+			field.setAccessible(true);
+			// Same immutable contents, counted access only; install before building either index.
+			field.set(defaults, backing);
+			ordinals(defaults);
+			backing.reads = 0;
+			Map<Object,List<?>> input = graph(dead, List.of(), live,
+				List.of(alternative(List.of(), true, witness)), root, defaults);
+			Map<?,?> result = knownDeadPrune(input, true);
+			Assert.assertSame("unchanged owners retain the original list", defaults, result.get(root));
+			Assert.assertEquals("only warm, unfiltered certified rows avoid the first counting pass",
+				filtered ? 4 : 2, backing.reads);
+		}
+	}
+
+	@Test
+	public void coldDefaultAndPlainListsRetainTheirCountingPass() throws Exception {
+		for(boolean useDefault : List.of(false, true)) {
+			Object witness = witness();
+			CompiledHopKey liveOwner = key("cold-count-live");
+			Object live = state(liveOwner, 1, witness);
+			Object root = state(key("cold-count-root"), 2, witness);
+			Object dead = state(key("cold-count-dead"), 3, witness);
+			Object row = alternative(List.of(dependency(liveOwner, 1, witness)), false, witness);
+			Object second = alternative(List.of(dependency(liveOwner, 1, witness)), false, witness);
+			CountingAlternatives backing = new CountingAlternatives(List.of(row, second));
+			List<?> rows = backing;
+			if(useDefault) {
+				rows = defaultList(backing);
+				java.lang.reflect.Field field = nested("DefaultAlternativeList").getDeclaredField("alternatives");
+				field.setAccessible(true);
+				field.set(rows, backing);
+				Assert.assertNull(field(rows, "schedule"));
+			}
+			backing.reads = 0;
+			Map<?,?> result = knownDeadPrune(graph(dead, List.of(), live,
+				List.of(alternative(List.of(), true, witness)), root, rows), true);
+			Assert.assertSame(rows, result.get(root));
+			Assert.assertEquals("cold default retains counting plus later schedule/ordinal construction",
+				useDefault ? 8 : 4, backing.reads);
+		}
+	}
+
+	@Test
+	public void conservativeCountingStillDiscoversMissingDependencies() throws Exception {
+		Object witness = witness();
+		CompiledHopKey missingOwner = key("count-missing");
+		Object root = state(key("count-root-missing"), 2, witness);
+		Object doomed = alternative(List.of(dependency(missingOwner, 1, witness)), false, witness);
+		Object ground = alternative(List.of(), true, witness);
+		List<?> defaults = defaultList(List.of(doomed, ground));
+		ordinals(defaults);
+		Map<?,?> result = knownDeadPrune(graph(root, defaults), false);
+		assertOnlySurvivor(result, root, ground);
+	}
+
+	private static final class CountingAlternatives extends java.util.AbstractList<Object> {
+		private final List<?> values;
+		private int reads;
+		private CountingAlternatives(List<?> values) { this.values = List.copyOf(values); }
+		@Override public int size() { return values.size(); }
+		@Override public Object get(int index) { reads++; return values.get(index); }
+	}
+
+	private static Map<?,?> knownDeadPrune(Map<Object,List<?>> graph, boolean closed) throws Exception {
+		NativePlacementContinuity continuity = new NativePlacementContinuity(
+			Map.of(), Map.of(), List.of(), List.of(), Map.of());
+		Method method = NativePlacementContinuity.class.getDeclaredMethod(
+			"pruneDeadAlternativesFromKnownDeadSeed", Map.class, boolean.class);
+		method.setAccessible(true);
+		return (Map<?,?>)method.invoke(continuity, graph, closed);
+	}
+
 	private static void assertOnlySurvivor(Map<?,?> graph, Object root, Object survivor) {
 		List<?> alternatives = (List<?>)graph.get(root);
 		Assert.assertEquals(1, alternatives.size());
