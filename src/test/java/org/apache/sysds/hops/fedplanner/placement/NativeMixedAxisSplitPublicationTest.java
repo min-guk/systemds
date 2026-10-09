@@ -99,7 +99,7 @@ public class NativeMixedAxisSplitPublicationTest {
 	}
 
 	@Test
-	public void twoMixedAxesAndTwoSingletonRegionsRetainWholeScalarFallback() throws Exception {
+	public void twoMixedAxesFallBackAndSingletonDescriptorsRemainDisjoint() throws Exception {
 		CompiledHopKey consumer = key("fallback-consumer");
 		Axis first = axis(key("fallback-first"), 0, "first", 1, 1);
 		Axis second = axis(key("fallback-second"), 1, "second", 1, 1);
@@ -118,9 +118,14 @@ public class NativeMixedAxisSplitPublicationTest {
 				anchor("singleton-seed"), anchor("singleton-proof"), true,
 				List.of(singletonMixed.bindings()));
 		Assert.assertNotNull(singletonRegions);
-		Assert.assertNull(pluralPublication(closure(), singletonRegions, consumer,
-			anchor("singleton-output"), "singleton-regions",
-			directSources(List.of(singletonMixed.fact()))));
+		List<CandidateEmissionRealization> descriptors = pluralPublication(closure(),
+			singletonRegions, consumer, anchor("singleton-output"), "singleton-regions",
+			directSources(List.of(singletonMixed.fact())));
+		Assert.assertEquals(2, descriptors.size());
+		Assert.assertTrue(descriptors.stream().allMatch(value -> value.supportClauses().size() == 1));
+		Assert.assertNotEquals(descriptors.get(0).key(), descriptors.get(1).key());
+		// Actual publication rejects both singleton descriptors; that complete
+		// scalar fallback is exercised by NativeMixedExactnessPartitionTest.
 	}
 
 	@Test
@@ -190,7 +195,7 @@ public class NativeMixedAxisSplitPublicationTest {
 				.map(clause -> clause.inputBindings().get(0).source().realization())
 				.collect(java.util.stream.Collectors.toSet()));
 		SearchSpaceMetrics.NativePublicationCount split = metrics.nativePublicationSnapshot().stream()
-			.filter(value -> value.outcome() == SearchSpaceMetrics.NativePublicationOutcome.PUBLISHED_SPLIT)
+			.filter(value -> value.outcome() == SearchSpaceMetrics.NativePublicationOutcome.PARTITIONED)
 			.findFirst().orElseThrow();
 		Assert.assertEquals(1, split.queries());
 		Assert.assertEquals(4, split.logicalProofs());
@@ -356,7 +361,7 @@ public class NativeMixedAxisSplitPublicationTest {
 		Class<?> trace = Class.forName(
 			PlacementRelationClosure.class.getName() + "$NativePublicationTrace");
 		Method method = PlacementRelationClosure.class.getDeclaredMethod(
-			"directNativeProductPublications", product.getClass(), CompiledHopKey.class,
+			"directNativeProductPublication", product.getClass(), CompiledHopKey.class,
 			PlacementEmissionState.class, DurableAnchorKey.class, String.class, List.class,
 			sources.getClass(), Map.class, trace);
 		method.setAccessible(true);

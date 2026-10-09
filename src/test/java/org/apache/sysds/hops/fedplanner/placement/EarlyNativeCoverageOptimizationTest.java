@@ -586,13 +586,23 @@ public class EarlyNativeCoverageOptimizationTest {
 	}
 
 	@Test
-	public void exactProofWithKnownOutputStillRejectsMixedSourceExactness() throws Exception {
+	public void exactProofWithKnownOutputPartitionsMixedSourceExactness() throws Exception {
 		MixedProductFixture fixture = mixedProductFixture();
 		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, null, false,
 			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
-		Assert.assertNull("mixed exactness must still reject an exact durable output",
-			productPublication(closure, fixture.exactProduct(), fixture.owner(), fixture.knownOutput(),
-				"mixed-exact-known-output", fixture.sources()));
+		List<CandidateEmissionRealization> parts = invokeProductPublication(closure,
+			fixture.exactProduct(), fixture.owner(), fixture.knownOutput(),
+			"mixed-exact-known-output", fixture.sources(), null);
+		Assert.assertEquals(2, parts.size());
+		Assert.assertEquals(PlacementIdentity.PlacementLayoutKind.DURABLE_MAP, parts.get(0).key().layoutKind());
+		Assert.assertEquals(PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE, parts.get(1).key().layoutKind());
+		for(CandidateEmissionRealization part : parts) {
+			NativeContinuitySupportClauses clauses = (NativeContinuitySupportClauses)part.supportClauses();
+			Assert.assertTrue(clauses.product().exactPartitionRanges());
+			Assert.assertTrue(clauses.clauseLayoutExact());
+			Assert.assertEquals(1, clauses.size());
+			Assert.assertEquals(0, clauses.materializedHandleCount());
+		}
 
 		NativePlacementContinuity.NativeSupportProduct allExact =
 			NativePlacementContinuity.NativeSupportProduct.tryCreate(fixture.seed(), fixture.outputPool(),
@@ -629,7 +639,9 @@ public class EarlyNativeCoverageOptimizationTest {
 			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
 		TracedPublication traced = productPublicationWithTrace(closure, product, owner,
 			anchor("single-known-output"), "single-mixed-axis", sources);
-		Assert.assertNull(traced.publication());
+		Assert.assertEquals(2, traced.publication().size());
+		// Only binder admission records PARTITIONED; two singleton parts still use
+		// the original scalar query and its mixed-source fallback classification.
 		Assert.assertEquals("MIXED_EXACTNESS_SINGLE_AXIS", traced.outcome());
 	}
 
@@ -999,8 +1011,12 @@ public class EarlyNativeCoverageOptimizationTest {
 		PlacementRelationClosure closure, NativePlacementContinuity.NativeSupportProduct product,
 		CompiledHopKey owner, DurableAnchorKey outputAnchor, String lineage, Object sources)
 		throws Exception {
-		return invokeProductPublication(closure, product, owner, outputAnchor, lineage,
-			sources, null);
+		List<CandidateEmissionRealization> result = invokeProductPublication(closure, product,
+			owner, outputAnchor, lineage, sources, null);
+		if(result == null)
+			return null;
+		Assert.assertEquals("uniform helper expects one product", 1, result.size());
+		return result.get(0);
 	}
 
 	private static TracedPublication productPublicationWithTrace(
@@ -1012,14 +1028,15 @@ public class EarlyNativeCoverageOptimizationTest {
 		Constructor<?> constructor = traceType.getDeclaredConstructor();
 		constructor.setAccessible(true);
 		Object trace = constructor.newInstance();
-		CandidateEmissionRealization publication = invokeProductPublication(
+		List<CandidateEmissionRealization> publication = invokeProductPublication(
 			closure, product, owner, outputAnchor, lineage, sources, trace);
 		Field outcome = traceType.getDeclaredField("outcome");
 		outcome.setAccessible(true);
 		return new TracedPublication(publication, ((Enum<?>)outcome.get(trace)).name());
 	}
 
-	private static CandidateEmissionRealization invokeProductPublication(
+	@SuppressWarnings("unchecked")
+	private static List<CandidateEmissionRealization> invokeProductPublication(
 		PlacementRelationClosure closure, NativePlacementContinuity.NativeSupportProduct product,
 		CompiledHopKey owner, DurableAnchorKey outputAnchor, String lineage, Object sources,
 		Object trace) throws Exception {
@@ -1030,12 +1047,12 @@ public class EarlyNativeCoverageOptimizationTest {
 			PlacementEmissionState.class, DurableAnchorKey.class, String.class, List.class,
 			sources.getClass(), Map.class, traceType);
 		method.setAccessible(true);
-		return (CandidateEmissionRealization)method.invoke(closure, product, owner,
+		return (List<CandidateEmissionRealization>)method.invoke(closure, product, owner,
 			NATIVE_EMISSION, outputAnchor, lineage, List.of(), sources,
 			new IdentityHashMap<CandidateEmissionRealization,Boolean>(), trace);
 	}
 
-	private record TracedPublication(CandidateEmissionRealization publication, String outcome) { }
+	private record TracedPublication(List<CandidateEmissionRealization> publication, String outcome) { }
 
 	private static void assertLazyProductMatchesScalarReference(
 		CandidateEmissionRealization publication,

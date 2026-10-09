@@ -655,3 +655,18 @@
 
 - v18 실제 COFEE 고정 조건 결과: LogReg 385.222894848초 / GLM 128.050397173초. v17의 objective raw bits, assignment, selected receipt, costSurface 및 전체 fingerprint와 동일; numeric/audit PASS. 각 1회이며 20초 목표 FAIL. Consumed proof 수는 16,848,259 / 2,210,823으로 변하지 않음. 비교 SHA `6ffe1ab1da692805748c9981dff1c73a86c46fa82592099fbdb2ebea2e11ee47`.
 - Constant certificate v2 root focused gate 46개 중 1개 실패: 기존 numeric fallback 통합 fixture가 일정한 MIN_VALUE 비용이어서 새 정당한 constant certificate를 사용함. 실패 증거 `evidence/constant-certificate-root-red-46` 보존. varied-cost fallback fixture와 별도 constant 통합 검증으로 수정 중.
+### v33 / 단일 mixed source 축의 정확한 두 product 분할 (진행중)
+
+- **문제/근거**: v32-merged OFF/detailed 두 workload 모두60초 watchdog/no fullInitial receipt. 상세 마지막 partial snapshot에서LogReg single-mixed축2,444,038/3,201,921 consumed(76.3%), GLM126,922/1,382,843이다. 전체workload총량이나walltime개선율이아니다.
+- **계획/보존**: exact proof와known output에서한축만mixed일때그축을exact/inexact source옵션으로나누고나머지축을그대로공유한다. 두product의합집합은원래검증된Cartesian관계와동일하며둘다proof/output exactflag를유지한다. DURABLE/NATIVE키별로기존collision/retainedcoverage/authoritygate를독립적용하고거절된part만기존scalarpublication으로소비한다. 둘다효용없으면전체원래fallback; singletonencoding도그대로다. Query계측은PARTITIONED한번,scalar소비만actualcount한다. Candidate/합법성/privacy/runtime규칙변경없음.
+- **안전 보강**: legacy scalar는requiredInputs만executability를요구한다. 기존helper가non-required dead옵션을필터했다면새split은부분관계를게시하지않고전체legacy로되돌린다. Uniform기존경로는별도변경하지않는다. Full query dependencyfootprint는분할전에보존한다.
+- **회귀/위험**: 동일owner의2exact+2inexact옵션·exactproduct·knownoutput선행조건뒤수정전helper의0개대신2개게시를기대한실제RED1건확보(v33-native-mixed-test-red.log). 전체ordered scalarproof/source/owner와zerohandles,part별collision/replay/singleton/metrics를검증한다. 일반multi-mixed축union과same-key확장union은이번범위가아니다. Freshgate와Docker전20초달성/성능향상을주장하지않는다.
+
+- **중간 검증/fixture 정정**: 새생성binder는VALUE_MAP+exact native source의width4/exact product를실제로노출한다. 첫zero-handle실패는assert message에서realization list를미리toString하여모든member를전개한test부작용이었다; key-only/static message로고치자0handles를확인했다. 또singletons의scalarencoding정책은준비helper가아니라binderadmission의책임이므로helper결과에scalar를요구한RED는무효로분류하고실제binder회귀로옮긴다. 이를production버그수정으로보고하지않는다.
+- **현재 gate**: production독립정적CLEAR, freshisolated기존6suites190testsPASS(3.031초,기존ignored1). 새suite는정확한orderedscalarunion·metricsOFF/ON·source와transitiveVALUE_MAPleaf dependency·PARTITIONED1query/4logical/0consumed, replayidentity 및한part2scalar/다른partlazy보존까지확인했다. Singleton/필터경계보강후전체gate를수행한다.
+
+- **v33 최종 gate**: singleton정책을실제binder에서검증하는1+1/1+2/2+1과required/non-required dead옵션쌍을포함한새7testsPASS. Root frozen7suites **197testsPASS(2.527초,기존ignored1)** 및fresh144class package **1,219 selected tests/failure0/error0/skip1**, BUILD SUCCESS07:17:23. 독립최종production/testCLEAR. 실제mixed two-seed collision, exhaustivecoldidentityfootprint 및partialdurableclause assertSame은비차단추가coveragegap이며기존uniformcollision/identity회귀를대체했다고하지않는다. Defaultbudgetproduct의옵션부분집합은canonicalstates/transitions/cardinality를증가시키지않으며두child재구성null을모두게시전에검사한다. 전체저장소테스트나20초성공선언이아니다; 게시/봉인후동일Docker로실측한다.
+
+- origin/main `d0144c5f14`의 동일 single-mixed-axis 구현을 병합했다. 공통 production은 incoming admission/PARTITIONED 경로로 통일하고, root에서 발견한 equal-structural/foreign owner의 권한 대여 방지 fallback과 추가 binder 회귀를 유지했다. Incoming non-required staging option 보존 guard도 유지. 두 가지 테스트 모음과 constant numeric certificate를 함께 재검증한다.
+
+- d014 병합 focused gate에서 private singleton descriptor 생성 계약 차이를 확인했다(82개 중 최초1, early-return 실험시3 실패; 각각 증거 보존). Incoming은 singleton descriptor를 생성한 뒤 실제 admission에서 둘 다 scalar fallback하므로 해당 계약을 유지했다. 추가 테스트는 descriptor의 disjoint key/크기를 확인하고 기존 binder 테스트가 실제 fallback을 검증한다.
