@@ -18,6 +18,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -1614,7 +1615,8 @@ public class NativePlacementContinuityTest {
 			.realizations().get(0).supportClauses().get(0);
 		CandidateRealizationSupportClause temporary =
 			new CandidateRealizationSupportClause(List.of(), List.of());
-		NativePlacementContinuity resolver = full.resolver(new SearchSpaceMetrics(), 0, 0);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = full.resolver(metrics, 0, 0);
 		Assert.assertNotNull(dependencySkeletons(resolver, fact, owned, root.hop, seed.anchor));
 		Map<?,?> retained = (Map<?,?>)accessibleField(NativePlacementContinuity.class,
 			"dependencySkeletonMemo").get(resolver);
@@ -2351,6 +2353,8 @@ public class NativePlacementContinuityTest {
 				NativePlacementContinuity.class, "candidateTopologies").get(revised);
 
 			Assert.assertEquals(before.size(), after.size());
+			Assert.assertEquals("revision migration indexes exactly the admitted topology keys",
+				after.size(),residentTopologyKeyCount(revised));
 			for(var entry : before.entrySet())
 				Assert.assertSame("stable structural handles retain the immutable topology",
 					entry.getValue(), after.get(entry.getKey()));
@@ -3785,6 +3789,121 @@ public class NativePlacementContinuityTest {
 			else
 				System.setProperty(entriesProperty, priorEntries);
 		}
+	}
+
+	@Test
+	public void residentTopologyKeyReusesEqualWitnessWithoutCrossingOwnerIdentity() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("resident-key-seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref source = full.unary("resident-key-source", OpOp1.LOG, seed, false);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = full.resolver(metrics, 0, 0);
+		Method nativeWitness = NativePlacementContinuity.class.getDeclaredMethod(
+			"nativeWitness", DurableAnchorKey.class);
+		nativeWitness.setAccessible(true);
+		Object witness = nativeWitness.invoke(resolver, seed.anchor);
+		Class<?> witnessClass = witness.getClass();
+		Constructor<?> witnessConstructor = witnessClass.getDeclaredConstructor(
+			FType.class, List.class, List.class, boolean.class);
+		witnessConstructor.setAccessible(true);
+		Object equalWitness = witnessConstructor.newInstance(
+			accessibleField(witnessClass,"fType").get(witness),
+			accessibleField(witnessClass,"endpoints").get(witness),
+			accessibleField(witnessClass,"partitionAxisIntervals").get(witness),
+			accessibleField(witnessClass,"exactPartitionRanges").getBoolean(witness));
+		Assert.assertEquals(witness,equalWitness);
+		Assert.assertNotSame(witness,equalWitness);
+		Method candidateTopology = NativePlacementContinuity.class.getDeclaredMethod(
+			"candidateTopology", CompiledHopKey.class, witnessClass);
+		candidateTopology.setAccessible(true);
+
+		Object first = candidateTopology.invoke(resolver,source.key,witness);
+		long builds = metrics.snapshot().topologyExpansionBuilds();
+		Object repeated = candidateTopology.invoke(resolver,source.key,equalWitness);
+		Assert.assertSame("value-equal witnesses reuse the exact resident topology",first,repeated);
+		Assert.assertEquals("a cache hit must not build another retained key",builds,
+			metrics.snapshot().topologyExpansionBuilds());
+		Assert.assertEquals(1,residentTopologyKeyCount(resolver));
+
+		CompiledHopKey foreign = new CompiledHopKey(source.key.programFingerprint(),
+			source.key.functionNamespace(),source.key.callSitePath(),source.key.recompileContext(),
+			source.key.controlRegion(),source.key.emittedHopInstance(),source.key.canonicalSourceOrigin());
+		Assert.assertEquals(source.key,foreign);
+		Assert.assertNotSame(source.key,foreign);
+		Object unavailable = candidateTopology.invoke(resolver,foreign,equalWitness);
+		Assert.assertNotSame("equal foreign owner identity cannot borrow resident authority",
+			first,unavailable);
+		Assert.assertEquals(builds + 1,metrics.snapshot().topologyExpansionBuilds());
+		Assert.assertEquals(2,residentTopologyKeyCount(resolver));
+	}
+
+	@Test
+	public void topologyKeyIndexTracksEvictionAndBypassWithoutRetainingAliases() throws Exception {
+		String entriesProperty = "sysds.fedplanner.continuityTopology.maxEntries";
+		String priorEntries = System.getProperty(entriesProperty);
+		try {
+			System.setProperty(entriesProperty,"1");
+			Fixture full = new Fixture(FType.FULL);
+			Ref seed = full.source("eviction-seed",anchor(FType.FULL,"worker1:8001",0,50));
+			Ref first = full.unary("eviction-first",OpOp1.LOG,seed,false);
+			Ref second = full.unary("eviction-second",OpOp1.EXP,seed,false);
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity resolver = full.resolver(metrics,0,0);
+			Method nativeWitness = NativePlacementContinuity.class.getDeclaredMethod(
+				"nativeWitness",DurableAnchorKey.class);
+			nativeWitness.setAccessible(true);
+			Object witness = nativeWitness.invoke(resolver,seed.anchor);
+			Method candidateTopology = NativePlacementContinuity.class.getDeclaredMethod(
+				"candidateTopology",CompiledHopKey.class,witness.getClass());
+			candidateTopology.setAccessible(true);
+			candidateTopology.invoke(resolver,first.key,witness);
+			candidateTopology.invoke(resolver,second.key,witness);
+			Assert.assertEquals(1,residentTopologyKeyCount(resolver));
+			Assert.assertEquals(1,metrics.snapshot().topologyCacheEntries());
+			Assert.assertTrue(metrics.snapshot().topologyCacheEvictions() > 0);
+			long builds = metrics.snapshot().topologyExpansionBuilds();
+			candidateTopology.invoke(resolver,first.key,witness);
+			Assert.assertEquals("an evicted key must be rebuilt rather than retained out of budget",
+				builds + 1,metrics.snapshot().topologyExpansionBuilds());
+			Assert.assertEquals(1,residentTopologyKeyCount(resolver));
+
+			System.setProperty(entriesProperty,"0");
+			SearchSpaceMetrics bypassMetrics = new SearchSpaceMetrics();
+			NativePlacementContinuity bypass = full.resolver(bypassMetrics,0,0);
+			Object bypassWitness = nativeWitness.invoke(bypass,seed.anchor);
+			candidateTopology.invoke(bypass,first.key,bypassWitness);
+			candidateTopology.invoke(bypass,first.key,bypassWitness);
+			Assert.assertEquals("a bypassed topology must not retain an auxiliary key",0,
+				residentTopologyKeyCount(bypass));
+			Assert.assertEquals(2L,bypassMetrics.snapshot().topologyExpansionBuilds());
+		}
+		finally {
+			if(priorEntries == null)
+				System.clearProperty(entriesProperty);
+			else
+				System.setProperty(entriesProperty,priorEntries);
+		}
+	}
+
+	@Test
+	public void fixedBoundaryRejectsStructurallyEqualForeignOwnerAuthority() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("fixed-authority-seed",anchor(FType.FULL,"worker1:8001",0,50));
+		Ref source = full.unary("fixed-authority-source",OpOp1.LOG,seed,false);
+		CandidateRealizationReference reference = full.reference(source,
+			List.of(CandidateInputState.present(FType.FULL)));
+		CompiledHopKey foreign = new CompiledHopKey(source.key.programFingerprint(),
+			source.key.functionNamespace(),source.key.callSitePath(),source.key.recompileContext(),
+			source.key.controlRegion(),source.key.emittedHopInstance(),source.key.canonicalSourceOrigin());
+		Class<?> boundary = Class.forName(
+			NativePlacementContinuity.class.getName() + "$FixedCandidateBoundary");
+		Constructor<?> constructor = boundary.getDeclaredConstructor(
+			CompiledHopKey.class,CandidateRealizationReference.class,int.class);
+		constructor.setAccessible(true);
+		InvocationTargetException failure = Assert.assertThrows(InvocationTargetException.class,
+			() -> constructor.newInstance(foreign,reference,1));
+		Assert.assertEquals("CANDIDATE_FIXED_BOUNDARY_AUTHORITY_MISMATCH",
+			failure.getCause().getMessage());
 	}
 
 	@Test
@@ -6847,20 +6966,32 @@ public class NativePlacementContinuityTest {
 		Method candidateHandle = NativePlacementContinuity.class.getDeclaredMethod(
 			"candidateHandle", CandidateRealizationReference.class);
 		candidateHandle.setAccessible(true);
-		Map<CompiledHopKey,CandidateRealizationReference> exactFixed = new IdentityHashMap<>();
-		exactFixed.putAll(fixed);
-		Map<CompiledHopKey,Integer> handles = new IdentityHashMap<>();
-		for(var entry : exactFixed.entrySet())
-			handles.put(entry.getKey(), (int)candidateHandle.invoke(resolver, entry.getValue()));
+		Assert.assertEquals("proof traversal owns exactly one fixed root",1,fixed.size());
+		var fixedEntry = fixed.entrySet().iterator().next();
+		Class<?> fixedBoundary = Class.forName(
+			NativePlacementContinuity.class.getName() + "$FixedCandidateBoundary");
+		Constructor<?> fixedConstructor = fixedBoundary.getDeclaredConstructor(
+			CompiledHopKey.class, CandidateRealizationReference.class, int.class);
+		fixedConstructor.setAccessible(true);
+		Object exactFixed = fixedConstructor.newInstance(fixedEntry.getKey(), fixedEntry.getValue(),
+			(int)candidateHandle.invoke(resolver, fixedEntry.getValue()));
 		Class<?> generationRoot = Class.forName(
 			NativePlacementContinuity.class.getName() + "$GenerationRoot");
 		Method alternatives = NativePlacementContinuity.class.getDeclaredMethod(
 			"candidateProofAlternatives", CompiledHopKey.class,
 			CandidateRealizationReference.class, int.class, witness.getClass(), boolean.class,
-			Map.class, Map.class, generationRoot);
+			fixedBoundary, generationRoot);
 		alternatives.setAccessible(true);
 		return (List<?>)alternatives.invoke(resolver, pinned.rule().parentOccurrence(), pinned,
-			(int)candidateHandle.invoke(resolver, pinned), witness, true, exactFixed, handles, null);
+			(int)candidateHandle.invoke(resolver, pinned), witness, true, exactFixed, null);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static int residentTopologyKeyCount(NativePlacementContinuity resolver) throws Exception {
+		Map<CompiledHopKey,Map<Object,Object>> byOwner =
+			(Map<CompiledHopKey,Map<Object,Object>>)accessibleField(
+				NativePlacementContinuity.class,"candidateTopologyKeysByOwner").get(resolver);
+		return byOwner.values().stream().mapToInt(Map::size).sum();
 	}
 
 	@Test

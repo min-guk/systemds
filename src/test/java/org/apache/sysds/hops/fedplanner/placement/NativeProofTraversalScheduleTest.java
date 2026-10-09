@@ -10,7 +10,6 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -132,8 +131,8 @@ public class NativeProofTraversalScheduleTest {
 		CompiledHopKey rootOwner = rootReference.rule().parentOccurrence();
 		Object rootRow = topologyRow(rootReference,
 			List.of(skeleton(childOwner, witness, 0)), witness);
-		((Map<Object,Object>)field(continuity, "candidateTopologies")).put(
-			topologyKey(rootOwner, witness), topology(List.of(rootRow), Map.of()));
+		installTopology(continuity, topologyKey(rootOwner, witness),
+			topology(List.of(rootRow), Map.of()));
 		Object rootState = field(dependency(rootOwner, witness, 0), "state");
 		Constructor<?> traversalConstructor = nested("CandidateProofTraversal").getDeclaredConstructor();
 		traversalConstructor.setAccessible(true);
@@ -142,9 +141,9 @@ public class NativeProofTraversalScheduleTest {
 		long[] graphWork = new long[2];
 		Method build = method(NativePlacementContinuity.class, "buildCandidateProofGraph",
 			nested("CandidateProofState"), nested("CandidateProofState"), nested("GenerationRoot"),
-			Map.class, nested("CandidateProofTraversal"), Map.class, Map.class, long[].class);
+			Map.class, nested("CandidateProofTraversal"), nested("FixedCandidateBoundary"), long[].class);
 		build.invoke(continuity, rootState, rootState, null, graph, traversal,
-			new IdentityHashMap<>(), new IdentityHashMap<>(), graphWork);
+			fixedBoundary("cached-negative-query"), graphWork);
 		Assert.assertTrue(graph.get(state).isEmpty());
 		Assert.assertEquals("a reused failed component must force ordinary dead pruning", 1L,
 			field(traversal, "emptyFilteredStates"));
@@ -174,9 +173,8 @@ public class NativeProofTraversalScheduleTest {
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		NativePlacementContinuity continuity = new NativePlacementContinuity(
 			Map.of(), Map.of(), List.of(), List.of(), Map.of(), metrics);
-		Map<Object,Object> topologies = (Map<Object,Object>)field(continuity, "candidateTopologies");
-		topologies.put(topologyKey(rootOwner, witness), topology(List.of(rootRow), Map.of()));
-		topologies.put(topologyKey(childOwner, witness), topology(List.of(childRow), Map.of()));
+		installTopology(continuity, topologyKey(rootOwner, witness), topology(List.of(rootRow), Map.of()));
+		installTopology(continuity, topologyKey(childOwner, witness), topology(List.of(childRow), Map.of()));
 
 		Object rootState = field(dependency(rootOwner, witness, 0), "state");
 		Constructor<?> traversalConstructor = nested("CandidateProofTraversal").getDeclaredConstructor();
@@ -186,9 +184,9 @@ public class NativeProofTraversalScheduleTest {
 		long[] graphWork = new long[2];
 		Method build = method(NativePlacementContinuity.class, "buildCandidateProofGraph",
 			nested("CandidateProofState"), nested("CandidateProofState"), nested("GenerationRoot"),
-			Map.class, nested("CandidateProofTraversal"), Map.class, Map.class, long[].class);
+			Map.class, nested("CandidateProofTraversal"), nested("FixedCandidateBoundary"), long[].class);
 		build.invoke(continuity, rootState, rootState, null, graph, traversal,
-			new IdentityHashMap<>(), new IdentityHashMap<>(), graphWork);
+			fixedBoundary("closed-cycle-query"), graphWork);
 		Assert.assertEquals(2, graph.size());
 		Assert.assertEquals(2L, graphWork[0]);
 		Assert.assertEquals(true, field(traversal, "cycleDetected"));
@@ -273,6 +271,21 @@ public class NativeProofTraversalScheduleTest {
 			CompiledHopKey.class, nested("NativePoolWitness"));
 		constructor.setAccessible(true);
 		return constructor.newInstance(owner, witness);
+	}
+
+	private static Object fixedBoundary(String id) throws Exception {
+		CandidateRealizationReference reference = reference(id);
+		Constructor<?> constructor = nested("FixedCandidateBoundary").getDeclaredConstructor(
+			CompiledHopKey.class, CandidateRealizationReference.class, int.class);
+		constructor.setAccessible(true);
+		return constructor.newInstance(reference.rule().parentOccurrence(), reference, 1);
+	}
+
+	private static void installTopology(NativePlacementContinuity continuity, Object key,
+		Object topology) throws Exception {
+		Method cache = method(NativePlacementContinuity.class, "cacheTopology",
+			nested("CandidateTopologyKey"), nested("CandidateTopology"));
+		Assert.assertEquals(true, cache.invoke(continuity,key,topology));
 	}
 
 	@SuppressWarnings("unchecked")

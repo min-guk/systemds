@@ -134,6 +134,11 @@ final class NativePlacementContinuity {
 	private int nextCandidateHandle = -1;
 	private final Map<CandidateTopologyKey,CandidateTopology> candidateTopologies =
 		new java.util.LinkedHashMap<>(16, 0.75f, true);
+	// Exact resident keys mirror candidateTopologies. Owner identity prevents an
+	// equal foreign occurrence from borrowing authority; witness equality preserves
+	// the existing topology-key relation without allocating a probe on every hit.
+	private final Map<CompiledHopKey,Map<NativePoolWitness,CandidateTopologyKey>>
+		candidateTopologyKeysByOwner = new IdentityHashMap<>();
 	private final int topologyMaxEntries;
 	private final long topologyMaxRows;
 	private long topologyRetainedRows;
@@ -2524,17 +2529,15 @@ final class NativePlacementContinuity {
 		CandidateProofState root = new CandidateProofState(source.rule().parentOccurrence(), source,
 			sourceHandle, witness, true);
 		Map<CandidateProofState,List<SelectedCandidateProof>> graph = new java.util.LinkedHashMap<>();
-		Map<CompiledHopKey,CandidateRealizationReference> fixed = new IdentityHashMap<>();
-		Map<CompiledHopKey,Integer> fixedHandles = new IdentityHashMap<>();
-		fixed.put(source.rule().parentOccurrence(), source);
-		fixedHandles.put(source.rule().parentOccurrence(), sourceHandle);
+		FixedCandidateBoundary fixed = new FixedCandidateBoundary(
+			source.rule().parentOccurrence(), source, sourceHandle);
 		SearchSpaceMetrics.PhaseToken overlayStarted = metrics == null ? null
 			: metrics.startPhase(SearchSpaceMetrics.Phase.PROOF_OVERLAY);
 		long[] graphWork = metrics == null ? null : new long[2];
 		CandidateProofTraversal traversal = new CandidateProofTraversal();
 		try {
 			buildCandidateProofGraph(root, root, generation,
-				graph, traversal, fixed, fixedHandles, graphWork);
+				graph, traversal, fixed, graphWork);
 			if(metrics != null)
 				metrics.recordProofGraph(graph.size(), graphWork[0], graphWork[1]);
 		}
@@ -3137,8 +3140,7 @@ final class NativePlacementContinuity {
 	private void buildCandidateProofGraph(CandidateProofState state, CandidateProofState root,
 		GenerationRoot generation,
 		Map<CandidateProofState,List<SelectedCandidateProof>> graph, CandidateProofTraversal traversal,
-		Map<CompiledHopKey,CandidateRealizationReference> fixed,
-		Map<CompiledHopKey,Integer> fixedHandles, long[] graphWork) {
+		FixedCandidateBoundary fixed, long[] graphWork) {
 		if(traversal.active.contains(state)) {
 			traversal.cycleDetected = true;
 			return;
@@ -3153,7 +3155,7 @@ final class NativePlacementContinuity {
 		if(generation != null && state.key() == root.key() && !generatedRoot)
 			traversal.generatedRootPublishedHistoryObserved = true;
 		AcyclicComponentSummary shared = generatedRoot || state.axisGate() != null
-			? null : reusableAcyclicComponent(state, fixed.keySet());
+			? null : reusableAcyclicComponent(state, fixed.owner());
 		if(shared != null) {
 			// Failed summaries are retained for exact negative-result reuse too.
 			// They remain dead seeds; hiding them would invalidate the DAG shortcut.
@@ -3178,7 +3180,7 @@ final class NativePlacementContinuity {
 			List<SelectedCandidateProof> alternatives = state.axisGate() == null
 				? candidateProofAlternatives(
 					state.key(), state.realization(), state.realizationHandle(), state.witness(),
-					state.templateRoot(), fixed, fixedHandles,
+					state.templateRoot(), fixed,
 					generatedRoot ? generation : null, traversal)
 				: state.axisGate().alternatives;
 			DefaultTraversalSchedule defaultSchedule = alternatives instanceof DefaultAlternativeList defaults
@@ -3209,12 +3211,12 @@ final class NativePlacementContinuity {
 			if(defaultSchedule != null)
 				for(CandidateProofState successor : defaultSchedule.uniqueSuccessors)
 					buildCandidateProofGraph(successor, root, generation, graph, traversal,
-						fixed, fixedHandles, graphWork);
+						fixed, graphWork);
 			else
 				for(SelectedCandidateProof alternative : alternatives)
 					for(CandidateProofDependency dependency : alternative.dependencies)
 						buildCandidateProofGraph(dependency.state(), root, generation, graph, traversal,
-							fixed, fixedHandles, graphWork);
+							fixed, graphWork);
 			traversal.completionOrder.add(state);
 		}
 		finally {
@@ -3223,14 +3225,11 @@ final class NativePlacementContinuity {
 	}
 
 	private AcyclicComponentSummary reusableAcyclicComponent(CandidateProofState state,
-		Set<CompiledHopKey> fixedOccurrences) {
+		CompiledHopKey fixedOccurrence) {
 		AcyclicComponentSummary summary = acyclicComponentMemo.get(state);
 		if(summary == null)
 			return null;
-		for(CompiledHopKey fixed : fixedOccurrences)
-			if(summary.occurrences.contains(fixed))
-				return null;
-		return summary;
+		return summary.occurrences.contains(fixedOccurrence) ? null : summary;
 	}
 
 	private Map<CandidateProofState,AcyclicComponentFootprint> acyclicRootChildFootprints(
@@ -3381,24 +3380,22 @@ final class NativePlacementContinuity {
 
 	private List<SelectedCandidateProof> candidateProofAlternatives(CompiledHopKey key,
 		CandidateRealizationReference pinned, int pinnedHandle, NativePoolWitness witness,
-		boolean allowPinnedTemplate, Map<CompiledHopKey,CandidateRealizationReference> fixed,
-		Map<CompiledHopKey,Integer> fixedHandles, GenerationRoot generation) {
+		boolean allowPinnedTemplate, FixedCandidateBoundary fixed, GenerationRoot generation) {
 		return candidateProofAlternatives(key, pinned, pinnedHandle, witness,
-			allowPinnedTemplate, fixed, fixedHandles, generation, new CandidateProofTraversal());
+			allowPinnedTemplate, fixed, generation, new CandidateProofTraversal());
 	}
 
 	private List<SelectedCandidateProof> candidateProofAlternatives(CompiledHopKey key,
 		CandidateRealizationReference pinned, int pinnedHandle, NativePoolWitness witness,
-		boolean allowPinnedTemplate, Map<CompiledHopKey,CandidateRealizationReference> fixed,
-		Map<CompiledHopKey,Integer> fixedHandles, GenerationRoot generation,
+		boolean allowPinnedTemplate, FixedCandidateBoundary fixed, GenerationRoot generation,
 		CandidateProofTraversal traversal) {
 		if(metrics != null)
 			metrics.recordTopologyOverlayEvaluation();
 		if(generation != null)
-			return generatedRootAlternative(key, pinned, witness, fixed, fixedHandles, generation);
+			return generatedRootAlternative(key, pinned, witness, fixed, generation);
 		NativeFactoredProofAlternatives factored = !hasNativeRelationOwner(key) ? null
-			: pinned == null ? nativeUnpinnedFactoredProofAlternatives(key, witness, fixed, fixedHandles)
-				: nativeFactoredProofAlternatives(key, pinned, witness, fixed, fixedHandles);
+			: pinned == null ? nativeUnpinnedFactoredProofAlternatives(key, witness, fixed)
+				: nativeFactoredProofAlternatives(key, pinned, witness, fixed);
 		if(factored != null)
 			return factored.alternatives;
 		CandidateTopology topology = candidateTopology(key, witness);
@@ -3412,7 +3409,7 @@ final class NativePlacementContinuity {
 		// Unrelated fixed owners cannot change any immediate dependency, so reuse
 		// the enclosing canonical list too. Synthetic anchors and empty/template
 		// cases intentionally remain on their existing query-local paths below.
-		if((pinned != null || !topology.nodeDirectGround) && !topology.hasFixedDependency(fixed)) {
+		if((pinned != null || !topology.nodeDirectGround) && !topology.hasFixedDependency(fixed.owner())) {
 			List<SelectedCandidateProof> defaults = pinned == null ? topology.defaultAlternatives
 				: topology.defaultAlternativesByHandle.getOrDefault(pinnedHandle, List.of());
 			if(!defaults.isEmpty())
@@ -3436,7 +3433,7 @@ final class NativePlacementContinuity {
 			CandidateTopologyRow row = overlayRows.get(rowIndex);
 			boolean queryOverlay = false;
 			for(CandidateDependencySkeleton dependency : row.dependencies)
-				if(fixed.containsKey(dependency.key)) {
+				if(fixed.matches(dependency.key)) {
 					queryOverlay = true;
 					break;
 				}
@@ -3450,7 +3447,7 @@ final class NativePlacementContinuity {
 				}
 				List<CandidateProofDependency> dependencies =
 					overlayDependencies(row.dependencies, row.defaultAlternative.dependencies,
-						fixed, fixedHandles);
+						fixed);
 				alternative = new SelectedCandidateProof(row.reference,
 					dependencies, row.directGround, witness);
 				edge = ContinuityEdgeKey.ofEffective(row.reference, row.directGround, dependencies);
@@ -3484,7 +3481,7 @@ final class NativePlacementContinuity {
 				CandidateRealizationSupportClause templateClause =
 					new CandidateRealizationSupportClause(List.of(), List.of());
 				List<CandidateProofDependency> dependencies = candidateDependencies(
-					fact, templateClause, hop, witness, fixed, fixedHandles);
+					fact, templateClause, hop, witness, fixed);
 				if(dependencies != null)
 					alternatives.add(new SelectedCandidateProof(pinned, dependencies,
 						false, witness));
@@ -3510,8 +3507,7 @@ final class NativePlacementContinuity {
 
 	private List<SelectedCandidateProof> generatedRootAlternative(CompiledHopKey key,
 		CandidateRealizationReference proposed, NativePoolWitness witness,
-		Map<CompiledHopKey,CandidateRealizationReference> fixed,
-		Map<CompiledHopKey,Integer> fixedHandles, GenerationRoot generation) {
+		FixedCandidateBoundary fixed, GenerationRoot generation) {
 		CandidateRuleFact fact = generation.trustedBase();
 		CandidateEmissionFact emission = generation.baseEmission();
 		if(metrics != null) {
@@ -3537,7 +3533,7 @@ final class NativePlacementContinuity {
 		CandidateRealizationSupportClause empty =
 			new CandidateRealizationSupportClause(List.of(), List.of());
 		List<CandidateProofDependency> dependencies = candidateDependencies(
-			fact, empty, hop, witness, fixed, fixedHandles);
+			fact, empty, hop, witness, fixed);
 		return dependencies == null ? List.of()
 			: List.of(new SelectedCandidateProof(proposed, dependencies, false, witness));
 	}
@@ -3579,9 +3575,7 @@ final class NativePlacementContinuity {
 	 */
 	private NativeFactoredProofAlternatives nativeFactoredProofAlternatives(
 		CompiledHopKey key, CandidateRealizationReference pinned,
-		NativePoolWitness witness,
-		Map<CompiledHopKey,CandidateRealizationReference> fixed,
-		Map<CompiledHopKey,Integer> fixedHandles) {
+		NativePoolWitness witness, FixedCandidateBoundary fixed) {
 		Node node = nodesByKey.get(key);
 		Hop hop = originsByKey.get(key);
 		if(node == null || hop == null || incompleteSources.contains(key)
@@ -3644,7 +3638,7 @@ final class NativePlacementContinuity {
 			// Legacy query overlays replace every clause pin at a fixed owner, rather
 			// than filtering the published axis by that pin. Keep that exact path until
 			// the gate's returned references and dependencies can both model the overlay.
-			if(fixed.containsKey(owner))
+			if(fixed.matches(owner))
 				return null;
 			if(ownerAxes.put(owner, axis) != null)
 				return null;
@@ -3695,7 +3689,7 @@ final class NativePlacementContinuity {
 
 		List<CandidateProofDependency> consumerDependencies =
 			new ArrayList<>(invariant.size() + product.axes().size());
-		consumerDependencies.addAll(overlayDependencies(invariant, fixed, fixedHandles));
+		consumerDependencies.addAll(overlayDependencies(invariant, fixed));
 		for(int axis = 0; axis < product.axes().size(); axis++) {
 			List<CandidateRealizationInputBinding> options = product.axes().get(axis);
 			CompiledHopKey owner = options.get(0).source().rule().parentOccurrence();
@@ -3707,7 +3701,7 @@ final class NativePlacementContinuity {
 					optionSkeletons.add(new CandidateDependencySkeleton(skeleton.key(), source,
 						candidateHandle(source), skeleton.witness(), skeleton.inputPosition()));
 				List<CandidateProofDependency> optionDependencies =
-					overlayDependencies(optionSkeletons, fixed, fixedHandles);
+					overlayDependencies(optionSkeletons, fixed);
 				gateAlternatives.add(new SelectedCandidateProof(
 					source, optionDependencies, false, witness));
 			}
@@ -3734,9 +3728,7 @@ final class NativePlacementContinuity {
 	 * returns to the legacy topology so no row is silently omitted.
 	 */
 	private NativeFactoredProofAlternatives nativeUnpinnedFactoredProofAlternatives(
-		CompiledHopKey key, NativePoolWitness witness,
-		Map<CompiledHopKey,CandidateRealizationReference> fixed,
-		Map<CompiledHopKey,Integer> fixedHandles) {
+		CompiledHopKey key, NativePoolWitness witness, FixedCandidateBoundary fixed) {
 		Node node = nodesByKey.get(key);
 		Hop hop = originsByKey.get(key);
 		if(node == null || hop == null || incompleteSources.contains(key)
@@ -3771,7 +3763,7 @@ final class NativePlacementContinuity {
 					CandidateRealizationReference reference =
 						CandidateRealizationReference.of(fact.key(), realization);
 					NativeFactoredProofAlternatives factored = nativeFactoredProofAlternatives(
-						key, reference, witness, fixed, fixedHandles);
+						key, reference, witness, fixed);
 					if(factored == null || factored.alternatives().size() != 1)
 						return null;
 					alternatives.add(factored.alternatives().get(0));
@@ -3800,8 +3792,8 @@ final class NativePlacementContinuity {
 	}
 
 	private CandidateTopology candidateTopology(CompiledHopKey key, NativePoolWitness witness) {
-		SearchSpaceMetrics.PhaseToken started = metrics == null ? null
-			: metrics.startPhase(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY);
+		long started = metrics == null ? 0L
+			: metrics.startPhaseHandle(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY);
 		try {
 			return candidateTopologyMeasured(key, witness);
 		}
@@ -3813,13 +3805,16 @@ final class NativePlacementContinuity {
 
 	private CandidateTopology candidateTopologyMeasured(CompiledHopKey key,
 		NativePoolWitness witness) {
-		CandidateTopologyKey topologyKey = new CandidateTopologyKey(key, witness);
-		CandidateTopology cached = candidateTopologies.get(topologyKey);
+		CandidateTopologyKey topologyKey = residentTopologyKey(key, witness);
+		CandidateTopology cached = topologyKey == null ? null : candidateTopologies.get(topologyKey);
 		if(cached != null) {
 			if(metrics != null)
 				metrics.recordTopologyExpansion(true, 0);
 			return cached;
 		}
+		if(topologyKey != null)
+			forgetResidentTopologyKey(topologyKey);
+		topologyKey = new CandidateTopologyKey(key, witness);
 		Node node = nodesByKey.get(key);
 		Hop hop = originsByKey.get(key);
 		if(node == null || hop == null || incompleteSources.contains(key)
@@ -4013,7 +4008,9 @@ final class NativePlacementContinuity {
 				metrics.recordTopologyCacheBypass();
 			return false;
 		}
-		CandidateTopology prior = candidateTopologies.remove(key);
+		CandidateTopologyKey resident = residentTopologyKey(key.occurrence, key.witness);
+		CandidateTopologyKey cacheKey = resident == null ? key : resident;
+		CandidateTopology prior = candidateTopologies.remove(cacheKey);
 		if(prior != null) {
 			topologyRetainedRows -= prior.rows.size();
 			topologyRetainedOwnerReads -= prior.metadataOwnerReads.size();
@@ -4026,10 +4023,14 @@ final class NativePlacementContinuity {
 			topologyRetainedRows -= oldest.getValue().rows.size();
 			topologyRetainedOwnerReads -= oldest.getValue().metadataOwnerReads.size();
 			candidateTopologies.remove(oldest.getKey());
+			forgetResidentTopologyKey(oldest.getKey());
 			if(metrics != null)
 				metrics.recordTopologyCacheEviction();
 		}
-		candidateTopologies.put(key, topology);
+		candidateTopologies.put(cacheKey, topology);
+		if(resident == null)
+			candidateTopologyKeysByOwner.computeIfAbsent(cacheKey.occurrence,
+				ignored -> new java.util.HashMap<>()).put(cacheKey.witness, cacheKey);
 		topologyRetainedRows += rows;
 		topologyRetainedOwnerReads += ownerReads;
 		if(metrics != null)
@@ -4037,13 +4038,28 @@ final class NativePlacementContinuity {
 		return true;
 	}
 
+	private CandidateTopologyKey residentTopologyKey(CompiledHopKey owner,
+		NativePoolWitness witness) {
+		Map<NativePoolWitness,CandidateTopologyKey> byWitness = candidateTopologyKeysByOwner.get(owner);
+		return byWitness == null ? null : byWitness.get(witness);
+	}
+
+	private void forgetResidentTopologyKey(CandidateTopologyKey key) {
+		Map<NativePoolWitness,CandidateTopologyKey> byWitness =
+			candidateTopologyKeysByOwner.get(key.occurrence);
+		if(byWitness == null || byWitness.get(key.witness) != key)
+			return;
+		byWitness.remove(key.witness);
+		if(byWitness.isEmpty())
+			candidateTopologyKeysByOwner.remove(key.occurrence);
+	}
+
 	private List<CandidateProofDependency> candidateDependencies(CandidateRuleFact fact,
 		CandidateRealizationSupportClause clause, Hop owner, NativePoolWitness witness,
-		Map<CompiledHopKey,CandidateRealizationReference> fixed,
-		Map<CompiledHopKey,Integer> fixedHandles) {
+		FixedCandidateBoundary fixed) {
 		List<CandidateDependencySkeleton> skeletons = candidateDependencySkeletons(
 			fact, clause, owner, witness);
-		return skeletons == null ? null : overlayDependencies(skeletons, fixed, fixedHandles);
+		return skeletons == null ? null : overlayDependencies(skeletons, fixed);
 	}
 
 	private List<CandidateDependencySkeleton> candidateDependencySkeletons(CandidateRuleFact fact,
@@ -4228,27 +4244,25 @@ final class NativePlacementContinuity {
 
 	private List<CandidateProofDependency> overlayDependencies(
 		List<CandidateDependencySkeleton> skeletons,
-		Map<CompiledHopKey,CandidateRealizationReference> fixed,
-		Map<CompiledHopKey,Integer> fixedHandles) {
-		return overlayDependencies(skeletons, null, fixed, fixedHandles);
+		FixedCandidateBoundary fixed) {
+		return overlayDependencies(skeletons, null, fixed);
 	}
 
 	private List<CandidateProofDependency> overlayDependencies(
 		List<CandidateDependencySkeleton> skeletons, List<CandidateProofDependency> defaults,
-		Map<CompiledHopKey,CandidateRealizationReference> fixed,
-		Map<CompiledHopKey,Integer> fixedHandles) {
+		FixedCandidateBoundary fixed) {
 		// A cached topology owns immutable default dependencies. An overlay changes
 		// only identity-pinned owners; leave every other dependency/state shared.
 		List<CandidateProofDependency> dependencies = defaults == null
 			? new ArrayList<>(skeletons.size()) : null;
 		for(int index = 0; index < skeletons.size(); index++) {
 			CandidateDependencySkeleton skeleton = skeletons.get(index);
-			boolean queryPinned = fixed.containsKey(skeleton.key);
+			boolean queryPinned = fixed.matches(skeleton.key);
 			if(defaults != null && !queryPinned)
 				continue;
 			CandidateRealizationReference pinned = queryPinned
-				? fixed.get(skeleton.key) : skeleton.clausePinned;
-			int handle = queryPinned ? fixedHandles.get(skeleton.key) : skeleton.clausePinnedHandle;
+				? fixed.reference() : skeleton.clausePinned;
+			int handle = queryPinned ? fixed.handle() : skeleton.clausePinnedHandle;
 			CandidateProofDependency dependency = new CandidateProofDependency(skeleton.key, pinned,
 				handle, skeleton.witness, skeleton.inputPosition, queryPinned);
 			if(defaults == null)
@@ -4966,12 +4980,8 @@ final class NativePlacementContinuity {
 			this.metadataOwnerReads = Collections.unmodifiableSet(metadata);
 		}
 
-		private boolean hasFixedDependency(Map<CompiledHopKey,CandidateRealizationReference> fixed) {
-			// Production query pins are identity maps over analysis-owned occurrences.
-			for(CompiledHopKey owner : fixed.keySet())
-				if(dependencyOwners.contains(owner))
-					return true;
-			return false;
+		private boolean hasFixedDependency(CompiledHopKey fixedOwner) {
+			return dependencyOwners.contains(fixedOwner);
 		}
 
 		private boolean hasStableStructuralHandles(NativePlacementContinuity destination) {
@@ -5262,6 +5272,21 @@ final class NativePlacementContinuity {
 		private GenerationRoot {
 			Objects.requireNonNull(trustedBase, "trusted generator base");
 			Objects.requireNonNull(baseEmission, "generator base emission");
+		}
+	}
+
+	/** One exact query pin; candidate proof traversal never carries a multi-owner boundary. */
+	private record FixedCandidateBoundary(CompiledHopKey owner,
+		CandidateRealizationReference reference, int handle) {
+		private FixedCandidateBoundary {
+			Objects.requireNonNull(owner, "fixed candidate owner");
+			Objects.requireNonNull(reference, "fixed candidate reference");
+			if(reference.rule().parentOccurrence() != owner || handle == 0)
+				throw new IllegalArgumentException("CANDIDATE_FIXED_BOUNDARY_AUTHORITY_MISMATCH");
+		}
+
+		private boolean matches(CompiledHopKey candidateOwner) {
+			return owner == candidateOwner;
 		}
 	}
 

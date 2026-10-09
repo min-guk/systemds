@@ -9,7 +9,6 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -70,7 +69,7 @@ public class NativePlacementGroundingAndSignatureTest {
 		CandidateRealizationReference firstSource = source("source-first");
 		CandidateRealizationReference dynamicSource = source("source-dynamic");
 		CandidateRealizationReference lastSource = source("source-last");
-		CandidateRealizationReference overlaidSource = source("source-overlaid");
+		CandidateRealizationReference overlaidSource = source(dynamicDependency,"source-overlaid");
 		Object firstRow = topologyRow(firstReference,
 			List.of(skeleton(firstDependency, firstSource, 11, witness)), witness);
 		Object dynamicRow = topologyRow(dynamicReference,
@@ -80,13 +79,10 @@ public class NativePlacementGroundingAndSignatureTest {
 		List<Object> rows = List.of(firstRow, dynamicRow, lastRow);
 		int pinnedHandle = 29;
 		installTopology(continuity, owner, witness, rows, pinnedHandle);
-		Map<CompiledHopKey,CandidateRealizationReference> fixed = new IdentityHashMap<>();
-		fixed.put(dynamicDependency, overlaidSource);
-		Map<CompiledHopKey,Integer> handles = new IdentityHashMap<>();
-		handles.put(dynamicDependency, 17);
+		Object fixed = fixedBoundary(dynamicDependency, overlaidSource, 17);
 
 		List<?> full = candidateAlternatives(
-			continuity, owner, null, 0, witness, fixed, handles);
+			continuity, owner, null, 0, witness, fixed);
 		Assert.assertEquals(4, full.size());
 		Assert.assertNull("the synthetic direct ground remains first", field(full.get(0), "realization"));
 		Assert.assertSame(field(firstRow, "defaultAlternative"), full.get(1));
@@ -94,7 +90,7 @@ public class NativePlacementGroundingAndSignatureTest {
 		Assert.assertSame(field(lastRow, "defaultAlternative"), full.get(3));
 
 		List<?> pinned = candidateAlternatives(
-			continuity, owner, firstReference, pinnedHandle, witness, fixed, handles);
+			continuity, owner, firstReference, pinnedHandle, witness, fixed);
 		Assert.assertEquals(3, pinned.size());
 		Assert.assertSame(field(firstRow, "defaultAlternative"), pinned.get(0));
 		Assert.assertNotSame(field(dynamicRow, "defaultAlternative"), pinned.get(1));
@@ -118,17 +114,17 @@ public class NativePlacementGroundingAndSignatureTest {
 			witness);
 		List<Object> rows = List.of(first, second);
 		installTopology(continuity, owner, witness, rows, false, Map.of(31, rows));
-		CompiledHopKey firstRoot = key("unrelated-first-root");
-		CompiledHopKey secondRoot = key("unrelated-second-root");
-		Map<CompiledHopKey,CandidateRealizationReference> firstFixed = new IdentityHashMap<>();
-		Map<CompiledHopKey,CandidateRealizationReference> secondFixed = new IdentityHashMap<>();
-		firstFixed.put(firstRoot, source("unrelated-first-source"));
-		secondFixed.put(secondRoot, source("unrelated-second-source"));
+		CandidateRealizationReference firstFixedSource = source("unrelated-first-source");
+		CandidateRealizationReference secondFixedSource = source("unrelated-second-source");
+		CompiledHopKey firstRoot = firstFixedSource.rule().parentOccurrence();
+		CompiledHopKey secondRoot = secondFixedSource.rule().parentOccurrence();
+		Object firstFixed = fixedBoundary(firstRoot, firstFixedSource, 21);
+		Object secondFixed = fixedBoundary(secondRoot, secondFixedSource, 22);
 
 		List<?> unpinned = candidateAlternatives(continuity, owner, null, 0, witness,
-			firstFixed, Map.of(firstRoot, 21));
+			firstFixed);
 		List<?> again = candidateAlternatives(continuity, owner, null, 0, witness,
-			secondFixed, Map.of(secondRoot, 22));
+			secondFixed);
 		Assert.assertEquals(2, unpinned.size());
 		Assert.assertSame(field(first, "defaultAlternative"), unpinned.get(0));
 		Assert.assertSame(field(second, "defaultAlternative"), unpinned.get(1));
@@ -136,15 +132,15 @@ public class NativePlacementGroundingAndSignatureTest {
 		Assert.assertThrows(UnsupportedOperationException.class, unpinned::clear);
 
 		List<?> pinned = candidateAlternatives(continuity, owner, firstReference, 31, witness,
-			firstFixed, Map.of(firstRoot, 21));
+			firstFixed);
 		List<?> pinnedAgain = candidateAlternatives(continuity, owner, firstReference, 31, witness,
-			secondFixed, Map.of(secondRoot, 22));
+			secondFixed);
 		Assert.assertEquals(unpinned, pinned);
 		Assert.assertSame("handle-filtered default lists are also immutable shared authority", pinned, pinnedAgain);
 		Assert.assertThrows(UnsupportedOperationException.class, pinned::clear);
 		Assert.assertTrue("a missing pinned row does not borrow unrelated default authority",
 			candidateAlternatives(continuity, owner, firstReference, 99, witness,
-				firstFixed, Map.of(firstRoot, 21)).isEmpty());
+					firstFixed).isEmpty());
 	}
 
 	private static void assertLegacySignature(NativeContinuityProof proof) {
@@ -179,9 +175,10 @@ public class NativePlacementGroundingAndSignatureTest {
 			CompiledHopKey.class, nested("NativePoolWitness"));
 		keyConstructor.setAccessible(true);
 		Object topologyKey = keyConstructor.newInstance(owner, witness);
-		Field cache = NativePlacementContinuity.class.getDeclaredField("candidateTopologies");
+		Method cache = NativePlacementContinuity.class.getDeclaredMethod("cacheTopology",
+			keyType, topologyType);
 		cache.setAccessible(true);
-		((Map<Object,Object>)cache.get(continuity)).put(topologyKey, topology);
+		Assert.assertEquals(true, cache.invoke(continuity,topologyKey,topology));
 	}
 
 	private static Object topologyRow(CandidateRealizationReference reference,
@@ -204,15 +201,22 @@ public class NativePlacementGroundingAndSignatureTest {
 	@SuppressWarnings("unchecked")
 	private static List<?> candidateAlternatives(NativePlacementContinuity continuity,
 		CompiledHopKey owner, CandidateRealizationReference pinned, int pinnedHandle,
-		Object witness, Map<CompiledHopKey,CandidateRealizationReference> fixed,
-		Map<CompiledHopKey,Integer> handles) throws Exception {
+		Object witness, Object fixed) throws Exception {
 		Method alternatives = NativePlacementContinuity.class.getDeclaredMethod(
 			"candidateProofAlternatives", CompiledHopKey.class,
 			CandidateRealizationReference.class, int.class, nested("NativePoolWitness"),
-			boolean.class, Map.class, Map.class, nested("GenerationRoot"));
+			boolean.class, nested("FixedCandidateBoundary"), nested("GenerationRoot"));
 		alternatives.setAccessible(true);
 		return (List<?>)alternatives.invoke(continuity, owner, pinned, pinnedHandle,
-			witness, true, fixed, handles, null);
+			witness, true, fixed, null);
+	}
+
+	private static Object fixedBoundary(CompiledHopKey owner,
+		CandidateRealizationReference reference, int handle) throws Exception {
+		Constructor<?> constructor = nested("FixedCandidateBoundary").getDeclaredConstructor(
+			CompiledHopKey.class, CandidateRealizationReference.class, int.class);
+		constructor.setAccessible(true);
+		return constructor.newInstance(owner,reference,handle);
 	}
 
 	private static Object nativeWitness(NativePlacementContinuity continuity,
@@ -232,6 +236,10 @@ public class NativePlacementGroundingAndSignatureTest {
 	@SuppressWarnings("unchecked")
 	private static CandidateRealizationReference source(String id) {
 		CompiledHopKey owner = key(id);
+		return source(owner,id);
+	}
+
+	private static CandidateRealizationReference source(CompiledHopKey owner, String id) {
 		CandidateRuleKey rule = new CandidateRuleKey(owner, List.of());
 		PlacementState state = new PlacementState(
 			ExecType.FED, FederatedOutput.LOUT, FType.ROW, false);
