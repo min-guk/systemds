@@ -2530,7 +2530,7 @@ final class NativePlacementContinuity {
 		for(AcyclicComponentSummary reused : traversal.reusedComponents.values())
 			occurrences.addAll(reused.occurrences);
 		boolean rootIndependent = generation != null
-			? !traversal.generatedRootDependencyObserved
+			? !traversal.generatedRootPublishedHistoryObserved
 			: graph.entrySet().stream()
 				.filter(entry -> !entry.getKey().equals(root))
 				.flatMap(entry -> entry.getValue().stream())
@@ -2968,6 +2968,11 @@ final class NativePlacementContinuity {
 			return;
 		boolean generatedRoot = generation != null && state.key() == root.key()
 			&& Objects.equals(state.realization(), root.realization());
+		// A proposed-root recurrence reads the same primitive recipe, not the
+		// root's published clauses. Only a non-recipe root occurrence or an
+		// explicit metadata receipt below requires full published-root history.
+		if(generation != null && state.key() == root.key() && !generatedRoot)
+			traversal.generatedRootPublishedHistoryObserved = true;
 		AcyclicComponentSummary shared = generatedRoot
 			? null : reusableAcyclicComponent(state, fixed.keySet());
 		if(shared != null) {
@@ -2991,25 +2996,7 @@ final class NativePlacementContinuity {
 				? defaults.traversalSchedule(metrics) : null;
 			if(generation != null && traversal.hiddenOwnerReadsByState
 				.getOrDefault(state, Set.of()).contains(root.key()))
-				traversal.generatedRootDependencyObserved = true;
-			// Record dependency-to-root reads from the unpruned alternatives. The
-			// dependency is query-pinned to the generated realization, so its recursive
-			// state can equal the active root and return before an ordinary row is built.
-			// Recording the edge also keeps later dead-alternative pruning conservative.
-			if(generation != null && !traversal.generatedRootDependencyObserved) {
-				if(defaultSchedule != null)
-					traversal.generatedRootDependencyObserved = defaultSchedule.uniqueSuccessors.stream()
-						.anyMatch(successor -> successor.key() == root.key());
-				else {
-					dependencySearch:
-					for(SelectedCandidateProof alternative : alternatives)
-						for(CandidateProofDependency dependency : alternative.dependencies)
-							if(dependency.key == root.key()) {
-								traversal.generatedRootDependencyObserved = true;
-								break dependencySearch;
-							}
-				}
-			}
+				traversal.generatedRootPublishedHistoryObserved = true;
 			// An empty non-source row supplies nothing. Remove it before dependency
 			// pruning so its consumers cannot survive on a fictitious leaf. This also
 			// covers generated and provisional template rows.
@@ -5060,7 +5047,7 @@ final class NativePlacementContinuity {
 		private final Map<CandidateProofState,Set<CompiledHopKey>> hiddenOwnerReadsByState =
 			new java.util.HashMap<>();
 		private boolean cycleDetected;
-		private boolean generatedRootDependencyObserved;
+		private boolean generatedRootPublishedHistoryObserved;
 		private long emptyFilteredStates;
 	}
 

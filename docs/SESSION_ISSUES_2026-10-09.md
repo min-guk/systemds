@@ -151,6 +151,34 @@
 - **v13 red/green**: 의미를 보존한 old SCC helper에서 covered-edge regression은 예상{B,C}/실제{A,B,C}로 실패했다. 최초 Native 새4tests 중3개 기대 receipt 실패와1개 fixture fingerprint setup 오류를 분리했다. fixture를 수정하고 sealed v12 binary로 재검증한15tests는 정확히4개 receipt assertion 실패였다. 구현 뒤 SCC+Native focused **51PASS**, source freeze 후 full package 중. Broad BFS/identity certification 및 required invalidation은 유지했다.
 - **v13 full gate**: fresh **1,020 selected tests/failure0/error0/skip1**, BUILD SUCCESS01:33:37. Independent production delta review CLEAR, sealed-v12 hash reconstruction으로 이전 변경과 구분했다. Covered-edge unit fixture의 AVAILABLE/PRIVACY_EXCLUDED 전환은 index-only adjacency 검증이며 실제 privacy 정책 변경이 아니다. 실제 통합 경로는 기존 full-recompute ordered-fact/fingerprint 비교로 추가 검증했다. 다음 동일 Docker 실측 전 전체 속도 달성을 주장하지 않는다.
 
+### v13 게시 및 v14 다음 병목 계측/개선 계획 (진행중)
+
+- **게시**: v12/v13를 `0af4efd265558cdb893cea71286a197d17868848`로 커밋하고 최신 origin/main 확인 뒤 push/remote SHA 확인. v13 JAR `a73121cad2a807c03081530df174359cfeaf9e950a5986dc1bf0df85e43f4687`. 상세 Docker는 두 workload 모두60초 timeout/no receipt로20초 미달이다.
+- **GLM 원인 분류**: incomplete-only new-pending을 direct eligible slot이 전혀 없는 owner / 마지막 committed change / 마지막 boundary cancellation / 기타로 구분한다. 마지막 이유는 재시도 시 지우고, 관측이 꺼져 있으면 추가 identity set/map을 만들지 않는다. Scheduling/receipt completeness 자체는 바꾸지 않는다. 기존 cancellation 테스트는 수동 invalidate 정책 테스트여서 실제 GLM의 cancellation 지배성을 입증하지 않는다. 테스트37건 중 기대한 새 constructor 누락1건을 red로 확인했다.
+- **LogReg 계획**: v12 JFR에서 NativePoolWitness.equals141 leaf samples 중94개가 cyclic pruning reverse index의 structural state ID 조회다. 동일 immutable dependency state 객체가 default alternatives에서 반복 재사용되므로 query-local bounded identity memo를 앞에 둔다. miss는 반드시 기존 structural map을 조회하고 cap4096 초과 시 기존 경로를 유지한다. 보존 객체를 변경하거나 전역 캐시를 두지 않는다. Hit/miss 실측 전 효과를 단정하지 않으며 기존 randomized oracle/duplicate object identity/negative graph/collision/counter parity부터 잠근다.
+- **위험/검출**: identity miss를 부재로 잘못 해석, cap 초과 오류, 쿼리 간 ID 누수, 원인 계측의 stale label이 주요 위험이다.20초 미달이며 legal state/runtime/privacy/DP arithmetic 변경은 없다.
+- **v14 gate**: Native helper regressions13tests 중4개 기대 missing-method red 확인 후 실제 pruning-path 테스트도 추가했다. 원인 계측37PASS, 통합 focused66PASS, fresh **1,026 selected tests/failure0/error0/skip1**, BUILD SUCCESS01:44:53. 두 slice independent CLEAR. JAR `e50729c02179630cb90354bd80d9966d763387d464f792dbedbd803d4357caf0`. Lookup counters는 helper의 hit/fallback만 세며 initial ID table 구축/보수적 기존 선행 containsKey는 포함하지 않는다.
+- **계측 OFF 대조**: v13 OFF/JFR run도 LogReg/GLM 모두60초 timeout/no receipt였다. ON observer 비용만으로20초 미달이 설명되지는 않는다. 자체 build/JFR parse는 timed run과 겹치지 않았고 own container 삭제를 확인했다.
+
+### v14 실측 거절 및 v15 generated SUPPORT 재사용 계획 (진행중)
+
+- **실측/판정**: v14 동일 Docker 양쪽60초 timeout/no receipt. LogReg identity lookup hit2,183,311/fallback36,512,436(약5.6%)로 대부분 structural lookup을 그대로 수행하며 추가 lookup 비용을 부과한다. 정확성 gate 통과와 성능 채택은 별개이므로 bounded identity cache와 전용 tests/counters는 철회했다. 원인 계측은 유지한다. GLM incomplete-new8,473 중 no-binding7,559/other914, committed/cancelled0이다. 이 집계는 서로 다른 부분 진행도의 snapshot이며 wall-clock speedup 증거가 아니다.
+- **문제/계획**: generated SUPPORT traversal은 root로 향하는 모든 edge를 published-root history read로 취급한다. 하지만 exact owner/proposal에 맞는 recurrence는 GenerationRoot primitive recipe를 재실행하거나 active-state로 돌아갈 뿐이다. Primitive authority와 다른 occurrence full facts가 같고 실제 root metadata read가 없다면 지원 증명은 같다. 독립 architect가 recipe/topology/identity-clause/fixed-map/component cache 경로를 검토해 bounded design CLEAR로 판정했다.
+- **변경 범위**: broad dependency-to-root flag만 실제 non-recipe root routing/hidden metadata read로 좁힌다. Exact routing predicate, 모든 DFS/cycle/pruning/self-premise 규칙, complete occurrence footprint, fixed-root component exclusion, public completedProofMemo의 full-history invalidation은 보존한다. boolean 이름은 published-history read 의미를 명시한다.
+- **회귀 계획**: publication-only 실제 recurrence의 cached/fresh ordered proofs와 identity footprint, cache-budget0, negative support, hidden derived/VALUE_MAP root certificate withdrawal/restoration, primitive/source revision 및 public dynamic filtering을 잠근다. 초기 fixture의 CP/FED execution-side 및 CP emission executionFType 오류는 production semantics failure와 분리하고 수정한다.
+- **잔여/위험**: root history를 실제 읽는 경로를 놓치면 stale positive/negative support가 생길 수 있다. 기존 metadata receipt 및 cold-warm differential로 검출한다. 다른 owner revision은 여전히 invalidate하므로 약35k graph가 모두 없어질 것으로 가정하지 않는다.20초 목표 미달이며 runtime/oracle/privacy/legal candidate set 변경 없음.
+
+### v16 closure-local no-query receipt 보존 (검증중)
+
+- **문제/근거**: v14 GLM에서 incomplete-new8,473건 중7,559건은 eligible direct-binding slot이 없는 owner다. 한 closeDirectComponents 호출 안에서는 status/rule input/opcode와 owner-slot 대응이 불변이고 binder/boundary는 emission만 갱신한다. 따라서 initial eligible BitSet의 모든 슬롯을 검사해 해당 owner의 direct transfer가 항등임을 증명할 수 있다. 독립 architect가 실제 binder/boundary 재구성 경로를 검토했다.
+- **변경**: metrics ON/OFF 모두 같은 invocation-local identity certificate를 만들고, 기존 complete receipt가 정확히 자기 자신 하나만 포함할 때에만 invalidate에서 유지한다. 미방문/빈/불완전/다른 identity/복수 의존 receipt는 보존하지 않는다. Changed-self/immediate/subscriber/support/removed-edge/alias propagation 및 boundary 실행은 그대로다. 관측용 원인 map만 metrics ON에 할당한다.
+- **회귀**: production 변경 전40tests 중4개 기대 실패를 확인했다. All-slot mixed eligibility, zero-row/TRead/ineligible, exact identity 및 incomplete withdrawal, changed-self/subscriber, 경계 net-delta 후 required work1→0과 실제 diagnostic-map OFF parity를 추가했다. 이 경계 테스트는 production delta/queue helper 검증이며 실제 boundary session 전체 실행 또는 두 번 복사한 동일 list의 비교를 통합 동등성 증거로 주장하지 않는다. 기존 full fixed-point differential suites를 함께 실행한다.
+- **v15 gate**: 실제 recurrence positive/negative/cold parity 및 generated memo certificate=true, hidden derived/VALUE_MAP positive·negative metadata receipt certificate=false, withdrawal/restoration을 추가했다. 올바른 FED/LOUT→FED/FOUT fixture로103tests/skip1 통과. 기존 broad guard에서 recurrence 재계산이 red로 재현되었다.
+- **잔여/위험**: 신규 전용 end-to-end boundary cancellation fixture는 아직 없다. 기존 full fixed-point output differential 및 실제 Docker로 보완하며, partial counter 감소를 전체20초 달성으로 해석하지 않는다. Legal candidate/privacy/runtime/oracle/DP arithmetic 변경은 없다.
+- **v15/v16 full gate**: source freeze 후 focused144PASS, fresh Maven **1,028 selected tests/failure0/error0/skip1**, BUILD SUCCESS01:59:12. 독립 production review 양쪽 CLEAR. Native memo certificate assertion도 직접 검증했다. v16 JAR `0ce7f074aa9b2eb62a6c235a6424babdbe200b59cb7f2b83785563ccbffa6988`을 봉인하고 동일 Docker detailed 진단을 시작했다. 새 전용 boundary end-to-end fixture 부재는 위 제한대로 유지한다.
+
+## Incoming native-support integration evidence (retained)
+
 
 ### v4 게시 및 실제 재검증 시작
 

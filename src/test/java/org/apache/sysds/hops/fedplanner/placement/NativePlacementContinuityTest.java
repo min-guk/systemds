@@ -3611,7 +3611,7 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
-	public void generatedRootHistoryKeepsCyclicAndZeroBudgetColdPaths() throws Exception {
+	public void generatedRootHistoryReusesRecipeCyclesButKeepsZeroBudgetCold() throws Exception {
 		for(boolean cyclic : List.of(false, true))
 			for(int budget : List.of(0, 128)) {
 				Fixture full = new Fixture(FType.FULL);
@@ -3645,12 +3645,68 @@ public class NativePlacementContinuityTest {
 					published.allowedEmissionFacts().get(0), proposed, seed.anchor);
 				Assert.assertEquals(full.resolver(null, 0, 0).proveGeneratedCandidateAlternatives(
 					published, published.allowedEmissionFacts().get(0), proposed, seed.anchor), actual);
-				if(cyclic || budget == 0)
-					Assert.assertTrue("cyclic roots and disabled caches must keep the cold path",
+				if(budget == 0)
+					Assert.assertTrue("disabled caches must keep the cold path",
 						metrics.snapshot().proofGraphsBuilt() > built);
 				else
 					Assert.assertEquals(built, metrics.snapshot().proofGraphsBuilt());
 			}
+	}
+
+	@Test
+	public void generatedRecurrenceDoesNotReadPublishedRootHistory() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref read = full.logicalRead("loop-read");
+		Ref root = full.unary("root", OpOp1.LOG, read, false);
+		full.reaching.put(read.key, List.of(seed.key, root.key));
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		CandidateRuleFact base = full.fact(root, inputs);
+		CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization publication = CandidateEmissionRealization.nativeLineage(
+			emission.emissionState(), "generated-recurrence", List.of(), List.of());
+		CandidateRealizationReference proposed = CandidateRealizationReference.of(base.key(), publication);
+		for(DurableAnchorKey witness : List.of(seed.anchor,
+			anchor(FType.FULL, "worker2:8001", 0, 50))) {
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity first = full.resolver(metrics, 128, 2048);
+			NativePlacementContinuity.CandidateSupportResult expected = first
+				.proveGeneratedCandidateSupport(base, emission, proposed, witness);
+			Assert.assertEquals(witness != seed.anchor, expected.proofs().isEmpty());
+			assertGeneratedRootCertificate(first, proposed, root.key, true);
+			long built = metrics.snapshot().proofGraphsBuilt();
+			long reused = metrics.snapshot().supportMemoRevisionEntriesReused();
+
+			CandidateRuleFact published = replaceRootRealization(full, base, emission, publication);
+			List<CandidateRuleFact> publishedFacts = List.copyOf(full.candidates);
+			NativePlacementContinuity revised = first.nextRevisionWithCompleteCandidateDelta(
+				publishedFacts, identitySet(root.key));
+			NativePlacementContinuity.CandidateSupportResult actual = revised
+				.proveGeneratedCandidateSupport(published,
+					published.allowedEmissionFacts().get(0), proposed, witness);
+			NativePlacementContinuity.CandidateSupportResult cold = new NativePlacementContinuity(
+				full.nodes, full.origins, publishedFacts, full.edges, full.reaching, Set.of(), full.privacy)
+				.proveGeneratedCandidateSupport(published,
+					published.allowedEmissionFacts().get(0), proposed, witness);
+
+			Assert.assertEquals(cold.proofs(), actual.proofs());
+			Assert.assertEquals(expected.proofs(), actual.proofs());
+			assertIdentitySetEquals(cold.dependencyOccurrences(), actual.dependencyOccurrences());
+			Assert.assertEquals("a prospective generated-root recurrence does not read published history",
+				built, metrics.snapshot().proofGraphsBuilt());
+			Assert.assertTrue(metrics.snapshot().supportMemoRevisionEntriesReused() > reused);
+			full.candidates.set(full.candidates.indexOf(published), base);
+		}
+	}
+
+	@Test
+	public void generatedDerivedRootMetadataReadForcesWithdrawalAndRestorationRebuild() {
+		assertGeneratedHiddenRootMetadataLifecycle(generatedHiddenRootFixture(true));
+	}
+
+	@Test
+	public void generatedValueMapRootMetadataReadForcesWithdrawalAndRestorationRebuild() {
+		assertGeneratedHiddenRootMetadataLifecycle(generatedHiddenRootFixture(false));
 	}
 
 	@Test
@@ -3874,6 +3930,167 @@ public class NativePlacementContinuityTest {
 		fixture.candidates.set(fixture.candidates.indexOf(prior), updated);
 		return updated;
 	}
+
+	private static GeneratedHiddenRootFixture generatedHiddenRootFixture(boolean derived) {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("hidden-seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("hidden-root", OpOp1.LOG, seed, false);
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		CandidateRuleFact initialRoot = full.fact(root, inputs);
+		CandidateEmissionFact initialRootEmission = initialRoot.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization certifiedRealization = CandidateEmissionRealization.nativeLineage(
+			initialRootEmission.emissionState(), "hidden-root-authority", seed.anchor,
+			List.of(new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
+				root.key, "hidden-root-authority")), List.of());
+		CandidateRuleFact certifiedRoot = replaceRootRealization(
+			full, initialRoot, initialRootEmission, certifiedRealization);
+		CandidateEmissionFact certifiedRootEmission = certifiedRoot.allowedEmissionFacts().get(0);
+		CandidateRealizationReference proposed = CandidateRealizationReference.of(
+			certifiedRoot.key(), certifiedRealization);
+
+		Ref hidden = full.read(derived ? "hidden-derived" : "hidden-value-map");
+		CandidateRuleKey hiddenRule = new CandidateRuleKey(hidden.key, List.of());
+		PlacementState resident = state(FType.FULL);
+		PlacementEmissionState residentEmission = new PlacementEmissionState(resident, false);
+		CandidateRuleFact hiddenFact;
+		if(derived) {
+			PlacementState local = new PlacementState(ExecType.FED, FederatedOutput.LOUT, null, false);
+			PlacementState materializedState = new PlacementState(
+				ExecType.FED, FederatedOutput.FOUT, FType.FULL, false);
+			Node hiddenNode = full.nodes.get(hidden.key);
+			full.nodes.put(hidden.key, new Node(hiddenNode.key(), hiddenNode.kind(),
+				hiddenNode.valueVersion(), hiddenNode.emittedWork(), List.of(materializedState),
+				hiddenNode.exclusions(), hiddenNode.anchors()));
+			PlacementEmissionState localEmissionState = new PlacementEmissionState(local, false);
+			DerivedFoutMaterializationActionKey action = new DerivedFoutMaterializationActionKey(
+				hidden.key, full.nodes.get(hidden.key).valueVersion(), hiddenRule, local, materializedState,
+				seed.anchor, root.key, FType.FULL, FType.FULL,
+				hidden.key.controlRegion().normalizedSignature());
+			CandidateEmissionFact localEmission = new CandidateEmissionFact(localEmissionState,
+				null, null, List.of(CandidateEmissionRealization.local(localEmissionState)));
+			CandidateEmissionFact materialized = new CandidateEmissionFact(
+				new PlacementEmissionState(materializedState, true), FType.FULL, action,
+				List.of(CandidateEmissionRealization.durable(
+					new PlacementEmissionState(materializedState, true), seed.anchor,
+					List.of(new PlacementProofKey(PlacementProofKind.DURABLE_ANCHOR,
+						hidden.key, "derived-fout:" + action.normalizedSignature())), List.of())));
+			hiddenFact = candidateFact(hiddenRule, List.of(localEmission, materialized), ExecType.FED);
+		}
+		else {
+			CandidateRealizationSupportClause clause = new CandidateRealizationSupportClause(
+				List.of(), List.of(CandidateRealizationInputBinding.direct(0, proposed)));
+			CandidateEmissionRealization valueMap = CandidateEmissionRealization.valueMap(
+				residentEmission, "hidden-root-value-map", List.of(clause));
+			hiddenFact = candidateFact(hiddenRule, List.of(new CandidateEmissionFact(
+				residentEmission, FType.FULL, null, List.of(valueMap))), ExecType.FED);
+		}
+		full.candidates.add(hiddenFact);
+		full.edges.removeIf(edge -> edge.consumer() == root.key);
+		full.edges.add(new CompiledInputEdgeFact(hidden.key, root.key, 0));
+
+		CandidateEmissionRealization uncertifiedRealization = new CandidateEmissionRealization(
+			certifiedRealization.key(), List.of(new CandidateRealizationSupportClause(List.of(), List.of())));
+		CandidateEmissionFact uncertifiedEmission = new CandidateEmissionFact(
+			certifiedRootEmission.emissionState(), certifiedRootEmission.executionFType(),
+			certifiedRootEmission.derivedFoutAction(), List.of(uncertifiedRealization));
+		CandidateRuleFact uncertifiedRoot = new CandidateRuleFact(certifiedRoot.key(),
+			certifiedRoot.status(), certifiedRoot.capability(), certifiedRoot.shapeProof(),
+			certifiedRoot.profile(), List.of(uncertifiedEmission), certifiedRoot.failureCode());
+		List<CandidateRuleFact> activeFacts = List.copyOf(full.candidates);
+		List<CandidateRuleFact> withdrawnFacts = activeFacts.stream()
+			.map(fact -> fact == certifiedRoot ? uncertifiedRoot : fact).toList();
+		return new GeneratedHiddenRootFixture(full, seed, root, hidden, certifiedRoot,
+			certifiedRootEmission, proposed, activeFacts, withdrawnFacts);
+	}
+
+	private static CandidateRuleFact candidateFact(CandidateRuleKey rule,
+		List<CandidateEmissionFact> emissions, ExecType execType) {
+		return new CandidateRuleFact(rule, CandidateEvaluationStatus.AVAILABLE,
+			new CandidateCapabilityFact(OpCategory.OTHER, "hidden-root", execType,
+				FederatedOutput.FOUT, FType.FULL, ReasonCode.OK, "hidden-root", List.of()),
+			new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
+			new CandidateProfileFact(List.of(), ""), emissions, "");
+	}
+
+	private static void assertGeneratedHiddenRootMetadataLifecycle(GeneratedHiddenRootFixture fixture) {
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity initial = fixture.full().resolver(metrics, 128, 2048);
+		NativePlacementContinuity.CandidateSupportResult positive = initial
+			.proveGeneratedCandidateSupport(fixture.activeRoot(), fixture.activeEmission(),
+				fixture.proposed(), fixture.seed().anchor);
+		Assert.assertFalse(positive.proofs().isEmpty());
+		Assert.assertTrue(positive.dependencyOccurrences().stream()
+			.anyMatch(owner -> owner == fixture.root().key));
+		assertGeneratedRootCertificate(initial, fixture.proposed(), fixture.hidden().key, false);
+		long built = metrics.snapshot().proofGraphsBuilt();
+
+		NativePlacementContinuity withdrawn = initial.nextRevisionWithCompleteCandidateDelta(
+			fixture.withdrawnFacts(), identitySet(fixture.root().key));
+		CandidateRuleFact withdrawnRoot = fixture.withdrawnFacts().stream()
+			.filter(fact -> fact.key().parentOccurrence() == fixture.root().key).findFirst().orElseThrow();
+		NativePlacementContinuity.CandidateSupportResult negative = withdrawn
+			.proveGeneratedCandidateSupport(withdrawnRoot,
+				withdrawnRoot.allowedEmissionFacts().get(0), fixture.proposed(), fixture.seed().anchor);
+		NativePlacementContinuity.CandidateSupportResult coldNegative = new NativePlacementContinuity(
+			fixture.full().nodes, fixture.full().origins, fixture.withdrawnFacts(), fixture.full().edges,
+			fixture.full().reaching, Set.of(), fixture.full().privacy)
+			.proveGeneratedCandidateSupport(withdrawnRoot,
+				withdrawnRoot.allowedEmissionFacts().get(0), fixture.proposed(), fixture.seed().anchor);
+		Assert.assertTrue(negative.proofs().isEmpty());
+		Assert.assertEquals(coldNegative.proofs(), negative.proofs());
+		assertIdentitySetEquals(coldNegative.dependencyOccurrences(), negative.dependencyOccurrences());
+		Assert.assertTrue("a hidden published-root metadata read must invalidate the generated memo",
+			metrics.snapshot().proofGraphsBuilt() > built);
+		assertGeneratedRootCertificate(withdrawn, fixture.proposed(), fixture.hidden().key, false);
+		long withdrawnBuilt = metrics.snapshot().proofGraphsBuilt();
+
+		NativePlacementContinuity restored = withdrawn.nextRevisionWithCompleteCandidateDelta(
+			fixture.activeFacts(), identitySet(fixture.root().key));
+		NativePlacementContinuity.CandidateSupportResult restoredSupport = restored
+			.proveGeneratedCandidateSupport(fixture.activeRoot(), fixture.activeEmission(),
+				fixture.proposed(), fixture.seed().anchor);
+		NativePlacementContinuity.CandidateSupportResult coldRestored = new NativePlacementContinuity(
+			fixture.full().nodes, fixture.full().origins, fixture.activeFacts(), fixture.full().edges,
+			fixture.full().reaching, Set.of(), fixture.full().privacy)
+			.proveGeneratedCandidateSupport(fixture.activeRoot(), fixture.activeEmission(),
+				fixture.proposed(), fixture.seed().anchor);
+		Assert.assertFalse(restoredSupport.proofs().isEmpty());
+		Assert.assertEquals(coldRestored.proofs(), restoredSupport.proofs());
+		assertIdentitySetEquals(coldRestored.dependencyOccurrences(), restoredSupport.dependencyOccurrences());
+		Assert.assertTrue(metrics.snapshot().proofGraphsBuilt() > withdrawnBuilt);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static void assertGeneratedRootCertificate(NativePlacementContinuity continuity,
+		CandidateRealizationReference root, CompiledHopKey visitedOwner, boolean independent) {
+		try {
+			Map<?,?> memo = (Map<?,?>)accessibleField(
+				NativePlacementContinuity.class, "completedSupportMemo").get(continuity);
+			int visited = 0;
+			for(var entry : memo.entrySet()) {
+				Object query = entry.getKey(), support = entry.getValue();
+				if(!(boolean)accessibleField(query.getClass(), "generated").get(query)
+					|| !root.equals(accessibleField(support.getClass(), "root").get(support)))
+					continue;
+				Set<CompiledHopKey> footprint = (Set<CompiledHopKey>)accessibleField(
+					support.getClass(), "occurrences").get(support);
+				if(footprint.stream().noneMatch(owner -> owner == visitedOwner))
+					continue;
+				visited++;
+				Assert.assertEquals("certify the actual traversal, not just revision invalidation",
+					independent, accessibleField(support.getClass(), "rootIndependent").get(support));
+			}
+			Assert.assertTrue("the generated query must have visited the selected owner", visited > 0);
+		}
+		catch(ReflectiveOperationException ex) {
+			throw new AssertionError(ex);
+		}
+	}
+
+	private record GeneratedHiddenRootFixture(Fixture full, Ref seed, Ref root, Ref hidden,
+		CandidateRuleFact activeRoot, CandidateEmissionFact activeEmission,
+		CandidateRealizationReference proposed, List<CandidateRuleFact> activeFacts,
+		List<CandidateRuleFact> withdrawnFacts) { }
 
 	@SuppressWarnings("unchecked")
 	private static List<?> candidateAlternatives(NativePlacementContinuity resolver,
@@ -5046,5 +5263,12 @@ public class NativePlacementContinuityTest {
 		Set<CompiledHopKey> result = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
 		result.addAll(List.of(keys));
 		return result;
+	}
+
+	private static void assertIdentitySetEquals(Set<CompiledHopKey> expected,
+		Set<CompiledHopKey> actual) {
+		Assert.assertEquals(expected.size(), actual.size());
+		for(CompiledHopKey owner : expected)
+			Assert.assertTrue(actual.stream().anyMatch(candidate -> candidate == owner));
 	}
 }

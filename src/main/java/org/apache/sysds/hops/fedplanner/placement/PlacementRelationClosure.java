@@ -4812,12 +4812,52 @@ final class PlacementRelationClosure {
 			new IdentityHashMap<>();
 		private final Map<CompiledHopKey,Set<CompiledHopKey>> ownersByDependency =
 			new IdentityHashMap<>();
+		// Exact invocation-local certificate: none of these owners has an eligible
+		// direct-binding slot. Diagnostic cause labels remain independently optional.
+		private final Set<CompiledHopKey> noDirectBindingOwners;
+		// A reason labels the last invalidating write, not proof that the owner needs
+		// recomputation or that a cancellation is unsafe.
+		private final Map<CompiledHopKey,Boolean> invalidationCommitted;
+
+		private DirectQuerySubscriptions() { this(Set.of(), false); }
+
+		private DirectQuerySubscriptions(Set<CompiledHopKey> noDirectBindingOwners) {
+			this(noDirectBindingOwners, true);
+		}
+
+		private DirectQuerySubscriptions(Set<CompiledHopKey> noDirectBindingOwners,
+			boolean recordInvalidationCauses) {
+			Objects.requireNonNull(noDirectBindingOwners, "no-direct-binding owners");
+			Set<CompiledHopKey> certified = Collections.newSetFromMap(new IdentityHashMap<>());
+			certified.addAll(noDirectBindingOwners);
+			this.noDirectBindingOwners = Collections.unmodifiableSet(certified);
+			invalidationCommitted = recordInvalidationCauses ? new IdentityHashMap<>() : null;
+		}
+
+		private void recordInvalidationCauses(Set<CompiledHopKey> touched, Set<CompiledHopKey> changed) {
+			if(invalidationCommitted != null)
+				for(CompiledHopKey owner : touched)
+					if(!noDirectBindingOwners.contains(owner))
+						invalidationCommitted.put(owner, changed.contains(owner));
+		}
+
+		private void recordIncompleteNewPending(CompiledHopKey owner, SearchSpaceMetrics metrics) {
+			Boolean committed = invalidationCommitted == null ? null : invalidationCommitted.get(owner);
+			DirectWork category = noDirectBindingOwners.contains(owner)
+				? DirectWork.INVALIDATION_INCOMPLETE_NEW_NO_BINDING_OWNERS
+				: committed == null ? DirectWork.INVALIDATION_INCOMPLETE_NEW_OTHER_OWNERS
+				: committed ? DirectWork.INVALIDATION_INCOMPLETE_NEW_COMMITTED_OWNERS
+				: DirectWork.INVALIDATION_INCOMPLETE_NEW_CANCELLED_OWNERS;
+			metrics.recordDirectWork(category);
+		}
 
 		private void replace(Set<CompiledHopKey> owners,
 			Map<CompiledHopKey,Set<CompiledHopKey>> dependencies,
 			Set<CompiledHopKey> incompleteDependencies) {
 			for(CompiledHopKey owner : owners) {
 				remove(owner);
+				if(invalidationCommitted != null)
+					invalidationCommitted.remove(owner);
 				if(incompleteDependencies.contains(owner))
 					continue;
 				Set<CompiledHopKey> ownerDependencies = dependencies.get(owner);
@@ -4834,7 +4874,16 @@ final class PlacementRelationClosure {
 
 		private void invalidate(Set<CompiledHopKey> owners) {
 			for(CompiledHopKey owner : owners)
-				remove(owner);
+				if(!retainsExactNoBindingReceipt(owner))
+					remove(owner);
+		}
+
+		private boolean retainsExactNoBindingReceipt(CompiledHopKey owner) {
+			if(!noDirectBindingOwners.contains(owner))
+				return false;
+			Set<CompiledHopKey> dependencies = dependenciesByOwner.get(owner);
+			return dependencies != null && dependencies.size() == 1
+				&& dependencies.iterator().next() == owner;
 		}
 
 		private void remove(CompiledHopKey owner) {
@@ -4904,7 +4953,10 @@ final class PlacementRelationClosure {
 		PlacementDependencyComponents components = directComponentSchedule(
 			owners, potential, support, aliasEdges, directComponentSchedules);
 		LogicalBoundaryRealizations.Session boundarySession = null;
-		DirectQuerySubscriptions querySubscriptions = new DirectQuerySubscriptions();
+		Set<CompiledHopKey> noDirectBindingOwners = noEligibleDirectBindingOwners(
+			owners, initialFacts, directBindingSlots);
+		DirectQuerySubscriptions querySubscriptions = new DirectQuerySubscriptions(
+			noDirectBindingOwners, complexityMetrics != null);
 		Set<CompiledHopKey> pending = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(var component : components.initialDirtyComponents(
 			initialDirty == null ? owners : List.copyOf(initialDirty)))
@@ -4967,6 +5019,7 @@ final class PlacementRelationClosure {
 			// Direct binding writes only selected slots; the boundary session reports
 			// its complete delta. Compare their union to detect net cancellations too.
 			Set<CompiledHopKey> changed = changedCandidateOwnersInSlots(facts, merged, slots, touched);
+			querySubscriptions.recordInvalidationCauses(touched, changed);
 			if(complexityMetrics != null) {
 				if(changed.isEmpty())
 					recordNoDeltaDirectWork(bindingSlots.size(), seedRelationsBefore,
@@ -5102,9 +5155,11 @@ final class PlacementRelationClosure {
 					metrics.recordDirectWork(
 						DirectWork.INVALIDATION_INCOMPLETE_ONLY_EXTRA_OWNERS);
 				if(addedOnlyByIncompleteFallback && metrics != null && pending != null
-					&& !pending.contains(owner))
+					&& !pending.contains(owner)) {
 					metrics.recordDirectWork(
 						DirectWork.INVALIDATION_INCOMPLETE_ONLY_NEW_PENDING_OWNERS);
+					querySubscriptions.recordIncompleteNewPending(owner, metrics);
+				}
 			}
 		if(metrics != null) {
 			long uniqueExtraOwners = 0;
@@ -5136,6 +5191,18 @@ final class PlacementRelationClosure {
 		return fact.status() == CandidateEvaluationStatus.AVAILABLE
 			&& !(owner instanceof DataOp data && data.getOp() == OpOpData.TRANSIENTREAD)
 			&& fact.key().orderedInputs().stream().anyMatch(CandidateInputState::present);
+	}
+
+	private static Set<CompiledHopKey> noEligibleDirectBindingOwners(
+		List<CompiledHopKey> owners, List<CandidateRuleFact> facts,
+		java.util.BitSet directBindingSlots) {
+		Set<CompiledHopKey> result = Collections.newSetFromMap(
+			new IdentityHashMap<>(owners.size()));
+		result.addAll(owners);
+		for(int slot = directBindingSlots.nextSetBit(0); slot >= 0;
+			slot = directBindingSlots.nextSetBit(slot + 1))
+			result.remove(facts.get(slot).key().parentOccurrence());
+		return Collections.unmodifiableSet(result);
 	}
 
 	private static Set<CompiledHopKey> readyDirectOwners(PlacementDependencyComponents components,
