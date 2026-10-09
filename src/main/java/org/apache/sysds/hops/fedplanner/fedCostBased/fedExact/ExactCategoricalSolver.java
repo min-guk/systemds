@@ -3257,13 +3257,18 @@ public final class ExactCategoricalSolver {
 		if((long)prepared.variables.size() + factors.size() > (1L << 20))
 			return false;
 		for(DenseFactor factor : factors) {
+			// Conditional support contains only +0/+INF. Its finite cardinality
+			// is not needed by the relation-native sparse join, so keep it deferred.
+			if(factor.conditionalSupport != null)
+				continue;
 			if(factor.hardValues != null) {
 				factor.finiteCount = factor.hardValues.finiteCount();
 				continue;
 			}
 			int finiteCount = 0;
-			for(int cell = 0; cell < factor.logicalCells(); cell++) {
-				double value = factor.valueAt(cell);
+			// Missing sparse cells are implicit +INF and cannot affect this bound.
+			// Scanning logical cells here would re-expand an already sparse input.
+			for(double value : factor.values) {
 				if(value != Double.POSITIVE_INFINITY && Math.abs(value) > 0x1.0p400)
 					return false;
 				if(value != Double.POSITIVE_INFINITY)
