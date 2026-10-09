@@ -169,7 +169,8 @@ public final class ExactCategoricalSolver {
 		/** Fix singleton boundary values without expanding a sparse hard relation. Null requests the numeric fallback. */
 		Factor conditionSupport(int[] boundary) {
 			FunctionalMap mapping = functionalMapping();
-			if(!(evaluator instanceof FiniteSupport) && mapping == null)
+			ConditionalSupport conditional = conditionalSupport();
+			if(!(evaluator instanceof FiniteSupport) && mapping == null && conditional == null)
 				return null;
 			if(boundary.length != scope.size())
 				throw new IllegalArgumentException("EXACT_VE_CONDITION_BOUNDARY_SIZE_INVALID");
@@ -182,6 +183,32 @@ public final class ExactCategoricalSolver {
 			}
 			if(free.size() == scope.size())
 				return this;
+			if(conditional != null) {
+				// A fixed selector needs a selector-free union representation; retain
+				// the existing exact fallback until that representation is available.
+				if(boundary[conditional.selectorAxis] >= 0)
+					return null;
+				int selector = 0;
+				for(int axis = 0; axis < conditional.selectorAxis; axis++)
+					if(boundary[axis] < 0) selector++;
+				List<ConditionalRegion> regions = new ArrayList<>();
+				for(ConditionalRegion region : conditional.regions) {
+					boolean retained = true;
+					for(int axis = 0; axis < boundary.length && retained; axis++)
+						if(boundary[axis] >= 0)
+							retained = Arrays.binarySearch(region.allowedValuesByAxis[axis], boundary[axis]) >= 0;
+					if(!retained)
+						continue;
+					int[][] allowed = new int[free.size()][];
+					for(int axis = 0, output = 0; axis < boundary.length; axis++)
+						if(boundary[axis] < 0)
+							allowed[output++] = region.allowedValuesByAxis[axis];
+					regions.add(new ConditionalRegion(region.selectorValue, allowed));
+				}
+				// A constrained selector whose regions all died remains forbidden.
+				// Inferring this set from the survivors would introduce wildcard holes.
+				return conditionalSupport(free, selector, conditional.constrainedSelectorValues, regions);
+			}
 			if(mapping != null) {
 				if(boundary[0] >= 0) {
 					int target = mapping.target(boundary[0]);

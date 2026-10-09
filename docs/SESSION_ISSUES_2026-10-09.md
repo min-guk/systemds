@@ -410,11 +410,12 @@
 
 - **Unpinned/overlay 통합 gate**: fresh main/test compile,1,053 JUnit PASS(184.653초), source SHA mismatch0(`evidence/native-unpinned-overlay-full-green-1053`). 새 grounded recurrence 반례, generated unpinned child, multi-family/duplicate/mixed fallback 및 fixed-seed exact/dynamic source withdrawal이 포함된다. 이 수정본을v10으로 별도 봉인하여 실제 실행한다.
 
-### v26 / unpinned axis 경로 재병합 (검증중)
 
-- **문제/해결**: 수정된 pinned+summary 병합 `598eb6f602`의 push가 원격 갱신으로 거부됐다. Force하지 않고 `d59fa583c5`를 병합했다. 같은 fixed-owner fallback의 주석 충돌만 정리하고, 우리 반복 input-position fallback과 양쪽 문서 기록을 모두 보존했다.
-- **독립 검토**: 새 architect가 complete native alternative-set 조건, mixed/derived/ambiguous authority의 전체 exact fallback, canonical OR, synthetic direct ground, summary의 전체 descendant footprint를 검토하여 CLEAR. Unpinned matcher의 realization별 재검색 O(R²)은 성능 관찰 대상으로 남기고 근거 없이 변경하지 않는다.
-- **검증 계획/위험**: sibling generated root가 unpinned child summary를 실제 재사용한 뒤 deep-axis owner를 nextRevision에서 철회/복구하는 통합 회귀를 추가한다. Fresh135class package와 별도 봉인을 거쳐 게시한다. 이전 1,143 결과는 새 unpinned 병합의 검증 결과로 소급하지 않는다.
-- **직전 엔진 실측**: `candidate-v26-axis-merged-detailed` 양쪽60초 timeout/no receipt, 관찰OOM0, 컨테이너 제거 확인. LogReg direct binding53.91%/dead pruning7.82%, GLM direct binding18.42%/canonical7.76%/joint8.74%는 inclusive JFR sample 비율이며 완료 wall-time 향상이 아니다. 새 unpinned 경로는 이 측정 엔진에 없다.20초 목표는 미달이다.
-- **규칙/잔여**: 후보·oracle·privacy·TR/TW·recompile·runtime fallback 규칙은 바꾸지 않는다. 기존 supplemental Exact/PCA width 실패도 이번 수정의 해결 범위 밖이다.
-- **새 병합 gate 완료**: focused153tests/skip1 및 fresh135class package **1,147 selected tests/failure0/error0/skip1**, BUILD SUCCESS05:13:51. Native child summary의 sibling reuse와 deep-axis 철회/복구 회귀도 독립 CLEAR. `candidate-v26-unpinned-merged`로 원본 봉인했다. 게시 직전 fetch에서 별도 DP boundary 조건부 product 변경 `78a25c8e60`을 발견하여 추가 병합·경계 검증 후 게시한다.
+### Conditional support의 부분 고정 시 union-of-products 유지
+
+- **문제**: v8은 finite support와 functional map만 부분 고정 시 압축을 유지했다. ConditionalSupport는 원래 region 표현을 잃고 남은 축의 product를 다시 평가했다.
+- **변경**: selector가 free인 경우 각 region을 고정된 축의 membership으로 필터링한 뒤 고정 축만 제거한다. 원래 constrained selector 집합을 그대로 보존하여 모든 region을 잃은 selector가 wildcard가 되는 오류를 방지한다. Selector까지 고정된 경우는 selector-free union 표현이 없어 기존 exact fallback을 유지한다. 숫자 factor와 seed의 기존 resource preflight는 그대로다.
+- **검증**: 기존 구현에서6tests 중2개 표현 검사 실패(`evidence/conditional-conditioning-red-6`), 수정 후6PASS(0.332초).480,000셀 관계의 선택 목록 저장은20개 미만이며 wildcard/forbidden selector와 sparse holes를 검사한다. 고정 seed30관계에서 모든 작은 boundary, selector 위치0/1/2, 빈/겹친 region, selector까지 고정된 fallback을 explicit table과 비교하여 raw cost 및 canonical Exact optimum/assignment parity를 확인했다. 두 실제 conditioning consumer를 모두 통과시켰다. 이 수치를 실제 workload 시간 개선으로 일반화하지 않는다. 전체 gate는 별도로 기록한다.
+
+- **Conditional conditioning 전체 gate**: fresh compile,1,055 JUnit PASS(185.656초), source SHA mismatch0. 증거 `evidence/conditional-conditioning-full-green-1055`. v10 실제 실행은 기존 봉인본 그대로 유지하며 이 후속 변경은 별도 엔진에 포함한다.
+- **추가 DP boundary 병합 gate**: `78a25c8e60`의 조건부 product 제한은 independent architect CLEAR. 현재 병합 소스의 ExactCategoricalSolver 및 새 test를 isolated compile하고 ExactSupportConditioning/ExactConditionalSupportSolver/SharedRegionalPreparation/IncrementalRegionalSeed **29tests PASS(0.946초)**를 확인했다. Native 미변경으로 앞선1,147전체 gate와 이 추가 경계 검증을 구분하여 게시한다. 봉인37ffd4ab는 추가 DP 변경 전 엔진이며 실측에 소급 포함하지 않는다.

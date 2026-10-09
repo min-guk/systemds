@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.ConditionalRegion;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Limits;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Variable;
@@ -59,6 +60,57 @@ public class ExactSupportConditioningTest {
 		for(Factor input : List.of(function, ExactCategoricalSolver.freezeValidatedFactor(function)))
 			for(int row = -1; row < 5; row++) for(int column = -1; column < 3; column++)
 				assertParity(input, new int[] {row, column}, true);
+	}
+
+	@Test public void conditionalSliceKeepsProductsAndForbiddenSelectors() throws Exception {
+		Variable left = new Variable("left", 400), selector = new Variable("selector", 3),
+			fixed = new Variable("fixed", 2), right = new Variable("right", 400);
+		Factor source = Factor.conditionalSupport(List.of(left, selector, fixed, right), 1,
+			new int[] {0, 1}, List.of(
+				new ConditionalRegion(0, new int[][] {{1, 300}, null, {1}, {2, 299}}),
+				new ConditionalRegion(1, new int[][] {{0}, null, {0}, {0}})));
+		for(boolean seed : List.of(false, true)) {
+			Factor actual = condition(source, new int[] {-1, -1, 1, -1}, seed);
+			Assert.assertTrue("480000 cells must remain a union of products", actual.isConditionalSupport());
+			Assert.assertEquals(List.of(left, selector, right), actual.scope());
+			Assert.assertSame(selector, actual.conditionalSelectorVariable());
+			Assert.assertTrue(actual.conditionalStoredValues() < 20);
+			Assert.assertEquals(0d, actual.cost(new int[] {300, 0, 299}), 0d);
+			Assert.assertEquals(Double.POSITIVE_INFINITY, actual.cost(new int[] {0, 0, 299}), 0d);
+			Assert.assertEquals("a removed region must not turn its selector into a wildcard",
+				Double.POSITIVE_INFINITY, actual.cost(new int[] {0, 1, 0}), 0d);
+			Assert.assertEquals("unconstrained selectors remain wildcards", 0d,
+				actual.cost(new int[] {399, 2, 399}), 0d);
+		}
+	}
+
+	@Test public void randomConditionalSlicesMatchExplicitIncludingFixedSelectorFallback() throws Exception {
+		Random random = new Random(0x636f6e646974L);
+		for(int trial = 0; trial < 30; trial++) {
+			List<Variable> variables = List.of(new Variable("a", 2), new Variable("b", 3),
+				new Variable("c", 2));
+			int selector = trial % 3;
+			int[] constrained = {0, variables.get(selector).domainSize() - 1};
+			List<ConditionalRegion> regions = new ArrayList<>();
+			for(int row = 0, count = random.nextInt(6); row < count; row++) {
+				int[][] allowed = new int[3][];
+				for(int axis = 0; axis < 3; axis++) if(axis != selector) {
+					List<Integer> options = new ArrayList<>();
+					for(int value = 0; value < variables.get(axis).domainSize(); value++)
+						if(random.nextBoolean()) options.add(value);
+					allowed[axis] = options.stream().mapToInt(Integer::intValue).toArray();
+				}
+				regions.add(new ConditionalRegion(constrained[random.nextInt(2)], allowed));
+			}
+			Factor source = Factor.conditionalSupport(variables, selector, constrained, regions);
+			for(int a = -1; a < 2; a++) for(int b = -1; b < 3; b++) for(int c = -1; c < 2; c++) {
+				int[] boundary = {a, b, c};
+				assertParity(source, boundary, false);
+				if(boundary[selector] < 0)
+					for(boolean seed : List.of(false, true))
+						Assert.assertTrue(condition(source, boundary, seed).isConditionalSupport());
+			}
+		}
 	}
 
 	@Test public void numericalFallbackRetainsRawCostsAndCanonicalMinimum() throws Exception {
