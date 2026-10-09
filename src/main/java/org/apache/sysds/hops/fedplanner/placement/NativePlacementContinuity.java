@@ -3955,12 +3955,17 @@ final class NativePlacementContinuity {
 	 */
 	private NativeFactoredProofAlternatives nativeUnpinnedFactoredProofAlternatives(
 		CompiledHopKey key, NativePoolWitness witness, FixedCandidateBoundary fixed) {
+		if(metrics != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_REQUESTS);
 		Node node = nodesByKey.get(key);
 		Hop hop = originsByKey.get(key);
 		if(node == null || hop == null || incompleteSources.contains(key)
 			|| node.legalAlternatives().stream().noneMatch(state ->
-				state.output() == FederatedOutput.FOUT && state.fType() == witness.fType))
+				state.output() == FederatedOutput.FOUT && state.fType() == witness.fType)) {
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_REJECT_CONTEXT);
 			return null;
+		}
 		List<HybridTopologyRow> rows = new ArrayList<>();
 		Set<ContinuityEdgeKey> defaultEdges = new java.util.HashSet<>();
 		Set<CompiledHopKey> metadataOwnerReads =
@@ -3974,8 +3979,11 @@ final class NativePlacementContinuity {
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
 				// Derived authority is validated from action metadata by the legacy
 				// topology and cannot be inferred from native relation axes.
-				if(emission.derivedFoutAction() != null)
+				if(emission.derivedFoutAction() != null) {
+					if(metrics != null)
+						metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_REJECT_DERIVED);
 					return null;
+				}
 				if(isBroadcastRowProvablyUnselectable(fact)
 					|| !operationPreservesWitness(hop, witness, fact))
 					continue;
@@ -3991,16 +3999,25 @@ final class NativePlacementContinuity {
 					// The pinned resolver rejected structurally duplicated authority while
 					// rescanning the inventory. Preserve that fallback before bypassing its
 					// repeated lookup for this already validated exact row.
-					if(!exactReferences.add(reference))
+					if(!exactReferences.add(reference)) {
+						if(metrics != null)
+							metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_REJECT_REFERENCE);
 						return null;
+					}
 					if(realization.supportClauses() instanceof NativeContinuitySupportClauses relation) {
-						if(!nativeContinuityProductLayout(realization))
+						if(!nativeContinuityProductLayout(realization)) {
+							if(metrics != null)
+								metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_REJECT_LAYOUT);
 							return null;
+						}
 						NativeFactoredProofAlternatives factored =
 							nativeFactoredProofAlternativesResolved(key, reference, witness, fixed,
 								node, hop, fact, realization, relation);
-						if(factored == null || factored.alternatives().size() != 1)
+						if(factored == null || factored.alternatives().size() != 1) {
+							if(metrics != null)
+								metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_REJECT_PRODUCT);
 							return null;
+						}
 						SelectedCandidateProof alternative = factored.alternatives().get(0);
 						rows.add(HybridTopologyRow.nativeRow(reference, alternative));
 						matchedNative = true;
@@ -4037,8 +4054,11 @@ final class NativePlacementContinuity {
 				}
 			}
 		}
-		if(!matchedNative)
+		if(!matchedNative) {
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_REJECT_NO_NATIVE);
 			return null;
+		}
 		rows.sort((left, right) -> PlacementAnalysis.canonicalComparator()
 			.compare(left.reference(), right.reference()));
 		List<SelectedCandidateProof> alternatives = new ArrayList<>(rows.size() + 1);
@@ -4083,6 +4103,8 @@ final class NativePlacementContinuity {
 			else if(metrics != null)
 				metrics.recordTopologyOverlayRowCollapsed();
 		}
+		if(metrics != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_ACCEPTED);
 		return new NativeFactoredProofAlternatives(List.copyOf(alternatives),
 			metadataOwnerReads);
 	}
