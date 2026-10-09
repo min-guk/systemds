@@ -326,6 +326,11 @@ public final class ExactCategoricalSolver {
 		ConditionalSupport conditionalSupport() {
 			return evaluator instanceof ConditionalSupport support ? support : null;
 		}
+		boolean[][] conditionalSupportedValues(boolean[][] activeValuesByAxis) {
+			if(!(evaluator instanceof ConditionalSupport support))
+				throw new IllegalStateException("EXACT_VE_FACTOR_NOT_CONDITIONAL_SUPPORT");
+			return support.supportedValues(activeValuesByAxis);
+		}
 		long conditionalStoredValues() {
 			if(!(evaluator instanceof ConditionalSupport support))
 				throw new IllegalStateException("EXACT_VE_FACTOR_NOT_CONDITIONAL_SUPPORT");
@@ -339,6 +344,16 @@ public final class ExactCategoricalSolver {
 			if(!(evaluator instanceof FiniteSupport support))
 				throw new IllegalStateException("EXACT_VE_FACTOR_NOT_FINITE_SUPPORT");
 			return support.finiteCells.clone();
+		}
+		int finiteSupportCellCount() {
+			if(!(evaluator instanceof FiniteSupport support))
+				throw new IllegalStateException("EXACT_VE_FACTOR_NOT_FINITE_SUPPORT");
+			return support.finiteCells.length;
+		}
+		int finiteSupportCellAt(int index) {
+			if(!(evaluator instanceof FiniteSupport support))
+				throw new IllegalStateException("EXACT_VE_FACTOR_NOT_FINITE_SUPPORT");
+			return support.finiteCells[Objects.checkIndex(index, support.finiteCells.length)];
 		}
 		Factor rebindOwned(List<Variable> reboundScope) {
 			if(denseValues != null)
@@ -573,6 +588,67 @@ public final class ExactCategoricalSolver {
 		private boolean feasible() {
 			for(int selector = 0; selector < conditioned.length; selector++)
 				if(hasCompletion(selectorAxis, selector))
+					return true;
+			return false;
+		}
+
+		/** Exact generalized-arc support over the currently active value domains. */
+		private boolean[][] supportedValues(boolean[][] activeValuesByAxis) {
+			if(activeValuesByAxis == null || activeValuesByAxis.length != dimensions.length)
+				throw new IllegalArgumentException("EXACT_VE_CONDITIONAL_ACTIVE_SHAPE_INVALID");
+			boolean[][] supported = new boolean[dimensions.length][];
+			boolean empty = false;
+			for(int axis = 0; axis < dimensions.length; axis++) {
+				boolean[] active = activeValuesByAxis[axis];
+				if(active == null || active.length != dimensions[axis])
+					throw new IllegalArgumentException("EXACT_VE_CONDITIONAL_ACTIVE_SHAPE_INVALID");
+				supported[axis] = new boolean[dimensions[axis]];
+				boolean any = false;
+				for(boolean value : active)
+					any |= value;
+				empty |= !any;
+			}
+			if(empty)
+				return supported;
+
+			boolean wildcard = false;
+			for(int selector = 0; selector < conditioned.length; selector++)
+				if(activeValuesByAxis[selectorAxis][selector] && !conditioned[selector]) {
+					supported[selectorAxis][selector] = true;
+					wildcard = true;
+				}
+			if(wildcard)
+				for(int axis = 0; axis < dimensions.length; axis++)
+					if(axis != selectorAxis)
+						System.arraycopy(activeValuesByAxis[axis], 0, supported[axis], 0, dimensions[axis]);
+
+			for(ConditionalRegion region : regions) {
+				if(!activeValuesByAxis[selectorAxis][region.selectorValue])
+					continue;
+				boolean viable = true;
+				for(int axis = 0; axis < dimensions.length && viable; axis++) {
+					if(axis == selectorAxis)
+						continue;
+					viable = intersects(activeValuesByAxis[axis], region.allowedValuesByAxis[axis]);
+				}
+				if(!viable)
+					continue;
+				supported[selectorAxis][region.selectorValue] = true;
+				if(!wildcard)
+					for(int axis = 0; axis < dimensions.length; axis++) {
+						if(axis == selectorAxis)
+							continue;
+						for(int value : region.allowedValuesByAxis[axis])
+							if(activeValuesByAxis[axis][value])
+								supported[axis][value] = true;
+					}
+			}
+			return supported;
+		}
+
+		private static boolean intersects(boolean[] active, int[] allowed) {
+			for(int value : allowed)
+				if(active[value])
 					return true;
 			return false;
 		}

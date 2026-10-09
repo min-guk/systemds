@@ -614,3 +614,15 @@
 - **v31 최종 gate**: 유효RED16tests/2실패후freshisolated6suites **187testsPASS(3.444초,기존ignore1)**. 독립최종production/testCLEAR(회귀는helper수준이며requiredInputs=empty; 변경하지않은sourcevalidation은기존binder회귀로함께검사). 이어fresh140class package **1,188 selected tests/failure0/error0/skip1**, BUILD SUCCESS06:41:56. 실제성능은봉인후동일Docker로확인하며이통과만으로20초목표를달성했다고하지않는다.
 
 - **origin/main1948f 병합 완료 검증**: staging-only key는 authority로 세지 않고, 같은 key의 grounded explicit clause 또는 native product가 있을 때만 retained authority로 처리하는 incoming 변경과 새 회귀를 보존했다. Mixed exactness 조건은 양쪽이 동일하여 주석 충돌만 정리했다. 독립 정적 review CLEAR 및 fresh 전체 **1,126 tests PASS(160.235초), source SHA mismatch0**. 증거 `evidence/main1948f-mixed-sparse-full-green-1126`. v17 실제 실행은 병합 전 봉인 엔진이며 이 테스트 결과를 v17 runtime의 소스라고 주장하지 않는다.
+
+### 압축 public proof memo 및 다항 sparse pruning (통합 검증중)
+
+- **문제**: singular proof product의 예상 메모리를 Long.MAX_VALUE로 처리해 기존 예산 안의 작은 압축 relation도 public memo에 들어가지 못했다. 별도로 finite support의 저장 행 기반 GAC는 이미 모든 arity를 처리하지만 호출부가 입력2개 이하로 제한되어3개 이상에서는 pruning을 건너뛰었다.
+- **변경/근거**: public memo는 제품의 축·옵션 메타데이터만 saturating 추정하고 기존 논리적 proof수65,536/entry/byte 예산은 그대로 적용한다. Finite support는 불변 저장 행을 인덱스로 읽어 모든 arity에서 지원 없는 값만 제거한다. Public clone API는 유지하고 매 fixed-point round의 배열 복사를 없앴다. 합법 tuple·authority·비용은 변경하지 않는다.
+- **수정 파일**: NativePlacementContinuity, ExactCategoricalSolver, ExactPhysicalReducedSolver 및 관련 회귀. Native memo 독립169PASS와root169PASS(1.335초), n-ary 독립59PASS. N-ary는3회 전파 cascade와80개 고정seed dense-reference objective rawbits/assignment 비교를 포함한다. 전체 통합 검증은 이어진다.
+- **남은 문제/위험**: 큰 논리적 product는 여전히 기존 proof수 예산으로 memo에서 제외된다. Exact/dynamic region union은 이번 메모리 추정 변경에 포함하지 않는다. Cache resident memory와 실제 ML 시간은 동일Docker 실측으로 확인해야 한다.
+- **v17 GLM 실측**: planningFullInitial132.662625426초로v16130.794740209초보다1.868초 늘었다. Analysis84.614초, cost10.261초, optimizer28.523초. 숫자 comparator/runtime audit 및선택receipt·objectiveRawBits4655470428781502442 동등성PASS. MIXED_EXACTNESS 소비는681,653→487,531로감소했지만 OUTPUT_COLLISION1,358,208 및RETAINED_UNION355,644가남는다. 이변경을전체시간개선으로보고하지않는다. LogReg는실행중이다.
+
+- **다항·조건부 pruning root gate**: finite-support 60tests PASS(0.857초), conditional과조합한7suites **69tests PASS(1.084초)**. ConditionalSupport는 각region의모든축이현재활성도메인과교차할때만지원mask에기여한다. Unconstrained selector는기존wildcard의미를유지하며서로다른region축을합쳐새tuple을만들지않는다. 160fixed-seed exhaustive mask비교, frozen/partial두경로, removal epochcascade, 10억logical tuple/저장값6개회귀및dense원본objective/tie parity를검증했다. 독립검토CLEAR. 실제workload에얼마나적용되는지는다음봉인본으로측정한다.
+
+- **Native memo + 다항/conditional 통합 전체 gate**: fresh main/test compile 및 **1,138 tests PASS(150.209초), source SHA mismatch0**. 증거 `evidence/native-memo-nary-conditional-full-green-1138`. 이코드를v18로별도봉인한다. v17최종LogReg386.943659265초/GLM132.662625426초는v16보다각5.676/1.868초늘었다. 두실행numeric/audit 및선택receipt/rawbits동등성PASS이나성능목표는여전히미달이다.

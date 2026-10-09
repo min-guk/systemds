@@ -27,8 +27,9 @@ import java.util.Objects;
 /**
  * Exact solve-time reduction for the physical categorical model.
  *
- * <p>The reducer first removes values that lack finite support in a unary or
- * binary factor. It then quotients only original physical-decision variables,
+ * <p>The reducer first removes values that lack support in any unary, binary,
+ * finite-support, or conditional-support factor, using stored rows and regions
+ * for the latter relations. It then quotients only original physical-decision variables,
  * and only when two values have byte-for-byte identical observations in every
  * incident frozen factor over the remaining active domains. Consequently each
  * reduced assignment has a representative full assignment with the same
@@ -1056,8 +1057,10 @@ final class ExactPhysicalReducedSolver {
 		if(mapping != null)
 			return reviseFunctionalSupport(mapping, scope, active, removals);
 		ExactCategoricalSolver.Factor frozenFactor = frozen.factor(factor);
-		if(frozenFactor.isFiniteSupport() && scope.length <= 2)
-			return reviseFiniteSupport(frozenFactor.finiteSupportCells(), scope, active, removals);
+		if(frozenFactor.isConditionalSupport())
+			return reviseConditionalSupport(frozenFactor, scope, active, removals);
+		if(frozenFactor.isFiniteSupport())
+			return reviseFiniteSupport(frozenFactor, scope, active, removals);
 		boolean changed = false;
 		if(scope.length == 1) {
 			for(int value=0; value<active[scope[0]].length; value++)
@@ -1098,13 +1101,14 @@ final class ExactPhysicalReducedSolver {
 		return changed;
 	}
 
-	private static boolean reviseFiniteSupport(int[] cells, int[] scope,
+	private static boolean reviseFiniteSupport(ExactCategoricalSolver.Factor factor, int[] scope,
 		boolean[][] active, int[] removals) {
 		boolean[][] supported = new boolean[scope.length][];
 		for(int axis = 0; axis < scope.length; axis++)
 			supported[axis] = new boolean[active[scope[axis]].length];
 		int[] coordinates = new int[scope.length];
-		for(int cell : cells) {
+		for(int stored = 0; stored < factor.finiteSupportCellCount(); stored++) {
+			int cell = factor.finiteSupportCellAt(stored);
 			int remaining = cell;
 			boolean activeCell = true;
 			for(int axis = scope.length - 1; axis >= 0; axis--) {
@@ -1122,6 +1126,24 @@ final class ExactPhysicalReducedSolver {
 			for(int value = 0; value < active[scope[axis]].length; value++)
 				if(active[scope[axis]][value] && !supported[axis][value]) {
 					active[scope[axis]][value] = false;
+					if(removals != null)
+						removals[scope[axis]]++;
+					changed = true;
+				}
+		return changed;
+	}
+
+	private static boolean reviseConditionalSupport(ExactCategoricalSolver.Factor factor,
+		int[] scope, boolean[][] active, int[] removals) {
+		boolean[][] localActive = new boolean[scope.length][];
+		for(int axis = 0; axis < scope.length; axis++)
+			localActive[axis] = active[scope[axis]];
+		boolean[][] supported = factor.conditionalSupportedValues(localActive);
+		boolean changed = false;
+		for(int axis = 0; axis < scope.length; axis++)
+			for(int value = 0; value < localActive[axis].length; value++)
+				if(localActive[axis][value] && !supported[axis][value]) {
+					localActive[axis][value] = false;
 					if(removals != null)
 						removals[scope[axis]]++;
 					changed = true;
@@ -1203,6 +1225,8 @@ final class ExactPhysicalReducedSolver {
 
 	private static boolean revisePartialHardFactor(ExactCategoricalSolver.Factor factor,
 		int[] scope, boolean[][] active, int[] removals) {
+		if(factor.isConditionalSupport())
+			return reviseConditionalSupport(factor, scope, active, removals);
 		boolean changed = false;
 		int[] local = new int[scope.length];
 		Arrays.fill(local,-1);
