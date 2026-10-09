@@ -306,3 +306,18 @@
 - **위험**: 향후다른constructor가 row-index consistency를깨면linearcheck전제가깨진다. 현재세construction site의동일row단일삽입을확인했고, 전체기능회귀및widebucket검사를유지한다. 완전planning20초효과는아직없다.
 - **후속 v24는 계측만**: recipe/emission/witness가같은generatedquery들을batch로재사용할수있는가설을독립architect가검토했다. 하지만실제공유가능비율을모르므로 먼저기존exactmemo결과에대한bounded shadowindex로잠재graph회피수만측정한다. Root-history-independent+root-owner-freebinding, exactowneridentity및기존cachebudget을모두만족해야하고, 결과/현재query수는변경하지않는다. 반복이적으면실제cache구현을기각한다.
 - **v23 full gate 결과**: fresh package **1,117 selected tests/failure0/error0/skip1**, BUILD SUCCESS02:46:46. 독립architect productionreview CLEAR이며봉인후게시한다. Widefixture에서정확히64visits와실제rawsameidentity를직접assert하는보강은후속test변경으로분리한다(현재oldcode복잡도red는유효). 기존Exact/PCA supplemental gap은해결주장하지않는다.
+
+### v24 generated-query shadow 계측 / native product metadata (진행중)
+
+- **게시**: v23 `689760d079a7ce818034533a0f9003a0a10fc888`을origin/main push하고remoteSHA를확인했다. 봉인JAR `830789df47865f24fa242a64fb13398b06241c9cea6c019c33d56533b9cf6945`로동일Docker측정한다.
+- **shadow계획**: 실제batch재사용은아직구현하지않는다. Exact support/publicmemo keys와LRU순서를그대로두고, recomputeNative의한resolver/fact/emission seedloop에만metrics-ON observer를둔다. 실제graph miss 직전의동일witness에resident certified key가있는지만세며, entry자체는새cache에보유하지않는다. rootIndependent 및returned binding의rootowner없음을검사하고 foreign-owner proposal을identity로제외한다. Product는axes만검사한다. Zero-cache/eviction/saturation도분모와분리한다.
+- **초기test gate**: 신규observer API를직접참조한3tests는아직API가없어compile6missing-symbol로red다. 실행결과의semantic실패로혼동하지않는다. 자체shadow가결과를변경하지않는orderedproof/footprint parity와counter를이후검증한다.
+- **별도metadata병목**: `hasDynamicNativeLayout(List)`는기존factorized/indexed표현만special-case하고 NativeContinuitySupportClauses는exact(false결과)검사에모든member를생성했다. 이표현의모든member는같은clauseWitness/clauseLayoutExact를사용하므로이를직접읽는다. Proof의partitionRanges와clause의layout을혼동하지않는다.17tests중실제0vs4materialization1red를확인후3linebranch를추가했다. proofExact/clauseExact의독립조합, nullwitness와separateexplicit-oracle를검증한다.
+- **v23 tests-only 보강**: 봉인후widebucket검사를정확히64회및실제topology assertSame으로강화했다. 이는v24 gate에포함하며1117봉인결과를새test검증으로과장하지않는다.
+- **위험/잔여**: shadow가LRUget으로순서를바꾸거나product를펼치면관측자효과가된다. containsKey만사용하고각loop수명을제한하며OFF동등성을검증한다. 후보/합법성/privacy/실제graph선택은변경하지않는다.20초달성은여전히미확인이다.
+
+- **v24 focused/matrix gate**: isolated javac 후 첫 148 tests PASS/skip1(Composition 포함), 테스트만 추가한 후 Native/NativeProduct/DefaultPruning 140 tests PASS/skip1. 두 집합은 겹치므로 합산하지 않는다. A(X)→B(Y)→C(X)의 budget2 LRU 순서를 observer-null 대조와 매 단계 비교했고, containsKey가 get으로 바뀌면 eviction 순서가 바뀌는 회귀를 잠갔다. Foreign fact/emission/root/resolver identity, zero budget, saturation/eviction, negative missing-root의 순서/footprint, root history와 root-binding 및 lazy axes 검사도 포함한다.
+- **독립 검토**: architect는 shadow-only production과 constant metadata branch를 CLEAR로 확인했다. Actual batch result reuse는 미구현이며 별도의 증명/검증 gate가 필요하다.
+- **계측 해석 제한**: repeat potential은 같은 emission loop에서 관찰된 실제 MISS 중 기존 certified key가 resident인 경우만 세는 bounded lower bound다. 기존 public/support memo HIT는 index에 넣지 않으므로, 낮은 수치가 전체 재사용 가능성이 없다는 증거는 아니다. Saturation/eviction도 과소계수 요인이다. 후보 축소나 비용/합법성 규칙은 변경하지 않는다.
+- **v23 Docker 결과**: pinned image/4CPU/16GiB/10GiB heap, JFR55s/watchdog60s에서 LogReg·GLM 모두 timeout/no completion receipt. own container 제거를 확인했다. Inclusive samples에서 direct binding은 각각52.98%/18.53%였으나 완료 wall-time의 속도 향상으로 해석하지 않는다. Probe는 production DMLScript compile-only 경로로 runtime-program 생성 이후 full-initial planning receipt를 검증한다. `liveMetrics=false`는 DMLTranslator.productionSearchSpaceMetrics가 null을 반환하므로 상세 metrics OFF이며 JFR만 유지된다.
+- **v24 full gate 완료**: fresh 133-class package **1,125 selected tests/failure0/error0/skip1**, BUILD SUCCESS 03:00:55. `candidate-v24-package.log`와 source/JAR seal을 보존한 뒤 게시·Docker 계측한다. 기존 Exact/PCA supplemental width 실패는 이번 selected gate에 포함하지 않았고 해결 주장하지 않는다.

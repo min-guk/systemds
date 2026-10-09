@@ -1972,6 +1972,20 @@ final class NativePlacementContinuity {
 	CandidateSupportResult proveGeneratedCandidateSupport(
 		CandidateRuleFact trustedBase, CandidateEmissionFact baseEmission,
 		CandidateRealizationReference proposedOutput, DurableAnchorKey externalSeed) {
+		return proveGeneratedCandidateSupport(
+			trustedBase, baseEmission, proposedOutput, externalSeed, null);
+	}
+
+	GeneratedSupportBatchObserver generatedSupportBatchObserver(
+		CandidateRuleFact trustedBase, CandidateEmissionFact baseEmission) {
+		return metrics == null ? null
+			: new GeneratedSupportBatchObserver(trustedBase, baseEmission);
+	}
+
+	CandidateSupportResult proveGeneratedCandidateSupport(
+		CandidateRuleFact trustedBase, CandidateEmissionFact baseEmission,
+		CandidateRealizationReference proposedOutput, DurableAnchorKey externalSeed,
+		GeneratedSupportBatchObserver batchObserver) {
 		Objects.requireNonNull(trustedBase, "trusted generator base");
 		Objects.requireNonNull(baseEmission, "generator base emission");
 		Objects.requireNonNull(proposedOutput, "proposed generator output");
@@ -1990,6 +2004,9 @@ final class NativePlacementContinuity {
 			|| state.fType() == null || baseEmission.executionFType() != state.fType()
 			|| baseEmission.derivedFoutAction() != null)
 			return new CandidateSupportResult(List.of(), Set.of(root));
+		if(batchObserver != null && !batchObserver.matches(
+			this, trustedBase, baseEmission, proposedOutput))
+			batchObserver = null;
 		GenerationRoot generation = new GenerationRoot(trustedBase, baseEmission);
 		PublicCandidateQueryKey query = new PublicCandidateQueryKey(
 			proposedOutput, externalSeed, true);
@@ -2002,7 +2019,7 @@ final class NativePlacementContinuity {
 		if(metrics != null)
 			metrics.recordMemoMiss();
 		ComputedPublicProof computed = computeCandidateAlternatives(
-			proposedOutput, externalSeed, generation);
+			proposedOutput, externalSeed, generation, batchObserver);
 		cacheCompletedProofs(query, computed);
 		return new CandidateSupportResult(computed.proofs(), computed.occurrences());
 	}
@@ -2063,6 +2080,12 @@ final class NativePlacementContinuity {
 
 	private ComputedPublicProof computeCandidateAlternatives(CandidateRealizationReference source,
 		DurableAnchorKey externalSeed, GenerationRoot generation) {
+		return computeCandidateAlternatives(source, externalSeed, generation, null);
+	}
+
+	private ComputedPublicProof computeCandidateAlternatives(CandidateRealizationReference source,
+		DurableAnchorKey externalSeed, GenerationRoot generation,
+		GeneratedSupportBatchObserver batchObserver) {
 		NativePoolWitness seedWitness = nativeWitness(
 			externalSeed);
 		if(seedWitness == null)
@@ -2075,7 +2098,7 @@ final class NativePlacementContinuity {
 		if(witness == null)
 			return new ComputedPublicProof(List.of(), Set.of(source.rule().parentOccurrence()));
 		ComputedPublicProof exact = proveCandidateAlternatives(
-			source, externalSeed, witness, generation);
+			source, externalSeed, witness, generation, batchObserver);
 		if(witness.fType != FType.ROW && witness.fType != FType.COL && witness.fType != FType.FULL)
 			return exact;
 		FType witnessType = witness.fType;
@@ -2083,7 +2106,7 @@ final class NativePlacementContinuity {
 		if(dynamicWitness == null)
 			return exact;
 		ComputedPublicProof dynamic = proveCandidateAlternatives(
-			source, externalSeed, dynamicWitness, generation);
+			source, externalSeed, dynamicWitness, generation, batchObserver);
 		List<NativeContinuityProof> dynamicProofs = dynamic.proofs().stream()
 			.filter(proof -> recomputesNativePartitionRanges(owner, witnessType)
 				|| proof.immediateBindings().stream().anyMatch(binding ->
@@ -2331,6 +2354,9 @@ final class NativePlacementContinuity {
 	}
 
 	static boolean hasDynamicNativeLayout(List<CandidateRealizationSupportClause> supportClauses) {
+		// Every member uses this exact clause metadata, independently of its proof's ranges.
+		if(supportClauses instanceof NativeContinuitySupportClauses product)
+			return product.clauseWitness() != null && !product.clauseLayoutExact();
 		if(supportClauses instanceof FactorizedSupportClauses factorized)
 			return factorized.nativeWorkerPoolWitness() != null
 				&& !factorized.nativeWorkerPoolLayoutExact();
@@ -2349,6 +2375,12 @@ final class NativePlacementContinuity {
 
 	private ComputedPublicProof proveCandidateAlternatives(CandidateRealizationReference source,
 		DurableAnchorKey externalSeed, NativePoolWitness witness, GenerationRoot generation) {
+		return proveCandidateAlternatives(source, externalSeed, witness, generation, null);
+	}
+
+	private ComputedPublicProof proveCandidateAlternatives(CandidateRealizationReference source,
+		DurableAnchorKey externalSeed, NativePoolWitness witness, GenerationRoot generation,
+		GeneratedSupportBatchObserver batchObserver) {
 		boolean generated = generation != null;
 		CandidateSupportQueryKey query = candidateSupportQueryKey(source, witness, generated);
 		SupportMemoEntry cached = completedSupportMemo.get(query);
@@ -2371,11 +2403,16 @@ final class NativePlacementContinuity {
 		}
 		if(metrics != null)
 			metrics.recordSupportMemoMiss();
+		boolean certifiedPriorResident = batchObserver != null
+			&& batchObserver.beforeGraphBuild(witness);
 		ComputedCandidateSupport computed = computeCandidateSupportAlternatives(
 			source, witness, generation);
 		SupportMemoEntry entry = new SupportMemoEntry(source, computed.templates,
 			computed.occurrences, estimatedSupportBytes(computed.templates), computed.rootIndependent);
 		cacheCompletedSupports(query, entry);
+		if(batchObserver != null)
+			batchObserver.afterGraphBuild(
+				witness, query, entry, certifiedPriorResident);
 		if(rootSupportKey != null && entry.rootIndependent)
 			cacheAcyclicRootSupport(rootSupportKey, entry);
 		return new ComputedPublicProof(instantiateSupportTemplates(entry, source, externalSeed),
@@ -4847,6 +4884,75 @@ final class NativePlacementContinuity {
 		private GenerationRoot {
 			Objects.requireNonNull(trustedBase, "trusted generator base");
 			Objects.requireNonNull(baseEmission, "generator base emission");
+		}
+	}
+
+	final class GeneratedSupportBatchObserver {
+		private static final int MAXIMUM_ENTRIES = 256;
+		private final CandidateRuleFact trustedBase;
+		private final CandidateEmissionFact baseEmission;
+		private final CompiledHopKey root;
+		private final int maximumEntries;
+		private final Map<NativePoolWitness,CandidateSupportQueryKey> certifiedByWitness =
+			new java.util.HashMap<>();
+
+		private GeneratedSupportBatchObserver(CandidateRuleFact trustedBase,
+			CandidateEmissionFact baseEmission) {
+			this.trustedBase = Objects.requireNonNull(trustedBase, "trusted generator base");
+			this.baseEmission = Objects.requireNonNull(baseEmission, "generator base emission");
+			root = trustedBase.key().parentOccurrence();
+			maximumEntries = Math.min(supportMemoMaxEntries, MAXIMUM_ENTRIES);
+		}
+
+		private boolean matches(NativePlacementContinuity resolver,
+			CandidateRuleFact fact, CandidateEmissionFact emission,
+			CandidateRealizationReference proposedOutput) {
+			return NativePlacementContinuity.this == resolver
+				&& fact == trustedBase && emission == baseEmission
+				&& proposedOutput.rule().parentOccurrence() == root;
+		}
+
+		private boolean beforeGraphBuild(NativePoolWitness witness) {
+			metrics.recordDirectWork(
+				SearchSpaceMetrics.DirectWork.GENERATED_BATCH_ELIGIBLE_GRAPH_MISSES);
+			CandidateSupportQueryKey prior = certifiedByWitness.get(witness);
+			return prior != null && completedSupportMemo.containsKey(prior);
+		}
+
+		private void afterGraphBuild(NativePoolWitness witness,
+			CandidateSupportQueryKey query, SupportMemoEntry entry,
+			boolean certifiedPriorResident) {
+			if(!entry.rootIndependent) {
+				metrics.recordDirectWork(
+					SearchSpaceMetrics.DirectWork.GENERATED_BATCH_ROOT_HISTORY_REJECTIONS);
+				return;
+			}
+			if(hasReturnedRootBinding(entry)) {
+				metrics.recordDirectWork(
+					SearchSpaceMetrics.DirectWork.GENERATED_BATCH_ROOT_BINDING_REJECTIONS);
+				return;
+			}
+			if(certifiedPriorResident)
+				metrics.recordDirectWork(
+					SearchSpaceMetrics.DirectWork.GENERATED_BATCH_CERTIFIED_REPEAT_POTENTIAL);
+			if(!completedSupportMemo.containsKey(query))
+				return;
+			if(certifiedByWitness.containsKey(witness) || certifiedByWitness.size() < maximumEntries)
+				certifiedByWitness.put(witness, query);
+			else
+				metrics.recordDirectWork(
+					SearchSpaceMetrics.DirectWork.GENERATED_BATCH_INDEX_SATURATION);
+		}
+
+		private boolean hasReturnedRootBinding(SupportMemoEntry entry) {
+			if(entry.templates instanceof CandidateSupportTemplateProduct product)
+				return product.axes.stream().flatMap(List::stream)
+					.anyMatch(binding -> binding.source().rule().parentOccurrence() == root);
+			for(CandidateSupportTemplate template : entry.templates)
+				for(CandidateRealizationInputBinding binding : template.immediateBindings)
+					if(binding.source().rule().parentOccurrence() == root)
+						return true;
+			return false;
 		}
 	}
 

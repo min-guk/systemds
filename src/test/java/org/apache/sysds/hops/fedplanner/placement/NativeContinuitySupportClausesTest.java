@@ -377,6 +377,34 @@ public class NativeContinuitySupportClausesTest {
 		Assert.assertEquals(0, realization.fullyMaterializedSupportClauseCount());
 	}
 
+	@Test
+	public void dynamicLayoutMetadataDoesNotEnumerateNativeProductMembers() {
+		CompiledHopKey owner = key("metadata-owner");
+		CompiledHopKey left = key("metadata-left");
+		CompiledHopKey right = key("metadata-right");
+		DurableAnchorKey seed = pool("metadata-seed");
+		DurableAnchorKey output = pool("metadata-output");
+		var axes = List.of(List.of(direct(0, "a", left), direct(0, "b", left)),
+			List.of(direct(1, "a", right), direct(1, "b", right)));
+		for(boolean proofExact : new boolean[] {true, false}) {
+			var product = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				seed, output, proofExact, axes);
+			Assert.assertNotNull(product);
+			for(boolean clauseExact : new boolean[] {true, false}) {
+				var measured = new NativeContinuitySupportClauses(owner, product, output, clauseExact);
+				var oracle = new NativeContinuitySupportClauses(owner, product, output, clauseExact);
+				List<CandidateRealizationSupportClause> explicit = new ArrayList<>(oracle);
+				Assert.assertEquals(!clauseExact, NativePlacementContinuity.hasDynamicNativeLayout(explicit));
+				Assert.assertEquals(!clauseExact, NativePlacementContinuity.hasDynamicNativeLayout(measured));
+				Assert.assertEquals("constant clause metadata must not read a product member",
+					0, measured.materializedHandleCount());
+			}
+			var absentWitness = new NativeContinuitySupportClauses(owner, product, null, true);
+			Assert.assertFalse(NativePlacementContinuity.hasDynamicNativeLayout(absentWitness));
+			Assert.assertEquals(0, absentWitness.materializedHandleCount());
+		}
+	}
+
 	private static CandidateRealizationInputBinding direct(int position, String name,
 		CompiledHopKey owner) {
 		CandidateRuleKey rule = new CandidateRuleKey(owner,
