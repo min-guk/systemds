@@ -1165,3 +1165,15 @@
 - **v35 통합 gate 완료**: latest derived hybrid + conditional union final2 + Regional scope preparation을 함께 검증했다. Selected FedPlanner1,361개 PASS(177.399초),7,864 class/resource 실행 전후 변경0/source SHA 불일치0. 근거 evidence/native-conditional-union-derived-regional-full-gate-v35/validation.json. Incoming derived와 final2 conditional은 독립 reviewer CLEAR, Regional은 root가 immutable scope와 evaluator contract를 독립 검토했다. 기존 omitted/ignored baseline 범위는 유지하며 전체 저장소 Maven 통과로 확대하지 않는다.
 
 - **v35 probe**: 별도9개 PASS(1.394초). 검증된 source를 봉인·게시한다. v34 actual 및 별도 normalized semantic 검증은 진행 중이며20초 목표는 미달이다.
+
+
+### v36 / 동일 source owner의 재생성 binding과 Local seed 비용 평가 (진행 중)
+
+- **Conditional union**: 이전에는 같은 source owner와 동일한 binding 값이어도 wrapper 객체가 새로 생성되면 union을 거절했다. base 축 전체에 `sameExactAxes`를 적용하고 exclusion intersection을 왼쪽 binding으로 재결합한다. Exact complement factory의 자기 base mask identity 검사는 그대로 유지한다. 왼쪽 donor 우선순위와 RHS-only member의 원래 Clause/binding/reference 객체를 보존하며, 구조적으로 같은 별도 owner는 거절한다. 독립 review CLEAR; fixed-seed 40개 mask와 foreign owner, identity predicate restriction 등을 포함해77개 PASS. 기존 equal-distinct fallback 기대 검사 하나를 의도된 admission 계약으로 수정했고 constructor authority 거절은 유지한다.
+- **v34 actual 완료**: 고정8CPU COFEE50K×128 W1 LogReg391.356789578초/GLM127.030148981초. Numeric/audit/objective bits/선택 계획 parity PASS,20초 미달. LogReg explicit Clause2,543,426/proof 소비6,127,475로 v32와 같아 생성량 개선으로 보고하지 않는다. Native hybrid 요청15,032회 중 derived 최초 거부10,376회는 v35 수정 경로의 실제 발생 근거다. 상세 중복 진단 OFF와 정상 liveMetrics ON을 구분한다. v35 고정 엔진 측정은 진행 중이다.
+
+- **Local seed 비용 평가**: 현재 변수 외 입력의 assignment와 닫힌 incident factor를 값별 반복 전에 한 번 준비한다. 각 factor의 입력 배열 하나에서 현재 변수 위치만 바꾸고 기존 `Factor.cost`를 호출한다. CostFunction은 solver buffer를 보관·수정하지 않는 계약을 이미 명시한다. Factor 순서, 최초 +INF short circuit, compensated sum의 raw bits, hard violation 검사, state-key tie가 유지된다. 40개 fixed-seed 모델의 fresh-array reference와 assignment/objective bits를 비교했으며 큰 domain에서 factor당 seed 배열512개→1개를 검증했다. Focused56개 PASS 및 독립 review CLEAR. 논리 후보/pruning 감소가 아니라 scope 순회·배열 할당 감소이며 실제 ML optimizer 개선은 미확정이다. 통합 gate 실행 중에는 source를 수정하지 않는다.
+
+- **원격 anchor lookup 검토**: origin/main d92822e018의 `FederatedAnchorOwnerLookup`을 독립적으로 검토했다. 한 bind 호출의 immutable node/overlay/origin inventory만 재사용하며 전체 DurableAnchorKey로 memo한다. Exact anchor 소유자를 physical-only 소유자보다 먼저 선택하고, Node 비교 동률은 기존 encounter order를 유지한다. Node constructor가 anchors를 canonical 정렬함을 확인했으므로 첫 selectable anchor는 기존 정렬 minimum과 같다. Native miss만 memo하고 action별 provisional owner 검사는 매번 수행하며 현재 action의 equal-distinct anchor 객체를 돌려준다. Root static CLEAR, 현재 gate 종료 후 병합·통합 재검증한다.
+
+- **v36 사전 통합 gate**: conditional rebound + Local closed incident 변경을 함께 검사해 selected FedPlanner1,367개 PASS(178.931초),7,867 class/resource 변경0/source SHA 불일치0. 근거 `evidence/native-conditional-rebound-local-full-gate-v36/validation.json`. 원격 anchor lookup 병합 후 최신 checkout에서 새 gate를 수행하며 사전 결과를 최종 게시본 검증으로 대체하지 않는다.

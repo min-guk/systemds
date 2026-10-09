@@ -126,6 +126,12 @@ final class LocalCategoricalOptimizer {
 	}
 
 	private record IndexedFactor(Factor factor, int[] scope, int ordinal) { }
+	private record ClosedIncidentFactor(Factor factor, int[] values, int variablePosition) {
+		double cost(int value) {
+			values[variablePosition] = value;
+			return factor.cost(values);
+		}
+	}
 	private record LocalChoice(int value, int hardViolations, double cost) { }
 	private record BlockSolution(int[] valuesInCanonicalBlockOrder, double incidentCost,
 		long searchAssignments) { }
@@ -880,13 +886,17 @@ final class LocalCategoricalOptimizer {
 	private static void selectLocalState(Context context, int[] assignment, int variable,
 		MutableStatistics statistics) {
 		Variable decision = context.variables.get(variable);
+		List<ClosedIncidentFactor> hard = closedIncidentFactors(
+			context.incidentHard.get(variable), assignment, variable);
+		List<ClosedIncidentFactor> cost = closedIncidentFactors(
+			context.incidentCost.get(variable), assignment, variable);
 		Map<Object,LocalChoice> representatives = new LinkedHashMap<>();
 		// Preserve the seed's conflict regions: removing unsupported provisional
 		// choices here can skip repairs that improve the anytime incumbent.
 		for(int value = 0; value < decision.domainSize(); value++) {
 			statistics.rawLocalAlternatives++;
 			assignment[variable] = value;
-			LocalChoice candidate = closedIncidentChoice(context, assignment, variable, value);
+			LocalChoice candidate = closedIncidentChoice(hard, cost, value);
 			Object state = context.stateKeys.stateKey(decision, value);
 			LocalChoice prior = representatives.get(state);
 			if(prior == null || compare(candidate, prior) < 0)
@@ -900,19 +910,49 @@ final class LocalCategoricalOptimizer {
 		assignment[variable] = selected.value();
 	}
 
-	private static LocalChoice closedIncidentChoice(Context context, int[] assignment,
-		int variable, int value) {
+	private static List<ClosedIncidentFactor> closedIncidentFactors(
+		List<IndexedFactor> factors, int[] assignment, int variable) {
+		List<ClosedIncidentFactor> closed = new ArrayList<>();
+		for(IndexedFactor factor : factors) {
+			int[] values = new int[factor.scope().length];
+			int variablePosition = -1;
+			boolean complete = true;
+			for(int position = 0; position < values.length; position++) {
+				int global = factor.scope()[position];
+				if(global == variable)
+					variablePosition = position;
+				else if(assignment[global] >= 0)
+					values[position] = assignment[global];
+				else {
+					complete = false;
+					break;
+				}
+			}
+			if(complete)
+				closed.add(new ClosedIncidentFactor(factor.factor(), values, variablePosition));
+		}
+		return List.copyOf(closed);
+	}
+
+	private static LocalChoice closedIncidentChoice(List<ClosedIncidentFactor> hard,
+		List<ClosedIncidentFactor> costFactors, int value) {
 		int violations = 0;
-		for(IndexedFactor factor : context.incidentHard.get(variable)) {
-			if(!allAssigned(factor.scope(), assignment))
-				continue;
-			double cost = evaluate(factor, assignment);
+		for(ClosedIncidentFactor factor : hard) {
+			double cost = factor.cost(value);
 			if(cost == Double.POSITIVE_INFINITY)
 				violations++;
 			else
 				requireNonNegativeCost(cost, "LOCAL_HARD_FACTOR_COST_INVALID");
 		}
-		double cost = evaluateClosedCost(context.incidentCost.get(variable), assignment);
+		ExactCompensatedCostSum total = new ExactCompensatedCostSum();
+		for(ClosedIncidentFactor factor : costFactors) {
+			double candidate = factor.cost(value);
+			if(candidate == Double.POSITIVE_INFINITY)
+				return new LocalChoice(value, violations, candidate);
+			total.addBits(Double.doubleToRawLongBits(candidate), "LOCAL_COST_FACTOR_INVALID",
+				"LOCAL_COST_TOTAL_INVALID");
+		}
+		double cost = Double.longBitsToDouble(total.totalBits("LOCAL_COST_TOTAL_INVALID"));
 		return new LocalChoice(value, violations, cost);
 	}
 
