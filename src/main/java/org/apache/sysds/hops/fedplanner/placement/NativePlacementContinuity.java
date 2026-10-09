@@ -188,6 +188,8 @@ final class NativePlacementContinuity {
 	private long dependencySkeletonOwnerFactScans;
 	private long supportMemoRetainedTemplates;
 	private long supportMemoRetainedEstimatedBytes;
+	private long acyclicRootRetainedUnits;
+	private long acyclicRootRetainedEstimatedBytes;
 	// Acyclic child components retain one immutable exact relation DAG while their
 	// supported boundary rows provide the fast path. The complete footprint guards
 	// the query-local root pin and revision invalidation.
@@ -2517,6 +2519,12 @@ final class NativePlacementContinuity {
 		cacheCompletedSupports(query, entry);
 		if(batch != null)
 			batch.admit(witness, query, entry);
+		// A native-containing ordinary root may admit its bounded ordinary topology
+		// only while building this first graph. Recheck the resident slice afterward;
+		// never build or expand topology solely to manufacture a shared-root key.
+		if(rootSupportKey == null && !generated && entry.rootIndependent
+			&& hasNativeRelationOwner(source.rule().parentOccurrence()))
+			rootSupportKey = acyclicRootSupportKey(source, witness);
 		if(rootSupportKey != null && entry.rootIndependent)
 			cacheAcyclicRootSupport(rootSupportKey, entry);
 		return new ComputedPublicProof(instantiateSupportTemplates(entry, source, externalSeed),
@@ -2528,11 +2536,21 @@ final class NativePlacementContinuity {
 		CompiledHopKey occurrence = source.rule().parentOccurrence();
 		if(occurrenceComponents.components().componentOf(occurrence).cyclic())
 			return null;
-		// The shared root key is a flat OR-of-AND topology key. A native rectangular
-		// relation is kept as AND-of-axis-OR gates below; asking the legacy key builder
-		// for it would first enumerate every tuple and defeat that representation.
-		if(hasNativeRelationOwner(occurrence))
-			return null;
+		boolean nativeOwner = hasNativeRelationOwner(occurrence);
+		int handle = candidateHandle(source);
+		CandidateTopology topology = null;
+		if(nativeOwner) {
+			// A native product remains an AND-of-axis-OR circuit and must never become
+			// this flat relation key. Only an already resident bounded ordinary slice is
+			// eligible; key construction itself never builds or expands fallback topology.
+			if(hasNativeContinuityRelation(occurrence, source)
+				|| !declaresExactRealization(occurrence, source))
+				return null;
+			CandidateTopologyKey resident = residentTopologyKey(occurrence, witness);
+			topology = resident == null ? null : candidateTopologies.get(resident);
+			if(topology == null || !topology.ordinaryOnly)
+				return null;
+		}
 		if(metrics != null) {
 			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.ACYCLIC_ROOT_TOPOLOGY_REQUESTS);
 			CandidateTopologyKey resident = residentTopologyKey(occurrence, witness);
@@ -2540,8 +2558,8 @@ final class NativePlacementContinuity {
 				? SearchSpaceMetrics.DirectWork.ACYCLIC_ROOT_TOPOLOGY_RESIDENT
 				: SearchSpaceMetrics.DirectWork.ACYCLIC_ROOT_TOPOLOGY_COLD);
 		}
-		CandidateTopology topology = candidateTopology(occurrence, witness);
-		int handle = candidateHandle(source);
+		if(!nativeOwner)
+			topology = candidateTopology(occurrence, witness);
 		List<CandidateTopologyRow> rows = topology.rowsByHandle.get(handle);
 		if(rows == null || rows.isEmpty())
 			return null;
@@ -2552,15 +2570,47 @@ final class NativePlacementContinuity {
 	}
 
 	private void cacheAcyclicRootSupport(AcyclicRootSupportKey key, SupportMemoEntry entry) {
+		long retainedUnits = key.retainedUnits() + entry.templates.size();
+		long estimatedBytes = estimatedAcyclicRootRetentionBytes(key, entry);
 		if(supportMemoMaxEntries == 0 || supportMemoMaxTemplates == 0
 			|| supportMemoMaxEstimatedBytes == 0
-			|| entry.templates.size() > supportMemoMaxTemplates
-			|| entry.estimatedBytes > supportMemoMaxEstimatedBytes)
+			|| retainedUnits > supportMemoMaxTemplates
+			|| estimatedBytes > supportMemoMaxEstimatedBytes)
 			return;
-		acyclicRootSupportMemo.remove(key);
-		while(acyclicRootSupportMemo.size() >= supportMemoMaxEntries)
-			acyclicRootSupportMemo.remove(acyclicRootSupportMemo.entrySet().iterator().next().getKey());
+		SupportMemoEntry prior = acyclicRootSupportMemo.remove(key);
+		if(prior != null) {
+			acyclicRootRetainedUnits -= key.retainedUnits() + prior.templates.size();
+			acyclicRootRetainedEstimatedBytes -= estimatedAcyclicRootRetentionBytes(key, prior);
+		}
+		while(!acyclicRootSupportMemo.isEmpty()
+			&& (acyclicRootSupportMemo.size() >= supportMemoMaxEntries
+				|| saturatedAdd(acyclicRootRetainedUnits, retainedUnits) > supportMemoMaxTemplates
+				|| saturatedAdd(acyclicRootRetainedEstimatedBytes, estimatedBytes)
+					> supportMemoMaxEstimatedBytes)) {
+			var oldest = acyclicRootSupportMemo.entrySet().iterator().next();
+			acyclicRootRetainedUnits -= oldest.getKey().retainedUnits()
+				+ oldest.getValue().templates.size();
+			acyclicRootRetainedEstimatedBytes -= estimatedAcyclicRootRetentionBytes(
+				oldest.getKey(), oldest.getValue());
+			acyclicRootSupportMemo.remove(oldest.getKey());
+			if(metrics != null)
+				metrics.recordSupportMemoEviction();
+		}
 		acyclicRootSupportMemo.put(key, entry);
+		acyclicRootRetainedUnits += retainedUnits;
+		acyclicRootRetainedEstimatedBytes += estimatedBytes;
+	}
+
+	private static long estimatedAcyclicRootRetentionBytes(
+		AcyclicRootSupportKey key, SupportMemoEntry entry) {
+		long occurrenceBytes = entry.occurrences.size() > Long.MAX_VALUE / 64L
+			? Long.MAX_VALUE : 64L * entry.occurrences.size();
+		return saturatedAdd(key.estimatedBytes(), saturatedAdd(entry.estimatedBytes,
+			saturatedAdd(96L, occurrenceBytes)));
+	}
+
+	private static long saturatedAdd(long left, long right) {
+		return Long.MAX_VALUE - left < right ? Long.MAX_VALUE : left + right;
 	}
 
 	private ComputedCandidateSupport computeCandidateSupportAlternatives(
@@ -4284,9 +4334,12 @@ final class NativePlacementContinuity {
 		// a later declaration can expose native support under the very same key.
 		// Negative handles are exact resolver-local equality buckets after arena
 		// overflow; only zero denotes no pin. This slice never migrates revisions.
+		// An undeclared pin cannot name a skipped native row either. Its empty handle
+		// bucket still reaches the unchanged staging-template fallback below, with all
+		// ordinary/derived metadata reads and exact source authority preserved.
 		boolean ordinaryOnly = pinned != null && pinnedHandle != 0
 			&& pinned.rule().parentOccurrence() == key && hasNativeRelationOwner(key)
-			&& !hasNativeContinuityRelation(key, pinned) && declaresExactRealization(key, pinned);
+			&& !hasNativeContinuityRelation(key, pinned);
 		if(ordinaryOnly && (topologyMaxEntries == 0 || topologyMaxRows == 0)) {
 			if(metrics != null)
 				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.ORDINARY_TOPOLOGY_BYPASSES);
@@ -5516,7 +5569,7 @@ final class NativePlacementContinuity {
 
 	private static final class CandidateTopology {
 		// A slice contains every ordinary/derived row, but not native sibling
-		// products. It may serve only non-aliased declared ordinary pins.
+		// products. It may serve only non-aliased ordinary or undeclared pins.
 		private final boolean ordinaryOnly;
 		private final boolean eligible;
 		private final boolean nodeDirectGround;
@@ -5752,6 +5805,8 @@ final class NativePlacementContinuity {
 		private final CompiledHopKey occurrence;
 		private final NativePoolWitness witness;
 		private final List<RootTopologyRowKey> relation;
+		private final long retainedUnits;
+		private final long estimatedBytes;
 		private final int hashCode;
 
 		private AcyclicRootSupportKey(CompiledHopKey occurrence, NativePoolWitness witness,
@@ -5759,9 +5814,17 @@ final class NativePlacementContinuity {
 			this.occurrence = occurrence;
 			this.witness = witness;
 			this.relation = List.copyOf(relation);
+			long dependencies = this.relation.stream()
+				.mapToLong(row -> row.dependencies().size()).sum();
+			retainedUnits = saturatedAdd(this.relation.size(), dependencies);
+			estimatedBytes = saturatedAdd(64L,
+				saturatedAdd(48L * this.relation.size(), 48L * dependencies));
 			int hash = 31 * System.identityHashCode(occurrence) + witness.hashCode();
 			hashCode = 31 * hash + this.relation.hashCode();
 		}
+
+		private long retainedUnits() { return retainedUnits; }
+		private long estimatedBytes() { return estimatedBytes; }
 
 		@Override public int hashCode() { return hashCode; }
 

@@ -1312,3 +1312,18 @@
 - **phase 해석 정정**: PROOF_OVERLAY는 fixed overlay list 구성만이 아니라 computeCandidateSupportAlternatives→buildCandidateProofGraph 전체를 감싼다. v38의72.625초를 overlay list 재구축 비용으로 단정하지 않는다. Positive exact-key 반복은 기존 bounded memo가 처리하고, negative handle-only memo는 structural-equal source wrapper의 객체 권한을 섞을 위험이 있다. 정상 실행의 반복 identity 증거 없이 추가 cache를 만들지 않았다. 통합본 실제 graph/topology/시간 지표를 우선 확인한다.
 
 - **v41 병합 gate 완료**: selected FedPlanner1,416개 PASS(179.908초),7,886 class/resource 실행 전후 변경0/source SHA 불일치0. 별도 probe9개 PASS(1.387초), root와 독립 reviewer 최종 CLEAR. 검증된 병합본을 commit·별도 엔진 봉인 후 고정 COFEE actual로 확인한다. 전체 repository Maven 통과나20초 달성을 의미하지 않는다.
+
+- **v41 게시/actual 완료**:46c2d282d6 origin/main push 성공. Frozen JAR38b156b1d0d8113e8c96bb0e1de14cde88d1df9f5b40eacbdc6dfbd926f9e126,manifestdbdbdcdfcbe980e0b90a4b8df4c1e787ad10b245def61ba2e7d906fc4d22ce59. 동일 COFEE LogReg367.465936042초/GLM124.110473372초. Numeric/audit0/objective/selectedsections 및 CostSurface 지문 모두v38과 같다. 각1회이며20초FAIL, 일관된 전체 개선 없음.
+- **v41 실제 범위**: LR ordinary admissions21,202/hits6,574,634/logical member 조회생략12,421,044이나 proof소비6,121,451회는 그대로다. Explicit Clause−19,402, topology54.314→46.963초, overlay72.625→76.425초·pruning24.632→26.699초·proofconsumption26.869→28.596초로 상쇄됐다. peak−455,241,728B. GLM Clause−6,419, full+0.444초. 비교5514270bb45204def7880f91345badeba552584905a91749375c1a0c3acf0508. Logical member 조회생략을 unique tuple pruning/전체 속도개선으로 보고하지 않는다.
+
+### v42 / Ordinary root 재사용과 missing pin의 불필요한 native 전개 (진행 중)
+
+- **문제**: native sibling이 있다는 이유로 같은 의존 관계의 ordinary root가 기존 acyclic support memo를 전혀 사용하지 못했다. 또 선언되지 않은 template pin은 native row와 일치할 수 없는데도 full topology를 만들어 sibling product를 펼쳤다.
+- **해결/계약**: root key는 이미 resident인 ordinaryOnly 관계에서만 만들며, 최초 graph 후 rootIndependent이고 partial이 admit됐을 때 재조회한다. Native/미선언 source·cycle·동일 native authority alias는 root memo 대상이 아니다. Missing pin은 기존 ordinary coverage를 쓰되 빈 handle bucket에서 기존 staging-template fallback을 그대로 수행한다. Derived/VALUE_MAP metadata·source owner identity·negative resolver-local handle 의미를 유지한다.
+- **메모리**: acyclic cache가 기존 per-entry 제한만 두던 문제를 함께 수정한다. Key의 row/dependency, templates, entry/occurrence footprint 추정량을 기존 entry/template/byte 설정의 합계 안에 보관한다. 기존 nonnative hit율이 줄 수 있는 성능 위험은 실제 비교로 확인한다.
+- **사전 검사**: root reuse RED graphs2→4 / GREEN2→3(동적 witness는 별도 graph),native handle1. Author3+211PASS/기존ignore1, 독립26PASS 및 final2fbdb928a CLEAR. Missing pin 실제 public/direct seam은 기존6handles→수정1, eager ordered proof/owner parity와positive/negative handles2tests PASS. Rootmissingpatch6e46958f+fbdb 통합 static review CLEAR. Missing pin 추가 authority/metadata/budget 반례 및 통합 gate는 진행 중이다.
+
+- **독립 missing 반례 강화**: 첫 derived fixture는 hidden owner 복원 후에도 exact native anchor certificate가 없어 실제 invalid→valid 전환을 만들지 못했다. metadata invalidation 증거는 유지하되 valid-authority 반례로는 부족했다. Final2는 해당 certificate를 추가했고 combined31개 PASS다. 기존df089 artifact를 복원·보존하고 새final2 afb95a92 및 old→new88baf3b9를 별도 발행했다. 진행 중 v42 gate의 source는 바꾸지 않았으며 다음 origin 병합 gate에 최종 테스트를 적용한다.
+- **추가 incoming**: origin23f199291f/8b48da679f는 같은 immutable support-list identity와 SkeletonTemplate identity에서만 resolver-local dependency objects를 재사용한다. Revision마다 cache가 비고 entry4096/dependency16384 제한을 적용한다. 별도 독립 review CLEAR. Template 교체로 오래된 identity entry가 resolver 종료까지 남아 유효 용량이 줄 수 있는 성능 WATCH를 기록한다. v42 standalone actual은 생략하고 이 변경까지 병합한 v43을 실측한다.
+
+- **v42 gate 완료**: selected1,428개 PASS(183.202초),7,889 class/resource 변경0/source SHA 불일치0, probe9개 PASS(1.541초). 이 gate는 최초df089 missing metadata test를 포함하며 valid-authority 강화final2는 다음 병합 gate에서 검증한다. Production과 테스트를 local commit으로 보존하고 origin을 병합한다. 아직 actual20초 개선 증거는 없다.
