@@ -612,6 +612,16 @@
 - **v31 유효RED/fixture수정**: 최초14tests/1failure는한axis에다른sourceowner둘을넣어productfactory가null인잘못된fixture였다. 한owner·한fact의서로다른exact/dynamicrealization으로바꾸고입력순서를canonical정렬했다. 이제nonnull·width2·mixedlayout선행검증뒤수정전helper의두admission이실제로실패한다(16tests/2failure, `v31-valid-red-test.log`). Production은위조건한곳과설명주석만수정하고focusedGREEN을확인한다.
 - **낮은 우선순위 조사 보류**: LoopSeedRevision hash에서nativeproduct가전개될수있는코드경로와derivedFOUT검색의불필요member스캔을확인했으나v30OFF sample의loopseedhash는각0.11%이고derivedFOUT/nativeclausematerialize는관측되지않았다. 이것을새주병목으로가정하지않고이번mixedexactness실측을우선한다. 필요시List.hash계약은유지한privateRevision전용hash를별도로검토한다.
 - **v31 최종 gate**: 유효RED16tests/2실패후freshisolated6suites **187testsPASS(3.444초,기존ignore1)**. 독립최종production/testCLEAR(회귀는helper수준이며requiredInputs=empty; 변경하지않은sourcevalidation은기존binder회귀로함께검사). 이어fresh140class package **1,188 selected tests/failure0/error0/skip1**, BUILD SUCCESS06:41:56. 실제성능은봉인후동일Docker로확인하며이통과만으로20초목표를달성했다고하지않는다.
+- **v31 게시/실측**: `1948f6cff132531c4811065992f770dedf2eb325` origin/main remote확인, 봉인JAR5cf2e01084890f0c8dce1ec87969a837963c9a779ea1d8f397fe44dadac59559. OFF/detailed양쪽여전히60초/no receipt. LogRegpartial MIXED_EXACTNESS2,807,444/3,292,739consumed,GLM OUTPUT_COLLISION884,209/1,418,541. v31이허용하는경계는유효하지만남은대부분은실제로known/exact출력이어서더큰exact분할이필요할수있다. Counters모집단진행량이다르므로절대개수차이를속도개선율로사용하지않는다.
+
+### v32 / prospective durable 충돌과 실제 native 출력 key 분리 (진행중)
+
+- **문제/증명**: prospective DURABLE키가충돌해도실제native키는원래seedFType/전체partitions의prefix-free lineage를유지한다. 같은fact/emission의단일recomputedtemplate에서같은native키라면같은seedlayout이고동일DirectNativeSeedKey로이미dedup된다. 따라서새native게시만prospectivecollision에서제외하며durablecollision/retainedauthority는그대로유지한다. IndependentdesignCLEAR, 계획V32_NATIVE_ACTUAL_KEY_PLAN.md.
+- **회귀 선행**: 저장소밖draft를v31에실행하여queryproduct두개width4·같은prospectiveanchor뒤lazy게시2기대/0실제의유효RED1건을확보했다. 최종draft는actualnativekey2개·trustedqueryproof8개·fullsourceset·owneridentity·orderedscalarparity·zerohandles·replayidentity/zeroScalar계수를추가했다. 저장소로옮겨freshRED/GREEN을진행한다.
+- **추가계측/위험**: 남은MIXED_EXACTNESS를단일mixedaxis/복수mixedaxes로분리해다음exactpartition설계근거를확보한다. 이미계산한exactbool만사용하고metricsOFF에서추가분류를하지않으며admission/후보/합법성은바꾸지않는다. Native이외DURABLEcollision을제거하거나Cartesian축을임의합치는것은이번범위가아니다.20초는미달이다.
+- **v32 RED/GREEN/독립 검토**: 최종nativeactualkey회귀는v31에서선행query/actualkey조건을통과한뒤lazy게시0개로실패했다(1test/1failure). 계측회귀는2axes중1mixed와2mixed를구분하며기존MIXED_EXACTNESS이름에대해18tests/2실패였다. 두변경후fresh9suites **48testsPASS(2.763초)**. 독립최종diffCLEAR: enum값은뒤에추가해기존ordinal을유지하고filtered binding의기존exact값만metricsON에서분류한다. 이제141class전체gate를수행한다.
+- **v32 자체 최종 gate/후속 merge**: fresh141class package **1,191 selected tests/failure0/error0/skip1**, BUILD SUCCESS06:54:46, independentfinalCLEAR. 게시직전fetch에서origin/main12f1f712d3의sparse logical조회·certifiedDP재계산회피·topologykey재사용·primitivephasehandle변경을발견했다. 자체v32검증본을localcommit/별도봉인하고강제push없이병합한다. 통합freshgate와봉인후에만최신엔진성능을측정하며아직v32를origin에push했다고하지않는다.
+
 
 - **origin/main1948f 병합 완료 검증**: staging-only key는 authority로 세지 않고, 같은 key의 grounded explicit clause 또는 native product가 있을 때만 retained authority로 처리하는 incoming 변경과 새 회귀를 보존했다. Mixed exactness 조건은 양쪽이 동일하여 주석 충돌만 정리했다. 독립 정적 review CLEAR 및 fresh 전체 **1,126 tests PASS(160.235초), source SHA mismatch0**. 증거 `evidence/main1948f-mixed-sparse-full-green-1126`. v17 실제 실행은 병합 전 봉인 엔진이며 이 테스트 결과를 v17 runtime의 소스라고 주장하지 않는다.
 
@@ -626,3 +636,12 @@
 - **다항·조건부 pruning root gate**: finite-support 60tests PASS(0.857초), conditional과조합한7suites **69tests PASS(1.084초)**. ConditionalSupport는 각region의모든축이현재활성도메인과교차할때만지원mask에기여한다. Unconstrained selector는기존wildcard의미를유지하며서로다른region축을합쳐새tuple을만들지않는다. 160fixed-seed exhaustive mask비교, frozen/partial두경로, removal epochcascade, 10억logical tuple/저장값6개회귀및dense원본objective/tie parity를검증했다. 독립검토CLEAR. 실제workload에얼마나적용되는지는다음봉인본으로측정한다.
 
 - **Native memo + 다항/conditional 통합 전체 gate**: fresh main/test compile 및 **1,138 tests PASS(150.209초), source SHA mismatch0**. 증거 `evidence/native-memo-nary-conditional-full-green-1138`. 이코드를v18로별도봉인한다. v17최종LogReg386.943659265초/GLM132.662625426초는v16보다각5.676/1.868초늘었다. 두실행numeric/audit 및선택receipt/rawbits동등성PASS이나성능목표는여전히미달이다.
+
+- **v32 최신 main 통합 검증**: incoming12f1의production은자동병합됐고문서양쪽기록을보존했다. Native residenttopologykey/identity boundary/primitivephasehandle과DP/sparse certificate를독립된두read-only검토로확인하여correctnessblocker없음/CLEAR. DPcertificate는동일root·fixedboundary·raw+0의recognizedhardrelation만허용하고Incremental strictimprovement의incumbenttie를보존한다. Foreign-equivalentroot, postconditioningnumeric→hardpositive, untouchedsubnormaloutsidefactor의전용회귀는비차단후속coveragegap이다.
+- **통합 full gate**: fresh143class package **1,212 selected tests/failure0/error0/skip1**, BUILD SUCCESS06:59:32. IncomingprivateFixedCandidateBoundary시그니처변경과관련기존reflection테스트도함께보존/통과했다. 자체v32봉인96916c26에는incoming최적화가없으므로실제측정은별도candidate-v32-merged봉인으로수행한다. 이통과는전체저장소테스트나20초달성선언이아니다.
+
+### origin/main dbee와 단일 mixed 축 분리 (진행중)
+
+- **병합 검증**: incoming 실제NATIVE출력key의seed identity를활용하는prospectivecollision 예외와MIXED_EXACTNESS 단일/다중축구분을보존했다. 독립reviewCLEAR, root7suites66tests PASS(4.310초). 이추가변경은v18봉인에포함되지않는다.
+- **후속 설계/근거**: exact proof와concrete output anchor의경우mixed축이정확히1개이면다른축은모두exact다. 해당축을exact/inexact 옵션으로분리하여DURABLE과NATIVE 두직사각관계를만든다. 원래필터링된합법tuple을겹침·누락없이분할하며서로다른authority를합치지않는다. Multiple mixed axes, 재구성실패, 두region모두singleton은기존scalar경로를유지한다.
+- **Authority/잔여 위험**: retained coverage 및동일key충돌은region별로판정한다. 한region이충돌해도다른region은압축을유지하고충돌region만기존scalar권한병합을따른다. PUBLISHED_SPLIT은요청1개와논리적proof수를기록하며최종merge의객체생성절감을의미하지않는다. 강제멤버복원·원본scalarproof·sourceowner identity·retained replay·withdrawal회귀와실제Docker검증이필요하다.

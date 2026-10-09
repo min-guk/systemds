@@ -5939,7 +5939,12 @@ final class PlacementRelationClosure {
 								boolean worthwhile = supportProduct.size() > 1 || distinctSeeds.size() == 1
 									&& grounded.retained().isEmpty()
 									&& productPublication.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE;
-								boolean disjointRequest = prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1;
+								// Native keys retain the full seed layout; equal layouts have
+								// already been deduplicated in this recomputed emission. Only
+								// durable outputs can collapse distinct seeds to the same key.
+								boolean disjointRequest = productPublication.key().layoutKind()
+									== PlacementLayoutKind.NATIVE_LINEAGE
+									|| prospectiveOutputCounts.getOrDefault(request.output(), 0) == 1;
 								if(!worthwhile || !disjointRequest) {
 									if(publicationTrace != null)
 										publicationTrace.outcome = !worthwhile
@@ -6245,9 +6250,11 @@ final class PlacementRelationClosure {
 		Set<Integer> coveredRequiredPositions = new HashSet<>();
 		boolean everyBindingExact = true;
 		boolean hasAlwaysInexactAxis = false;
+		int mixedAxes = 0;
 		for(List<CandidateRealizationInputBinding> axis : product.axes()) {
 			List<CandidateRealizationInputBinding> filtered = new ArrayList<>();
 			boolean axisEveryInexact = true;
+			boolean axisEveryExact = true;
 			for(CandidateRealizationInputBinding binding : axis) {
 				DirectInputBinding required = requiredByPosition.get(binding.inputPosition());
 				if(required != null && (binding.source().rule().parentOccurrence() != required.sourceKey()
@@ -6261,6 +6268,8 @@ final class PlacementRelationClosure {
 					CandidateEmissionRealization::allOwnedSupportClausesHaveExactNativeLayout);
 				everyBindingExact &= exact;
 				axisEveryInexact &= !exact;
+				if(trace != null)
+					axisEveryExact &= exact;
 				filtered.add(binding);
 			}
 			if(filtered.isEmpty())
@@ -6268,6 +6277,8 @@ final class PlacementRelationClosure {
 			if(requiredByPosition.containsKey(filtered.get(0).inputPosition()))
 				coveredRequiredPositions.add(filtered.get(0).inputPosition());
 			hasAlwaysInexactAxis |= axisEveryInexact;
+			if(trace != null && !axisEveryExact && !axisEveryInexact)
+				mixedAxes++;
 			filteredAxes.add(List.copyOf(filtered));
 		}
 		if(coveredRequiredPositions.size() != requiredByPosition.size())
@@ -6277,7 +6288,9 @@ final class PlacementRelationClosure {
 		// so mixed source layouts remain one exact product relation there.
 		if(outputAnchor != null && product.exactPartitionRanges()
 			&& !everyBindingExact && !hasAlwaysInexactAxis)
-			return rejectedNativeProduct(trace, NativePublicationOutcome.MIXED_EXACTNESS);
+			return rejectedNativeProduct(trace, trace == null ? NativePublicationOutcome.MIXED_EXACTNESS
+				: mixedAxes == 1 ? NativePublicationOutcome.MIXED_EXACTNESS_SINGLE_AXIS
+				: NativePublicationOutcome.MIXED_EXACTNESS_MULTIPLE_AXES);
 		NativePlacementContinuity.NativeSupportProduct filtered = product.withAxes(filteredAxes);
 		if(filtered == null)
 			return rejectedNativeProduct(trace, NativePublicationOutcome.PRODUCT_RECONSTRUCTION);
