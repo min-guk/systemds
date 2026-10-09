@@ -1869,13 +1869,15 @@ public final class PlacementAnalysis {
 			Objects.requireNonNull(key, "key");
 			supportClauses = supportClauses instanceof FactorizedSupportClauses
 				|| supportClauses instanceof IndexedSupportClauses
+				|| supportClauses instanceof NativeContinuitySupportClauses
 				? Objects.requireNonNull(supportClauses, "realization support clauses")
 				: canonicalComparableList(supportClauses, "realization support clause", true);
 			if(supportClauses.isEmpty())
 				throw new IllegalArgumentException("Candidate realization requires support authority");
 			SearchSpaceMetrics metrics = PlacementIdentity.activeMetrics();
 			if(metrics != null && !(supportClauses instanceof FactorizedSupportClauses)
-				&& !(supportClauses instanceof IndexedSupportClauses))
+				&& !(supportClauses instanceof IndexedSupportClauses)
+				&& !(supportClauses instanceof NativeContinuitySupportClauses))
 				metrics.recordDuplicateMergeClauseOrigins(supportClauses);
 			if(supportClauses instanceof FactorizedSupportClauses factorized) {
 				DurableAnchorKey witness = factorized.nativeWorkerPoolWitness();
@@ -1886,6 +1888,13 @@ public final class PlacementAnalysis {
 			}
 			else if(supportClauses instanceof IndexedSupportClauses indexed)
 				indexed.validateRealizationKey(key);
+			else if(supportClauses instanceof NativeContinuitySupportClauses nativeProduct) {
+				DurableAnchorKey witness = nativeProduct.clauseWitness();
+				if(witness != null && (key.layoutKind() != PlacementLayoutKind.NATIVE_LINEAGE
+					|| key.emissionState().placementState().fType() != witness.fType()))
+					throw new IllegalArgumentException(
+						"Native worker-pool witness and realization layout differ");
+			}
 			else {
 				for(CandidateRealizationSupportClause clause : supportClauses)
 					if(clause.nativeWorkerPoolWitness() != null
@@ -1960,11 +1969,16 @@ public final class PlacementAnalysis {
 			return supportClauses instanceof FactorizedSupportClauses factorized
 				? Optional.of(new FactorizedSupportProduct(factorized)) : Optional.empty();
 		}
+		public Optional<NativeContinuitySupportProduct> nativeContinuitySupportProduct() {
+			return supportClauses instanceof NativeContinuitySupportClauses nativeProduct
+				? Optional.of(new NativeContinuitySupportProduct(nativeProduct)) : Optional.empty();
+		}
 
 		/** Freeze already admitted whole tuples as legal IDs without enumerating a product. */
 		public CandidateEmissionRealization withIndexedSupport() {
 			if(supportClauses instanceof IndexedSupportClauses
-				|| supportClauses instanceof FactorizedSupportClauses)
+				|| supportClauses instanceof FactorizedSupportClauses
+				|| supportClauses instanceof NativeContinuitySupportClauses)
 				return this;
 			return new CandidateEmissionRealization(key,
 				IndexedSupportClauses.fromCanonical(supportClauses));
@@ -1985,7 +1999,9 @@ public final class PlacementAnalysis {
 			return supportClauses instanceof IndexedSupportClauses indexed
 				? indexed.materializedHandleCount()
 				: supportClauses instanceof FactorizedSupportClauses factorized
-					? factorized.materializedClauseCount() : supportClauses.size();
+					? factorized.materializedClauseCount()
+					: supportClauses instanceof NativeContinuitySupportClauses nativeProduct
+						? nativeProduct.materializedHandleCount() : supportClauses.size();
 		}
 
 		/**
@@ -2098,6 +2114,8 @@ public final class PlacementAnalysis {
 				return shared.firstIdentityOrdinal(clause);
 			if(supportClauses instanceof FactorizedSupportClauses factorized)
 				return factorized.firstIdentityOrdinal(clause);
+			if(supportClauses instanceof NativeContinuitySupportClauses nativeProduct)
+				return nativeProduct.firstIdentityOrdinal(clause);
 			for(int index = 0; index < supportClauses.size(); index++)
 				if(supportClauses.get(index) == clause)
 					return index;
@@ -2113,6 +2131,8 @@ public final class PlacementAnalysis {
 				return factorized.nativeWorkerPoolLayoutExact();
 			if(supportClauses instanceof IndexedSupportClauses indexed)
 				return indexed.allRowsHaveExactNativeLayout();
+			if(supportClauses instanceof NativeContinuitySupportClauses nativeProduct)
+				return nativeProduct.clauseLayoutExact();
 			return supportClauses.stream().allMatch(
 				CandidateRealizationSupportClause::nativeWorkerPoolLayoutExact);
 		}
@@ -2144,6 +2164,21 @@ public final class PlacementAnalysis {
 		@Override public int compareTo(CandidateEmissionRealization that) {
 			return compareCanonicalOrdering(this, that);
 		}
+	}
+
+	/** Non-enumerating view of a native-continuity proof family. */
+	public static final class NativeContinuitySupportProduct {
+		private final NativeContinuitySupportClauses relation;
+		NativeContinuitySupportProduct(NativeContinuitySupportClauses relation) {
+			this.relation = Objects.requireNonNull(relation);
+		}
+		public String authoritySignature() { return relation.authoritySignature(); }
+		public List<List<CandidateRealizationInputBinding>> axes() {
+			return relation.product().axes();
+		}
+		public DurableAnchorKey nativeWorkerPoolWitness() { return relation.clauseWitness(); }
+		public boolean nativeWorkerPoolLayoutExact() { return relation.clauseLayoutExact(); }
+		public int logicalClauseCount() { return relation.size(); }
 	}
 
 	/** One exact immutable rule/profile emission with its executable physical realizations. */
@@ -2213,9 +2248,8 @@ public final class PlacementAnalysis {
 					if(metrics != null) {
 						metrics.recordRealizationMergeInput();
 						metrics.recordRealizationMergeInput();
-						for(int index = 0; index < left.supportClauses().size()
-							+ right.supportClauses().size(); index++)
-							metrics.recordRealizationMergeClause(true);
+						metrics.recordRealizationMergeClauses(
+							(long)left.supportClauses().size() + right.supportClauses().size(), 0);
 					}
 					return canonicalRealizationList(List.of(left, right));
 				}
@@ -2244,8 +2278,10 @@ public final class PlacementAnalysis {
 								duplicateProvenanceCounts(provenance), true);
 						}
 					}
-					return List.of(leftClauses instanceof FactorizedSupportClauses ? left
-						: rightClauses instanceof FactorizedSupportClauses ? right : left);
+					return List.of(leftClauses instanceof FactorizedSupportClauses
+						|| leftClauses instanceof NativeContinuitySupportClauses ? left
+						: rightClauses instanceof FactorizedSupportClauses
+							|| rightClauses instanceof NativeContinuitySupportClauses ? right : left);
 				}
 				if((metrics == null || !metrics.hasDuplicateMergeDiagnostics())
 					&& leftClauses instanceof FactorizedSupportClauses leftFactorized
@@ -2362,10 +2398,7 @@ public final class PlacementAnalysis {
 				if(!ambiguousOrderingTie && metrics != null) {
 					metrics.recordRealizationMergeInput();
 					metrics.recordRealizationMergeInput();
-					for(int index = 0; index < uniqueClauses; index++)
-						metrics.recordRealizationMergeClause(true);
-					for(int index = 0; index < duplicateClauses; index++)
-						metrics.recordRealizationMergeClause(false);
+					metrics.recordRealizationMergeClauses(uniqueClauses, duplicateClauses);
 					if(diagnoseDuplicates)
 						metrics.recordDuplicateMergeDiagnostics("TWO_SORTED_UNION", 2, 0,
 							sharedDuplicateClauses, equalDistinctDuplicateClauses,
@@ -2408,6 +2441,9 @@ public final class PlacementAnalysis {
 			List<CandidateRealizationSupportClause> right) {
 			if(left == right)
 				return true;
+			if(left instanceof NativeContinuitySupportClauses leftNative
+				&& right instanceof NativeContinuitySupportClauses rightNative)
+				return leftNative.sameExactAuthority(rightNative);
 			if(left instanceof FactorizedSupportClauses leftFactorized
 				&& right instanceof FactorizedSupportClauses rightFactorized)
 				return leftFactorized.sameExactAuthority(rightFactorized);
@@ -2478,9 +2514,8 @@ public final class PlacementAnalysis {
 					firstClauses, group.get(index).supportClauses());
 			if(allEqual) {
 				if(metrics != null) {
-					for(int groupIndex = 0; groupIndex < group.size(); groupIndex++)
-						for(int clauseIndex = 0; clauseIndex < firstClauses.size(); clauseIndex++)
-							metrics.recordRealizationMergeClause(groupIndex == 0);
+					metrics.recordRealizationMergeClauses(firstClauses.size(),
+						(long)(group.size() - 1) * firstClauses.size());
 					metrics.recordRealizationMergeReuse();
 					if(metrics.hasDuplicateMergeDiagnostics()) {
 						long immutableReplay = 0, sharedReplay = 0, equalDistinct = 0;

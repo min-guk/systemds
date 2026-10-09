@@ -2746,10 +2746,15 @@ public class NativePlacementContinuityTest {
 						continue;
 					NativePlacementContinuity.NativeContinuityProof proof = memoProofs.stream()
 						.filter(candidate -> candidate.normalizedSignature().equals(
-							authority.authoritySignature())).findFirst().orElseThrow();
-					Assert.assertEquals(proof.immediateBindings(), clause.inputBindings());
-					Assert.assertSame("direct binding must retain the proof's canonical list marker",
-						proof.immediateBindings(), clause.inputBindings());
+							authority.authoritySignature())).findFirst().orElse(null);
+					if(proof != null) {
+						Assert.assertEquals(proof.immediateBindings(), clause.inputBindings());
+						Assert.assertSame("explicit direct binding must retain the proof's canonical list marker",
+							proof.immediateBindings(), clause.inputBindings());
+					}
+					else
+						Assert.assertTrue("relation-native members retain canonical binding order",
+							clause.inputBindings().stream().sorted().toList().equals(clause.inputBindings()));
 					Assert.assertEquals(expectedSources, clause.inputBindings().stream()
 						.map(binding -> binding.source().rule().parentOccurrence())
 						.collect(java.util.stream.Collectors.toSet()));
@@ -2760,6 +2765,179 @@ public class NativePlacementContinuityTest {
 					matchedClauses++;
 				}
 		Assert.assertTrue("the two-input direct native output must be fully grounded", matchedClauses > 0);
+	}
+
+	@Test
+	public void unchangedNativeRelationSurvivesNextClosureConsumersWithoutMemberHandles() throws Exception {
+		Fixture full = new Fixture(FType.ROW);
+		DurableAnchorKey pool = anchor(FType.ROW, "worker1:8001", 0, 50);
+		Ref source = full.source("source", pool);
+		Ref input = full.logicalRead("input");
+		full.reaching.put(input.key, List.of(source.key));
+		List<CandidateInputState> unaryInputs = List.of(CandidateInputState.present(FType.ROW));
+		CandidateRuleFact inputFact = full.fact(input, unaryInputs);
+		CandidateEmissionFact inputEmission = inputFact.allowedEmissionFacts().get(0);
+		List<CandidateEmissionRealization> inputChoices = List.of(
+			CandidateEmissionRealization.nativeLineage(
+				inputEmission.emissionState(), "input-option-a", pool, List.of(new PlacementProofKey(
+					PlacementProofKind.NATIVE_CONTINUITY, input.key, "input-option-a")), List.of()),
+			CandidateEmissionRealization.nativeLineage(
+				inputEmission.emissionState(), "input-option-b", pool, List.of(new PlacementProofKey(
+					PlacementProofKind.NATIVE_CONTINUITY, input.key, "input-option-b")), List.of()));
+		CandidateEmissionFact expandedInput = new CandidateEmissionFact(inputEmission.emissionState(),
+			inputEmission.executionFType(), inputEmission.derivedFoutAction(), inputChoices);
+		full.candidates.set(full.candidates.indexOf(inputFact), new CandidateRuleFact(inputFact.key(),
+			inputFact.status(), inputFact.capability(), inputFact.shapeProof(), inputFact.profile(),
+			List.of(expandedInput), inputFact.failureCode()));
+		Ref reverse = full.unary("consumer", OpOp1.LOG, input, false);
+		CandidateRuleFact reverseFact = full.fact(reverse,
+			List.of(CandidateInputState.present(FType.ROW)));
+		CandidateEmissionFact reverseEmission = reverseFact.allowedEmissionFacts().get(0);
+		CandidateRealizationReference proposed = new CandidateRealizationReference(reverseFact.key(),
+			PlacementIdentity.PlacementRealizationKey.nativeLineage(
+				reverseEmission.emissionState(), "generated-product-probe"));
+		NativePlacementContinuity.CandidateSupportResult generated = full.resolver()
+			.proveGeneratedCandidateSupport(reverseFact, reverseEmission, proposed, pool);
+		Assert.assertNotNull("generated proofs=" + generated.proofs().stream()
+			.map(NativePlacementContinuity.NativeContinuityProof::immediateBindings).toList(),
+			generated.supportProduct());
+		Assert.assertEquals(2, generated.supportProduct().size());
+		Ref dead = full.unary("dead", OpOp1.LOG, source, false);
+		CandidateRuleFact deadFact = full.fact(dead, unaryInputs);
+		CandidateEmissionFact deadEmission = deadFact.allowedEmissionFacts().get(0);
+		CandidateRealizationReference missingSource = new CandidateRealizationReference(
+			inputFact.key(), PlacementIdentity.PlacementRealizationKey.nativeLineage(
+				inputEmission.emissionState(), "missing-source"));
+		CandidateEmissionRealization deadRealization = CandidateEmissionRealization.nativeLineage(
+			deadEmission.emissionState(), "dead", pool, List.of(new PlacementProofKey(
+				PlacementProofKind.NATIVE_CONTINUITY, dead.key, "dead")),
+			List.of(CandidateRealizationInputBinding.direct(0, missingSource)));
+		CandidateEmissionFact groundedDead = new CandidateEmissionFact(deadEmission.emissionState(),
+			deadEmission.executionFType(), deadEmission.derivedFoutAction(), List.of(deadRealization));
+		full.candidates.set(full.candidates.indexOf(deadFact), new CandidateRuleFact(deadFact.key(),
+			deadFact.status(), deadFact.capability(), deadFact.shapeProof(), deadFact.profile(),
+			List.of(groundedDead), deadFact.failureCode()));
+		List<CandidateRuleFact> facts = List.copyOf(full.candidates);
+		List<Node> nodes = List.copyOf(full.nodes.values());
+		Map<Hop,NodeShapeFact> shapes = new IdentityHashMap<>();
+		for(Hop hop : full.origins.values())
+			shapes.put(hop, new NodeShapeFact(DataType.MATRIX, 4, 2));
+		shapes.put(reverse.hop, new NodeShapeFact(DataType.MATRIX, -1, -1));
+		Method indexMethod = PlacementRelationClosure.class.getDeclaredMethod(
+			"directBindingIndex", List.class, List.class, List.class, List.class);
+		indexMethod.setAccessible(true);
+		Object index = indexMethod.invoke(null, facts, nodes, full.edges, facts);
+		Method bind = PlacementRelationClosure.class.getDeclaredMethod(
+			"bindDirectNativeCandidateRealizationsMeasured", index.getClass(), List.class,
+			Map.class, Map.class, NativePlacementContinuity.class, Set.class);
+		bind.setAccessible(true);
+		PlacementRelationClosure closure =
+			PlacementBuilderTestAccess.relationClosure(new NeutralPlacementGraphBuilder());
+		@SuppressWarnings("unchecked")
+		List<CandidateRuleFact> first = (List<CandidateRuleFact>)bind.invoke(closure,
+			index, facts, full.origins, shapes, full.resolver(), Set.of(reverse.key));
+		CandidateEmissionRealization relation = first.stream()
+			.filter(fact -> fact.key().parentOccurrence() == reverse.key)
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> realization.nativeContinuitySupportProduct().isPresent())
+			.findFirst().orElseThrow(() -> new AssertionError("missing lazy native relation: " + first));
+		Assert.assertEquals(2,
+			relation.nativeContinuitySupportProduct().orElseThrow().logicalClauseCount());
+		Assert.assertEquals(0, relation.fullyMaterializedSupportClauseCount());
+		Assert.assertTrue(PlacementSupportRelations.executableSourceRealization(
+			reverseFact.key(), relation));
+		Assert.assertEquals(0, relation.fullyMaterializedSupportClauseCount());
+
+		Method dependencies = PlacementRelationClosure.class.getDeclaredMethod(
+			"addDirectSupportDependencies", Map.class, List.class);
+		dependencies.setAccessible(true);
+		dependencies.invoke(null, new IdentityHashMap<CompiledHopKey,Set<CompiledHopKey>>(), first);
+		Method single = PlacementRelationClosure.class.getDeclaredMethod(
+			"singlePartitionPossibilities", CandidateEmissionRealization.class, Map.class, Set.class);
+		single.setAccessible(true);
+		single.invoke(null, relation, Map.of(), Set.of());
+		Method replaySeeds = PlacementRelationClosure.class.getDeclaredMethod(
+			"nativeResidencyWitnesses", CandidateEmissionRealization.class);
+		replaySeeds.setAccessible(true);
+		try(@SuppressWarnings("unchecked") java.util.stream.Stream<DurableAnchorKey> witnesses =
+			(java.util.stream.Stream<DurableAnchorKey>)replaySeeds.invoke(null, relation)) {
+			Assert.assertEquals(1, witnesses.count());
+		}
+		Assert.assertEquals(0, relation.fullyMaterializedSupportClauseCount());
+
+		PlacementSupportRelations.WorklistResult pruned =
+			PlacementSupportRelations.pruneUnsupportedRealizationsToFixedPointWithWork(
+				first, null, List.of(), Map.of());
+		Assert.assertTrue("the unrelated staging realization forces the real worklist",
+			pruned.work().deletedRealizations() > 0 && pruned.work().queueVisits() > 0);
+		CandidateEmissionRealization prunedRelation = pruned.facts().stream()
+			.filter(fact -> fact.key().parentOccurrence() == reverse.key)
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> realization.nativeContinuitySupportProduct().isPresent())
+			.findFirst().orElseThrow();
+		Assert.assertSame(relation, prunedRelation);
+		Assert.assertEquals(0, relation.fullyMaterializedSupportClauseCount());
+
+		List<CandidateRuleFact> oneSourceFacts = pruned.facts().stream().map(fact -> {
+			if(fact.key().parentOccurrence() != input.key)
+				return fact;
+			CandidateEmissionFact emission = fact.allowedEmissionFacts().get(0);
+			CandidateEmissionFact one = new CandidateEmissionFact(emission.emissionState(),
+				emission.executionFType(), emission.derivedFoutAction(), List.of(inputChoices.get(0)));
+			return new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+				fact.profile(), List.of(one), fact.failureCode());
+		}).toList();
+		List<CandidateRuleFact> restrictedFacts = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPoint(oneSourceFacts, null, List.of(), Map.of());
+		CandidateEmissionRealization restricted = restrictedFacts.stream()
+			.filter(fact -> fact.key().parentOccurrence() == reverse.key)
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> realization.nativeContinuitySupportProduct().isPresent())
+			.findFirst().orElseThrow();
+		Assert.assertEquals(1,
+			restricted.nativeContinuitySupportProduct().orElseThrow().logicalClauseCount());
+		Assert.assertEquals(0, restricted.fullyMaterializedSupportClauseCount());
+		CandidateRuleFact originalConsumer = pruned.facts().stream()
+			.filter(fact -> fact.key().parentOccurrence() == reverse.key).findFirst().orElseThrow();
+		CandidateRuleFact restrictedConsumer = restrictedFacts.stream()
+			.filter(fact -> fact.key().parentOccurrence() == reverse.key).findFirst().orElseThrow();
+		Assert.assertNotEquals(originalConsumer, restrictedConsumer);
+		Assert.assertEquals(0, relation.fullyMaterializedSupportClauseCount());
+		Assert.assertEquals(0, restricted.fullyMaterializedSupportClauseCount());
+
+		Object nextIndex = indexMethod.invoke(null, pruned.facts(), nodes, full.edges, facts);
+		Assert.assertEquals("direct index must consume native metadata", 0,
+			relation.fullyMaterializedSupportClauseCount());
+		NativePlacementContinuity nextContinuity = new NativePlacementContinuity(
+			full.nodes, full.origins, pruned.facts(), full.edges, full.reaching, Set.of(), full.privacy);
+		Assert.assertEquals("revision index must retain the native relation", 0,
+			relation.fullyMaterializedSupportClauseCount());
+		Set<CompiledHopKey> metadataOwners = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+		metadataOwners.add(reverse.key);
+		Assert.assertTrue(nextContinuity.expandValueMapMetadataDependencies(metadataOwners));
+		Assert.assertEquals("VALUE_MAP metadata projection skips native-lineage members", 0,
+			relation.fullyMaterializedSupportClauseCount());
+		Method readers = NativePlacementContinuity.class.getDeclaredMethod(
+			"indexBoundCandidateReaders", Map.class);
+		readers.setAccessible(true);
+		readers.invoke(null, Map.of(reverse.key, List.of(originalConsumer)));
+		Assert.assertEquals("VALUE_MAP reader projection skips native-lineage members", 0,
+			relation.fullyMaterializedSupportClauseCount());
+		@SuppressWarnings("unchecked")
+		List<CandidateRuleFact> second = (List<CandidateRuleFact>)bind.invoke(closure,
+			nextIndex, pruned.facts(), full.origins, shapes, nextContinuity, Set.of(reverse.key));
+		CandidateEmissionRealization retained = second.stream()
+			.filter(fact -> fact.key().parentOccurrence() == reverse.key)
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> realization.nativeContinuitySupportProduct().isPresent())
+			.findFirst().orElseThrow();
+		Assert.assertSame("unchanged relation authority is retained across the next wave",
+			relation, retained);
+		Assert.assertEquals(0, retained.fullyMaterializedSupportClauseCount());
 	}
 
 	@Test

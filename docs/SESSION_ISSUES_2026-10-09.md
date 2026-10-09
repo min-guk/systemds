@@ -181,3 +181,17 @@
 - **환경 보존**: root filesystem 여유가4.7MB까지 줄어 immutable pinned baseline target317개 파일을 grid로 복사/SHA 검증하고 원래 경로를 symlink로 유지했다. 원본도 grid에 별도 보존했으며 pinned JAR/dependencies 내용은 변경하지 않았다. Manifest: `evidence/pinned-base-target-relocation-20261009/manifest.json`.
 
 - **DP 전체 회귀 완료**: 첫 확장738 tests 중1개는 observation-star 전용 테스트가 새 circuit의 모든 auxiliary domain을 product로 계산해 int overflow가 난 검사기 문제였다. Production의 `isObservationStar()`와 같은 typed 구분을 적용하고 circuit은 독립 existential/forced-optimizer 테스트로 검증한다. Baseline selector까지 합친 최종 **953 tests PASS(174.246초)**, independent reviewer CLEAR. 원본 실패 로그와 최종 로그는 각각 `evidence/root-derived-fout-full-regression/`, `evidence/root-derived-fout-full-regression-final/`에 보존했다. 이는 아직 native relation 통합 전 DP snapshot 결과다.
+
+
+### COFEE 통합 v5 준비: native DIRECT support의 relation-native 생성
+
+- **통합 범위**: 검증된 derived-FOUT DP circuit을 `0e71e6e792`로 커밋하고 최신 main `0af4efd265`를 `d13f5dd407`로 병합했다. Native slice 12개 파일은 기존 `5f9edeeb2f`를 ancestor로 3-way 통합하여 upstream metadata/closure 변경을 보존했다. 기존 stash/patch와 새 cost follow-up stash는 삭제하지 않는다.
+- **새 경로**: 서로 다른 owner의 완전한 독립 Cartesian support를 입력 축으로 보관하고 exact native proof/Clause는 선택된 member를 요청할 때 복원한다. 생성, Closure publication, 삭제 worklist, 재바인딩, fingerprint와 Cost Model metadata 조회가 이 관계를 직접 소비한다. Source/action/proof authority를 대표 하나로 대체하지 않는다.
+- **안전한 fallback**: 동일 owner, sparse/mixed/overlap, VALUE_MAP, DURABLE_MAP publication, variable-length canonical binding 및 범위를 넘는 product는 기존 explicit 경로를 유지한다. Canonical proof 순서는 length-prefix에 영향을 받으므로 binding 길이가 다른 축을 임의 row-major로 정렬하지 않는다. Physical Model의 exact Alternative 전개는 아직 남아 있다.
+- **독립 검증**: native lane 161 tests/failure0/error0/skip1. 작은 domain의 nested explicit enumeration, fixed-seed random 1–4축, canonical ordering 반례, source/proof identity, 실제 Closure 삭제 worklist와 반복 bind, 2×3 Physical/Cost/selection objective raw bits를 비교했다. Cost metadata 후속은 100만 논리 member를 Clause0개로 검사하고 exact/dynamic pool 차이를 보존한다. 실제 workload 성능으로 일반화하지 않는다.
+- **병합 회귀 발견**: 첫 통합998 tests 중2실패. Upstream metadata subscription의 source/reader index가 NATIVE_LINEAGE realization도 Clause별로 순회한 뒤 VALUE_MAP이 아니라고 버려 native relation을 다시 펼쳤다. 두 함수의 VALUE_MAP guard를 clause loop 앞으로 옮겼다. 실제 metadata 확장과 reader index의 0-handle 회귀를 추가했다. 별도 reviewer는 판정/authority가 같음을 CLEAR로 확인했다.
+- **계측 테스트 정정**: 기존 `supportLeaves == uniqueProofs + duplicateProofs`는 모든 논리 proof를 방문한다는 가정이었다. 현재 product는 논리 cardinality를 그대로 세고 실제 leaf 방문을 생략한다. `supportLeaves <= logicalProofs`, 엄격히 작으면 product descriptor가 존재한다는 조건으로 바꿨다. 객체/방문 감소와 합법 조합 수 감소를 구분하며 independent review CLEAR다.
+- **실패 보존**: 첫998 회귀는 `evidence/merged-native-red-998`, 추가 metadata 테스트의 Collections qualification 누락 compile 실패는 `evidence/merged-native-metadata-first-compile`에 보존했다. Qualification을 고친 뒤 다시 검증한다.
+- **현재 한계**: 이 시점 v5 Docker 실행은 아직 없다. v4.5 DP-only 준비는 실제 실행 없이 통합 v5로 대체했다. 실제 COFEE 최신 근거는 여전히 v4 Analysis333.489초 후 DP overflow이며, full initial planning20초 목표는 미달이다.
+
+- **통합 v5 중간 gate**: 수정 후 focused168 PASS(39.343초), 전체998 PASS(160.254초), 컴파일된 소스와 현재 SHA mismatch0, independent metadata/metric review CLEAR. 증거 `evidence/merged-native-focused-green-168`, `evidence/merged-native-full-green-998`. 추가 upstream `ac0b5e6028`이 도착해 이 검증본을 먼저 커밋하고 최신 변경을 병합·재검증한 뒤 게시한다.

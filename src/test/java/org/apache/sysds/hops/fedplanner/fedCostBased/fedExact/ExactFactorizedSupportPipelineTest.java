@@ -11,6 +11,7 @@ import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixt
 import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.CandidateRuleRelation;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.NativeContinuitySupportFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
@@ -18,11 +19,13 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEva
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateInputBindingKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementLayoutKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.parser.DMLProgram;
@@ -77,6 +80,19 @@ public class ExactFactorizedSupportPipelineTest {
 		Fixture compactFixture = fixture(2, 3, true);
 		Fixture explicitFixture = fixture(2, 3, false);
 		Assert.assertEquals(solveAll(explicitFixture), solveAll(compactFixture));
+	}
+
+	@Test(timeout = 30000)
+	public void nativeRelationPhysicalFallbackMatchesExplicitEveryReceipt() throws Exception {
+		List<SupportPair> admitted = rectangularPairs(2, 3);
+		Fixture lazy = fixture(2, 3, SupportEncoding.NATIVE, false, admitted);
+		Fixture explicit = fixture(2, 3, SupportEncoding.NATIVE_EXPLICIT, false, admitted);
+		Assert.assertEquals("the deliberate exact Physical preparation boundary expands all members",
+			6, NativeContinuitySupportFixtureBridge.materialized(lazy.supportRealization()));
+		Assert.assertEquals("member-specific source/proof receipts and raw objective bits differ",
+			solveAll(explicit), solveAll(lazy));
+		Assert.assertEquals("the deliberate Physical boundary expands every exact member",
+			6, NativeContinuitySupportFixtureBridge.materialized(lazy.supportRealization()));
 	}
 
 	@Test
@@ -247,9 +263,12 @@ public class ExactFactorizedSupportPipelineTest {
 			var receipt = localSelection.candidateReceipts().stream().filter(candidate ->
 				candidate.rule().parentOccurrence() == fixture.consumer()).findFirst().orElseThrow();
 			Assert.assertEquals(2, receipt.supportClause().inputBindings().size());
-			if(!fixture.mixedAuthority())
+			if(!fixture.mixedAuthority() && !fixture.directSupport())
 				Assert.assertTrue(receipt.supportClause().inputBindings().stream().allMatch(binding ->
 					binding.relocationAction() != null));
+			if(fixture.directSupport())
+				Assert.assertTrue(receipt.supportClause().inputBindings().stream().allMatch(binding ->
+					binding.kind() == CandidateInputBindingKind.DIRECT));
 			results.add(new Result(localSelection.objectiveBits(),
 				receipt.supportClause().normalizedSignature(),
 				localSelection.emittedRelocations().stream()
@@ -417,8 +436,12 @@ public class ExactFactorizedSupportPipelineTest {
 			.findFirst().orElseThrow();
 		CandidateRealizationReference localLeft = includeLocalLeftChoice
 			? localReference(base, left) : null;
-		ExpandedSource expandedLeft = expandedSource(leftRule, leftSize, "left", localLeft);
-		ExpandedSource expandedRight = expandedSource(rightRule, rightSize, "right", null);
+		boolean dynamicNativeSources = encoding == SupportEncoding.NATIVE
+			|| encoding == SupportEncoding.NATIVE_EXPLICIT;
+		ExpandedSource expandedLeft = expandedSource(
+			leftRule, leftSize, "left", localLeft, dynamicNativeSources);
+		ExpandedSource expandedRight = expandedSource(
+			rightRule, rightSize, "right", null, dynamicNativeSources);
 		java.util.concurrent.atomic.AtomicReference<RelocationPair> selectedPair =
 			new java.util.concurrent.atomic.AtomicReference<>();
 		CandidateEmissionFact oldEmission = consumerRule.allowedEmissionFacts().stream()
@@ -445,6 +468,21 @@ public class ExactFactorizedSupportPipelineTest {
 				throw new IllegalArgumentException("Factorized fixture requires a complete Cartesian relation");
 			realization = CampaignBPlacementAnalysisFixtureBridge.factorizedRealization(
 				oldRealization.key(), List.of(), List.of(leftBindings, rightBindings));
+		}
+		else if(encoding == SupportEncoding.NATIVE || encoding == SupportEncoding.NATIVE_EXPLICIT) {
+			leftBindings = leftBindings.stream().map(binding ->
+				CandidateRealizationInputBinding.direct(binding.inputPosition(), binding.source())).toList();
+			rightBindings = rightBindings.stream().map(binding ->
+				CandidateRealizationInputBinding.direct(binding.inputPosition(), binding.source())).toList();
+			List<List<CandidateRealizationInputBinding>> axes = List.of(leftBindings, rightBindings);
+			DurableAnchorKey witness = pair.left().durableAnchor();
+			PlacementRealizationKey nativeKey = PlacementRealizationKey.nativeLineage(
+				oldRealization.key().emissionState(), "native-physical-fallback");
+			realization = encoding == SupportEncoding.NATIVE
+				? NativeContinuitySupportFixtureBridge.nativeRelation(nativeKey, consumer,
+					witness, witness, true, axes)
+				: NativeContinuitySupportFixtureBridge.explicitNativeRelation(nativeKey, consumer,
+					witness, witness, true, axes);
 		}
 		else {
 			List<CandidateRealizationSupportClause> clauses = new ArrayList<>();
@@ -500,7 +538,7 @@ public class ExactFactorizedSupportPipelineTest {
 				CandidateSelections.requiredInputSupportIdentity(binding.source())).toList(),
 			rightBindings.stream().map(binding ->
 				CandidateSelections.requiredInputSupportIdentity(binding.source())).toList(),
-			List.copyOf(admittedPairs), mixedAuthority);
+			List.copyOf(admittedPairs), mixedAuthority, dynamicNativeSources);
 	}
 
 	private static List<SupportPair> rectangularPairs(int leftSize, int rightSize) {
@@ -513,6 +551,11 @@ public class ExactFactorizedSupportPipelineTest {
 
 	private static ExpandedSource expandedSource(CandidateRuleFact rule, int size, String prefix,
 		CandidateRealizationReference extraChoice) {
+		return expandedSource(rule, size, prefix, extraChoice, false);
+	}
+
+	private static ExpandedSource expandedSource(CandidateRuleFact rule, int size, String prefix,
+		CandidateRealizationReference extraChoice, boolean dynamicLayout) {
 		CandidateEmissionFact emission = rule.allowedEmissionFacts().stream().filter(candidate ->
 			candidate.realizations().stream().anyMatch(realization -> realization.key().durableAnchor() != null))
 			.findFirst().orElseThrow();
@@ -524,8 +567,13 @@ public class ExactFactorizedSupportPipelineTest {
 			rule.key().parentOccurrence(), "test-native-pool:" + anchor.normalizedSignature());
 		List<CandidateEmissionRealization> realizations = new ArrayList<>();
 		for(int index = 0; index < size; index++)
-			realizations.add(CandidateEmissionRealization.nativeLineage(
-				emission.emissionState(), prefix + '-' + index, anchor, List.of(nativeProof), List.of()));
+			realizations.add(dynamicLayout
+				? CandidateEmissionRealization.nativeLineageDynamicLayout(
+					emission.emissionState(), prefix + '-' + index, anchor,
+					List.of(nativeProof), List.of())
+				: CandidateEmissionRealization.nativeLineage(
+					emission.emissionState(), prefix + '-' + index, anchor,
+					List.of(nativeProof), List.of()));
 		List<CandidateEmissionRealization> allRealizations = new ArrayList<>(emission.realizations());
 		allRealizations.addAll(realizations);
 		CandidateEmissionFact expandedEmission = new CandidateEmissionFact(emission.emissionState(),
@@ -613,8 +661,8 @@ public class ExactFactorizedSupportPipelineTest {
 		List<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationSupportKey>
 			rightSupportKeys,
 		List<SupportPair> admittedPairs,
-		boolean mixedAuthority) { }
-	private enum SupportEncoding { EXPLICIT, FACTORIZED, INDEXED }
+		boolean mixedAuthority, boolean directSupport) { }
+	private enum SupportEncoding { EXPLICIT, FACTORIZED, INDEXED, NATIVE, NATIVE_EXPLICIT }
 	private record SupportPair(int leftOption, int rightOption) { }
 	private record Result(long objectiveBits, String supportSignature,
 		List<String> emittedRelocationSignatures) { }

@@ -39,6 +39,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRul
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateShapeProofFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedText;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NormalizedTextBuilder;
+import org.apache.sysds.hops.fedplanner.placement.NativeContinuitySupportFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding;
@@ -60,6 +61,29 @@ import org.junit.Assume;
 import org.junit.Test;
 
 public class ExactPhysicalSemanticDagFingerprintTest {
+	@Test
+	public void nativeContinuityProductFingerprintUsesMetadataWithoutMaterializingMembers() {
+		CandidateEmissionRealization product =
+			NativeContinuitySupportFixtureBridge.realization("native", 2, 3);
+		CandidateEmissionFact emission = new CandidateEmissionFact(
+			product.key().emissionState(), FType.ROW, null, List.of(product));
+		CandidateRuleFact candidate = fact("native-product", List.of(emission));
+		Assert.assertEquals(0, NativeContinuitySupportFixtureBridge.materialized(product));
+		String expected = IndependentPhysicalSemanticDagOracle.candidates(List.of(candidate));
+		String actual = ExactPhysicalCostModel.physicalCandidateFactsDagFingerprintForTest(
+			List.of(candidate));
+		Assert.assertEquals(expected, actual);
+		Assert.assertEquals(0, NativeContinuitySupportFixtureBridge.materialized(product));
+
+		CandidateEmissionRealization changed =
+			NativeContinuitySupportFixtureBridge.realization("changed", 2, 3);
+		CandidateEmissionFact changedEmission = new CandidateEmissionFact(
+			changed.key().emissionState(), FType.ROW, null, List.of(changed));
+		Assert.assertNotEquals(actual, ExactPhysicalCostModel.physicalCandidateFactsDagFingerprintForTest(
+			List.of(fact("native-product", List.of(changedEmission)))));
+		Assert.assertEquals(0, NativeContinuitySupportFixtureBridge.materialized(changed));
+	}
+
 	@Test
 	public void factorizedFingerprintBindsEveryAxisWithoutMaterializingProduct() throws Exception {
 		CandidateEmissionRealization product = factorizedFingerprintFixture(100, "source");

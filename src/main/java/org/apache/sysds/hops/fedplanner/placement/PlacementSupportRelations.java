@@ -190,7 +190,10 @@ final class PlacementSupportRelations {
 					// an expired reference merely because another map has equal geometry.
 					FactorizedSupportClauses factorized = realization.supportClauses()
 						instanceof FactorizedSupportClauses relation ? relation : null;
+					NativeContinuitySupportClauses nativeProduct = realization.supportClauses()
+						instanceof NativeContinuitySupportClauses relation ? relation : null;
 					Optional<FactorizedSupportClauses> restrictedFactorized = Optional.empty();
+					Optional<NativeContinuitySupportClauses> restrictedNative = Optional.empty();
 					List<CandidateRealizationSupportClause> clauses = new ArrayList<>();
 					if(factorized != null) {
 						restrictedFactorized = factorized.restrictBindings(binding ->
@@ -200,6 +203,12 @@ final class PlacementSupportRelations {
 										fact.key(), emission.emissionState(), binding)));
 						if(collectWork && restrictedFactorized.isPresent())
 							reverseIncidences += restrictedFactorized.get().retainedFactorOptionCount();
+					}
+					else if(nativeProduct != null) {
+						restrictedNative = nativeProduct.restrictBindings(binding ->
+							currentReferences.contains(binding.source()));
+						if(collectWork && restrictedNative.isPresent())
+							reverseIncidences += restrictedNative.get().retainedFactorOptionCount();
 					}
 					else for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 						boolean supported = true;
@@ -220,10 +229,17 @@ final class PlacementSupportRelations {
 								reverseIncidences += distinctSources.size();
 						}
 					}
-					if(logicalSupported && (factorized != null ? restrictedFactorized.isPresent() : !clauses.isEmpty())) {
+					boolean physicalSupported = factorized != null ? restrictedFactorized.isPresent()
+						: nativeProduct != null ? restrictedNative.isPresent() : !clauses.isEmpty();
+					if(logicalSupported && physicalSupported) {
 						if(factorized != null) {
 							FactorizedSupportClauses retained = restrictedFactorized.orElseThrow();
 							realizations.add(retained == factorized ? realization
+								: new CandidateEmissionRealization(realization.key(), retained));
+						}
+						else if(nativeProduct != null) {
+							NativeContinuitySupportClauses retained = restrictedNative.orElseThrow();
+							realizations.add(retained == nativeProduct ? realization
 								: new CandidateEmissionRealization(realization.key(), retained));
 						}
 						else
@@ -411,6 +427,19 @@ final class PlacementSupportRelations {
 						}
 					}
 			}
+			else if(slot.realization.supportClauses() instanceof NativeContinuitySupportClauses product) {
+				NativeFixedPointSupport support = new NativeFixedPointSupport(slot, product);
+				slot.nativeSupport = support;
+				for(int axis = 0; axis < product.product().axes().size(); axis++)
+					for(CandidateRealizationInputBinding binding : product.product().axes().get(axis)) {
+						FixedPointReference source = references.get(binding.source());
+						if(source == null || source.liveSlots == 0)
+							continue;
+						NativeFixedPointOption option = support.add(axis, binding);
+						source.dependentNativeOptions.add(option);
+						reverseIncidences++;
+					}
+			}
 			else for(CandidateRealizationSupportClause clause : slot.realization.supportClauses()) {
 				boolean actionSupported = clause.inputBindings().stream().allMatch(binding ->
 					actions == null || binding.kind() != CandidateInputBindingKind.RELOCATION
@@ -492,6 +521,12 @@ final class PlacementSupportRelations {
 					if(!option.owner.hasLiveProduct())
 						scheduleDeletion(option.owner.realization, deletions);
 				}
+			for(NativeFixedPointOption option : reference.dependentNativeOptions)
+				if(option.live) {
+					invalidatedClauses += option.owner.invalidate(option);
+					if(!option.owner.hasLiveProduct())
+						scheduleDeletion(option.owner.realization, deletions);
+				}
 			for(FixedPointLogicalRequirement requirement : reference.logicalRequirements)
 				if(requirement.liveSources > 0 && --requirement.liveSources == 0) {
 					requirement.owner.unsupportedLogicalRequirements++;
@@ -516,6 +551,12 @@ final class PlacementSupportRelations {
 						FactorizedSupportClauses restricted = slot.factorizedSupport.restricted();
 						survivors.add(restricted == slot.factorizedSupport.original
 							? slot.realization : new CandidateEmissionRealization(slot.realization.key(), restricted));
+					}
+					else if(slot.nativeSupport != null) {
+						NativeContinuitySupportClauses restricted = slot.nativeSupport.restricted();
+						survivors.add(restricted == slot.nativeSupport.original
+							? slot.realization : new CandidateEmissionRealization(
+								slot.realization.key(), restricted));
 					}
 					else {
 						List<CandidateRealizationSupportClause> clauses = slot.clauses.stream()
@@ -613,6 +654,7 @@ final class PlacementSupportRelations {
 		private final FixedPointReference reference;
 		private final List<FixedPointClause> clauses = new ArrayList<>();
 		private FactorizedFixedPointSupport factorizedSupport;
+		private NativeFixedPointSupport nativeSupport;
 		private boolean live;
 		private boolean deletionScheduled;
 		private int liveClauses;
@@ -626,7 +668,8 @@ final class PlacementSupportRelations {
 			this.live = live;
 		}
 		private boolean hasLivePhysicalSupport() {
-			return factorizedSupport != null ? factorizedSupport.hasLiveProduct() : liveClauses > 0;
+			return factorizedSupport != null ? factorizedSupport.hasLiveProduct()
+				: nativeSupport != null ? nativeSupport.hasLiveProduct() : liveClauses > 0;
 		}
 	}
 
@@ -634,6 +677,7 @@ final class PlacementSupportRelations {
 		private final CandidateRealizationReference reference;
 		private final List<FixedPointClause> dependentClauses = new ArrayList<>();
 		private final List<FactorizedFixedPointOption> dependentFactorOptions = new ArrayList<>();
+		private final List<NativeFixedPointOption> dependentNativeOptions = new ArrayList<>();
 		private final List<FixedPointLogicalRequirement> logicalRequirements = new ArrayList<>();
 		private int liveSlots;
 		private FixedPointReference(CandidateRealizationReference reference) {
@@ -695,6 +739,60 @@ final class PlacementSupportRelations {
 			this.owner = owner;
 			this.group = group;
 			this.bindings = bindings;
+		}
+	}
+
+	private static final class NativeFixedPointSupport {
+		private final FixedPointRealization realization;
+		private final NativeContinuitySupportClauses original;
+		private final List<Integer> liveByAxis;
+		private final Map<CandidateRealizationInputBinding,NativeFixedPointOption> options =
+			new IdentityHashMap<>();
+		private NativeFixedPointSupport(FixedPointRealization realization,
+			NativeContinuitySupportClauses original) {
+			this.realization = realization;
+			this.original = original;
+			liveByAxis = new ArrayList<>(Collections.nCopies(
+				original.product().axes().size(), 0));
+		}
+		private NativeFixedPointOption add(int axis, CandidateRealizationInputBinding binding) {
+			NativeFixedPointOption option = new NativeFixedPointOption(this, axis, binding);
+			options.put(binding, option);
+			liveByAxis.set(axis, liveByAxis.get(axis) + 1);
+			return option;
+		}
+		private boolean hasLiveProduct() {
+			return liveByAxis.stream().allMatch(count -> count > 0);
+		}
+		private long invalidate(NativeFixedPointOption option) {
+			option.live = false;
+			long removed = 1;
+			for(int axis = 0; axis < liveByAxis.size(); axis++)
+				if(axis != option.axis)
+					removed *= liveByAxis.get(axis);
+			liveByAxis.set(option.axis, liveByAxis.get(option.axis) - 1);
+			return removed;
+		}
+		private NativeContinuitySupportClauses restricted() {
+			return original.restrictBindings(binding -> {
+				NativeFixedPointOption option = options.get(binding);
+				return option != null && option.live;
+			}).orElseThrow(() -> new IllegalStateException(
+				"Live native realization has an empty support axis"));
+		}
+	}
+
+	private static final class NativeFixedPointOption {
+		private final NativeFixedPointSupport owner;
+		private final int axis;
+		@SuppressWarnings("unused")
+		private final CandidateRealizationInputBinding binding;
+		private boolean live = true;
+		private NativeFixedPointOption(NativeFixedPointSupport owner, int axis,
+			CandidateRealizationInputBinding binding) {
+			this.owner = owner;
+			this.axis = axis;
+			this.binding = binding;
 		}
 	}
 
@@ -813,6 +911,10 @@ final class PlacementSupportRelations {
 		java.util.function.Consumer<CandidateRealizationInputBinding> consumer) {
 		if(realization.supportClauses() instanceof FactorizedSupportClauses product) {
 			for(List<CandidateRealizationInputBinding> axis : product.factors())
+				axis.forEach(consumer);
+		}
+		else if(realization.supportClauses() instanceof NativeContinuitySupportClauses product) {
+			for(List<CandidateRealizationInputBinding> axis : product.product().axes())
 				axis.forEach(consumer);
 		}
 		else if(realization.supportClauses() instanceof IndexedSupportClauses indexed)
@@ -976,6 +1078,8 @@ final class PlacementSupportRelations {
 			return true;
 		if(realization.supportClauses() instanceof FactorizedSupportClauses factorized)
 			return factorized.nativeWorkerPoolWitness() != null;
+		if(realization.supportClauses() instanceof NativeContinuitySupportClauses nativeProduct)
+			return nativeProduct.clauseWitness() != null;
 		return realization.supportClauses().stream()
 			.allMatch(clause -> clause.nativeWorkerPoolWitness() != null);
 	}
