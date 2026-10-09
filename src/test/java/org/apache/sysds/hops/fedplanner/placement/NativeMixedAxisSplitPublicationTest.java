@@ -4,6 +4,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -126,6 +127,34 @@ public class NativeMixedAxisSplitPublicationTest {
 		Assert.assertTrue(((NativeContinuitySupportClauses)nativePart.supportClauses())
 			.conditionalComplement());
 		Assert.assertEquals(0, nativePart.fullyMaterializedSupportClauseCount());
+		Assert.assertTrue(multiple.stream().allMatch(value ->
+			value.supportClauses() instanceof NativeContinuitySupportClauses
+				&& value.fullyMaterializedSupportClauseCount() == 0));
+
+		List<CandidateEmissionRealization> scalar = new ArrayList<>();
+		for(int ordinal = 0; ordinal < twoMixed.size(); ordinal++) {
+			List<CandidateRealizationInputBinding> bindings = twoMixed.bindingsAt(ordinal);
+			boolean exact = first.exactBindings().stream().anyMatch(value -> value == bindings.get(0))
+				&& second.exactBindings().stream().anyMatch(value -> value == bindings.get(1));
+			scalar.add(scalarPublication(closure(), new NativeContinuityProof(
+				twoMixed.externalSeed(), twoMixed.outputWorkerPoolWitness(),
+				twoMixed.exactPartitionRanges(), bindings), consumer,
+				anchor("fallback-output"), "two-mixed", exact));
+		}
+		CandidateEmissionFact expected = new CandidateEmissionFact(
+			EMISSION, FType.ROW, null, scalar);
+		CandidateEmissionFact actual = new CandidateEmissionFact(
+			EMISSION, FType.ROW, null, multiple);
+		Assert.assertEquals("two disjoint lazy regions must equal every ordered scalar authority",
+			expected.realizations(), actual.realizations());
+		for(CandidateEmissionRealization realization : actual.realizations())
+			for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+				Assert.assertSame(consumer, clause.proofDependencies().get(0).owner());
+				Assert.assertTrue(clause.inputBindings().stream().anyMatch(binding ->
+					first.bindings().stream().anyMatch(option -> option == binding)));
+				Assert.assertTrue(clause.inputBindings().stream().anyMatch(binding ->
+					second.bindings().stream().anyMatch(option -> option == binding)));
+			}
 
 		Axis singletonMixed = axis(key("singleton-source"), 0, "singleton", 1, 1);
 		NativePlacementContinuity.NativeSupportProduct singletonRegions =
@@ -141,6 +170,79 @@ public class NativeMixedAxisSplitPublicationTest {
 		Assert.assertNotEquals(descriptors.get(0).key(), descriptors.get(1).key());
 		// Actual publication rejects both singleton descriptors; that complete
 		// scalar fallback is exercised by NativeMixedExactnessPartitionTest.
+	}
+
+	@Test
+	public void actualTwoMixedAxisBinderMatchesScalarAuthorityAcrossReplayAndWithdrawal()
+		throws Exception {
+		CompiledHopKey leftOwner = fixtureKey("two-mixed-left");
+		CompiledHopKey rightOwner = fixtureKey("two-mixed-right");
+		CompiledHopKey consumerOwner = fixtureKey("two-mixed-consumer");
+		DurableAnchorKey pool = anchor("two-mixed-pool");
+		CandidateEmissionRealization leftExact = sourceRealization(
+			leftOwner, pool, "two-left-exact", true);
+		CandidateRuleFact left = fact(new CandidateRuleKey(leftOwner, List.of()), List.of(
+			leftExact, sourceRealization(leftOwner, pool, "two-left-other-exact", true),
+			valueMapSource("two-left-map",
+				new CandidateRuleKey(leftOwner, List.of()), leftExact)));
+		CandidateEmissionRealization rightExact = sourceRealization(
+			rightOwner, pool, "two-right-exact", true);
+		CandidateEmissionRealization rightMap = valueMapSource("two-right-map",
+			new CandidateRuleKey(rightOwner, List.of()), rightExact);
+		CandidateRuleFact right = fact(new CandidateRuleKey(rightOwner, List.of()),
+			List.of(rightExact, rightMap));
+		CandidateEmissionRealization stagingRealization = CandidateEmissionRealization.nativeLineage(
+			EMISSION, "two-mixed-staging", List.of(), List.of());
+		CandidateRuleFact staging = fact(new CandidateRuleKey(consumerOwner, List.of(
+			CandidateInputState.present(FType.ROW), CandidateInputState.present(FType.ROW))),
+			List.of(stagingRealization));
+		DataOp leftHop = new DataOp("two-mixed-left", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "two-mixed-left", 8, 2, 16, 1000);
+		DataOp rightHop = new DataOp("two-mixed-right", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "two-mixed-right", 8, 2, 16, 1000);
+		BinaryOp consumerHop = new BinaryOp("two-mixed-consumer", DataType.MATRIX,
+			ValueType.FP64, OpOp2.PLUS, leftHop, rightHop);
+
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		CandidateRuleFact first = bindBinary(closure(metrics), left, right, staging,
+			leftHop, rightHop, consumerHop, pool, 6);
+		List<CandidateEmissionRealization> firstProducts = products(first);
+		Assert.assertEquals(2, firstProducts.size());
+		Assert.assertEquals(6, firstProducts.stream()
+			.mapToInt(value -> value.supportClauses().size()).sum());
+		Assert.assertTrue(firstProducts.stream().allMatch(value ->
+			value.supportClauses() instanceof NativeContinuitySupportClauses
+				&& value.fullyMaterializedSupportClauseCount() == 0));
+		SearchSpaceMetrics.NativePublicationCount partitioned = metrics.nativePublicationSnapshot()
+			.stream().filter(value -> value.outcome()
+				== SearchSpaceMetrics.NativePublicationOutcome.PARTITIONED)
+			.findFirst().orElseThrow();
+		Assert.assertEquals(1, partitioned.queries());
+		Assert.assertEquals(6, partitioned.logicalProofs());
+		Assert.assertEquals(0, partitioned.consumedProofs());
+
+		CandidateRuleFact metricsOff = bindBinary(closure(), left, right, staging,
+			leftHop, rightHop, consumerHop, pool, 6);
+		Assert.assertEquals(exactMemberSignatures(metricsOff), exactMemberSignatures(first));
+		CandidateRuleFact replay = bindBinary(closure(metrics), left, right, first,
+			leftHop, rightHop, consumerHop, pool, 6);
+		for(CandidateEmissionRealization retained : firstProducts)
+			Assert.assertTrue("unchanged conditional regions retain exact realization authority",
+				products(replay).stream().anyMatch(candidate -> candidate == retained));
+
+		CandidateRuleFact reducedRight = fact(new CandidateRuleKey(rightOwner, List.of()),
+			List.of(rightExact));
+		CandidateRuleFact rebound = bindBinary(closure(), left, reducedRight, replay,
+			leftHop, rightHop, consumerHop, pool, 3);
+		CandidateRuleFact pruned = PlacementSupportRelations.pruneUnsupportedRealizations(
+			List.of(left, reducedRight, rebound)).stream().filter(value ->
+				value.key().parentOccurrence() == consumerOwner).findFirst().orElseThrow();
+		CandidateRuleFact cold = bindBinary(closure(), left, reducedRight, staging,
+			leftHop, rightHop, consumerHop, pool, 3);
+		Assert.assertEquals("partial withdrawal must equal a cold scalar-authority rebuild",
+			expandedSignatures(cold), expandedSignatures(pruned));
+		Assert.assertFalse(expandedSignatures(pruned).stream().anyMatch(signature ->
+			signature.contains("two-right-map")));
 	}
 
 	@Test
@@ -590,6 +692,67 @@ public class NativeMixedAxisSplitPublicationTest {
 		facts.setAccessible(true);
 		@SuppressWarnings("unchecked")
 		List<CandidateRuleFact> rebound = (List<CandidateRuleFact>)facts.invoke(result);
+		return rebound.get(0);
+	}
+
+	private static CandidateRuleFact bindBinary(PlacementRelationClosure closure,
+		CandidateRuleFact left, CandidateRuleFact right, CandidateRuleFact consumer,
+		DataOp leftHop, DataOp rightHop, BinaryOp consumerHop,
+		DurableAnchorKey pool, int expectedWidth) throws Exception {
+		List<CandidateRuleFact> inventory = List.of(left, right, consumer);
+		List<Node> nodes = List.of(fixtureNode(left.key().parentOccurrence()),
+			fixtureNode(right.key().parentOccurrence()), fixtureNode(consumer.key().parentOccurrence()));
+		List<CompiledInputEdgeFact> edges = List.of(
+			new CompiledInputEdgeFact(left.key().parentOccurrence(),
+				consumer.key().parentOccurrence(), 0),
+			new CompiledInputEdgeFact(right.key().parentOccurrence(),
+				consumer.key().parentOccurrence(), 1));
+		Map<CompiledHopKey,Hop> origins = new IdentityHashMap<>();
+		origins.put(left.key().parentOccurrence(), leftHop);
+		origins.put(right.key().parentOccurrence(), rightHop);
+		origins.put(consumer.key().parentOccurrence(), consumerHop);
+		Map<Hop,PlacementAnalysis.NodeShapeFact> shapes = new IdentityHashMap<>();
+		shapes.put(leftHop, new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+		shapes.put(rightHop, new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+		shapes.put(consumerHop, new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+		for(Node node : nodes)
+			nodesByKey.put(node.key(), node);
+		NativePlacementContinuity continuity = new NativePlacementContinuity(
+			nodesByKey, origins, inventory, edges, Map.of());
+		CandidateEmissionFact emission = consumer.allowedEmissionFacts().get(0);
+		CandidateRealizationReference proposed = new CandidateRealizationReference(
+			consumer.key(), PlacementIdentity.PlacementRealizationKey.nativeLineage(
+				emission.emissionState(), "two-mixed-query"));
+		NativePlacementContinuity.CandidateSupportResult query =
+			continuity.proveGeneratedCandidateSupport(consumer, emission, proposed, pool);
+		Assert.assertNotNull(query.supportProduct());
+		Assert.assertEquals(expectedWidth, query.supportProduct().size());
+
+		Method indexBuilder = PlacementRelationClosure.class.getDeclaredMethod("directBindingIndex",
+			List.class, List.class, List.class, List.class, Map.class, Map.class);
+		indexBuilder.setAccessible(true);
+		Object index = indexBuilder.invoke(null, inventory, nodes, edges, inventory, origins, shapes);
+		Method bind = PlacementRelationClosure.class.getDeclaredMethod(
+			"bindDirectNativeCandidateRealizationsWithDependenciesMeasured", index.getClass(),
+			List.class, Map.class, Map.class, NativePlacementContinuity.class, Set.class);
+		bind.setAccessible(true);
+		Set<CompiledHopKey> dirty = Collections.newSetFromMap(new IdentityHashMap<>());
+		dirty.add(consumer.key().parentOccurrence());
+		Object result = bind.invoke(closure, index, List.of(consumer), origins, shapes,
+			continuity, dirty);
+		Method facts = result.getClass().getDeclaredMethod("facts");
+		facts.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		List<CandidateRuleFact> rebound = (List<CandidateRuleFact>)facts.invoke(result);
+		Method dependencies = result.getClass().getDeclaredMethod("dependencyOccurrences");
+		dependencies.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		Map<CompiledHopKey,Set<CompiledHopKey>> footprint =
+			(Map<CompiledHopKey,Set<CompiledHopKey>>)dependencies.invoke(result);
+		Set<CompiledHopKey> owners = footprint.get(consumer.key().parentOccurrence());
+		Assert.assertTrue(owners.stream().anyMatch(owner -> owner == left.key().parentOccurrence()));
+		Assert.assertTrue(owners.stream().anyMatch(owner -> owner == right.key().parentOccurrence()));
 		return rebound.get(0);
 	}
 

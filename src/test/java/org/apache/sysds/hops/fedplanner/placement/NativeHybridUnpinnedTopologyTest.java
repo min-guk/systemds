@@ -26,10 +26,61 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRea
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationReference;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class NativeHybridUnpinnedTopologyTest {
+	private static final List<String> HYBRID_OUTCOMES = List.of(
+		"NATIVE_HYBRID_ACCEPTED", "NATIVE_HYBRID_REJECT_CONTEXT",
+		"NATIVE_HYBRID_REJECT_DERIVED", "NATIVE_HYBRID_REJECT_REFERENCE",
+		"NATIVE_HYBRID_REJECT_LAYOUT", "NATIVE_HYBRID_REJECT_PRODUCT",
+		"NATIVE_HYBRID_REJECT_NO_NATIVE");
+
+	@Test
+	public void metricsClassifyAcceptedHybridWithoutChangingProofAuthority() throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		NativePlacementContinuity.CandidateSupportResult explicit = scenario.query(true);
+		NativeContinuitySupportClauses relation = scenario.install(false);
+		NativePlacementContinuity.CandidateSupportResult metricsOff = scenario.queryCurrent();
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 128, 2048L);
+		NativePlacementContinuity.CandidateSupportResult metricsOn = scenario.queryCurrent(resolver);
+
+		Assert.assertEquals(signatures(explicit), signatures(metricsOff));
+		Assert.assertEquals(signatures(metricsOff), signatures(metricsOn));
+		assertBindingSourceIdentity(metricsOff, metricsOn);
+		assertIdentitySetEquals(metricsOff.dependencyOccurrences(), metricsOn.dependencyOccurrences());
+		Assert.assertEquals(1, relation.materializedHandleCount());
+		// The exact witness admits the circuit; the dynamic witness has no eligible native row.
+		assertHybridCounts(metrics, "NATIVE_HYBRID_ACCEPTED", "NATIVE_HYBRID_REJECT_NO_NATIVE");
+	}
+
+	@Test
+	public void derivedHybridAttemptIsClassifiedBeforeLegacyFullProofFallback() throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		NativeContinuitySupportClauses relation = scenario.installDerived();
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 128, 2048L);
+		NativePlacementContinuity.CandidateSupportResult metricsOn = scenario.queryCurrent(resolver);
+		NativePlacementContinuity.CandidateSupportResult metricsOff = scenario.queryCurrent();
+
+		Assert.assertEquals("derived authority must retain the complete legacy fallback",
+			3, metricsOn.proofs().size());
+		Assert.assertEquals(signatures(metricsOff), signatures(metricsOn));
+		assertBindingSourceIdentity(metricsOff, metricsOn);
+		assertIdentitySetEquals(metricsOff.dependencyOccurrences(), metricsOn.dependencyOccurrences());
+		Assert.assertEquals("the legacy fallback, not diagnostics, expands every native member",
+			relation.size(), relation.materializedHandleCount());
+		assertHybridCounts(metrics, "NATIVE_HYBRID_REJECT_DERIVED", "NATIVE_HYBRID_REJECT_DERIVED");
+	}
+
 	@Test
 	public void mixedNativeAndExplicitRowsPreserveEveryCanonicalProofLazily()
 		throws Exception {
@@ -216,6 +267,37 @@ public class NativeHybridUnpinnedTopologyTest {
 			return relation;
 		}
 
+		private NativeContinuitySupportClauses installDerived() throws Exception {
+			NativeContinuitySupportClauses relation = install(false);
+			CandidateRuleFact installed = candidateFacts(fixture).stream()
+				.filter(fact -> fact.key().parentOccurrence() == childKey).findFirst().orElseThrow();
+			CandidateEmissionFact ordinary = installed.allowedEmissionFacts().get(0);
+			PlacementState target = ordinary.emissionState().placementState();
+			PlacementState source = new PlacementState(
+				target.execType(), FederatedOutput.LOUT, target.fType(), target.shapeDependent());
+			PlacementEmissionState derivedState = new PlacementEmissionState(target, true);
+			ValueVersionKey version = new ValueVersionKey(childKey.programFingerprint(),
+				"hybrid-derived", childKey.controlRegion(), 0, VersionKind.ORDINARY, List.of());
+			DerivedFoutMaterializationActionKey action =
+				new DerivedFoutMaterializationActionKey(childKey, version, installed.key(),
+					source, target, pool, childKey, FType.FULL, FType.FULL,
+					childKey.controlRegion().normalizedSignature());
+			List<CandidateEmissionRealization> derived = ordinary.realizations().stream()
+				.map(realization -> new CandidateEmissionRealization(
+					PlacementRealizationKey.nativeLineage(
+						derivedState, realization.key().nativeLineage()),
+					realization.supportClauses())).toList();
+			CandidateEmissionFact derivedEmission = new CandidateEmissionFact(
+				derivedState, FType.FULL, action, derived);
+			CandidateRuleFact replacement = new CandidateRuleFact(installed.key(), installed.status(),
+				installed.capability(), installed.shapeProof(), installed.profile(),
+				// The invalid derived action must still refuse the hybrid route, while
+				// ordinary native/explicit rows remain available through legacy topology.
+				List.of(derivedEmission, ordinary), installed.failureCode());
+			replaceFact(candidateFacts(fixture), installed, replacement);
+			return relation;
+		}
+
 		private int installedNativeOrdinal() throws Exception {
 			CandidateRuleFact installed = candidateFacts(fixture).stream()
 				.filter(fact -> fact.key().parentOccurrence() == childKey).findFirst().orElseThrow();
@@ -226,6 +308,32 @@ public class NativeHybridUnpinnedTopologyTest {
 					return ordinal;
 			throw new AssertionError("installed native realization is missing");
 		}
+	}
+
+	private static void assertHybridCounts(SearchSpaceMetrics metrics, String... outcomes) {
+		// The public FULL-pool query tries both exact and dynamic partition witnesses.
+		Assert.assertEquals(outcomes.length, directWork(metrics, "NATIVE_HYBRID_REQUESTS"));
+		long classified = 0;
+		for(String candidate : HYBRID_OUTCOMES) {
+			long count = directWork(metrics, candidate);
+			Assert.assertEquals(candidate + " counts=" + HYBRID_OUTCOMES.stream()
+				.map(name -> name + "=" + directWork(metrics, name)).toList(),
+				java.util.Collections.frequency(List.of(outcomes), candidate), count);
+			classified += count;
+		}
+		Assert.assertEquals("every completed request has exactly one outcome",
+			directWork(metrics, "NATIVE_HYBRID_REQUESTS"), classified);
+	}
+
+	private static long directWork(SearchSpaceMetrics metrics, String name) {
+		return metrics.directWorkCount(SearchSpaceMetrics.DirectWork.valueOf(name));
+	}
+
+	private static void replaceFact(List<CandidateRuleFact> facts,
+		CandidateRuleFact prior, CandidateRuleFact replacement) {
+		int index = facts.indexOf(prior);
+		Assert.assertTrue(index >= 0);
+		facts.set(index, replacement);
 	}
 
 	@SuppressWarnings("unchecked")

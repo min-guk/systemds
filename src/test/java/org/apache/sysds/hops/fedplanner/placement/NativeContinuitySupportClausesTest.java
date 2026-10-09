@@ -375,6 +375,56 @@ public class NativeContinuitySupportClausesTest {
 	}
 
 	@Test
+	public void conditionalLengthRanksRejectEveryOutOfBucketIndex() {
+		CompiledHopKey owner = key("length-rank-owner");
+		CompiledHopKey leftOwner = key("length-rank-left");
+		CompiledHopKey rightOwner = key("length-rank-right");
+		DurableAnchorKey seed = pool("length-rank-seed");
+		DurableAnchorKey output = pool("length-rank-output");
+		List<CandidateRealizationInputBinding> left = List.of(
+			direct(0, "a", leftOwner),
+			direct(0, "left-medium-width", leftOwner),
+			direct(0, "left-" + "x".repeat(67), leftOwner)).stream().sorted().toList();
+		List<CandidateRealizationInputBinding> right = List.of(
+			direct(1, "b", rightOwner),
+			direct(1, "right-somewhat-longer", rightOwner),
+			direct(1, "right-" + "y".repeat(103), rightOwner)).stream().sorted().toList();
+		var base = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			seed, output, true, List.of(left, right));
+		Assert.assertNotNull(base);
+		var relation = NativeContinuitySupportClauses.exactComplement(owner, base,
+			List.of(List.of(left.get(0)), List.of(right.get(0))), output, true);
+		Assert.assertNotNull(relation);
+		var conditional = relation.product();
+		var counts = conditional.bindingLengthCounts();
+		Assert.assertTrue("fixture needs several nonempty canonical length buckets: " + counts,
+			counts.size() >= 3);
+
+		for(var bucket : counts.entrySet()) {
+			int length = bucket.getKey();
+			int count = bucket.getValue();
+			Assert.assertTrue(count > 0);
+			for(int rank = 0; rank < count; rank++) {
+				List<CandidateRealizationInputBinding> bindings =
+					conditional.bindingsAtLengthRank(length, rank);
+				Assert.assertEquals(length, conditional.bindingLength(bindings));
+				Assert.assertEquals(rank, conditional.rankWithinBindingLength(bindings));
+				Assert.assertTrue(conditional.ordinalOfExactAuthorityBindings(bindings) >= 0);
+			}
+			Assert.assertThrows(IndexOutOfBoundsException.class,
+				() -> conditional.bindingsAtLengthRank(length, -1));
+			Assert.assertThrows(IndexOutOfBoundsException.class,
+				() -> conditional.bindingsAtLengthRank(length, count));
+			Assert.assertThrows(IndexOutOfBoundsException.class,
+				() -> conditional.bindingsAtLengthRank(length, Integer.MAX_VALUE));
+		}
+		Assert.assertThrows(IndexOutOfBoundsException.class,
+			() -> conditional.bindingsAtLengthRank(Integer.MIN_VALUE, 0));
+		Assert.assertEquals("rank probes must not materialize clause handles",
+			0, relation.materializedHandleCount());
+	}
+
+	@Test
 	public void complementRestrictionCollapsesOrDiesWithoutInventingHoles() {
 		CompiledHopKey owner = key("restrict-owner");
 		CompiledHopKey leftOwner = key("restrict-left");
@@ -396,6 +446,56 @@ public class NativeContinuitySupportClausesTest {
 		Assert.assertEquals(2, fullRectangle.size());
 		Assert.assertTrue(relation.restrictBindings(binding ->
 			binding == leftExact || binding == rightExact).isEmpty());
+	}
+
+	@Test
+	public void complementKeepsDistinctFullSeedsWithIdenticalWorkerGeometry() {
+		CompiledHopKey owner = key("seed-identity-owner");
+		CompiledHopKey leftOwner = key("seed-identity-left");
+		CompiledHopKey rightOwner = key("seed-identity-right");
+		var leftExact = direct(0, "exact", leftOwner);
+		var leftOther = direct(0, "other", leftOwner);
+		var rightExact = direct(1, "exact", rightOwner);
+		var rightOther = direct(1, "other", rightOwner);
+		var axes = List.of(List.of(leftExact, leftOther).stream().sorted().toList(),
+			List.of(rightExact, rightOther).stream().sorted().toList());
+		var excluded = List.of(List.of(leftExact), List.of(rightExact));
+		DurableAnchorKey firstSeed = pool("seed-a"), secondSeed = pool("seed-b");
+		DurableAnchorKey output = pool("seed-output");
+		Assert.assertNotEquals(firstSeed, secondSeed);
+		Assert.assertTrue(PlacementIdentity.samePhysicalWorkerPool(firstSeed, secondSeed));
+		var first = NativeContinuitySupportClauses.exactComplement(owner,
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(firstSeed, output, true, axes),
+			excluded, output, true);
+		var second = NativeContinuitySupportClauses.exactComplement(owner,
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(secondSeed, output, true, axes),
+			excluded, output, true);
+		Assert.assertFalse(first.sameExactAuthority(second));
+		Assert.assertTrue(first.oneAxisUnion(second).isEmpty());
+		Assert.assertTrue(first.multiHeaderUnion(second).isEmpty());
+		Assert.assertTrue(NativeContinuitySupportClauses.unionSameAxesHeaderGroup(
+			List.of(first, second)).isEmpty());
+		Assert.assertEquals(0, first.materializedHandleCount() + second.materializedHandleCount());
+		List<CandidateRealizationSupportClause> expected = new ArrayList<>();
+		for(var seed : List.of(firstSeed, secondSeed))
+			for(var clause : enumeratedClauses(owner, seed, output, axes))
+				if(clause.inputBindings().get(0) != leftExact
+					|| clause.inputBindings().get(1) != rightExact)
+					expected.add(clause);
+		var realizationKey = PlacementRealizationKey.nativeLineage(emission(), "same-seed-output");
+		var merged = new PlacementAnalysis.CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+			new CandidateEmissionRealization(realizationKey, first),
+			new CandidateEmissionRealization(realizationKey, second))).realizations().get(0);
+		Assert.assertEquals(6, merged.supportClauses().size());
+		Assert.assertEquals(new CandidateEmissionRealization(realizationKey, expected).supportClauses(),
+			merged.supportClauses());
+		for(var clause : merged.supportClauses()) {
+			int firstOrdinal = first.ordinalOfExactAuthorityClause(clause);
+			int secondOrdinal = second.ordinalOfExactAuthorityClause(clause);
+			Assert.assertTrue("full seed, not worker geometry, chooses exactly one authority",
+				(firstOrdinal >= 0) != (secondOrdinal >= 0));
+			Assert.assertSame(firstOrdinal >= 0 ? first.get(firstOrdinal) : second.get(secondOrdinal), clause);
+		}
 	}
 
 	@Test

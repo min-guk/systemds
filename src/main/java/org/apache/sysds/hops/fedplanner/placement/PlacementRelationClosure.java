@@ -6328,7 +6328,7 @@ final class PlacementRelationClosure {
 
 	/**
 	 * Returns one uniform publication, or exactly [DURABLE_MAP, NATIVE_LINEAGE]
-	 * for a known-output exact proof partitioned by one mixed source axis. Both
+	 * for a known-output exact proof partitioned by mixed source-layout axes. Both
 	 * parts keep exact proof/output ranges and are reconstructed before admission.
 	 */
 	private List<CandidateEmissionRealization> directNativeProductPublication(

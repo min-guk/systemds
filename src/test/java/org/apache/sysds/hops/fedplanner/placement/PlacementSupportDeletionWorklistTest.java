@@ -368,6 +368,56 @@ public class PlacementSupportDeletionWorklistTest {
 			removed.facts().get(2).status());
 		Assert.assertTrue(removed.work().deletedRealizations() >= 1);
 		Assert.assertEquals(0, relation.materializedHandleCount());
+
+		// Independent base enumeration excludes the exact rectangle without consulting
+		// conditional rank/iteration; use it as the cold deletion oracle below.
+		List<CandidateRealizationSupportClause> explicit = new ArrayList<>();
+		for(var left : List.of(leftExactBinding, leftInexactBinding))
+			for(var right : List.of(rightExactBinding, rightInexactBinding)) {
+				if(left == leftExactBinding && right == rightExactBinding)
+					continue;
+				List<CandidateRealizationInputBinding> bindings = List.of(left, right);
+				var proof = new NativePlacementContinuity.NativeContinuityProof(
+					pool, pool, true, bindings).continuityProofKey(consumer.parentOccurrence());
+				explicit.add(new CandidateRealizationSupportClause(List.of(proof), bindings, pool, true));
+			}
+		CandidateEmissionRealization expanded = new CandidateEmissionRealization(dependent.key(), explicit);
+		for(boolean removeExactAxis : List.of(false, true)) {
+			List<CandidateEmissionRealization> leftLive = removeExactAxis
+				? List.of(leftExact, leftInexact) : List.of(leftExact);
+			List<CandidateEmissionRealization> rightLive = removeExactAxis
+				? List.of(rightInexact) : List.of(rightExact, rightInexact);
+			CandidateRuleFact leftFact = fact(leftRule, ROW, leftLive);
+			CandidateRuleFact rightFact = fact(rightRule, ROW, rightLive);
+			var actual = PlacementSupportRelations.pruneUnsupportedRealizationsToFixedPointWithWork(
+				List.of(leftFact, rightFact, fact(consumer, ROW, List.of(dependent))), null, null, null);
+			var expected = PlacementSupportRelations.pruneUnsupportedRealizationsToFixedPointWithWork(
+				List.of(leftFact, rightFact, fact(consumer, ROW, List.of(expanded))), null, null, null);
+			var actualClauses = actual.facts().get(2).allowedEmissionFacts().get(0)
+				.realizations().get(0).supportClauses();
+			var expectedClauses = expected.facts().get(2).allowedEmissionFacts().get(0)
+				.realizations().get(0).supportClauses();
+			Assert.assertTrue(actualClauses instanceof NativeContinuitySupportClauses);
+			var restricted = (NativeContinuitySupportClauses)actualClauses;
+			Assert.assertEquals(!removeExactAxis, restricted.conditionalComplement());
+			Assert.assertEquals(removeExactAxis ? 2 : 1, restricted.size());
+			Assert.assertEquals("partial deletion itself stays lazy", 0, restricted.materializedHandleCount());
+			Assert.assertEquals(expectedClauses, actualClauses);
+			for(var clause : actualClauses) {
+				Assert.assertFalse(clause.inputBindings().get(0) == leftExactBinding
+					&& clause.inputBindings().get(1) == rightExactBinding);
+				int donorOrdinal = relation.ordinalOfExactAuthorityClause(clause);
+				Assert.assertTrue(donorOrdinal >= 0);
+				// Leaf pruning deliberately releases its old relation instead of retaining
+				// a donor graph. Preserve exact proof and binding authority, not the wrapper.
+				Assert.assertEquals(0, restricted.authorityDonorCount());
+				Assert.assertEquals(relation.get(donorOrdinal), clause);
+				Assert.assertSame(consumer.parentOccurrence(), clause.proofDependencies().get(0).owner());
+				for(int axis = 0; axis < clause.inputBindings().size(); axis++)
+					Assert.assertSame(relation.get(donorOrdinal).inputBindings().get(axis),
+						clause.inputBindings().get(axis));
+			}
+		}
 	}
 
 	@Test
