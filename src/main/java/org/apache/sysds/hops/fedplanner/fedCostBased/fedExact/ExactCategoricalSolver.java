@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -344,6 +345,26 @@ public final class ExactCategoricalSolver {
 			if(!(evaluator instanceof FiniteSupport support))
 				throw new IllegalStateException("EXACT_VE_FACTOR_NOT_FINITE_SUPPORT");
 			return support.finiteCells.clone();
+		}
+		/** Constant finite numeric cost, allowing +INF holes; empty for every other case. */
+		OptionalLong constantFiniteCostBits() {
+			if(denseValues == null)
+				return OptionalLong.empty();
+			long bits = 0L;
+			boolean found = false;
+			for(double value : denseValues) {
+				if(value == Double.POSITIVE_INFINITY)
+					continue;
+				long current = Double.doubleToRawLongBits(value);
+				if(!Double.isFinite(value) || value < 0d
+					|| current == Double.doubleToRawLongBits(-0d))
+					return OptionalLong.empty();
+				if(found && current != bits)
+					return OptionalLong.empty();
+				bits = current;
+				found = true;
+			}
+			return found ? OptionalLong.of(bits) : OptionalLong.empty();
 		}
 		int finiteSupportCellCount() {
 			if(!(evaluator instanceof FiniteSupport support))

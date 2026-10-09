@@ -2,7 +2,7 @@
 
 ## 상태
 
-최신 게시 코드는 `12f1f712d3`이며, 동일 COFEE 50K×128 W1 조건의 v17 실제 실행을 완료했다. **20초 목표는 달성하지 못했다.** 아래 값은 학습 실행 시간이 아니라 `planningFullInitialNanos`로 측정한 전체 초기 플래닝 시간이다.
+게시 이력 `12f1f712d3` 이후, 동일 COFEE 50K×128 W1 조건의 v18 실제 실행까지 완료했다. **20초 목표는 달성하지 못했다.** 아래 값은 학습 실행 시간이 아니라 `planningFullInitialNanos`로 측정한 전체 초기 플래닝 시간이다.
 
 | 엔진 | LogReg | GLM | 검증 상태 |
 |---|---:|---:|---|
@@ -10,6 +10,9 @@
 | v15 | 384.003초 | 126.728초 | Numeric/audit PASS. GLM 선택 receipt·비용은 v11/v14와 동일 |
 | v16 | 381.268초 | 130.795초 | 두 workload numeric/audit, v15와 전체 선택 receipt·certificate 동일 |
 | v17 | 386.944초 | 132.663초 | Numeric/audit 및 v16 선택 receipt·비용 raw bits 동일; 전체 시간 증가 |
+| v18 | 385.223초 | 128.050초 | Numeric/audit 및 v17 선택 receipt·비용 raw bits·전체 fingerprint 동일 |
+
+v18은 LogReg 1.721초, GLM 4.612초 줄었지만 단일 관측이며, proof 소비량은 각각 16,848,259개와 2,210,823개로 v17과 같다. Public/native memo hit는 LogReg 31,312→98,777, GLM 12,197→42,049로 증가했다. Coordinator peak는 LogReg 9,326,448,640B, GLM 5,456,707,584B였다. 메모리나 전체 시간의 반복 검증된 개선으로 보고하지 않는다. 근거: `evidence/cofee-50k128-v18-validation/v17-v18-comparison.json`, SHA256 `6ffe1ab1da692805748c9981dff1c73a86c46fa82592099fbdb2ebea2e11ee47`.
 
 각 버전은 workload별 1회 관측이다. v17도 LogReg와 GLM 모두 v16보다 느렸다. v15는 GLM이 빨라졌지만 LogReg가 느려졌고, v16 GLM도 v15보다 느렸다. 따라서 객체 생성이나 proof 방문량 감소를 전체 ML 플래닝 시간 개선으로 일반화하지 않는다. 동일 probe의 추가 비교에서 LogReg v14·v15·v16의 전체 선택 receipt, assignment 및 비용 raw bits `4653340210026796583`이 모두 같았다. GLM도 v11·v14·v15·v16의 선택과 비용이 같다. Aggregate plan hash 차이는 비용 표면의 표현 hash에서 발생했으며, 선택 의미의 차이는 발견되지 않았다. LogReg 근거는 `evidence/cofee-50k128-v16-validation/logreg-receipt-parity-v14-v16.json` (SHA256 `a2d521100896a6e11721055c9a36198084c22faac6ea8b87b65e71bbb649eada`)이다.
 

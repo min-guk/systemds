@@ -645,3 +645,13 @@
 - **병합 검증**: incoming 실제NATIVE출력key의seed identity를활용하는prospectivecollision 예외와MIXED_EXACTNESS 단일/다중축구분을보존했다. 독립reviewCLEAR, root7suites66tests PASS(4.310초). 이추가변경은v18봉인에포함되지않는다.
 - **후속 설계/근거**: exact proof와concrete output anchor의경우mixed축이정확히1개이면다른축은모두exact다. 해당축을exact/inexact 옵션으로분리하여DURABLE과NATIVE 두직사각관계를만든다. 원래필터링된합법tuple을겹침·누락없이분할하며서로다른authority를합치지않는다. Multiple mixed axes, 재구성실패, 두region모두singleton은기존scalar경로를유지한다.
 - **Authority/잔여 위험**: retained coverage 및동일key충돌은region별로판정한다. 한region이충돌해도다른region은압축을유지하고충돌region만기존scalar권한병합을따른다. PUBLISHED_SPLIT은요청1개와논리적proof수를기록하며최종merge의객체생성절감을의미하지않는다. 강제멤버복원·원본scalarproof·sourceowner identity·retained replay·withdrawal회귀와실제Docker검증이필요하다.
+
+### DP의 동일 비용 벡터 certificate 확장 (통합 검증중)
+
+- **문제/판단**: 기존certificate는hard+0 factor만허용하여값이항상같은numeric factor가포함된경우에도조건부solve를반복한다. 일반적인factor별최솟값합은부동소수보정합의raw bits에대한증명이아니므로그설계는적용하지않았다.
+- **안전한 범위**: 이미소유한dense factor의모든finite cell이동일한nonnegative raw bits이고incumbent가그finite cell을선택하는경우만인정한다. +INF hole은허용하되그값을선택하면fallback한다. 모든합법assignment의순서있는factor 비용비트벡터가같으므로동일한ExactCompensatedCostSum의결과도정확히같다. Varied cost, unknown evaluator, 음수/-0/NaN/all-INF는기존solve다.
+- **구현/검증**: root/conditioned 분류를한번만계산해보관한다. 이미검사한cost bits를기존순서의보정합에넣어중복factor평가·temporary map을피한다. Resource preflight, 고정경계, incumbent auxiliary witness와strict improvement 정책은보존한다. 독립62tests PASS, rawbits/조건부slice/40fixed-seed reference를포함한다. Root통합회귀와실제workload 효과는아직미검증이다.
+- **single mixed 축 추가 회귀**: 독립test에서구조적으로같지만identity가다른source owner가글로벌structural source index의layout을빌릴수있는helper입력을발견했다. 새압축경로는그경우관계전체를기존scalar fallback으로돌린다. Foreign옵션을부분삭제하거나legacy허용집합을바꾸지않는다. 일반planner전체의foreignowner문제를해결했다고주장하지않는다.
+
+- v18 실제 COFEE 고정 조건 결과: LogReg 385.222894848초 / GLM 128.050397173초. v17의 objective raw bits, assignment, selected receipt, costSurface 및 전체 fingerprint와 동일; numeric/audit PASS. 각 1회이며 20초 목표 FAIL. Consumed proof 수는 16,848,259 / 2,210,823으로 변하지 않음. 비교 SHA `6ffe1ab1da692805748c9981dff1c73a86c46fa82592099fbdb2ebea2e11ee47`.
+- Constant certificate v2 root focused gate 46개 중 1개 실패: 기존 numeric fallback 통합 fixture가 일정한 MIN_VALUE 비용이어서 새 정당한 constant certificate를 사용함. 실패 증거 `evidence/constant-certificate-root-red-46` 보존. varied-cost fallback fixture와 별도 constant 통합 검증으로 수정 중.

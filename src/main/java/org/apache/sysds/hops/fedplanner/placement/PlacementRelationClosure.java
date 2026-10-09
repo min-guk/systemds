@@ -5344,6 +5344,11 @@ final class PlacementRelationClosure {
 			return executableReferences.containsKey(reference);
 		}
 
+		private boolean hasForeignNativeOwner(CandidateRealizationReference reference) {
+			CompiledHopKey owner = nativeOwners.get(reference);
+			return owner != null && owner != reference.rule().parentOccurrence();
+		}
+
 		private Set<CompiledHopKey> incompleteMetadataOwners() { return incompleteMetadataOwners; }
 
 		private void nextRevision(List<CandidateRuleFact> facts, Set<CompiledHopKey> changed) {
@@ -5929,10 +5934,22 @@ final class PlacementRelationClosure {
 									: grounded.hasConflictingEqualAuthority() ? NativePublicationOutcome.CONFLICTING_AUTHORITY
 									: NativePublicationOutcome.RETAINED_UNION;
 							if(recomputeNative && supportProduct != null && grounded != null
-								&& !grounded.hasConflictingEqualAuthority())
-								productPublication = directNativeProductPublication(supportProduct,
-									fact.key().parentOccurrence(), emission.emissionState(), outputAnchor,
+								&& !grounded.hasConflictingEqualAuthority()) {
+								List<CandidateEmissionRealization> publications = directNativeProductPublications(
+									supportProduct, fact.key().parentOccurrence(), emission.emissionState(), outputAnchor,
 									nativeLineage, requiredInputs, sources, exactSourceLayouts, publicationTrace);
+								if(publications != null && publications.size() == 2) {
+									coveredByRetained |= appendSplitNativePublications(publications,
+										prospectiveOutputCounts.getOrDefault(request.output(), 0),
+										fact.key().parentOccurrence(), emission.emissionState(), outputAnchor,
+										nativeLineage, grounded, bound);
+									if(publicationTrace != null)
+										complexityMetrics.recordNativePublication(
+											NativePublicationOutcome.PUBLISHED_SPLIT, supportResult.proofs().size());
+									continue;
+								}
+								productPublication = publications == null ? null : publications.get(0);
+							}
 							if(productPublication != null) {
 								// Preserve the legacy singleton encoding when this new path
 								// cannot avoid any product member generation.
@@ -6221,11 +6238,49 @@ final class PlacementRelationClosure {
 		return publication;
 	}
 
+	/** Retained or colliding authority expands only its own exactness region. */
+	private boolean appendSplitNativePublications(List<CandidateEmissionRealization> publications,
+		int prospectiveOutputs, CompiledHopKey owner, PlacementEmissionState emissionState,
+		DurableAnchorKey outputAnchor, String nativeLineage, GroundedNativePreparation grounded,
+		List<CandidateEmissionRealization> bound) {
+		boolean covered = false;
+		for(CandidateEmissionRealization publication : publications) {
+			if(grounded.coversRetainedNativeProduct(publication)) {
+				covered = true;
+				continue;
+			}
+			boolean nativeOutput = publication.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE;
+			if(!grounded.hasRetainedAuthority(publication.key())
+				&& (nativeOutput || prospectiveOutputs == 1)) {
+				bound.add(publication);
+				continue;
+			}
+			NativePlacementContinuity.NativeSupportProduct product =
+				((NativeContinuitySupportClauses)publication.supportClauses()).product();
+			for(int ordinal = 0; ordinal < product.size(); ordinal++) {
+				if(complexityMetrics != null) {
+					complexityMetrics.recordNativePublicationProofConsumed(NativePublicationOutcome.PUBLISHED_SPLIT);
+					complexityMetrics.recordDirectWork(DirectWork.PROOFS_CONSUMED);
+				}
+				NativePlacementContinuity.NativeContinuityProof proof =
+					new NativePlacementContinuity.NativeContinuityProof(product.externalSeed(),
+						product.outputWorkerPoolWitness(), product.exactPartitionRanges(), product.bindingsAt(ordinal));
+				CandidateEmissionRealization scalar = directNativePublication(proof, owner, emissionState,
+					outputAnchor, nativeLineage, !nativeOutput, grounded);
+				if(scalar == null)
+					covered = true;
+				else
+					bound.add(scalar);
+			}
+		}
+		return covered;
+	}
+
 	private static final class NativePublicationTrace {
 		private NativePublicationOutcome outcome;
 	}
 
-	private static CandidateEmissionRealization rejectedNativeProduct(
+	private static List<CandidateEmissionRealization> rejectedNativeProducts(
 		NativePublicationTrace trace, NativePublicationOutcome reason) {
 		if(trace != null)
 			trace.outcome = reason;
@@ -6238,19 +6293,44 @@ final class PlacementRelationClosure {
 		String nativeLineage, List<DirectInputBinding> requiredInputs,
 		DirectSourceIndex sources,
 		Map<CandidateEmissionRealization,Boolean> exactSourceLayouts, NativePublicationTrace trace) {
+		List<CandidateEmissionRealization> publications = directNativeProductPublications(
+			product, owner, emissionState, outputAnchor, nativeLineage,
+			requiredInputs, sources, exactSourceLayouts, trace, false);
+		return publications == null ? null : publications.get(0);
+	}
+
+	private List<CandidateEmissionRealization> directNativeProductPublications(
+		NativePlacementContinuity.NativeSupportProduct product, CompiledHopKey owner,
+		PlacementEmissionState emissionState, DurableAnchorKey outputAnchor,
+		String nativeLineage, List<DirectInputBinding> requiredInputs,
+		DirectSourceIndex sources,
+		Map<CandidateEmissionRealization,Boolean> exactSourceLayouts, NativePublicationTrace trace) {
+		return directNativeProductPublications(
+			product, owner, emissionState, outputAnchor, nativeLineage,
+			requiredInputs, sources, exactSourceLayouts, trace, true);
+	}
+
+	private List<CandidateEmissionRealization> directNativeProductPublications(
+		NativePlacementContinuity.NativeSupportProduct product, CompiledHopKey owner,
+		PlacementEmissionState emissionState, DurableAnchorKey outputAnchor,
+		String nativeLineage, List<DirectInputBinding> requiredInputs,
+		DirectSourceIndex sources,
+		Map<CandidateEmissionRealization,Boolean> exactSourceLayouts, NativePublicationTrace trace,
+		boolean splitMixedAxis) {
 		// A zero-axis proof is the existing staging authority. Publishing it as a
 		// grounded relation would change fixed-point retention semantics.
 		if(product.axes().isEmpty())
-			return rejectedNativeProduct(trace, NativePublicationOutcome.ZERO_AXIS);
+			return rejectedNativeProducts(trace, NativePublicationOutcome.ZERO_AXIS);
 		Map<Integer,DirectInputBinding> requiredByPosition = new java.util.HashMap<>();
 		for(DirectInputBinding input : requiredInputs)
 			if(requiredByPosition.put(input.position(), input) != null)
-				return rejectedNativeProduct(trace, NativePublicationOutcome.REQUIRED_INPUTS);
+				return rejectedNativeProducts(trace, NativePublicationOutcome.REQUIRED_INPUTS);
 		List<List<CandidateRealizationInputBinding>> filteredAxes = new ArrayList<>();
 		Set<Integer> coveredRequiredPositions = new HashSet<>();
 		boolean everyBindingExact = true;
 		boolean hasAlwaysInexactAxis = false;
 		int mixedAxes = 0;
+		int mixedAxis = -1;
 		for(List<CandidateRealizationInputBinding> axis : product.axes()) {
 			List<CandidateRealizationInputBinding> filtered = new ArrayList<>();
 			boolean axisEveryInexact = true;
@@ -6261,6 +6341,10 @@ final class PlacementRelationClosure {
 					|| binding.source().realization().emissionState().placementState().fType()
 						!= required.fType()))
 					continue;
+				// The structural source index may contain an equal foreign owner. Do
+				// not borrow its authority for compression; retain the scalar path.
+				if(splitMixedAxis && sources.hasForeignNativeOwner(binding.source()))
+					return rejectedNativeProducts(trace, NativePublicationOutcome.CONFLICTING_AUTHORITY);
 				if(!sources.executable(binding.source()))
 					continue;
 				CandidateEmissionRealization source = sources.nativeRealization(binding.source());
@@ -6268,37 +6352,71 @@ final class PlacementRelationClosure {
 					CandidateEmissionRealization::allOwnedSupportClausesHaveExactNativeLayout);
 				everyBindingExact &= exact;
 				axisEveryInexact &= !exact;
-				if(trace != null)
-					axisEveryExact &= exact;
+				axisEveryExact &= exact;
 				filtered.add(binding);
 			}
 			if(filtered.isEmpty())
-				return rejectedNativeProduct(trace, NativePublicationOutcome.REQUIRED_INPUTS);
+				return rejectedNativeProducts(trace, NativePublicationOutcome.REQUIRED_INPUTS);
 			if(requiredByPosition.containsKey(filtered.get(0).inputPosition()))
 				coveredRequiredPositions.add(filtered.get(0).inputPosition());
 			hasAlwaysInexactAxis |= axisEveryInexact;
-			if(trace != null && !axisEveryExact && !axisEveryInexact)
+			if(!axisEveryExact && !axisEveryInexact) {
 				mixedAxes++;
+				mixedAxis = filteredAxes.size();
+			}
 			filteredAxes.add(List.copyOf(filtered));
 		}
 		if(coveredRequiredPositions.size() != requiredByPosition.size())
-			return rejectedNativeProduct(trace, NativePublicationOutcome.REQUIRED_INPUTS);
+			return rejectedNativeProducts(trace, NativePublicationOutcome.REQUIRED_INPUTS);
 		// Input-layout exactness selects DURABLE_MAP only for an exact product with
 		// a concrete output anchor. Native-lineage outputs do not encode this bit,
 		// so mixed source layouts remain one exact product relation there.
 		if(outputAnchor != null && product.exactPartitionRanges()
-			&& !everyBindingExact && !hasAlwaysInexactAxis)
-			return rejectedNativeProduct(trace, trace == null ? NativePublicationOutcome.MIXED_EXACTNESS
+			&& !everyBindingExact && !hasAlwaysInexactAxis) {
+			if(splitMixedAxis && mixedAxes == 1) {
+				List<CandidateRealizationInputBinding> exactOptions = new ArrayList<>();
+				List<CandidateRealizationInputBinding> inexactOptions = new ArrayList<>();
+				for(CandidateRealizationInputBinding binding : filteredAxes.get(mixedAxis)) {
+					CandidateEmissionRealization source = sources.nativeRealization(binding.source());
+					boolean exact = source != null && Boolean.TRUE.equals(exactSourceLayouts.get(source));
+					(exact ? exactOptions : inexactOptions).add(binding);
+				}
+				List<List<CandidateRealizationInputBinding>> exactAxes = new ArrayList<>(filteredAxes);
+				List<List<CandidateRealizationInputBinding>> inexactAxes = new ArrayList<>(filteredAxes);
+				exactAxes.set(mixedAxis, List.copyOf(exactOptions));
+				inexactAxes.set(mixedAxis, List.copyOf(inexactOptions));
+				NativePlacementContinuity.NativeSupportProduct exact = product.withAxes(exactAxes);
+				NativePlacementContinuity.NativeSupportProduct inexact = product.withAxes(inexactAxes);
+				if(exact == null || inexact == null)
+					return rejectedNativeProducts(trace, NativePublicationOutcome.PRODUCT_RECONSTRUCTION);
+				// All other axes are exact: one wholly inexact axis would have admitted
+				// the original native product above. These two rectangles are therefore
+				// a disjoint, complete partition with distinct output authority.
+				if(exact.size() > 1 || inexact.size() > 1)
+					return List.of(nativeProductPublication(exact, owner, emissionState,
+						outputAnchor, nativeLineage, true),
+						nativeProductPublication(inexact, owner, emissionState,
+							outputAnchor, nativeLineage, false));
+			}
+			return rejectedNativeProducts(trace, trace == null ? NativePublicationOutcome.MIXED_EXACTNESS
 				: mixedAxes == 1 ? NativePublicationOutcome.MIXED_EXACTNESS_SINGLE_AXIS
 				: NativePublicationOutcome.MIXED_EXACTNESS_MULTIPLE_AXES);
+		}
 		NativePlacementContinuity.NativeSupportProduct filtered = product.withAxes(filteredAxes);
 		if(filtered == null)
-			return rejectedNativeProduct(trace, NativePublicationOutcome.PRODUCT_RECONSTRUCTION);
-		boolean directInputsExact = everyBindingExact;
-		DirectNativeOutput output = directNativeOutput(filtered, emissionState,
+			return rejectedNativeProducts(trace, NativePublicationOutcome.PRODUCT_RECONSTRUCTION);
+		return List.of(nativeProductPublication(filtered, owner, emissionState,
+			outputAnchor, nativeLineage, everyBindingExact));
+	}
+
+	private static CandidateEmissionRealization nativeProductPublication(
+		NativePlacementContinuity.NativeSupportProduct product, CompiledHopKey owner,
+		PlacementEmissionState emissionState, DurableAnchorKey outputAnchor,
+		String nativeLineage, boolean directInputsExact) {
+		DirectNativeOutput output = directNativeOutput(product, emissionState,
 			outputAnchor, nativeLineage, directInputsExact);
 		NativeContinuitySupportClauses clauses = new NativeContinuitySupportClauses(owner,
-			filtered, output.clauseNativePool(), output.clauseLayoutExact());
+			product, output.clauseNativePool(), output.clauseLayoutExact());
 		return new CandidateEmissionRealization(output.realizationKey(), clauses);
 	}
 

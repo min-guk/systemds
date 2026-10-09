@@ -34,6 +34,7 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 	private final List<int[]> scopes = new ArrayList<>();
 	private final List<List<Integer>> incidence = new ArrayList<>();
 	private Conditioned[] cache;
+	private ConstantCost[] rootConstantCosts;
 	private long cacheHits;
 	private long tableBuilds;
 	private long unchangedTables;
@@ -51,8 +52,17 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 	private long unsupportedBoundaryValues;
 	private String lastFallbackReason;
 
+	private record ConstantCost(boolean known, long bits) {
+		private static final ConstantCost UNKNOWN = new ConstantCost(false, 0L);
+	}
+	private record CertifiedAssignment(int[] assignment, double objective) {
+		private CertifiedAssignment {
+			assignment = assignment.clone();
+		}
+		@Override public int[] assignment() { return assignment.clone(); }
+	}
 	/** One entry per source factor: cache cells can never exceed root input cells. */
-	private record Conditioned(int[] boundary, Factor factor) { }
+	private record Conditioned(int[] boundary, Factor factor, ConstantCost constantCost) { }
 	/** Exact conditional result plus an optional assignment in the shared compact root. */
 	static record ConditionalResult(ExactCategoricalSolver.Result block, int[] rootWitness) {
 		ConditionalResult {
@@ -69,11 +79,10 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 	}
 
 	private record PreparedSlice(LocalCategoricalOptimizer.PreparedBlockSolver solver,
-		int[] indexes, int[] originalBlock, int[] certifiedAssignment) {
+		int[] indexes, int[] originalBlock, CertifiedAssignment certified) {
 		private PreparedSlice {
 			indexes = indexes.clone();
 			originalBlock = originalBlock.clone();
-			certifiedAssignment = certifiedAssignment == null ? null : certifiedAssignment.clone();
 		}
 	}
 
@@ -136,6 +145,7 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 			scopes.add(scope);
 		}
 		cache = new Conditioned[scopes.size()];
+		rootConstantCosts = new ConstantCost[scopes.size()];
 	}
 
 	@Override
@@ -299,17 +309,20 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 		List<Variable> variables = indexes.stream().map(root.variables()::get).toList();
 		Limits solveLimits = conditionalLimits(selected,free);
 		boolean matchingBoundary = incumbentMatchesFixedBoundary(assignment,free,decisions,incumbent);
-		// A feasible incumbent already attains zero in each selected hard root
-		// relation. Fixing the same boundary cannot lower that minimum, so no
-		// conditioned relation or elimination plan needs to be constructed.
-		int[] certified = matchingBoundary
-			? factorwiseOptimalIncumbent(root.factors(),selected,incumbent) : null;
+		// A feasible incumbent that attains every selected hard or raw-constant
+		// factor has the same ordered cost vector as every feasible alternative.
+		// No conditioned relation or elimination plan is then needed.
+		if(matchingBoundary)
+			classifySelectedRootCosts(selected);
+		CertifiedAssignment certified = matchingBoundary
+			? factorwiseOptimalIncumbent(root.factors(),selected,rootConstantCosts,incumbent) : null;
 		if(certified != null) {
 			factorwiseCertifiedPreparations++;
 			return new PreparedSlice(null,indexes.stream().mapToInt(Integer::intValue).toArray(),
 				block,certified);
 		}
 		List<Factor> factors = new ArrayList<>();
+		List<ConstantCost> factorConstantCosts = matchingBoundary ? new ArrayList<>() : null;
 		long conditionStarted = System.nanoTime();
 		for(int factor = 0; factor < selected.length; factor++) {
 			if(!selected[factor])
@@ -327,20 +340,32 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 			if(allFree) {
 				unchangedTables++;
 				factors.add(source);
+				if(factorConstantCosts != null)
+					factorConstantCosts.add(rootConstantCost(factor));
 			}
 			else if(cache[factor] != null && Arrays.equals(boundary, cache[factor].boundary())) {
 				cacheHits++;
-				factors.add(cache[factor].factor());
+				Conditioned cached = cache[factor];
+				if(factorConstantCosts != null && cached.constantCost() == null)
+					cache[factor] = cached = new Conditioned(cached.boundary(), cached.factor(),
+						constantCost(cached.factor()));
+				factors.add(cached.factor());
+				if(factorConstantCosts != null)
+					factorConstantCosts.add(cached.constantCost());
 			}
 			else {
 				Factor conditioned = condition(source, boundary);
-				cache[factor] = new Conditioned(boundary, conditioned);
+				ConstantCost constant = factorConstantCosts == null ? null : constantCost(conditioned);
+				cache[factor] = new Conditioned(boundary, conditioned, constant);
 				tableBuilds++;
 				factors.add(conditioned);
+				if(factorConstantCosts != null)
+					factorConstantCosts.add(constant);
 			}
 		}
 		conditionNanos += System.nanoTime() - conditionStarted;
-		certified = matchingBoundary ? factorwiseOptimalIncumbent(factors,null,incumbent) : null;
+		certified = matchingBoundary ? factorwiseOptimalIncumbent(factors,null,
+			factorConstantCosts.toArray(ConstantCost[]::new),incumbent) : null;
 		if(certified != null) {
 			factorwiseCertifiedPreparations++;
 			return new PreparedSlice(null,indexes.stream().mapToInt(Integer::intValue).toArray(),
@@ -391,9 +416,12 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 			block,null);
 	}
 
-	private int[] factorwiseOptimalIncumbent(List<Factor> factors, boolean[] selected, int[] incumbent) {
+	private CertifiedAssignment factorwiseOptimalIncumbent(List<Factor> factors, boolean[] selected,
+		ConstantCost[] constantCosts, int[] incumbent) {
 		if(incumbent == null || incumbent.length != root.variables().size())
 			return null;
+		if(constantCosts == null || constantCosts.length != factors.size())
+			throw new IllegalStateException("REGIONAL_SHARED_CONSTANT_COST_SIZE_INVALID");
 		for(int variable = 0; variable < incumbent.length; variable++)
 			if(incumbent[variable] < 0
 				|| incumbent[variable] >= root.variables().get(variable).domainSize())
@@ -402,9 +430,18 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 			if(selected != null && !selected[index])
 				continue;
 			Factor factor = factors.get(index);
-			if(!(factor.isHardTable() || factor.isFiniteSupport()
-				|| factor.isConditionalSupport() || factor.functionalMapping() != null))
+			boolean hard = factor.isHardTable() || factor.isFiniteSupport()
+				|| factor.isConditionalSupport() || factor.functionalMapping() != null;
+			if(!hard && !constantCosts[index].known())
 				return null;
+		}
+		ExactCompensatedCostSum objective = new ExactCompensatedCostSum();
+		for(int index = 0; index < factors.size(); index++) {
+			if(selected != null && !selected[index])
+				continue;
+			Factor factor = factors.get(index);
+			boolean hard = factor.isHardTable() || factor.isFiniteSupport()
+				|| factor.isConditionalSupport() || factor.functionalMapping() != null;
 			int[] values = new int[factor.scope().size()];
 			for(int axis = 0; axis < values.length; axis++) {
 				Integer position = positions.get(factor.scope().get(axis));
@@ -412,13 +449,32 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 					throw new IllegalStateException("REGIONAL_SHARED_FACTOR_VARIABLE_UNKNOWN");
 				values[axis] = incumbent[position];
 			}
-			// Every recognized representation is an exact +0/+INF relation. A zero
-			// incumbent cell therefore attains this factor's global minimum.
-			if(Double.doubleToRawLongBits(factor.cost(values))
-				!= Double.doubleToRawLongBits(0d))
+			long actual = Double.doubleToRawLongBits(factor.cost(values));
+			long required = hard ? Double.doubleToRawLongBits(0d) : constantCosts[index].bits();
+			if(actual != required)
 				return null;
+			objective.addBits(actual, "REGIONAL_COST_INVALID", "REGIONAL_TOTAL_INVALID");
 		}
-		return incumbent.clone();
+		return new CertifiedAssignment(incumbent,
+			Double.longBitsToDouble(objective.totalBits("REGIONAL_TOTAL_INVALID")));
+	}
+
+	private static ConstantCost constantCost(Factor factor) {
+		java.util.OptionalLong bits = factor.constantFiniteCostBits();
+		return bits.isPresent() ? new ConstantCost(true, bits.getAsLong()) : ConstantCost.UNKNOWN;
+	}
+
+	private void classifySelectedRootCosts(boolean[] selected) {
+		for(int factor = 0; factor < selected.length; factor++)
+			if(selected[factor])
+				rootConstantCost(factor);
+	}
+
+	private ConstantCost rootConstantCost(int factor) {
+		ConstantCost known = rootConstantCosts[factor];
+		if(known == null)
+			rootConstantCosts[factor] = known = constantCost(root.factors().get(factor));
+		return known;
 	}
 
 	/**
@@ -445,17 +501,18 @@ final class SharedRegionalPreparation implements LocalCategoricalOptimizer.Block
 
 	private ConditionalResult solvePrepared(PreparedSlice prepared, int[] sourceAssignment,
 		int[] incumbent, boolean mapped) {
-		int[] certified = prepared.certifiedAssignment();
+		CertifiedAssignment certificate = prepared.certified();
 		ExactCategoricalSolver.Result solved;
 		List<Integer> solvedLocal;
-		if(certified == null) {
+		if(certificate == null) {
 			solved = prepared.solver().solve();
 			solvedLocal = solved.assignmentInVariableOrder();
 		}
 		else {
+			int[] certified = certificate.assignment();
 			solvedLocal = Arrays.stream(prepared.indexes()).map(index -> certified[index])
 				.boxed().toList();
-			solved = new ExactCategoricalSolver.Result(0d,solvedLocal,
+			solved = new ExactCategoricalSolver.Result(certificate.objective(),solvedLocal,
 				new ExactCategoricalSolver.Statistics(List.of(),0,0L,0L,0L,0L));
 		}
 		int[] block = prepared.originalBlock();

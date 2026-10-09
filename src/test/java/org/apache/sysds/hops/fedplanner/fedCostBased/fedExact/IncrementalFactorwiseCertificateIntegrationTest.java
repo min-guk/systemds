@@ -53,9 +53,10 @@ public class IncrementalFactorwiseCertificateIntegrationTest {
 		Variable left = new Variable("integration-numeric-left",2);
 		Variable right = new Variable("integration-numeric-right",2);
 		List<Variable> variables = List.of(left,right);
+		double varied = Math.nextUp(Double.MIN_VALUE);
 		List<Factor> factors = List.of(Factor.dense(variables,
 			Double.MIN_VALUE,Double.POSITIVE_INFINITY,
-			Double.POSITIVE_INFINITY,Double.MIN_VALUE));
+			Double.POSITIVE_INFINITY,varied));
 		RegionalSearchProblem problem = RegionalSearchProblem.generic(variables,factors);
 		IncrementalRegionalOptimizer optimizer = optimizer(problem,List.of(1,1));
 		installNeighborhood(optimizer,new int[] {0,1});
@@ -65,8 +66,43 @@ public class IncrementalFactorwiseCertificateIntegrationTest {
 			conditionalAttempts(optimizer));
 		Assert.assertEquals(0,replaySize(optimizer));
 		Assert.assertEquals(List.of(1,1),expandedIncumbent(optimizer));
+		Assert.assertEquals(Double.doubleToRawLongBits(varied),
+			Double.doubleToRawLongBits(upper(optimizer)));
+	}
+
+	@Test
+	public void constantNumericNeighborhoodPreservesIncumbentAndReplaysWithoutPreparation()
+		throws Exception {
+		Variable left = new Variable("integration-constant-left",2);
+		Variable right = new Variable("integration-constant-right",2);
+		List<Variable> variables = List.of(left,right);
+		List<Factor> factors = List.of(Factor.dense(variables,
+			Double.MIN_VALUE,Double.POSITIVE_INFINITY,
+			Double.POSITIVE_INFINITY,Double.MIN_VALUE));
+		RegionalSearchProblem problem = RegionalSearchProblem.generic(variables,factors);
+		IncrementalRegionalOptimizer optimizer = optimizer(problem,List.of(1,1));
+		installNeighborhood(optimizer,new int[] {0,1});
+
+		refine(optimizer);
+		Assert.assertEquals("the exact constant certificate bypasses the assignment cap",1,
+			conditionalAttempts(optimizer));
+		Assert.assertEquals(1,replaySize(optimizer));
+		Assert.assertEquals(List.of(1,1),expandedIncumbent(optimizer));
 		Assert.assertEquals(Double.doubleToRawLongBits(Double.MIN_VALUE),
 			Double.doubleToRawLongBits(upper(optimizer)));
+		Assert.assertEquals(Double.doubleToRawLongBits(
+			ExactCategoricalSolver.solve(variables,factors,LIMITS).objective()),
+			Double.doubleToRawLongBits(upper(optimizer)));
+		assertLastConditionalCheckpoint(optimizer,1);
+
+		refine(optimizer);
+		Assert.assertEquals("the second visit replays the certified numeric block",1,
+			conditionalAttempts(optimizer));
+		Assert.assertEquals(1,replaySize(optimizer));
+		Assert.assertEquals(List.of(1,1),expandedIncumbent(optimizer));
+		Assert.assertEquals(Double.doubleToRawLongBits(Double.MIN_VALUE),
+			Double.doubleToRawLongBits(upper(optimizer)));
+		assertLastConditionalCheckpoint(optimizer,1);
 	}
 
 	private static IncrementalRegionalOptimizer optimizer(RegionalSearchProblem problem,
