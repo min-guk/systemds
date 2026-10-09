@@ -45,6 +45,11 @@ public class NativeHybridUnpinnedTopologyTest {
 		"NATIVE_HYBRID_REJECT_DERIVED", "NATIVE_HYBRID_REJECT_REFERENCE",
 		"NATIVE_HYBRID_REJECT_LAYOUT", "NATIVE_HYBRID_REJECT_PRODUCT",
 		"NATIVE_HYBRID_REJECT_NO_NATIVE");
+	private static final List<String> PINNED_OUTCOMES = List.of(
+		"NATIVE_PINNED_ACCEPTED", "NATIVE_PINNED_REJECT_CONTEXT",
+		"NATIVE_PINNED_REJECT_DUPLICATE", "NATIVE_PINNED_REJECT_ORDINARY",
+		"NATIVE_PINNED_REJECT_LAYOUT", "NATIVE_PINNED_REJECT_MISSING",
+		"NATIVE_PINNED_REJECT_PRODUCT");
 
 	@Test
 	public void metricsClassifyAcceptedHybridWithoutChangingProofAuthority() throws Exception {
@@ -64,6 +69,104 @@ public class NativeHybridUnpinnedTopologyTest {
 		Assert.assertEquals(1, relation.materializedHandleCount());
 		// The exact witness admits the circuit; the dynamic witness has no eligible native row.
 		assertHybridCounts(metrics, "NATIVE_HYBRID_ACCEPTED", "NATIVE_HYBRID_REJECT_NO_NATIVE");
+	}
+
+	@Test
+	public void pinnedNativeAndOrdinaryRowsClassifyColdAndResidentTopologyWithoutChangingAuthority()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		Assert.assertEquals("the fixture must expose a genuine two-by-three native product",
+			6, scenario.product().size());
+		scenario.install(true);
+		NativePlacementContinuity eagerResolver =
+			(NativePlacementContinuity)invoke(scenario.fixture(), "resolver");
+		NativePlacementContinuity.CandidateSupportResult eager =
+			scenario.queryInstalled("m-choice", eagerResolver);
+		NativePlacementContinuity.CandidateSupportResult eagerOrdinaryA =
+			scenario.queryInstalled("a-choice", eagerResolver);
+		NativePlacementContinuity.CandidateSupportResult eagerOrdinaryZ =
+			scenario.queryInstalled("z-choice", eagerResolver);
+		scenario.install(false);
+		NativePlacementContinuity metricsOffResolver =
+			(NativePlacementContinuity)invoke(scenario.fixture(), "resolver");
+		NativePlacementContinuity.CandidateSupportResult metricsOff =
+			scenario.queryInstalled("m-choice", metricsOffResolver);
+		NativePlacementContinuity.CandidateSupportResult metricsOffOrdinaryA =
+			scenario.queryInstalled("a-choice", metricsOffResolver);
+		NativePlacementContinuity.CandidateSupportResult metricsOffOrdinaryZ =
+			scenario.queryInstalled("z-choice", metricsOffResolver);
+		NativeContinuitySupportClauses lazy = scenario.install(false);
+		Assert.assertEquals("an ordinary pin must precede and follow the native pin",
+			1, scenario.installedNativeOrdinal());
+		Assert.assertEquals("canonical candidate construction reads only the representative member",
+			1, lazy.materializedHandleCount());
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity nativeResolver = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 128, 2048L);
+		NativePlacementContinuity.CandidateSupportResult metricsOn = scenario.queryInstalled(
+			"m-choice", nativeResolver);
+
+		Assert.assertEquals(signatures(eager), signatures(metricsOn));
+		Assert.assertEquals(signatures(metricsOff), signatures(metricsOn));
+		assertBindingSourceIdentity(eager, metricsOn);
+		assertBindingSourceIdentity(metricsOff, metricsOn);
+		assertIdentitySetEquals(eager.dependencyOccurrences(), metricsOn.dependencyOccurrences());
+		assertIdentitySetEquals(metricsOff.dependencyOccurrences(), metricsOn.dependencyOccurrences());
+		Assert.assertEquals("the accepted native pin does not expand beyond the representative",
+			1, lazy.materializedHandleCount());
+
+		NativePlacementContinuity ordinaryResolver = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 128, 2048L);
+		NativePlacementContinuity.CandidateSupportResult metricsOnOrdinaryA =
+			scenario.queryInstalled("a-choice", ordinaryResolver);
+		NativePlacementContinuity.CandidateSupportResult metricsOnOrdinaryZ =
+			scenario.queryInstalled("z-choice", ordinaryResolver);
+		assertResultParity(eagerOrdinaryA, metricsOffOrdinaryA, metricsOnOrdinaryA);
+		assertResultParity(eagerOrdinaryZ, metricsOffOrdinaryZ, metricsOnOrdinaryZ);
+		assertPinnedCounts(metrics);
+		assertAcyclicRootTopologyCounts(metrics);
+
+		metrics.reset();
+		Assert.assertEquals(0, directWork(metrics, "NATIVE_PINNED_REQUESTS"));
+		Assert.assertEquals(0, directWork(metrics, "NATIVE_PINNED_ORDINARY_COLD_TOPOLOGY"));
+		Assert.assertEquals(0, directWork(metrics, "NATIVE_PINNED_ORDINARY_RESIDENT_TOPOLOGY"));
+		Assert.assertEquals(0, directWork(metrics, "ACYCLIC_ROOT_TOPOLOGY_REQUESTS"));
+		Assert.assertEquals(0, directWork(metrics, "ACYCLIC_ROOT_TOPOLOGY_COLD"));
+		Assert.assertEquals(0, directWork(metrics, "ACYCLIC_ROOT_TOPOLOGY_RESIDENT"));
+		Assert.assertEquals(0, directWork(metrics, "SUPPORT_QUERY_TOPOLOGY_REQUESTS"));
+		Assert.assertEquals(0, directWork(metrics, "SUPPORT_QUERY_TOPOLOGY_COLD"));
+		Assert.assertEquals(0, directWork(metrics, "SUPPORT_QUERY_TOPOLOGY_RESIDENT"));
+		for(String outcome : PINNED_OUTCOMES)
+			Assert.assertEquals(outcome, 0, directWork(metrics, outcome));
+	}
+
+	@Test
+	public void directAlternativeSeamObservesColdThenResidentFallbackTopology() throws Exception {
+		// The public-query regression above intentionally covers support-query key prewarming.
+		// This narrow seam enters alternatives directly to observe the fallback's own
+		// cold-to-resident transition without relabeling it as public root behavior.
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		scenario.install(false);
+		CandidateRealizationReference first = scenario.installedReference("a-choice");
+		CandidateRealizationReference second = scenario.installedReference("z-choice");
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 128, 2048L);
+
+		Assert.assertFalse("the first ordinary pin retains its exact legacy fallback",
+			candidateAlternatives(resolver, scenario.childKey(), first, scenario.pool()).isEmpty());
+		Assert.assertFalse("the second ordinary pin reuses the resident fallback topology",
+			candidateAlternatives(resolver, scenario.childKey(), second, scenario.pool()).isEmpty());
+		Assert.assertEquals(2, directWork(metrics, "NATIVE_PINNED_REQUESTS"));
+		Assert.assertEquals(2, directWork(metrics, "NATIVE_PINNED_REJECT_ORDINARY"));
+		Assert.assertEquals(1, directWork(metrics, "NATIVE_PINNED_ORDINARY_COLD_TOPOLOGY"));
+		Assert.assertEquals(1, directWork(metrics, "NATIVE_PINNED_ORDINARY_RESIDENT_TOPOLOGY"));
+		Assert.assertEquals("the narrow non-root seam bypasses acyclic-root preprocessing",
+			0, directWork(metrics, "ACYCLIC_ROOT_TOPOLOGY_REQUESTS"));
+		long classified = 0;
+		for(String outcome : PINNED_OUTCOMES)
+			classified += directWork(metrics, outcome);
+		Assert.assertEquals(2, classified);
 	}
 
 	@Test
@@ -436,6 +539,21 @@ public class NativeHybridUnpinnedTopologyTest {
 					return ordinal;
 			throw new AssertionError("installed native realization is missing");
 		}
+
+		private NativePlacementContinuity.CandidateSupportResult queryInstalled(
+			String lineage, NativePlacementContinuity resolver) throws Exception {
+			return resolver.proveCandidateSupport(installedReference(lineage), pool);
+		}
+
+		private CandidateRealizationReference installedReference(String lineage) throws Exception {
+			CandidateRuleFact installed = candidateFacts(fixture).stream()
+				.filter(fact -> fact.key().parentOccurrence() == childKey).findFirst().orElseThrow();
+			for(CandidateEmissionFact emission : installed.allowedEmissionFacts())
+				for(CandidateEmissionRealization realization : emission.realizations())
+					if(lineage.equals(realization.key().nativeLineage()))
+						return CandidateRealizationReference.of(installed.key(), realization);
+			throw new AssertionError("installed realization is missing: " + lineage);
+		}
 	}
 
 	private static void assertHybridCounts(SearchSpaceMetrics metrics, String... outcomes) {
@@ -453,8 +571,87 @@ public class NativeHybridUnpinnedTopologyTest {
 			directWork(metrics, "NATIVE_HYBRID_REQUESTS"), classified);
 	}
 
+	private static void assertPinnedCounts(SearchSpaceMetrics metrics) {
+		long requests = directWork(metrics, "NATIVE_PINNED_REQUESTS");
+		long classified = 0;
+		for(String outcome : PINNED_OUTCOMES)
+			classified += directWork(metrics, outcome);
+		Assert.assertTrue("the native relation must admit at least one pinned lazy circuit",
+			directWork(metrics, "NATIVE_PINNED_ACCEPTED") > 0);
+		long ordinary = directWork(metrics, "NATIVE_PINNED_REJECT_ORDINARY");
+		long cold = directWork(metrics, "NATIVE_PINNED_ORDINARY_COLD_TOPOLOGY");
+		long resident = directWork(metrics, "NATIVE_PINNED_ORDINARY_RESIDENT_TOPOLOGY");
+		Assert.assertTrue("the public fixture must issue ordinary pinned requests", ordinary > 0);
+		Assert.assertEquals("support-query key preprocessing warms topology before pinned classification",
+			0, cold);
+		Assert.assertEquals("every public ordinary pin observes the prewarmed resident topology",
+			ordinary, resident);
+		Assert.assertEquals("every completed pinned request has exactly one outcome",
+			requests, classified);
+	}
+
+	private static void assertAcyclicRootTopologyCounts(SearchSpaceMetrics metrics) {
+		long requests = directWork(metrics, "ACYCLIC_ROOT_TOPOLOGY_REQUESTS");
+		long cold = directWork(metrics, "ACYCLIC_ROOT_TOPOLOGY_COLD");
+		long resident = directWork(metrics, "ACYCLIC_ROOT_TOPOLOGY_RESIDENT");
+		Assert.assertEquals("support-query key construction already warmed the ordinary root topology", 0, cold);
+		Assert.assertTrue("the acyclic root observes the resident topology",
+			resident > 0);
+		Assert.assertEquals("acyclic root topology requests are exactly partitioned",
+			requests, cold + resident);
+		long queryRequests = directWork(metrics, "SUPPORT_QUERY_TOPOLOGY_REQUESTS");
+		long queryCold = directWork(metrics, "SUPPORT_QUERY_TOPOLOGY_COLD");
+		long queryResident = directWork(metrics, "SUPPORT_QUERY_TOPOLOGY_RESIDENT");
+		Assert.assertTrue("the first support-query key builds its ordinary root topology", queryCold > 0);
+		Assert.assertTrue("a later support-query key observes the resident topology", queryResident > 0);
+		Assert.assertEquals("support-query topology requests are exactly partitioned",
+			queryRequests, queryCold + queryResident);
+	}
+
+	private static void assertResultParity(
+		NativePlacementContinuity.CandidateSupportResult eager,
+		NativePlacementContinuity.CandidateSupportResult metricsOff,
+		NativePlacementContinuity.CandidateSupportResult metricsOn) {
+		Assert.assertEquals(signatures(eager), signatures(metricsOff));
+		Assert.assertEquals(signatures(metricsOff), signatures(metricsOn));
+		assertBindingSourceIdentity(eager, metricsOff);
+		assertBindingSourceIdentity(metricsOff, metricsOn);
+		assertIdentitySetEquals(eager.dependencyOccurrences(), metricsOff.dependencyOccurrences());
+		assertIdentitySetEquals(metricsOff.dependencyOccurrences(), metricsOn.dependencyOccurrences());
+	}
+
 	private static long directWork(SearchSpaceMetrics metrics, String name) {
 		return metrics.directWorkCount(SearchSpaceMetrics.DirectWork.valueOf(name));
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<?> candidateAlternatives(NativePlacementContinuity resolver,
+		CompiledHopKey owner, CandidateRealizationReference pinned, DurableAnchorKey pool)
+		throws Exception {
+		Method handleMethod = NativePlacementContinuity.class.getDeclaredMethod(
+			"candidateHandle", CandidateRealizationReference.class);
+		handleMethod.setAccessible(true);
+		int handle = (int)handleMethod.invoke(resolver, pinned);
+		Method witnessMethod = NativePlacementContinuity.class.getDeclaredMethod(
+			"nativeWitness", DurableAnchorKey.class);
+		witnessMethod.setAccessible(true);
+		Object witness = witnessMethod.invoke(resolver, pool);
+		Class<?> fixedType = nested("FixedCandidateBoundary");
+		Constructor<?> fixedConstructor = fixedType.getDeclaredConstructor(
+			CompiledHopKey.class, CandidateRealizationReference.class, int.class);
+		fixedConstructor.setAccessible(true);
+		Object fixed = fixedConstructor.newInstance(owner, pinned, handle);
+		Method alternatives = NativePlacementContinuity.class.getDeclaredMethod(
+			"candidateProofAlternatives", CompiledHopKey.class,
+			CandidateRealizationReference.class, int.class, nested("NativePoolWitness"),
+			boolean.class, fixedType, nested("GenerationRoot"));
+		alternatives.setAccessible(true);
+		return (List<?>)alternatives.invoke(
+			resolver, owner, pinned, handle, witness, true, fixed, null);
+	}
+
+	private static Class<?> nested(String name) throws ClassNotFoundException {
+		return Class.forName(NativePlacementContinuity.class.getName() + '$' + name);
 	}
 
 	private static void replaceFact(List<CandidateRuleFact> facts,
