@@ -44,6 +44,7 @@ import static org.apache.sysds.hops.fedplanner.placement.PlacementCandidateGener
 import static org.apache.sysds.hops.fedplanner.placement.PlacementCandidateGenerator.isLegalTransient;
 import static org.apache.sysds.hops.fedplanner.placement.PlacementCandidateGenerator.isVector;
 import org.apache.sysds.hops.fedplanner.placement.SearchSpaceMetrics.DirectWork;
+import org.apache.sysds.hops.fedplanner.placement.SearchSpaceMetrics.NativePublicationOutcome;
 import org.apache.sysds.hops.fedplanner.placement.PlacementClosureDiagnostics.CompositionRecurrenceTracker;
 import org.apache.sysds.hops.fedplanner.placement.PlacementClosureDiagnostics.CompositionRecurrenceObservation;
 import org.apache.sysds.hops.fedplanner.placement.PlacementClosureDiagnostics.ExportDeltaDiagnostics;
@@ -5666,6 +5667,8 @@ final class PlacementRelationClosure {
 		Map<List<CandidateRealizationInputBinding>,DirectInputLookup> directInputLookups =
 			new IdentityHashMap<>();
 		int retainedDirectInputBindings = 0;
+		// One metrics-only carrier per pass; never inspect skipped publication paths.
+		NativePublicationTrace publicationTrace = complexityMetrics == null ? null : new NativePublicationTrace();
 		List<CandidateRuleFact> rebound = new ArrayList<>(facts.size());
 		Map<CompiledHopKey,Set<CompiledHopKey>> dependencyOccurrences = new IdentityHashMap<>();
 		Set<CompiledHopKey> incompleteDependencyOccurrences =
@@ -5909,26 +5912,43 @@ final class PlacementRelationClosure {
 								}).toList();
 							NativePlacementContinuity.NativeSupportProduct supportProduct =
 								supportResult.supportProduct();
+							if(publicationTrace != null)
+								publicationTrace.outcome = !recomputeNative ? NativePublicationOutcome.NOT_RECOMPUTED
+									: supportProduct == null ? NativePublicationOutcome.NO_PRODUCT
+									: distinctSeeds.size() != 1 ? NativePublicationOutcome.MULTI_SEED
+									: grounded == null ? NativePublicationOutcome.NO_GROUNDED_PREPARATION
+									: grounded.hasConflictingEqualAuthority() ? NativePublicationOutcome.CONFLICTING_AUTHORITY
+									: NativePublicationOutcome.RETAINED_UNION;
 							if(recomputeNative && distinctSeeds.size() == 1
 								&& supportProduct != null && grounded != null
 								&& !grounded.hasConflictingEqualAuthority()) {
 								CandidateEmissionRealization publication = directNativeProductPublication(
 									supportProduct, fact.key().parentOccurrence(), emission.emissionState(),
-									outputAnchor, nativeLineage, requiredInputs, sources, exactSourceLayouts);
+									outputAnchor, nativeLineage, requiredInputs, sources, exactSourceLayouts, publicationTrace);
 								if(publication != null) {
 									if(grounded.coversRetainedNativeProduct(publication)) {
 										coveredByRetained = true;
+										if(publicationTrace != null)
+											complexityMetrics.recordNativePublication(
+												NativePublicationOutcome.COVERED_RETAINED, supportResult.proofs().size());
 										continue;
 									}
 									if(grounded.retained().isEmpty()) {
 										bound.add(publication);
+										if(publicationTrace != null)
+											complexityMetrics.recordNativePublication(
+												NativePublicationOutcome.PUBLISHED, supportResult.proofs().size());
 										continue;
 									}
 								}
 							}
+							if(publicationTrace != null)
+								complexityMetrics.recordNativePublication(publicationTrace.outcome, supportResult.proofs().size());
 							for(NativePlacementContinuity.NativeContinuityProof proof : supportResult.proofs()) {
-								if(complexityMetrics != null)
+								if(complexityMetrics != null) {
+									complexityMetrics.recordNativePublicationProofConsumed(publicationTrace.outcome);
 									complexityMetrics.recordDirectWork(DirectWork.PROOFS_CONSUMED);
+								}
 								// Native proofs already own an immutable canonical list. Retain its marker and
 								// cached hash rather than forcing every output clause to sort the bindings again.
 								List<CandidateRealizationInputBinding> bindings = proof.immediateBindings();
@@ -6034,6 +6054,12 @@ final class PlacementRelationClosure {
 							if(complexityMetrics != null)
 								complexityMetrics.finishPhase(SearchSpaceMetrics.Phase.DIRECT_PROOF_CONSUMPTION, consumeStarted);
 						}
+					}
+					if(complexityMetrics != null && distinctSeeds.size() > 1) {
+						complexityMetrics.recordDirectWork(DirectWork.MULTI_SEED_BATCHES);
+						complexityMetrics.recordDirectWork(DirectWork.MULTI_SEED_DISTINCT_SEEDS, distinctSeeds.size());
+						complexityMetrics.recordDirectWork(DirectWork.MULTI_SEED_REQUESTED_RELATIONS,
+							requestedNativeRelations.size());
 					}
 					// Keep a generic lineage only as staging authority when no exact direct
 					// realization is currently provable. It is excluded from transient replay.
@@ -6172,20 +6198,31 @@ final class PlacementRelationClosure {
 		return publication;
 	}
 
+	private static final class NativePublicationTrace {
+		private NativePublicationOutcome outcome;
+	}
+
+	private static CandidateEmissionRealization rejectedNativeProduct(
+		NativePublicationTrace trace, NativePublicationOutcome reason) {
+		if(trace != null)
+			trace.outcome = reason;
+		return null;
+	}
+
 	private CandidateEmissionRealization directNativeProductPublication(
 		NativePlacementContinuity.NativeSupportProduct product, CompiledHopKey owner,
 		PlacementEmissionState emissionState, DurableAnchorKey outputAnchor,
 		String nativeLineage, List<DirectInputBinding> requiredInputs,
 		DirectSourceIndex sources,
-		Map<CandidateEmissionRealization,Boolean> exactSourceLayouts) {
+		Map<CandidateEmissionRealization,Boolean> exactSourceLayouts, NativePublicationTrace trace) {
 		// A zero-axis proof is the existing staging authority. Publishing it as a
 		// grounded relation would change fixed-point retention semantics.
 		if(product.axes().isEmpty())
-			return null;
+			return rejectedNativeProduct(trace, NativePublicationOutcome.ZERO_AXIS);
 		Map<Integer,DirectInputBinding> requiredByPosition = new java.util.HashMap<>();
 		for(DirectInputBinding input : requiredInputs)
 			if(requiredByPosition.put(input.position(), input) != null)
-				return null;
+				return rejectedNativeProduct(trace, NativePublicationOutcome.REQUIRED_INPUTS);
 		List<List<CandidateRealizationInputBinding>> filteredAxes = new ArrayList<>();
 		Set<Integer> coveredRequiredPositions = new HashSet<>();
 		boolean everyBindingExact = true;
@@ -6209,28 +6246,28 @@ final class PlacementRelationClosure {
 				filtered.add(binding);
 			}
 			if(filtered.isEmpty())
-				return null;
+				return rejectedNativeProduct(trace, NativePublicationOutcome.REQUIRED_INPUTS);
 			if(requiredByPosition.containsKey(filtered.get(0).inputPosition()))
 				coveredRequiredPositions.add(filtered.get(0).inputPosition());
 			hasAlwaysInexactAxis |= axisEveryInexact;
 			filteredAxes.add(List.copyOf(filtered));
 		}
 		if(coveredRequiredPositions.size() != requiredByPosition.size())
-			return null;
+			return rejectedNativeProduct(trace, NativePublicationOutcome.REQUIRED_INPUTS);
 		// Exactness is a conjunction over selected bindings. It is uniform only if
 		// every option is exact, or one complete axis is inexact for every tuple.
 		if(!everyBindingExact && !hasAlwaysInexactAxis)
-			return null;
+			return rejectedNativeProduct(trace, NativePublicationOutcome.MIXED_EXACTNESS);
 		NativePlacementContinuity.NativeSupportProduct filtered = product.withAxes(filteredAxes);
 		if(filtered == null)
-			return null;
+			return rejectedNativeProduct(trace, NativePublicationOutcome.PRODUCT_RECONSTRUCTION);
 		boolean directInputsExact = everyBindingExact;
 		DirectNativeOutput output = directNativeOutput(filtered, emissionState,
 			outputAnchor, nativeLineage, directInputsExact);
 		// Equal durable keys from distinct seeds must be unioned by exact member
 		// authority. Keep that path explicit until relation-native union is proven.
 		if(output.realizationKey().layoutKind() == PlacementLayoutKind.DURABLE_MAP)
-			return null;
+			return rejectedNativeProduct(trace, NativePublicationOutcome.DURABLE_OUTPUT);
 		NativeContinuitySupportClauses clauses = new NativeContinuitySupportClauses(owner,
 			filtered, output.clauseNativePool(), output.clauseLayoutExact());
 		return new CandidateEmissionRealization(output.realizationKey(), clauses);

@@ -90,6 +90,7 @@ public final class SearchSpaceMetrics {
 		FACT_VISITS, FACTS_SKIPPED_CLEAN, FACTS_SKIPPED_INELIGIBLE,
 		EMISSION_VISITS, EMISSIONS_REUSED, EMISSIONS_REBUILT,
 		SEEDS_BEFORE_DEDUP, SEED_RELATIONS_REQUESTED, SEED_RELATIONS_DUPLICATE,
+		MULTI_SEED_BATCHES, MULTI_SEED_DISTINCT_SEEDS, MULTI_SEED_REQUESTED_RELATIONS,
 		PROOFS_CONSUMED, REQUIRED_INPUT_CHECKS, BINDING_CANDIDATES_EXAMINED,
 		INCOMPLETE_PROOFS, LAYOUT_CHECKS, LAYOUT_CACHE_HITS,
 		MEMOIZED_NATIVE_PUBLICATION_REQUESTS, MEMOIZED_NATIVE_PUBLICATION_CACHE_HITS,
@@ -125,6 +126,43 @@ public final class SearchSpaceMetrics {
 		NO_DELTA_PUBLICATION_REQUESTS,
 		INITIAL_FULL_RESET_DERIVED_ANCHOR_CONTEXT, INITIAL_FULL_RESET_BASELINE,
 		INITIAL_FULL_RESET_REFERENCED_OWNER_DIRTY
+	}
+
+	/** First observed publication blocker, not a speculative set of overlapping causes. */
+	enum NativePublicationOutcome {
+		NOT_RECOMPUTED, NO_PRODUCT, MULTI_SEED, NO_GROUNDED_PREPARATION,
+		CONFLICTING_AUTHORITY, ZERO_AXIS, REQUIRED_INPUTS, MIXED_EXACTNESS,
+		PRODUCT_RECONSTRUCTION, DURABLE_OUTPUT, RETAINED_UNION, COVERED_RETAINED, PUBLISHED
+	}
+
+	record NativePublicationCount(NativePublicationOutcome outcome, long queries,
+		long logicalProofs, long consumedProofs, long emptyResults, long singletonResults,
+		long smallProducts, long largeProducts) { }
+
+	// Fixed-size diagnostics: queries, logical size, actual iterations, and 0/1/2-3/4+ buckets.
+	private final long[][] nativePublication = new long[NativePublicationOutcome.values().length][7];
+
+	void recordNativePublication(NativePublicationOutcome outcome, int logicalProofs) {
+		if(logicalProofs < 0)
+			throw new IllegalArgumentException("Negative native publication cardinality");
+		long[] row = nativePublication[outcome.ordinal()];
+		row[0]++;
+		row[1] += logicalProofs;
+		row[logicalProofs == 0 ? 3 : logicalProofs == 1 ? 4 : logicalProofs < 4 ? 5 : 6]++;
+	}
+
+	void recordNativePublicationProofConsumed(NativePublicationOutcome outcome) {
+		nativePublication[outcome.ordinal()][2]++;
+	}
+
+	List<NativePublicationCount> nativePublicationSnapshot() {
+		List<NativePublicationCount> result = new ArrayList<>(nativePublication.length);
+		for(NativePublicationOutcome outcome : NativePublicationOutcome.values()) {
+			long[] row = nativePublication[outcome.ordinal()];
+			result.add(new NativePublicationCount(outcome, row[0], row[1], row[2],
+				row[3], row[4], row[5], row[6]));
+		}
+		return List.copyOf(result);
 	}
 
 	private static final int CANDIDATE_OPCODE_LIMIT = 64;
@@ -508,6 +546,8 @@ public final class SearchSpaceMetrics {
 		Arrays.fill(candidateRouteTotals, 0);
 		candidateRouteOverflow = 0;
 		Arrays.fill(directWork, 0);
+		for(long[] row : nativePublication)
+			Arrays.fill(row, 0);
 		factorizedRelocationProducts = factorizedRelocationLogicalLeaves = explicitRelocationLeaves = 0;
 		candidateRuleKeysCreated = candidateRuleFactsCreated = 0;
 		explicitSupportClausesCreated = indexedSupportHandlesCreated = 0;
@@ -711,6 +751,8 @@ public final class SearchSpaceMetrics {
 		System.err.println("SEARCH_SPACE_CANDIDATE_CONSTRUCTION|seq=" + sequence
 			+ "|" + candidateConstructionSnapshot());
 		System.err.println("SEARCH_SPACE_DIRECT_WORK|seq=" + sequence + "|" + directBindingSnapshot());
+		System.err.println("SEARCH_SPACE_NATIVE_PUBLICATION|seq=" + sequence + "|"
+			+ nativePublicationSnapshot());
 		System.err.println("SEARCH_SPACE_RELOCATION_STORAGE|seq=" + sequence
 			+ "|" + relocationStorageSnapshot());
 		for(CandidateRouteCount route : candidateRouteSnapshot())
