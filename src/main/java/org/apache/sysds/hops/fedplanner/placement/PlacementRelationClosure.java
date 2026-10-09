@@ -11408,6 +11408,7 @@ final class PlacementRelationClosure {
 		Map<CompiledHopKey,Long> scopes, List<Node> nodes, Map<CompiledHopKey,Node> nodesByKey,
 		Node ownerOverlay, Map<CompiledHopKey,Hop> origins) {
 		List<CandidateRuleFact> bound = new ArrayList<>(facts.size());
+		FederatedAnchorOwnerLookup anchorOwners = null;
 		for(CandidateRuleFact fact : facts) {
 			Node factNode = exactOwnerNode(nodesByKey, ownerOverlay, fact.key().parentOccurrence());
 			if(factNode != null && factNode.kind() == NodeKind.FUNCTION_BODY_NON_EMITTED) {
@@ -11435,8 +11436,10 @@ final class PlacementRelationClosure {
 					|| !provisional.producerValueVersion().equals(producer.valueVersion()))
 					throw new IllegalStateException(
 						"Derived FOUT candidate has no structurally matching final producer authority");
+				if(anchorOwners == null)
+					anchorOwners = new FederatedAnchorOwnerLookup(nodes, ownerOverlay, origins);
 				MaterializationAnchor anchorOwner = canonicalFederatedAnchorOwner(
-					provisional, nodes, nodesByKey, ownerOverlay, origins);
+					provisional, nodesByKey, ownerOverlay, anchorOwners);
 				String exactScope = producer.key().controlRegion().normalizedSignature();
 				boolean alreadyExact = provisional.producerValueVersion() == producer.valueVersion()
 					&& provisional.candidateRule() == fact.key()
@@ -12817,43 +12820,72 @@ final class PlacementRelationClosure {
 	 * policy graph will subsequently remove the action if that owner is unavailable.
 	 */
 	private static MaterializationAnchor canonicalFederatedAnchorOwner(
-		DerivedFoutMaterializationActionKey action, List<Node> nodes,
-		Map<CompiledHopKey,Node> nodesByKey, Map<CompiledHopKey,Hop> origins) {
-		return canonicalFederatedAnchorOwner(action, nodes, nodesByKey, null, origins);
-	}
-
-	private static MaterializationAnchor canonicalFederatedAnchorOwner(
-		DerivedFoutMaterializationActionKey action, List<Node> nodes,
-		Map<CompiledHopKey,Node> nodesByKey, Node ownerOverlay, Map<CompiledHopKey,Hop> origins) {
-		List<Node> nativeOwners = nodes.stream()
-			.map(node -> ownerOverlay != null && node.key() == ownerOverlay.key() ? ownerOverlay : node)
-			.filter(node -> {
-				Hop origin = origins.get(node.key());
-				return origin instanceof DataOp && ((DataOp) origin).getOp() == OpOpData.FEDERATED;
-			})
-			.filter(node -> node.anchors().stream().anyMatch(anchor ->
-				PlacementIdentity.samePhysicalWorkerPool(anchor, action.durableAnchor())
-					&& hasSelectableFoutType(node, anchor.fType())))
-			.sorted().toList();
-		List<Node> exactNativeOwners = nativeOwners.stream()
-			.filter(node -> node.anchors().contains(action.durableAnchor())).toList();
-		if(!exactNativeOwners.isEmpty())
+		DerivedFoutMaterializationActionKey action, Map<CompiledHopKey,Node> nodesByKey,
+		Node ownerOverlay, FederatedAnchorOwnerLookup anchorOwners) {
+		MaterializationAnchor nativeOwner = anchorOwners.find(action.durableAnchor());
+		if(nativeOwner != null)
+			// Equal memo keys can be distinct action anchors; retain the current one.
 			return new MaterializationAnchor(action.durableAnchor(),
-				exactNativeOwners.get(0).key(), action.durableAnchor().fType());
-		if(!nativeOwners.isEmpty()) {
-			Node owner = nativeOwners.get(0);
-			DurableAnchorKey ownerAnchor = owner.anchors().stream()
-				.filter(anchor -> PlacementIdentity.samePhysicalWorkerPool(anchor, action.durableAnchor()))
-				.filter(anchor -> hasSelectableFoutType(owner, anchor.fType()))
-				.sorted().findFirst().orElseThrow();
-			return new MaterializationAnchor(action.durableAnchor(), owner.key(), ownerAnchor.fType());
-		}
+				nativeOwner.owner(), nativeOwner.ownerFType());
 		Node provisional = exactOwnerNode(nodesByKey, ownerOverlay, action.durableAnchorOwner());
 		if(provisional == null || !isSelectableFoutAnchorOwner(provisional, action))
 			throw new IllegalStateException(
 				"Output materialization has no exact graph-owned FOUT anchor owner");
 		return new MaterializationAnchor(action.durableAnchor(), provisional.key(),
 			action.durableAnchorOwnerFType());
+	}
+
+	/** Invocation-local native inventory; never memoizes action-specific fallback authority. */
+	private static final class FederatedAnchorOwnerLookup {
+		private final List<Node> nativeSources = new ArrayList<>();
+		private final Map<DurableAnchorKey,MaterializationAnchor> nativeOwners = new HashMap<>();
+
+		private FederatedAnchorOwnerLookup(List<Node> nodes, Node ownerOverlay,
+			Map<CompiledHopKey,Hop> origins) {
+			for(Node node : nodes) {
+				Node current = ownerOverlay != null && node.key() == ownerOverlay.key()
+					? ownerOverlay : node;
+				Hop origin = origins.get(current.key());
+				if(origin instanceof DataOp && ((DataOp) origin).getOp() == OpOpData.FEDERATED)
+					nativeSources.add(current);
+			}
+		}
+
+		private MaterializationAnchor find(DurableAnchorKey anchor) {
+			MaterializationAnchor cached = nativeOwners.get(anchor);
+			if(cached != null || nativeOwners.containsKey(anchor))
+				return cached;
+			Node exactOwner = null, physicalOwner = null;
+			FType physicalType = null;
+			for(Node node : nativeSources) {
+				DurableAnchorKey matching = null;
+				// Node anchors are already canonical: retain the first selectable match.
+				for(DurableAnchorKey candidate : node.anchors())
+					if(PlacementIdentity.samePhysicalWorkerPool(candidate, anchor)
+						&& hasSelectableFoutType(node, candidate.fType())) {
+						matching = candidate;
+						break;
+					}
+				if(matching == null)
+					continue;
+				if(node.anchors().contains(anchor)
+					&& (exactOwner == null || node.compareTo(exactOwner) < 0))
+					exactOwner = node;
+				if(physicalOwner == null || node.compareTo(physicalOwner) < 0) {
+					physicalOwner = node;
+					physicalType = matching.fType();
+				}
+			}
+			// Exact anchor identity globally outranks a smaller physical-only owner.
+			MaterializationAnchor result = exactOwner != null
+				? new MaterializationAnchor(anchor, exactOwner.key(), anchor.fType())
+				: physicalOwner != null
+					? new MaterializationAnchor(anchor, physicalOwner.key(), physicalType) : null;
+			// Full anchor equality, including placement id: pool identity is insufficient.
+			// Null records only a native miss; each action still checks its own fallback.
+			nativeOwners.put(anchor, result);
+			return result;
+		}
 	}
 
 	private static boolean hasSelectableFoutType(Node node, FType fType) {
