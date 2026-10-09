@@ -9,6 +9,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -56,6 +57,54 @@ public class NativePoolWitnessInterningTest {
 		Assert.assertSame(col, exact.invoke(dynamicCol));
 		Assert.assertNotSame("exact and dynamic range authority remains distinct", col, dynamicCol);
 		Assert.assertNotEquals(col, dynamicCol);
+	}
+
+	@Test
+	public void cachedHashRejectsDifferentWitnessesBeforeWalkingStructuralLists() throws Exception {
+		Class<?> arenaType = nested("NativeWitnessArena");
+		Constructor<?> constructor = arenaType.getDeclaredConstructor(int.class);
+		constructor.setAccessible(true);
+		Object arena = constructor.newInstance(0);
+		Method intern = method(arenaType, "intern", FType.class, List.class, List.class, boolean.class);
+		Object left = intern.invoke(arena, FType.FULL, List.of("worker-left"), List.of(), true);
+		Object right = intern.invoke(arena, FType.FULL, List.of("worker-right"), List.of(), true);
+		CountingList<String> countedEndpoints = new CountingList<>(List.of("worker-left"));
+		setField(left, "endpoints", countedEndpoints);
+
+		Assert.assertNotEquals(left.hashCode(), right.hashCode());
+		Assert.assertNotEquals(left, right);
+		Assert.assertEquals("unequal cached hashes must reject before deep endpoint equality", 0,
+			countedEndpoints.reads);
+	}
+
+	@Test
+	public void hashCollisionsAndRangeAuthorityStillUseCompleteWitnessEquality() throws Exception {
+		Assert.assertEquals("fixture requires a genuine String hash collision",
+			"FB".hashCode(), "Ea".hashCode());
+		Class<?> arenaType = nested("NativeWitnessArena");
+		Constructor<?> constructor = arenaType.getDeclaredConstructor(int.class);
+		constructor.setAccessible(true);
+		Method intern = method(arenaType, "intern", FType.class, List.class, List.class, boolean.class);
+		Object firstArena = constructor.newInstance(0);
+		Object secondArena = constructor.newInstance(0);
+		Object collisionLeft = intern.invoke(firstArena, FType.FULL, List.of("FB"), List.of(), true);
+		Object collisionRight = intern.invoke(secondArena, FType.FULL, List.of("Ea"), List.of(), true);
+		Assert.assertEquals(collisionLeft.hashCode(), collisionRight.hashCode());
+		Assert.assertNotEquals("a cached-hash collision cannot collapse distinct endpoints",
+			collisionLeft, collisionRight);
+		Object equalAcrossArena = intern.invoke(secondArena,
+			FType.FULL, List.of("FB"), List.of(), true);
+		Assert.assertEquals(collisionLeft, equalAcrossArena);
+		Assert.assertNotSame(collisionLeft, equalAcrossArena);
+
+		NativePlacementContinuity continuity = empty();
+		Object exact = nativeWitness(continuity,
+			rowAnchor("range-a", "localhost:8731", 0, 40));
+		Object otherRange = nativeWitness(continuity,
+			rowAnchor("range-b", "localhost:8731", 1, 40));
+		Assert.assertNotEquals(exact, otherRange);
+		Object dynamic = method(exact.getClass(), "withDynamicPartitionRanges").invoke(exact);
+		Assert.assertNotEquals("exactness remains part of complete witness authority", exact, dynamic);
 	}
 
 	@Test
@@ -148,6 +197,12 @@ public class NativePoolWitnessInterningTest {
 		return field.get(owner);
 	}
 
+	private static void setField(Object owner, String name, Object value) throws Exception {
+		Field field = owner.getClass().getDeclaredField(name);
+		field.setAccessible(true);
+		field.set(owner, value);
+	}
+
 	private static Class<?> nested(String simpleName) throws Exception {
 		return Class.forName(NativePlacementContinuity.class.getName() + '$' + simpleName);
 	}
@@ -165,5 +220,13 @@ public class NativePoolWitnessInterningTest {
 	private static DurableAnchorKey fullAnchor(String id, String endpoint) {
 		return new DurableAnchorKey(id, FType.FULL,
 			List.of(new AnchorPartition(endpoint, List.of(0L, 0L), List.of(1L, 1L))));
+	}
+
+	private static final class CountingList<T> extends AbstractList<T> {
+		private final List<T> values;
+		private int reads;
+		private CountingList(List<T> values) { this.values = List.copyOf(values); }
+		@Override public T get(int index) { reads++; return values.get(index); }
+		@Override public int size() { return values.size(); }
 	}
 }

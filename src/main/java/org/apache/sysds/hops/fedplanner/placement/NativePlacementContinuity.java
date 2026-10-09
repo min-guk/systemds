@@ -2830,6 +2830,14 @@ final class NativePlacementContinuity {
 		int slotCount = 0, edgeCount = 0;
 		for(List<SelectedCandidateProof> alternatives : graph.values()) {
 			slotCount = Math.addExact(slotCount, alternatives.size());
+			DefaultTraversalSchedule schedule = dependencyClosed
+				&& alternatives instanceof DefaultAlternativeList defaults ? defaults.schedule : null;
+			if(schedule != null && schedule.filteredAlternatives == alternatives) {
+				// The closed builder already consumed this exact immutable schedule.
+				// Reuse its edge count without building another index or visiting rows.
+				edgeCount = Math.addExact(edgeCount, Math.toIntExact(schedule.rawDependencyCount));
+				continue;
+			}
 			for(int alternativeIndex = 0; alternativeIndex < alternatives.size(); alternativeIndex++) {
 				List<CandidateProofDependency> dependencies = alternatives.get(alternativeIndex).dependencies;
 				edgeCount = Math.addExact(edgeCount, dependencies.size());
@@ -2850,6 +2858,7 @@ final class NativePlacementContinuity {
 		int[] reverseNext = new int[edgeCount];
 		int[] reverseSlots = new int[edgeCount];
 		int[] lastSlot = new int[stateIds.size()];
+		int[] liveCounts = new int[stateIds.size()];
 		java.util.Arrays.fill(reverseHeads, -1);
 		java.util.Arrays.fill(lastSlot, -1);
 		IdentityHashMap<SelectedCandidateProof,Integer> ownerAlternatives = null;
@@ -2881,6 +2890,7 @@ final class NativePlacementContinuity {
 			}
 			int ownerDependency = 0;
 			int ownerWidth = alternatives.size();
+			liveCounts[owner] = ownerWidth;
 			if(ownerWidth > 1) {
 				// IdentityHashMap.clear scans its retained backing array. Avoid paying for a
 				// prior wide owner on the overwhelmingly common empty/singleton rows, and
@@ -2919,10 +2929,6 @@ final class NativePlacementContinuity {
 			}
 			owner++;
 		}
-		int[] liveCounts = new int[stateIds.size()];
-		owner = 0;
-		for(List<SelectedCandidateProof> alternatives : graph.values())
-			liveCounts[owner++] = alternatives.size();
 		int[] dead = new int[stateIds.size()];
 		int nextDead = 0, deadCount = 0;
 		for(int state = 0; state < liveCounts.length; state++)
@@ -4289,14 +4295,17 @@ final class NativePlacementContinuity {
 
 	private boolean ownsCandidateClause(CandidateRuleFact fact,
 		CandidateRealizationSupportClause clause) {
+		Set<CandidateRealizationSupportClause> owned = ownedCandidateClausesByFact.get(fact);
+		if(owned != null && owned.contains(clause))
+			return true;
 		for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
 			for(CandidateEmissionRealization realization : emission.realizations())
 				if(realization.supportClauses() instanceof NativeContinuitySupportClauses product
 					&& product.firstIdentityOrdinal(clause) >= 0)
 					return true;
-		Set<CandidateRealizationSupportClause> owned = ownedCandidateClausesByFact.get(fact);
+		// A cached ordinary miss cannot hide a native handle materialized later.
 		if(owned != null)
-			return owned.contains(clause);
+			return false;
 		dependencySkeletonOwnerFactScans++;
 		List<CandidateRuleFact> ownerFacts = candidateFactsByKey.get(fact.key().parentOccurrence());
 		if(ownerFacts == null || ownerFacts.stream().noneMatch(current -> current == fact))
@@ -6929,6 +6938,7 @@ final class NativePlacementContinuity {
 
 		@Override public boolean equals(Object other) {
 			return this == other || other instanceof NativePoolWitness that
+				&& hashCode == that.hashCode
 				&& exactPartitionRanges == that.exactPartitionRanges && fType == that.fType
 				&& endpoints.equals(that.endpoints)
 				&& partitionAxisIntervals.equals(that.partitionAxisIntervals);
