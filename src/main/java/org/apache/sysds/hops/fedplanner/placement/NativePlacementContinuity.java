@@ -2679,6 +2679,30 @@ final class NativePlacementContinuity {
 		int retainedOwnerAlternativeWidth = 0;
 		int owner = 0, slot = 0, edge = 0;
 		for(List<SelectedCandidateProof> alternatives : graph.values()) {
+			int[] dependencyOrdinals = null;
+			int[] denseSuccessors = null;
+			if(alternatives instanceof DefaultAlternativeList defaults) {
+				dependencyOrdinals = defaults.pruningDependencyOrdinals();
+				if(dependencyOrdinals != null) {
+					List<CandidateProofState> uniqueSuccessors = defaults.traversalSchedule(null).uniqueSuccessors;
+					try {
+						denseSuccessors = new int[uniqueSuccessors.size()];
+						for(int successor = 0; successor < uniqueSuccessors.size(); successor++)
+							denseSuccessors[successor] = stateIds.get(uniqueSuccessors.get(successor));
+					}
+					catch(OutOfMemoryError optionalDenseIndexAllocationFailure) {
+						dependencyOrdinals = null;
+						denseSuccessors = null;
+					}
+					if(denseSuccessors != null && metrics != null) {
+						metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.PRUNE_DEFAULT_ORDINAL_EDGES,
+							dependencyOrdinals.length);
+						metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.PRUNE_DEFAULT_DENSE_RESOLUTIONS,
+							denseSuccessors.length);
+					}
+				}
+			}
+			int ownerDependency = 0;
 			int ownerWidth = alternatives.size();
 			if(ownerWidth > 1) {
 				// IdentityHashMap.clear scans its retained backing array. Avoid paying for a
@@ -2701,7 +2725,10 @@ final class NativePlacementContinuity {
 				alternativeOwners[removalId] = owner;
 				List<CandidateProofDependency> dependencies = alternative.dependencies;
 				for(int dependencyIndex = 0; dependencyIndex < dependencies.size(); dependencyIndex++) {
-					int dependency = stateIds.get(dependencies.get(dependencyIndex).state());
+					int dependency = denseSuccessors == null
+						? stateIds.get(dependencies.get(dependencyIndex).state())
+						: denseSuccessors[dependencyOrdinals[ownerDependency]];
+					ownerDependency++;
 					// The legacy reverse index deduplicates dependencies per original list
 					// slot, not per shared alternative object or per owner.
 					if(lastSlot[dependency] == slot)
@@ -2750,8 +2777,18 @@ final class NativePlacementContinuity {
 		Map<CandidateProofState,List<SelectedCandidateProof>> viable =
 			new java.util.LinkedHashMap<>(graph);
 		slot = 0;
+		owner = 0;
 		for(var entry : graph.entrySet()) {
 			List<SelectedCandidateProof> alternatives = entry.getValue();
+			// Every first removal decrements this owner, even for shared object
+			// slots. An unchanged count proves that the original list survives.
+			if(liveCounts[owner++] == alternatives.size()) {
+				if(metrics != null)
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.PRUNE_UNCHANGED_OWNER_SLOTS_SKIPPED,
+						alternatives.size());
+				slot += alternatives.size();
+				continue;
+			}
 			List<SelectedCandidateProof> survivors = null;
 			for(int index = 0; index < alternatives.size(); index++) {
 				if(removed[slotRemovalIds[slot + index]]) {
@@ -4468,8 +4505,11 @@ final class NativePlacementContinuity {
 	/** Original topology list plus its one lazy, immutable DFS schedule. */
 	private static final class DefaultAlternativeList extends AbstractList<SelectedCandidateProof>
 		implements java.util.RandomAccess {
+		private static final int MAX_PRUNING_ORDINAL_EDGES = 65_536;
 		private final List<SelectedCandidateProof> alternatives;
 		private volatile DefaultTraversalSchedule schedule;
+		private volatile boolean pruningOrdinalsAttempted;
+		private volatile int[] pruningDependencyOrdinals;
 
 		private DefaultAlternativeList(List<SelectedCandidateProof> alternatives) {
 			this.alternatives = List.copyOf(alternatives);
@@ -4517,6 +4557,39 @@ final class NativePlacementContinuity {
 			}
 			return new DefaultTraversalSchedule(filtered == null ? this : List.copyOf(filtered),
 				List.copyOf(successors), rawDependencies);
+		}
+
+		private int[] pruningDependencyOrdinals() {
+			if(!pruningOrdinalsAttempted)
+				synchronized(this) {
+					if(!pruningOrdinalsAttempted) {
+						try {
+							DefaultTraversalSchedule current = traversalSchedule(null);
+							long edges = current.rawDependencyCount;
+							if(current.filteredAlternatives == this && edges <= MAX_PRUNING_ORDINAL_EDGES
+								&& edges <= 8L * alternatives.size()
+								&& current.uniqueSuccessors.size() < edges) {
+								Map<CandidateProofState,Integer> ordinalBySuccessor =
+									new HashMap<>(current.uniqueSuccessors.size());
+								for(int ordinal = 0; ordinal < current.uniqueSuccessors.size(); ordinal++)
+									ordinalBySuccessor.put(current.uniqueSuccessors.get(ordinal), ordinal);
+								int[] ordinals = new int[(int)edges];
+								int edge = 0;
+								for(SelectedCandidateProof alternative : alternatives)
+									for(CandidateProofDependency dependency : alternative.dependencies)
+										ordinals[edge++] = ordinalBySuccessor.get(dependency.state());
+								pruningDependencyOrdinals = ordinals;
+							}
+						}
+						catch(OutOfMemoryError optionalOrdinalAllocationFailure) {
+							pruningDependencyOrdinals = null;
+						}
+						finally {
+							pruningOrdinalsAttempted = true;
+						}
+					}
+				}
+			return pruningDependencyOrdinals;
 		}
 	}
 
