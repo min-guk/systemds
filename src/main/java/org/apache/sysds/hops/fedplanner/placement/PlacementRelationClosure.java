@@ -5952,7 +5952,7 @@ final class PlacementRelationClosure {
 											NativePublicationOutcome.COVERED_RETAINED, supportResult.proofs().size());
 									continue;
 								}
-								else if(!grounded.hasRetainedRealizationKey(productPublication.key())) {
+								else if(!grounded.hasRetainedAuthority(productPublication.key())) {
 									bound.add(productPublication);
 									if(publicationTrace != null)
 										complexityMetrics.recordNativePublication(
@@ -6380,9 +6380,10 @@ final class PlacementRelationClosure {
 				}
 			return false;
 		}
-		private boolean hasRetainedRealizationKey(
-			PlacementIdentity.PlacementRealizationKey key) {
-			return retained.stream().anyMatch(candidate -> candidate.key().equals(key));
+		private boolean hasRetainedAuthority(PlacementIdentity.PlacementRealizationKey key) {
+			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> clauses = prior.get(key);
+			// Staging-only keys have an empty prior map, not grounded authority.
+			return clauses != null && !clauses.isEmpty() || nativeProducts.containsKey(key);
 		}
 		private boolean coversRetainedNative(
 			NativePlacementContinuity.NativeContinuityProof proof, CompiledHopKey owner,

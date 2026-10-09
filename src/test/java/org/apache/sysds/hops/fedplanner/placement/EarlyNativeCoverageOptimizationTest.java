@@ -562,6 +562,53 @@ public class EarlyNativeCoverageOptimizationTest {
 	}
 
 	@Test
+	public void exactProofWithUnknownOutputAdmitsMixedSourceExactness() throws Exception {
+		MixedProductFixture fixture = mixedProductFixture();
+		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, null, false,
+			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
+		CandidateEmissionRealization publication = productPublication(closure,
+			fixture.exactProduct(), fixture.owner(), null, "mixed-unknown-output", fixture.sources());
+		assertLazyProductMatchesScalarReference(publication, fixture.exactProduct(), fixture.owner(),
+			null, "mixed-unknown-output", fixture.exactBinding(), fixture.dynamicBinding());
+	}
+
+	@Test
+	public void dynamicProofWithKnownOutputAdmitsMixedSourceExactness() throws Exception {
+		MixedProductFixture fixture = mixedProductFixture();
+		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, null, false,
+			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
+		CandidateEmissionRealization publication = productPublication(closure,
+			fixture.dynamicProduct(), fixture.owner(), fixture.knownOutput(),
+			"mixed-dynamic-known-output", fixture.sources());
+		assertLazyProductMatchesScalarReference(publication, fixture.dynamicProduct(), fixture.owner(),
+			fixture.knownOutput(), "mixed-dynamic-known-output",
+			fixture.exactBinding(), fixture.dynamicBinding());
+	}
+
+	@Test
+	public void exactProofWithKnownOutputStillRejectsMixedSourceExactness() throws Exception {
+		MixedProductFixture fixture = mixedProductFixture();
+		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, null, false,
+			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
+		Assert.assertNull("mixed exactness must still reject an exact durable output",
+			productPublication(closure, fixture.exactProduct(), fixture.owner(), fixture.knownOutput(),
+				"mixed-exact-known-output", fixture.sources()));
+
+		NativePlacementContinuity.NativeSupportProduct allExact =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(fixture.seed(), fixture.outputPool(),
+				true, List.of(List.of(fixture.exactBinding())));
+		NativePlacementContinuity.NativeSupportProduct allInexact =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(fixture.seed(), fixture.outputPool(),
+				true, List.of(List.of(fixture.dynamicBinding())));
+		Assert.assertNotNull("uniform exact publication must remain admitted",
+			productPublication(closure, allExact, fixture.owner(), fixture.knownOutput(),
+				"all-exact", fixture.sources()));
+		Assert.assertNotNull("uniform inexact publication must remain admitted",
+			productPublication(closure, allInexact, fixture.owner(), fixture.knownOutput(),
+				"all-inexact", fixture.sources()));
+	}
+
+	@Test
 	public void collidingDurableSeedOutputsKeepTheExactExplicitUnion() throws Exception {
 		CompiledHopKey sourceOwner = (CompiledHopKey)seedFixture("key",
 			new Class<?>[] {String.class}, "collision-source");
@@ -594,7 +641,7 @@ public class EarlyNativeCoverageOptimizationTest {
 		List<CandidateRuleFact> inventory = List.of(source, consumer);
 		List<Object> nodes = List.of(
 			seedFixture("node", new Class<?>[] {CompiledHopKey.class, List.class},
-				sourceOwner, List.of(firstPool, secondPool)),
+				sourceOwner, List.of()),
 			seedFixture("node", new Class<?>[] {CompiledHopKey.class, List.class},
 				consumerOwner, List.of()));
 		List<CompiledInputEdgeFact> edges = List.of(
@@ -622,6 +669,21 @@ public class EarlyNativeCoverageOptimizationTest {
 					node -> node, (left, right) -> right, IdentityHashMap::new));
 		NativePlacementContinuity continuity = new NativePlacementContinuity(
 			nodesByKey, origins, inventory, edges, Map.of());
+		DurableAnchorKey collisionOutput = new DurableAnchorKey(
+			"native-output:" + consumerOwner.normalizedSignature(), FType.ROW,
+			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(4L, 2L))));
+		CandidateEmissionFact baseEmission = consumer.allowedEmissionFacts().get(0);
+		CandidateRealizationReference queryOutput = new CandidateRealizationReference(
+			consumer.key(), PlacementIdentity.PlacementRealizationKey.durable(
+				baseEmission.emissionState(), collisionOutput));
+		for(DurableAnchorKey seed : List.of(firstPool, secondPool)) {
+			NativePlacementContinuity.CandidateSupportResult query =
+				continuity.proveGeneratedCandidateSupport(
+					consumer, baseEmission, queryOutput, seed);
+			Assert.assertNotNull("colliding seed query must retain its factored product",
+				query.supportProduct());
+			Assert.assertEquals(2, query.supportProduct().size());
+		}
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, metrics, false,
 			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
@@ -644,8 +706,13 @@ public class EarlyNativeCoverageOptimizationTest {
 		Assert.assertTrue(actualRealization.supportClauses().size() >= 2);
 		Assert.assertTrue("colliding products must consume exact proof members",
 			directMetric(metrics, "PROOFS_CONSUMED") > 0);
+		SearchSpaceMetrics.NativePublicationCount collision = metrics.nativePublicationSnapshot().stream()
+			.filter(row -> row.outcome() == SearchSpaceMetrics.NativePublicationOutcome.OUTPUT_COLLISION)
+			.findFirst().orElseThrow();
+		Assert.assertEquals(2, collision.queries());
+		Assert.assertEquals(4, collision.logicalProofs());
+		Assert.assertEquals(4, collision.consumedProofs());
 
-		CandidateEmissionFact baseEmission = consumer.allowedEmissionFacts().get(0);
 		CandidateRealizationReference output = new CandidateRealizationReference(
 			consumer.key(), actualRealization.key());
 		PlacementRelationClosure referenceClosure = new PlacementRelationClosure(null, null,
@@ -772,6 +839,114 @@ public class EarlyNativeCoverageOptimizationTest {
 		method.setAccessible(true);
 		return (CandidateEmissionRealization)method.invoke(closure, proof, owner,
 			emission, outputAnchor, lineage, directInputsExact);
+	}
+
+	private static CandidateRuleFact sourceFact(CompiledHopKey owner,
+		CandidateEmissionRealization realization) throws Exception {
+		return (CandidateRuleFact)seedFixture("fact",
+			new Class<?>[] {CandidateRuleKey.class, CandidateEmissionRealization.class},
+			new CandidateRuleKey(owner, List.of()), realization);
+	}
+
+	private static MixedProductFixture mixedProductFixture() throws Exception {
+		CompiledHopKey owner = key("mixed-product-owner");
+		CompiledHopKey sourceOwner = key("mixed-source");
+		DurableAnchorKey seed = anchor("mixed-seed");
+		DurableAnchorKey outputPool = anchor("mixed-proof-output");
+		DurableAnchorKey knownOutput = anchor("mixed-known-output");
+		CandidateEmissionRealization exactSource = CandidateEmissionRealization.nativeLineage(
+			NATIVE_EMISSION, "mixed-exact", seed, List.of(new PlacementProofKey(
+				PlacementProofKind.NATIVE_CONTINUITY, sourceOwner, "exact-source")), List.of());
+		CandidateEmissionRealization dynamicSource =
+			CandidateEmissionRealization.nativeLineageDynamicLayout(
+				NATIVE_EMISSION, "mixed-dynamic", seed, List.of(new PlacementProofKey(
+					PlacementProofKind.NATIVE_CONTINUITY, sourceOwner, "dynamic-source")), List.of());
+		CandidateRuleFact source = sourceFact(sourceOwner, exactSource);
+		CandidateEmissionFact emission = source.allowedEmissionFacts().get(0);
+		source = new CandidateRuleFact(source.key(), source.status(), source.capability(),
+			source.shapeProof(), source.profile(), List.of(new CandidateEmissionFact(
+				emission.emissionState(), emission.executionFType(), emission.derivedFoutAction(),
+				List.of(exactSource, dynamicSource))), source.failureCode());
+		CandidateRealizationInputBinding exactBinding = CandidateRealizationInputBinding.direct(0,
+			CandidateRealizationReference.of(source.key(), exactSource));
+		CandidateRealizationInputBinding dynamicBinding = CandidateRealizationInputBinding.direct(0,
+			CandidateRealizationReference.of(source.key(), dynamicSource));
+		Assert.assertTrue(exactSource.allOwnedSupportClausesHaveExactNativeLayout());
+		Assert.assertFalse(dynamicSource.allOwnedSupportClausesHaveExactNativeLayout());
+		NativePlacementContinuity.NativeSupportProduct exactProduct =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(seed, outputPool, true,
+				List.of(List.of(exactBinding, dynamicBinding)));
+		NativePlacementContinuity.NativeSupportProduct dynamicProduct =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(seed, outputPool, false,
+				List.of(List.of(exactBinding, dynamicBinding)));
+		Assert.assertNotNull(exactProduct);
+		Assert.assertNotNull(dynamicProduct);
+		Assert.assertEquals(2, exactProduct.size());
+		Assert.assertEquals(2, dynamicProduct.size());
+		return new MixedProductFixture(owner, seed, outputPool, knownOutput,
+			exactBinding, dynamicBinding, exactProduct, dynamicProduct,
+			directSources(List.of(source)));
+	}
+
+	private record MixedProductFixture(CompiledHopKey owner, DurableAnchorKey seed,
+		DurableAnchorKey outputPool, DurableAnchorKey knownOutput,
+		CandidateRealizationInputBinding exactBinding,
+		CandidateRealizationInputBinding dynamicBinding,
+		NativePlacementContinuity.NativeSupportProduct exactProduct,
+		NativePlacementContinuity.NativeSupportProduct dynamicProduct, Object sources) { }
+
+	private static Object directSources(List<CandidateRuleFact> sources) throws Exception {
+		Class<?> type = Class.forName(PlacementRelationClosure.class.getName() + "$DirectSourceIndex");
+		Constructor<?> constructor = type.getDeclaredConstructor(List.class);
+		constructor.setAccessible(true);
+		return constructor.newInstance(sources);
+	}
+
+	private static CandidateEmissionRealization productPublication(
+		PlacementRelationClosure closure, NativePlacementContinuity.NativeSupportProduct product,
+		CompiledHopKey owner, DurableAnchorKey outputAnchor, String lineage, Object sources)
+		throws Exception {
+		Class<?> trace = Class.forName(
+			PlacementRelationClosure.class.getName() + "$NativePublicationTrace");
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"directNativeProductPublication", product.getClass(), CompiledHopKey.class,
+			PlacementEmissionState.class, DurableAnchorKey.class, String.class, List.class,
+			sources.getClass(), Map.class, trace);
+		method.setAccessible(true);
+		return (CandidateEmissionRealization)method.invoke(closure, product, owner,
+			NATIVE_EMISSION, outputAnchor, lineage, List.of(), sources,
+			new IdentityHashMap<CandidateEmissionRealization,Boolean>(), null);
+	}
+
+	private static void assertLazyProductMatchesScalarReference(
+		CandidateEmissionRealization publication,
+		NativePlacementContinuity.NativeSupportProduct product, CompiledHopKey owner,
+		DurableAnchorKey outputAnchor, String lineage,
+		CandidateRealizationInputBinding exactBinding,
+		CandidateRealizationInputBinding dynamicBinding) throws Exception {
+		Assert.assertNotNull(publication);
+		Assert.assertTrue(publication.supportClauses() instanceof NativeContinuitySupportClauses);
+		NativeContinuitySupportClauses lazy =
+			(NativeContinuitySupportClauses)publication.supportClauses();
+		Assert.assertEquals("admission must not materialize a product member", 0,
+			lazy.materializedHandleCount());
+		PlacementRelationClosure referenceClosure = new PlacementRelationClosure(
+			null, null, null, false,
+			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
+		List<CandidateEmissionRealization> explicit = new ArrayList<>();
+		for(CandidateRealizationInputBinding binding : List.of(exactBinding, dynamicBinding)) {
+			NativeContinuityProof proof = new NativeContinuityProof(product.externalSeed(),
+				product.outputWorkerPoolWitness(), product.exactPartitionRanges(), List.of(binding));
+			explicit.add(referencePublication(referenceClosure, proof, owner, NATIVE_EMISSION,
+				outputAnchor, lineage, binding == exactBinding));
+		}
+		CandidateEmissionFact expected = new CandidateEmissionFact(
+			NATIVE_EMISSION, FType.ROW, null, explicit);
+		CandidateEmissionFact actual = new CandidateEmissionFact(
+			NATIVE_EMISSION, FType.ROW, null, List.of(publication));
+		Assert.assertEquals("factored publication must preserve ordered proof/source/owner metadata",
+			expected.realizations(), actual.realizations());
+		Assert.assertEquals(2, lazy.materializedHandleCount());
 	}
 
 	private static Object seedFixture(String name, Class<?>[] parameters, Object... arguments)
