@@ -760,7 +760,8 @@ final class NativePlacementContinuity {
 				SkeletonFactMemo current = new SkeletonFactMemo();
 				for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
 					for(CandidateEmissionRealization realization : emission.realizations())
-						for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
+						for(CandidateRealizationSupportClause clause : skeletonTransferClauses(
+							realization.supportClauses(), donor)) {
 							SkeletonClauseMemo inherited = donor.donor(clause);
 							if(inherited == null || !sameSkeletonClauseAuthority(inherited.clause, clause))
 								continue;
@@ -776,6 +777,23 @@ final class NativePlacementContinuity {
 					next.dependencySkeletonTemplatesCarried += current.templateCount;
 				}
 			}
+	}
+
+	private static List<CandidateRealizationSupportClause> skeletonTransferClauses(
+		List<CandidateRealizationSupportClause> clauses, SkeletonFactMemo donor) {
+		if(!(clauses instanceof NativeContinuitySupportClauses relation)
+			|| relation.size() <= donor.clauses.size())
+			return clauses;
+		// Probe only cached donor members when the current native family is larger.
+		// Canonical ordinals preserve the old transfer order; get() below restores
+		// current first-donor authority before the ordinary donor/identity checks.
+		Set<Integer> ordinals = new java.util.TreeSet<>();
+		for(CandidateRealizationSupportClause clause : donor.clauses.keySet()) {
+			int ordinal = relation.ordinalOfExactAuthorityClause(clause);
+			if(ordinal >= 0)
+				ordinals.add(ordinal);
+		}
+		return ordinals.stream().map(relation::get).toList();
 	}
 
 	RevisionComparisonSnapshot revisionComparisonSnapshot() {
