@@ -28,6 +28,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
@@ -168,6 +169,167 @@ public class PlacementJointInputOrderedEnvironmentOptimizationTest {
 			field(first, "valuesAxis"), field(second, "valuesAxis"));
 		Assert.assertSame("axis reuse must expose the same normalized text identity",
 			field(first, "valuesText"), field(second, "valuesText"));
+	}
+
+	@Test
+	public void exactAxisPoolHitsProbeBeforeBuildingCanonicalTrees() throws Exception {
+		Object pool = canonicalAxisPool();
+		CountingHashMap<Object,Object> valuesPool = countingPoolMap(pool, "values");
+		CountingHashMap<Object,Object> readsPool = countingPoolMap(pool, "reads");
+		AtomicInteger definitionKeyCalls = new AtomicInteger();
+		Function<Definition,String> definitionKey = definition -> {
+			definitionKeyCalls.incrementAndGet();
+			return "long-canonical-definition-key-".repeat(5) + definition.stableKey();
+		};
+		Map<String,Definition> values = new TreeMap<>();
+		Map<Integer,Definition> reads = new TreeMap<>();
+		for(int index = 0; index < 48; index++)
+			values.put(String.format("v-%03d", index), definition(index, "value-" + index));
+		for(int index = 0; index < 7; index++)
+			reads.put(index, definition(100 + index, "read-" + index));
+		Object first = environment(values, reads, definitionKey, pool);
+		Assert.assertTrue("the cold construction must build more than its bounded prefix",
+			definitionKeyCalls.get() > values.size() + reads.size());
+
+		definitionKeyCalls.set(0);
+		valuesPool.resetGets();
+		readsPool.resetGets();
+		Object repeated = environment(new TreeMap<>(values), new TreeMap<>(reads), definitionKey, pool);
+
+		Assert.assertEquals("an exact values key must be probed once", 1, valuesPool.gets());
+		Assert.assertEquals("an exact read-source key must be probed once", 1, readsPool.gets());
+		Assert.assertEquals("a pool hit must perform only the one bounded-prefix key lookup",
+			1, definitionKeyCalls.get());
+		Assert.assertSame(field(first, "valuesAxis"), field(repeated, "valuesAxis"));
+		Assert.assertSame(field(first, "readSourcesAxis"), field(repeated, "readSourcesAxis"));
+		Assert.assertSame("exact reuse must retain the original Definition provenance",
+			values.get("v-000"), ((Map<?,?>)field(repeated, "values")).get("v-000"));
+	}
+
+	@Test
+	public void persistentUpdatesProbeOnlyTheChangedAxisAndBuildOnlyOnMiss() throws Exception {
+		Object pool = canonicalAxisPool();
+		CountingHashMap<Object,Object> valuesPool = countingPoolMap(pool, "values");
+		CountingHashMap<Object,Object> readsPool = countingPoolMap(pool, "reads");
+		AtomicInteger definitionKeyCalls = new AtomicInteger();
+		Function<Definition,String> definitionKey = definition -> {
+			definitionKeyCalls.incrementAndGet();
+			return "long-canonical-definition-key-".repeat(5) + definition.stableKey();
+		};
+		Definition original = definition(1, "original");
+		Definition replacement = definition(2, "replacement");
+		Object base = environment(Map.of("value", original), Map.of(), definitionKey, pool);
+
+		definitionKeyCalls.set(0);
+		valuesPool.resetGets();
+		readsPool.resetGets();
+		Object changed = with(base, "value", replacement);
+		Assert.assertEquals("a changed values axis must still be probed", 1, valuesPool.gets());
+		Assert.assertEquals("the unchanged read axis must not be reprobed", 0, readsPool.gets());
+		Assert.assertEquals("a miss builds one changed entry in addition to the bounded prefix",
+			2, definitionKeyCalls.get());
+		Assert.assertSame(field(base, "readSourcesAxis"), field(changed, "readSourcesAxis"));
+
+		definitionKeyCalls.set(0);
+		valuesPool.resetGets();
+		readsPool.resetGets();
+		Object repeatedChange = with(base, "value", replacement);
+		Assert.assertEquals(1, valuesPool.gets());
+		Assert.assertEquals(0, readsPool.gets());
+		Assert.assertEquals("a changed-axis hit must avoid rebuilding its persistent tree",
+			1, definitionKeyCalls.get());
+		Assert.assertSame(field(changed, "valuesAxis"), field(repeatedChange, "valuesAxis"));
+
+		definitionKeyCalls.set(0);
+		valuesPool.resetGets();
+		readsPool.resetGets();
+		Definition observedDefinition = definition(3, "observed");
+		Object observed = observe(base, 7, observedDefinition);
+		Assert.assertEquals("the unchanged values axis must not be reprobed", 0, valuesPool.gets());
+		Assert.assertEquals("a changed read-source axis must still be probed", 1, readsPool.gets());
+		Assert.assertEquals(2, definitionKeyCalls.get());
+
+		definitionKeyCalls.set(0);
+		valuesPool.resetGets();
+		readsPool.resetGets();
+		Object repeatedObservation = observe(base, 7, observedDefinition);
+		Assert.assertEquals(0, valuesPool.gets());
+		Assert.assertEquals(1, readsPool.gets());
+		Assert.assertEquals("a read-source hit must avoid rebuilding its persistent tree",
+			1, definitionKeyCalls.get());
+		Assert.assertSame(field(observed, "readSourcesAxis"), field(repeatedObservation, "readSourcesAxis"));
+
+		definitionKeyCalls.set(0);
+		valuesPool.resetGets();
+		readsPool.resetGets();
+		Method nextBlock = observed.getClass().getDeclaredMethod("nextBlock");
+		nextBlock.setAccessible(true);
+		Object next = nextBlock.invoke(observed);
+		Assert.assertEquals("a block transition must retain its values axis without probing", 0,
+			valuesPool.gets());
+		Assert.assertEquals("only the changed empty read-source axis is probed", 1, readsPool.gets());
+		Assert.assertEquals(1, definitionKeyCalls.get());
+		Assert.assertSame(field(base, "valuesAxis"), field(next, "valuesAxis"));
+		Assert.assertSame(field(base, "readSourcesAxis"), field(next, "readSourcesAxis"));
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	public void clearingAxisPoolPreservesParentProvenanceAcrossLaterTransitions() throws Exception {
+		Object pool = canonicalAxisPool();
+		Definition alpha = definition(11, "alpha-authority");
+		Definition beta = definition(12, "beta-authority");
+		Definition originalRead = definition(13, "original-read-authority");
+		Object parent = environment(Map.of("alpha", alpha, "beta", beta),
+			Map.of(3, originalRead), pool);
+		Map<String,Definition> parentValues =
+			(Map<String,Definition>)field(parent, "values");
+		Map<Integer,Definition> parentReads =
+			(Map<Integer,Definition>)field(parent, "readSources");
+
+		Method clear = pool.getClass().getDeclaredMethod("clear");
+		clear.setAccessible(true);
+		clear.invoke(pool);
+		Definition replacement = definition(14, "replacement-authority");
+		Definition additionalRead = definition(15, "additional-read-authority");
+		Object changed = with(parent, "beta", replacement);
+		Object observed = observe(parent, 7, additionalRead);
+		Method nextBlock = parent.getClass().getDeclaredMethod("nextBlock");
+		nextBlock.setAccessible(true);
+		Object next = nextBlock.invoke(parent);
+
+		Object coldChanged = environment(Map.of("alpha", alpha, "beta", replacement),
+			Map.of(3, originalRead), Definition::stableKey);
+		Object coldObserved = environment(Map.of("alpha", alpha, "beta", beta),
+			Map.of(3, originalRead, 7, additionalRead), Definition::stableKey);
+		Object coldNext = environment(Map.of("alpha", alpha, "beta", beta), Map.of(),
+			Definition::stableKey);
+		assertCanonicalEquivalent(changed, coldChanged);
+		assertCanonicalEquivalent(observed, coldObserved);
+		assertCanonicalEquivalent(next, coldNext);
+
+		Assert.assertSame("clearing the pool must not replace the parent's authoritative values",
+			parentValues, field(parent, "values"));
+		Assert.assertSame("clearing the pool must not replace the parent's authoritative reads",
+			parentReads, field(parent, "readSources"));
+		Assert.assertSame(alpha, ((Map<?,?>)field(changed, "values")).get("alpha"));
+		Assert.assertSame(replacement, ((Map<?,?>)field(changed, "values")).get("beta"));
+		Assert.assertSame(originalRead, ((Map<?,?>)field(changed, "readSources")).get(3));
+		Assert.assertSame(parentValues, field(observed, "values"));
+		Assert.assertSame(additionalRead, ((Map<?,?>)field(observed, "readSources")).get(7));
+		Assert.assertSame(parentValues, field(next, "values"));
+		Assert.assertTrue(((Integer)field(pool, "retainedAxes")) <= 4_096);
+		Assert.assertTrue(((Integer)field(pool, "retainedDefinitions")) <= 65_536);
+
+		Definition firstAuthority = definition(22, "first-authority");
+		Definition secondAuthority = definition(22, "second-authority");
+		Assert.assertNotEquals(firstAuthority, secondAuthority);
+		Assert.assertEquals(firstAuthority.stableKey(), secondAuthority.stableKey());
+		Object first = environment(Map.of("same", firstAuthority), Map.of(), pool);
+		Object second = environment(Map.of("same", secondAuthority), Map.of(), pool);
+		Assert.assertEquals(stableKey(first), stableKey(second));
+		Assert.assertNotSame("stable text alone must not intern unequal Definition provenance",
+			field(first, "valuesAxis"), field(second, "valuesAxis"));
 	}
 
 	@Test
@@ -366,11 +528,57 @@ public class PlacementJointInputOrderedEnvironmentOptimizationTest {
 		return constructor.newInstance(values, reads, axisPool);
 	}
 
+	private static Object environment(Map<String,Definition> values, Map<Integer,Definition> reads,
+		Function<Definition,String> definitionKey, Object axisPool) throws Exception {
+		Class<?> environment = Class.forName(PlacementJointInputAnalysis.class.getName() + "$Environment");
+		Class<?> pool = Class.forName(PlacementJointInputAnalysis.class.getName() + "$CanonicalAxisPool");
+		Class<?> axis = Class.forName(PlacementJointInputAnalysis.class.getName()
+			+ "$CanonicalDefinitionMap");
+		Constructor<?> constructor = environment.getDeclaredConstructor(Map.class, Map.class,
+			Function.class, pool, boolean.class, axis, axis);
+		constructor.setAccessible(true);
+		return constructor.newInstance(values, reads, definitionKey, axisPool, false, null, null);
+	}
+
 	private static Object canonicalAxisPool() throws Exception {
 		Class<?> type = Class.forName(PlacementJointInputAnalysis.class.getName() + "$CanonicalAxisPool");
 		Constructor<?> constructor = type.getDeclaredConstructor();
 		constructor.setAccessible(true);
 		return constructor.newInstance();
+	}
+
+	@SuppressWarnings("unchecked")
+	private static CountingHashMap<Object,Object> countingPoolMap(Object pool, String name)
+		throws Exception {
+		Field field = pool.getClass().getDeclaredField(name);
+		field.setAccessible(true);
+		CountingHashMap<Object,Object> counting =
+			new CountingHashMap<>((Map<Object,Object>)field.get(pool));
+		field.set(pool, counting);
+		return counting;
+	}
+
+	private static final class CountingHashMap<K,V> extends HashMap<K,V> {
+		private static final long serialVersionUID = 1L;
+		private int gets;
+
+		private CountingHashMap(Map<K,V> source) {
+			super(source);
+		}
+
+		@Override
+		public V get(Object key) {
+			gets++;
+			return super.get(key);
+		}
+
+		private int gets() {
+			return gets;
+		}
+
+		private void resetGets() {
+			gets = 0;
+		}
 	}
 
 	private static String stableKey(Object environment) throws Exception {
@@ -423,6 +631,12 @@ public class PlacementJointInputOrderedEnvironmentOptimizationTest {
 		Method compare = left.getClass().getDeclaredMethod("compareTo", left.getClass());
 		compare.setAccessible(true);
 		return (Integer)compare.invoke(left, right);
+	}
+
+	private static void assertCanonicalEquivalent(Object actual, Object cold) throws Exception {
+		Assert.assertEquals(stableKey(cold), stableKey(actual));
+		Assert.assertEquals(0, compare(actual, cold));
+		Assert.assertEquals(0, compare(cold, actual));
 	}
 
 	private static Object field(Object target, String name) throws Exception {

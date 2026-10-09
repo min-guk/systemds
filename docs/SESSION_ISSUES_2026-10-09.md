@@ -418,6 +418,22 @@
 - **검증**: 기존 구현에서6tests 중2개 표현 검사 실패(`evidence/conditional-conditioning-red-6`), 수정 후6PASS(0.332초).480,000셀 관계의 선택 목록 저장은20개 미만이며 wildcard/forbidden selector와 sparse holes를 검사한다. 고정 seed30관계에서 모든 작은 boundary, selector 위치0/1/2, 빈/겹친 region, selector까지 고정된 fallback을 explicit table과 비교하여 raw cost 및 canonical Exact optimum/assignment parity를 확인했다. 두 실제 conditioning consumer를 모두 통과시켰다. 이 수치를 실제 workload 시간 개선으로 일반화하지 않는다. 전체 gate는 별도로 기록한다.
 
 - **Conditional conditioning 전체 gate**: fresh compile,1,055 JUnit PASS(185.656초), source SHA mismatch0. 증거 `evidence/conditional-conditioning-full-green-1055`. v10 실제 실행은 기존 봉인본 그대로 유지하며 이 후속 변경은 별도 엔진에 포함한다.
+- **추가 DP boundary 병합 gate**: `78a25c8e60`의 조건부 product 제한은 independent architect CLEAR. 현재 병합 소스의 ExactCategoricalSolver 및 새 test를 isolated compile하고 ExactSupportConditioning/ExactConditionalSupportSolver/SharedRegionalPreparation/IncrementalRegionalSeed **29tests PASS(0.946초)**를 확인했다. Native 미변경으로 앞선1,147전체 gate와 이 추가 경계 검증을 구분하여 게시한다. 봉인37ffd4ab는 추가 DP 변경 전 엔진이며 실측에 소급 포함하지 않는다.
+
+### v27 emission-local generated support 실제 재사용 (test-first, 진행중)
+
+- **문제/근거**: v26 pinned+summary 상세 진단에서도 certified resident 반복은 LogReg19,478/29,774, GLM57,817/73,112다. 잠재치이며 실제 재사용은 없었다. 새 회귀는 기존 API로 A 이후 B의 graph build가 증가하지 않아야 함을 검사했고, 적용 전129tests 중 정확히1개가 expected2/actual4로 실패했다(`v27-red-test.log`).
+- **계획/안전 증명**: 같은 resolver·fact·emission 객체, root owner identity와 full witness에 한정한다. Generated dispatch의 fixed-root alpha-renaming이 graph/hidden read/footprint를 보존하더라도 prior root-history-independent 및 returned-root-binding 없음 두 certificate를 모두 요구한다. Fixed-owner native axes는 이미 exact fallback으로 보존된다.
+- **변경**: metrics-only observer를 실제 batch로 교체한다. 기존 bounded support memo의 resident key만 index하고 새 proof cache/alias B support entry는 만들지 않는다. Actual hit는 기존 LRU를 갱신하며 새 externalSeed를 instantiate한다. Root-free product axes와 canonical suffix/order를 유지하고, 바깥 exact/dynamic filtering 및 final public memo의 exact proposal key는 그대로다. Metrics OFF에서도 사용하고 기존 어느 support budget이0이면 batch를 만들지 않는다.
+- **검증/위험**: old published/unpublished 양방향, cycle, VALUE_MAP/derived hidden history, returned root binding, full witness, owner/fact/emission/resolver/revision identity, metricsOFF, zero/oversize/eviction/saturation/LRU/noalias/product laziness 회귀와 독립 검토가 게시 gate다. 규칙/후보/비용/privacy 제약은 변경하지 않는다. 아직20초 달성 및 실제 속도향상을 주장하지 않는다.
+- **v27 초기 focused**: 테스트 helper의 checked Exception 누락2건을 고쳤다(compile로그 별도 보존). FULL은 partition interval을 의도적으로 무시하므로 range 변경을 endpoint 차이라고 가정한 fixture를 실제 worker 차이로 보정했다. 이후 Native/DefaultPruning/Product156tests/skip1PASS(1.127초). Cold parity와 실제 cycle/root-binding/oversize/witness 구분은 추가 보강중이며 아직 최종 gate가 아니다.
+- **전체 closure semantic 대조**: 신규 ACTIONS fixture에서 실제 GENERATED_BATCH_REUSE_HITS>0을 요구하고, 기존 support memo budget0 대조의 reuse0 및 전체 analysis fingerprint/graph/candidate facts/transient-input 일치를 확인했다(1test PASS,1764ms). 대조가 일반 support memo도 끄므로 isolated batch 성능 실험으로 해석하지 않는다.
+- **직전 unpinned 엔진 실측**: `candidate-v26-unpinned-merged-detailed` 양쪽60초 timeout/no receipt, OOM0, 컨테이너 제거. LogReg31,328miss 중20,381potential, GLM76,487 중60,491potential이다. 아직 실제 재사용 없는 봉인본37ffd4ab의 계측이며 새v27 성능과 혼동하지 않는다. Inclusive graph support sample은 각각1,142/2,031 및364/2,458; candidateTopology가513/266이다. 다음v27 측정으로 실제 graph 회피 및 남은 병목을 다시 판정한다.
+- **v27 보강 중 발견한 fixture 문제**: root-binding white-box 변수를 Object로 선언한 compile 오류를 typed batch로 고쳤다. 새 descendant pin 회귀의 최초174tests/1failure는 정상 pin overlay를 hidden-root metadata read로 오인하여 재계산을 요구한 잘못된 기대였다. Fixed root가 순수 dependency pin B를 현재 A/B로 바꾸므로 alpha-renaming certificate가 성립하고 재사용해야 한다. 기대를 실제 reuse·양방향 cold proof/identity footprint·positive 결과·실제 cycle 관찰로 바꾸었다. Metadata history 거절 회귀는 별도로 유지한다.
+- **root-binding 방어 검증 한계**: 독립 architect가 현재 지원 recipe를 추적했으나 실제 changed-witness root binding을 생성하는 유효 fixture는 찾지 못했다. Same-witness self-premise는 이미 제외되고, FType 변경은 emission/witness 검증에 걸리며 현재 range-recompute 경로의 exactness 조건도 이를 제한한다. 따라서 이 조건의 테스트는 injected resident entry에 대한 admission 거절 및 실제 다음 query의 cold-parity fallback을 검사하는 white-box 방어 회귀로 명시한다. 실제 workload에서 해당 graph를 관측했다고 주장하지 않고 두 certificate는 그대로 유지한다.
+- **v27 최종 focused/독립 gate**: 최종 Native/DefaultPruning/Product161tests/skip1PASS(1.599초). Exact/dynamic 두 graph·두 key, metricsOFF의 실제 skeleton build 불변과 null-batch positive control, 실제 양·음성 proof cycle 양방향, explicit/native-product descendant pin B의 순서·footprint·positive parity, indexed resident certificate 교체(ABA) 방어를 보강했다. 독립 architect는 production 및 최종 test scope를 CLEAR로 확인했다. 이전 잘못된 fixture 실패는 삭제하지 않고 evidence에 보존한다. 사용하지 않는 shadow helper는 제거했다. Incoming DP conditional2tests까지 포함한 fresh135class package를 진행한다.
+- **첫 full gate 실패/수정**: root가 마지막에 shadow helper를 제거하면서 wrapper `batchWork`의 호출까지 치환하여 자기 재귀를 만들었다. 첫 full gate는1,158tests/failure0/error13(StackOverflow, 모두 해당 test helper)로 실패했다. Production 문제로 오인하지 않으며 `v27-recursive-test-helper-package-failure.log`를 보존한다. Helper를 직접 metrics.directWorkCount 호출로 고치고 focused 및 fresh package를 다시 실행한다. 앞선 focused/독립 검토 이후의 작은 test 정리도 재검증해야 한다는 사례다.
+- **v27 최종 전체 gate**: helper 수정 후 focused161tests/skip1PASS(1.572초), 이어 fresh135class package **1,158 selected tests/failure0/error0/skip1**, BUILD SUCCESS05:33:21. Production·test scope independent CLEAR 및 전체 closure parity를 함께 충족했다. 이 정확한 source/JAR를 `candidate-v27`로 봉인하여 게시하고 동일 Docker에서 metrics OFF 우선, 상세 계측 후속 순서로 측정한다. 기존 supplemental Exact/PCA 한계와20초 미달은 여전히 남아 있다.
 
 
 ### v10 실제 결과와 generated batch graph 재사용 후보
@@ -432,8 +448,6 @@
 - **Batch 첫 full gate의 작업량 범위 오류**:1,058tests 중1개에서 cold native query1handle assertion에 이어 수행한 legacy revision migration의20handle까지 합산했다. Proof/footprint parity는 통과했다. Revision에 별도 relation을 사용해 cold gate 작업과 legacy migration 작업을 분리한 뒤 focused150PASS(1.114초) 재확인했다. 실패 `evidence/generated-batch-full-revision-work-scope-red-1058`, 수정 `generated-batch-final-focused-green-150` 보존. Revision migration의 전개가 사라졌다고 주장하지 않는다.
 
 - **Generated batch 최종 gate**: fresh main/test compile,1,058 JUnit PASS(154.829초), source SHA mismatch0. 증거 `evidence/generated-batch-full-green-1058`. v12로 별도 봉인하여 두 실제 workload를 실행한다.
-- **추가 DP boundary 병합 gate**: `78a25c8e60`의 조건부 product 제한은 independent architect CLEAR. 현재 병합 소스의 ExactCategoricalSolver 및 새 test를 isolated compile하고 ExactSupportConditioning/ExactConditionalSupportSolver/SharedRegionalPreparation/IncrementalRegionalSeed **29tests PASS(0.946초)**를 확인했다. Native 미변경으로 앞선1,147전체 gate와 이 추가 경계 검증을 구분하여 게시한다. 봉인37ffd4ab는 추가 DP 변경 전 엔진이며 실측에 소급 포함하지 않는다.
-
 
 ### Resume: generated batch와 최신 main 통합 (진행중)
 
@@ -444,6 +458,16 @@
 - **잔여/위험**: 다중 seed·retained relation·DURABLE_MAP publication의 exact union과 Physical/DP materialization이 남는다. v10 normal terminal log에서 proof consumption52.13초, topology62.74초, overlay exclusive68.79초, dependency pruning42.13초였다. Inclusive 시간을 중복 합산하지 않는다.20초 목표는 여전히 미달이다.
 
 - **병합 검증 완료**: fresh main/test compile,1,063 JUnit PASS(152.813초), source SHA mismatch0, 독립 review CLEAR. 증거 `evidence/generated-batch-summary-merge-green-1063`. 이 병합본은v13으로 분리하여 봉인한다.
+
+### v27 / 원격 generated batch 구현 중복 병합 (진행중)
+
+- **문제/상태**: 자체v27 `c8141e81fd`를1,158PASS 후 봉인했지만 fetch에서 원격 `9bfccd8d96`(독립 batch `95ed3daeb2` 포함)를 발견했다. 아직 이v27을push했다고 주장하지 않는다. 원격과3-way merge하되 force하지 않는다.
+- **해결**: batch는 더 강한 resident certificate 재검사·no-alias·zero-budget·metricsOFF·lazy instantiation을 갖춘 자체 구현 하나로 유지한다. Incoming 고유 nativeRelationOwners presence preflight와3개 product/history/eviction 회귀, representation revision 회귀는 보존한다. Counter/API만 단일 구현에 맞춘다. 문서는 양쪽 전체 section을 보존한다.
+- **layout 범위 결정**: incoming NATIVE_LINEAGE 전용 제한은 채택하지 않는다. Generated recipe는 현재 fact/emission/owner/witness만 읽고 prospective layout/anchor를 authority로 소비하지 않는다. Fixed-owner overlay와 두 certificate가 유지되면 durable/native 차이도 alpha-renaming이다. 실제 closure가DURABLE_MAP proposal도 만들기 때문에 임의로 재사용 범위를 줄이지 않는다. 독립 architect의 코드 기반 CLEAR 후 native↔durable·durableA↔B 양/음성 cold parity를 추가한다.
+- **실측 분리**: `candidate-v27` JAR25396b6ace9c8b492efaa50e99dfac22659f803080b92800c9bf2be65404f453의 metricsOFF/JFR 양쪽60초timeout/no receipt, own containers 제거. 이 엔진에는 incoming presence preflight가 없다. 상세계측은 같은 봉인본을 사용하며 아직20초 미달이다.
+- **병합 focused gate**: native↔durable 및 durableA↔B에 대해 positive4member/failed-deep-producer negative를 추가했다. 최초 초안의 빠진 method brace와 존재하지 않는 UNAVAILABLE 상태는 compile 전 정적 확인에서 고쳤으며, 기존 RULE_ERROR/empty profile/zero emission invariant를 사용했다. Incoming3tests와 revision 보강을 포함한165focused tests/skip1PASS(1.377초). Fresh135class package를 별도 `v27-merged`로 실행한다.
+- **v27 상세 관측**: 원본 봉인본의 실제 batch reuse는 LogReg68,597회/GLM113,008회였다. 같은60초 중 마지막 관측 graph build는19,999/26,422(직전 원본31k/76k potential 계측과 별개)이며 기존 v26-unpinned graph count38,755/81,373보다 작다. 하지만 partial-progress 모집단이 같지 않고 fullInitial receipt는 여전히 없으므로 이를 wall-time 개선율로 환산하지 않는다. LogReg topology 약10.74초·overlay exclusive8.34초가 남아 있고, GLM joint/canonical 및 relocation binding 경로도 남는다. 새 incoming presence preflight 효과와 다음 fallback 진단을 별도 측정한다.
+- **v27 통합 최종 gate/봉인**: 독립 reviewer가 실제 최종 diff와165focused 결과를 재검토해 CLEAR로 확인했다. 이어 fresh135class package **1,162 selected tests/failure0/error0/skip1**, BUILD SUCCESS05:41:40. `candidate-v27-merged` JAR SHA256=`e0df82f0e78810481d436a86afefe809daf2158ad98a3b7f71d97f50ac745471`로 봉인했다. 기존 supplemental Exact/PCA 제한은 이 선택 회귀 통과에 포함하지 않는다. 원격 추가 representation preflight의 성능 효과는 이 봉인본으로 별도 측정하며,20초 목표는 미달 상태다.
 
 
 ### Generated batch의 durable proposal 적용 범위 확장 (검증중)
@@ -486,3 +510,37 @@
 - **잔여/위험**: exact+dynamic proof의혼합 병합, durable proof topology 및 Physical member 전개는남는다. 새 회귀가모두통과하기전에는현재미커밋후보를게시하지않는다. 기존 golden fingerprint/cost model/privacy/runtime 규칙은변경하지않는다.
 
 - **Closure 최종 gate**: singleton exact/3옵션 durable fixture 및 새로운 Physical 회귀 포함 fresh main/test compile **1,073PASS(178.238초)**,source SHA mismatch0. 증거 `evidence/closure-dynamic-full-green-1073`. 기존 protected cost fingerprint/구조/raw bits와 실제 explicit계수의기대값을변경하지않고통과했다. 새post-timer receipt probe는독립compile및9testsPASS이며planner/runtime/timer규칙은바꾸지않는다. 추가gate확장은이봉인본에포함하지않는다.
+
+### v27 / durable batch 원격 후속 통합 (검증 완료)
+
+- **문제/해결**: fetch에서 원격 `592818109f7b`가 추가되어 다시3-way 병합했다. 바로 앞의 'Generated batch의 durable proposal 적용 범위 확장'은 **원격 분기의 역사 기록**이며, 현재 채택한 no-alias batch는 이미 layout에 무관한 동일 recipe/certificate를 검증한다. 이번 통합은 production diff가0이며 원격5개 durable/mixed/witness/history/eviction 테스트와 문서만 추가했다.
+- **검증**: 동일 production의 앞선1,162 selected 전체 gate에 더해, fresh isolated compile 및 native3suites **170tests/skip1PASS(1.203초)**. 독립 reviewer는 conflict/retired API 및 보존 회귀를 확인하여 CLEAR. `candidate-v27-merged` 봉인 엔진은 여전히 정확한 current production이다.
+- **잔여/위험**: metricsOFF Docker LogReg/GLM 모두60초timeout/no fullInitial receipt, own containers 제거. 원격v12의 GLM 버전간 plan fingerprint 차이는 별개 미해결이며 이번 merge가 해결했다고 주장하지 않는다. 다음 단계는 publication fallback을 실제 logical/consumed work로 나눠 계측하는 것; 지원 후보/합법성/privacy 변경은 없다.
+
+### v28 / native product publication fallback 계측 (진행중)
+
+- **문제**: v27에서 batch graph 재계산은 줄었지만 두 실제 workload는60초 diagnostic watchdog까지 종료하지 못한다. Product 압축은 한 distinct seed·비충돌 retained authority에서만 시도하며, helper가DURABLE_MAP을 거부한다. 많은 logical product가 어느 조건에서 명시적 proof로 풀리는지 현재 수치로 구분할 수 없다.
+- **해결/설계**: 기존 분기에서 처음 확인한 결과를 고정 enum별 query수·logical proof수·0/1/2–3/4+ 크기 bucket으로 기록하고, 기존 fallback loop에서 실제 소비한 proof만 별도로 센다. Covered retained/new publication 성공도 분리한다. Helper의 기존 null 반환 이유와 기존 distinct/requested seed 집합 크기만 읽으며 생략된 helper를 실행하거나 product를 펼치지 않는다. MetricsOFF에서는 trace/cardinality 계측을 만들지 않는다.
+- **수정 파일**: PlacementRelationClosure.java, SearchSpaceMetrics.java, 새 NativeProductPublicationMetricsTest.java. 후보/pruning/oracle/runtime/privacy 규칙 변경은 없다. Gate fallback 추가계측·single-seed durable압축·multi-seed exactunion은 아직 미구현이다.
+- **검증 계획**: counter bucket/reset/immutable snapshot/live opt-in과 PRIVATE_AGGREGATE ACTIONS의 metricsOFF/ON exact fingerprint/facts/graph/transientinput parity, query수 및 실제consumed수 partition을 검사한다. 독립 검토 후 fresh 전체 gate·봉인·동일Docker로 actual blocker를 측정한다.
+- **잔여/위험**: logical opportunity와 실제 savedwork를 혼동하지 않는다. MetricsON 실행의 추가counter비용은 성능 개선으로 계산하지 않는다. 20초 목표 및 원격v12 GLM planfingerprint 차이는 미해결이다.
+- **계측 해석/독립 검토**: reviewer는 모든 원래7개 helper 거절·필터·순서·authority·호출 조건 불변을 확인하여 static CLEAR. `smallProducts/largeProducts` 필드는 NO_PRODUCT에서도 **결과 cardinality의2–3/4+ bucket**이며 certified product 존재를 의미하지 않는다. Query합계는 완료된 pass에서만 requested와 맞아야 한다; timed live snapshot에는 아직 결과를 분류하지 못한 진행중 query나 소비중 loop가 있고 multi-seed 집계도 seed loop가 끝난 후 기록된다. Partial count를 부정확한 일치/불일치 판정에 쓰지 않는다.
+- **Focused gate**: fresh isolated main/test compile 후 NativeProductPublicationMetrics/SearchSpaceFineGrainedMetrics/SearchSpaceLiveMetrics **13testsPASS(2.379초)**. ACTIONS의 metricsOFF/ON semantic parity 및 완료된 query/consumed partition을 확인했다. 136class fresh package를 이어서 수행한다.
+- **v28 full gate/봉인**: fresh136class package **1,170 selected tests/failure0/error0/skip1**, BUILD SUCCESS05:53:10. JAR SHA256=`7461475c08d9616f1ae28e4bdf4b3c0ed37f78cd2936bb9ac59d6d6ced529804`로 `candidate-v28` 봉인. Diagnostic-only 변경이며 이 통과를20초 달성이나 성능 개선으로 해석하지 않는다. 동일60초/JFR55초 Docker 상세계측을 수행한다.
+- **v28 실제 관측/우선순위 결정**: 동일Docker 두 workload는 여전히60초timeout/no fullInitial receipt였다. 마지막 live snapshot의 LogReg MULTI_SEED는72,317queries·3,401,737consumed, 전체3,401,815consumed의99.9977%; GLM은76,406queries·1,465,227consumed, 전체1,465,234의99.9995%다. 단일seed DURABLE_OUTPUT은각30/3개의singleton뿐이다. LogReg compressed publication0, GLM publication2·covered4도singleton뿐. 따라서 single-seed DURABLE만 확대하는 계획은 저효율로 판단하고 **whole-product exact union** 설계를 우선한다. Axis를 합쳐Cartesian product로 만드는 방식은 불법 조합을 발명하므로 사용하지 않는다. `evidence/v28-publication-outcomes.json`은 completed workload가 아닌 partial-progress 증거다.
+
+### v29 / GLM joint Environment의 pool-hit 전 canonical tree 생성 제거 (진행중)
+
+- **문제/근거**: v27-merged OFF의 GLM main JFR sample2,784개 중 joint path11.03%, 첫 planner frame CanonicalAxisPool.values34개였다. 현재 생성자가 exact interning hit 여부를 확인하기 전에 두 tree를 만들고, with/observe/nextBlock가 이미 아는 unchanged axis도 다시 전체Map hash/probe한다. 전체 canonical sample을 이 문제 하나의 비용으로 귀속하지 않는다.
+- **회귀 선행**: test-only CountingHashMap 및 counted definition-key Function으로 새2개 회귀를 추가했다. 보존한 수정전 production을 isolated compile한 실제RED는12tests 중2실패: cached tree 재생성에서 bounded-prefix1회 기대 대비56회 호출, unchanged axis lookup0회 기대 대비1회였다(`v29-red-test.log`). Missing API가 아닌 실제 반복작업을 재현했다.
+- **변경/근거**: pool은 exact Map.equals lookup 후 miss일 때만 canonical tree를 만든다. Environment의 전달된 axis는 이미 검증/인터닝한 최종 axis이며 다시 probe하지 않는다. with/observe는 changed axis만 lazy persistent update, nextBlock은 empty read axis만 처리한다. Authoritative Definition map/provenance/canonical comparator/first tie/cap/reset은 그대로 유지한다. 새cache·publicflag·production testcounter·dependency는 없다.
+- **수정 파일/검증**: PlacementJointInputAnalysis.java, PlacementJointInputOrderedEnvironmentOptimizationTest.java. 계획은 외부V29_JOINT_AXIS_PLAN.md에 먼저 기록했다. Focused/full 회귀·독립 검토·별도봉인Docker 후 실제효과를 판단한다.
+- **잔여/위험**: 새로운 supplier의 작은 할당비용과 cache miss 환경의 효율은 실측이 필요하다. Per-analysis poolclear 이후 이미 만든 parent axis를 재사용해도 bytes/authority는 불변이어야 한다. Native multi-seed exact union이 여전히 primary bottleneck이며 이 작은 개선만으로20초 성공을 주장하지 않는다.
+- **v29 focused gate/범위 보강**: poolclear 뒤 기존 parent의with/observe/nextBlock를 cold reconstruction과 byte/sign/order로 비교하고, stableKey가 같아도 다른 provenance의Definition은 axis를 부당하게 공유하지 않는 회귀를 추가했다. 최종 joint5suites **42testsPASS(3.230초)**. Source/test를 freeze하고136class fresh package를 시작했다.
+- **v29 독립 검토/전체 gate**: reviewer는 exactMap equality·authoritative map 불변·poolclear/cap 의미 및 production의Definition::stableKey 고정 사용을 확인하여 CLEAR. 최종3개 새회귀를 포함한42focused PASS와 fresh136class package **1,173 selected tests/failure0/error0/skip1**, BUILD SUCCESS06:02:56을 확인했다. 별도봉인 후 metricsOFF 실측부터 수행한다.
+
+### Main52ef 병합 및 durable topology 확장 (검증중)
+
+- **병합**: incoming no-alias GeneratedSupportBatch와canonical environment axes miss-only생성을보존했다. 로컬streaming Closure와uniform proof필터를합치고publication계측이각요청/실제proof소비를정확히한번기록하도록갱신했다. 새fallback 이유SINGLETON_OUTPUT/OUTPUT_COLLISION을분리한다. 이전MULTI_SEED/DURABLE_OUTPUT enum은기록호환성용으로남지만새fastpath의거절사유로사용하지않는다.
+- **검증**: source/proof/cache/계측 partition에대한독립reviewCLEAR, freshfocused201PASS(40.233초,기존ignored1). 전체회귀는다음durable topology공통코드통합후수행한다. 로컬7abfe9700a는1,073PASS엔진v15로보존하여병합후코드와실측을혼합하지않는다.
+- **후속설계**: DURABLE_MAP의압축support도pinned/unpinned AND/OR축gate로소비한다. Direct grounding은기존anchor match ORclause witness match를그대로유지한다. Fixed owner pin,같은source owner,반복입력위치,mixed/derived/VALUE_MAP 경로는기존fallback이다. 독립156tests 및별도reviewCLEAR. 실제전개감소/시간은병합실측전미확인이다.

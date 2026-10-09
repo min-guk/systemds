@@ -379,6 +379,38 @@ public class NeutralPlacementFixedPointCompositionTest {
 	}
 
 	@Test
+	public void generatedBatchReusePreservesCompleteClosurePublication() throws Exception {
+		String property = "sysds.fedplanner.continuitySupportMemo.maxEntries";
+		String prior = System.getProperty(property);
+		try {
+			System.setProperty(property, "4096");
+			SearchSpaceMetrics cachedMetrics = new SearchSpaceMetrics();
+			PlacementAnalysis cached = new NeutralPlacementGraphBuilder(null, cachedMetrics)
+				.buildAnalysis(compileProtected(ACTIONS));
+			Assert.assertTrue("the complete closure must exercise actual generated batch reuse",
+				cachedMetrics.directWorkCount(SearchSpaceMetrics.DirectWork.GENERATED_BATCH_REUSE_HITS) > 0);
+			System.setProperty(property, "0");
+			SearchSpaceMetrics uncachedMetrics = new SearchSpaceMetrics();
+			PlacementAnalysis uncached = new NeutralPlacementGraphBuilder(null, uncachedMetrics)
+				.buildAnalysis(compileProtected(ACTIONS));
+			Assert.assertEquals(0, uncachedMetrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.GENERATED_BATCH_REUSE_HITS));
+			Assert.assertEquals(uncached.analysisFingerprint(), cached.analysisFingerprint());
+			Assert.assertEquals(uncached.graph().normalizedSignature(), cached.graph().normalizedSignature());
+			Assert.assertEquals(uncached.candidateRuleFacts().orderedFacts(),
+				cached.candidateRuleFacts().orderedFacts());
+			Assert.assertEquals(uncached.logicalTransientInputsInCanonicalOrder(),
+				cached.logicalTransientInputsInCanonicalOrder());
+		}
+		finally {
+			if(prior == null)
+				System.clearProperty(property);
+			else
+				System.setProperty(property, prior);
+		}
+	}
+
+	@Test
 	public void recursiveDirectPublicationIsStableWithIncrementalAndMemoDisabled() throws Exception {
 		String memoProperty = "sysds.fedplanner.continuityMemo.maxEntries";
 		String prior = System.getProperty(memoProperty);
