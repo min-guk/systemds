@@ -2,7 +2,7 @@
 
 ## 상태
 
-최신 완료 실측은 **v35 (`e146043b3b`)**다. 같은 입력·seed·privacy·cost profile·JVM·CPU/메모리 조건의 COFEE 50K×128 W1 결과이며 각 버전별 1회 관측이다. **20초 목표는 미달이다.**
+최신 완료 실측은 **v38 (`d41ddedf38`)**다. 같은 입력·seed·privacy·cost profile·JVM·CPU/메모리 조건의 COFEE 50K×128 W1 결과이며 각 버전별 1회 관측이다. **20초 목표는 미달이다.**
 
 | 엔진 | LogReg 전체 초기 planning | GLM 전체 초기 planning |
 |---|---:|---:|
@@ -12,6 +12,20 @@
 | v32 | 357.012초 | 122.062초 |
 | v34 | 391.357초 | 127.030초 |
 | v35 | 365.797초 | 116.640초 |
+| v38 | 368.659초 | 123.666초 |
+
+v38은 v35 대비 LogReg가 2.862초, GLM이 7.026초 늘었다. 두 workload 모두 numeric comparator·runtime audit(mismatch0)·선택 계획 지문이 같지만 성능 개선은 확인하지 못했다. 각1회 관측이며 새 통합본도20초 미달이다. v39는 일반 pinned 조회에서 native sibling의 전체 전개를 줄였지만, query-local 재생성 때문에 selected 회귀 검사 시간이 176.755→389.843초로 늘어 게시·실측하지 않았다. v40은 handle별 캐시와 key별 staging residual로1,397개 회귀를 통과했다. 이후 origin/main의 owner+witness별 ordinary coverage 및 입력 인덱스를 통합한 v41은1,416개/probe9개와 독립 검토를 통과했다. 중복 캐시는 제거하고 key별 staging residual을 유지했으며, v41 actual 측정을 진행한다. 회귀 검사 시간은 실제 workload planning 시간과 구분한다.
+
+| v38 단계 / 메모리 | LogReg | GLM |
+|---|---:|---:|
+| PlacementAnalysis | 275.855초 | 77.699초 |
+| Physical Model | 7.301초 | 6.287초 |
+| Cost Surface | 6.318초 | 11.234초 |
+| Optimizer | 75.592초 | 24.665초 |
+| Coordinator peak | 9,312,743,424B | 4,785,160,192B |
+| Worker peak | 725,819,392B | 776,400,896B |
+
+v38의 생성 explicit Clause는 v35보다 LogReg198,207개/GLM40,325개 줄었지만 proof 소비는 각각6,024회/5,931회만 줄었다. PARTITIONED retained 소비는 오히려1,932회/38,036회 늘었다. 객체 생성 감소가 전체 downstream 작업 제거로 이어지지 않았음을 구분한다. 두 workload의 CostSurface 표현 지문은 v35와 다르다. 후속 GLM 보조 검증에서는 v35→v38의 256,920개 exact Clause, 3,526개 realization별 key/digest, Physical carrier와 선택 hard factor/objective bits가 같았다(비교 SHA `55e9811c946f1c279fb6ffd0fd774120cedd7ff13631350aeaf3e053e36274f0`). LogReg도 v35→v38의147,012개 exact Clause,2,777개 realization별 key/digest,116,571개 Physical Alternative/525개decision과 선택 hard factor/objective bits가 같았다(비교 SHA `6f00d0bab86560b5a83effc57908ce9edf67145993a884b3eab57995cf8099b4`). 모든 assignment의 비용 전수 동등성은 미증명이다. 보조 검증 시간은 성능 근거에서 제외한다. 비교 SHA `ab4a749b56b837e152ccc130a96a078ec4b8029767ae1cc0efe110ac501f7712`.
 
 v35는 v32 대비 LogReg가 8.785초 늘고 GLM이 5.422초 줄었다. v34보다는 둘 다 줄었지만 v31/v32까지 함께 보면 LogReg 개선은 확인되지 않는다. Numeric comparator, runtime audit, objective bits와 selected plan parity는 통과했다. LogReg proof 소비6,127,475회는 그대로이며 explicit Clause만2,543,426→2,541,843개로 줄었다. Native hybrid accepted4,414→11,515회, 누적 row19,629,467→19,442,307회였고 전체 할당량 개선은 확인하지 못했다. 단일 관측이며20초 미달이다.
 
@@ -33,7 +47,7 @@ v34 LogReg의 explicit Clause 2,543,426개, proof 소비 6,127,475개 등 기존
 
 v32는 v31 대비 LogReg가 2.656초 늘고 GLM은 2.535초 줄었다. 두 workload 전체의 일관된 개선은 확인하지 못했다. Numeric comparison, runtime audit, objective raw bits, assignment, 전체 selected candidate 문자열과 receipt/section 동등성은 v19/v31 기준으로 통과했다. **CostSurface 및 aggregate finalSelection fingerprint는 두 workload 모두 달라 전체 후보·비용 동등성은 추가 검증 중이다.** 기존 지문은 native/explicit 저장 표현도 포함한다. 작은 conditional fixture에서는 exact fact 전체가 같아도 이 지문이 달라짐을 확인했지만 이를 실제 workload의 차이 원인으로 단정하지 않는다.
 
-**후속 LogReg 전체 support 검증**: v31과 v35의 normalized exact stream을 별도 JVM에서 비교했다. 147,012개 committed Clause, 2,777개 realization별 digest/key, Physical authority carrier의 116,571개 Alternative와 525개 decision이 모두 같았다. 선택 assignment의 1,878개 hard factor 및 objective/canonical recost raw bits도 같다. 이는 전체 support와 Physical carrier 동등성 증거이며 가능한 모든 assignment의 비용 전수 동등성을 증명하지는 않는다. GLM의 같은 보조 검증은 진행 중이다. 보조 실행 시간은 성능 근거에서 제외한다. 비교 SHA `e8d50b17d5f171c862b19807ff8b09886cab71d862fef78484f07a9de59ccbe6`.
+**후속 LogReg 전체 support 검증**: v31과 v35의 normalized exact stream을 별도 JVM에서 비교했다. 147,012개 committed Clause, 2,777개 realization별 digest/key, Physical authority carrier의 116,571개 Alternative와 525개 decision이 모두 같았다. 선택 assignment의 1,878개 hard factor 및 objective/canonical recost raw bits도 같다. 이는 전체 support와 Physical carrier 동등성 증거이며 가능한 모든 assignment의 비용 전수 동등성을 증명하지는 않는다. GLM은 commit 시점 snapshot으로 같은 검증을 통과했다. 256,920개 Clause, 3,526개 realization, 162,313개 Alternative, 1,240개 decision, 선택3,581개 hard factor와objective/recost bits가 같다. GLM 비교 SHA `a893c4de6dc91f76e3f92cc6519e27aa719d6b2f0df0ace7c6c5117cf0f7e169`. 보조 실행 시간은 성능 근거에서 제외한다. 비교 SHA `e8d50b17d5f171c862b19807ff8b09886cab71d862fef78484f07a9de59ccbe6`.
 
 | v32 단계/메모리 | LogReg | GLM |
 |---|---:|---:|
@@ -49,7 +63,7 @@ v32는 여러 입력 축에 exact/inexact source가 섞인 관계를 `전체 pro
 
 v33 (`409b9fe4a9`)은 canonical run 정렬 최적화를 병합한 버전이며 selected FedPlanner 1,335개/probe 9개를 통과해 origin/main에 게시했다. 별도 실제 workload 측정은 생략했다. v34는 이미 보존된 exact 영역의 재열거를 피하고, 상세 진단이 켜져 있어도 기존 native union을 유지한다. 두 수정은 독립 검토를 통과했으며 최신 origin 병합 후 selected FedPlanner 1,349개/probe 9개를 통과했다. 실제 workload 측정은 위 v34 표와 같으며 생성량 감소가 확인되지 않았다. 실제 v32에서는 상세 중복 진단이 OFF였으므로 진단 경로 변경은 이 성능 병목을 설명하지 않는다. liveMetrics와 상세 중복 진단은 별개다. Physical Model과 복잡한 conditional union의 exact fallback은 남아 있다.
 
-v35는 검증된 derived-FOUT row를 기존 권한 검사로 처리하면서 다른 native 관계의 압축을 유지하고, 같은 base/header의 conditional union과 반복 DP 비용 검증 인덱스를 재사용한다. 독립 검토와 selected FedPlanner 1,361개를 통과했다. 단위 검사에서의 생성량 감소를 실제 ML 성능으로 확대하지 않으며 전체 후보 동등성 보조 검증을 이어간다. v36은 같은 owner의 재생성 binding을 conditional union에 포함하고 Local seed의 factor scope 배열을 재사용하며 origin/main anchor lookup을 병합했다. Selected FedPlanner1,372개/probe9개를 통과했다. v36 실제 성능은 미측정이다. v37은 동일 conditional domain의 다중 proof header를 압축 상태로 유지하고, DP의 내부 인증 relation에 대한 Cartesian 재검사를 생략하며 standalone retained residual caller를 연결한다. Selected FedPlanner1,382개/probe9개와 독립 검토를 통과했다. Actual 성능은 아직 미측정이다. 일반 binder에서 conditional multi-header가 생성량을 줄이는지는 아직 입증하지 못했다. v38은 변경 없는 native relation을 relocation 권한 비교에서 다시 전개하던 경로와 불일치 proof 종류의 전수 scan을 제거했다. 최신 main을 포함한 selected FedPlanner1,391개/probe9개 및 독립 검토를 통과했다. Actual 성능은 아직 미측정이다. 같은 relation의 정확한 source authority와 DIRECT-only 계약을 확인해 반복만 생략한다.
+v35는 검증된 derived-FOUT row를 기존 권한 검사로 처리하면서 다른 native 관계의 압축을 유지하고, 같은 base/header의 conditional union과 반복 DP 비용 검증 인덱스를 재사용한다. 독립 검토와 selected FedPlanner 1,361개를 통과했다. 단위 검사에서의 생성량 감소를 실제 ML 성능으로 확대하지 않으며 전체 후보 동등성 보조 검증을 이어간다. v36은 같은 owner의 재생성 binding을 conditional union에 포함하고 Local seed의 factor scope 배열을 재사용하며 origin/main anchor lookup을 병합했다. Selected FedPlanner1,372개/probe9개를 통과했다. v36 실제 성능은 미측정이다. v37은 동일 conditional domain의 다중 proof header를 압축 상태로 유지하고, DP의 내부 인증 relation에 대한 Cartesian 재검사를 생략하며 standalone retained residual caller를 연결한다. Selected FedPlanner1,382개/probe9개와 독립 검토를 통과했다. Actual 성능은 아직 미측정이다. 일반 binder에서 conditional multi-header가 생성량을 줄이는지는 아직 입증하지 못했다. v38은 변경 없는 native relation을 relocation 권한 비교에서 다시 전개하던 경로와 불일치 proof 종류의 전수 scan을 제거했다. 최신 main을 포함한 selected FedPlanner1,391개/probe9개 및 독립 검토를 통과했다. Actual 결과는 위 v38 표와 같으며 전체 성능 개선은 확인하지 못했다. 같은 relation의 정확한 source authority와 DIRECT-only 계약을 확인해 반복만 생략한다.
 
 - v32-v34 비교 SHA `4f448d390f4f1a6c78541da70c559d0b4bd0d0ef0cd1c1028e94d8d03b3ed9b1` (선택 결과와 CostSurface fingerprint가 두 workload 모두 같음; v31 대비 전체 후보 차이는 별도 검증 중)
 - v19-v32 비교 SHA `004bb8d3ef4df8f6b642521a6cc21f9b5b9aa4512225f03fb1797f8bff932d7a`

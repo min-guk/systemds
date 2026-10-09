@@ -1245,6 +1245,43 @@
 
 - **v38 통합 gate 완료**: incoming542 comparator/counters 및 v37 변경을 포함해 selected FedPlanner1,391개 PASS(176.755초),7,881 class/resource 실행 전후 변경0/source SHA 불일치0. 별도probe9개 PASS(1.483초). 근거 `evidence/native-native-authority-proof-full-gate-v38/validation.json`. Native relocation shortcut은 작성 lane 외 root와 별도 agent가 검토해 CLEAR, proof-kind는 root 독립 CLEAR. 전체 repository Maven 통과나20초 달성으로 확대하지 않는다. 검증된 source를 별도 엔진으로 봉인하며 actual Docker를 이어간다.
 
+- **v38 게시/봉인**: d41ddedf38을 origin/main으로 fast-forward push했다. Actual JAR5486bf804719d3bc9697834c35fc52276ee5daf8e95bc87d0ff2ec450be0870e / freeze b4bb66ece78a67a8d9fcc0ba5f8063c64db1834353eccfebebeaaf4e4f5f8c4d,4,647 class resources/301 dependency jars.
+- **GLM 보조 helper 실패**: v31 GLM 실행 후 helper의 captureCommitted가 assertProgramStructureUnchanged에서 동적 recompilation에 따른 program structure 변화를 검출했다. 이는 supplemental capture 시점의 문제이며 엔진 의미 실패나 완료 planning time의 근거로 채택하지 않는다. v35 보조 실행은 시작하지 않았고 정상 v38 LogReg/GLM 실측을 우선한다. 초기 planning 시점의 immutable authority snapshot을 포착하는 수정이 추가로 필요하다. LogReg의 기존 보조 비교 PASS는 별도다.
+
+
+### v39 / 일반 pin 조회가 native 형제 product를 전개하는 경로 (진행 중)
+
+- **원인**: 같은 owner에 ordinary와 native realization이 섞여 있으면 candidateSupportQueryKey와 acyclicRootSupportKey가 full candidateTopology를 먼저 만들었다. Ordinary pin도 native sibling의 모든 Clause를 읽은 뒤 native fast path에서 거절되어 full topology를 사용했다.
+- **수정**: 선언된 source는 정확한 handle로 memo key를 분리하고 native owner의 flat root memo 생성을 생략한다. Ordinary pin은 기존 mixed hybrid circuit의 동일 handle bucket만 선택한다. Hybrid 적용이 불가능하면 공통 topology walker를 query-local handle로 제한하며 full cache에는 넣지 않는다. Native와 동일 structural handle에 속하는 멤버는 기존 bucket 의미대로 읽고, 다른 VALUE_MAP/derived owner의 metadata 의존성도 유지한다. Absent template/native 거절 등 기존 경로는 유지한다.
+- **공통 코드/계측**: 최초95줄 별도 walker를 없애고 원래 full topology와 buildCandidateTopology를 공유했다. Null handle은 기존 per-clause VALUE_MAP 순회/순서 그대로다. Query-local 생성도 PROOF_TOPOLOGY 시간과 topologyExpansionBuilds/RowsBuilt에 기록한다. Cache entry0을 객체/row 생성0으로 보고하지 않는다.
+- **검증**: 정상 public ordinary query와 direct seam에서 이전 production은 native6멤버를 전개했고 수정 후 representative1만 읽는다. Ordered proof/source/dependency owner identity를 eager explicit reference와 비교한다. 작성 lane180개 PASS/기존ignore1, production final3 eb0f311627455911d6bffeb2a998fe66ad36c08ca834505e297bef4786a872c2/tests d84d088388be68f7b8a8f9f42f5510c81cd7a7376a1e1140155eb30a122e899e. Root static review CLEAR이며 별도 adversarial 검증과 통합 gate를 이어간다.
+- **잔여/위험**: 공유 가능한 flat-root memo 수가 줄고 hybrid 불가 시 handle bucket을 재생성하므로 cache 재사용 감소가 시간/메모리에 불리할 수 있다. 기존 fallback의 정확한 authority/metadata/cycle 계약을 유지해야 하며 실제 COFEE에서 절감량을 확인하기 전 성능 개선을 주장하지 않는다.
+
+- **v38 LogReg actual**: 고정 COFEE50K×128 W1 full initial368.658989409초, numeric/선택 계획/audit mismatch0 통과. v35의365.796985938초보다 느린 단일 관측이며20초 미달이다. GLM은 진행 중이다. Fixture의0-handle 결과를 전체 성능 향상으로 보고하지 않는다.
+- **GLM capture 시점 보완**: 기존 PlacementEmissionTransaction.observeCommitsForTesting으로 atomic commit/authorizeCommittedProgramStructure 직후 snapshot을 만든다. Probe의 executeScript에 lexical scope를 추가하고 실행 후 exact final plan hash의 snapshot을 선택한다. Missing/ambiguous plan은 실패하며 production source는 변경하지 않는다. v31/v35 supplemental JAR 각각 compile 및probe9개 PASS; 별도 독립 review CLEAR. Source SHA bc071eb199791e41975db7b903832d0eb4b86b78636b8d271341d248367aa05f. Actual GLM 보조 실행 전이므로 아직 GLM parity 통과를 주장하지 않는다. Rebuild/capture 비용을 포함한 모든 보조 시간은 성능 근거에서 제외한다.
+- **v39 독립 검사 수정**: eager reference helper가 기본 native relation만 explicit로 바꾸고 추가 cycle/missing-template native sibling을 남긴다는 문제를 root review에서 발견했다. 추가 native relation도 모두 List.copyOf로 풀어 reference가 기존 full-topology 경로를 지나도록 고치고 재검증한다. 이 정정 전164개 PASS는 남겨두되 해당 두 eager 반례의 독립성 증거로 사용하지 않는다.
+
+- **v39 독립 반례 재검증 완료**: reference의 모든 추가 native carrier를 explicit로 바꾸고 native relation0 및 full owner topology 존재까지 확인했다. Collision/revision/cycle/missing-template4개 추가 검사를 포함해164개 PASS/기존ignore1. Revised tests52942e97efaf09aae02f17c7c6136b45a50ca4a83d859c9cd7a90dca1cdd793d. Production final3는 root와 별도 reviewer 모두 CLEAR. 통합 source를 고정해 새 selected gate를 실행한다.
+
+- **v38 GLM actual**:123.666464692초, numeric/선택 계획/audit0 통과. v35 대비+7.026초이며 LogReg와 함께20초 미달/일관된 개선 없음이다. 새 commit-capture probe로 GLM 보조 검증을 별도 복사 repo에서 실행하며 v38 actual 엔진과 이전 evidence는 변경하지 않는다.
+
+- **v39 full gate 결과/재사용 비용**:1395개 PASS(389.843초),7,882 class/resource 변경0/source SHA 불일치0 및probe9개 PASS(1.649초). 기존v38176.755초보다 selected suite가 크게 느려졌다. 종료 요청과 완료가 경합했으나 최종JUnit완료1395/exit0 및 snapshot검증을 확인했다. 최초 abort 분류는 최종 결과와 함께 정정·보존했다. 이 시간은 실제 workload planning benchmark가 아니다. v38 실제LR의 ordinary resident pin6,307,096회/cold7,416회로 볼 때 query-local 재구성 반복이 위험하므로 v39를 게시/실측하지 않고 bounded handle-bucket cache로 보완한다.
+
+### v40 / 반복 ordinary pin cache 및 key별 staging residual (진행 중)
+
+- **Staging residual**: 다른 keyS의 staging 때문에 candidateK의 정확한 retained subtraction까지 막혔다. Immutable structural stagingKeys를 저장하고 retainedNativeResidual의 guard만 K에 한정한다. Native coverage/scalar reuse/union/hasOnlyNativeRetainedAuthority/containsExact의 전역 hasStaging과 hasConflictingEqualAuthority는 그대로다. 후보의 합법성을 바꾸지 않고 이미 권한이 보존된 구간의 재소비만 줄인다.
+- **검증**: diagnosticsOFF 실제 binder에서 기존4proof 소비→residual3, ordered key/member/source/proof 및 retained donor identity 일치, unrelatedS 제거동작 동등. Same-key staging과explicitK는 full4fallback이다. Targeted9/related71개 PASS, root/별도reviewer CLEAR. Productiond288567e/tests1e42880c. 실제 workload coverage·시간 개선은 미측정이다.
+
+- **GLM v31→v35 전체 support/carrier 후속 PASS**: commit-capture v3 두 실행에서256,920 Clause/3,526 realization별 key+digest/162,313 Alternatives/1,240decision,selected3,581hard factors와objective/recost bits가 같다. Missing/differing0. Comparisona893c4de6dc91f76e3f92cc6519e27aa719d6b2f0df0ace7c6c5117cf0f7e169. 모든 assignment 비용 전수 증거는 아니며 supplemental 시간은 성능 근거에서 제외한다.
+- **v38 단계/생성량 비교**: actual comparatorab4a749b56b837e152ccc130a96a078ec4b8029767ae1cc0efe110ac501f7712. LRanalysis275.855/model7.301/cost6.318/optimizer75.592초,GLM77.699/6.287/11.234/24.665초. Clause 생성은LR−198,207/GLM−40,325이나proof소비−6,024/−5,931뿐이며PARTITIONED retained는+1,932/+38,036이다. v38CostSurface 표현지문이 달라 전체carrier동등성 추가검증이 필요하다. Numeric/audit/objective/selected raw+sections 모두PASS,20초 evaluatorFAIL(각0/3)이다.
+
+- **Ordinary pin의 bounded cache**: ordinary mixed pin은 hybrid gate를 매번 만들지 않고 정확한 handle 제한 topology를 재사용한다. CandidateTopologyKey의0은 기존full,양수는restricted이며 owner/witness/handle resident index가 분리돼 full lookup에 부분 관계가 섞이지 않는다. 기존 LRU entry/row/metadata/overlay 한도를 공유하고 restricted cache는 revision 간 이월하지 않는다. Nonpositive overflow handle은 query-local이다. Native gate는 cache하지 않는다. 초기 RED9개중4는cache계약미충족,수정후targeted9/independent4/combined200개PASS(기존ignore1). Cold2→resident2,sharedmaxEntries1 eviction/recold,revision재생성,negativehandle bypass 검사와 root static CLEAR. Production7ad12777/testa07a2368; 추가 독립검토와 통합 gate를 수행한다.
+- **v38 GLM 후속 carrier PASS**: v35와v38의256,920 Clause/3,526 realization key+digest와Physical carrier,selected hard factors/objective bits가 같다. Comparison55e9811c946f1c279fb6ffd0fd774120cedd7ff13631350aeaf3e053e36274f0. GLM CostSurface 표현지문 변화가 bounded semantic carrier 차이는 아님을 확인했다. LogReg v38전체carrier와all-assignment cost는 아직 미확정이다.
+
+- **Resume 통합 상태**: v40 cache를 독립 reviewer가 CLEAR로 검토했다. 독립 eager-reference 검사는 full topology(`pinnedHandle==0`)와 의도된 restricted cache를 분리해 집계하도록 수정했으며 4개 PASS다. Root에 production/test incremental을 적용하고 main/tests source를 고정했다. Main/test compile 통과 후 selected 전체 gate와 별도 probe를 실행 중이다. 현 단계는 의미 검증이며 실제 성능 개선이나20초 달성을 주장하지 않는다.
+
+- **v40 통합 gate 완료**: selected FedPlanner1,397개 PASS(182.327초),7,882 class/resource 변경0/source SHA 불일치0. 별도 probe9개 PASS(1.560초). Uncached v39의389.843초 회귀를 보완했지만 actual 성능 근거는 아니다. 최신 origin/main be3fa50584에 같은 ordinary 영역을 owner+witness 단위로 함께 캐시하는 변경이 있어, per-handle 캐시를 중복 유지하지 않고 해당 구현으로 통합한다. v40 local commit과 증거는 보존하고 v40 단독 actual은 생략한다. PRC key별 staging residual은 그대로 유지한다.
+
 - **V50 병합 gate 완료**: 326032af01을 incoming d41ddedf38/2efa65d3a8과3053e770c6으로 병합했다. 문서 append는 양쪽 보존, PRC의 독립 함수 변경은 자동 병합했고 두 incoming slice 독립 CLEAR. Fresh actual193classes **1,510tests/failure0/error0/skip1**, Maven package BUILD SUCCESS(2026-10-09 13:41:09+02). Conditional multi-header는 full seed/header·source-owner·donor를 유지하고 certified DP 생략은 구조 검증 뒤 +0/+INF 내부 relation만 해당한다. Native authority/proof-kind shortcut은 DIRECT-only·정확한 relation authority와 DURABLE_ANCHOR 불일치에 한정된다. 전체 저장소/모든 ML-op/20초 완료 주장은 아니며 봉인된 병합 엔진으로 동일 Docker 네 진단을 실행한다.
 
 - **V50 동일 Docker 결과**: OFF/detailed 네 실행 모두watchdog60/fullInitial receipt 없음/container 제거. OFF LogReg2,374samples/direct57.41%/native materialization2.40%/peak5.264GB, GLM2,740/canonical8.94%/joint7.48%/peak3.504GB. Partial scalar867,347/405,289. External build overlap19/25와 외부 planner2개가 있어 깨끗한 완료시간 비교가 아니며20초미달이다. 두 partial snapshot의 relocation-factorfilter 요청은0이므로 이 경로의 실제 workload 이득을 주장하지 않는다. LogReg pinned1,927,744 중 ordinary1,017,370/resident1,015,598/cold1,772; GLM223,546 중 ordinary31,873/resident30,826/cold1,047. Outcome partition은 일치했다.
@@ -1267,3 +1304,21 @@
 - **수정 예정 파일/위험**: NativePlacementContinuity, SearchSpaceMetrics, NativeSkeletonMaterializationMemoTest. Support identity 혼동/handle revision 누수/slot accounting 오류가 핵심 위험이며 전용 경계 tests와 기존 authority/revision/overlay gate로 감지한다. Legality/privacy/runtime/oracle 변경 없음.
 - **V52 구현/중간 검증**: resolver-local identity memo와5개 work counter를 구현했다. Primary5tests RED4→GREEN5; capacity/revision/equal-distinct source/metrics/공개 query 통합을 보강한 최종 focused3classes **33PASS(1.257초)**. 초기 focused selector의 잘못된 StructuralAuthorityArenaTest 이름은 실제 PlacementStructuralArenaTest로 바로잡았고 실패 로그를 별도 보존했다. 독립 actual production review2건 CLEAR. 지원되지 않은 PUBLIC privacy route를 새로 열거나 후보를 줄이지 않는다.
 - **V52 incoming 검토**: origin/main46c2d282d6의 key-local retained staging gate와 rejected topology build 계측 이동을 독립 검토 CLEAR. Unrelated realization-key staging만 residual subtraction 방해에서 제외하고 same-key/whole-emission/union guards는 그대로다. 새 NativePinnedMixedOwnerParityTest와 추가 staging/metrics fixture를 포함한195selectedclass gate로 통합 검증한다. 아직20초 달성/실성능 개선 주장은 없다.
+
+- **v38 LogReg 후속 carrier PASS**: commit-capture v3에서 v35→v38의147,012 exact Clause/2,777 realization별 key·digest/116,571 Physical Alternatives/525decision과 selected hard factors/objective raw bits가 같다. Missing/differing0, 비교 SHA6f00d0bab86560b5a83effc57908ce9edf67145993a884b3eab57995cf8099b4. GLM55e9811c와 함께 두 workload 전체 support/carrier 비교를 통과했다. 모든 assignment 비용 전수 동등성이나 성능 개선은 뜻하지 않는다.
+
+### v41 / 최신 origin ordinary coverage와 inventory 통합 (진행 중)
+
+- **문제/판단**: v40의 handle별 캐시와 incoming576fd2c8bc의 owner+witness별 ordinary coverage는 같은 중복 전개를 해결한다. 두 캐시를 겹치면 중복 행·인덱스와 예산 관리가 늘어난다. 여러 ordinary handle을 한 번에 재사용하는 incoming coverage를 채택하고 v40 per-handle cache는 local93207d86a2 및 gate evidence로 보존한다.
+- **불변 계약**: native와 ordinary가 같은 structural reference를 공유하면 complete fallback한다. Partial cache는 ordinary pin만 소비하며 일반 소비자는 complete upgrade한다. LRU/row/metadata/overlay 예산을 공유하고 partial topology는 revision 간 이월하지 않는다. 기존 exact proof/source/metadata 순서를 유지한다. PRC key별 staging residual은 별도 변경으로 보존한다.
+- **incoming 독립 검토**:326032af01 inventory는 exact owner identity 및 기존 structural-key equality/중복 encounter 순서를 보존하고 logical Cartesian member를 읽지 않는다. Query-time AVAILABLE/layout/owner gates와 revision별 새 index도 유지한다. Factorized relocation filter는 derived action이 없고 전체 유지/제거를 축에서 증명할 때만 동작하며 mixed는 기존 exact fallback이다. 두 변경 CLEAR.
+- **잔여 위험/검증**: lazy inventory의 보조 map은 명시적 fact/emission/realization 수에 비례하지만 별도 byte budget은 없어 heap 상수 비용이 늘 수 있다. 같은 고정 Docker의 peak memory를 비교한다. 병합 후 source를 다시 고정해 회귀·probe·실제 실행으로 검증한다. 다른 세션의4CPU/JFR/watchdog 관측은 본8CPU/no-profiling 성능 근거에 포함하지 않는다.
+
+- **통합 focused 검증**: Hybrid21개, 관련 topology/authority suites200개 PASS(기존ignore1). v40 per-handle reuse 검사는 owner slice의 두 handle reuse 및 complete upgrade 검사로 대체하고, positive/negative resolver-local handle parity·revision 비이전·VALUE_MAP/derived metadata·실패 upgrade·예산 fallback을 보존했다. Root의4개 independent eager-reference 반례는 coverage marker만 수정했다. Superseded per-handle 구현과 테스트는93207d86a2에 남아 있다.
+- **계측 정확성 수정**: incoming partial slice가 cache budget에서 거절되면 이미 만든 row를 집계하기 전에 full fallback으로 반환했다. 생성 직후 recordTopologyExpansion을 호출해 discarded slice도 세며,1회 조회에서 실제2build/10row/0hit/2bypass를 검사한다. 이는 pruning·법적 후보·캐시 admission 규칙을 바꾸지 않는 카운터 정정이다.
+
+- **최종 독립 검토**: NPC7fda3581/Hybrid testbc9d2676/metrics delta42631608 및 root independent helper 모두 CLEAR. Partial/full coverage, fixed overlay 단일 예산, revision 재사용 제한, native alias·foreign authority·metadata invalidation 계약을 확인했다. Inventory 메모리 WATCH는 실제 peak 비교 대상으로 유지한다.
+
+- **phase 해석 정정**: PROOF_OVERLAY는 fixed overlay list 구성만이 아니라 computeCandidateSupportAlternatives→buildCandidateProofGraph 전체를 감싼다. v38의72.625초를 overlay list 재구축 비용으로 단정하지 않는다. Positive exact-key 반복은 기존 bounded memo가 처리하고, negative handle-only memo는 structural-equal source wrapper의 객체 권한을 섞을 위험이 있다. 정상 실행의 반복 identity 증거 없이 추가 cache를 만들지 않았다. 통합본 실제 graph/topology/시간 지표를 우선 확인한다.
+
+- **v41 병합 gate 완료**: selected FedPlanner1,416개 PASS(179.908초),7,886 class/resource 실행 전후 변경0/source SHA 불일치0. 별도 probe9개 PASS(1.387초), root와 독립 reviewer 최종 CLEAR. 검증된 병합본을 commit·별도 엔진 봉인 후 고정 COFEE actual로 확인한다. 전체 repository Maven 통과나20초 달성을 의미하지 않는다.

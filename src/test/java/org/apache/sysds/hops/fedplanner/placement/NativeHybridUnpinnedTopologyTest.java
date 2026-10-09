@@ -654,6 +654,43 @@ public class NativeHybridUnpinnedTopologyTest {
 	}
 
 	@Test
+	public void rejectedOrdinarySliceCountsItsRowsBeforeCompleteFallback() throws Exception {
+		synchronized(NativeHybridUnpinnedTopologyTest.class) {
+			String entriesKey = "sysds.fedplanner.continuityTopology.maxEntries";
+			String rowsKey = "sysds.fedplanner.continuityTopology.maxRows";
+			String oldEntries = System.getProperty(entriesKey);
+			String oldRows = System.getProperty(rowsKey);
+			try {
+				Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+				NativeContinuitySupportClauses lazy = scenario.install(false);
+				System.setProperty(entriesKey, "8");
+				System.setProperty(rowsKey, "1");
+				SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+				NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+					scenario.fixture(), "resolver", metrics, 128, 2048L);
+
+				Assert.assertFalse(candidateAlternatives(resolver, scenario.childKey(),
+					scenario.installedReference("a-choice"), scenario.pool()).isEmpty());
+				SearchSpaceMetrics.Snapshot snapshot = metrics.snapshot();
+				Assert.assertEquals("the rejected ordinary slice and its complete fallback are both builds",
+					2, snapshot.topologyExpansionBuilds());
+				Assert.assertEquals("two ordinary rows plus the complete six-member native family",
+					10, snapshot.topologyRowsBuilt());
+				Assert.assertEquals(0, snapshot.topologyExpansionHits());
+				Assert.assertEquals("both over-budget builds remain uncached",
+					2, snapshot.topologyCacheBypasses());
+				Assert.assertNull(residentTopology(resolver, scenario.childKey(), scenario.pool()));
+				Assert.assertEquals("fallback still materializes the complete native authority",
+					scenario.product().size(), lazy.materializedHandleCount());
+			}
+			finally {
+				restoreProperty(entriesKey, oldEntries);
+				restoreProperty(rowsKey, oldRows);
+			}
+		}
+	}
+
+	@Test
 	public void ordinaryOnlyTopologyIsRebuiltRatherThanMigratedAcrossRevision()
 		throws Exception {
 		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));

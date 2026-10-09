@@ -484,8 +484,27 @@ public class NativeMixedAxisSplitPublicationTest {
 
 		CandidateEmissionRealization stagingRealization = staging.allowedEmissionFacts().get(0)
 			.realizations().get(0);
+		SearchSpaceMetrics unrelatedStagingMetrics = new SearchSpaceMetrics();
+		CandidateRuleFact unrelatedStagingRebound = bindBinary(closure(unrelatedStagingMetrics),
+			left, right, fact(staging.key(), List.of(retainedRealization, stagingRealization)),
+			consumerHop);
+		Assert.assertEquals("staging under another realization key preserves exact ordered authority",
+			exactMemberSignatures(cold), exactMemberSignatures(unrelatedStagingRebound));
+		CandidateEmissionRealization unrelatedStagingDurable = unrelatedStagingRebound
+			.allowedEmissionFacts().get(0).realizations().stream()
+			.filter(value -> value.key().equals(complete.key())).findFirst().orElseThrow();
+		Assert.assertTrue("key-local residual keeps the retained donor object",
+			unrelatedStagingDurable.supportClauses().stream().anyMatch(clause -> clause == retainedClause));
+		Assert.assertTrue("unrelated staging is excluded exactly as in the full scalar reconstruction",
+			unrelatedStagingRebound.allowedEmissionFacts().get(0).realizations().stream()
+				.noneMatch(value -> value.key().equals(stagingRealization.key())));
+		Assert.assertEquals("unrelated staging must not force the retained tuple through scalar consumption",
+			3L, unrelatedStagingMetrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+
+		CandidateEmissionRealization sameKeyStaging = new CandidateEmissionRealization(
+			complete.key(), List.of(new CandidateRealizationSupportClause(List.of(), List.of())));
 		assertStandaloneResidualFallback(left, right, consumerHop,
-			fact(staging.key(), List.of(retainedRealization, stagingRealization)), cold, 4);
+			fact(staging.key(), List.of(retainedRealization, sameKeyStaging)), cold, 4);
 		assertStandaloneResidualFallback(left, right, consumerHop,
 			fact(staging.key(), List.of(new CandidateEmissionRealization(
 				complete.key(), List.of(retainedClause)))), cold, 4);

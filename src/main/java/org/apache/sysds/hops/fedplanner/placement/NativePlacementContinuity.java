@@ -4453,6 +4453,10 @@ final class NativePlacementContinuity {
 		CandidateTopology topology = new CandidateTopology(true, nodeDirectGround, canonicalRows,
 			Collections.unmodifiableMap(mutableRowsByHandle), metadataOwnerReads, ordinaryOnly);
 		boolean admitted = cacheTopology(topologyKey, topology);
+		// Count every topology that was actually constructed, including an ordinary
+		// slice rejected by the shared cache budget before complete fallback builds.
+		if(metrics != null)
+			metrics.recordTopologyExpansion(false, canonicalRows.size());
 		if(ordinaryOnly) {
 			if(metrics != null)
 				metrics.recordDirectWork(admitted
@@ -4462,8 +4466,6 @@ final class NativePlacementContinuity {
 			if(!admitted)
 				return candidateTopologyMeasured(key, witness, false);
 		}
-		if(metrics != null)
-			metrics.recordTopologyExpansion(false, canonicalRows.size());
 		return topology;
 	}
 
