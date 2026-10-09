@@ -3321,9 +3321,26 @@ final class NativePlacementContinuity {
 			retainedStates++;
 			if(retainedStates > acyclicComponentMaxStates)
 				return null;
-			for(SelectedCandidateProof alternative : graph.getOrDefault(state, List.of()))
-				for(CandidateProofDependency dependency : alternative.dependencies)
-					pending.addLast(dependency.state());
+			List<SelectedCandidateProof> alternatives = graph.getOrDefault(state, List.of());
+			if(alternatives instanceof DefaultAlternativeList defaults) {
+				// Graph construction already prepared this exact immutable schedule.
+				// Full-state, first-encounter deduplication removes only repeated queue
+				// entries; overlays and filtered ordinary lists keep the original walk.
+				DefaultTraversalSchedule schedule = defaults.traversalSchedule(null);
+				if(metrics != null) {
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_SCHEDULES);
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_RAW_EDGES,
+						schedule.rawDependencyCount);
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_UNIQUE_EDGES,
+						schedule.uniqueSuccessors.size());
+				}
+				for(CandidateProofState successor : schedule.uniqueSuccessors)
+					pending.addLast(successor);
+			}
+			else
+				for(SelectedCandidateProof alternative : alternatives)
+					for(CandidateProofDependency dependency : alternative.dependencies)
+						pending.addLast(dependency.state());
 		}
 		retainedStates = Math.max(retainedStates, occurrences.size());
 		return retainedStates > acyclicComponentMaxStates ? null
