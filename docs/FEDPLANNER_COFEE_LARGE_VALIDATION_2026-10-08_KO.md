@@ -15,7 +15,7 @@
 
 작업량 감소와 비용의 위치를 구분한다. LogReg Analysis는v12보다38.986초 감소했으나optimizer는7.928초 증가했다. GLM graph 계산은46,685→25,947로44.4% 줄었는데전체시간은거의같다. 압축·재사용적용만으로후속방문과전개비용이사라지지않는다.
 
-**해시 차이는 아직 분리 검증 중이다.** v11 GLM은126.740초, v10과같은`ebf0cc31…`이고v12/v14는`113d2d19…`다. 하지만 이 fingerprint에는 선택한 실행 계획 외에 objectiveCertificate의cost surface hash·assignment 인덱스·maxFactorCells·objective bits도 포함된다. v11/v12의6,824 lowering과278 FED dispatch 기록은 의미 필드multiset이동일하다. 따라서실행계획이바뀌었다고단정하지않으며,동일비용·정확한선택receipt보존도아직증명되지않았다. 다음 검증은planning timer 종료후기존committed result에서certificate와선택필드를분리한다.
+**GLM 선택·비용 동등성은 분리 검증을 통과했다.** 동일 probe로 v11·v14를 다시 실행해 canonical candidate receipt1,129개 전체와6개 선택 section 해시가 모두 같음을 확인했다. 선택 비용 raw bits는둘다`4655470428781502442`이고 assignment와maxFactorCells도같다. Aggregate plan hash 차이는 **costSurface 표현 해시만 다른 것**에서 발생했다. Numeric/raw-output/runtime audit도PASS다. 이 추가 검증은planning timer 종료후committed result에서추출했으며,추가receipt생성의메모리를이전probe의peak와직접비교하지않는다. 근거`evidence/cofee-50k128-v14-receipt-parity/receipt-parity-v11-v14.json`, SHA`6ac15002b0c5fce79f1b74d2a8803d5f9934f60f7e49135566fb73bf48d16537`. 전체cost surface의모든cell을실제GLM에서열거한검증은아니며선택비용과선택authority의동등성이다.
 
 v13 LogReg은402.155507465초로v12와차이가작았고, v13 GLM은후속v14검증을우선해실행하지않았다. 아래는v12 및이전기록이다.
 
@@ -369,3 +369,9 @@ Frozen v2 engine을 보존하고 별도 `engine-integration-v3`에서 다음 두
 새 candidate LogReg runtime attempt `01791495720953163961-b7761e40`를 시작했다. Campaign은 `evidence/cofee-50k128-merged-hotspot-validation/candidate-logreg-first-v2`이며 coordinator so007/worker so006,24GiB/16GiB heap/cpuset0–7/tmpfs4GiB와 고정 cost profile을 확인했다. 첫 준비 attempt는 wrapper의 dependency symlink 누락으로 probe compile 단계에서 실패했으며 container나 workload가 시작되지 않았다. 경로를 수정하고301개 pinned dependency를 검증한 뒤 새 root에서 실행했다. Frozen candidate JAR는 변경하지 않았다.
 
 사용자의 최신 지시에 따라 추가 JFR·thread dump·profiling 실험을 진행하지 않고 실제 LogReg 완료 및 수치 동등성을 검증한다. 성공 후 동일 COFEE GLM 검증을 이어간다. 기존 정상 실행 로그의 단계 시간/생성량만 수집한다.
+
+### v15 Closure 및 v16 durable topology 검증
+
+v15 GLM 전체 초기 planning은 **126.728496870초**였다. Analysis86.086초, optimizer24.170초이며 v14의136.946062790초 대비10.218초 감소한 단일 관측이다. 선택 candidate receipt 전체,6개 section hash,objectiveRawBits4655470428781502442가 v11/v14와 동일하고 numeric/audit PASS다. 비용 표면의 표현 hash는 달라졌지만 선택 결과는 같다. LogReg는 실행 중이며 20초 목표는 미달이다.
+
+main52ef 병합 후 DURABLE_MAP의 압축 support를 pinned/unpinned proof 축 gate로 읽도록 확장했다. 기존 exact anchor/clause grounding과 source identity를 유지한다. Fresh compile 및 **1,091 tests PASS(155.313초)**, source hash mismatch0이며 `evidence/main52ef-durable-gates-full-green-1091`에 보존했다. 2×3 회귀 fixture는 materialized handle6→1을 확인하며 논리적 후보는 동일하다. 이 버전(v16)의 실제 workload 시간은 아직 측정하지 않았다.

@@ -3610,8 +3610,7 @@ final class NativePlacementContinuity {
 						continue;
 					if(matchedRealization != null
 						|| !(realization.supportClauses() instanceof NativeContinuitySupportClauses relation)
-						|| realization.key().layoutKind()
-							!= PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE)
+						|| !nativeContinuityProductLayout(realization))
 						return null;
 					matchedFact = fact;
 					matchedRealization = realization;
@@ -3716,9 +3715,15 @@ final class NativePlacementContinuity {
 				options.get(0).inputPosition(), witness, gateAlternatives);
 			consumerDependencies.add(new CandidateProofDependency(gate));
 		}
-		boolean directGround = matchedRelation.clauseWitness() != null
-			&& witness.matches(nativeWitness(matchedRelation.clauseWitness()),
-				matchedRelation.clauseLayoutExact());
+		// Mirror candidateTopology's exact grounding precedence. A durable
+		// realization owns its anchor independently of optional clause metadata;
+		// native lineage can be grounded only by the relation witness.
+		boolean directGround = matchedRealization.key().layoutKind()
+				== PlacementIdentity.PlacementLayoutKind.DURABLE_MAP
+				&& witness.matches(nativeWitness(matchedRealization.anchor()), true)
+			|| matchedRelation.clauseWitness() != null
+				&& witness.matches(nativeWitness(matchedRelation.clauseWitness()),
+					matchedRelation.clauseLayoutExact());
 		return new NativeFactoredProofAlternatives(List.of(new SelectedCandidateProof(
 			pinned, List.copyOf(consumerDependencies), directGround, witness)));
 	}
@@ -3759,8 +3764,7 @@ final class NativePlacementContinuity {
 				for(CandidateEmissionRealization realization : emission.realizations()) {
 					if(realization.supportClauses().isEmpty())
 						continue;
-					if(realization.key().layoutKind()
-							!= PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE
+					if(!nativeContinuityProductLayout(realization)
 						|| !(realization.supportClauses()
 							instanceof NativeContinuitySupportClauses))
 						return null;
@@ -3786,6 +3790,13 @@ final class NativePlacementContinuity {
 		if(nodeDirectGround)
 			alternatives.add(0, new SelectedCandidateProof(null, List.of(), true, witness));
 		return new NativeFactoredProofAlternatives(List.copyOf(alternatives));
+	}
+
+	private static boolean nativeContinuityProductLayout(
+		CandidateEmissionRealization realization) {
+		PlacementIdentity.PlacementLayoutKind layout = realization.key().layoutKind();
+		return layout == PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE
+			|| layout == PlacementIdentity.PlacementLayoutKind.DURABLE_MAP;
 	}
 
 	private CandidateTopology candidateTopology(CompiledHopKey key, NativePoolWitness witness) {
