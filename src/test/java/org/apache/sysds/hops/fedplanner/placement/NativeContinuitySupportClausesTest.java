@@ -525,7 +525,10 @@ public class NativeContinuitySupportClausesTest {
 		Assert.assertNotNull(first);
 		Assert.assertNotNull(second);
 		Assert.assertFalse(first.sameExactAuthority(second));
-		Assert.assertTrue(first.oneAxisUnion(second).isEmpty());
+		// Each exclusion still belongs to its own base. Union can map equal choices
+		// by exact source owner and retain the first relation without borrowing a mask.
+		Assert.assertSame(first, first.oneAxisUnion(second).orElseThrow());
+		Assert.assertEquals(0, first.materializedHandleCount() + second.materializedHandleCount());
 	}
 
 	@Test

@@ -2,7 +2,7 @@
 
 ## 상태
 
-최신 완료 실측은 **v32 (`bd44009fbb`)**다. 같은 입력·seed·privacy·cost profile·JVM·CPU/메모리 조건의 COFEE 50K×128 W1 결과이며 각 버전별 1회 관측이다. **20초 목표는 미달이다.**
+최신 완료 실측은 **v35 (`e146043b3b`)**다. 같은 입력·seed·privacy·cost profile·JVM·CPU/메모리 조건의 COFEE 50K×128 W1 결과이며 각 버전별 1회 관측이다. **20초 목표는 미달이다.**
 
 | 엔진 | LogReg 전체 초기 planning | GLM 전체 초기 planning |
 |---|---:|---:|
@@ -10,6 +10,26 @@
 | v29 | 361.813초 | 123.207초 |
 | v31 | 354.356초 | 124.597초 |
 | v32 | 357.012초 | 122.062초 |
+| v34 | 391.357초 | 127.030초 |
+| v35 | 365.797초 | 116.640초 |
+
+v35는 v32 대비 LogReg가 8.785초 늘고 GLM이 5.422초 줄었다. v34보다는 둘 다 줄었지만 v31/v32까지 함께 보면 LogReg 개선은 확인되지 않는다. Numeric comparator, runtime audit, objective bits와 selected plan parity는 통과했다. LogReg proof 소비6,127,475회는 그대로이며 explicit Clause만2,543,426→2,541,843개로 줄었다. Native hybrid accepted4,414→11,515회, 누적 row19,629,467→19,442,307회였고 전체 할당량 개선은 확인하지 못했다. 단일 관측이며20초 미달이다.
+
+| v35 단계 | LogReg | GLM |
+|---|---:|---:|
+| PlacementAnalysis | 280.073초 | 76.077초 |
+| Physical Model | 5.850초 | 4.227초 |
+| Cost Surface | 6.365초 | 8.484초 |
+| Optimizer | 69.869초 | 23.953초 |
+
+v34는 v32 대비 LogReg가 34.345초, GLM이 4.968초 늘었다. Numeric comparison, runtime audit, objective raw bits와 선택 계획 비교는 통과했지만 성능 개선은 확인하지 못했다. 각 1회 관측이며 반복 paired run의 통계적 결론은 아니다. LogReg의 PlacementAnalysis는 298.130초, Physical Model 8.682초, Cost Surface 7.817초, Optimizer 72.944초다. GLM은 각각 81.006초, 5.445초, 9.835초, 26.896초다.
+
+| v34 메모리 | LogReg | GLM |
+|---|---:|---:|
+| Coordinator peak | 9,407,344,640B | 4,991,393,792B |
+| Worker peak | 758,149,120B | 763,510,784B |
+
+v34 LogReg의 explicit Clause 2,543,426개, proof 소비 6,127,475개 등 기존 생성량은 v32와 같았다. Native hybrid 요청 15,032회 중 10,376회가 derived-FOUT 존재에 따른 fallback이었다. 이는 정상 실행 카운터에서 관측한 경로 횟수이며, 제거 가능한 조합 수나 예상 절감 시간으로 해석하지 않는다. v35는 이 fallback을 줄였지만 최종 proof 소비는 같았다.
 
 v32는 v31 대비 LogReg가 2.656초 늘고 GLM은 2.535초 줄었다. 두 workload 전체의 일관된 개선은 확인하지 못했다. Numeric comparison, runtime audit, objective raw bits, assignment, 전체 selected candidate 문자열과 receipt/section 동등성은 v19/v31 기준으로 통과했다. **CostSurface 및 aggregate finalSelection fingerprint는 두 workload 모두 달라 전체 후보·비용 동등성은 추가 검증 중이다.** 기존 지문은 native/explicit 저장 표현도 포함한다. 작은 conditional fixture에서는 exact fact 전체가 같아도 이 지문이 달라짐을 확인했지만 이를 실제 workload의 차이 원인으로 단정하지 않는다.
 
@@ -25,10 +45,11 @@ v32는 v31 대비 LogReg가 2.656초 늘고 GLM은 2.535초 줄었다. 두 workl
 
 v32는 여러 입력 축에 exact/inexact source가 섞인 관계를 `전체 product − all-exact rectangle`으로 유지한다. LogReg의 mixed-multiple proof 소비는 1,530,296→0으로 줄었지만 PARTITIONED 소비가 2,532,571→3,431,359로 늘었다. 총 proof 소비는 6,774,679→6,127,475, explicit Clause 생성은 2,318,473→2,543,426이다. 압축은 적용됐으나 후속 fallback 전개가 남아 실제 전체 시간은 개선되지 않았다. 생성 객체 감소와 논리 후보 pruning을 혼동하지 않는다.
 
-v33 (`409b9fe4a9`)은 canonical run 정렬 최적화를 병합한 버전이며 selected FedPlanner 1,335개/probe 9개를 통과해 origin/main에 게시했다. 별도 실제 workload 측정은 생략했다. v34는 이미 보존된 exact 영역의 재열거를 피하고, 상세 진단이 켜져 있어도 기존 native union을 유지한다. 두 수정은 독립 검토를 통과했으며 최신 origin 병합 후 selected FedPlanner 1,349개/probe 9개를 통과했다. 실제 workload 측정은 다음 단계다. 실제 v32에서는 상세 중복 진단이 OFF였으므로 진단 경로 변경은 이 성능 병목을 설명하지 않는다. liveMetrics와 상세 중복 진단은 별개다. Physical Model과 복잡한 conditional union의 exact fallback은 남아 있다.
+v33 (`409b9fe4a9`)은 canonical run 정렬 최적화를 병합한 버전이며 selected FedPlanner 1,335개/probe 9개를 통과해 origin/main에 게시했다. 별도 실제 workload 측정은 생략했다. v34는 이미 보존된 exact 영역의 재열거를 피하고, 상세 진단이 켜져 있어도 기존 native union을 유지한다. 두 수정은 독립 검토를 통과했으며 최신 origin 병합 후 selected FedPlanner 1,349개/probe 9개를 통과했다. 실제 workload 측정은 위 v34 표와 같으며 생성량 감소가 확인되지 않았다. 실제 v32에서는 상세 중복 진단이 OFF였으므로 진단 경로 변경은 이 성능 병목을 설명하지 않는다. liveMetrics와 상세 중복 진단은 별개다. Physical Model과 복잡한 conditional union의 exact fallback은 남아 있다.
 
-v35는 검증된 derived-FOUT row를 기존 권한 검사로 처리하면서 다른 native 관계의 압축을 유지하고, 같은 base/header의 conditional union과 반복 DP 비용 검증 인덱스를 재사용한다. 독립 검토와 selected FedPlanner 1,361개를 통과했다. 단위 검사에서의 생성량 감소를 실제 ML 성능으로 확대하지 않으며 v34/v35 실측과 전체 후보 동등성 검증을 이어간다.
+v35는 검증된 derived-FOUT row를 기존 권한 검사로 처리하면서 다른 native 관계의 압축을 유지하고, 같은 base/header의 conditional union과 반복 DP 비용 검증 인덱스를 재사용한다. 독립 검토와 selected FedPlanner 1,361개를 통과했다. 단위 검사에서의 생성량 감소를 실제 ML 성능으로 확대하지 않으며 전체 후보 동등성 보조 검증을 이어간다. v36은 같은 owner의 재생성 binding을 conditional union에 포함하고 Local seed의 factor scope 배열을 재사용하며 origin/main anchor lookup을 병합했다. Selected FedPlanner1,372개/probe9개를 통과했다. v36 실제 성능은 미측정이다.
 
+- v32-v34 비교 SHA `4f448d390f4f1a6c78541da70c559d0b4bd0d0ef0cd1c1028e94d8d03b3ed9b1` (선택 결과와 CostSurface fingerprint가 두 workload 모두 같음; v31 대비 전체 후보 차이는 별도 검증 중)
 - v19-v32 비교 SHA `004bb8d3ef4df8f6b642521a6cc21f9b5b9aa4512225f03fb1797f8bff932d7a`
 - v31-v32 비교 SHA `17204be378baa67517dd9f6ff4281150e664433cf1bd9797a19adfca942385bf`
 - v32 evaluator FAIL SHA `5b77dbcae20e371342f3b15b9ef6f81b9ad59c165b38f6665106ccfcb8358137`

@@ -6188,7 +6188,7 @@ final class NativePlacementContinuity {
 		java.util.Optional<ConditionalUnion> conditionalUnion(NativeSupportProduct that,
 			int maximumLengthStates, long maximumLengthTransitions) {
 			if(that == null || excludedExactProduct == null || that.excludedExactProduct == null
-				|| !sameHeaderAuthority(that) || !sameIdentityAxes(that)
+				|| !sameHeaderAuthority(that) || !sameExactAxes(that)
 				|| maximumLengthStates < 0 || maximumLengthTransitions < 0)
 				return java.util.Optional.empty();
 			List<List<CandidateRealizationInputBinding>> intersection =
@@ -6197,8 +6197,10 @@ final class NativePlacementContinuity {
 			for(int axis = 0; axis < axes.size(); axis++) {
 				List<CandidateRealizationInputBinding> leftMask = excludedExactProduct.axes.get(axis);
 				List<CandidateRealizationInputBinding> common = new ArrayList<>();
+				// Rebind an equivalent RHS mask onto the published left axes. Donor
+				// lookup still returns the RHS-owned clause and its original bindings.
 				for(CandidateRealizationInputBinding binding : leftMask)
-					if(that.excludedExactProduct.containsIdentityBinding(axis, binding))
+					if(that.excludedExactProduct.containsExactBinding(axis, binding))
 						common.add(binding);
 				if(common.isEmpty()) {
 					NativeSupportProduct full = baseProduct();

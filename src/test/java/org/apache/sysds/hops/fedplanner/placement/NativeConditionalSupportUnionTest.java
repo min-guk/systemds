@@ -30,6 +30,106 @@ import org.junit.Test;
 
 public class NativeConditionalSupportUnionTest {
 	@Test
+	public void rebuiltBindingsKeepFirstDonorAndRightOnlyOwnedObjects() {
+		Fixture fixture = fixture("rebuilt", 3, 3);
+		List<List<CandidateRealizationInputBinding>> clonedAxes = cloneAxes(fixture.axes, false);
+		var clonedBase = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			fixture.seed, fixture.output, true, clonedAxes);
+		var left = conditional(fixture, List.of(
+			fixture.axes.get(0).subList(0, 2), fixture.axes.get(1).subList(0, 2)));
+		var right = NativeContinuitySupportClauses.exactComplement(fixture.owner, clonedBase,
+			List.of(clonedAxes.get(0).subList(1, 3), clonedAxes.get(1).subList(1, 3)),
+			fixture.output, true);
+		var union = left.oneAxisUnion(right).orElseThrow();
+		Assert.assertEquals(8, union.size());
+		Assert.assertEquals(0, left.materializedHandleCount());
+		Assert.assertEquals(0, right.materializedHandleCount());
+		Assert.assertEquals(0, union.materializedHandleCount());
+		List<CandidateRealizationInputBinding> overlap = List.of(
+			fixture.axes.get(0).get(0), fixture.axes.get(1).get(2));
+		List<CandidateRealizationInputBinding> rightOnly = List.of(
+			fixture.axes.get(0).get(0), fixture.axes.get(1).get(0));
+		var retainedLeft = left.get(left.product().ordinalOfExactAuthorityBindings(overlap));
+		var retainedRight = right.get(right.product().ordinalOfExactAuthorityBindings(rightOnly));
+		Assert.assertSame(retainedLeft, union.get(union.product().ordinalOfExactAuthorityBindings(overlap)));
+		Assert.assertSame(retainedRight, union.get(union.product().ordinalOfExactAuthorityBindings(rightOnly)));
+		Assert.assertSame(clonedAxes.get(0).get(0), retainedRight.inputBindings().get(0));
+		Assert.assertNotSame(rightOnly.get(0), retainedRight.inputBindings().get(0));
+		Assert.assertNotSame(rightOnly.get(0).source(), retainedRight.inputBindings().get(0).source());
+		Assert.assertEquals(explicitUnion(fixture, left, right), signatures(union));
+		Assert.assertEquals(new ArrayList<>(union).hashCode(), union.hashCode());
+		var restricted = union.restrictBindings(binding -> binding.inputPosition() != 0
+			|| binding == fixture.axes.get(0).get(0)).orElseThrow();
+		Assert.assertEquals(3, restricted.size());
+		Assert.assertEquals(0, restricted.materializedHandleCount());
+		Assert.assertSame(retainedLeft, restricted.get(restricted.product().ordinalOfExactAuthorityBindings(overlap)));
+		Assert.assertSame(retainedRight, restricted.get(restricted.product().ordinalOfExactAuthorityBindings(rightOnly)));
+		Assert.assertTrue(union.restrictBindings(binding -> binding.inputPosition() != 0
+			|| binding == clonedAxes.get(0).get(0)).isEmpty());
+	}
+
+	@Test
+	public void rebuiltBindingMasksMatchExplicitUnionAcrossFixedSeedDomains() {
+		Random random = new Random(0xaba51cL);
+		for(int trial = 0; trial < 40; trial++) {
+			Fixture fixture = fixture("rebuilt-random-" + trial, 2 + random.nextInt(3), 2 + random.nextInt(3));
+			List<List<CandidateRealizationInputBinding>> clonedAxes = cloneAxes(fixture.axes, false);
+			var clonedBase = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				fixture.seed, fixture.output, true, clonedAxes);
+			var rightMask = randomMask(fixture, random);
+			List<List<CandidateRealizationInputBinding>> mapped = new ArrayList<>();
+			for(int axis = 0; axis < rightMask.size(); axis++) {
+				int at = axis;
+				mapped.add(rightMask.get(axis).stream().map(binding ->
+					clonedAxes.get(at).get(fixture.axes.get(at).indexOf(binding))).toList());
+			}
+			var left = conditional(fixture, randomMask(fixture, random));
+			var right = NativeContinuitySupportClauses.exactComplement(fixture.owner, clonedBase,
+				mapped, fixture.output, true);
+			var union = left.oneAxisUnion(right).orElseThrow();
+			Assert.assertEquals(explicitUnion(fixture, left, right), signatures(union));
+			for(int index = 0; index < union.size(); index++) {
+				var member = union.get(index);
+				int leftIndex = left.product().ordinalOfExactAuthorityBindings(member.inputBindings());
+				var donor = leftIndex >= 0 ? left.get(leftIndex)
+					: right.get(right.product().ordinalOfExactAuthorityBindings(member.inputBindings()));
+				Assert.assertSame(donor, member);
+			}
+		}
+	}
+
+	@Test
+	public void structurallyEqualForeignOwnerStillFailsWithoutExpansion() {
+		Fixture fixture = fixture("foreign-rebuilt", 3, 3);
+		var clonedAxes = cloneAxes(fixture.axes, true);
+		var clonedBase = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			fixture.seed, fixture.output, true, clonedAxes);
+		var left = conditional(fixture, List.of(
+			fixture.axes.get(0).subList(0, 2), fixture.axes.get(1).subList(0, 2)));
+		var foreign = NativeContinuitySupportClauses.exactComplement(fixture.owner, clonedBase,
+			List.of(clonedAxes.get(0).subList(1, 3), clonedAxes.get(1).subList(1, 3)), fixture.output, true);
+		Assert.assertEquals(fixture.axes, clonedAxes);
+		Assert.assertTrue(left.oneAxisUnion(foreign).isEmpty());
+		Assert.assertEquals(0, left.materializedHandleCount());
+		Assert.assertEquals(0, foreign.materializedHandleCount());
+	}
+
+	private static List<List<CandidateRealizationInputBinding>> cloneAxes(
+		List<List<CandidateRealizationInputBinding>> axes, boolean foreignOwners) {
+		List<List<CandidateRealizationInputBinding>> cloned = new ArrayList<>();
+		for(var axis : axes) {
+			CompiledHopKey original = axis.get(0).source().rule().parentOccurrence();
+			CompiledHopKey owner = foreignOwners ? new CompiledHopKey(original.programFingerprint(),
+				original.functionNamespace(), original.callSitePath(), original.recompileContext(),
+				original.controlRegion(), original.emittedHopInstance(), original.canonicalSourceOrigin()) : original;
+			cloned.add(axis.stream().map(binding -> CandidateRealizationInputBinding.direct(
+				binding.inputPosition(), new CandidateRealizationReference(new CandidateRuleKey(owner,
+					binding.source().rule().orderedInputs()), binding.source().realization()))).toList());
+		}
+		return List.copyOf(cloned);
+	}
+
+	@Test
 	public void threeWayConditionalGroupFoldsInEncounterOrder() {
 		Fixture fixture = fixture("three-way", 4, 4);
 		var first = conditional(fixture, List.of(
@@ -197,7 +297,8 @@ public class NativeConditionalSupportUnionTest {
 		var foreign = NativeContinuitySupportClauses.exactComplement(fixture.owner,
 			foreignBase, List.of(List.of(equalDistinctAxes.get(0).get(0)),
 				List.of(equalDistinctAxes.get(1).get(0))), fixture.output, true);
-		Assert.assertTrue(left.oneAxisUnion(foreign).isEmpty());
+		Assert.assertTrue("rebuilt bindings retain the same exact owner authority",
+			left.oneAxisUnion(foreign).isPresent());
 		List<List<CandidateRealizationInputBinding>> foreignOwnerAxes = List.of(
 			axis(0, 3, key("fallback-foreign-left"), "fallback-l"),
 			fixture.axes.get(1));
