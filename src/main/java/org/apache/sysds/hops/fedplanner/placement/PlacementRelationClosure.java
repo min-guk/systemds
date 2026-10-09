@@ -5742,6 +5742,9 @@ final class PlacementRelationClosure {
 							List.of(), List.of())) : templateEmission.realizations();
 				GroundedNativePreparation grounded = recomputeNative
 					? prepareGroundedNativeSupport(emission, complexityMetrics) : null;
+				NativePlacementContinuity.GeneratedSupportBatchObserver generatedBatchObserver =
+					complexityMetrics != null && recomputeNative
+						? continuity.generatedSupportBatchObserver(fact, emission) : null;
 				List<CandidateEmissionRealization> realizations = new ArrayList<>();
 				if(grounded != null)
 					realizations.addAll(grounded.retained());
@@ -5879,7 +5882,8 @@ final class PlacementRelationClosure {
 							// of its prior publication. Existing root clauses must not restrict
 							// newly available input alternatives or make raw reset history matter.
 							supportResult = recomputeNative
-								? continuity.proveGeneratedCandidateSupport(fact, emission, output, seed)
+								? continuity.proveGeneratedCandidateSupport(
+									fact, emission, output, seed, generatedBatchObserver)
 								: continuity.provePrimitiveCandidateSupport(output, seed);
 						}
 						finally {

@@ -2286,8 +2286,11 @@ public class NativePlacementContinuityTest {
 				new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
 					fact.profile(), fact.allowedEmissionFacts(), fact.failureCode())).toList();
 			NativePlacementContinuity revised = first.nextRevision(equalNewFacts);
-			Assert.assertTrue("each indexed row may be checked only once",
-				countedBucket.gets() <= rows.size());
+			Assert.assertEquals("each indexed row must be checked exactly once",
+				rows.size(), countedBucket.gets());
+			Assert.assertSame("the wide topology must actually be shared", countedTopology,
+				((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+					"candidateTopologies").get(revised)).get(topologyKey));
 			NativePlacementContinuity.CandidateSupportResult actual =
 				revised.proveCandidateSupport(reference, pool);
 			NativePlacementContinuity.CandidateSupportResult fresh = new NativePlacementContinuity(
@@ -4335,6 +4338,365 @@ public class NativePlacementContinuityTest {
 
 		Assert.assertEquals("staging history must not change the generator-root relation", absent, staging);
 		Assert.assertEquals("an old exact support subset must not constrain generation", absent, partialProofs);
+	}
+
+	@Test
+	public void generatedBatchShadowCountsOnlyResidentCertifiedRepeatedWitnesses() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("root", OpOp1.LOG, seed, false);
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		CandidateRuleFact base = full.fact(root, inputs);
+		CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization outputA = CandidateEmissionRealization.nativeLineage(
+			emission.emissionState(), "shadow-a", List.of(), List.of());
+		CandidateEmissionRealization outputB = CandidateEmissionRealization.nativeLineage(
+			emission.emissionState(), "shadow-b", List.of(), List.of());
+		CandidateRealizationReference proposedA = CandidateRealizationReference.of(base.key(), outputA);
+		CandidateRealizationReference proposedB = CandidateRealizationReference.of(base.key(), outputB);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = full.resolver(metrics, 128, 2048);
+		NativePlacementContinuity.GeneratedSupportBatchObserver observer =
+			resolver.generatedSupportBatchObserver(base, emission);
+		long built = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity.CandidateSupportResult first = resolver
+			.proveGeneratedCandidateSupport(base, emission, proposedA, seed.anchor, observer);
+		long eligibleBeforePublicHit = shadowWork(metrics,
+			"GENERATED_BATCH_ELIGIBLE_GRAPH_MISSES");
+		DurableAnchorKey equivalentSeed = new DurableAnchorKey(
+			"equivalent-seed", FType.FULL, seed.anchor.partitions());
+		NativePlacementContinuity.CandidateSupportResult supportHit = resolver
+			.proveGeneratedCandidateSupport(base, emission, proposedA, equivalentSeed, observer);
+		assertIdentitySetEquals(first.dependencyOccurrences(), supportHit.dependencyOccurrences());
+		Assert.assertEquals("public/support hits are outside the graph-miss denominator",
+			eligibleBeforePublicHit, shadowWork(metrics,
+				"GENERATED_BATCH_ELIGIBLE_GRAPH_MISSES"));
+		NativePlacementContinuity.CandidateSupportResult second = resolver
+			.proveGeneratedCandidateSupport(base, emission, proposedB, seed.anchor, observer);
+		long graphMisses = metrics.snapshot().proofGraphsBuilt() - built;
+		Assert.assertTrue(graphMisses > 1);
+		Assert.assertEquals(graphMisses, shadowWork(metrics,
+			"GENERATED_BATCH_ELIGIBLE_GRAPH_MISSES"));
+		Assert.assertTrue(shadowWork(metrics,
+			"GENERATED_BATCH_CERTIFIED_REPEAT_POTENTIAL") > 0);
+		Assert.assertEquals(0, shadowWork(metrics,
+			"GENERATED_BATCH_ROOT_HISTORY_REJECTIONS"));
+		Assert.assertEquals(0, shadowWork(metrics,
+			"GENERATED_BATCH_ROOT_BINDING_REJECTIONS"));
+
+		NativePlacementContinuity cold = full.resolver(null, 0, 0);
+		NativePlacementContinuity.CandidateSupportResult coldFirst = cold
+			.proveGeneratedCandidateSupport(base, emission, proposedA, seed.anchor);
+		NativePlacementContinuity.CandidateSupportResult coldSecond = cold
+			.proveGeneratedCandidateSupport(base, emission, proposedB, seed.anchor);
+		Assert.assertEquals(coldFirst.proofs(), first.proofs());
+		Assert.assertEquals(coldSecond.proofs(), second.proofs());
+		assertIdentitySetEquals(coldFirst.dependencyOccurrences(), first.dependencyOccurrences());
+		assertIdentitySetEquals(coldSecond.dependencyOccurrences(), second.dependencyOccurrences());
+	}
+
+	@Test
+	public void generatedBatchShadowRequiresResidentEntryAndExactObserverScope() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("root", OpOp1.LOG, seed, false);
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		CandidateRuleFact base = full.fact(root, inputs);
+		CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+		CandidateRealizationReference proposedA = CandidateRealizationReference.of(base.key(),
+			CandidateEmissionRealization.nativeLineage(
+				emission.emissionState(), "zero-budget-a", List.of(), List.of()));
+		CandidateRealizationReference proposedB = CandidateRealizationReference.of(base.key(),
+			CandidateEmissionRealization.nativeLineage(
+				emission.emissionState(), "zero-budget-b", List.of(), List.of()));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = full.resolver(metrics, 0, 0);
+		NativePlacementContinuity.GeneratedSupportBatchObserver observer =
+			resolver.generatedSupportBatchObserver(base, emission);
+		resolver.proveGeneratedCandidateSupport(base, emission, proposedA, seed.anchor, observer);
+		resolver.proveGeneratedCandidateSupport(base, emission, proposedB, seed.anchor, observer);
+		Assert.assertTrue(shadowWork(metrics, "GENERATED_BATCH_ELIGIBLE_GRAPH_MISSES") > 1);
+		Assert.assertEquals("a nonresident support cannot certify a repeated batch recipe", 0,
+			shadowWork(metrics, "GENERATED_BATCH_CERTIFIED_REPEAT_POTENTIAL"));
+
+		CandidateEmissionRealization twinOutput = CandidateEmissionRealization.nativeLineage(
+			emission.emissionState(), "owner-twin", List.of(), List.of());
+		CompiledHopKey twinOwner = new CompiledHopKey(root.key.programFingerprint(),
+			root.key.functionNamespace(), root.key.callSitePath(), root.key.recompileContext(),
+			root.key.controlRegion(), root.key.emittedHopInstance(), root.key.canonicalSourceOrigin());
+		Assert.assertNotSame(root.key, twinOwner);
+		Assert.assertEquals(root.key, twinOwner);
+		CandidateRuleKey twinRule = new CandidateRuleKey(twinOwner, base.key().orderedInputs());
+		CandidateRealizationReference twin = new CandidateRealizationReference(
+			twinRule, twinOutput.key());
+		long eligible = shadowWork(metrics, "GENERATED_BATCH_ELIGIBLE_GRAPH_MISSES");
+		resolver.proveGeneratedCandidateSupport(base, emission, twin, seed.anchor, observer);
+		Assert.assertEquals("equal foreign owner identity is outside the observer scope", eligible,
+			shadowWork(metrics, "GENERATED_BATCH_ELIGIBLE_GRAPH_MISSES"));
+		CandidateRuleFact equalForeignFact = new CandidateRuleFact(base.key(), base.status(),
+			base.capability(), base.shapeProof(), base.profile(), base.allowedEmissionFacts(),
+			base.failureCode());
+		CandidateEmissionFact equalForeignEmission = new CandidateEmissionFact(
+			emission.emissionState(), emission.executionFType(), emission.derivedFoutAction(),
+			emission.realizations());
+		resolver.proveGeneratedCandidateSupport(
+			equalForeignFact, emission, proposedA, seed.anchor, observer);
+		resolver.proveGeneratedCandidateSupport(
+			base, equalForeignEmission, proposedA, seed.anchor, observer);
+		Assert.assertEquals("fact and emission identity delimit one observer batch", eligible,
+			shadowWork(metrics, "GENERATED_BATCH_ELIGIBLE_GRAPH_MISSES"));
+
+		CandidateRealizationReference crossResolverOutput = CandidateRealizationReference.of(
+			base.key(), CandidateEmissionRealization.nativeLineage(
+				emission.emissionState(), "cross-resolver", List.of(), List.of()));
+		SearchSpaceMetrics otherMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity otherResolver = full.resolver(otherMetrics, 128, 2048);
+		NativePlacementContinuity.CandidateSupportResult crossResolver = otherResolver
+			.proveGeneratedCandidateSupport(
+				base, emission, crossResolverOutput, seed.anchor, observer);
+		Assert.assertEquals("an observer cannot read or mutate another resolver's memo", eligible,
+			shadowWork(metrics, "GENERATED_BATCH_ELIGIBLE_GRAPH_MISSES"));
+		Assert.assertEquals(0,
+			shadowWork(otherMetrics, "GENERATED_BATCH_ELIGIBLE_GRAPH_MISSES"));
+		NativePlacementContinuity.CandidateSupportResult crossResolverFresh =
+			full.resolver(null, 0, 0).proveGeneratedCandidateSupport(
+				base, emission, crossResolverOutput, seed.anchor);
+		Assert.assertEquals(crossResolverFresh.proofs(), crossResolver.proofs());
+		assertIdentitySetEquals(crossResolverFresh.dependencyOccurrences(),
+			crossResolver.dependencyOccurrences());
+	}
+
+	@Test
+	public void generatedBatchShadowRejectsPublishedRootHistory() {
+		GeneratedHiddenRootFixture fixture = generatedHiddenRootFixture(false);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = fixture.full().resolver(metrics, 128, 2048);
+		NativePlacementContinuity.GeneratedSupportBatchObserver observer =
+			resolver.generatedSupportBatchObserver(
+				fixture.activeRoot(), fixture.activeEmission());
+		CandidateEmissionRealization secondOutput = CandidateEmissionRealization.nativeLineage(
+			fixture.activeEmission().emissionState(), "hidden-history-second", List.of(), List.of());
+		CandidateRealizationReference second =
+			CandidateRealizationReference.of(fixture.activeRoot().key(), secondOutput);
+		resolver.proveGeneratedCandidateSupport(fixture.activeRoot(), fixture.activeEmission(),
+			fixture.proposed(), fixture.seed().anchor, observer);
+		resolver.proveGeneratedCandidateSupport(fixture.activeRoot(), fixture.activeEmission(),
+			second, fixture.seed().anchor, observer);
+		Assert.assertTrue(shadowWork(metrics, "GENERATED_BATCH_ROOT_HISTORY_REJECTIONS") > 0);
+		Assert.assertEquals(0,
+			shadowWork(metrics, "GENERATED_BATCH_CERTIFIED_REPEAT_POTENTIAL"));
+	}
+
+	private static long shadowWork(SearchSpaceMetrics metrics, String name) {
+		return metrics.directWorkCount(Enum.valueOf(SearchSpaceMetrics.DirectWork.class, name));
+	}
+
+	private static List<?> supportMemoKeys(NativePlacementContinuity continuity) throws Exception {
+		Map<?,?> memo = (Map<?,?>)accessibleField(
+			NativePlacementContinuity.class, "completedSupportMemo").get(continuity);
+		return List.copyOf(memo.keySet());
+	}
+
+	@Test
+	public void generatedBatchShadowIsAbsentWithoutMetricsAndReportsIndexSaturation() {
+		Fixture disabled = new Fixture(FType.FULL);
+		Ref disabledSeed = disabled.source(
+			"seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref disabledRoot = disabled.unary("root", OpOp1.LOG, disabledSeed, false);
+		CandidateRuleFact disabledFact = disabled.fact(disabledRoot,
+			List.of(CandidateInputState.present(FType.FULL)));
+		CandidateEmissionFact disabledEmission = disabledFact.allowedEmissionFacts().get(0);
+		Assert.assertNull("shadow measurement must allocate nothing when metrics are disabled",
+			disabled.resolver(null, 128, 2048)
+				.generatedSupportBatchObserver(disabledFact, disabledEmission));
+
+		String property = "sysds.fedplanner.continuitySupportMemo.maxEntries";
+		String prior = System.getProperty(property);
+		try {
+			System.setProperty(property, "1");
+			Fixture full = new Fixture(FType.FULL);
+			DurableAnchorKey firstSeed = anchor(FType.FULL, "worker1:8001", 0, 50);
+			DurableAnchorKey secondSeed = anchor(FType.FULL, "worker2:8002", 0, 50);
+			Ref seed = full.source("seed", firstSeed);
+			Ref root = full.unary("root", OpOp1.LOG, seed, false);
+			CandidateRuleFact base = full.fact(root,
+				List.of(CandidateInputState.present(FType.FULL)));
+			CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity resolver = full.resolver(metrics, 128, 2048);
+			NativePlacementContinuity.GeneratedSupportBatchObserver observer =
+				resolver.generatedSupportBatchObserver(base, emission);
+			List<NativePlacementContinuity.CandidateSupportResult> actual = new ArrayList<>();
+			int ordinal = 0;
+			for(DurableAnchorKey querySeed : List.of(firstSeed, secondSeed, firstSeed)) {
+				CandidateRealizationReference proposed = CandidateRealizationReference.of(base.key(),
+					CandidateEmissionRealization.nativeLineage(emission.emissionState(),
+						"saturation-" + ordinal++, List.of(), List.of()));
+				actual.add(resolver.proveGeneratedCandidateSupport(
+					base, emission, proposed, querySeed, observer));
+				NativePlacementContinuity.CandidateSupportResult fresh =
+					full.resolver(null, 0, 0).proveGeneratedCandidateSupport(
+						base, emission, proposed, querySeed);
+				Assert.assertEquals(fresh.proofs(), actual.get(actual.size() - 1).proofs());
+				assertIdentitySetEquals(fresh.dependencyOccurrences(),
+					actual.get(actual.size() - 1).dependencyOccurrences());
+			}
+			Assert.assertTrue("a second resident witness exceeds the one-entry shadow index",
+				shadowWork(metrics, "GENERATED_BATCH_INDEX_SATURATION") > 0);
+			Assert.assertEquals("an evicted witness cannot be counted as reusable", 0,
+				shadowWork(metrics, "GENERATED_BATCH_CERTIFIED_REPEAT_POTENTIAL"));
+		}
+		finally {
+			if(prior == null)
+				System.clearProperty(property);
+			else
+				System.setProperty(property, prior);
+		}
+	}
+
+	@Test
+	public void generatedBatchResidentProbeDoesNotChangeSupportMemoLruOrder() throws Exception {
+		String property = "sysds.fedplanner.continuitySupportMemo.maxEntries";
+		String prior = System.getProperty(property);
+		try {
+			System.setProperty(property, "2");
+			Fixture full = new Fixture(FType.BROADCAST);
+			DurableAnchorKey witnessX = anchor(FType.BROADCAST, "worker1:8001", 0, 50);
+			DurableAnchorKey witnessY = anchor(FType.BROADCAST, "worker2:8002", 0, 50);
+			Ref seed = full.source("seed", witnessX);
+			Ref root = full.unary("root", OpOp1.LOG, seed, false);
+			CandidateRuleFact base = full.fact(root,
+				List.of(CandidateInputState.present(FType.BROADCAST)));
+			CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+			SearchSpaceMetrics observedMetrics = new SearchSpaceMetrics();
+			NativePlacementContinuity observed = full.resolver(observedMetrics, 128, 2048);
+			NativePlacementContinuity control = full.resolver(new SearchSpaceMetrics(), 128, 2048);
+			var observer = observed.generatedSupportBatchObserver(base, emission);
+			List<DurableAnchorKey> seeds = List.of(witnessX, witnessY, witnessX);
+			for(int query = 0; query < seeds.size(); query++) {
+				CandidateRealizationReference proposed = CandidateRealizationReference.of(base.key(),
+					CandidateEmissionRealization.nativeLineage(emission.emissionState(),
+						"lru-" + query, List.of(), List.of()));
+				NativePlacementContinuity.CandidateSupportResult actual = observed
+					.proveGeneratedCandidateSupport(
+						base, emission, proposed, seeds.get(query), observer);
+				NativePlacementContinuity.CandidateSupportResult expected = control
+					.proveGeneratedCandidateSupport(
+						base, emission, proposed, seeds.get(query), null);
+				Assert.assertEquals(expected.proofs(), actual.proofs());
+				assertIdentitySetEquals(
+					expected.dependencyOccurrences(), actual.dependencyOccurrences());
+				Assert.assertEquals("shadow membership probes must not refresh LRU order",
+					supportMemoKeys(control), supportMemoKeys(observed));
+			}
+			Assert.assertEquals(2, supportMemoKeys(observed).size());
+			Assert.assertTrue(shadowWork(observedMetrics,
+				"GENERATED_BATCH_CERTIFIED_REPEAT_POTENTIAL") > 0);
+		}
+		finally {
+			if(prior == null)
+				System.clearProperty(property);
+			else
+				System.setProperty(property, prior);
+		}
+	}
+
+	@Test
+	public void generatedBatchRootBindingCertificationInspectsLazyProductAxes()
+		throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+		Ref seed = full.source("seed", pool);
+		Ref root = full.unary("root", OpOp1.LOG, seed, false);
+		CandidateRuleFact base = full.fact(root,
+			List.of(CandidateInputState.present(FType.FULL)));
+		CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+		CandidateRealizationReference proposed = CandidateRealizationReference.of(base.key(),
+			CandidateEmissionRealization.nativeLineage(
+				emission.emissionState(), "root-binding", List.of(), List.of()));
+		CandidateRealizationInputBinding rootBinding =
+			CandidateRealizationInputBinding.direct(0, proposed);
+		NativePlacementContinuity resolver = full.resolver(new SearchSpaceMetrics(), 128, 2048);
+		Object observer = resolver.generatedSupportBatchObserver(base, emission);
+
+		Class<?> templateClass = Class.forName(
+			NativePlacementContinuity.class.getName() + "$CandidateSupportTemplate");
+		Constructor<?> templateConstructor = java.util.Arrays.stream(
+			templateClass.getDeclaredConstructors())
+			.filter(candidate -> candidate.getParameterCount() == 3).findFirst().orElseThrow();
+		templateConstructor.setAccessible(true);
+		Object rootTemplate = templateConstructor.newInstance(
+			pool, true, List.of(rootBinding));
+		Object rootFreeTemplate = templateConstructor.newInstance(pool, true, List.of());
+		Class<?> entryClass = Class.forName(
+			NativePlacementContinuity.class.getName() + "$SupportMemoEntry");
+		Constructor<?> entryConstructor = entryClass.getDeclaredConstructors()[0];
+		entryConstructor.setAccessible(true);
+		Object rootEntry = entryConstructor.newInstance(
+			proposed, List.of(rootTemplate), Set.of(root.key), 32L, true);
+		Object rootFreeEntry = entryConstructor.newInstance(
+			proposed, List.of(rootFreeTemplate), Set.of(root.key), 32L, true);
+		Method classifier = observer.getClass().getDeclaredMethod(
+			"hasReturnedRootBinding", entryClass);
+		classifier.setAccessible(true);
+		Assert.assertTrue((boolean)classifier.invoke(observer, rootEntry));
+		Assert.assertFalse((boolean)classifier.invoke(observer, rootFreeEntry));
+
+		Class<?> productClass = Class.forName(
+			NativePlacementContinuity.class.getName() + "$CandidateSupportTemplateProduct");
+		Method productFactory = productClass.getDeclaredMethod(
+			"tryCreate", DurableAnchorKey.class, boolean.class, List.class);
+		productFactory.setAccessible(true);
+		Object product = productFactory.invoke(null, pool, true,
+			List.of(List.of(rootBinding)));
+		Assert.assertNotNull(product);
+		Object productEntry = entryConstructor.newInstance(
+			proposed, product, Set.of(root.key), 32L, true);
+		Assert.assertTrue("product certification reads its factor axis, not Cartesian members",
+			(boolean)classifier.invoke(observer, productEntry));
+	}
+
+	@Test
+	public void generatedBatchShadowKeepsNegativeProposalOrderAndFootprintsExact() {
+		Fixture full = new Fixture(FType.FULL);
+		Ref seed = full.source("seed", anchor(FType.FULL, "worker1:8001", 0, 50));
+		Ref root = full.unary("missing-root", OpOp1.LOG, seed, false);
+		CandidateRuleFact base = full.fact(root,
+			List.of(CandidateInputState.present(FType.FULL)));
+		CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+		CandidateRealizationReference first = CandidateRealizationReference.of(base.key(),
+			CandidateEmissionRealization.nativeLineage(
+				emission.emissionState(), "negative-a", List.of(), List.of()));
+		CandidateRealizationReference second = CandidateRealizationReference.of(base.key(),
+			CandidateEmissionRealization.nativeLineage(
+				emission.emissionState(), "negative-b", List.of(), List.of()));
+		full.nodes.remove(root.key);
+		full.origins.remove(root.key);
+		full.edges.clear();
+		SearchSpaceMetrics forwardMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity forward = full.resolver(forwardMetrics, 128, 2048);
+		var forwardObserver = forward.generatedSupportBatchObserver(base, emission);
+		NativePlacementContinuity.CandidateSupportResult forwardA = forward
+			.proveGeneratedCandidateSupport(base, emission, first, seed.anchor, forwardObserver);
+		NativePlacementContinuity.CandidateSupportResult forwardB = forward
+			.proveGeneratedCandidateSupport(base, emission, second, seed.anchor, forwardObserver);
+		SearchSpaceMetrics reverseMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity reverse = full.resolver(reverseMetrics, 128, 2048);
+		var reverseObserver = reverse.generatedSupportBatchObserver(base, emission);
+		NativePlacementContinuity.CandidateSupportResult reverseB = reverse
+			.proveGeneratedCandidateSupport(base, emission, second, seed.anchor, reverseObserver);
+		NativePlacementContinuity.CandidateSupportResult reverseA = reverse
+			.proveGeneratedCandidateSupport(base, emission, first, seed.anchor, reverseObserver);
+		for(NativePlacementContinuity.CandidateSupportResult result :
+			List.of(forwardA, forwardB, reverseA, reverseB))
+			Assert.assertTrue(result.proofs().isEmpty());
+		assertIdentitySetEquals(forwardA.dependencyOccurrences(), reverseA.dependencyOccurrences());
+		assertIdentitySetEquals(forwardB.dependencyOccurrences(), reverseB.dependencyOccurrences());
+		Assert.assertTrue(shadowWork(forwardMetrics,
+			"GENERATED_BATCH_CERTIFIED_REPEAT_POTENTIAL") > 0);
+		Assert.assertEquals(shadowWork(forwardMetrics,
+			"GENERATED_BATCH_CERTIFIED_REPEAT_POTENTIAL"), shadowWork(reverseMetrics,
+				"GENERATED_BATCH_CERTIFIED_REPEAT_POTENTIAL"));
 	}
 
 	@Test
