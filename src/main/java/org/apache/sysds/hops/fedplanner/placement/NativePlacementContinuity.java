@@ -182,6 +182,13 @@ final class NativePlacementContinuity {
 		new IdentityHashMap<>();
 	private final Map<CompiledHopKey,Map<List<CandidateInputState>,SkeletonFactMemo>>
 		dependencySkeletonMemoByRule = new IdentityHashMap<>();
+	// Templates may be shared across revisions, but their bound handles may not.
+	// Exact support-list identity also preserves the current source objects. Keep
+	// only one binding per template, under both entry and dependency-slot bounds.
+	private static final int MATERIALIZED_SKELETON_MAX_ENTRIES = 4096;
+	private static final int MATERIALIZED_SKELETON_MAX_DEPENDENCIES = 16384;
+	private final Map<SkeletonTemplate,BoundSkeleton> materializedSkeletons = new IdentityHashMap<>();
+	private int materializedSkeletonDependencies;
 	private long dependencySkeletonBuilds;
 	private long dependencySkeletonReuses;
 	private long dependencySkeletonTemplatesCarried;
@@ -1264,6 +1271,9 @@ final class NativePlacementContinuity {
 
 	private record SkeletonTemplateDependency(CompiledHopKey key, int pinnedSupportIndex,
 		NativePoolWitness witness, int inputPosition) { }
+
+	private record BoundSkeleton(List<CandidateRealizationReference> support,
+		List<CandidateDependencySkeleton> dependencies) { }
 
 	private static final class EmissionProjectionMemo {
 		private static final EmissionProjectionMemo AMBIGUOUS = new EmissionProjectionMemo();
@@ -4837,6 +4847,14 @@ final class NativePlacementContinuity {
 
 	private List<CandidateDependencySkeleton> materializeSkeletonTemplate(
 		SkeletonTemplate template, List<CandidateRealizationReference> support) {
+		if(metrics != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.SKELETON_MATERIALIZATION_REQUESTS);
+		BoundSkeleton cached = materializedSkeletons.get(template);
+		if(cached != null && cached.support == support) {
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.SKELETON_MATERIALIZATION_REUSES);
+			return cached.dependencies;
+		}
 		List<CandidateDependencySkeleton> dependencies = new ArrayList<>(template.dependencies.size());
 		for(SkeletonTemplateDependency dependency : template.dependencies) {
 			CandidateRealizationReference pinned = null;
@@ -4849,8 +4867,22 @@ final class NativePlacementContinuity {
 			}
 			dependencies.add(new CandidateDependencySkeleton(dependency.key, pinned,
 				candidateHandle(pinned), dependency.witness, dependency.inputPosition));
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.SKELETON_MATERIALIZATION_DEPENDENCIES_BUILT);
 		}
-		return List.copyOf(dependencies);
+		List<CandidateDependencySkeleton> immutable = List.copyOf(dependencies);
+		int retainedWithoutPrior = materializedSkeletonDependencies
+			- (cached == null ? 0 : cached.dependencies.size());
+		if((cached != null || materializedSkeletons.size() < MATERIALIZED_SKELETON_MAX_ENTRIES)
+			&& immutable.size() <= MATERIALIZED_SKELETON_MAX_DEPENDENCIES - retainedWithoutPrior) {
+			materializedSkeletons.put(template, new BoundSkeleton(support, immutable));
+			materializedSkeletonDependencies = retainedWithoutPrior + immutable.size();
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.SKELETON_MATERIALIZATION_ADMISSIONS);
+		}
+		else if(metrics != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.SKELETON_MATERIALIZATION_BYPASSES);
+		return immutable;
 	}
 
 	private List<CandidateProofDependency> overlayDependencies(

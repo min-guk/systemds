@@ -26,6 +26,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRea
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -149,10 +151,15 @@ public class NativeMissingPinAdversarialTest {
 	public void missingPinRetainsDerivedMetadataAcrossRevision() throws Exception {
 		Object scenario = scenario();
 		Object fixture = invoke(scenario, "fixture");
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
 		Object hiddenSeed = invoke(fixture, "source", "missing-derived-seed", pool(scenario));
 		Object hidden = invoke(fixture, "unary", "missing-derived-owner",
 			OpOp1.LOG, hiddenSeed, false);
 		CompiledHopKey hiddenOwner = (CompiledHopKey)invoke(hidden, "key");
+		invoke(fixture, "withClauses", hidden, unary,
+			List.of(new CandidateRealizationSupportClause(List.of(new PlacementProofKey(
+				PlacementProofKind.NATIVE_CONTINUITY, hiddenOwner,
+				"missing-derived-hidden-authority")), List.of(), pool(scenario), true)));
 		invoke(scenario, "installDerived", false, hiddenOwner);
 		List<CandidateRuleFact> validFacts = List.copyOf(candidateFacts(fixture));
 		List<CandidateRuleFact> invalidFacts = validFacts.stream()

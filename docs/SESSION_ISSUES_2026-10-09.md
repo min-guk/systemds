@@ -1295,6 +1295,16 @@
 
 - **V51 최종 선택 gate**: actual193classes **1,520tests/failure0/error0/skip1**, Maven package BUILD SUCCESS(2026-10-09 14:02:41+02). Native partial coverage·nonzero handle·counter production 두 검토 및 frozen test diff 독립 CLEAR. 새 fixed-overlay/partial 조합 전용 검사는 없고 기존 dedicated overlay suites를 포함한 gate가 통과했다. 최신 main을 fetch해 incoming 여부 확인 후 봉인·게시하고 동일 Docker 조건을 재측정한다. 테스트 감소나 runtime/privacy/authority 완화는 없다.
 
+- **V51 고정 Docker 결과**: OFF/detailed × LogReg/GLM 모두 watchdog60초, fullInitial receipt 없음; 네 container 제거. OFF LogReg2,131samples/direct66.87%/peak5.528GB, GLM2,852/canonical9.54%/joint7.08%/peak3.223GB. Ordinary coverage build/admission은5,349/3,735, resident hit는1,171,394/75,340, native logical incidence skip는3,263,063/755,306이다. 실제 시간 절감/unique owner 수가 아니다. Partial scalar consumption1,108,433/398,787. 외부 build 중첩0/25 samples씩이지만 오래 실행 중인 planner2개는 전 구간 존재했다. 근거 R/evidence/v51-{planner-breakdown.txt,contention-summary.json}, candidate-v51-detailed-topology-outcomes.json. **20초 및 전체 ML-op 확대 미달**.
+
+### V52 동일 resolver의 skeleton materialization 재사용 (진행중)
+- **문제/원인**: Template cache hit 이후에도 immutable dependency list/records와 candidate handle lookup을 반복한다. V51 OFF first-frame materializeSkeletonTemplate는LogReg47/2,131, GLM36/2,852 samples이며 전체 잠재 절감량으로 해석하지 않는다.
+- **계획/원칙**: 동일 resolver + template identity + immutable support-list identity만 재사용. Resolver-local handle map은 arena 종료 후에도 기존 handle을 유지하며, revision으로 새 bound cache를 복사하지 않는다. Original index/exact-owner validation과 ordered source authority를 보존하고 성공 결과만 memo한다. Query-specific fixed overlay는 downstream 유지. 4,096 entries 및16,384 dependency slots를 각각 제한하고, 교체는 기존 slot 수를 빼고 검사한다. Entry/slot 상한이지 전체 retained heap bytes 상한이 아니다.
+- **테스트 우선 검증**: 잘못된 nested type import2개를 같은 package type으로 정정한 후, V51 class에서 새5tests 중4개가 예상한 reuse assertions로 실패했다. `R/evidence/v52-primary-red.log`. Capacity, exact rebuilt-source identity, actual revision, ON/OFF/reset coverage를 보강한 뒤 구현/독립 검토/선택 gate/동일 Docker를 수행한다.
+- **수정 예정 파일/위험**: NativePlacementContinuity, SearchSpaceMetrics, NativeSkeletonMaterializationMemoTest. Support identity 혼동/handle revision 누수/slot accounting 오류가 핵심 위험이며 전용 경계 tests와 기존 authority/revision/overlay gate로 감지한다. Legality/privacy/runtime/oracle 변경 없음.
+- **V52 구현/중간 검증**: resolver-local identity memo와5개 work counter를 구현했다. Primary5tests RED4→GREEN5; capacity/revision/equal-distinct source/metrics/공개 query 통합을 보강한 최종 focused3classes **33PASS(1.257초)**. 초기 focused selector의 잘못된 StructuralAuthorityArenaTest 이름은 실제 PlacementStructuralArenaTest로 바로잡았고 실패 로그를 별도 보존했다. 독립 actual production review2건 CLEAR. 지원되지 않은 PUBLIC privacy route를 새로 열거나 후보를 줄이지 않는다.
+- **V52 incoming 검토**: origin/main46c2d282d6의 key-local retained staging gate와 rejected topology build 계측 이동을 독립 검토 CLEAR. Unrelated realization-key staging만 residual subtraction 방해에서 제외하고 same-key/whole-emission/union guards는 그대로다. 새 NativePinnedMixedOwnerParityTest와 추가 staging/metrics fixture를 포함한195selectedclass gate로 통합 검증한다. 아직20초 달성/실성능 개선 주장은 없다.
+
 - **v38 LogReg 후속 carrier PASS**: commit-capture v3에서 v35→v38의147,012 exact Clause/2,777 realization별 key·digest/116,571 Physical Alternatives/525decision과 selected hard factors/objective raw bits가 같다. Missing/differing0, 비교 SHA6f00d0bab86560b5a83effc57908ce9edf67145993a884b3eab57995cf8099b4. GLM55e9811c와 함께 두 workload 전체 support/carrier 비교를 통과했다. 모든 assignment 비용 전수 동등성이나 성능 개선은 뜻하지 않는다.
 
 ### v41 / 최신 origin ordinary coverage와 inventory 통합 (진행 중)
@@ -1327,3 +1337,13 @@
 - **추가 incoming**: origin23f199291f/8b48da679f는 같은 immutable support-list identity와 SkeletonTemplate identity에서만 resolver-local dependency objects를 재사용한다. Revision마다 cache가 비고 entry4096/dependency16384 제한을 적용한다. 별도 독립 review CLEAR. Template 교체로 오래된 identity entry가 resolver 종료까지 남아 유효 용량이 줄 수 있는 성능 WATCH를 기록한다. v42 standalone actual은 생략하고 이 변경까지 병합한 v43을 실측한다.
 
 - **v42 gate 완료**: selected1,428개 PASS(183.202초),7,889 class/resource 변경0/source SHA 불일치0, probe9개 PASS(1.541초). 이 gate는 최초df089 missing metadata test를 포함하며 valid-authority 강화final2는 다음 병합 gate에서 검증한다. Production과 테스트를 local commit으로 보존하고 origin을 병합한다. 아직 actual20초 개선 증거는 없다.
+
+- **V52 통합 선택 gate 완료**: fresh195actualclasses **1,536tests/failure0/error0/skip1**, Maven package BUILD SUCCESS(2026-10-09 14:24:30+02). Incoming staging/counter/parity와 새 skeleton11cases를 포함한다. Production 두 독립 검토 및 incoming 독립 검토 CLEAR. 전체 repository 성공/20초 달성을 의미하지 않는다. Fresh fetch에서 추가 incoming 없음, 동일 고정 Docker 조건의 네 진단 실행으로 효과를 평가한다.
+
+### v43 / resolver-local skeleton 재사용 병합 (진행 중)
+
+- **통합**: v42 production·검사 local17fc46d573을 보존하고 origin23f199291f를 병합했다. NPC 독립 함수 변경은 자동 병합, 문서 양쪽을 보존했다. Missing-derived final2는 actual native certificate를 포함하고, root 새 테스트는 repository indentation에 맞췄다. Runtime·privacy·oracle 규칙을 바꾸지 않는다.
+- **검증 실행 오류/복구**: final2 incremental의 diff header가 임시 파일 경로를 가리켜 apply-check가 실패했는데 다음 exec로 gate가 시작됐다. 해당 owned wrapper/Java subtree만 중단했고 성공 근거로 사용하지 않는다. Old gate/artifact는 보존했다. 검증된 final2 전체 파일SHA49806244를 복사하고 unresolved0/diff-check를 확인한 뒤 hardlink 없는 fresh corrected build에서 재실행한다. 첫 시도의 메모리·시간은 성능 근거가 아니다.
+- **잔여 이슈**: source/proof identity·revision 격리·storage budget을 독립 검토했으며 전체 gate와 실제 COFEE는 진행 중이다. Native gate state 자체를 매번 만드는 다음 병목은 별도 lane에서 공개 API 반례부터 검증한다.
+
+- **v43 corrected 통합 gate 완료**: selected FedPlanner1,439개 PASS(212.549초),7,891 class/resource 실행 전후 변경0/source SHA 불일치0. 별도 probe9개 PASS(2.855초). 강화된 derived valid-authority 반례까지 포함한다. 중단한 첫 gate는 성공 증거에서 제외한다. 검증된 병합 엔진을 봉인하고 같은 COFEE 조건으로 실행하며, 전체 repository Maven 통과나20초 달성은 주장하지 않는다.
