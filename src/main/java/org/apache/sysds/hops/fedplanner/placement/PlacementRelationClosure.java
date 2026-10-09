@@ -6272,9 +6272,11 @@ final class PlacementRelationClosure {
 		}
 		if(coveredRequiredPositions.size() != requiredByPosition.size())
 			return rejectedNativeProduct(trace, NativePublicationOutcome.REQUIRED_INPUTS);
-		// Exactness is a conjunction over selected bindings. It is uniform only if
-		// every option is exact, or one complete axis is inexact for every tuple.
-		if(!everyBindingExact && !hasAlwaysInexactAxis)
+		// Input exactness distinguishes durable from native output only when the
+		// output anchor and proof ranges are exact. Otherwise all tuples publish
+		// the same native metadata, even when their source exactness differs.
+		if(outputAnchor != null && product.exactPartitionRanges()
+			&& !everyBindingExact && !hasAlwaysInexactAxis)
 			return rejectedNativeProduct(trace, NativePublicationOutcome.MIXED_EXACTNESS);
 		NativePlacementContinuity.NativeSupportProduct filtered = product.withAxes(filteredAxes);
 		if(filtered == null)
