@@ -223,3 +223,5 @@
 - **현재 한계**: 이 시점 v5 Docker 실행은 아직 없다. v4.5 DP-only 준비는 실제 실행 없이 통합 v5로 대체했다. 실제 COFEE 최신 근거는 여전히 v4 Analysis333.489초 후 DP overflow이며, full initial planning20초 목표는 미달이다.
 
 - **통합 v5 중간 gate**: 수정 후 focused168 PASS(39.343초), 전체998 PASS(160.254초), 컴파일된 소스와 현재 SHA mismatch0, independent metadata/metric review CLEAR. 증거 `evidence/merged-native-focused-green-168`, `evidence/merged-native-full-green-998`. 추가 upstream `ac0b5e6028`이 도착해 이 검증본을 먼저 커밋하고 최신 변경을 병합·재검증한 뒤 게시한다.
+
+- **最新 main 통합 gate**: `ac0b5e6028`을 `b115ee00e8`로 병합했다. Production/test는 충돌 없이 reviewer의3-way preview와 byte-for-byte 일치했고, 문서는 두 evidence block을 모두 보존했다. Fresh compile 및 **1,006 tests PASS(167.58초)**, source SHA mismatch0, independent review CLEAR. 증거 `evidence/merged-ac0-native-full-green-1006`. 이 봉인본으로 실제 COFEE v5를 실행하며 아직20초 달성 주장은 없다.
