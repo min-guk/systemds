@@ -158,6 +158,14 @@ public class NativeFixedBoundaryOverlayMemoTest {
 			SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_ROWS_VISITED));
 		Assert.assertEquals(1L, metrics.snapshot().proofDefaultScheduleBuilds());
 		Assert.assertEquals(1L, metrics.snapshot().proofDefaultScheduleHits());
+		Assert.assertEquals(2L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_LOOKUPS));
+		Assert.assertEquals(1L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_HITS));
+		Assert.assertEquals(1L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_ADMISSIONS));
+		Assert.assertEquals(2L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_ROWS_VISITED));
 		assertMetadataOwner(firstTraversal, metadataOwner);
 		assertMetadataOwner(secondTraversal, metadataOwner);
 		for(Object alternative : first) {

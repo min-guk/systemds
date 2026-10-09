@@ -127,9 +127,11 @@ public class NativeMultiSeedPublicationTest {
 			sourceHop, consumerHop, Map.of(poolA, 3, poolB, 2, poolC, 2));
 		CandidateEmissionRealization grownA = realizations(third).stream()
 			.filter(realization -> realization.key().equals(oldA.key())).findFirst().orElseThrow();
-		Assert.assertFalse("same-key unequal product growth must use the exact scalar fallback",
+		Assert.assertTrue("same-header one-axis growth must remain relation-native",
 			grownA.supportClauses() instanceof NativeContinuitySupportClauses);
 		Assert.assertEquals(3, grownA.supportClauses().size());
+		Assert.assertEquals("binder union must not create a scalar member handle", 0,
+			((NativeContinuitySupportClauses)grownA.supportClauses()).materializedHandleCount());
 		Assert.assertEquals(Set.of(variants.get(0).key(), variants.get(1).key(), variants.get(6).key()),
 			grownA.supportClauses().stream().map(clause -> clause.inputBindings().get(0)
 				.source().realization()).collect(java.util.stream.Collectors.toSet()));
@@ -138,7 +140,7 @@ public class NativeMultiSeedPublicationTest {
 				grownA.supportClauses().stream().anyMatch(clause -> clause == retainedClause));
 		CandidateRuleFact fourth = bind(closure, sourceFact(sourceOwner, variants), third,
 			sourceHop, consumerHop, Map.of(poolA, 3, poolB, 2, poolC, 2));
-		Assert.assertSame("an unchanged nonempty scalar fallback must replay exactly", grownA,
+		Assert.assertSame("an unchanged nonempty native union must replay exactly", grownA,
 			realizations(fourth).stream().filter(realization -> realization.key().equals(
 				grownA.key())).findFirst().orElseThrow());
 

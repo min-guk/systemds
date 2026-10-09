@@ -45,6 +45,78 @@ import org.junit.Test;
 
 public class CandidateRuleRelationTest {
 	@Test
+	public void nativeHeaderSupportStaysCompressedUntilItsSignatureIsRequested() {
+		var realization = NativeContinuitySupportFixtureBridge.realization("lazy-header", 3, 4);
+		var template = header(FType.ROW);
+		var nativeHeader = new CandidateRuleRelation.Header(template.capability(), template.shapeProof(),
+			template.profile(), List.of(new CandidateEmissionFact(realization.key().emissionState(),
+				FType.ROW, null, List.of(realization))));
+		var axes = List.of(List.of(present(FType.ROW), present(FType.COL)), List.of(absent()));
+		var region = new CandidateRuleRelation.ConditionalRegion(axes, nativeHeader);
+		var relation = new CandidateRuleRelation(parent(), List.of(region));
+		var mapped = relation.mapEmissions(java.util.function.UnaryOperator.identity());
+
+		assertEquals("constructing and mapping a relation must not expand its native support", 0,
+			realization.fullyMaterializedSupportClauseCount());
+		assertEquals(BigInteger.valueOf(2), relation.logicalSize());
+		assertTrue(relation.contains(List.of(present(FType.COL), absent())));
+		assertSame(realization, relation.requireExact(List.of(present(FType.ROW), absent()))
+			.allowedEmissionFacts().get(0).realizations().get(0));
+		assertEquals(0, realization.fullyMaterializedSupportClauseCount());
+
+		String expectedRegion = "axes=" + axes.stream().map(axis -> axis.stream()
+			.map(CandidateInputState::normalizedSignature).toList()).toList()
+			+ "|header=" + nativeHeader.normalizedSignature();
+		String expected = parent().normalizedSignature() + "|candidateRelation=" + List.of(expectedRegion);
+		assertEquals(expectedRegion, region.normalizedSignature());
+		assertEquals(expected, relation.normalizedSignature());
+		assertSame(relation.normalizedSignature(), relation.normalizedSignature());
+		assertEquals(expected, mapped.normalizedSignature());
+		assertEquals(12, realization.fullyMaterializedSupportClauseCount());
+	}
+
+	@Test
+	public void conditionedHeaderDefersSupportButValidatesAndSnapshotsTheAuthoritySignature() {
+		var realization = NativeContinuitySupportFixtureBridge.realization("lazy-conditioned", 2, 3);
+		var template = header(FType.ROW);
+		var nativeHeader = new CandidateRuleRelation.Header(template.capability(), template.shapeProof(),
+			template.profile(), List.of(new CandidateEmissionFact(realization.key().emissionState(),
+				FType.ROW, null, List.of(realization))));
+		AtomicInteger signatureCalls = new AtomicInteger();
+		CandidateRuleRelation.MemberEmissions authority = new CandidateRuleRelation.MemberEmissions() {
+			@Override public List<CandidateEmissionFact> resolve(List<CandidateInputState> inputs) {
+				return nativeHeader.emissions();
+			}
+			@Override public String normalizedSignature() {
+				return "closed-authority-" + signatureCalls.incrementAndGet();
+			}
+			@Override public long storedChoiceCount() { return 6; }
+		};
+		var axes = List.of(List.of(present(FType.ROW)));
+		var region = CandidateRuleRelation.ConditionalRegion.withConditionedEmissions(
+			axes, nativeHeader, authority);
+		var relation = new CandidateRuleRelation(parent(), List.of(region));
+		assertEquals(1, signatureCalls.get());
+		assertEquals(0, realization.fullyMaterializedSupportClauseCount());
+		assertSame(realization, relation.requireExact(List.of(present(FType.ROW)))
+			.allowedEmissionFacts().get(0).realizations().get(0));
+		assertEquals(0, realization.fullyMaterializedSupportClauseCount());
+		assertTrue(relation.normalizedSignature().contains("|closedEmissions=closed-authority-1"));
+		assertEquals(1, signatureCalls.get());
+		assertEquals(6, realization.fullyMaterializedSupportClauseCount());
+
+		CandidateRuleRelation.MemberEmissions invalid = new CandidateRuleRelation.MemberEmissions() {
+			@Override public List<CandidateEmissionFact> resolve(List<CandidateInputState> inputs) {
+				return nativeHeader.emissions();
+			}
+			@Override public String normalizedSignature() { return null; }
+			@Override public long storedChoiceCount() { return 0; }
+		};
+		assertThrows(NullPointerException.class, () ->
+			CandidateRuleRelation.ConditionalRegion.withConditionedEmissions(axes, nativeHeader, invalid));
+	}
+
+	@Test
 	public void conditionedEmissionsStayLazyImmutableAndMemoizedByExactMember() {
 		AtomicInteger resolutions = new AtomicInteger();
 		List<CandidateEmissionFact> mutableAuthority = new ArrayList<>();

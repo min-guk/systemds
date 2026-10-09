@@ -80,7 +80,8 @@ public final class CandidateRuleRelation {
 		private final Header header;
 		private final BigInteger logicalSize;
 		private final MemberEmissions memberEmissions;
-		private final String normalizedSignature;
+		private final String closedEmissionSignature;
+		private volatile String normalizedSignature;
 		private final Map<List<CandidateInputState>,List<CandidateEmissionFact>> resolvedEmissions =
 			new LinkedHashMap<>();
 
@@ -105,11 +106,10 @@ public final class CandidateRuleRelation {
 			this.header = Objects.requireNonNull(header, "candidate relation header");
 			this.memberEmissions = memberEmissions;
 			logicalSize = size;
-			normalizedSignature = "axes=" + this.axes.stream().map(axis -> axis.stream()
-				.map(CandidateInputState::normalizedSignature).toList()).toList()
-				+ "|header=" + header.normalizedSignature()
-				+ (memberEmissions == null ? "" : "|closedEmissions="
-					+ Objects.requireNonNull(memberEmissions.normalizedSignature(), "closed emission signature"));
+			// Validate and snapshot the closed authority as before, but do not walk
+			// every support member in the header just to construct this relation.
+			closedEmissionSignature = memberEmissions == null ? null
+				: Objects.requireNonNull(memberEmissions.normalizedSignature(), "closed emission signature");
 		}
 
 		public static ConditionalRegion withConditionedEmissions(List<List<CandidateInputState>> axes,
@@ -155,14 +155,22 @@ public final class CandidateRuleRelation {
 			return CandidateRuleRelation.canonicalInputs(parent, axes);
 		}
 		public String normalizedSignature() {
-			return normalizedSignature;
+			String result = normalizedSignature;
+			if(result == null) {
+				result = "axes=" + axes.stream().map(axis -> axis.stream()
+					.map(CandidateInputState::normalizedSignature).toList()).toList()
+					+ "|header=" + header.normalizedSignature()
+					+ (closedEmissionSignature == null ? "" : "|closedEmissions=" + closedEmissionSignature);
+				normalizedSignature = result;
+			}
+			return result;
 		}
 	}
 
 	private final CompiledHopKey parent;
 	private final List<ConditionalRegion> regions;
 	private final BigInteger logicalSize;
-	private final String normalizedSignature;
+	private volatile String normalizedSignature;
 	private final Map<List<CandidateInputState>,CandidateRuleFact> exactMembers = new LinkedHashMap<>();
 
 	public CandidateRuleRelation(CompiledHopKey parent, List<ConditionalRegion> regions) {
@@ -182,14 +190,20 @@ public final class CandidateRuleRelation {
 					throw new IllegalArgumentException("Candidate relation regions overlap");
 		}
 		logicalSize = size;
-		normalizedSignature = parent.normalizedSignature() + "|candidateRelation="
-			+ this.regions.stream().map(ConditionalRegion::normalizedSignature).toList();
 	}
 
 	public CompiledHopKey parent() { return parent; }
 	public List<ConditionalRegion> regions() { return regions; }
 	public BigInteger logicalSize() { return logicalSize; }
-	public String normalizedSignature() { return normalizedSignature; }
+	public String normalizedSignature() {
+		String result = normalizedSignature;
+		if(result == null) {
+			result = parent.normalizedSignature() + "|candidateRelation="
+				+ regions.stream().map(ConditionalRegion::normalizedSignature).toList();
+			normalizedSignature = result;
+		}
+		return result;
+	}
 	public synchronized int materializedMemberCount() { return exactMembers.size(); }
 
 	public boolean contains(List<CandidateInputState> inputs) {

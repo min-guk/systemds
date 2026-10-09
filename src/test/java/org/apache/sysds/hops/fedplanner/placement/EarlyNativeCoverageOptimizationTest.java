@@ -24,6 +24,7 @@ import org.apache.sysds.hops.fedplanner.placement.NativePlacementContinuity.Nati
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRealizationSupportClause;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
@@ -430,6 +431,46 @@ public class EarlyNativeCoverageOptimizationTest {
 			List.of(coldFirst), origins, shapes, new NativePlacementContinuity(
 				nodesByKey, origins, coldInventory, edges, Map.of()), dirty);
 		assertBindingResultParity(allCoveredResult, coldAllCoveredResult);
+
+		if(sourceOptions > 1) {
+			NativeContinuitySupportClauses retainedRelation =
+				(NativeContinuitySupportClauses)durableProduct.supportClauses();
+			CandidateRealizationSupportClause retainedMember =
+				retainedRelation.get(retainedRelation.size() - 1);
+			CandidateRuleFact expandedSource = withSourceOptions(
+				source, "live-source", sourceOptions + 1);
+			List<CandidateRuleFact> expandedInventory = List.of(expandedSource, second);
+			Object expandedIndex = indexBuilder.invoke(null, expandedInventory, nodes, edges,
+				expandedInventory, origins, shapes);
+			clearPublicationMemo(closure);
+			Object expandedResult = bind.invoke(closure, expandedIndex, List.of(second),
+				origins, shapes, new NativePlacementContinuity(nodesByKey, origins,
+					expandedInventory, edges, Map.of()), dirty);
+			CandidateEmissionFact expandedEmission = boundFacts(expandedResult).get(0)
+				.allowedEmissionFacts().get(0);
+			Assert.assertEquals("same-output axis growth remains one realization", 1,
+				expandedEmission.realizations().size());
+			NativeContinuitySupportClauses expandedRelation =
+				(NativeContinuitySupportClauses)expandedEmission.realizations().get(0).supportClauses();
+			Assert.assertEquals(sourceOptions + 1, expandedRelation.size());
+			Assert.assertEquals("binder must publish the union without creating scalar handles",
+				0, expandedRelation.materializedHandleCount());
+			int retainedOrdinal = expandedRelation.product().ordinalOfExactAuthorityBindings(
+				retainedMember.inputBindings());
+			Assert.assertTrue(retainedOrdinal >= 0);
+			Assert.assertSame("selected retained member keeps first clause authority",
+				retainedMember, expandedRelation.get(retainedOrdinal));
+			CandidateRuleFact explicitSecond = withoutTypedNativeMarkers(second);
+			List<CandidateRuleFact> explicitInventory = List.of(expandedSource, explicitSecond);
+			Object explicitIndex = indexBuilder.invoke(null, explicitInventory, nodes, edges,
+				explicitInventory, origins, shapes);
+			Object explicitResult = bind.invoke(new PlacementRelationClosure(null, null,
+				new SearchSpaceMetrics(), false,
+				NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false), explicitIndex,
+				List.of(explicitSecond), origins, shapes, new NativePlacementContinuity(
+					nodesByKey, origins, explicitInventory, edges, Map.of()), dirty);
+			assertBindingResultParity(expandedResult, explicitResult);
+		}
 
 		DurableAnchorKey addedPool = new DurableAnchorKey("zz-live-pool", FType.ROW,
 			List.of(new AnchorPartition("worker-added", List.of(0L, 0L), List.of(4L, 2L))));

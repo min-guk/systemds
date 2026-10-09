@@ -2,7 +2,7 @@
 
 ## 상태
 
-게시 이력 `12f1f712d3` 이후, 동일 COFEE 50K×128 W1 조건의 v18 실제 실행까지 완료했다. **20초 목표는 달성하지 못했다.** 아래 값은 학습 실행 시간이 아니라 `planningFullInitialNanos`로 측정한 전체 초기 플래닝 시간이다.
+동일 COFEE 50K×128 W1 조건의 v19 실제 실행까지 완료했다. 최신 게시본은 `fe44101e97`이며, 실측 v19는 그 직전 `b31cc2bf67` 봉인본이다. **20초 목표는 달성하지 못했다.** 아래 값은 학습 실행 시간이 아니라 `planningFullInitialNanos`로 측정한 전체 초기 플래닝 시간이다.
 
 | 엔진 | LogReg | GLM | 검증 상태 |
 |---|---:|---:|---|
@@ -11,6 +11,30 @@
 | v16 | 381.268초 | 130.795초 | 두 workload numeric/audit, v15와 전체 선택 receipt·certificate 동일 |
 | v17 | 386.944초 | 132.663초 | Numeric/audit 및 v16 선택 receipt·비용 raw bits 동일; 전체 시간 증가 |
 | v18 | 385.223초 | 128.050초 | Numeric/audit 및 v17 선택 receipt·비용 raw bits·전체 fingerprint 동일 |
+| v19 | 383.841초 | 127.505초 | Numeric/audit 및 v18 선택 receipt·비용 raw bits 동일; LogReg costSurface 표현 hash 변경 |
+
+v19의 단계별 실제 관측은 다음과 같다. 각 workload 1회이며 반복 검증된 성능 개선으로 해석하지 않는다.
+
+| v19 관측 | LogReg | GLM |
+|---|---:|---:|
+| 전체 초기 planning | 383.841413562초 | 127.505152320초 |
+| Placement Analysis | 293.829765565초 | 84.614059416초 |
+| Physical Model | 3.909993924초 | 5.076346751초 |
+| Cost Surface | 7.328567268초 | 7.867473820초 |
+| Optimizer | 75.801520972초 | 25.546037513초 |
+| 실제 학습 실행 | 4.666921838초 | 6.886452897초 |
+| Coordinator peak | 9,337,430,016B | 5,311,815,680B |
+| Worker peak | 728,973,312B | 772,120,576B |
+| 소비한 proof member | 16,292,799 | 2,209,575 |
+| Explicit Clause 생성 | 2,485,894 | 1,128,292 |
+
+LogReg의 소비한 proof는 v18보다 555,460개 줄었지만, 전체 초기 planning은 1.381초 줄었을 뿐이다. Topology·closure·relocation 시간 감소가 overlay 시간 35.374→42.587초 및 optimizer 증가와 겹쳤다. Overlay cache의 hit 수를 이 실행에서는 직접 공개하지 않았으므로 cache 효과를 단정하지 않는다. 분할 publication의 논리적 member 9,041,022개 중 8,488,001개는 여전히 scalar fallback으로 소비됐다. GLM의 proof 감소는 1,248개이며 전체 시간 감소는 0.545초다. 논리적 후보 수, 방문한 member 수, 생성한 Clause 수를 구분한다.
+
+두 workload 모두 numeric comparison PASS, runtime audit mismatch 0, exact assignment 및 전체 선택 receipt가 v18과 같다. Objective raw bits는 LogReg `4653340210026796583`, GLM `4655470428781502442`다. LogReg는 costSurface 및 이를 포함한 aggregate fingerprint가 바뀌었으며 모든 fingerprint가 같다고 보고하지 않는다. GLM은 이 두 hash도 같다. 실제 workload 전체 cost cell을 열거한 검증은 아니다.
+
+근거: `evidence/cofee-50k128-v19-validation/v18-v19-comparison.json`, SHA256 `13d5290f488267500e4d6bc7c1efd27cd8eafb01197eb7f6b9088f690043aa81`; frozen runtime binding SHA256 `fad547ba4d3dc528ba1b08101a11720b8d223663308d4e01ca4d2e910e9d48ce`. v19는 single-mixed-axis publication, constant finite numeric certificate, fixed-boundary overlay memo를 포함하며 이후 `e24fb093bd`의 acyclic footprint reuse는 포함하지 않는다. 전체 1,166개 회귀 PASS 및 실행 중 class/resource 변경 0을 확인한 봉인본이다.
+
+다음 수정은 같은 authority/header를 가진 한 축 차이의 native product union을 전개 없이 유지하고, TRead/TWrite replay 설명 문자열의 eager support 전개를 미루는 범위다. 서로 다른 authority, 여러 축의 상관관계, sparse hole은 기존 exact fallback을 유지한다. 분할 fallback의 원인별 소비량과 overlay 실제 hit/row 수를 정상 계측으로 추가하여 적용 범위를 확인한다. 이 후속 변경의 실제 성능은 아직 검증 전이다.
 
 v18은 LogReg 1.721초, GLM 4.612초 줄었지만 단일 관측이며, proof 소비량은 각각 16,848,259개와 2,210,823개로 v17과 같다. Public/native memo hit는 LogReg 31,312→98,777, GLM 12,197→42,049로 증가했다. Coordinator peak는 LogReg 9,326,448,640B, GLM 5,456,707,584B였다. 메모리나 전체 시간의 반복 검증된 개선으로 보고하지 않는다. 근거: `evidence/cofee-50k128-v18-validation/v17-v18-comparison.json`, SHA256 `6ffe1ab1da692805748c9981dff1c73a86c46fa82592099fbdb2ebea2e11ee47`.
 

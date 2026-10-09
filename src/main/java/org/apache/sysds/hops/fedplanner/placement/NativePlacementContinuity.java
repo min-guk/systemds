@@ -3477,6 +3477,8 @@ final class NativePlacementContinuity {
 		}
 		FixedBoundaryOverlayKey overlayKey = fixedBoundaryOverlayKey(key, pinned,
 			pinnedHandle, witness, allowPinnedTemplate, fixed);
+		if(metrics != null && overlayKey != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_LOOKUPS);
 		DefaultAlternativeList cachedOverlay = overlayKey == null ? null
 			: fixedBoundaryOverlays.get(overlayKey);
 		if(cachedOverlay != null) {
@@ -5607,6 +5609,12 @@ final class NativePlacementContinuity {
 		boolean exactPartitionRanges() { return exactPartitionRanges; }
 		List<List<CandidateRealizationInputBinding>> axes() { return axes; }
 		int size() { return size; }
+		long retainedMetadataUnits() {
+			long units = Math.addExact(1L + 2L * axes.size(), canonicalIndex.retainedMetadataUnits());
+			for(List<CandidateRealizationInputBinding> axis : axes)
+				units = Math.addExact(units, axis.size());
+			return units;
+		}
 		static NativeSupportProduct tryCreate(DurableAnchorKey externalSeed,
 			DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
 			List<List<CandidateRealizationInputBinding>> axes) {
@@ -5664,12 +5672,124 @@ final class NativePlacementContinuity {
 			return tryCreate(externalSeed, outputWorkerPoolWitness,
 				exactPartitionRanges, filtered);
 		}
+		java.util.Optional<NativeSupportProduct> oneAxisUnion(NativeSupportProduct that) {
+			return oneAxisUnion(that, MAX_CANONICAL_LENGTH_STATES,
+				MAX_CANONICAL_LENGTH_TRANSITIONS);
+		}
+		java.util.Optional<NativeSupportProduct> oneAxisUnion(NativeSupportProduct that,
+			int maximumLengthStates, long maximumLengthTransitions) {
+			if(that == null || exactPartitionRanges != that.exactPartitionRanges
+				|| !externalSeed.equals(that.externalSeed)
+				|| !outputWorkerPoolWitness.equals(that.outputWorkerPoolWitness)
+				|| axes.size() != that.axes.size())
+				return java.util.Optional.empty();
+			int changedAxis = -1;
+			List<List<CandidateRealizationInputBinding>> unionAxes = new ArrayList<>(axes.size());
+			for(int axis = 0; axis < axes.size(); axis++) {
+				List<CandidateRealizationInputBinding> left = axes.get(axis);
+				List<CandidateRealizationInputBinding> right = that.axes.get(axis);
+				if(sameExactAxis(left, right)) {
+					unionAxes.add(left);
+					continue;
+				}
+				if(changedAxis >= 0)
+					return java.util.Optional.empty();
+				changedAxis = axis;
+				List<CandidateRealizationInputBinding> merged = mergeExactAxis(left, right);
+				if(merged == null)
+					return java.util.Optional.empty();
+				unionAxes.add(merged);
+			}
+			if(changedAxis < 0)
+				return java.util.Optional.of(this);
+			NativeSupportProduct union = tryCreate(externalSeed, outputWorkerPoolWitness,
+				exactPartitionRanges, unionAxes, maximumLengthStates, maximumLengthTransitions);
+			return java.util.Optional.ofNullable(union);
+		}
+
+		private static boolean sameExactAxis(List<CandidateRealizationInputBinding> left,
+			List<CandidateRealizationInputBinding> right) {
+			if(left.size() != right.size())
+				return false;
+			for(int option = 0; option < left.size(); option++)
+				if(!sameExactBindingAuthority(left.get(option), right.get(option)))
+					return false;
+			return true;
+		}
+
+		private static List<CandidateRealizationInputBinding> mergeExactAxis(
+			List<CandidateRealizationInputBinding> left,
+			List<CandidateRealizationInputBinding> right) {
+			List<CandidateRealizationInputBinding> merged = new ArrayList<>(left.size() + right.size());
+			int leftIndex = 0, rightIndex = 0;
+			while(leftIndex < left.size() && rightIndex < right.size()) {
+				CandidateRealizationInputBinding a = left.get(leftIndex);
+				CandidateRealizationInputBinding b = right.get(rightIndex);
+				int order = a.compareTo(b);
+				if(order < 0) {
+					merged.add(a);
+					leftIndex++;
+				}
+				else if(order > 0) {
+					merged.add(b);
+					rightIndex++;
+				}
+				else {
+					if(!sameExactBindingAuthority(a, b))
+						return null;
+					// Preserve the first relation's exact authority object for overlaps.
+					merged.add(a);
+					leftIndex++;
+					rightIndex++;
+				}
+			}
+			while(leftIndex < left.size())
+				merged.add(left.get(leftIndex++));
+			while(rightIndex < right.size())
+				merged.add(right.get(rightIndex++));
+			return List.copyOf(merged);
+		}
+
+		private static boolean sameExactBindingAuthority(
+			CandidateRealizationInputBinding left,
+			CandidateRealizationInputBinding right) {
+			return left.equals(right)
+				&& left.source().rule().parentOccurrence()
+					== right.source().rule().parentOccurrence();
+		}
+		boolean containsExactBinding(int axis, CandidateRealizationInputBinding binding) {
+			if(axis < 0 || axis >= axes.size())
+				return false;
+			for(CandidateRealizationInputBinding candidate : axes.get(axis))
+				if(sameExactBindingAuthority(candidate, binding))
+					return true;
+			return false;
+		}
 
 		List<CandidateRealizationInputBinding> bindingsAt(int ordinal) {
 			return canonicalIndex.bindingsAt(axes, size, ordinal);
 		}
 		int ordinalOfBindings(List<CandidateRealizationInputBinding> bindings) {
 			return canonicalIndex.ordinalOfBindings(axes, bindings);
+		}
+		int ordinalOfExactAuthorityBindings(List<CandidateRealizationInputBinding> bindings) {
+			if(bindings.size() != axes.size())
+				return -1;
+			List<CandidateRealizationInputBinding> owned = new ArrayList<>(axes.size());
+			for(int axis = 0; axis < axes.size(); axis++) {
+				CandidateRealizationInputBinding selected = bindings.get(axis);
+				CandidateRealizationInputBinding match = null;
+				for(CandidateRealizationInputBinding candidate : axes.get(axis))
+					if(sameExactBindingAuthority(candidate, selected)) {
+						if(match != null)
+							return -1;
+						match = candidate;
+					}
+				if(match == null)
+					return -1;
+				owned.add(match);
+			}
+			return canonicalIndex.ordinalOfBindings(axes, owned);
 		}
 		private static List<CandidateRealizationInputBinding> rowMajorBindingsAt(
 			List<List<CandidateRealizationInputBinding>> axes, int size, int ordinal) {
@@ -5709,6 +5829,17 @@ final class NativePlacementContinuity {
 			this.optionLengths = optionLengths;
 			this.suffixLengthCounts = suffixLengthCounts;
 			this.orderedLengths = orderedLengths;
+		}
+
+		private long retainedMetadataUnits() {
+			long units = 1L + optionLengths.size() + suffixLengthCounts.size() + orderedLengths.size();
+			for(int[] lengths : optionLengths)
+				units = Math.addExact(units, 1L + lengths.length);
+			for(java.util.Map<Integer,Integer> counts : suffixLengthCounts)
+				units = Math.addExact(units, 1L + 3L * counts.size());
+			for(NativeCanonicalLengthBucket bucket : orderedLengths)
+				units = Math.addExact(units, 4L + bucket.lengthPrefix().length());
+			return units;
 		}
 
 		private static NativeCanonicalProductIndex tryCreate(DurableAnchorKey externalSeed,

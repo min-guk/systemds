@@ -199,6 +199,12 @@ public class NativeMixedExactnessPartitionTest {
 				.findFirst().orElseThrow();
 			Assert.assertEquals(3, partitioned.logicalProofs());
 			Assert.assertEquals(1, partitioned.consumedProofs());
+			Assert.assertEquals(1L, metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.PARTITIONED_SINGLETON_PROOFS));
+			Assert.assertEquals(0L, metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.PARTITIONED_COLLISION_PROOFS));
+			Assert.assertEquals(0L, metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS));
 		}
 	}
 
@@ -336,6 +342,12 @@ public class NativeMixedExactnessPartitionTest {
 		Assert.assertEquals(4, partitioned.logicalProofs());
 		Assert.assertEquals("only the rejected two-member part may consume scalar proofs",
 			2, partitioned.consumedProofs());
+		Assert.assertEquals(2L, fallbackMetrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS));
+		Assert.assertEquals(0L, fallbackMetrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.PARTITIONED_COLLISION_PROOFS));
+		Assert.assertEquals(0L, fallbackMetrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.PARTITIONED_SINGLETON_PROOFS));
 	}
 
 	private static void assertLazyExactPart(CandidateEmissionRealization part,
