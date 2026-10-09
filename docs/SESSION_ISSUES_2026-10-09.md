@@ -284,6 +284,24 @@
 
 - **Rank 단독 통합 gate**: fresh main/test compile, **1,012 JUnit PASS(177.301초)**, source SHA mismatch0, static independent review CLEAR. Evidence `evidence/native-variable-rank-full-green-1012`. Multi-member Physical compaction은 동률 receipt 반례 때문에 제외했고, 이 검증본만 v6로 게시·봉인·실측한다.
 
+
+### COFEE v6 실제 완료: 생성 방문 감소가 전체 시간 감소로 이어지지 않음
+
+- **상태/증상**: v6 `9fb272e355`/JAR `f1eedaa2187e31af274887c9419941a16c6879d91a1ded37ed91f1b77fe912e6`, 동일50K×128/W1/DML/Y/privacy/seed/profile/자원에서 LogReg fullInitial422.957952127초, GLM151.734634551초. v5의403.786/142.961초보다 느리고20초 미달이다. 양쪽 numeric comparator PASS, runtime audit mismatch0, plan fingerprint는 v5와 동일하다.
+- **원인 근거**: native support leaf 방문은 LogReg3,919,362→3,072, GLM799,642→356으로 줄었지만 explicit Clause는2,534,754→2,536,770 및1,156,839→1,157,816로 거의 그대로다. `candidateTopologyMeasured`가 모든 support member를 다시 순회하고, PlacementAnalysis validation과 일부 metadata 조회도 전개한다. 잔여 proof alternative/edge 집계에는 summary 재사용 크기가 포함되므로 새 객체/DP 방문 수로 보고하지 않는다. Memo eviction0이며 capacity 증설을 해법으로 가정하지 않는다.
+- **증거/재현**: `evidence/cofee-50k128-v6-validation/v6-final-summary.json` SHA77721096e2708e165282e0ca3480060ef601057cde22fdf44badb9f4606ceaa9. 각1회 clean completed run이며20초 초과이므로 반복3회 성공으로 포장하지 않는다. 새 profiling/JFR 없이 정상 harness/receipt 지표만 사용했다.
+
+### v7 후보: native metadata 재전개 제거 및 SCC rank 관계 표현
+
+- **상태**: focused37 PASS(9.742초), independent static review CLEAR; 전체 gate 진행중. 실제 시간 개선은 아직 검증 전이다.
+- **변경/근거**: PlacementAnalysis는 각 native axis의 모든 binding과 uniform witness를 검사한다. Physical source-owner 집계와 delivered layout은 native metadata를 읽되 기존 FEDERATED unique-anchor fallback을 보존한다. NPC dynamic-layout와 exact-owner authority는 uniform metadata로 판정한다. Fixed-pool graph는 동일한 grounded pool leaf 반복만 하나로 표현하며 exact member source/proof authority는 원래 relation에 유지한다.
+- **DP 변경**: `ExactDerivedFoutAnchorEncoding` SCC bit comparator의16/12/36 Cartesian lazy cells를4/4/12개 finite-support 또는 functional row로 표현한다. 변수, scope, factor 순서, logical-cell 회계,0/+INF raw bits는 같다. 모든 cell explicit parity와 fixed-seed free assignment/tie parity를 검증했다. 이 gate가 실제 optimizer74초의 주원인이라고 주장하지 않는다.
+- **수정 파일**: NativePlacementContinuity.java, PlacementAnalysis.java, ExactPhysicalModel.java, ExactDerivedFoutAnchorEncoding.java와 해당 focused 회귀 tests.
+- **검증/실패 보존**: metadata 기존 구현은400member 모두 materialize하여 새0-handle assertion에 실패했다(`evidence/native-fixed-metadata-red-13`). 수정 후 exact/dynamic의 alias resolution·ownerReads·action authority explicit parity 및0handles 통과.10,000member dynamic 조회도0handles다. Sparse gate 초기 red와15PASS는 `evidence/derived-rank-sparse-red`, `evidence/derived-rank-sparse-green-15`; 통합 focused37PASS는 `evidence/native-metadata-sparse-focused-green-37`.
+- **제외/잔여 위험**: multi-member Physical compaction은 unconstrained equal-cost canonical receipt 반례가 있어 제외했다. Physical exact fallback과 proof topology member 전개는 남는다. AND(per-axis OR) proof graph 설계는 full rectangle/DIRECT/distinct owner만 대상으로 하며 SCC·cache·fixed pin·authority 검증 전에는 통합하지 않는다. Metadata shortcut의 회귀는 dynamic layout/FEDERATED fallback/explicit parity 및 전체 회귀로 감지한다.
+
+- **v7 병합 전 gate**: fresh compile 및1,017 JUnit PASS(185.856초), source SHA mismatch0, independent static review CLEAR. Encoded Local과 Exact의 canonical assignment/raw objective parity까지 통과했다. 증거 `evidence/native-metadata-sparse-full-green-1017`. 이후 도착한 origin/main d27fa82b44의 pruning ordinal/native projection 변경을 병합하여 재검증한다.
+
 ### v21 product projection / v22 topology 재사용 계획 (진행중)
 
 - **문제/근거**: incoming native support product가 publication에서 압축돼도 continuity projection이 모든 Cartesian clause를 펼친다. 기존 v19 OFF GLM sample에서 topology revision reindex가237/2,884(8.2%)를 차지한다. 동일 실행 relation을 유지하는 proof-history revision도 snapshot identity가 달라 모든 topology row/default edge를 재생성한다.
@@ -297,6 +315,12 @@
 - **계측/리뷰**: shared/reindexed rows는 cache admission에 성공한 행만 계수한다. Positive path shared>0/reindexed0을assert하고 negative namespace기존회귀유지. v21/v22 production 독립review CLEAR. Equal-but-foreign productsource identity추가assert를 포함해 fresh133class package를 수행한다.
 - **v20 실측**: LogReg/GLM detailed모두60초 timeout/no finalreceipt. LogReg39,037graphs/4.328Mstates/54.283Malternatives/91.784Medges, GLM74,589graphs/375,852states/6.445Malternatives. Partialprogress라이전버전과전체속도비교로환산하지않는다. v22의가변길이 productrank, 축projection, topologyrawsharing효과는다음봉인측정에서확인한다.
 - **v22 full gate**: incoming9fb + v21/v22의 fresh133class package BUILD SUCCESS02:39:48, failure0/error0/skip1. Source/JAR 봉인 후 origin/main에 merge 게시를 재시도한다. Supplemental Exact/PCA 기존 실패는 여전히 위 별도항목이며 전체repository green으로 주장하지 않는다. Pin guard mutation은실제고장1개를검출했고 privateproduct의equal-but-foreign source identity까지fullgate에포함했다.
+
+
+- **v7 최신 main 병합**:2290e8b2f3의1,017PASS 수정본에 origin/main d27fa82b44를8ac7604a68로 병합했다. Production은 자동 통합됐고 docs append 충돌은 양쪽 기록을 보존했다. 첫 focused142 중1실패는 upstream 테스트의 metadata1handle 기대값이 신규0handle 경로와 달랐기 때문이다. 의미 비교는 그대로 유지하고 두 작업량 기대값만0으로 갱신했다. 실패 `evidence/native-v7-d27-merge-red-142` 보존.
+- **Revision authority 후속 검증**: native product externalSeed만 바뀌고 실행 metadata가 같은 revision에서 warm/cold ordered proofs·identity footprint를 양쪽 query seed로 비교했다. 공개 proof는 현재 query seed를 가지며 각 relation의 exact member proof history는 서로 다르다. Focused143PASS(2.061초), independent review CLEAR. 증거 `evidence/native-v7-d27-focused-green-143`; 최종 전체 gate에는 query 후0handle 추가 assertion도 포함한다.
+
+- **v7 최종 통합 gate**: d27fa82b44 병합 및 seed-history regression 포함 fresh compile,1,033 JUnit PASS(161.85초), source SHA mismatch0, independent static review CLEAR. 증거 `evidence/native-v7-d27-full-green-1033`. 이 봉인본을 동일 COFEE 설정으로 실행하며20초 달성 여부는 실제 receipt로 판정한다.
 
 ### v23 stable-handle bucket 선형 검사 (검증중)
 
@@ -321,3 +345,23 @@
 - **계측 해석 제한**: repeat potential은 같은 emission loop에서 관찰된 실제 MISS 중 기존 certified key가 resident인 경우만 세는 bounded lower bound다. 기존 public/support memo HIT는 index에 넣지 않으므로, 낮은 수치가 전체 재사용 가능성이 없다는 증거는 아니다. Saturation/eviction도 과소계수 요인이다. 후보 축소나 비용/합법성 규칙은 변경하지 않는다.
 - **v23 Docker 결과**: pinned image/4CPU/16GiB/10GiB heap, JFR55s/watchdog60s에서 LogReg·GLM 모두 timeout/no completion receipt. own container 제거를 확인했다. Inclusive samples에서 direct binding은 각각52.98%/18.53%였으나 완료 wall-time의 속도 향상으로 해석하지 않는다. Probe는 production DMLScript compile-only 경로로 runtime-program 생성 이후 full-initial planning receipt를 검증한다. `liveMetrics=false`는 DMLTranslator.productionSearchSpaceMetrics가 null을 반환하므로 상세 metrics OFF이며 JFR만 유지된다.
 - **v24 full gate 완료**: fresh 133-class package **1,125 selected tests/failure0/error0/skip1**, BUILD SUCCESS 03:00:55. `candidate-v24-package.log`와 source/JAR seal을 보존한 뒤 게시·Docker 계측한다. 기존 Exact/PCA supplemental width 실패는 이번 selected gate에 포함하지 않았고 해결 주장하지 않는다.
+
+- **추가 원격 병합/게시**: c6be0b6916 push는 원격689760d079가 먼저 갱신되어 fast-forward 거부됐다. 강제 push하지 않고 fbc30a527c로 병합, docs 양쪽 보존 및 NPC production/test 자동 통합. 변경 범위 continuity/revision/pruning focused188PASS(4.508초), source SHA mismatch0, independent review CLEAR. 앞선 통합1,033PASS와 함께 검증 근거로 보존한다(`evidence/native-v7-689-focused-green-188`). 실제 v7는 이미 봉인한 정확한 c6be/JAR5172e29a를 계속 사용하며 이 추가 커밋을 소급 포함하지 않는다.
+
+
+### DP 부분 고정 시 sparse relation의 dense 재전개 제거 (v8 후보)
+
+- **문제/근거**: SharedRegionalPreparation.condition은 boundary 밖 입력을 고정한 뒤 남은 free 축 product를 lazy wrapper+freeze로 전부 평가했다. IncrementalRegionalSeed.condition도 같은 product의 double[]를 만들었다. 원본이 FiniteSupport/FunctionalMap이어도 표현을 잃었다. 실제 optimizer74.5초 중 이 경로의 기여도를 새 profiling으로 측정한 것은 아니다.
+- **해결/파일**: ExactCategoricalSolver.Factor.conditionSupport는 sparse admitted row만 filter/project한다. 고정된 singleton 축을 제거하는 projection은 injective이며 row-major 정렬을 유지한다. FunctionalMap은 source 고정 시0/1개 target, target 고정 시정렬된 source preimage, 양쪽 고정 시scalar true/false로 처리한다. SharedRegionalPreparation/IncrementalRegionalSeed가 먼저 이 경로를 소비하고 일반 numeric/conditional relation은 기존 fallback을 유지한다.
+- **검증**: 기존 구현은 새4tests 중3개 sparse 표현 유지 검사에서 실패(`evidence/sparse-conditioning-red-4`). 수정 후6suites55PASS(1.357초), independent review CLEAR(`evidence/sparse-conditioning-focused-green-55`).160,000 free cells의 예제가 sparse3rows를 유지한다.35fixed-seed random 관계의 모든 작은 boundary·sparse holes·zero axes, functional -1/unmapped/frozen map, raw cost bits와 exact canonical minimum을 explicit table과 비교한다. Regional preparation/seed lift/incremental 회귀도 통과했다.
+- **의미/회귀 위험**: +0/+INF hard relation만 새 경로를 쓴다. 변수 identity/order와 source 관계의 정확한 feasible cells를 보존한다. Seed의 기존 conceptual cell/resource limit 판정은 sparse 처리 전 동일하게 적용하며, 조건부 비용/공유 비용 수식은 변경하지 않는다. 따라서 이전에 conceptual limit으로 거절된 sparse case를 새로 통과시키는 개선은 아직 없다. 실제 workload 시간/peak와 full gate는 별도 확인한다.
+
+- **v8 DP conditioning 통합 gate**: fresh main/test compile 및1,038 JUnit PASS(180.381초), source SHA mismatch0, independent static review CLEAR. 증거 `evidence/sparse-conditioning-full-green-1038`. 본 snapshot은689760의 linear topology check를 포함하나 별도 개발 중인 synthetic axis gate는 아직 포함하지 않는다.
+
+### v24 / 最新 native metadata·sparse DP 병합 (검증중)
+
+- **문제/원인**: v24 own gate 1,125 PASS 후 fetch에서 origin/main이6commits 앞선 `3d8e59378f`임을 확인했다. Native metadata 소비 및 sparse DP conditioning을 force push 없이 병합한다.
+- **해결/파일**: docs append 충돌은 양쪽 기록을 유지했다. NativePlacementContinuity의 자동 merge가 같은 `NativeContinuitySupportClauses` dynamic-layout branch를 두 번 넣어, 증명/테스트가 동일한 첫 branch 하나만 남겼다. Incoming exact-owner/fixed-pool metadata 및 sparse factor conditioning은 보존한다. Shadow observer의 authority/LRU/bound는 변경하지 않는다.
+- **검증 계획**: 신규 DerivedFoutRankRelationTest/ExactSupportConditioningTest 포함135classes fresh package 및 독립 merge review를 진행한다. 원본 v24 seal은 보존하고 병합본을 별도 봉인한다.
+- **잔여/위험**: 기존 Exact/PCA supplemental width 실패와20초 미달은 남아 있다. Incoming native metadata의0handle 동작은 기존1handle fixture기대를 갱신하되 ordered proof/identity-footprint authority 대조는 유지한다. 후보/합법성/privacy 규칙은 완화하지 않는다.
+- **병합 gate 완료**: fresh135class package **1,135 selected tests/failure0/error0/skip1**, BUILD SUCCESS03:04:12. 독립 integration review CLEAR; duplicate branch 제거를 확인했다. Incoming metadata와 sparse DP 회귀 및 v24 observer의 cold/warm/identity/LRU parity를 함께 검증했다. 병합본만 `candidate-v25-merged`로 따로 봉인·실측한다.

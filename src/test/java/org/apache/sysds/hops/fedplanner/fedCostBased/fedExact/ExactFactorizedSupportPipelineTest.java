@@ -87,7 +87,15 @@ public class ExactFactorizedSupportPipelineTest {
 		List<SupportPair> admitted = rectangularPairs(2, 3);
 		Fixture lazy = fixture(2, 3, SupportEncoding.NATIVE, false, admitted);
 		Fixture explicit = fixture(2, 3, SupportEncoding.NATIVE_EXPLICIT, false, admitted);
-		Assert.assertEquals("the deliberate exact Physical preparation boundary expands all members",
+		Assert.assertEquals("analysis validation must inspect native axes without member handles",
+			0, NativeContinuitySupportFixtureBridge.materialized(lazy.supportRealization()));
+		ExactPhysicalModel model = ExactPhysicalModel.build(lazy.analysis());
+		var consumer = model.domains().stream()
+			.filter(domain -> domain.node().key() == lazy.consumer()).findFirst().orElseThrow();
+		Assert.assertTrue("multi-member native relations retain the exact Physical tie-order fallback",
+			consumer.alternatives().stream().noneMatch(alternative ->
+				alternative.compactSupport() != null));
+		Assert.assertEquals("the deliberate exact Physical boundary expands every member",
 			6, NativeContinuitySupportFixtureBridge.materialized(lazy.supportRealization()));
 		Assert.assertEquals("member-specific source/proof receipts and raw objective bits differ",
 			solveAll(explicit), solveAll(lazy));

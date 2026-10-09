@@ -2,7 +2,22 @@
 
 ## 상태
 
-최신 게시본 v5(`bd00913e21`, JAR `b843129d…`)은 동일 COFEE50K×128 W1 LogReg에서 **전체 최초 planning 403.786초**에 완료됐다. 최종 receipt의 `planningFullInitialNanos=403786041598`이 목표 판정값이다. 내부 `candidateE2E.totalNanos=402603192964`와 혼동하지 않는다. 숫자 출력 비교는 byte-identical, runtime audit MATCH이며, 이전 v4의 DP overflow는 해결됐다. 같은 봉인본의 GLM도 전체 최초 planning **142.961초**에 완료됐고 숫자 비교/audit mismatch0을 통과했다. **두 workload 모두20초 목표에는 미달**이다.
+최신 실측 v6(`9fb272e355`, JAR `f1eedaa2…`)은 동일 COFEE50K×128 W1에서 LogReg **422.957952127초**, GLM **151.734634551초**에 전체 최초 planning을 완료했다. 두 workload의 숫자 비교와 runtime audit(mismatch0)은 통과했고 v5와 선택한 plan fingerprint도 같았다. 하지만 v5의403.786041598초/142.960651865초보다 느렸으며 **20초 목표는 미달**이다. 각 엔진·workload1회 관측이므로 반복 측정의 통계적 성능 개선으로 해석하지 않는다.
+
+| v5 → v6 실제 관측 | LogReg | GLM |
+|---|---:|---:|
+| 전체 최초 planning (`receipt.planningFullInitialNanos`) | 403.786 → 422.958초 | 142.961 → 151.735초 |
+| 내부 Analysis | 316.871 → 334.660초 | 97.883 → 106.183초 |
+| Physical Model | 4.296 → 4.236초 | 5.264 → 4.799초 |
+| Cost Surface | 6.497 → 6.354초 | 7.830 → 9.744초 |
+| Optimizer | 73.494 → 74.496초 | 27.837 → 26.202초 |
+| support leaf 실제 방문 | 3,919,362 → 3,072 | 799,642 → 356 |
+| Explicit Clause 생성 | 2,534,754 → 2,536,770 | 1,156,839 → 1,157,816 |
+| coordinator cgroup peak | 9,286,393,856 → 9,285,378,048B | 5,284,954,112 → 5,192,859,648B |
+
+v6는 variable-length native relation의 생성 전개를 없앴지만, 후속 validation·proof topology·Physical 단계의 전개는 남아 있다. 따라서 생성 leaf 감소를 전체 객체·메모리·시간 감소로 보고하지 않는다. Proof alternatives/edges 지표는 캐시 summary 크기도 포함하므로 새 객체 생성 수 또는 DP join 방문 수가 아니다. 공통 근거: `evidence/cofee-50k128-v6-validation/v6-final-summary.json`, SHA `77721096e2708e165282e0ca3480060ef601057cde22fdf44badb9f4606ceaa9`.
+
+아래는 이전 v5 완료 기록이다. 전체 최초 planning은 최종 receipt의 `planningFullInitialNanos`를 사용하며 내부 `candidateE2E.totalNanos`와 구분한다.
 
 | v5 측정 | LogReg | GLM |
 |---|---:|---:|
@@ -20,7 +35,7 @@
 
 사용자 지시대로 DML·Y 위치·전처리·privacy·seed·cost profile·자원을 유지했다. 최신 main `ac0b5e6028` + native support/DP 통합 회귀 **1,006 JUnit PASS**, source/class hash mismatch0, independent review CLEAR다. 실제 runtime 근거는 `evidence/cofee-50k128-v5-validation/candidate-logreg-run1`, 범위가 명확한 시간 근거는 각 run 아래 `timing-evidence.json`이다. 두 완료 결과를 묶은 근거는 `evidence/cofee-50k128-v5-validation/first-valid-both-workloads.json`이다. 신규 profiling/JFR는 사용하지 않았다.
 
-다음 미게시 후보는 variable-length native support canonical rank와 Physical Model의 compact relation 소비다. v5는 native 생성/Closure/metadata를 제한된 rectangle에 적용하지만 Physical exact fallback이 남아 있다. 적용 범위와 성능을 실제 v6 검증 전에는 확대해 보고하지 않는다.
+v7 후보는 남은 metadata 조회의 native relation 직접 소비와 SCC rank gate의 sparse/functional 표현이다. 별도 Physical multi-member compaction은 동일-cost 선택에서 receipt가 달라지는 반례 때문에 제외했다. Proof topology 자체를 입력별 선택 그래프로 표현하는 후속 수정은 별도로 검증한다. 실제 v7 성능 검증 전에는 개선 시간을 주장하지 않는다.
 
 ## 현재 병목: pruning 누락과 조합 전개를 구분
 

@@ -806,6 +806,12 @@ final class ExactPhysicalModel {
 										changed |= result.add(
 											binding.source().rule().parentOccurrence());
 							}
+							else if(realization.nativeContinuitySupportProduct().isPresent()) {
+								for(var axis : realization.nativeContinuitySupportProduct().orElseThrow().axes())
+									for(var binding : axis)
+										changed |= result.add(
+											binding.source().rule().parentOccurrence());
+							}
 							else for(var clause : realization.supportClauses())
 								for(var binding : clause.inputBindings())
 									changed |= result.add(
@@ -1232,11 +1238,19 @@ final class ExactPhysicalModel {
 		CandidateEmissionRealization realization = analysis.requireExactCandidateRealization(binding.source());
 		if(realization.anchor() != null)
 			return realization.anchor();
-		var first = realization.supportClauses().get(0);
-		if(realization.nativeWorkerPoolLayoutExactForOwnedClause(first)) {
-			DurableAnchorKey witness = realization.nativeWorkerPoolResidencyForOwnedClause(first);
-			if(witness != null)
+		var nativeProduct = realization.nativeContinuitySupportProduct().orElse(null);
+		if(nativeProduct != null) {
+			DurableAnchorKey witness = nativeProduct.nativeWorkerPoolWitness();
+			if(witness != null && nativeProduct.nativeWorkerPoolLayoutExact())
 				return witness;
+		}
+		else {
+			var first = realization.supportClauses().get(0);
+			if(realization.nativeWorkerPoolLayoutExactForOwnedClause(first)) {
+				DurableAnchorKey witness = realization.nativeWorkerPoolResidencyForOwnedClause(first);
+				if(witness != null)
+					return witness;
+			}
 		}
 		var owner = binding.source().rule().parentOccurrence();
 		if(analysis.hop(owner).orElse(null) instanceof DataOp data && data.getOp() == OpOpData.FEDERATED) {
@@ -1245,6 +1259,11 @@ final class ExactPhysicalModel {
 				return anchors.get(0);
 		}
 		return null;
+	}
+
+	static DurableAnchorKey deliveredSupportLayoutForTest(PlacementAnalysis analysis,
+		PlacementIdentity.CandidateRealizationInputBinding binding) {
+		return deliveredSupportLayout(analysis, binding);
 	}
 
 	static List<Alternative> sortAndDeduplicateAlternatives(List<Alternative> generated) {

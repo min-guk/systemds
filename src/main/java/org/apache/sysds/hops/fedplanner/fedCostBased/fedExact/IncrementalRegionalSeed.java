@@ -270,6 +270,12 @@ final class IncrementalRegionalSeed {
 			throw new IllegalArgumentException("EXACT_VE_MATERIALIZED_LIMIT_EXCEEDED"
 				+ "|source=seed-condition|cells=" + materializedCells[0]
 				+ "|limit=" + limits.maximumMaterializedCells());
+		int[] boundary = new int[factor.scope().size()];
+		for(int axis = 0; axis < boundary.length; axis++)
+			boundary[axis] = assignment[requireIndex(index, factor.scope().get(axis))];
+		ExactCategoricalSolver.Factor support = factor.conditionSupport(boundary);
+		if(support != null)
+			return support;
 		int cells = (int) cellsLong;
 		double[] costs = new double[cells];
 		int[] freeValues = new int[freeScope.size()];
