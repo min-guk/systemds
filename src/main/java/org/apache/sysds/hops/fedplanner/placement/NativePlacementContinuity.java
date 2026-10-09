@@ -6284,11 +6284,13 @@ final class NativePlacementContinuity {
 			int bindingLength, int rank) {
 			if(excludedExactProduct == null)
 				return canonicalIndex.bindingsAtLengthRank(axes, bindingLength, rank);
-			int ordinal = rank;
+			int offset = 0;
 			for(var entry : bindingLengthCounts().entrySet()) {
-				if(entry.getKey() == bindingLength)
-					return bindingsAt(ordinal);
-				ordinal = Math.addExact(ordinal, entry.getValue());
+				if(entry.getKey() == bindingLength) {
+					Objects.checkIndex(rank, entry.getValue());
+					return bindingsAt(Math.addExact(offset, rank));
+				}
+				offset = Math.addExact(offset, entry.getValue());
 			}
 			throw new IndexOutOfBoundsException("Native binding-length rank outside relation");
 		}
