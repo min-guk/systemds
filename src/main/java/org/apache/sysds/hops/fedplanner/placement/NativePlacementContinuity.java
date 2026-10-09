@@ -2109,12 +2109,36 @@ final class NativePlacementContinuity {
 			return exact;
 		ComputedPublicProof dynamic = proveCandidateAlternatives(
 			source, externalSeed, dynamicWitness, generation, batch);
-		List<NativeContinuityProof> dynamicProofs = dynamic.proofs().stream()
-			.filter(proof -> recomputesNativePartitionRanges(owner, witnessType)
-				|| proof.immediateBindings().stream().anyMatch(binding ->
-					hasDynamicNativeLayout(binding.source())))
-			.toList();
+		List<NativeContinuityProof> dynamicProofs = retainDynamicProofs(dynamic.proofs(),
+			recomputesNativePartitionRanges(owner, witnessType), this::hasDynamicNativeLayout);
 		return mergeExactAndDynamicAlternatives(exact, dynamic, dynamicProofs);
+	}
+
+	static List<NativeContinuityProof> retainDynamicProofs(List<NativeContinuityProof> proofs,
+		boolean recomputesRanges,
+		java.util.function.Predicate<CandidateRealizationReference> dynamicSource) {
+		if(proofs instanceof NativeContinuityProofProduct product) {
+			if(recomputesRanges)
+				return proofs;
+			boolean anyDynamic = false;
+			for(List<CandidateRealizationInputBinding> axis : product.product.axes) {
+				boolean allDynamic = true;
+				for(CandidateRealizationInputBinding binding : axis) {
+					boolean dynamic = dynamicSource.test(binding.source());
+					anyDynamic |= dynamic;
+					allDynamic &= dynamic;
+				}
+				// Every member chooses one option from this nonempty axis.
+				if(allDynamic)
+					return proofs;
+			}
+			if(!anyDynamic)
+				return List.of();
+		}
+		// Mixed products can have sparse holes. Retain their exact member filter.
+		return proofs.stream().filter(proof -> recomputesRanges
+			|| proof.immediateBindings().stream().anyMatch(binding -> dynamicSource.test(binding.source())))
+			.toList();
 	}
 
 	private static NativePoolWitness distinctDynamicPartitionWitness(NativePoolWitness witness) {
@@ -3586,8 +3610,7 @@ final class NativePlacementContinuity {
 						continue;
 					if(matchedRealization != null
 						|| !(realization.supportClauses() instanceof NativeContinuitySupportClauses relation)
-						|| realization.key().layoutKind()
-							!= PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE)
+						|| !nativeContinuityProductLayout(realization))
 						return null;
 					matchedFact = fact;
 					matchedRealization = realization;
@@ -3692,9 +3715,15 @@ final class NativePlacementContinuity {
 				options.get(0).inputPosition(), witness, gateAlternatives);
 			consumerDependencies.add(new CandidateProofDependency(gate));
 		}
-		boolean directGround = matchedRelation.clauseWitness() != null
-			&& witness.matches(nativeWitness(matchedRelation.clauseWitness()),
-				matchedRelation.clauseLayoutExact());
+		// Mirror candidateTopology's exact grounding precedence. A durable
+		// realization owns its anchor independently of optional clause metadata;
+		// native lineage can be grounded only by the relation witness.
+		boolean directGround = matchedRealization.key().layoutKind()
+				== PlacementIdentity.PlacementLayoutKind.DURABLE_MAP
+				&& witness.matches(nativeWitness(matchedRealization.anchor()), true)
+			|| matchedRelation.clauseWitness() != null
+				&& witness.matches(nativeWitness(matchedRelation.clauseWitness()),
+					matchedRelation.clauseLayoutExact());
 		return new NativeFactoredProofAlternatives(List.of(new SelectedCandidateProof(
 			pinned, List.copyOf(consumerDependencies), directGround, witness)));
 	}
@@ -3735,8 +3764,7 @@ final class NativePlacementContinuity {
 				for(CandidateEmissionRealization realization : emission.realizations()) {
 					if(realization.supportClauses().isEmpty())
 						continue;
-					if(realization.key().layoutKind()
-							!= PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE
+					if(!nativeContinuityProductLayout(realization)
 						|| !(realization.supportClauses()
 							instanceof NativeContinuitySupportClauses))
 						return null;
@@ -3762,6 +3790,13 @@ final class NativePlacementContinuity {
 		if(nodeDirectGround)
 			alternatives.add(0, new SelectedCandidateProof(null, List.of(), true, witness));
 		return new NativeFactoredProofAlternatives(List.copyOf(alternatives));
+	}
+
+	private static boolean nativeContinuityProductLayout(
+		CandidateEmissionRealization realization) {
+		PlacementIdentity.PlacementLayoutKind layout = realization.key().layoutKind();
+		return layout == PlacementIdentity.PlacementLayoutKind.NATIVE_LINEAGE
+			|| layout == PlacementIdentity.PlacementLayoutKind.DURABLE_MAP;
 	}
 
 	private CandidateTopology candidateTopology(CompiledHopKey key, NativePoolWitness witness) {

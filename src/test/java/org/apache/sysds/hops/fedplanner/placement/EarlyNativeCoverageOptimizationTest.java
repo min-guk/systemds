@@ -4,6 +4,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -333,6 +334,15 @@ public class EarlyNativeCoverageOptimizationTest {
 
 	@Test
 	public void liveBinderAllCoveredPathKeepsExactEmissionWithoutAddingStaging() throws Exception {
+		assertLiveBinderAllCoveredPath(1);
+	}
+
+	@Test
+	public void liveBinderPublishesMultiMemberDurableProductsWithoutExpansion() throws Exception {
+		assertLiveBinderAllCoveredPath(3);
+	}
+
+	private void assertLiveBinderAllCoveredPath(int sourceOptions) throws Exception {
 		CompiledHopKey sourceOwner = (CompiledHopKey)seedFixture("key",
 			new Class<?>[] {String.class}, "live-source");
 		CompiledHopKey consumerOwner = (CompiledHopKey)seedFixture("key",
@@ -341,6 +351,7 @@ public class EarlyNativeCoverageOptimizationTest {
 		CandidateRuleFact source = (CandidateRuleFact)seedFixture("nativeFact",
 			new Class<?>[] {CompiledHopKey.class, String.class, DurableAnchorKey.class, int.class},
 			sourceOwner, "live-source", pool, 1);
+		source = withSourceOptions(source, "live-source", sourceOptions);
 		CandidateRuleKey consumerRule = new CandidateRuleKey(consumerOwner,
 			List.of(CandidateInputState.present(FType.ROW)));
 		CandidateEmissionRealization staging = CandidateEmissionRealization.nativeLineage(
@@ -387,8 +398,14 @@ public class EarlyNativeCoverageOptimizationTest {
 		CandidateRuleFact first = boundFacts(bind.invoke(closure, index, List.of(consumer),
 			origins, shapes, continuity, dirty)).get(0);
 		CandidateEmissionFact grounded = first.allowedEmissionFacts().get(0);
-		Assert.assertTrue(grounded.realizations().stream().flatMap(realization ->
-			realization.supportClauses().stream()).anyMatch(clause -> !clause.inputBindings().isEmpty()));
+		CandidateEmissionRealization durableProduct = grounded.realizations().get(0);
+		Assert.assertEquals(PlacementIdentity.PlacementLayoutKind.DURABLE_MAP,
+			durableProduct.key().layoutKind());
+		Assert.assertEquals("only multiple members benefit from a durable product wrapper",
+			sourceOptions > 1, durableProduct.nativeContinuitySupportProduct().isPresent());
+		Assert.assertEquals(sourceOptions, durableProduct.supportClauses().size());
+		Assert.assertEquals("singletons keep their exact clause; products stay lazy",
+			sourceOptions > 1 ? 0 : 1, durableProduct.fullyMaterializedSupportClauseCount());
 
 		List<CandidateRuleFact> nextInventory = List.of(source, first);
 		Object nextIndex = indexBuilder.invoke(null, nextInventory, nodes, edges,
@@ -419,10 +436,11 @@ public class EarlyNativeCoverageOptimizationTest {
 		CandidateRuleFact addedSource = (CandidateRuleFact)seedFixture("nativeFact",
 			new Class<?>[] {CompiledHopKey.class, String.class, DurableAnchorKey.class, int.class},
 			sourceOwner, "zz-live-source", addedPool, 1);
+		addedSource = withSourceOptions(addedSource, "zz-live-source", sourceOptions);
 		CandidateEmissionFact combinedSourceEmission = new CandidateEmissionFact(
-			NATIVE_EMISSION, FType.ROW, null, List.of(
-				source.allowedEmissionFacts().get(0).realizations().get(0),
-				addedSource.allowedEmissionFacts().get(0).realizations().get(0)));
+			NATIVE_EMISSION, FType.ROW, null, java.util.stream.Stream.concat(
+				source.allowedEmissionFacts().get(0).realizations().stream(),
+				addedSource.allowedEmissionFacts().get(0).realizations().stream()).toList());
 		CandidateRuleFact combinedSource = new CandidateRuleFact(source.key(), source.status(),
 			source.capability(), source.shapeProof(), source.profile(),
 			List.of(combinedSourceEmission), source.failureCode());
@@ -450,6 +468,16 @@ public class EarlyNativeCoverageOptimizationTest {
 			mixed.allowedEmissionFacts().get(0).realizations();
 		Assert.assertTrue("mixed caller keeps prior authority and appends newly proved output",
 			mixedRealizations.size() > grounded.realizations().size());
+		Assert.assertTrue("disjoint seed outputs keep their appropriate exact representation",
+			mixedRealizations.stream().allMatch(realization ->
+				realization.nativeContinuitySupportProduct().isPresent() == (sourceOptions > 1)));
+		if(sourceOptions > 1)
+			Assert.assertTrue("the newly appended seed product remains unmaterialized",
+				mixedRealizations.stream().anyMatch(realization ->
+					realization.fullyMaterializedSupportClauseCount() == 0));
+		Assert.assertEquals("disjoint seed outputs keep distinct realization authority",
+			mixedRealizations.size(), mixedRealizations.stream()
+				.map(CandidateEmissionRealization::key).distinct().count());
 		for(CandidateEmissionRealization prior : grounded.realizations())
 			Assert.assertTrue("mixed caller must retain each prior exact object",
 				mixedRealizations.stream().anyMatch(candidate -> candidate == prior));
@@ -486,6 +514,18 @@ public class EarlyNativeCoverageOptimizationTest {
 		assertBindingResultParity(withdrawnResult, coldWithdrawnResult);
 
 		CandidateRuleFact withdrawn = boundFacts(withdrawnResult).get(0);
+		List<CandidateRuleFact> prunedWithdrawal = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPoint(
+				List.of(source, withdrawn), null, List.of(), Map.of());
+		List<CandidateEmissionRealization> survivingProducts = prunedWithdrawal.stream()
+			.filter(candidate -> candidate.key().parentOccurrence() == consumerOwner)
+			.flatMap(candidate -> candidate.allowedEmissionFacts().stream())
+			.flatMap(candidate -> candidate.realizations().stream())
+			.filter(candidate -> candidate.key().layoutKind()
+				== PlacementIdentity.PlacementLayoutKind.DURABLE_MAP).toList();
+		Assert.assertEquals("withdrawing one source removes only its disjoint seed output",
+			1, survivingProducts.size());
+		Assert.assertEquals(durableProduct.key(), survivingProducts.get(0).key());
 		List<CandidateRuleFact> restoredInventory = List.of(combinedSource, withdrawn);
 		Object restoredIndex = indexBuilder.invoke(null, restoredInventory, mixedNodes, edges,
 			restoredInventory, origins, shapes);
@@ -503,6 +543,145 @@ public class EarlyNativeCoverageOptimizationTest {
 			List.of(coldWithdrawn), origins, shapes, new NativePlacementContinuity(
 				mixedNodesByKey, origins, coldRestoredInventory, edges, Map.of()), dirty);
 		assertBindingResultParity(restoredResult, coldRestoredResult);
+	}
+
+
+	private static CandidateRuleFact withSourceOptions(CandidateRuleFact source,
+		String lineage, int options) {
+		CandidateEmissionFact emission = source.allowedEmissionFacts().get(0);
+		List<CandidateEmissionRealization> realizations = new ArrayList<>();
+		for(int option = 0; option < options; option++)
+			realizations.add(new CandidateEmissionRealization(
+				PlacementIdentity.PlacementRealizationKey.nativeLineage(
+					emission.emissionState(), lineage + "-option-" + option),
+				emission.realizations().get(0).supportClauses()));
+		return new CandidateRuleFact(source.key(), source.status(), source.capability(),
+			source.shapeProof(), source.profile(), List.of(new CandidateEmissionFact(
+				emission.emissionState(), emission.executionFType(), emission.derivedFoutAction(),
+				realizations)), source.failureCode());
+	}
+
+	@Test
+	public void collidingDurableSeedOutputsKeepTheExactExplicitUnion() throws Exception {
+		CompiledHopKey sourceOwner = (CompiledHopKey)seedFixture("key",
+			new Class<?>[] {String.class}, "collision-source");
+		CompiledHopKey consumerOwner = (CompiledHopKey)seedFixture("key",
+			new Class<?>[] {String.class}, "collision-consumer");
+		DurableAnchorKey firstPool = new DurableAnchorKey("collision-seed-a", FType.ROW,
+			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(4L, 1L))));
+		DurableAnchorKey secondPool = new DurableAnchorKey("collision-seed-b", FType.ROW,
+			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(4L, 2L))));
+		CandidateRuleFact firstSource = (CandidateRuleFact)seedFixture("nativeFact",
+			new Class<?>[] {CompiledHopKey.class, String.class, DurableAnchorKey.class, int.class},
+			sourceOwner, "collision-source-a", firstPool, 1);
+		CandidateRuleFact secondSource = (CandidateRuleFact)seedFixture("nativeFact",
+			new Class<?>[] {CompiledHopKey.class, String.class, DurableAnchorKey.class, int.class},
+			sourceOwner, "collision-source-b", secondPool, 1);
+		CandidateEmissionFact sourceEmission = new CandidateEmissionFact(
+			NATIVE_EMISSION, FType.ROW, null, List.of(
+				firstSource.allowedEmissionFacts().get(0).realizations().get(0),
+				secondSource.allowedEmissionFacts().get(0).realizations().get(0)));
+		CandidateRuleFact source = new CandidateRuleFact(firstSource.key(), firstSource.status(),
+			firstSource.capability(), firstSource.shapeProof(), firstSource.profile(),
+			List.of(sourceEmission), firstSource.failureCode());
+		CandidateRuleKey consumerRule = new CandidateRuleKey(consumerOwner,
+			List.of(CandidateInputState.present(FType.ROW)));
+		CandidateEmissionRealization staging = CandidateEmissionRealization.nativeLineage(
+			NATIVE_EMISSION, "collision-consumer", List.of(), List.of());
+		CandidateRuleFact consumer = (CandidateRuleFact)seedFixture("fact",
+			new Class<?>[] {CandidateRuleKey.class, CandidateEmissionRealization.class},
+			consumerRule, staging);
+		List<CandidateRuleFact> inventory = List.of(source, consumer);
+		List<Object> nodes = List.of(
+			seedFixture("node", new Class<?>[] {CompiledHopKey.class, List.class},
+				sourceOwner, List.of()),
+			seedFixture("node", new Class<?>[] {CompiledHopKey.class, List.class},
+				consumerOwner, List.of()));
+		List<CompiledInputEdgeFact> edges = List.of(
+			new CompiledInputEdgeFact(sourceOwner, consumerOwner, 0));
+		DataOp sourceHop = new DataOp("collision-source", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "collision-source", 8, 2, 16, 1000);
+		UnaryOp consumerHop = new UnaryOp("collision-consumer", DataType.MATRIX,
+			ValueType.FP64, OpOp1.LOG, sourceHop);
+		Map<CompiledHopKey,Hop> origins = new IdentityHashMap<>();
+		origins.put(sourceOwner, sourceHop);
+		origins.put(consumerOwner, consumerHop);
+		Map<Hop,NodeShapeFact> shapes = new IdentityHashMap<>();
+		shapes.put(sourceHop, new NodeShapeFact(DataType.MATRIX, 8, 2));
+		shapes.put(consumerHop, new NodeShapeFact(DataType.MATRIX, 8, 2));
+		Method indexBuilder = PlacementRelationClosure.class.getDeclaredMethod("directBindingIndex",
+			List.class, List.class, List.class, List.class, Map.class, Map.class);
+		indexBuilder.setAccessible(true);
+		Object index = indexBuilder.invoke(null, inventory, nodes, edges,
+			inventory, origins, shapes);
+		@SuppressWarnings("unchecked")
+		Map<CompiledHopKey,NeutralPlacementGraph.Node> nodesByKey =
+			(Map<CompiledHopKey,NeutralPlacementGraph.Node>)nodes.stream()
+				.map(NeutralPlacementGraph.Node.class::cast)
+				.collect(java.util.stream.Collectors.toMap(NeutralPlacementGraph.Node::key,
+					node -> node, (left, right) -> right, IdentityHashMap::new));
+		NativePlacementContinuity continuity = new NativePlacementContinuity(
+			nodesByKey, origins, inventory, edges, Map.of());
+		DurableAnchorKey collisionOutput = new DurableAnchorKey(
+			"native-output:" + consumerOwner.normalizedSignature(), FType.ROW,
+			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(4L, 2L))));
+		CandidateEmissionFact baseEmission = consumer.allowedEmissionFacts().get(0);
+		CandidateRealizationReference queryOutput = new CandidateRealizationReference(
+			consumer.key(), PlacementIdentity.PlacementRealizationKey.durable(
+				baseEmission.emissionState(), collisionOutput));
+		for(DurableAnchorKey seed : List.of(firstPool, secondPool)) {
+			NativePlacementContinuity.CandidateSupportResult query =
+				continuity.proveGeneratedCandidateSupport(
+					consumer, baseEmission, queryOutput, seed);
+			Assert.assertNotNull("colliding seed query must retain its factored product",
+				query.supportProduct());
+			Assert.assertEquals(2, query.supportProduct().size());
+		}
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementRelationClosure closure = new PlacementRelationClosure(null, null, metrics, false,
+			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
+		Method bind = PlacementRelationClosure.class.getDeclaredMethod(
+			"bindDirectNativeCandidateRealizationsWithDependenciesMeasured", index.getClass(),
+			List.class, Map.class, Map.class, NativePlacementContinuity.class, Set.class);
+		bind.setAccessible(true);
+		Set<CompiledHopKey> dirty = Collections.newSetFromMap(new IdentityHashMap<>());
+		dirty.add(consumerOwner);
+		CandidateRuleFact actualFact = boundFacts(bind.invoke(closure, index, List.of(consumer),
+			origins, shapes, continuity, dirty)).get(0);
+		CandidateEmissionFact actual = actualFact.allowedEmissionFacts().get(0);
+		Assert.assertTrue("same durable output authority must take the exact fallback",
+			actual.realizations().stream().noneMatch(realization ->
+				realization.nativeContinuitySupportProduct().isPresent()));
+		Assert.assertEquals(1, actual.realizations().size());
+		CandidateEmissionRealization actualRealization = actual.realizations().get(0);
+		Assert.assertEquals(PlacementIdentity.PlacementLayoutKind.DURABLE_MAP,
+			actualRealization.key().layoutKind());
+		Assert.assertTrue(actualRealization.supportClauses().size() >= 2);
+		Assert.assertTrue("colliding products must consume exact proof members",
+			directMetric(metrics, "PROOFS_CONSUMED") > 0);
+		SearchSpaceMetrics.NativePublicationCount collision = metrics.nativePublicationSnapshot().stream()
+			.filter(row -> row.outcome() == SearchSpaceMetrics.NativePublicationOutcome.OUTPUT_COLLISION)
+			.findFirst().orElseThrow();
+		Assert.assertEquals(2, collision.queries());
+		Assert.assertEquals(4, collision.logicalProofs());
+		Assert.assertEquals(4, collision.consumedProofs());
+
+		CandidateRealizationReference output = new CandidateRealizationReference(
+			consumer.key(), actualRealization.key());
+		PlacementRelationClosure referenceClosure = new PlacementRelationClosure(null, null,
+			new SearchSpaceMetrics(), false,
+			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
+		List<CandidateEmissionRealization> explicit = new java.util.ArrayList<>();
+		for(DurableAnchorKey seed : List.of(firstPool, secondPool))
+			for(NativeContinuityProof proof : continuity.proveGeneratedCandidateAlternatives(
+				consumer, baseEmission, output, seed))
+				explicit.add(referencePublication(referenceClosure, proof, consumerOwner,
+					baseEmission.emissionState(), actualRealization.anchor(),
+					"explicit-collision-reference", true));
+		CandidateEmissionFact reference = new CandidateEmissionFact(baseEmission.emissionState(),
+			baseEmission.executionFType(), baseEmission.derivedFoutAction(), explicit);
+		Assert.assertEquals("collision fallback preserves canonical proof/source authority",
+			reference.realizations(), actual.realizations());
 	}
 
 	private static CandidateEmissionRealization retained(CompiledHopKey owner,

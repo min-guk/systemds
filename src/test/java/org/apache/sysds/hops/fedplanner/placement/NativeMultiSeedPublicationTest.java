@@ -5,6 +5,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -184,7 +185,7 @@ public class NativeMultiSeedPublicationTest {
 	}
 
 	@Test
-	public void knownOutputShapeKeepsExactMultiSeedsOnDurableScalarPath()
+	public void knownOutputShapePublishesCompressedDurableProductsWithExactProofs()
 		throws Exception {
 		CompiledHopKey sourceOwner = fixtureKey("durable-collision-source");
 		CompiledHopKey consumerOwner = fixtureKey("durable-collision-consumer");
@@ -205,15 +206,16 @@ public class NativeMultiSeedPublicationTest {
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		PlacementRelationClosure closure = new PlacementRelationClosure(
 			null, null, metrics, false, PrivacyEvidenceMode.NONE, false);
+		Map<SeedSourceProof,PlacementProofKey> expectedProofs = new LinkedHashMap<>();
 		CandidateRuleFact rebound = bind(closure, source, consumer, sourceHop, consumerHop,
 			Map.of(firstPool, 2, secondPool, 2),
-			new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2));
+			new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, 8, 2), expectedProofs);
 
 		List<CandidateEmissionRealization> durable = realizations(rebound).stream()
 			.filter(realization -> realization.key().layoutKind()
 				== PlacementIdentity.PlacementLayoutKind.DURABLE_MAP).toList();
 		Assert.assertEquals("each worker layout must retain a durable output", 2, durable.size());
-		Assert.assertTrue(durable.stream().noneMatch(realization ->
+		Assert.assertTrue(durable.stream().allMatch(realization ->
 			realization.supportClauses() instanceof NativeContinuitySupportClauses));
 		Assert.assertEquals("the durable path must retain every exact seed proof", 4,
 			durable.stream().mapToInt(realization -> realization.supportClauses().size()).sum());
@@ -221,40 +223,50 @@ public class NativeMultiSeedPublicationTest {
 			durable.stream().flatMap(realization -> realization.supportClauses().stream())
 				.map(clause -> clause.inputBindings().get(0).source().realization())
 				.collect(java.util.stream.Collectors.toSet()));
-		Map<PlacementIdentity.PlacementRealizationKey,DurableAnchorKey> seedBySource = Map.of(
-			variants.get(0).key(), firstPool, variants.get(1).key(), firstPool,
-			variants.get(2).key(), secondPool, variants.get(3).key(), secondPool);
-		for(CandidateEmissionRealization realization : durable)
+		Set<SeedSourceProof> actualAuthority = new java.util.HashSet<>();
+		for(CandidateEmissionRealization realization : durable) {
+			NativeContinuitySupportClauses relation =
+				(NativeContinuitySupportClauses)realization.supportClauses();
 			for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 				CandidateRealizationInputBinding binding = clause.inputBindings().get(0);
-				DurableAnchorKey seed = seedBySource.get(binding.source().realization());
-				NativePlacementContinuity.NativeContinuityProof expectedProof =
-					new NativePlacementContinuity.NativeContinuityProof(seed,
-						durableOutput(seed, consumerOwner), true, List.of(binding));
+				SeedSourceProof authority = new SeedSourceProof(
+					relation.product().externalSeed(), binding.source().realization());
+				actualAuthority.add(authority);
 				Assert.assertEquals("each durable receipt must retain its exact seed/source proof",
-					List.of(expectedProof.continuityProofKey(consumerOwner)),
+					List.of(expectedProofs.get(authority)),
 					clause.proofDependencies());
 			}
-		SearchSpaceMetrics.NativePublicationCount rejected = metrics.nativePublicationSnapshot().stream()
-			.filter(row -> row.outcome() == SearchSpaceMetrics.NativePublicationOutcome.DURABLE_OUTPUT)
+		}
+		Assert.assertEquals(expectedProofs.keySet(), actualAuthority);
+		SearchSpaceMetrics.NativePublicationCount published = metrics.nativePublicationSnapshot().stream()
+			.filter(row -> row.outcome() == SearchSpaceMetrics.NativePublicationOutcome.PUBLISHED)
 			.findFirst().orElseThrow();
-		Assert.assertEquals(2, rejected.queries());
-		Assert.assertEquals(4, rejected.logicalProofs());
-		Assert.assertEquals("durable product rejection must consume every scalar proof",
-			4, rejected.consumedProofs());
+		Assert.assertEquals(2, published.queries());
+		Assert.assertEquals(4, published.logicalProofs());
+		Assert.assertEquals("compressed durable products must not consume scalar proofs",
+			0, published.consumedProofs());
 	}
 
 	private static CandidateRuleFact bind(PlacementRelationClosure closure,
 		CandidateRuleFact source, CandidateRuleFact consumer, DataOp sourceHop,
 		UnaryOp consumerHop, Map<DurableAnchorKey,Integer> expectedProductWidths) throws Exception {
 		return bind(closure, source, consumer, sourceHop, consumerHop, expectedProductWidths,
-			new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, -1, -1));
+			new PlacementAnalysis.NodeShapeFact(DataType.MATRIX, -1, -1), null);
 	}
 
 	private static CandidateRuleFact bind(PlacementRelationClosure closure,
 		CandidateRuleFact source, CandidateRuleFact consumer, DataOp sourceHop,
 		UnaryOp consumerHop, Map<DurableAnchorKey,Integer> expectedProductWidths,
 		PlacementAnalysis.NodeShapeFact consumerShape) throws Exception {
+		return bind(closure, source, consumer, sourceHop, consumerHop, expectedProductWidths,
+			consumerShape, null);
+	}
+
+	private static CandidateRuleFact bind(PlacementRelationClosure closure,
+		CandidateRuleFact source, CandidateRuleFact consumer, DataOp sourceHop,
+		UnaryOp consumerHop, Map<DurableAnchorKey,Integer> expectedProductWidths,
+		PlacementAnalysis.NodeShapeFact consumerShape,
+		Map<SeedSourceProof,PlacementProofKey> expectedProofs) throws Exception {
 		List<CandidateRuleFact> inventory = List.of(source, consumer);
 		List<Node> nodes = List.of(fixtureNode(source.key().parentOccurrence(), List.of()),
 			fixtureNode(consumer.key().parentOccurrence(), List.of()));
@@ -288,6 +300,16 @@ public class NativeMultiSeedPublicationTest {
 				query.supportProduct());
 			Assert.assertEquals("query product width differs from its source alternatives",
 				expected.getValue().intValue(), query.supportProduct().size());
+			if(expectedProofs != null)
+				for(NativePlacementContinuity.NativeContinuityProof proof : query.proofs()) {
+					Assert.assertEquals(1, proof.immediateBindings().size());
+					CandidateRealizationInputBinding binding = proof.immediateBindings().get(0);
+					SeedSourceProof authority = new SeedSourceProof(
+						expected.getKey(), binding.source().realization());
+					Assert.assertNull("duplicate generated seed/source proof authority",
+						expectedProofs.put(authority, proof.continuityProofKey(
+							consumer.key().parentOccurrence())));
+				}
 		}
 		Method bind = PlacementRelationClosure.class.getDeclaredMethod(
 			"bindDirectNativeCandidateRealizationsWithDependenciesMeasured", index.getClass(),
@@ -451,8 +473,7 @@ public class NativeMultiSeedPublicationTest {
 			List.of(new AnchorPartition(worker, List.of(0L, 0L), List.of(8L, 2L))));
 	}
 
-	private static DurableAnchorKey durableOutput(DurableAnchorKey seed, CompiledHopKey owner) {
-		return new DurableAnchorKey("native-output:" + owner.normalizedSignature(), FType.ROW,
-			seed.partitions());
-	}
+
+	private record SeedSourceProof(DurableAnchorKey seed,
+		PlacementIdentity.PlacementRealizationKey source) { }
 }

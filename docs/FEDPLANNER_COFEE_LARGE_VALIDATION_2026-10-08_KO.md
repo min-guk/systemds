@@ -2,7 +2,24 @@
 
 ## 상태
 
-최신 완료 v12(`95ed3daeb2`, JAR `3ee4db4e…`)의 전체 최초 planning은 LogReg **402.506716391초**, GLM **137.753315043초**다. 각1회이며 **20초 미달**이다. Numeric/raw-output 비교와 runtime audit mismatch0은 통과했다. LogReg 선택 fingerprint는 이전과 같지만, **GLM 선택 fingerprint는 `ebf0cc31…`에서 `113d2d19…`로 달라져 버전 간 계획 동등성은 미검증/불일치 상태**다. Analysis fingerprint는 같다. 공개 receipt/log에 objective raw bits와 cost fingerprint가 없어 동일 비용이라고 추정하지 않는다. DP conditional conditioning 단독v11 분리 실행과 코드 검토로 원인을 확인한다.
+최신 완료 v14(`592818109f`, JAR `d6f68baa…`)의 전체 최초 planning은 LogReg **371.222976558초**, GLM **136.946062790초**다. 같은 COFEE50K×128 W1 조건이며 각1회다. v12 대비 LogReg31.284초(7.77%) 줄었지만 GLM은0.807초 감소에 그쳤다. **20초 목표는 미달**이며 반복 측정으로 확인한 개선율은 아니다. 숫자 결과/raw hash와 runtime audit는 모두PASS다.
+
+| v14 관측 | LogReg | GLM |
+|---|---:|---:|
+| 전체 최초 planning | 371.222976558초 | 136.946062790초 |
+| Analysis | 280.217789505초 | 92.296초 |
+| Optimizer | 77.604초 | 26.801초 |
+| 실제 batch graph 재사용 | 92,253 | 72,302 |
+| proof graph 계산 | 89,904 | 25,947 |
+| Explicit Clause 생성 | 2,478,691 | 1,124,873 |
+
+작업량 감소와 비용의 위치를 구분한다. LogReg Analysis는v12보다38.986초 감소했으나optimizer는7.928초 증가했다. GLM graph 계산은46,685→25,947로44.4% 줄었는데전체시간은거의같다. 압축·재사용적용만으로후속방문과전개비용이사라지지않는다.
+
+**GLM 선택·비용 동등성은 분리 검증을 통과했다.** 동일 probe로 v11·v14를 다시 실행해 canonical candidate receipt1,129개 전체와6개 선택 section 해시가 모두 같음을 확인했다. 선택 비용 raw bits는둘다`4655470428781502442`이고 assignment와maxFactorCells도같다. Aggregate plan hash 차이는 **costSurface 표현 해시만 다른 것**에서 발생했다. Numeric/raw-output/runtime audit도PASS다. 이 추가 검증은planning timer 종료후committed result에서추출했으며,추가receipt생성의메모리를이전probe의peak와직접비교하지않는다. 근거`evidence/cofee-50k128-v14-receipt-parity/receipt-parity-v11-v14.json`, SHA`6ac15002b0c5fce79f1b74d2a8803d5f9934f60f7e49135566fb73bf48d16537`. 전체cost surface의모든cell을실제GLM에서열거한검증은아니며선택비용과선택authority의동등성이다.
+
+v13 LogReg은402.155507465초로v12와차이가작았고, v13 GLM은후속v14검증을우선해실행하지않았다. 아래는v12 및이전기록이다.
+
+이전 완료 v12(`95ed3daeb2`, JAR `3ee4db4e…`)의 전체 최초 planning은 LogReg **402.506716391초**, GLM **137.753315043초**다. 각1회이며 **20초 미달**이다. Numeric/raw-output 비교와 runtime audit mismatch0은 통과했다. LogReg 선택 fingerprint는 이전과 같지만, **GLM aggregate fingerprint는 `ebf0cc31…`에서 `113d2d19…`로 달라져 certificate와 선택 필드의 분리 검증이 필요**다. Analysis fingerprint는 같다. 공개 receipt/log에 objective raw bits와 cost fingerprint가 없어 동일 비용이라고 추정하지 않는다. DP conditional conditioning 단독v11 분리 실행과 코드 검토로 원인을 확인한다.
 
 | v12 관측 | LogReg | GLM |
 |---|---:|---:|
@@ -352,3 +369,9 @@ Frozen v2 engine을 보존하고 별도 `engine-integration-v3`에서 다음 두
 새 candidate LogReg runtime attempt `01791495720953163961-b7761e40`를 시작했다. Campaign은 `evidence/cofee-50k128-merged-hotspot-validation/candidate-logreg-first-v2`이며 coordinator so007/worker so006,24GiB/16GiB heap/cpuset0–7/tmpfs4GiB와 고정 cost profile을 확인했다. 첫 준비 attempt는 wrapper의 dependency symlink 누락으로 probe compile 단계에서 실패했으며 container나 workload가 시작되지 않았다. 경로를 수정하고301개 pinned dependency를 검증한 뒤 새 root에서 실행했다. Frozen candidate JAR는 변경하지 않았다.
 
 사용자의 최신 지시에 따라 추가 JFR·thread dump·profiling 실험을 진행하지 않고 실제 LogReg 완료 및 수치 동등성을 검증한다. 성공 후 동일 COFEE GLM 검증을 이어간다. 기존 정상 실행 로그의 단계 시간/생성량만 수집한다.
+
+### v15 Closure 및 v16 durable topology 검증
+
+v15 GLM 전체 초기 planning은 **126.728496870초**였다. Analysis86.086초, optimizer24.170초이며 v14의136.946062790초 대비10.218초 감소한 단일 관측이다. 선택 candidate receipt 전체,6개 section hash,objectiveRawBits4655470428781502442가 v11/v14와 동일하고 numeric/audit PASS다. 비용 표면의 표현 hash는 달라졌지만 선택 결과는 같다. LogReg는 실행 중이며 20초 목표는 미달이다.
+
+main52ef 병합 후 DURABLE_MAP의 압축 support를 pinned/unpinned proof 축 gate로 읽도록 확장했다. 기존 exact anchor/clause grounding과 source identity를 유지한다. Fresh compile 및 **1,091 tests PASS(155.313초)**, source hash mismatch0이며 `evidence/main52ef-durable-gates-full-green-1091`에 보존했다. 2×3 회귀 fixture는 materialized handle6→1을 확인하며 논리적 후보는 동일하다. 이 버전(v16)의 실제 workload 시간은 아직 측정하지 않았다.

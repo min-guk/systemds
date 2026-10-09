@@ -10,10 +10,13 @@ import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -24,7 +27,16 @@ import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.conf.FederatedPlannerConfiguration;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.utils.Statistics;
 
 /**
@@ -52,6 +64,8 @@ public final class MatrixCampaignProbe {
 			+ " missingPhysicalHops=(\\d+) plannedSynthetic=(\\d+) missingSynthetic=(\\d+)"
 			+ " loweringRecords=(\\d+) runtimeInstructionKinds=(\\d+) federatedDispatchKinds=(\\d+)"
 			+ " workerFragmentKinds=(\\d+) mismatches=(\\d+)$");
+	private static final Pattern OBJECTIVE_RAW_BITS = Pattern.compile(
+		"(?:^|;)(?:physical-ve|local-conflict)-objective=([0-9]+)(?=;|$)");
 
 	private MatrixCampaignProbe() {
 		// utility class
@@ -119,6 +133,7 @@ public final class MatrixCampaignProbe {
 			receipt.put("plannerRuntimeAuditSummary", audit.raw());
 			receipt.put("plannerRuntimeAudit", audit.values());
 			appendAuthorityReceipt(receipt, audit.values(), PlannerRuntimePlacementAudit.authorityGenerations());
+			appendFinalPlanEvidence(receipt, audit.values());
 			if(!receipt.get("scriptSha256").equals(fileHash(options.script()))
 				|| !receipt.get("configSha256").equals(fileHash(options.config()))
 				|| !receipt.get("effectiveCostEnvironment").equals(effectiveCostEnvironment()))
@@ -242,6 +257,119 @@ public final class MatrixCampaignProbe {
 		receipt.put("plannerAuthorityGenerations", List.copyOf(rows));
 	}
 
+	static void appendFinalPlanEvidence(Map<String,Object> receipt, Map<String,Object> audit) {
+		String finalPlan = String.valueOf(audit.get("plan"));
+		List<CommittedResult> matching = new ArrayList<>();
+		for(var entry : PlacementEmissionTransaction.receiptSnapshotForTesting().entrySet()) {
+			NormalizedPlannerResult result = PlacementEmissionTransaction.currentNormalizedResult(entry.getKey());
+			if(finalPlan.equals(entry.getValue().planHash())
+				&& finalPlan.equals(result.normalizedPlanFingerprint()))
+				matching.add(new CommittedResult(entry.getValue(), result));
+		}
+		if(matching.size() != 1)
+			throw new IllegalStateException("Expected one committed result for final audited authority "
+				+ finalPlan + ", observed " + matching.size());
+		CommittedResult committed = matching.get(0);
+		String productionHash = PlacementEmissionTransaction.canonicalPlanHash(committed.result());
+		if(!finalPlan.equals(productionHash) || !finalPlan.equals(committed.receipt().planHash()))
+			throw new IllegalStateException("Final committed result does not match audited canonical authority");
+		PlanEvidence evidence = planEvidence(committed.result());
+		if(!finalPlan.equals(evidence.reconstructedPlanFingerprint()))
+			throw new IllegalStateException("Split plan evidence does not reconstruct canonical plan hash");
+		receipt.put("analysisFingerprint", committed.result().analysisFingerprint());
+		receipt.put("objectiveCertificate", evidence.objectiveCertificate());
+		receipt.put("objectiveCertificateSha256", evidence.objectiveCertificateSha256());
+		if(evidence.objectiveRawBits() != null)
+			receipt.put("objectiveRawBits", evidence.objectiveRawBits());
+		receipt.put("selectedPlanFieldsFingerprint", evidence.selectedPlanFieldsFingerprint());
+		receipt.put("selectedPlanSectionFingerprints", evidence.sectionFingerprints());
+		receipt.put("selectedPlanSectionCounts", evidence.sectionCounts());
+		receipt.put("selectedCandidateSelections", evidence.selectedCandidateSelections());
+	}
+
+	static PlanEvidence planEvidence(NormalizedPlannerResult result) {
+		Objects.requireNonNull(result, "result");
+		PlacementAnalysis analysis = Objects.requireNonNull(result.analysis(), "result.analysis");
+		Map<CompiledHopKey,PlacementEmissionState> selected = Map.copyOf(
+			Objects.requireNonNull(result.selectedEmissionStates(), "selectedEmissionStates"));
+		List<CandidateSelectionReceipt> candidates = List.copyOf(Objects.requireNonNull(
+			result.selectedCandidateSelections(), "selectedCandidateSelections"));
+		List<RelocationChoiceReceipt> choices = List.copyOf(Objects.requireNonNull(
+			result.selectedRelocationChoices(), "selectedRelocationChoices"));
+		List<RelocationActionKey> relocations = List.copyOf(Objects.requireNonNull(
+			result.selectedRelocations(), "selectedRelocations"));
+		List<LocalMaterializationActionKey> locals = new ArrayList<>();
+		for(Object value : Objects.requireNonNull(
+			result.selectedLocalMaterializations(), "selectedLocalMaterializations")) {
+			if(!(value instanceof LocalMaterializationActionKey local))
+				throw new IllegalStateException("Selected local materialization has a foreign authority type");
+			locals.add(local);
+		}
+		StringBuilder header = new StringBuilder().append(result.plannerId()).append('\n')
+			.append(result.analysisFingerprint()).append('\n');
+		StringBuilder emissions = new StringBuilder();
+		selected.entrySet().stream().sorted(Comparator.comparing(entry ->
+			analysis.normalizedOccurrenceSignature(entry.getKey()))).forEach(entry -> emissions
+			.append(analysis.normalizedOccurrenceSignature(entry.getKey())).append('=')
+			.append(entry.getValue().placementState().normalizedSignature())
+			.append(entry.getValue().derivedFedFout() ? "|derivedFedFout=true" : "").append('\n'));
+		List<String> candidateSignatures = analysis.canonicalCandidateReceipts(candidates).stream()
+			.map(CandidateSelectionReceipt::normalizedSignature).toList();
+		StringBuilder candidateText = new StringBuilder();
+		candidateSignatures.forEach(value -> candidateText.append("CANDIDATE=").append(value).append('\n'));
+		List<RelocationChoiceReceipt> canonicalChoices = analysis.relocationOrder().canonicalChoices(choices);
+		StringBuilder choiceText = new StringBuilder();
+		canonicalChoices.forEach(value -> choiceText
+			.append("CHOICE=").append(value.normalizedSignature()).append('\n'));
+		List<RelocationActionKey> canonicalRelocations = analysis.relocationOrder().canonicalActions(relocations);
+		StringBuilder relocationText = new StringBuilder();
+		canonicalRelocations.forEach(value -> relocationText
+			.append(value.normalizedSignature()).append('\n'));
+		StringBuilder localText = new StringBuilder();
+		locals.stream().sorted(Comparator.comparing(LocalMaterializationActionKey::normalizedSignature))
+			.forEach(value -> localText.append("LOCAL=").append(value.normalizedSignature()).append('\n'));
+		List<String> shared = result.sharedSupplyLifetimes().stream().sorted().toList();
+		StringBuilder sharedText = new StringBuilder();
+		shared.forEach(value -> sharedText.append("SHARED_SUPPLY=").append(value.length())
+			.append(':').append(value).append('\n'));
+		String selectedPlanFields = header.toString() + emissions + candidateText + choiceText
+			+ relocationText + localText + sharedText;
+		String objective = Objects.requireNonNull(result.objectiveCertificate(), "objectiveCertificate");
+		Matcher rawBits = OBJECTIVE_RAW_BITS.matcher(objective);
+		Long objectiveBits = rawBits.find() ? Long.valueOf(rawBits.group(1)) : null;
+		if(rawBits.find())
+			throw new IllegalStateException("Objective certificate contains multiple raw-bit fields");
+		Map<String,String> sectionFingerprints = new LinkedHashMap<>();
+		sectionFingerprints.put("selectedEmissionStates", sha256(emissions.toString()));
+		sectionFingerprints.put("selectedCandidateSelections", sha256(candidateText.toString()));
+		sectionFingerprints.put("selectedRelocationChoices", sha256(choiceText.toString()));
+		sectionFingerprints.put("selectedRelocations", sha256(relocationText.toString()));
+		sectionFingerprints.put("selectedLocalMaterializations", sha256(localText.toString()));
+		sectionFingerprints.put("sharedSupplyLifetimes", sha256(sharedText.toString()));
+		Map<String,Integer> sectionCounts = new LinkedHashMap<>();
+		sectionCounts.put("selectedEmissionStates", selected.size());
+		sectionCounts.put("selectedCandidateSelections", candidateSignatures.size());
+		sectionCounts.put("selectedRelocationChoices", canonicalChoices.size());
+		sectionCounts.put("selectedRelocations", canonicalRelocations.size());
+		sectionCounts.put("selectedLocalMaterializations", locals.size());
+		sectionCounts.put("sharedSupplyLifetimes", shared.size());
+		return new PlanEvidence(objective, sha256(objective), objectiveBits,
+			sha256(selectedPlanFields), sha256(selectedPlanFields + objective),
+			Collections.unmodifiableMap(new LinkedHashMap<>(sectionFingerprints)),
+			Collections.unmodifiableMap(new LinkedHashMap<>(sectionCounts)),
+			candidateSignatures);
+	}
+
+	private static String sha256(String value) {
+		try {
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+				.digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+		}
+		catch(NoSuchAlgorithmException impossible) {
+			throw new IllegalStateException("JVM does not support SHA-256", impossible);
+		}
+	}
+
 	private static Map<String, Long> compilePhases() {
 		Map<String, Long> phases = new LinkedHashMap<>();
 		phases.put("parseNanos", Statistics.getCompilePhaseParseTime());
@@ -347,6 +475,14 @@ public final class MatrixCampaignProbe {
 			throw new IllegalArgumentException("Unknown mode: " + value + " (expected compile or runtime)");
 		}
 	}
+
+	private record CommittedResult(PlacementEmissionTransaction.PlacementEmissionReceipt receipt,
+		NormalizedPlannerResult result) { }
+
+	static record PlanEvidence(String objectiveCertificate, String objectiveCertificateSha256,
+		Long objectiveRawBits, String selectedPlanFieldsFingerprint,
+		String reconstructedPlanFingerprint, Map<String,String> sectionFingerprints,
+		Map<String,Integer> sectionCounts, List<String> selectedCandidateSelections) { }
 
 	private record AuditSummary(String raw, Map<String, Object> values) {
 		private long value(String key) {

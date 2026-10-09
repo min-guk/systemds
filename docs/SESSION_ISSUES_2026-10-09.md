@@ -485,6 +485,32 @@
 
 - **Durable batch 독립 review CLEAR**: generated root의empty clause dependency 생성, prospective output의emissionFType 외 anchor 미참조, non-recipe/hidden root history flag, root recurrence 및 returned root binding certificate를 별도 reviewer가 확인했다. 기존v12의GLM plan차이는별도미해결항목으로유지한다.
 
+
+### Dynamic proof 필터의 uniform product 전개 제거 (검증중)
+
+- **문제**: computeCandidateAlternatives는 exact/dynamic witness를 구한 뒤 dynamic proof 전체를 stream으로 펼친다. 연산 자체가 partition range를 재계산하거나 모든 축의 입력이static인 경우에도 product member를 생성한다.
+- **설계**: 연산이항상재계산하면전체immutable product를유지한다. 아니면 축의 source layout predicate만검사하여 모든option이static이면빈관계, 한축이모두dynamic이면전체product를반환한다. 두경우모두tuple을만들필요가없다. 나머지mixed축은기존정확한memberfilter를유지한다. Source identity/proof order/privacy판정은그대로다.
+- **검증 계획/위험**:1,000member fixture의source검사횟수를축30개이하로제한하는red,32fixed-seed mixed/empty/all조건과canonical proof/source identity를explicit필터에대조한다. Joint/sparse관계에는독립product규칙을적용하지않고기존경로를유지한다. 실제시간절감은미확인이다.
+
+
+### 多 seed / durable Closure publication의 bounded product 확장 (통합 검증중)
+
+- **변경**: 단일seed/빈retained 조건 대신 prospective output key가seed들사이에서유일하고실제output key가retained와겹치지않을때native product를직접게시한다. 동일exact product는기존authority객체를재사용한다. 단일seed DURABLE_MAP도null clause witness와durable anchor를그대로보존한다. Same-key retained/다중seed충돌은기존exact union으로돌아간다.
+- **메모리 검토 수정**: 최초patch는모든CandidateSupportResult를먼저보관해기존boundedmemo밖의큰결과수명을늘릴수있었다. 통합전거절하고작은requestmetadata와prospectivekey count만미리보관하도록수정했다. 각seed의support는이전처럼prove→consume순서로즉시처리한다. 최종원격lane56testsPASS. Root는중복phase계측블록을제거하고한seed당기존consumption범위를유지했다.
+- **검증/한계**: single durable,disjoint retained+newseed,retained identityreuse,sourcewithdrawal,andcollidingdurable의explicit proof/source canonical parity를실제bind경로에서검사한다. 개별제품이불가능한요청과실제key가겹치는예외는최종canonicalization의exact union을이용하므로전개될수있다. Native topology의durable fallback과Physical Alternative전개는여전히남는다. 새Physicalselectedreceipt전용회귀는추가검증대상이다.
+
+
+### Resume: 실제 workload 및 Closure 전체 회귀 (진행중)
+
+- **실측**: 변경 없는 COFEE 50K×128 W1 v14(`592818109f`) LogReg 전체 최초 planning371.222976558초, Analysis280.217789505초다. v12 대비 전체31.284초/Analysis38.986초 줄었지만 optimizer는 약7.928초 늘었다. GLM은136.946062790초로v12보다0.807초 감소에 그쳤다. 각1회 관측이며 반복 성능 보장은 아니다. 숫자/raw-output/runtime audit는 모두PASS,20초 목표는 미달이다.
+- **계획 해시 분리**: v11 conditional-only GLM126.740130738초는v10과같은ebf0cc31…해시다. v12/v14는113d2d19…다. 다만 canonicalPlanHash는 선택뿐 아니라 objectiveCertificate(cost surface fingerprint, objective bits, assignment 인덱스, maxFactorCells)도 포함한다. 독립 비교에서v11/v12의6,824 lowering 및278 FED dispatch 의미 필드 multiset은동일했다. 따라서 해시 차이를 실행 계획 회귀로 단정하지 않는다. Objective raw bits와 canonical selected receipt는 아직 분리 검증이 필요하다. 증거 `evidence/generated-batch-v11-v12-semantic-audit/audit.json`.
+- **회귀 실패 보존**: Closure+dynamic filter의1,071 전체 테스트 중2개 실패했다(`evidence/closure-dynamic-full-red-1071`). 기존 모델 구조 및 비용 raw bits digest는 통과했으나 durable singleton의 새 relation encoding이 protected fingerprint를 바꿨고, 실제 explicit intern 수136과 logical receipt slot137이 달랐다. 합법성이나 비용을 바꾼 근거는 없지만 기대 hash/counter를 덮어쓰지 않는다.
+- **수정**: 새 singleton product는 Cartesian 감소가 없어 기존 exact clause 경로로 보낸다. 기존 single-seed/empty-retained NATIVE_LINEAGE product는 유지한다. Multi-member product의 source/action/proof와 계수 의미는 그대로다. 두 원래 실패는35개 focused run에서 통과했고, 새 singleton fixture만 product를 강제 기대해 실패했다(`closure-singleton-guard-fixture-red-35`). 이 fixture를singleton exact와3옵션 durable product로 나누어 기존 binding/source canonical parity를 함께 검증한다.
+- **추가 검증**: 새 DURABLE Physical test는0→6 member의 의도된 exact fallback, 모든 강제 member의 raw 비용·receipt·source/proof, Local/Exact 선택 및 shared lifetime을 비교한다. Native relation을명시적으로복사한reference이므로독립 generation oracle로 과장하지 않는다. 서로다른receipt의동일비용row가있지만unforced optimum 자체의tie를입증한것은아니다. 독립 review CLEAR.
+- **잔여/위험**: exact+dynamic proof의혼합 병합, durable proof topology 및 Physical member 전개는남는다. 새 회귀가모두통과하기전에는현재미커밋후보를게시하지않는다. 기존 golden fingerprint/cost model/privacy/runtime 규칙은변경하지않는다.
+
+- **Closure 최종 gate**: singleton exact/3옵션 durable fixture 및 새로운 Physical 회귀 포함 fresh main/test compile **1,073PASS(178.238초)**,source SHA mismatch0. 증거 `evidence/closure-dynamic-full-green-1073`. 기존 protected cost fingerprint/구조/raw bits와 실제 explicit계수의기대값을변경하지않고통과했다. 새post-timer receipt probe는독립compile및9testsPASS이며planner/runtime/timer규칙은바꾸지않는다. 추가gate확장은이봉인본에포함하지않는다.
+
 ### v27 / durable batch 원격 후속 통합 (검증 완료)
 
 - **문제/해결**: fetch에서 원격 `592818109f7b`가 추가되어 다시3-way 병합했다. 바로 앞의 'Generated batch의 durable proposal 적용 범위 확장'은 **원격 분기의 역사 기록**이며, 현재 채택한 no-alias batch는 이미 layout에 무관한 동일 recipe/certificate를 검증한다. 이번 통합은 production diff가0이며 원격5개 durable/mixed/witness/history/eviction 테스트와 문서만 추가했다.
@@ -525,3 +551,19 @@
 - **별도 old/new semantic 대조**: 같은3wave fixture의전체expanded emission normalized text를old/new Closure에서각metricsOFF/ON으로실행했다.6개결과가byte-identical이며`v30-semantic-parity.diff`는0bytes이다. Repository회귀의retainedproduct/object및oldclauseidentity검사와함께사용한다. Shape-knownDURABLE·staging-only同key·withdraw/restore 경계보강후전체gate를진행한다.
 - **v30 경계 회귀 수정/검증**: 첫 known-shape fixture는같은worker의2/7column source를같은8×2노드에결합하여ROWwitness가두query각4member를선택했다(38tests/1fixturefailure). Production을바꾸지않고shape-consistent8×2의서로다른worker두seed로수정했다. Withdrawal pruning이Bproduct2→1을실제로줄이고A/Cauthority를그대로유지하는지검사한다. 수정전/후3wave metricsOFF/ON6개expandedsemantic행diff0,38focused PASS를확인했다. 마지막proofkey보강도동일focusedgate로검증한다.
 - **새 원격 통합 결정**: fetch에서origin/main89c017a094의disjointnative/durableproduct게시·uniformdynamicfilter·durableaxisgate를확인했다. 자체StageA와겹치므로독립후보의heavybuild/Docker를중복수행하지않고focused검증본을localcheckpoint한뒤통합한다. Incoming의singletonlegacyencoding 및collisionfallback을유지하고groundedkey조회는기존map인덱스를사용한다. 통합fresh전체회귀후에만push/봉인/실측한다. 현재20초미달상태는변하지않는다.
+
+
+### Main52ef 병합 및 durable topology 확장 (검증중)
+
+- **병합**: incoming no-alias GeneratedSupportBatch와canonical environment axes miss-only생성을보존했다. 로컬streaming Closure와uniform proof필터를합치고publication계측이각요청/실제proof소비를정확히한번기록하도록갱신했다. 새fallback 이유SINGLETON_OUTPUT/OUTPUT_COLLISION을분리한다. 이전MULTI_SEED/DURABLE_OUTPUT enum은기록호환성용으로남지만새fastpath의거절사유로사용하지않는다.
+- **검증**: source/proof/cache/계측 partition에대한독립reviewCLEAR, freshfocused201PASS(40.233초,기존ignored1). 전체회귀는다음durable topology공통코드통합후수행한다. 로컬7abfe9700a는1,073PASS엔진v15로보존하여병합후코드와실측을혼합하지않는다.
+- **후속설계**: DURABLE_MAP의압축support도pinned/unpinned AND/OR축gate로소비한다. Direct grounding은기존anchor match ORclause witness match를그대로유지한다. Fixed owner pin,같은source owner,반복입력위치,mixed/derived/VALUE_MAP 경로는기존fallback이다. 독립156tests 및별도reviewCLEAR. 실제전개감소/시간은병합실측전미확인이다.
+
+- **GLM 해시 차이 해결**: 같은post-timer probe의v11/v14 실제실행에서objectiveRawBits4655470428781502442, assignment,maxFactorCells,selectedPlanFieldsFingerprint 및6개section해시가모두동일했다. Canonical candidate receipt1,129개문자열도정확히같다. Aggregate planhash차이는costSurface representation hash만다른데서발생했다. Numeric/raw/auditPASS. 실제모든비선택cost cell동등성을열거했다는주장은하지않는다. 증거`receipt-parity-v11-v14.json` SHA6ac15002b0c5fce79f1b74d2a8803d5f9934f60f7e49135566fb73bf48d16537. 이결과로이전실행선택회귀의심은해소했다.
+
+- **Durable topology 최종 gate**: DURABLE_MAP의 pinned/unpinned 축 gate를 통합한 fresh main/test compile 및 전체 FedPlanner 회귀 **1,091 tests PASS(155.313초)**, source SHA mismatch 0. 증거 `evidence/main52ef-durable-gates-full-green-1091`. 정확한 anchor/clause grounding, source withdrawal, 동적 proof 및 source identity를 보존하면서 2×3 fixture의 materialized handle을 6→1로 줄였다. 합법 후보 수를 줄였다는 의미는 아니다. 최신 main 병합을 포함한 v16 엔진으로 별도 봉인하며 실제 workload 효과는 아직 측정 전이다.
+- **v15 실제 GLM**: 전체 초기 planning **126.728496870초**, Analysis86.086초, optimizer24.170초. v11/v14와 선택 receipt 전체·6개 section·objectiveRawBits4655470428781502442가 동일하고 numeric/audit PASS다. v14 대비 약10.218초 감소한 단일 관측이며 20초에는 미달한다. 이 v15는 main52ef 병합 및 durable topology gate 전 엔진이므로 최신 변경의 효과로 귀속하지 않는다. LogReg 실행을 계속한다.
+- **통합 전 마지막 fixture 보강의 실패 보존**:38PASS 뒤추가한durable proofkey검사가publishedoutputanchor를proofoutputwitness로잘못사용해38tests/1failure였다(`v30-frozen-focused-test.log`). Localcheckpoint8751746e1f는이마지막test실패를포함하므로게시gate통과본으로간주하지않는다. 정확한trustedquery proof의native-proof-output witness를대조하도록test만수정한다.
+- **병합 정적 검토**: origin89c의전체production을보존하고retained.stream membership만기존prior(nonempty) ORnativeProducts map조회로치환했다. IndependentCLEAR. Incoming collision회귀는source literalanchors의zero-binding proof때문에product분기를실제통과하지않을수있어, productnonnull/width/OUTPUT_COLLISION계수선행검증을보강한다. Requestprecollection으로live요청수는분류수보다wholebatch만큼앞설수있고completedpass에서만partition을검증한다.
+- **회귀/검토 정정 및 통합 focused gate**: exactsource receipt가존재하면node-direct-ground대안은emptybinding을추가하지않으므로incomingcollisionfixture가반드시무효였다는초기가설은철회한다. 다만guard비공허성을명시적으로고정하는querywidth2·OUTPUT_COLLISION2/4/4 및fullunionparity보강은유지한다. Durablepositive도trustedquery별proof와2published/4logical/0scalar를검사한다. Frozen merged7suites **172testsPASS(4.218초,기존ignore1)**, independentfinalstaticCLEAR. 이어140class freshpackage를수행한다.
+- **v30 통합 최종 gate**: fresh140class package **1,185 selected tests/failure0/error0/skip1**, BUILD SUCCESS06:29:49. 독립production/testCLEAR 및172focusedPASS와함께확인했다. Full build와동시실행한첫semanticprobe는target/classes재생성중classnotfound로실패했으므로그빈diff파일을무효증거로분리했다. Build종료후재실행한old/merged3wave metricsOFF/ON6행은byte-identical(`v30-merged-semantic-parity.diff`0bytes). 기존supplementalExact/PCA제한은선택gate성공에포함하지않는다. 이소스만candidate-v30으로봉인하여동일Docker60초조건으로측정한다.

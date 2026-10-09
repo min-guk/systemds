@@ -4156,6 +4156,177 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void durableNativeRectanglesUseAxisGatesWithLegacyGroundingParity() {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "durable-gate-worker:8001", 0, 50);
+		DurableAnchorKey otherPool = anchor(FType.FULL, "durable-gate-other:8002", 0, 50);
+		Ref seed = full.source("durable-gate-seed", pool);
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Ref left = full.unary("durable-gate-left", OpOp1.LOG, seed, false);
+		Ref right = full.unary("durable-gate-right", OpOp1.LOG, seed, false);
+		full.samePoolRealizations(left, unary,
+			new DurableAnchorKey("durable-left-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("durable-left-b", FType.FULL, pool.partitions()));
+		full.samePoolRealizations(right, unary,
+			new DurableAnchorKey("durable-right-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("durable-right-b", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("durable-right-c", FType.FULL, pool.partitions()));
+		Ref consumer = full.binary("durable-gate-consumer", OpOp2.PLUS, left, right, false);
+		List<CandidateInputState> binary = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+		NativePlacementContinuity.NativeSupportProduct product = full.resolver()
+			.proveCandidateSupport(full.reference(consumer, binary), pool).supportProduct();
+		Assert.assertNotNull(product);
+		Assert.assertEquals(6, product.size());
+
+		for(DurableGroundingCase grounding : List.of(
+			new DurableGroundingCase("exact-anchor", pool, true),
+			new DurableGroundingCase("dynamic-anchor", pool, false),
+			new DurableGroundingCase("exact-mismatch", otherPool, true),
+			new DurableGroundingCase("dynamic-mismatch", otherPool, false))) {
+			NativePlacementContinuity.NativeSupportProduct caseProduct = grounding.productExact()
+				? product : NativePlacementContinuity.NativeSupportProduct.tryCreate(
+					pool, pool, false, product.axes());
+			Assert.assertNotNull(caseProduct);
+			NativeContinuitySupportClauses explicitRelation = new NativeContinuitySupportClauses(
+				consumer.key, caseProduct, null, true);
+			CandidateRealizationReference explicitReference = replaceWithDurableRelation(
+				full, consumer, binary, grounding.anchor(), List.copyOf(explicitRelation));
+			SearchSpaceMetrics explicitMetrics = new SearchSpaceMetrics();
+			NativePlacementContinuity.CandidateSupportResult explicit = full.resolver(explicitMetrics, 0, 0)
+				.proveCandidateSupport(explicitReference, pool);
+
+			NativeContinuitySupportClauses relation = new NativeContinuitySupportClauses(
+				consumer.key, caseProduct, null, true);
+			CandidateRealizationReference reference = replaceWithDurableRelation(
+				full, consumer, binary, grounding.anchor(), relation);
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity.CandidateSupportResult actual = full.resolver(metrics, 0, 0)
+				.proveCandidateSupport(reference, pool);
+
+			Assert.assertEquals(PlacementIdentity.PlacementLayoutKind.DURABLE_MAP,
+				reference.realization().layoutKind());
+			Assert.assertEquals("ordered durable proof parity for " + grounding.name(),
+				explicit.proofs().stream().map(
+					NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+				actual.proofs().stream().map(
+					NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+			assertIdentitySetEquals(explicit.dependencyOccurrences(), actual.dependencyOccurrences());
+			Assert.assertEquals("durable gate materializes one authoritative member for "
+				+ grounding.name(), 1, relation.materializedHandleCount());
+			if(grounding.name().endsWith("mismatch"))
+				Assert.assertTrue("durable gate reduces dependency edges for " + grounding.name(),
+					metrics.snapshot().proofDependencyEdgesBuilt()
+						< explicitMetrics.snapshot().proofDependencyEdgesBuilt());
+		}
+
+		full.candidates.removeIf(candidate -> candidate.key().parentOccurrence() == left.key);
+		NativeContinuitySupportClauses withdrawnExplicit = new NativeContinuitySupportClauses(
+			consumer.key, product, null, true);
+		CandidateRealizationReference explicitReference = replaceWithDurableRelation(
+			full, consumer, binary, otherPool, List.copyOf(withdrawnExplicit));
+		NativePlacementContinuity.CandidateSupportResult explicit = full.resolver()
+			.proveCandidateSupport(explicitReference, pool);
+		NativeContinuitySupportClauses withdrawn = new NativeContinuitySupportClauses(
+			consumer.key, product, null, true);
+		CandidateRealizationReference reference = replaceWithDurableRelation(
+			full, consumer, binary, otherPool, withdrawn);
+		NativePlacementContinuity.CandidateSupportResult actual = full.resolver()
+			.proveCandidateSupport(reference, pool);
+		Assert.assertTrue(explicit.proofs().isEmpty());
+		Assert.assertEquals(explicit.proofs(), actual.proofs());
+		assertIdentitySetEquals(explicit.dependencyOccurrences(), actual.dependencyOccurrences());
+		Assert.assertEquals(1, withdrawn.materializedHandleCount());
+
+		NativeContinuitySupportClauses groundedExplicit = new NativeContinuitySupportClauses(
+			consumer.key, product, null, true);
+		explicitReference = replaceWithDurableRelation(
+			full, consumer, binary, pool, List.copyOf(groundedExplicit));
+		explicit = full.resolver().proveCandidateSupport(explicitReference, pool);
+		NativeContinuitySupportClauses grounded = new NativeContinuitySupportClauses(
+			consumer.key, product, null, true);
+		reference = replaceWithDurableRelation(full, consumer, binary, pool, grounded);
+		actual = full.resolver().proveCandidateSupport(reference, pool);
+		Assert.assertEquals(explicit.proofs().stream().map(
+			NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+			actual.proofs().stream().map(
+				NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+		assertIdentitySetEquals(explicit.dependencyOccurrences(), actual.dependencyOccurrences());
+		Assert.assertEquals(1, grounded.materializedHandleCount());
+	}
+
+	@Test
+	public void generatedOuterUsesUnpinnedDurableNativeAxisGates() {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "durable-outer-worker:8001", 0, 50);
+		Ref seed = full.source("durable-outer-seed", pool);
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Ref left = full.unary("durable-outer-left", OpOp1.LOG, seed, false);
+		Ref right = full.unary("durable-outer-right", OpOp1.LOG, seed, false);
+		full.samePoolRealizations(left, unary,
+			new DurableAnchorKey("durable-outer-left-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("durable-outer-left-b", FType.FULL, pool.partitions()));
+		full.samePoolRealizations(right, unary,
+			new DurableAnchorKey("durable-outer-right-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("durable-outer-right-b", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("durable-outer-right-c", FType.FULL, pool.partitions()));
+		Ref child = full.binary("durable-outer-child", OpOp2.PLUS, left, right, false);
+		List<CandidateInputState> binary = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+		NativePlacementContinuity.NativeSupportProduct product = full.resolver()
+			.proveCandidateSupport(full.reference(child, binary), pool).supportProduct();
+		Assert.assertNotNull(product);
+		Ref outer = full.unary("durable-outer-root", OpOp1.EXP, child, false);
+		CandidateRuleFact outerFact = full.fact(outer, unary);
+		CandidateEmissionFact outerEmission = outerFact.allowedEmissionFacts().get(0);
+		CandidateRealizationReference proposed = CandidateRealizationReference.of(outerFact.key(),
+			CandidateEmissionRealization.nativeLineage(
+				outerEmission.emissionState(), "durable-outer-proposed", List.of(), List.of()));
+
+		NativeContinuitySupportClauses explicitRelation = new NativeContinuitySupportClauses(
+			child.key, product, null, true);
+		DurableAnchorKey ungroundedAnchor = anchor(
+			FType.FULL, "durable-outer-other:8002", 0, 50);
+		replaceWithDurableRelation(full, child, binary, ungroundedAnchor, List.copyOf(explicitRelation));
+		SearchSpaceMetrics explicitMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity.CandidateSupportResult explicit = full.resolver(explicitMetrics, 0, 0)
+			.proveGeneratedCandidateSupport(outerFact, outerEmission, proposed, pool);
+		NativeContinuitySupportClauses relation = new NativeContinuitySupportClauses(
+			child.key, product, null, true);
+		replaceWithDurableRelation(full, child, binary, ungroundedAnchor, relation);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity.CandidateSupportResult actual = full.resolver(metrics, 0, 0)
+			.proveGeneratedCandidateSupport(outerFact, outerEmission, proposed, pool);
+
+		Assert.assertEquals(explicit.proofs().stream().map(
+			NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+			actual.proofs().stream().map(
+				NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+		assertIdentitySetEquals(explicit.dependencyOccurrences(), actual.dependencyOccurrences());
+		Assert.assertEquals(Set.of(outer.key, child.key, left.key, right.key, seed.key),
+			actual.dependencyOccurrences());
+		Assert.assertEquals(1, relation.materializedHandleCount());
+		Assert.assertTrue(metrics.snapshot().proofDependencyEdgesBuilt()
+			< explicitMetrics.snapshot().proofDependencyEdgesBuilt());
+		Assert.assertTrue(metrics.snapshot().topologyRowsBuilt()
+			< explicitMetrics.snapshot().topologyRowsBuilt());
+	}
+
+	private static CandidateRealizationReference replaceWithDurableRelation(Fixture fixture,
+		Ref owner, List<CandidateInputState> inputs, DurableAnchorKey anchor,
+		List<CandidateRealizationSupportClause> clauses) {
+		CandidateRuleFact fact = fixture.fact(owner, inputs);
+		CandidateEmissionFact emission = fact.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization realization = new CandidateEmissionRealization(
+			PlacementIdentity.PlacementRealizationKey.durable(emission.emissionState(), anchor), clauses);
+		replaceRealizations(fixture, fact, emission, List.of(realization));
+		return CandidateRealizationReference.of(fact.key(), realization);
+	}
+
+	private record DurableGroundingCase(String name, DurableAnchorKey anchor,
+		boolean productExact) { }
+
+	@Test
 	public void randomizedNativeAxisGatesMatchExplicitRectanglesAfterSourceWithdrawal() {
 		java.util.Random random = new java.util.Random(0x6e61746976654cL);
 		for(int trial = 0; trial < 20; trial++) {
