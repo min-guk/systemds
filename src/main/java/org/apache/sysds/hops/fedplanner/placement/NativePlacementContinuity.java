@@ -6041,12 +6041,8 @@ final class NativePlacementContinuity {
 			DurableAnchorKey clauseWitness, boolean clauseLayoutExact) {
 			PlacementAnalysis.NormalizedTextContext textContext =
 				new PlacementAnalysis.NormalizedTextContext();
-			List<java.util.Map<Integer,NativeTupleHashSummary>> memo = new ArrayList<>(
-				Collections.nCopies(product.axes().size() + 1, null));
-			for(int axis = 0; axis < memo.size(); axis++)
-				memo.set(axis, new java.util.HashMap<>());
-			memo.get(product.axes().size()).put(0,
-				new NativeTupleHashSummary(1, 31, 1, 31, ']', 1, 0));
+			java.util.Map<Integer,NativeTupleHashSummary> tuplesByLength =
+				tupleHashSummaries(product.axes(), textContext);
 
 			java.util.Map<Integer,NativeHashSequence> result = new java.util.LinkedHashMap<>();
 			String authorityPrefix = product.headerAuthoritySignature() + "|bindings=[";
@@ -6057,8 +6053,7 @@ final class NativePlacementContinuity {
 			int clauseConstant = 923521 + 29791 * proofConstant
 				+ 31 * witnessHash + Boolean.hashCode(clauseLayoutExact);
 			for(NativeCanonicalLengthBucket bucket : orderedLengths) {
-				NativeTupleHashSummary tuples = tupleHashSummary(product.axes(), textContext,
-					memo, 0, bucket.bindingLength());
+				NativeTupleHashSummary tuples = tuplesByLength.get(bucket.bindingLength());
 				if(tuples == null || tuples.count() != bucket.count())
 					throw new IllegalStateException("Native canonical hash index is inconsistent");
 				int authorityWeighted = authorityPrefix.hashCode()
@@ -6074,25 +6069,41 @@ final class NativePlacementContinuity {
 			return java.util.Collections.unmodifiableMap(result);
 		}
 
+		private java.util.Map<Integer,NativeTupleHashSummary> tupleHashSummaries(
+			List<List<CandidateRealizationInputBinding>> axes,
+			PlacementAnalysis.NormalizedTextContext textContext) {
+			java.util.Map<Integer,NativeTupleHashSummary> tail = java.util.Map.of(0,
+				new NativeTupleHashSummary(1, 31, 1, 31, ']', 1, 0));
+			int uniformLength = 0;
+			// Arity is not bounded by product cardinality (singleton axes still have
+			// one member). Evaluate the existing suffix states without Java recursion,
+			// retaining only the current and immediately following axis summaries.
+			for(int axis = axes.size() - 1; axis >= 0; axis--) {
+				if(rowMajor)
+					uniformLength = Math.addExact(uniformLength, optionLengths.get(axis)[0]);
+				Iterable<Integer> lengths = rowMajor ? List.of(uniformLength)
+					: suffixLengthCounts.get(axis).keySet();
+				java.util.Map<Integer,NativeTupleHashSummary> current = new java.util.HashMap<>();
+				for(int length : lengths) {
+					NativeTupleHashSummary summary = tupleHashSummary(axes, textContext, tail, axis, length);
+					if(summary != null)
+						current.put(length, summary);
+				}
+				tail = current;
+			}
+			return tail;
+		}
+
 		private NativeTupleHashSummary tupleHashSummary(
 			List<List<CandidateRealizationInputBinding>> axes,
 			PlacementAnalysis.NormalizedTextContext textContext,
-			List<java.util.Map<Integer,NativeTupleHashSummary>> memo,
-			int axis, int remainingLength) {
-			if(!rowMajor && !suffixLengthCounts.get(axis).containsKey(remainingLength))
-				return null;
-			NativeTupleHashSummary cached = memo.get(axis).get(remainingLength);
-			if(cached != null)
-				return cached;
-			if(axis == axes.size())
-				return null;
+			java.util.Map<Integer,NativeTupleHashSummary> tails, int axis, int remainingLength) {
 			NativeTupleHashSummary result = null;
 			for(int option = 0; option < axes.get(axis).size(); option++) {
 				int optionLength = optionLengths.get(axis)[option];
 				if(optionLength > remainingLength)
 					continue;
-				NativeTupleHashSummary tail = tupleHashSummary(axes, textContext, memo,
-					axis + 1, remainingLength - optionLength);
+				NativeTupleHashSummary tail = tails.get(remainingLength - optionLength);
 				if(tail == null)
 					continue;
 				CandidateRealizationInputBinding binding = axes.get(axis).get(option);
@@ -6113,8 +6124,6 @@ final class NativePlacementContinuity {
 						+ tail.weightedBindingsSuffix());
 				result = result == null ? block : result.append(block);
 			}
-			if(result != null)
-				memo.get(axis).put(remainingLength, result);
 			return result;
 		}
 
