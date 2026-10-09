@@ -3135,6 +3135,13 @@ final class NativePlacementContinuity {
 				traversal.emptyFilteredStates++;
 			graph.put(state, shared.supportedAlternatives);
 			traversal.reusedComponents.put(state, shared);
+			if(metrics != null) {
+				metrics.recordDirectWork(
+					SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_REUSE_HITS);
+				metrics.recordDirectWork(
+					SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_REUSED_ROWS,
+					shared.supportedAlternatives.size());
+			}
 			if(graphWork != null)
 				graphWork[0] += shared.supportedAlternatives.size();
 			traversal.completionOrder.add(state);
@@ -3285,13 +3292,27 @@ final class NativePlacementContinuity {
 		if(retainedStates > acyclicComponentMaxStates)
 			return;
 		List<SelectedCandidateProof> supportedAlternatives = new ArrayList<>();
+		Set<AcyclicSummaryRowKey> distinctRows = new java.util.HashSet<>();
 		if(supported.contains(child))
 			for(SelectedCandidateProof alternative : viable.getOrDefault(child, List.of()))
 				if((alternative.directGround || !alternative.dependencies.isEmpty())
 					&& alternative.dependencies.stream().allMatch(dependency ->
 						supported.contains(dependency.state()))) {
-					if(supportedAlternatives.size() >= acyclicComponentMaxAlternatives)
+					if(metrics != null)
+						metrics.recordDirectWork(
+							SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_SUPPORTED_ROWS_EXAMINED);
+					if(!distinctRows.add(AcyclicSummaryRowKey.of(alternative))) {
+						if(metrics != null)
+							metrics.recordDirectWork(
+								SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_DUPLICATE_ROWS_COLLAPSED);
+						continue;
+					}
+					if(supportedAlternatives.size() >= acyclicComponentMaxAlternatives) {
+						if(metrics != null)
+							metrics.recordDirectWork(
+								SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_DISTINCT_BUDGET_BYPASSES);
 						return; // Oversized boundary: exact recomputation is the safe fallback.
+					}
 					supportedAlternatives.add(new SelectedCandidateProof(alternative.realization,
 						List.of(), true, alternative.witness));
 				}
@@ -3326,6 +3347,10 @@ final class NativePlacementContinuity {
 		acyclicComponentMemo.put(child, summary);
 		acyclicComponentRetainedStates += retainedStates;
 		acyclicComponentRetainedAlternatives += supportedAlternatives.size();
+		if(metrics != null)
+			metrics.recordDirectWork(
+				SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_ADMITTED_ROWS,
+				supportedAlternatives.size());
 	}
 
 	private List<SelectedCandidateProof> candidateProofAlternatives(CompiledHopKey key,
@@ -3591,9 +3616,9 @@ final class NativePlacementContinuity {
 			if(options.isEmpty())
 				return null;
 			CompiledHopKey owner = options.get(0).source().rule().parentOccurrence();
-			// Legacy root overlays replace clause pins, even a different historical
-			// realization. Filtering that option would strengthen the proof relation.
-			// Keep recursive root overlays on their exact topology path.
+			// Legacy query overlays replace every clause pin at a fixed owner, rather
+			// than filtering the published axis by that pin. Keep that exact path until
+			// the gate's returned references and dependencies can both model the overlay.
 			if(fixed.containsKey(owner))
 				return null;
 			if(ownerAxes.put(owner, axis) != null)
@@ -3627,6 +3652,21 @@ final class NativePlacementContinuity {
 		}
 		if(affected.stream().anyMatch(List::isEmpty))
 			return null;
+		for(int axis = 0; axis < product.axes().size(); axis++) {
+			int position = product.axes().get(axis).get(0).inputPosition();
+			boolean exposesPosition = false;
+			for(CandidateDependencySkeleton skeleton : affected.get(axis)) {
+				if(skeleton.inputPosition() < 0)
+					continue;
+				// A single gate exposes one immediate binding position. A repeated
+				// producer can require several; the legacy path preserves all of them.
+				if(skeleton.inputPosition() != position)
+					return null;
+				exposesPosition = true;
+			}
+			if(!exposesPosition)
+				return null;
+		}
 
 		List<CandidateProofDependency> consumerDependencies =
 			new ArrayList<>(invariant.size() + product.axes().size());
@@ -5844,6 +5884,41 @@ final class NativePlacementContinuity {
 	}
 	private record AcyclicComponentFootprint(Set<CompiledHopKey> occurrences,
 		long retainedStates) { }
+	private static final class AcyclicSummaryRowKey {
+		private final CompiledHopKey owner;
+		private final CandidateRealizationReference realization;
+		private final NativePoolWitness witness;
+		private final int hashCode;
+
+		private AcyclicSummaryRowKey(SelectedCandidateProof row) {
+			realization = row.realization;
+			owner = realization == null ? null : realization.rule().parentOccurrence();
+			witness = row.witness;
+			int hash = owner == null ? 1 : System.identityHashCode(owner);
+			hash = 31 * hash + (realization == null ? 0 : realization.hashCode());
+			hashCode = 31 * hash + (witness == null ? 0 : witness.hashCode());
+		}
+
+		private static AcyclicSummaryRowKey of(SelectedCandidateProof row) {
+			return new AcyclicSummaryRowKey(row);
+		}
+
+		@Override
+		public int hashCode() { return hashCode; }
+
+		@Override
+		public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			if(!(other instanceof AcyclicSummaryRowKey that))
+				return false;
+			if(realization == null || that.realization == null)
+				return realization == null && that.realization == null
+					&& Objects.equals(witness, that.witness);
+			return owner == that.owner && realization.equals(that.realization)
+				&& Objects.equals(witness, that.witness);
+		}
+	}
 	private static final class CandidateProofTraversal {
 		private final Set<CandidateProofState> active = new java.util.HashSet<>();
 		private final List<CandidateProofState> completionOrder = new ArrayList<>();

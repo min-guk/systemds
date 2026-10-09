@@ -377,6 +377,27 @@
 - **잔여/위험**: 기존 Exact/PCA supplemental width 실패와20초 미달은 남아 있다. Incoming native metadata의0handle 동작은 기존1handle fixture기대를 갱신하되 ordered proof/identity-footprint authority 대조는 유지한다. 후보/합법성/privacy 규칙은 완화하지 않는다.
 - **병합 gate 완료**: fresh135class package **1,135 selected tests/failure0/error0/skip1**, BUILD SUCCESS03:04:12. 독립 integration review CLEAR; duplicate branch 제거를 확인했다. Incoming metadata와 sparse DP 회귀 및 v24 observer의 cold/warm/identity/LRU parity를 함께 검증했다. 병합본만 `candidate-v25-merged`로 따로 봉인·실측한다.
 
+### v26 completed component summary 중복 제거 계획 (test-first)
+
+- **문제/근거**: cacheAcyclicComponent는 viability가 증명된 각 원래 clause를 `(동일 reference, 빈 dependency, true, 동일 witness)`로 바꾼 뒤에도 중복 행을 모두 보관한다. 한 realization의64clauses가64행 budget을 사용하고 재사용 시 같은 경계 작업을 반복한다. 실제 중복률은 아직 계측되지 않았다.
+- **독립 설계**: architect는 원래 AND dependency를 pruning 전에 합치지 않고, 이미 ground된 summary 안에서만 정확히 같은 row를 합치는 범위를 CLEAR로 확인했다. Owner identity+reference equality+witness equality, null marker를 구분하고 첫 생존 대표/순서를 유지한다. 기존 cap은 distinct stored rows에 적용하며 증설하지 않는다.
+- **보존 조건**: 원래 pre-pruning occurrence footprint/retainedStates, hidden metadata, generated-root 제외, 음성 summary, revision invalidation을 유지한다. 결과 proof의 권한이나 completion receipt는 새로 만들지 않는다.
+- **검증 계획**: 64clauses/1reference/cap1 실제 graph의 회귀를 먼저 red로 확인하고, 기존2references/cap1 bypass·cold/warm orderedproof·identity-footprint·withdraw/restore·negative·root recurrence·metrics OFF/zero budget을 검증한다. 대표 압축 전후 rows와 reuse/bypass 카운터를 실제 Docker에서 측정한다.
+- **결정/위험**: oracle/runtime/privacy 후보를 바꾸는 pruning이 아니라 검증 완료된 내부 경계 표현만 압축한다. 동치 기준이 약하면 다른 source/witness가 합쳐질 수 있어 foreign-owner identity 및 witness 회귀로 검출한다.20초 효과는 검증 전이며 앞선 v25봉인본 측정과 분리한다.
+
+- **v26 실제 work red**: 현행 v25를 classpath로 새64clause/cap1 graph 회귀를 실행했다.118tests 중 정확히1개가 shared summary 미보존으로 실패했다(`v26-red-test.log`). 최초 실행은 JDK vector module을 누락해 기존 reshape 테스트까지 실패했으며 별도 `v26-red-missing-vector-test.log`로 보존했다. `--add-modules=jdk.incubator.vector`로 수정한 결과만 유효 red로 사용한다.
+- **v25 shadow 결과**: 동일 sealed merged 엔진의 LogReg·GLM 모두60초 timeout/no receipt다. 관측 실제 graph misses 중 certified resident repeat potential은 각각21,105/32,498(약65%),56,079/70,822(약79%)였다. 이는 bounded miss-stream 하한이며 actual reuse나 전체 wall-time 개선 수치가 아니다. Root history 거절2,164/0, returned root binding 거절0/0, saturation0/0이다. 실제 batch 재사용은 별도 alpha-renaming 안전 증명과 회귀 이후에만 구현한다.
+- **v26 fixture 수정/최종 focused**: FULL public query가 exact+dynamic witness 둘을 검사하여64행 기대가128이 됐다. Cap1 재사용을 명확히 검사하도록 BROADCAST 단일 witness로 고쳤다. 추가 mixed fixture의 equal-but-foreign clause는 canonical duplicate여서 생성 자체가 거절됐으므로, 같은 producer의 미선언 durable realization을 dead pin으로 사용했다. Canonical 길이 prefix 때문에 삽입 위치와 정렬 위치가 달랐던 실패도 보존하고, 동일 길이의 앞서는 key와 실제 canonical 첫 binding assertSame으로 dead-first를 잠갔다. 이후 첫 root로 warm하고 둘째 root가 summary를 실제 재사용하는 counter 증가를 검사했다. 최종143tests/skip1PASS(1.062초), withdrawal/all-negative/restoration의 ordered proof와 identity footprint cold parity도 통과했다. 각 초기 fixture 실패는 evidence/v26-*에 보존한다.
+- **v26 독립 검토**: 새 architect가 실제 production diff를 읽어 CLEAR로 확인했다. HashSet은 출력 순서를 공급하지 않고 첫 생존 행만 남기며, null row도 witness를 정확히 비교한다. 중복 판정 뒤에만 grounded row를 할당한다. 원래 graph pruning/전체 footprint/음성 cache/root 제외/합계 budget은 유지한다. Fresh135class 전체 selected gate를 이어서 수행한다.
+- **v26 full gate**: fresh135class package **1,137 selected tests/failure0/error0/skip1**, BUILD SUCCESS04:50:38。원본 엔진을 별도 봉인한다. Fetch에서 incoming pinned native axis gate `6a7096f34b`를 발견해, 검증한 v26을 먼저 커밋하고3-way 병합·재검증 후 main에 게시한다. 실제시간은 아직 미측정이며20초 성공 주장은 없다.
+
+### v26 / pinned native axis gate 병합 (검증중)
+
+- **상태/해결**: v26 `c56baecf24`와 incoming `6a7096f34b`를3-way 병합했으며 production/test/docs 모두 자동 통합됐다. 새 query-local axis gate의 summary 제외 및 전체 footprint 처리를 v26 grounded-row 압축과 함께 독립 검토한다.
+- **검증/위험**: 기존135class selector가 새 NativePlacementContinuityTest 회귀4개도 포함한다. Fresh package 후 별도 엔진으로 봉인하여 원본 v26과 혼동하지 않는다. Synthetic gate는 proof authority가 아니며, SCC/고정 pin/identity/invalidation을 약화하지 않는다. v27 generated batch는 아직 미구현이며 새 gate와도 alpha-renaming 증명을 재검토한다.
+- **병합 독립 검토 BLOCK / 새 회귀 추가**: 기존 selected1,141tests는 통과했지만 reviewer가 incoming axis gate의 두 표현 경계를 발견했다. (1) query-fixed root와 다른 축 pin을 단순 제거하여 기존 A→B overlay와 달라질 수 있다. (2) 한 owner가 여러 compiled input position에 쓰일 때 gate가 하나의 position만 노출한다. 새 explicit-vs-factored 두 회귀를 먼저 실행하고, 확인되면 해당 표현에서만 legacy exact 경로로 fallback한다. 후보를 제거하거나 oracle/privacy를 완화하는 가드가 아니라, 아직 증명되지 않은 압축 표현을 사용하지 않는 조건이다. v27 alpha-renaming도 이 수정 이후 재검증한다.
+- **두 문제 실제 재현/수정**: 새125tests에서 두 기대 실패를 확인했다(`v26-axis-red-test.log`). 다른 root pin의 explicit 결과는 proof1개인데 gate는0개였고, 반복 producer의 explicit는0·1 양쪽 binding인데 gate는0만 반환했다. Fixed owner 축 또는 affected nonnegative position이 축의 단일 position과 정확히 일치하지 않으면 기존 exact topology를 사용한다. 적용 후149focused tests/skip1PASS(0.884초). 새 조건은 fast-path 적용 한계이며 지원 후보를 배제하지 않는다. 기존 canonical proof/order/full identity footprint 대조와 random axis gate 회귀를 유지한다.
+- **수정 병합 최종 gate**: 두 회귀 수정 후 fresh135class package **1,143 selected tests/failure0/error0/skip1**, BUILD SUCCESS04:59:29. 독립 architect는 두 fallback 및 v26 보존 조건을 실제 코드에서 재검토하여 CLEAR로 변경했다. Synthetic gate의 보수적 root-history 처리도 유지했다. 이 결과만 수정된 병합본 봉인·게시의 근거로 사용한다.
 
 ### Pinned gate 원격 게시, 순환 overlay 반례, unpinned 경로 수정
 
@@ -411,3 +432,15 @@
 - **Batch 첫 full gate의 작업량 범위 오류**:1,058tests 중1개에서 cold native query1handle assertion에 이어 수행한 legacy revision migration의20handle까지 합산했다. Proof/footprint parity는 통과했다. Revision에 별도 relation을 사용해 cold gate 작업과 legacy migration 작업을 분리한 뒤 focused150PASS(1.114초) 재확인했다. 실패 `evidence/generated-batch-full-revision-work-scope-red-1058`, 수정 `generated-batch-final-focused-green-150` 보존. Revision migration의 전개가 사라졌다고 주장하지 않는다.
 
 - **Generated batch 최종 gate**: fresh main/test compile,1,058 JUnit PASS(154.829초), source SHA mismatch0. 증거 `evidence/generated-batch-full-green-1058`. v12로 별도 봉인하여 두 실제 workload를 실행한다.
+- **추가 DP boundary 병합 gate**: `78a25c8e60`의 조건부 product 제한은 independent architect CLEAR. 현재 병합 소스의 ExactCategoricalSolver 및 새 test를 isolated compile하고 ExactSupportConditioning/ExactConditionalSupportSolver/SharedRegionalPreparation/IncrementalRegionalSeed **29tests PASS(0.946초)**를 확인했다. Native 미변경으로 앞선1,147전체 gate와 이 추가 경계 검증을 구분하여 게시한다. 봉인37ffd4ab는 추가 DP 변경 전 엔진이며 실측에 소급 포함하지 않는다.
+
+
+### Resume: generated batch와 최신 main 통합 (진행중)
+
+- **상태/문제**: 로컬95ed3daeb2의1,058PASS 후 원격은95424a2117까지 진행했다. Native component-summary 중복 제거, 반복 producer 입력의 native gate fallback 및 추가 revision 회귀를 포함한다. 강제 push 없이 병합한다.
+- **충돌 해결**: docs의 양쪽 누적 기록을 모두 보존하고 SearchSpaceMetrics의 batch 실제 재사용 counter와 summary row counter를 모두 유지했다. Production NativePlacementContinuity와 테스트는 자동 병합됐으며 fresh 전체 회귀를 실행한다.
+- **독립 검토**: 재개한 reviewer가95ed batch/rebase/representation preflight와 incoming summary dedup 상호작용을 CLEAR로 판정했다. Summary는 complete dependency footprint를 유지한 existential boundary 행만 합치며 exact owner identity·realization·witness를 구분한다. Batch certificate의 root-history independence 및 returned root binding 부재는 변하지 않는다. 두 최적화를 한 fixture에서 동시에 exercise하는 추가 테스트는 비차단 coverage gap으로 남는다.
+- **실측 분리**: v12는 merge 전95ed3daeb2만 봉인했다. 4,613classes, main/test source mismatch0, JAR3ee4db4e9e4509777cbfd70fb43bf505000fc3cd87116988f879ce47f64187b3. 기존 Docker LogReg/GLM 계약을 그대로 사용한다. Incoming summary dedup 성능을 이 엔진의 효과에 포함하지 않는다.
+- **잔여/위험**: 다중 seed·retained relation·DURABLE_MAP publication의 exact union과 Physical/DP materialization이 남는다. v10 normal terminal log에서 proof consumption52.13초, topology62.74초, overlay exclusive68.79초, dependency pruning42.13초였다. Inclusive 시간을 중복 합산하지 않는다.20초 목표는 여전히 미달이다.
+
+- **병합 검증 완료**: fresh main/test compile,1,063 JUnit PASS(152.813초), source SHA mismatch0, 독립 review CLEAR. 증거 `evidence/generated-batch-summary-merge-green-1063`. 이 병합본은v13으로 분리하여 봉인한다.
