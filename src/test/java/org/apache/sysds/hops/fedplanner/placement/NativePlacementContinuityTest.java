@@ -356,6 +356,24 @@ public class NativePlacementContinuityTest {
 		return field;
 	}
 
+	private static Object acyclicSummaryRowKey(NativePlacementContinuity resolver,
+		CandidateRealizationReference reference, DurableAnchorKey pool) throws Exception {
+		Method nativeWitness = NativePlacementContinuity.class.getDeclaredMethod(
+			"nativeWitness", DurableAnchorKey.class);
+		nativeWitness.setAccessible(true);
+		Object witness = nativeWitness.invoke(resolver, pool);
+		Class<?> selectedType = Class.forName(
+			NativePlacementContinuity.class.getName() + "$SelectedCandidateProof");
+		Constructor<?> selectedConstructor = selectedType.getDeclaredConstructors()[0];
+		selectedConstructor.setAccessible(true);
+		Object selected = selectedConstructor.newInstance(reference, List.of(), true, witness);
+		Class<?> keyType = Class.forName(
+			NativePlacementContinuity.class.getName() + "$AcyclicSummaryRowKey");
+		Constructor<?> keyConstructor = keyType.getDeclaredConstructor(selectedType);
+		keyConstructor.setAccessible(true);
+		return keyConstructor.newInstance(selected);
+	}
+
 	@SuppressWarnings("unchecked")
 	private static Set<ValueVersionKey> broadcastCapableValueVersions(
 		NativePlacementContinuity continuity) throws ReflectiveOperationException {
@@ -1232,6 +1250,188 @@ public class NativePlacementContinuityTest {
 			else
 				System.setProperty(property, previous);
 		}
+	}
+
+	@Test
+	public void acyclicComponentBudgetCountsDistinctGroundedRowsAfterViability() throws Exception {
+		String property = "sysds.fedplanner.continuityAcyclicComponent.maxAlternatives";
+		String previous = System.getProperty(property);
+		try {
+			System.setProperty(property, "1");
+			Fixture full = new Fixture(FType.BROADCAST);
+			DurableAnchorKey pool = anchor(FType.BROADCAST, "worker1:8001", 0, 50);
+			Ref seed = full.source("seed", pool);
+			Ref producer = full.unary("producer", OpOp1.LOG, seed, false);
+			List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.BROADCAST));
+			DurableAnchorKey[] equivalentPools = new DurableAnchorKey[64];
+			for(int index = 0; index < equivalentPools.length; index++)
+				equivalentPools[index] = new DurableAnchorKey("equivalent-pool-" + index,
+					FType.BROADCAST, pool.partitions());
+			full.samePoolRealizations(producer, inputs, equivalentPools);
+			CandidateRuleFact producerFact = full.fact(producer, inputs);
+			List<CandidateRealizationSupportClause> clauses = producerFact.allowedEmissionFacts().get(0)
+				.realizations().stream().map(realization -> new CandidateRealizationSupportClause(
+					List.of(), List.of(CandidateRealizationInputBinding.direct(0,
+						CandidateRealizationReference.of(producerFact.key(), realization))))).toList();
+			Ref shared = full.unary("shared", OpOp1.ABS, producer, false);
+			full.withClauses(shared, inputs, clauses);
+			Ref firstRoot = full.unary("firstRoot", OpOp1.EXP, shared, false);
+			Ref secondRoot = full.unary("secondRoot", OpOp1.SQRT, shared, false);
+			CandidateRealizationReference firstReference = full.reference(firstRoot, inputs);
+			CandidateRealizationReference secondReference = full.reference(secondRoot, inputs);
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity cached = full.resolver(metrics, 8, 128);
+
+			NativePlacementContinuity.CandidateSupportResult first =
+				cached.proveCandidateSupport(firstReference, pool);
+			long firstStates = metrics.snapshot().proofStatesBuilt();
+			Assert.assertFalse(first.proofs().isEmpty());
+			Map<?,?> summaries = (Map<?,?>) accessibleField(
+				NativePlacementContinuity.class, "acyclicComponentMemo").get(cached);
+			Object sharedSummary = summaries.entrySet().stream().filter(entry -> {
+				try {
+					return accessibleField(entry.getKey().getClass(), "key").get(entry.getKey()) == shared.key;
+				}
+				catch(ReflectiveOperationException failure) {
+					throw new AssertionError(failure);
+				}
+			}).map(Map.Entry::getValue).findFirst().orElseThrow(() ->
+				new AssertionError("the distinct-row budget must retain the shared component"));
+			@SuppressWarnings("unchecked")
+			List<Object> retained = (List<Object>) accessibleField(
+				sharedSummary.getClass(), "supportedAlternatives").get(sharedSummary);
+			Assert.assertEquals("64 supported clauses collapse to one grounded summary row", 1,
+				retained.size());
+			Assert.assertEquals(64, metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_SUPPORTED_ROWS_EXAMINED));
+			Assert.assertEquals(63, metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_DUPLICATE_ROWS_COLLAPSED));
+			Assert.assertEquals(0, metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_DISTINCT_BUDGET_BYPASSES));
+
+			NativePlacementContinuity.CandidateSupportResult actual =
+				cached.proveCandidateSupport(secondReference, pool);
+			long secondStates = metrics.snapshot().proofStatesBuilt() - firstStates;
+			NativePlacementContinuity.CandidateSupportResult cold =
+				full.resolver(null, 0, 0).proveCandidateSupport(secondReference, pool);
+			Assert.assertEquals("summary quotienting preserves ordered proofs", cold.proofs(), actual.proofs());
+			assertIdentitySetEquals(cold.dependencyOccurrences(), actual.dependencyOccurrences());
+			Assert.assertTrue("the second root must reuse the retained one-row child summary",
+				secondStates < firstStates);
+			Assert.assertTrue(metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_REUSE_HITS) > 0);
+			Assert.assertTrue(metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_REUSED_ROWS) > 0);
+
+			List<CandidateRuleFact> originalFacts = List.copyOf(full.candidates);
+			CandidateRuleFact sharedFact = full.fact(shared, inputs);
+			CandidateEmissionFact sharedEmission = sharedFact.allowedEmissionFacts().get(0);
+			CandidateEmissionRealization sharedRealization = sharedEmission.realizations().get(0);
+			CandidateRealizationReference deadReference = new CandidateRealizationReference(
+				producerFact.key(), PlacementIdentity.PlacementRealizationKey.durable(
+					producerFact.allowedEmissionFacts().get(0).emissionState(),
+					new DurableAnchorKey("absent-pool-00000", FType.BROADCAST, pool.partitions())));
+			List<CandidateRealizationSupportClause> mixedClauses = new ArrayList<>();
+			mixedClauses.add(new CandidateRealizationSupportClause(List.of(), List.of(
+				CandidateRealizationInputBinding.direct(0, deadReference))));
+			mixedClauses.addAll(sharedRealization.supportClauses());
+			CandidateEmissionRealization mixedRealization = new CandidateEmissionRealization(
+				sharedRealization.key(), mixedClauses);
+			Assert.assertSame("the canonical first clause must be the dead pinned alternative",
+				deadReference, mixedRealization.supportClauses().get(0).inputBindings().get(0).source());
+			CandidateEmissionFact mixedEmission = new CandidateEmissionFact(
+				sharedEmission.emissionState(), sharedEmission.executionFType(),
+				sharedEmission.derivedFoutAction(), List.of(mixedRealization));
+			CandidateRuleFact mixedShared = new CandidateRuleFact(sharedFact.key(),
+				sharedFact.status(), sharedFact.capability(), sharedFact.shapeProof(),
+				sharedFact.profile(), List.of(mixedEmission), sharedFact.failureCode());
+			List<CandidateRuleFact> mixedFacts = replaceFact(originalFacts, sharedFact, mixedShared);
+			NativePlacementContinuity mixed = cached.nextRevisionWithCompleteCandidateDelta(
+				mixedFacts, identitySet(shared.key));
+			NativePlacementContinuity.CandidateSupportResult mixedWarm =
+				mixed.proveCandidateSupport(firstReference, pool);
+			Assert.assertFalse(mixedWarm.proofs().isEmpty());
+			long mixedReuseBefore = metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_REUSE_HITS);
+			NativePlacementContinuity.CandidateSupportResult mixedActual =
+				mixed.proveCandidateSupport(secondReference, pool);
+			Assert.assertTrue("the second root must reuse the mixed live/dead summary",
+				metrics.directWorkCount(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_REUSE_HITS)
+					> mixedReuseBefore);
+			NativePlacementContinuity.CandidateSupportResult mixedCold = new NativePlacementContinuity(
+				full.nodes, full.origins, mixedFacts, full.edges, full.reaching, Set.of(), full.privacy)
+				.proveCandidateSupport(secondReference, pool);
+			Assert.assertFalse("a dead first clause must not hide later supported duplicates",
+				mixedActual.proofs().isEmpty());
+			Assert.assertEquals(mixedCold.proofs(), mixedActual.proofs());
+			assertIdentitySetEquals(
+				mixedCold.dependencyOccurrences(), mixedActual.dependencyOccurrences());
+
+			List<CandidateRuleFact> withdrawnFacts = mixedFacts.stream()
+				.filter(fact -> fact != producerFact).toList();
+			NativePlacementContinuity withdrawn = mixed.nextRevisionWithCompleteCandidateDelta(
+				withdrawnFacts, identitySet(producer.key));
+			NativePlacementContinuity.CandidateSupportResult negative =
+				withdrawn.proveCandidateSupport(secondReference, pool);
+			NativePlacementContinuity.CandidateSupportResult negativeCold = new NativePlacementContinuity(
+				full.nodes, full.origins, withdrawnFacts, full.edges, full.reaching, Set.of(), full.privacy)
+				.proveCandidateSupport(secondReference, pool);
+			Assert.assertTrue("withdrawing every producer alternative must invalidate the summary",
+				negative.proofs().isEmpty());
+			Assert.assertEquals(negativeCold.proofs(), negative.proofs());
+			assertIdentitySetEquals(
+				negativeCold.dependencyOccurrences(), negative.dependencyOccurrences());
+
+			NativePlacementContinuity restored = withdrawn.nextRevisionWithCompleteCandidateDelta(
+				originalFacts, identitySet(producer.key, shared.key));
+			NativePlacementContinuity.CandidateSupportResult restoredActual =
+				restored.proveCandidateSupport(secondReference, pool);
+			NativePlacementContinuity.CandidateSupportResult restoredCold = new NativePlacementContinuity(
+				full.nodes, full.origins, originalFacts, full.edges, full.reaching, Set.of(), full.privacy)
+				.proveCandidateSupport(secondReference, pool);
+			Assert.assertFalse(restoredActual.proofs().isEmpty());
+			Assert.assertEquals(restoredCold.proofs(), restoredActual.proofs());
+			assertIdentitySetEquals(
+				restoredCold.dependencyOccurrences(), restoredActual.dependencyOccurrences());
+		}
+		finally {
+			if(previous == null)
+				System.clearProperty(property);
+			else
+				System.setProperty(property, previous);
+		}
+	}
+
+	@Test
+	public void acyclicComponentSummaryRowKeyUsesOwnerIdentityWitnessAndNullMarker()
+		throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey firstPool = anchor(FType.FULL, "worker1:8001", 0, 50);
+		DurableAnchorKey secondPool = anchor(FType.FULL, "worker2:8002", 0, 50);
+		Ref seed = full.source("seed", firstPool);
+		Ref root = full.unary("root", OpOp1.LOG, seed, false);
+		List<CandidateInputState> inputs = List.of(CandidateInputState.present(FType.FULL));
+		CandidateRealizationReference reference = full.reference(root, inputs);
+		CandidateRealizationReference equalReference = new CandidateRealizationReference(
+			reference.rule(), reference.realization());
+		CompiledHopKey foreignOwner = new CompiledHopKey(root.key.programFingerprint(),
+			root.key.functionNamespace(), root.key.callSitePath(), root.key.recompileContext(),
+			root.key.controlRegion(), root.key.emittedHopInstance(), root.key.canonicalSourceOrigin());
+		Assert.assertEquals(root.key, foreignOwner);
+		Assert.assertNotSame(root.key, foreignOwner);
+		CandidateRealizationReference foreignReference = new CandidateRealizationReference(
+			new CandidateRuleKey(foreignOwner, reference.rule().orderedInputs()), reference.realization());
+		NativePlacementContinuity resolver = full.resolver();
+
+		Object first = acyclicSummaryRowKey(resolver, reference, firstPool);
+		Object equal = acyclicSummaryRowKey(resolver, equalReference, firstPool);
+		Object differentWitness = acyclicSummaryRowKey(resolver, reference, secondPool);
+		Object foreign = acyclicSummaryRowKey(resolver, foreignReference, firstPool);
+		Assert.assertEquals(first, equal);
+		Assert.assertNotEquals(first, differentWitness);
+		Assert.assertNotEquals(first, foreign);
+		Assert.assertNotEquals(acyclicSummaryRowKey(resolver, null, firstPool),
+			acyclicSummaryRowKey(resolver, null, secondPool));
 	}
 
 	@Test

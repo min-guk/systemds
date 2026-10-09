@@ -3109,6 +3109,13 @@ final class NativePlacementContinuity {
 				traversal.emptyFilteredStates++;
 			graph.put(state, shared.supportedAlternatives);
 			traversal.reusedComponents.put(state, shared);
+			if(metrics != null) {
+				metrics.recordDirectWork(
+					SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_REUSE_HITS);
+				metrics.recordDirectWork(
+					SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_REUSED_ROWS,
+					shared.supportedAlternatives.size());
+			}
 			if(graphWork != null)
 				graphWork[0] += shared.supportedAlternatives.size();
 			traversal.completionOrder.add(state);
@@ -3256,13 +3263,27 @@ final class NativePlacementContinuity {
 		if(retainedStates > acyclicComponentMaxStates)
 			return;
 		List<SelectedCandidateProof> supportedAlternatives = new ArrayList<>();
+		Set<AcyclicSummaryRowKey> distinctRows = new java.util.HashSet<>();
 		if(supported.contains(child))
 			for(SelectedCandidateProof alternative : viable.getOrDefault(child, List.of()))
 				if((alternative.directGround || !alternative.dependencies.isEmpty())
 					&& alternative.dependencies.stream().allMatch(dependency ->
 						supported.contains(dependency.state()))) {
-					if(supportedAlternatives.size() >= acyclicComponentMaxAlternatives)
+					if(metrics != null)
+						metrics.recordDirectWork(
+							SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_SUPPORTED_ROWS_EXAMINED);
+					if(!distinctRows.add(AcyclicSummaryRowKey.of(alternative))) {
+						if(metrics != null)
+							metrics.recordDirectWork(
+								SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_DUPLICATE_ROWS_COLLAPSED);
+						continue;
+					}
+					if(supportedAlternatives.size() >= acyclicComponentMaxAlternatives) {
+						if(metrics != null)
+							metrics.recordDirectWork(
+								SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_DISTINCT_BUDGET_BYPASSES);
 						return; // Oversized boundary: exact recomputation is the safe fallback.
+					}
 					supportedAlternatives.add(new SelectedCandidateProof(alternative.realization,
 						List.of(), true, alternative.witness));
 				}
@@ -3297,6 +3318,10 @@ final class NativePlacementContinuity {
 		acyclicComponentMemo.put(child, summary);
 		acyclicComponentRetainedStates += retainedStates;
 		acyclicComponentRetainedAlternatives += supportedAlternatives.size();
+		if(metrics != null)
+			metrics.recordDirectWork(
+				SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_ADMITTED_ROWS,
+				supportedAlternatives.size());
 	}
 
 	private List<SelectedCandidateProof> candidateProofAlternatives(CompiledHopKey key,
@@ -5526,6 +5551,41 @@ final class NativePlacementContinuity {
 	}
 	private record AcyclicComponentFootprint(Set<CompiledHopKey> occurrences,
 		long retainedStates) { }
+	private static final class AcyclicSummaryRowKey {
+		private final CompiledHopKey owner;
+		private final CandidateRealizationReference realization;
+		private final NativePoolWitness witness;
+		private final int hashCode;
+
+		private AcyclicSummaryRowKey(SelectedCandidateProof row) {
+			realization = row.realization;
+			owner = realization == null ? null : realization.rule().parentOccurrence();
+			witness = row.witness;
+			int hash = owner == null ? 1 : System.identityHashCode(owner);
+			hash = 31 * hash + (realization == null ? 0 : realization.hashCode());
+			hashCode = 31 * hash + (witness == null ? 0 : witness.hashCode());
+		}
+
+		private static AcyclicSummaryRowKey of(SelectedCandidateProof row) {
+			return new AcyclicSummaryRowKey(row);
+		}
+
+		@Override
+		public int hashCode() { return hashCode; }
+
+		@Override
+		public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			if(!(other instanceof AcyclicSummaryRowKey that))
+				return false;
+			if(realization == null || that.realization == null)
+				return realization == null && that.realization == null
+					&& Objects.equals(witness, that.witness);
+			return owner == that.owner && realization.equals(that.realization)
+				&& Objects.equals(witness, that.witness);
+		}
+	}
 	private static final class CandidateProofTraversal {
 		private final Set<CandidateProofState> active = new java.util.HashSet<>();
 		private final List<CandidateProofState> completionOrder = new ArrayList<>();
