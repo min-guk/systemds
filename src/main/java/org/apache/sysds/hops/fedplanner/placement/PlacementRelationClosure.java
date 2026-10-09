@@ -6057,6 +6057,42 @@ final class PlacementRelationClosure {
 											admission.outcome(), supportResult.proofs().size());
 									continue;
 								}
+								if(admission.outcome() == NativePublicationOutcome.RETAINED_UNION) {
+									NativeRetainedResidual residual =
+										grounded.retainedNativeResidual(productPublication);
+									if(residual != null) {
+										if(publicationTrace != null)
+											complexityMetrics.recordNativePublication(
+												NativePublicationOutcome.RETAINED_UNION,
+												supportResult.proofs().size());
+										if(residual.product() == null)
+											coveredByRetained = true;
+										else {
+											NativePlacementContinuity.NativeSupportProduct product =
+												residual.product();
+											boolean directInputsExact = productPublication.key().layoutKind()
+												== PlacementLayoutKind.DURABLE_MAP;
+											for(int ordinal = 0; ordinal < product.size(); ordinal++) {
+												if(complexityMetrics != null) {
+													complexityMetrics.recordNativePublicationProofConsumed(
+														NativePublicationOutcome.RETAINED_UNION);
+													complexityMetrics.recordDirectWork(DirectWork.PROOFS_CONSUMED);
+												}
+												var proof = new NativePlacementContinuity.NativeContinuityProof(
+													product.externalSeed(), product.outputWorkerPoolWitness(),
+													product.exactPartitionRanges(), product.bindingsAt(ordinal));
+												CandidateEmissionRealization scalar = directNativePublication(proof,
+													fact.key().parentOccurrence(), emission.emissionState(),
+													outputAnchor, nativeLineage, directInputsExact, grounded);
+												if(scalar == null)
+													coveredByRetained = true;
+												else
+													bound.add(scalar);
+											}
+										}
+										continue;
+									}
+								}
 
 							}
 							if(publicationTrace != null)

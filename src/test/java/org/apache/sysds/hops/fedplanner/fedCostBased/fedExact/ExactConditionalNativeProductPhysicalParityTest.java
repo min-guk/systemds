@@ -38,8 +38,18 @@ public class ExactConditionalNativeProductPhysicalParityTest {
 		verify(3, 3, 2, 3);
 	}
 
-	@SuppressWarnings("unchecked")
+	@Test(timeout = 30000)
+	public void multipleProofHeadersPreserveConditionalCostsAndFinalReceipts() throws Exception {
+		verify(3, 3, 2, 2, true);
+	}
+
 	private static void verify(int left, int right, int excludedLeft, int excludedRight) throws Exception {
+		verify(left, right, excludedLeft, excludedRight, false);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static void verify(int left, int right, int excludedLeft, int excludedRight,
+		boolean multipleHeaders) throws Exception {
 		Object base = fixture(left, right);
 		CandidateEmissionRealization ordinary = (CandidateEmissionRealization)component(base, "supportRealization");
 		Object ordinaryClauses = ordinary.supportClauses();
@@ -62,12 +72,33 @@ public class ExactConditionalNativeProductPhysicalParityTest {
 		List<CandidateRealizationSupportClause> conditionalClauses =
 			(List<CandidateRealizationSupportClause>)constructor.newInstance(
 				consumer, conditionalProduct, witness, true);
+		List<CandidateRealizationSupportClause> referenceOrdinary = new ArrayList<>(ordinary.supportClauses());
+		if(multipleHeaders) {
+			DurableAnchorKey seed = (DurableAnchorKey)invoke(product, "externalSeed");
+			DurableAnchorKey secondSeed = new DurableAnchorKey(seed.placementId() + "-second-proof",
+				seed.fType(), seed.partitions());
+			Method create = product.getClass().getDeclaredMethod("tryCreate",
+				DurableAnchorKey.class, DurableAnchorKey.class, boolean.class, List.class);
+			create.setAccessible(true);
+			Object secondProduct = create.invoke(null, secondSeed,
+				invoke(product, "outputWorkerPoolWitness"), invoke(product, "exactPartitionRanges"), axes);
+			var secondOrdinary = (List<CandidateRealizationSupportClause>)constructor.newInstance(
+				consumer, secondProduct, witness, true);
+			referenceOrdinary.addAll(secondOrdinary);
+			Object secondConditional = complement.invoke(null, secondProduct, excluded);
+			Object secondClauses = constructor.newInstance(consumer, secondConditional, witness, true);
+			Method union = ordinaryClauses.getClass().getDeclaredMethod("multiHeaderUnion", ordinaryClauses.getClass());
+			union.setAccessible(true);
+			conditionalClauses = (List<CandidateRealizationSupportClause>)
+				((java.util.Optional<?>)union.invoke(conditionalClauses, secondClauses)).orElseThrow();
+		}
 		CandidateEmissionRealization lazy = new CandidateEmissionRealization(ordinary.key(), conditionalClauses);
 
-		// The reference enumerates the ordinary product, never the conditional rank/get implementation.
-		List<CandidateRealizationSupportClause> explicitClauses = ordinary.supportClauses().stream()
+		// The reference enumerates ordinary products, never conditional rank/get implementations.
+		List<CandidateRealizationSupportClause> explicitClauses = referenceOrdinary.stream()
 			.filter(clause -> !excludedTuple(clause.inputBindings(), excluded)).toList();
-		Assert.assertEquals(left * right - excludedLeft * excludedRight, explicitClauses.size());
+		Assert.assertEquals((multipleHeaders ? 2 : 1) * (left * right - excludedLeft * excludedRight),
+			explicitClauses.size());
 		CandidateEmissionRealization explicit = new CandidateEmissionRealization(ordinary.key(), explicitClauses);
 		List<Object> admitted = new ArrayList<>();
 		for(Object pair : (List<Object>)component(base, "admittedPairs"))

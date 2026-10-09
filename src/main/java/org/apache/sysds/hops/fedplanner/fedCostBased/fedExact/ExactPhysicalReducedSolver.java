@@ -729,6 +729,11 @@ final class ExactPhysicalReducedSolver {
 		ExactCategoricalSolver.validateInputStructure(variables,factors,limits);
 		List<ExactCategoricalSolver.Factor> materialized = new ArrayList<>();
 		for(ExactCategoricalSolver.Factor factor : factors) {
+			// ConditionalSupport is a constructor-validated +0/+INF relation. Binary
+			// arc consistency consumes its stored regions directly below, so walking
+			// its conceptual Cartesian product here cannot reveal another cost error.
+			if(factor.isConditionalSupport())
+				continue;
 			if(factor.supportsPartialTruth())
 				validatePartialHardFactor(factor);
 			else

@@ -316,9 +316,9 @@ final class NativeContinuitySupportClauses
 	}
 	java.util.Optional<NativeContinuitySupportClauses> multiHeaderUnion(
 		NativeContinuitySupportClauses that) {
-		if(conditionalComplement() || that != null && that.conditionalComplement())
-			return sameExactAuthority(that) ? java.util.Optional.of(this)
-				: java.util.Optional.empty();
+		if(that != null && (conditionalComplement() || that.conditionalComplement())
+			&& !sameConditionalDomain(products.get(0), that.products.get(0)))
+			return java.util.Optional.empty();
 		if(that == null || owner != that.owner
 			|| clauseLayoutExact != that.clauseLayoutExact
 			|| !Objects.equals(clauseWitness, that.clauseWitness)
@@ -368,7 +368,9 @@ final class NativeContinuitySupportClauses
 				return java.util.Optional.empty();
 			NativeContinuitySupportClauses union = first;
 			for(int index = 1; index < relations.size(); index++) {
-				union = union.oneAxisUnion(relations.get(index)).orElse(null);
+				NativeContinuitySupportClauses next = relations.get(index);
+				var merged = union.oneAxisUnion(next);
+				union = merged.isPresent() ? merged.get() : union.multiHeaderUnion(next).orElse(null);
 				if(union == null)
 					return java.util.Optional.empty();
 			}
@@ -616,16 +618,26 @@ final class NativeContinuitySupportClauses
 				return false;
 		return true;
 	}
+	/** Shared axes and holes let every downstream consumer use one exact domain. */
+	private static boolean sameConditionalDomain(
+		NativePlacementContinuity.NativeSupportProduct left,
+		NativePlacementContinuity.NativeSupportProduct right) {
+		return left.conditionalComplement() && right.conditionalComplement()
+			&& left.sameExactAxes(right)
+			&& left.excludedExactAxes().equals(right.excludedExactAxes());
+	}
+
 	private static List<NativePlacementContinuity.NativeSupportProduct> canonicalProducts(
 		List<NativePlacementContinuity.NativeSupportProduct> supplied) {
 		if(supplied == null || supplied.isEmpty())
 			throw new IllegalArgumentException("Native relation requires at least one proof header");
 		List<NativePlacementContinuity.NativeSupportProduct> canonical =
 			new java.util.ArrayList<>(supplied);
-		if(canonical.stream().anyMatch(
-			NativePlacementContinuity.NativeSupportProduct::conditionalComplement)
-			&& canonical.size() != 1)
-			throw new IllegalArgumentException("Conditional native relation requires one proof header");
+		if(canonical.size() > 1 && canonical.stream().anyMatch(
+			NativePlacementContinuity.NativeSupportProduct::conditionalComplement))
+			for(var product : canonical)
+				if(!sameConditionalDomain(canonical.get(0), product))
+					throw new IllegalArgumentException("Conditional native headers require identical domains");
 		canonical.sort(java.util.Comparator.comparing(
 			NativePlacementContinuity.NativeSupportProduct::headerAuthoritySignature));
 		for(int index = 1; index < canonical.size(); index++)

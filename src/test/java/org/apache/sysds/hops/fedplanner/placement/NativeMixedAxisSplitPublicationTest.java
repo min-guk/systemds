@@ -422,6 +422,87 @@ public class NativeMixedAxisSplitPublicationTest {
 	}
 
 	@Test
+	public void standaloneRetainedUnionConsumesOnlyTheExactResidual() throws Exception {
+		CompiledHopKey leftOwner = fixtureKey("standalone-residual-left");
+		CompiledHopKey rightOwner = fixtureKey("standalone-residual-right");
+		CompiledHopKey consumerOwner = fixtureKey("standalone-residual-consumer");
+		DurableAnchorKey sharedPool = anchor("standalone-residual-pool");
+		BinderAxis left = binderAxis(leftOwner, "standalone-residual-left", 2, 0, sharedPool);
+		BinderAxis right = binderAxis(rightOwner, "standalone-residual-right", 2, 0, sharedPool);
+		CandidateRuleFact staging = binaryConsumerFact(consumerOwner);
+		BinaryOp consumerHop = new BinaryOp("standalone-residual-consumer", DataType.MATRIX,
+			ValueType.FP64, OpOp2.PLUS, left.sourceHop(), right.sourceHop());
+
+		CandidateRuleFact cold = bindBinary(closure(), left, right, staging, consumerHop);
+		Assert.assertEquals(1, cold.allowedEmissionFacts().get(0).realizations().size());
+		CandidateEmissionRealization complete = cold.allowedEmissionFacts().get(0)
+			.realizations().get(0);
+		Assert.assertEquals(PlacementLayoutKind.DURABLE_MAP, complete.key().layoutKind());
+		NativeContinuitySupportClauses completeRelation =
+			(NativeContinuitySupportClauses)complete.supportClauses();
+		Assert.assertTrue(completeRelation.singleProduct().isPresent());
+		Assert.assertEquals(4, completeRelation.size());
+		List<CandidateRealizationInputBinding> retainedBindings = List.of(
+			completeRelation.commonAxes().get(0).get(0),
+			completeRelation.commonAxes().get(1).get(0));
+		NativeContinuitySupportClauses retainedRelation = completeRelation.restrictBindings(
+			retainedBindings::contains).orElseThrow();
+		CandidateRealizationSupportClause retainedClause = retainedRelation.get(0);
+		CandidateEmissionRealization retainedRealization = new CandidateEmissionRealization(
+			complete.key(), retainedRelation);
+		CandidateRuleFact retained = fact(staging.key(), List.of(retainedRealization));
+
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(0);
+		CandidateRuleFact rebound = bindBinary(closure(metrics), left, right, retained, consumerHop);
+		CandidateEmissionFact template = staging.allowedEmissionFacts().get(0);
+		CandidateEmissionFact explicitReference = new CandidateEmissionFact(
+			template.emissionState(), template.executionFType(), template.derivedFoutAction(),
+			List.of(new CandidateEmissionRealization(
+				complete.key(), List.copyOf(complete.supportClauses()))));
+		Assert.assertEquals("residual plus retained donor must equal a fresh explicit publication",
+			explicitReference.realizations(), rebound.allowedEmissionFacts().get(0).realizations());
+		CandidateEmissionRealization merged = rebound.allowedEmissionFacts().get(0)
+			.realizations().get(0);
+		Assert.assertTrue("the retained member remains the first exact donor",
+			merged.supportClauses().stream().anyMatch(clause -> clause == retainedClause));
+		for(CandidateRealizationSupportClause clause : merged.supportClauses()) {
+			Assert.assertSame(consumerOwner, clause.proofDependencies().get(0).owner());
+			Assert.assertTrue(clause.inputBindings().stream().anyMatch(binding ->
+				binding.source().rule().parentOccurrence() == leftOwner));
+			Assert.assertTrue(clause.inputBindings().stream().anyMatch(binding ->
+				binding.source().rule().parentOccurrence() == rightOwner));
+		}
+		SearchSpaceMetrics.NativePublicationCount retainedCount = metrics
+			.nativePublicationSnapshot().stream().filter(value -> value.outcome()
+				== SearchSpaceMetrics.NativePublicationOutcome.RETAINED_UNION)
+			.findFirst().orElseThrow();
+		Assert.assertEquals(4, retainedCount.logicalProofs());
+		Assert.assertEquals("only the three candidate tuples outside retained 1x1 are consumed",
+			3, retainedCount.consumedProofs());
+		Assert.assertEquals(3L,
+			metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+
+		CandidateEmissionRealization stagingRealization = staging.allowedEmissionFacts().get(0)
+			.realizations().get(0);
+		assertStandaloneResidualFallback(left, right, consumerHop,
+			fact(staging.key(), List.of(retainedRealization, stagingRealization)), cold, 4);
+		assertStandaloneResidualFallback(left, right, consumerHop,
+			fact(staging.key(), List.of(new CandidateEmissionRealization(
+				complete.key(), List.of(retainedClause)))), cold, 4);
+	}
+
+	private static void assertStandaloneResidualFallback(BinderAxis left, BinderAxis right,
+		BinaryOp consumerHop, CandidateRuleFact retained, CandidateRuleFact explicitReference,
+		long expectedConsumed) throws Exception {
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(0);
+		CandidateRuleFact rebound = bindBinary(closure(metrics), left, right, retained, consumerHop);
+		Assert.assertEquals("fallback retains the exact cold proof/source authority",
+			exactMemberSignatures(explicitReference), exactMemberSignatures(rebound));
+		Assert.assertEquals(expectedConsumed,
+			metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+	}
+
+	@Test
 	public void exactAuthorityResidualMatchesCanonicalExplicitSubsequenceAcrossSeededDomains()
 		throws Exception {
 		java.util.Random random = new java.util.Random(731_991L);
@@ -581,6 +662,17 @@ public class NativeMixedAxisSplitPublicationTest {
 		int exactCount, int valueCount) throws Exception {
 		CompiledHopKey leafOwner = fixtureKey(id + "-leaf");
 		DurableAnchorKey pool = anchor(id + "-pool");
+		return binderAxis(owner, id, exactCount, valueCount, pool, leafOwner);
+	}
+
+	private static BinderAxis binderAxis(CompiledHopKey owner, String id,
+		int exactCount, int valueCount, DurableAnchorKey pool) throws Exception {
+		return binderAxis(owner, id, exactCount, valueCount, pool, fixtureKey(id + "-leaf"));
+	}
+
+	private static BinderAxis binderAxis(CompiledHopKey owner, String id,
+		int exactCount, int valueCount, DurableAnchorKey pool,
+		CompiledHopKey leafOwner) throws Exception {
 		CandidateEmissionRealization leafRealization = sourceRealization(
 			leafOwner, pool, id + "-leaf", true);
 		CandidateRuleFact leaf = fact(new CandidateRuleKey(leafOwner, List.of()),
