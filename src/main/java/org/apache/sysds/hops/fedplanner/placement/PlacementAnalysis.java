@@ -2866,7 +2866,9 @@ public final class PlacementAnalysis {
 				? new long[SearchSpaceMetrics.DuplicateClauseProvenance.values().length] : null;
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> firstAuthorities =
 				diagnoseDuplicates ? new java.util.HashMap<>() : null;
+			boolean alreadyOrdered = true;
 			for(int group = 0; group < clausesByGroup.size(); group++) {
+				int runStart = ordered.size();
 				boolean repeatedList = diagnoseDuplicates && !seenLists.add(clausesByGroup.get(group));
 				for(int position = 0; position < clausesByGroup.get(group).size(); position++) {
 					CandidateRealizationSupportClause clause = clausesByGroup.get(group).get(position);
@@ -2892,13 +2894,22 @@ public final class PlacementAnalysis {
 					if(unique)
 						ordered.add(new ClauseRunEntry(clause, keysByGroup.get(group).get(position)));
 				}
+				// Removing duplicates preserves each canonical run's order. Only the
+				// boundary to its predecessor can invalidate the concatenation order.
+				if(alreadyOrdered && runStart > 0 && ordered.size() > runStart)
+					alreadyOrdered = compareCanonicalText(ordered.get(runStart - 1).key(),
+						ordered.get(runStart).key(), metrics, comparison) <= 0;
 			}
 			// Full immutable clause equality implies equal canonical text. Deduplication
 			// therefore keeps the same first authority and descriptor as the stable sort
 			// followed by equality checks. Hash collisions still require full equality.
 			// The remaining entries retain sorted runs and stable order for text ties.
-			ordered.sort((left, right) ->
-				compareCanonicalText(left.key(), right.key(), metrics, comparison));
+			if(!alreadyOrdered) {
+				ordered.sort((left, right) ->
+					compareCanonicalText(left.key(), right.key(), metrics, comparison));
+				if(metrics != null)
+					metrics.recordCanonicalSort(ordered.size());
+			}
 
 			List<CandidateRealizationSupportClause> union = new ArrayList<>(ordered.size());
 			List<CanonicalText> unionKeys = new ArrayList<>(ordered.size());
@@ -2906,8 +2917,6 @@ public final class PlacementAnalysis {
 				union.add(current.clause());
 				unionKeys.add(current.key());
 			}
-			if(metrics != null)
-				metrics.recordCanonicalSort(union.size());
 			return new MergedClauseRuns(List.copyOf(union), List.copyOf(unionKeys),
 				immutableListReplay, sharedClauseReplay, equalDistinct,
 				diagnoseDuplicates ? duplicateProvenanceCounts(provenance)

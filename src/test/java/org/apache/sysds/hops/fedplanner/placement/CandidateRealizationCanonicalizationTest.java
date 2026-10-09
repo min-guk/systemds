@@ -478,7 +478,7 @@ public class CandidateRealizationCanonicalizationTest {
 	}
 
 	@Test
-	public void sortedSupportRunsUseOneAdaptiveBulkSort() throws Exception {
+	public void disjointSortedSupportRunsSkipBulkSortAfterBoundaryProof() throws Exception {
 		CandidateEmissionRealization template = fixture().get(0);
 		int groupCount = 48, clausesPerGroup = 24;
 		List<CandidateEmissionRealization> alternatives = new ArrayList<>(groupCount);
@@ -488,7 +488,7 @@ public class CandidateRealizationCanonicalizationTest {
 		for(int groupIndex = 0; groupIndex < groupCount; groupIndex++) {
 			List<CandidateRealizationSupportClause> clauses = new ArrayList<>(clausesPerGroup + 1);
 			if(priorLast != null)
-				clauses.add(copy(priorLast));
+				clauses.add(groupIndex % 2 == 0 ? priorLast : copy(priorLast));
 			List<CandidateRealizationSupportClause> originals = new ArrayList<>(clausesPerGroup);
 			for(int clauseIndex = 0; clauseIndex < clausesPerGroup; clauseIndex++) {
 				CandidateRealizationSupportClause clause = new CandidateRealizationSupportClause(List.of(proof(
@@ -524,10 +524,51 @@ public class CandidateRealizationCanonicalizationTest {
 			Assert.assertEquals(groupCount, work.realizationMergeInputs());
 			Assert.assertEquals(expected.size(), work.realizationMergeUniqueClauses());
 			Assert.assertEquals(groupCount - 1, work.realizationMergeDuplicateClauses());
-			Assert.assertTrue("one adaptive stable sort must exploit the already-sorted runs: "
-				+ work.canonicalComparisons(), work.canonicalComparisons() < expected.size() * 3L);
-			Assert.assertEquals(1, work.canonicalSortCalls());
-			Assert.assertEquals(expected.size(), work.canonicalSortElements());
+			Assert.assertTrue("already ordered nonempty runs need at most one boundary comparison each: "
+				+ work.canonicalComparisons(), work.canonicalComparisons() <= groupCount - 1L);
+			Assert.assertEquals("a proven concatenation must not invoke TimSort",
+				0, work.canonicalSortCalls());
+			Assert.assertEquals(0, work.canonicalSortElements());
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
+	}
+
+	@Test
+	public void oneSurvivingCanonicalRunSkipsSortAndKeepsFirstDonorIdentity() throws Exception {
+		CandidateEmissionRealization template = fixture().get(0);
+		CandidateRealizationSupportClause a = new CandidateRealizationSupportClause(
+			List.of(proof("single-run-a")), List.of());
+		CandidateRealizationSupportClause b = new CandidateRealizationSupportClause(
+			List.of(proof("single-run-b")), List.of());
+		CandidateRealizationSupportClause c = new CandidateRealizationSupportClause(
+			List.of(proof("single-run-c")), List.of());
+		CandidateEmissionRealization first = new CandidateEmissionRealization(
+			template.key(), List.of(c, a, b));
+		List<?> firstDescriptors = descriptorSidecar(first.supportClauses());
+		CandidateEmissionRealization equalDistinctSubset = new CandidateEmissionRealization(
+			template.key(), List.of(copy(a), copy(c)));
+		CandidateEmissionRealization sharedSubset = new CandidateEmissionRealization(
+			template.key(), List.of(b));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.setActiveMetrics(metrics);
+		try {
+			CandidateEmissionRealization union = new CandidateEmissionFact(
+				EMISSION, FType.ROW, null,
+				List.of(first, equalDistinctSubset, sharedSubset)).realizations().get(0);
+			Assert.assertSame("an unchanged first run must retain its realization authority",
+				first, union);
+			for(int index = 0; index < first.supportClauses().size(); index++) {
+				Assert.assertSame(first.supportClauses().get(index), union.supportClauses().get(index));
+				Assert.assertSame(firstDescriptors.get(index),
+					descriptorSidecar(union.supportClauses()).get(index));
+			}
+			SearchSpaceMetrics.Snapshot work = metrics.snapshot();
+			Assert.assertEquals(3, work.realizationMergeUniqueClauses());
+			Assert.assertEquals(3, work.realizationMergeDuplicateClauses());
+			Assert.assertEquals(0, work.canonicalComparisons());
+			Assert.assertEquals(0, work.canonicalSortCalls());
 		}
 		finally {
 			PlacementIdentity.setActiveMetrics(null);
