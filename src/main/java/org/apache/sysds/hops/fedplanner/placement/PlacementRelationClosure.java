@@ -6914,7 +6914,14 @@ final class PlacementRelationClosure {
 				for(CompiledHopKey source : entry.getValue())
 					addIdentityDependency(adjacent, source, entry.getKey());
 		addDirectSupportDependencies(adjacent, beforeFacts);
-		addDirectSupportDependencies(adjacent, afterFacts);
+		if(afterFacts != beforeFacts) {
+			// The old inventory is already projected. An identical immutable fact
+			// contributes the same identity edges, even when its enclosing list changed.
+			var previous = beforeFacts.iterator();
+			for(CandidateRuleFact fact : afterFacts)
+				if(!previous.hasNext() || previous.next() != fact)
+					addDirectSupportDependencies(adjacent, fact);
+		}
 		Map<CompiledHopKey,List<CompiledHopKey>> beforeAliases = directAliasMembers(beforeNodes);
 		Map<CompiledHopKey,List<CompiledHopKey>> afterAliases = afterNodes == null || afterNodes == beforeNodes
 			? beforeAliases : directAliasMembers(afterNodes);
@@ -7036,21 +7043,26 @@ final class PlacementRelationClosure {
 	private static void addDirectSupportDependencies(Map<CompiledHopKey,Set<CompiledHopKey>> adjacent,
 		List<CandidateRuleFact> facts) {
 		for(CandidateRuleFact fact : facts)
-			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
-				for(CandidateEmissionRealization realization : emission.realizations()) {
-					if(realization.supportClauses() instanceof NativeContinuitySupportClauses product) {
-						for(List<CandidateRealizationInputBinding> axis : product.product().axes())
-							for(CandidateRealizationInputBinding binding : axis)
-								addIdentityDependency(adjacent,
-									binding.source().rule().parentOccurrence(),
-									fact.key().parentOccurrence());
-						continue;
-					}
-					for(CandidateRealizationSupportClause clause : realization.supportClauses())
-						for(CandidateRealizationInputBinding binding : clause.inputBindings())
-							addIdentityDependency(adjacent, binding.source().rule().parentOccurrence(),
+			addDirectSupportDependencies(adjacent, fact);
+	}
+
+	private static void addDirectSupportDependencies(Map<CompiledHopKey,Set<CompiledHopKey>> adjacent,
+		CandidateRuleFact fact) {
+		for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+			for(CandidateEmissionRealization realization : emission.realizations()) {
+				if(realization.supportClauses() instanceof NativeContinuitySupportClauses product) {
+					for(List<CandidateRealizationInputBinding> axis : product.product().axes())
+						for(CandidateRealizationInputBinding binding : axis)
+							addIdentityDependency(adjacent,
+								binding.source().rule().parentOccurrence(),
 								fact.key().parentOccurrence());
+					continue;
 				}
+				for(CandidateRealizationSupportClause clause : realization.supportClauses())
+					for(CandidateRealizationInputBinding binding : clause.inputBindings())
+						addIdentityDependency(adjacent, binding.source().rule().parentOccurrence(),
+							fact.key().parentOccurrence());
+			}
 	}
 
 	private static void addIdentityDependency(Map<CompiledHopKey,Set<CompiledHopKey>> dependents,

@@ -502,6 +502,102 @@ public class DirectedDirectClosureDirtyConeTest {
 	}
 
 	@Test
+	public void identicalNonemptyFactListProjectsDirectSupportExactlyOnce() throws Exception {
+		Node changedSource = node("union-count-source");
+		Node changedOwner = node("union-count-owner");
+		Node otherSource = node("union-count-other-source");
+		Node otherOwner = node("union-count-other-owner");
+		CountingFactList facts = new CountingFactList(List.of(
+			supportFact(changedSource, changedOwner), supportFact(otherSource, otherOwner)));
+
+		assertSameKeys(keys(changedSource, changedOwner), affected(keys(changedSource),
+			List.of(changedSource, changedOwner, otherSource, otherOwner), List.of(), Map.of(),
+			facts, facts));
+		Assert.assertEquals("one immutable before/after list must be projected only once",
+			facts.size(), facts.accesses());
+	}
+
+	@Test
+	public void directSupportUnionPreservesSlotLengthOrderAndIdentityAdversaries()
+		throws Exception {
+		Node stableSource = node("union-stable-source"), stableOwner = node("union-stable-owner");
+		Node oldSource = node("union-old-source"), newSource = node("union-new-source");
+		Node changedOwner = node("union-changed-owner");
+		CandidateRuleFact stable = supportFact(stableSource, stableOwner);
+		CandidateRuleFact oldSupport = supportFact(oldSource, changedOwner);
+		CandidateRuleFact newSupport = supportFact(newSource, changedOwner);
+		List<Node> baseNodes = List.of(stableSource, stableOwner, oldSource, newSource, changedOwner);
+
+		assertSameKeys(keys(oldSource, newSource, changedOwner), affected(
+			keys(oldSource, newSource), baseNodes, List.of(), Map.of(),
+			List.of(stable, oldSupport), List.of(stable, newSupport)));
+		assertSameKeys(keys(oldSource, newSource, changedOwner), affected(
+			keys(oldSource, newSource), baseNodes, List.of(), Map.of(),
+			new java.util.LinkedList<>(List.of(stable, oldSupport)),
+			new java.util.LinkedList<>(List.of(stable, newSupport))));
+		assertSameKeys(keys(oldSource, newSource, changedOwner), affected(
+			keys(oldSource, newSource), baseNodes, List.of(), Map.of(),
+			List.of(oldSupport, newSupport), List.of(newSupport, oldSupport)));
+
+		Node addedSource = node("union-added-source"), addedOwner = node("union-added-owner");
+		CandidateRuleFact added = supportFact(addedSource, addedOwner);
+		assertSameKeys(keys(addedSource, addedOwner), affected(keys(addedSource),
+			List.of(stableSource, stableOwner, addedSource, addedOwner), List.of(), Map.of(),
+			List.of(stable), List.of(stable, added)));
+		assertSameKeys(keys(addedSource, addedOwner), affected(keys(addedSource),
+			List.of(stableSource, stableOwner, addedSource, addedOwner), List.of(), Map.of(),
+			List.of(stable, added), List.of(stable)));
+
+		Node identitySource = node("union-equal-source", new ValueVersionKey(
+			FINGERPRINT, "union-before-version", REGION, 0, VersionKind.ORDINARY, List.of()));
+		Node foreignEqualSource = node("union-equal-source", new ValueVersionKey(
+			FINGERPRINT, "union-after-version", REGION, 0, VersionKind.ORDINARY, List.of()));
+		Node identityOwner = node("union-identity-owner");
+		Assert.assertEquals(identitySource.key(), foreignEqualSource.key());
+		Assert.assertNotSame(identitySource.key(), foreignEqualSource.key());
+		CandidateRuleFact identityBefore = supportFact(identitySource, identityOwner);
+		CandidateRuleFact identityAfter = supportFact(foreignEqualSource, identityOwner);
+		Assert.assertEquals(identityBefore, identityAfter);
+		Set<CompiledHopKey> identityAffected = affected(
+			keys(identitySource, foreignEqualSource),
+			List.of(identitySource, foreignEqualSource, identityOwner), List.of(), Map.of(),
+			List.of(identityBefore), List.of(identityAfter));
+		Assert.assertEquals(3, identityAffected.size());
+		Assert.assertTrue(identityAffected.stream().anyMatch(key -> key == identitySource.key()));
+		Assert.assertTrue(identityAffected.stream().anyMatch(key -> key == foreignEqualSource.key()));
+		Assert.assertTrue(identityAffected.stream().anyMatch(key -> key == identityOwner.key()));
+		Set<CompiledHopKey> foreignOnly = affected(keys(foreignEqualSource),
+			List.of(identitySource, foreignEqualSource, identityOwner), List.of(), Map.of(),
+			List.of(identityBefore), List.of(identityAfter));
+		Assert.assertEquals(2, foreignOnly.size());
+		Assert.assertTrue(foreignOnly.stream().anyMatch(key -> key == foreignEqualSource.key()));
+		Assert.assertTrue(foreignOnly.stream().anyMatch(key -> key == identityOwner.key()));
+		Assert.assertFalse(foreignOnly.stream().anyMatch(key -> key == identitySource.key()));
+		Set<CompiledHopKey> oldOnly = affected(keys(identitySource),
+			List.of(identitySource, foreignEqualSource, identityOwner), List.of(), Map.of(),
+			List.of(identityBefore), List.of(identityAfter));
+		Assert.assertEquals(2, oldOnly.size());
+		Assert.assertTrue(oldOnly.stream().anyMatch(key -> key == identitySource.key()));
+		Assert.assertTrue(oldOnly.stream().anyMatch(key -> key == identityOwner.key()));
+		Assert.assertFalse(oldOnly.stream().anyMatch(key -> key == foreignEqualSource.key()));
+	}
+
+	@Test
+	public void directSupportUnionKeepsNullFactListContractBehindEmptyEarlyReturn()
+		throws Exception {
+		Node changed = node("union-null-changed");
+		Assert.assertTrue(affected(Set.of(), List.of(changed), List.of(), Map.of(),
+			null, null).isEmpty());
+		try {
+			affected(keys(changed), List.of(changed), List.of(), Map.of(), null, List.of());
+			Assert.fail("a nonempty dirty cone must not silently accept a null fact list");
+		}
+		catch(InvocationTargetException failure) {
+			Assert.assertTrue(failure.getCause() instanceof NullPointerException);
+		}
+	}
+
+	@Test
 	public void postPhysicalFirstPassPreservesUnchangedIndependentRows() throws Exception {
 		Node a = node("post-a"), b = node("post-b"), other = node("post-other");
 		List<Node> nodes = List.of(a, b, other);
