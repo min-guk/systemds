@@ -1417,18 +1417,122 @@ public final class PlacementAnalysis {
 	}
 
 	/** Immutable primitive/enum projection of the exact rule capability result. */
-	public record CandidateCapabilityFact(OpCategory category, String opcode, ExecType nativeExec,
-		FederatedOutput nativeOutput, FType nativeFoutFType,
-		org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode reasonCode, String detail,
-		List<CandidateRuleNote> notes) {
-		public CandidateCapabilityFact {
-			Objects.requireNonNull(category, "category");
-			opcode = opcode == null ? "" : opcode;
-			Objects.requireNonNull(nativeExec, "nativeExec");
-			Objects.requireNonNull(nativeOutput, "nativeOutput");
-			Objects.requireNonNull(reasonCode, "reasonCode");
-			detail = detail == null ? "" : detail;
-			notes = List.copyOf(Objects.requireNonNull(notes, "notes"));
+	public static final class CandidateCapabilityFact {
+		private static final class LogicalTransientReplayDetail {
+			private final String read;
+			private final String input;
+			private final List<CandidateEmissionRealization> realizations;
+			private volatile String value;
+			private LogicalTransientReplayDetail(String read, String input,
+				List<CandidateEmissionRealization> realizations) {
+				this.read = Objects.requireNonNull(read, "read signature");
+				this.input = Objects.requireNonNull(input, "input signature");
+				this.realizations = List.copyOf(Objects.requireNonNull(realizations, "reader realizations"));
+			}
+			private String value() {
+				String rendered = value;
+				if(rendered == null) {
+					rendered = "logical-transient-replay|read=" + read + "|input=" + input
+						+ "|realizations=" + realizations.stream()
+							.map(CandidateEmissionRealization::normalizedSignature).toList();
+					value = rendered;
+				}
+				return rendered;
+			}
+			private boolean sameExactMetadata(LogicalTransientReplayDetail that) {
+				return that != null && read.equals(that.read) && input.equals(that.input)
+					&& realizations.equals(that.realizations);
+			}
+		}
+
+		private final OpCategory category;
+		private final String opcode;
+		private final ExecType nativeExec;
+		private final FederatedOutput nativeOutput;
+		private final FType nativeFoutFType;
+		private final org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode reasonCode;
+		private final String eagerDetail;
+		private final LogicalTransientReplayDetail replayDetail;
+		private final List<CandidateRuleNote> notes;
+
+		public CandidateCapabilityFact(OpCategory category, String opcode, ExecType nativeExec,
+			FederatedOutput nativeOutput, FType nativeFoutFType,
+			org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode reasonCode, String detail,
+			List<CandidateRuleNote> notes) {
+			this.category = Objects.requireNonNull(category, "category");
+			this.opcode = opcode == null ? "" : opcode;
+			this.nativeExec = Objects.requireNonNull(nativeExec, "nativeExec");
+			this.nativeOutput = Objects.requireNonNull(nativeOutput, "nativeOutput");
+			this.nativeFoutFType = nativeFoutFType;
+			this.reasonCode = Objects.requireNonNull(reasonCode, "reasonCode");
+			this.eagerDetail = detail == null ? "" : detail;
+			this.replayDetail = null;
+			this.notes = List.copyOf(Objects.requireNonNull(notes, "notes"));
+		}
+
+		private CandidateCapabilityFact(OpCategory category, String opcode, ExecType nativeExec,
+			FederatedOutput nativeOutput, FType nativeFoutFType,
+			org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode reasonCode,
+			LogicalTransientReplayDetail replayDetail,
+			List<CandidateRuleNote> notes) {
+			this.category = Objects.requireNonNull(category, "category");
+			this.opcode = opcode == null ? "" : opcode;
+			this.nativeExec = Objects.requireNonNull(nativeExec, "nativeExec");
+			this.nativeOutput = Objects.requireNonNull(nativeOutput, "nativeOutput");
+			this.nativeFoutFType = nativeFoutFType;
+			this.reasonCode = Objects.requireNonNull(reasonCode, "reasonCode");
+			this.eagerDetail = null;
+			this.replayDetail = Objects.requireNonNull(replayDetail, "replay detail");
+			this.notes = List.copyOf(Objects.requireNonNull(notes, "notes"));
+		}
+
+		static CandidateCapabilityFact logicalTransientReplay(OpCategory category, String opcode,
+			ExecType nativeExec, FederatedOutput nativeOutput, FType nativeFoutFType,
+			org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode reasonCode,
+			String readSignature, String inputSignature,
+			List<CandidateEmissionRealization> readerRealizations, List<CandidateRuleNote> notes) {
+			return new CandidateCapabilityFact(category, opcode, nativeExec, nativeOutput,
+				nativeFoutFType, reasonCode, new LogicalTransientReplayDetail(
+					readSignature, inputSignature, readerRealizations), notes);
+		}
+
+		public OpCategory category() { return category; }
+		public String opcode() { return opcode; }
+		public ExecType nativeExec() { return nativeExec; }
+		public FederatedOutput nativeOutput() { return nativeOutput; }
+		public FType nativeFoutFType() { return nativeFoutFType; }
+		public org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode reasonCode() { return reasonCode; }
+		public String detail() { return eagerDetail != null ? eagerDetail : replayDetail.value(); }
+		public List<CandidateRuleNote> notes() { return notes; }
+
+		@Override public boolean equals(Object other) {
+			if(this == other)
+				return true;
+			if(!(other instanceof CandidateCapabilityFact that))
+				return false;
+			return category == that.category && opcode.equals(that.opcode)
+				&& nativeExec == that.nativeExec && nativeOutput == that.nativeOutput
+				&& nativeFoutFType == that.nativeFoutFType && reasonCode == that.reasonCode
+				&& notes.equals(that.notes) && (replayDetail != null && that.replayDetail != null
+					&& replayDetail.sameExactMetadata(that.replayDetail) || detail().equals(that.detail()));
+		}
+
+		@Override public int hashCode() {
+			int result = category.hashCode();
+			result = 31 * result + opcode.hashCode();
+			result = 31 * result + nativeExec.hashCode();
+			result = 31 * result + nativeOutput.hashCode();
+			result = 31 * result + Objects.hashCode(nativeFoutFType);
+			result = 31 * result + reasonCode.hashCode();
+			result = 31 * result + detail().hashCode();
+			return 31 * result + notes.hashCode();
+		}
+
+		@Override public String toString() {
+			return "CandidateCapabilityFact[category=" + category + ", opcode=" + opcode
+				+ ", nativeExec=" + nativeExec + ", nativeOutput=" + nativeOutput
+				+ ", nativeFoutFType=" + nativeFoutFType + ", reasonCode=" + reasonCode
+				+ ", detail=" + detail() + ", notes=" + notes + "]";
 		}
 	}
 

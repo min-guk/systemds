@@ -3460,10 +3460,14 @@ final class NativePlacementContinuity {
 		}
 		FixedBoundaryOverlayKey overlayKey = fixedBoundaryOverlayKey(key, pinned,
 			pinnedHandle, witness, allowPinnedTemplate, fixed);
+		if(metrics != null && overlayKey != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_LOOKUPS);
 		DefaultAlternativeList cachedOverlay = overlayKey == null ? null
 			: fixedBoundaryOverlays.get(overlayKey);
 		if(cachedOverlay != null) {
 			fixedBoundaryOverlayHits++;
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_HITS);
 			return cachedOverlay;
 		}
 		List<SelectedCandidateProof> alternatives = new ArrayList<>();
@@ -3481,6 +3485,9 @@ final class NativePlacementContinuity {
 		// every preceding default then check that row and all later defaults/overlays.
 		Set<ContinuityEdgeKey> seen = null;
 		fixedBoundaryOverlayRowsVisited += overlayRows.size();
+		if(metrics != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_ROWS_VISITED,
+				overlayRows.size());
 		for(int rowIndex = 0; rowIndex < overlayRows.size(); rowIndex++) {
 			CandidateTopologyRow row = overlayRows.get(rowIndex);
 			boolean queryOverlay = false;
@@ -3575,6 +3582,8 @@ final class NativePlacementContinuity {
 		fixedBoundaryOverlays.put(key, overlay);
 		fixedBoundaryOverlayRetainedRows += rows;
 		fixedBoundaryOverlayBuilds++;
+		if(metrics != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.FIXED_BOUNDARY_OVERLAY_BUILDS);
 	}
 
 	/** Snapshot-local representation check; it carries no source or proof authority. */

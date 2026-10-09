@@ -5962,6 +5962,14 @@ final class PlacementRelationClosure {
 										else {
 											NativePlacementContinuity.NativeSupportProduct product =
 												((NativeContinuitySupportClauses)publication.supportClauses()).product();
+											if(complexityMetrics != null)
+												complexityMetrics.recordDirectWork(
+													admission == NativePublicationOutcome.OUTPUT_COLLISION
+														? DirectWork.PARTITIONED_COLLISION_PROOFS
+														: admission == NativePublicationOutcome.RETAINED_UNION
+															? DirectWork.PARTITIONED_RETAINED_PROOFS
+															: DirectWork.PARTITIONED_SINGLETON_PROOFS,
+													product.size());
 											for(int ordinal = 0; ordinal < product.size(); ordinal++) {
 												if(complexityMetrics != null) {
 													complexityMetrics.recordNativePublicationProofConsumed(
@@ -8655,13 +8663,12 @@ final class PlacementRelationClosure {
 			&& memo.state().equals(state) && memo.input().equals(alternative.input())
 			&& memo.readerRealizations().equals(readerRealizations))
 			return memo.fact();
-		String detail = "logical-transient-replay|read=" + key.parentOccurrence().normalizedSignature()
-			+ "|input=" + alternative.input().normalizedSignature() + "|realizations="
-			+ readerRealizations.stream().map(CandidateEmissionRealization::normalizedSignature).toList();
-		CandidateCapabilityFact capability = new CandidateCapabilityFact(
+		CandidateCapabilityFact capability = CandidateCapabilityFact.logicalTransientReplay(
 			org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory.OTHER, opcode,
 			state.execType(), state.output(), state.fType(),
-			org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.OK, detail,
+			org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.OK,
+			key.parentOccurrence().normalizedSignature(), alternative.input().normalizedSignature(),
+			readerRealizations,
 			List.of(new CandidateRuleNote(org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.INFO,
 				"builder-local logical transient replay from exact compatible realizations")));
 		CandidateShapeProofFact shapeProof = new CandidateShapeProofFact(
