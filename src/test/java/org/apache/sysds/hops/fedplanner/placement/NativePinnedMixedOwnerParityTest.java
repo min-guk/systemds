@@ -75,7 +75,7 @@ public class NativePinnedMixedOwnerParityTest {
 		assertParity(eager, actual);
 		Assert.assertEquals("only the native circuit representative may be read", 1,
 			relation.materializedHandleCount());
-		Assert.assertEquals("query-local mixed topology must not enter the owner cache", 0,
+		Assert.assertEquals("ordinary coverage must not populate full-owner topology", 0,
 			ownerTopologyCount(initial, childKey(scenario)));
 
 		List<CandidateRuleFact> withNative = List.copyOf(candidateFacts(fixture(scenario)));
@@ -122,7 +122,7 @@ public class NativePinnedMixedOwnerParityTest {
 		assertParity(eager, actual);
 		Assert.assertEquals("rejection may read only the relation's one circuit representative",
 			1, lazyCycle.materializedHandleCount());
-		Assert.assertEquals("the query-local fallback must not populate the owner topology cache", 0,
+		Assert.assertEquals("ordinary coverage must not populate full-owner topology", 0,
 			ownerTopologyCount(lazyResolver, childKey(scenario)));
 	}
 
@@ -339,12 +339,13 @@ public class NativePinnedMixedOwnerParityTest {
 		Field field = NativePlacementContinuity.class.getDeclaredField("candidateTopologies");
 		field.setAccessible(true);
 		int count = 0;
-		for(Object key : ((Map<Object,Object>)field.get(resolver)).keySet()) {
+		for(var entry : ((Map<Object,Object>)field.get(resolver)).entrySet()) {
+			Object key = entry.getKey();
 			Field occurrence = key.getClass().getDeclaredField("occurrence");
 			occurrence.setAccessible(true);
-			Field pinnedHandle = key.getClass().getDeclaredField("pinnedHandle");
-			pinnedHandle.setAccessible(true);
-			if(occurrence.get(key) == owner && pinnedHandle.getInt(key) == 0)
+			Field ordinaryOnly = entry.getValue().getClass().getDeclaredField("ordinaryOnly");
+			ordinaryOnly.setAccessible(true);
+			if(occurrence.get(key) == owner && !ordinaryOnly.getBoolean(entry.getValue()))
 				count++;
 		}
 		return count;

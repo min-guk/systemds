@@ -14,7 +14,7 @@
 | v35 | 365.797초 | 116.640초 |
 | v38 | 368.659초 | 123.666초 |
 
-v38은 v35 대비 LogReg가 2.862초, GLM이 7.026초 늘었다. 두 workload 모두 numeric comparator·runtime audit(mismatch0)·선택 계획 지문이 같지만 성능 개선은 확인하지 못했다. 각1회 관측이며 새 통합본도20초 미달이다. v39는 일반 pinned 조회에서 native sibling의 전체 전개를 줄였지만, query-local 재생성 때문에 selected 회귀 검사 시간이 176.755→389.843초로 늘어 게시·실측하지 않았다. v40은 기존 메모리 한도를 공유하는 handle별 캐시를 추가하고, 다른 realization key의 staging이 retained residual을 막던 조건을 고쳐 통합 검증 중이다. 회귀 검사 시간은 실제 workload planning 시간과 구분한다.
+v38은 v35 대비 LogReg가 2.862초, GLM이 7.026초 늘었다. 두 workload 모두 numeric comparator·runtime audit(mismatch0)·선택 계획 지문이 같지만 성능 개선은 확인하지 못했다. 각1회 관측이며 새 통합본도20초 미달이다. v39는 일반 pinned 조회에서 native sibling의 전체 전개를 줄였지만, query-local 재생성 때문에 selected 회귀 검사 시간이 176.755→389.843초로 늘어 게시·실측하지 않았다. v40은 handle별 캐시와 key별 staging residual로1,397개 회귀를 통과했다. 이후 origin/main의 owner+witness별 ordinary coverage 및 입력 인덱스를 통합한 v41은1,416개/probe9개와 독립 검토를 통과했다. 중복 캐시는 제거하고 key별 staging residual을 유지했으며, v41 actual 측정을 진행한다. 회귀 검사 시간은 실제 workload planning 시간과 구분한다.
 
 | v38 단계 / 메모리 | LogReg | GLM |
 |---|---:|---:|
@@ -25,7 +25,7 @@ v38은 v35 대비 LogReg가 2.862초, GLM이 7.026초 늘었다. 두 workload �
 | Coordinator peak | 9,312,743,424B | 4,785,160,192B |
 | Worker peak | 725,819,392B | 776,400,896B |
 
-v38의 생성 explicit Clause는 v35보다 LogReg198,207개/GLM40,325개 줄었지만 proof 소비는 각각6,024회/5,931회만 줄었다. PARTITIONED retained 소비는 오히려1,932회/38,036회 늘었다. 객체 생성 감소가 전체 downstream 작업 제거로 이어지지 않았음을 구분한다. 두 workload의 CostSurface 표현 지문은 v35와 다르다. 후속 GLM 보조 검증에서는 v35→v38의 256,920개 exact Clause, 3,526개 realization별 key/digest, Physical carrier와 선택 hard factor/objective bits가 같았다(비교 SHA `55e9811c946f1c279fb6ffd0fd774120cedd7ff13631350aeaf3e053e36274f0`). LogReg v38 전체 carrier 검증은 진행 중이며, 모든 assignment의 비용 전수 동등성은 미증명이다. 보조 검증 시간은 성능 근거에서 제외한다. 비교 SHA `ab4a749b56b837e152ccc130a96a078ec4b8029767ae1cc0efe110ac501f7712`.
+v38의 생성 explicit Clause는 v35보다 LogReg198,207개/GLM40,325개 줄었지만 proof 소비는 각각6,024회/5,931회만 줄었다. PARTITIONED retained 소비는 오히려1,932회/38,036회 늘었다. 객체 생성 감소가 전체 downstream 작업 제거로 이어지지 않았음을 구분한다. 두 workload의 CostSurface 표현 지문은 v35와 다르다. 후속 GLM 보조 검증에서는 v35→v38의 256,920개 exact Clause, 3,526개 realization별 key/digest, Physical carrier와 선택 hard factor/objective bits가 같았다(비교 SHA `55e9811c946f1c279fb6ffd0fd774120cedd7ff13631350aeaf3e053e36274f0`). LogReg도 v35→v38의147,012개 exact Clause,2,777개 realization별 key/digest,116,571개 Physical Alternative/525개decision과 선택 hard factor/objective bits가 같았다(비교 SHA `6f00d0bab86560b5a83effc57908ce9edf67145993a884b3eab57995cf8099b4`). 모든 assignment의 비용 전수 동등성은 미증명이다. 보조 검증 시간은 성능 근거에서 제외한다. 비교 SHA `ab4a749b56b837e152ccc130a96a078ec4b8029767ae1cc0efe110ac501f7712`.
 
 v35는 v32 대비 LogReg가 8.785초 늘고 GLM이 5.422초 줄었다. v34보다는 둘 다 줄었지만 v31/v32까지 함께 보면 LogReg 개선은 확인되지 않는다. Numeric comparator, runtime audit, objective bits와 selected plan parity는 통과했다. LogReg proof 소비6,127,475회는 그대로이며 explicit Clause만2,543,426→2,541,843개로 줄었다. Native hybrid accepted4,414→11,515회, 누적 row19,629,467→19,442,307회였고 전체 할당량 개선은 확인하지 못했다. 단일 관측이며20초 미달이다.
 

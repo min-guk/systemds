@@ -104,7 +104,7 @@ final class NativePlacementContinuity {
 	private final Map<CompiledHopKey,Hop> originsByKey;
 	private final CandidateFactsSnapshot candidateFactsSnapshot;
 	private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByKey;
-	private final Map<CompiledHopKey,Boolean> nativeRelationOwners = new IdentityHashMap<>();
+	private final Map<CompiledHopKey,NativeRelationInventory> nativeRelationOwners = new IdentityHashMap<>();
 	private Map<CompiledHopKey,List<CompiledHopKey>> boundCandidateReadersBySource;
 	private long boundSourceProjectionScans;
 	private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edgesByConsumer;
@@ -139,10 +139,6 @@ final class NativePlacementContinuity {
 	// the existing topology-key relation without allocating a probe on every hit.
 	private final Map<CompiledHopKey,Map<NativePoolWitness,CandidateTopologyKey>>
 		candidateTopologyKeysByOwner = new IdentityHashMap<>();
-	// Restricted buckets share the topology LRU and budgets but cannot alias a full
-	// owner topology. Handles are revision-local, so this index is never migrated.
-	private final Map<CompiledHopKey,Map<NativePoolWitness,Map<Integer,CandidateTopologyKey>>>
-		candidatePinnedTopologyKeysByOwner = new IdentityHashMap<>();
 	private final int topologyMaxEntries;
 	private final long topologyMaxRows;
 	private long topologyRetainedRows;
@@ -646,7 +642,9 @@ final class NativePlacementContinuity {
 			}
 		}
 		for(var entry : candidateTopologies.entrySet()) {
-			if(entry.getKey().pinnedHandle != 0)
+			// Partial coverage is rebuilt in the destination snapshot. Completed
+			// supports still migrate under their full occurrence/metadata receipts.
+			if(entry.getValue().ordinaryOnly)
 				continue;
 			CompiledHopKey occurrence = entry.getKey().occurrence;
 			if(!unchangedRows.computeIfAbsent(occurrence, key -> unchangedContinuityFacts(
@@ -2305,13 +2303,11 @@ final class NativePlacementContinuity {
 		// make two previously distinct queries share a support result.
 		if(generated)
 			return new CandidateSupportQueryKey(source, sourceHandle, witness, true, true);
-		// A mixed native owner must not flatten unrelated products merely to classify
-		// an ordinary source. A declared source handle is a conservative refinement of
-		// the legacy shallow bucket; an absent source retains that exact coarse bucket.
-		CompiledHopKey occurrence = source.rule().parentOccurrence();
-		if(hasNativeRelationOwner(occurrence))
-			return new CandidateSupportQueryKey(source, sourceHandle, witness,
-				declaresExactRealization(occurrence, source), false);
+		// A native-containing owner can supply ordinary rows without flattening its
+		// sibling products. Exact handles conservatively refine the old shallow
+		// bucket, including missing rows, and are recomputed during revision transfer.
+		if(hasNativeRelationOwner(source.rule().parentOccurrence()))
+			return new CandidateSupportQueryKey(source, sourceHandle, witness, true, false);
 		if(metrics != null) {
 			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.SUPPORT_QUERY_TOPOLOGY_REQUESTS);
 			CandidateTopologyKey resident = residentTopologyKey(source.rule().parentOccurrence(), witness);
@@ -2532,9 +2528,9 @@ final class NativePlacementContinuity {
 		CompiledHopKey occurrence = source.rule().parentOccurrence();
 		if(occurrenceComponents.components().componentOf(occurrence).cyclic())
 			return null;
-		// The shared root key is a flat OR-of-AND topology key. Any native sibling is
-		// kept as AND-of-axis-OR gates below; asking the legacy key builder for a mixed
-		// owner would first enumerate that sibling even for an ordinary pinned source.
+		// The shared root key is a flat OR-of-AND topology key. A native rectangular
+		// relation is kept as AND-of-axis-OR gates below; asking the legacy key builder
+		// for it would first enumerate every tuple and defeat that representation.
 		if(hasNativeRelationOwner(occurrence))
 			return null;
 		if(metrics != null) {
@@ -3570,17 +3566,9 @@ final class NativePlacementContinuity {
 			metrics.recordTopologyOverlayEvaluation();
 		if(generation != null)
 			return generatedRootAlternative(key, pinned, witness, fixed, generation);
-		boolean nativeOwner = hasNativeRelationOwner(key);
-		boolean pinnedOrdinaryMixed = nativeOwner && pinned != null
-			&& !hasNativeContinuityRelation(key, pinned)
-			&& declaresExactRealization(key, pinned);
-		NativeFactoredProofAlternatives factored = null;
-		if(nativeOwner) {
-			if(pinned == null)
-				factored = nativeUnpinnedFactoredProofAlternatives(key, witness, fixed);
-			else if(!pinnedOrdinaryMixed)
-				factored = nativeFactoredProofAlternatives(key, pinned, witness, fixed);
-		}
+		NativeFactoredProofAlternatives factored = !hasNativeRelationOwner(key) ? null
+			: pinned == null ? nativeUnpinnedFactoredProofAlternatives(key, witness, fixed)
+				: nativeFactoredProofAlternatives(key, pinned, witness, fixed);
 		if(factored != null) {
 			if(!factored.metadataOwnerReads().isEmpty())
 				traversal.hiddenOwnerReadsByState.put(
@@ -3588,9 +3576,7 @@ final class NativePlacementContinuity {
 						allowPinnedTemplate), factored.metadataOwnerReads());
 			return factored.alternatives;
 		}
-		CandidateTopology topology = pinnedOrdinaryMixed
-			? candidatePinnedOrdinaryTopology(key, witness, pinnedHandle)
-			: candidateTopology(key, witness);
+		CandidateTopology topology = candidateTopologyForPin(key, pinned, pinnedHandle, witness);
 		if(!topology.metadataOwnerReads.isEmpty())
 			traversal.hiddenOwnerReadsByState.put(
 				new CandidateProofState(key, pinned, pinnedHandle, witness, allowPinnedTemplate),
@@ -3751,18 +3737,87 @@ final class NativePlacementContinuity {
 
 	/** Snapshot-local representation check; it carries no source or proof authority. */
 	private boolean hasNativeRelationOwner(CompiledHopKey owner) {
+		return nativeRelationInventory(owner).hasNativeRelation();
+	}
+
+	private NativeRelationInventory nativeRelationInventory(CompiledHopKey owner) {
 		List<CandidateRuleFact> facts = candidateFactsByKey.get(owner);
 		if(facts == null)
-			return false;
-		Boolean known = nativeRelationOwners.get(owner);
+			return NativeRelationInventory.EMPTY;
+		NativeRelationInventory known = nativeRelationOwners.get(owner);
 		if(known != null)
 			return known;
-		boolean nativeRelation = facts.stream().flatMap(fact -> fact.allowedEmissionFacts().stream())
-			.flatMap(emission -> emission.realizations().stream())
-			.anyMatch(realization -> realization.supportClauses() instanceof NativeContinuitySupportClauses);
-		// At most one Boolean per immutable snapshot owner. Revisions get a fresh map.
-		nativeRelationOwners.put(owner, nativeRelation);
-		return nativeRelation;
+		NativeRelationInventory inventory = new NativeRelationInventory(facts);
+		nativeRelationOwners.put(owner, inventory);
+		return inventory;
+	}
+
+	/**
+	 * Indexes only explicit immutable inventory, never logical support members or
+	 * query eligibility. Encounter-ordered buckets retain duplicate authority for
+	 * the original query-time checks. Each resolver revision owns a fresh index.
+	 */
+	private static final class NativeRelationInventory {
+		private static final NativeRelationInventory EMPTY = new NativeRelationInventory(List.of());
+		private final List<CandidateRuleFact> facts;
+		private Boolean nativeRelation;
+		private Map<CandidateRuleKey,List<CandidateRuleFact>> factsByRule;
+		private Map<CandidateEmissionFact,Map<PlacementRealizationKey,List<CandidateEmissionRealization>>>
+			realizationsByEmission;
+
+		private NativeRelationInventory(List<CandidateRuleFact> facts) {
+			this.facts = facts;
+			if(facts.isEmpty()) {
+				nativeRelation = false;
+				factsByRule = Map.of();
+				realizationsByEmission = Map.of();
+			}
+		}
+
+		private boolean hasNativeRelation() {
+			if(nativeRelation == null)
+				nativeRelation = facts.stream().flatMap(fact -> fact.allowedEmissionFacts().stream())
+					.flatMap(emission -> emission.realizations().stream()).anyMatch(realization ->
+						realization.supportClauses() instanceof NativeContinuitySupportClauses);
+			return nativeRelation;
+		}
+
+		private List<CandidateRuleFact> matchingFacts(CandidateRuleKey rule) {
+			index();
+			return factsByRule.getOrDefault(rule, List.of());
+		}
+
+		private List<CandidateEmissionRealization> matchingRealizations(
+			CandidateEmissionFact emission, PlacementRealizationKey realization) {
+			return realizationsByEmission.get(emission).getOrDefault(realization, List.of());
+		}
+
+		private void index() {
+			if(factsByRule != null)
+				return;
+			Map<CandidateRuleKey,List<CandidateRuleFact>> byRule = new HashMap<>();
+			Map<CandidateEmissionFact,Map<PlacementRealizationKey,List<CandidateEmissionRealization>>>
+				byEmission = new IdentityHashMap<>();
+			boolean foundNative = false;
+			for(CandidateRuleFact fact : facts) {
+				byRule.computeIfAbsent(fact.key(), ignored -> new ArrayList<>()).add(fact);
+				for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+					if(byEmission.containsKey(emission))
+						continue;
+					Map<PlacementRealizationKey,List<CandidateEmissionRealization>> byRealization = new HashMap<>();
+					for(CandidateEmissionRealization realization : emission.realizations()) {
+						byRealization.computeIfAbsent(realization.key(), ignored -> new ArrayList<>()).add(realization);
+						foundNative |= realization.supportClauses() instanceof NativeContinuitySupportClauses;
+					}
+					byEmission.put(emission, byRealization);
+				}
+			}
+			// These private buckets are never mutated after publication. Their size is
+			// bounded by explicit facts/emissions/realizations, not requested pin count.
+			realizationsByEmission = byEmission;
+			factsByRule = byRule;
+			nativeRelation = foundNative;
+		}
 	}
 
 	private List<SelectedCandidateProof> generatedRootAlternative(CompiledHopKey key,
@@ -3800,27 +3855,25 @@ final class NativePlacementContinuity {
 
 	private boolean declaresExactRealization(CompiledHopKey key,
 		CandidateRealizationReference pinned) {
-		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of()))
-			if(fact.key().equals(pinned.rule()))
-				for(var emission : fact.allowedEmissionFacts())
-					for(CandidateEmissionRealization realization : emission.realizations())
-						if(CandidateRealizationReference.of(fact.key(), realization).equals(pinned))
-							return true;
+		NativeRelationInventory inventory = nativeRelationInventory(key);
+		for(CandidateRuleFact fact : inventory.matchingFacts(pinned.rule()))
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+				if(!inventory.matchingRealizations(emission, pinned.realization()).isEmpty())
+					return true;
 		return false;
 	}
 
 	private boolean hasNativeContinuityRelation(CompiledHopKey key,
 		CandidateRealizationReference pinned) {
-		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
+		NativeRelationInventory inventory = nativeRelationInventory(key);
+		for(CandidateRuleFact fact : inventory.matchingFacts(pinned.rule())) {
 			if(fact.status() != CandidateEvaluationStatus.AVAILABLE
 				|| fact.key().parentOccurrence() != key || !fact.key().equals(pinned.rule()))
 				continue;
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
-				for(CandidateEmissionRealization realization : emission.realizations()) {
-					CandidateRealizationReference reference =
-						CandidateRealizationReference.of(fact.key(), realization);
-					if(reference.rule().parentOccurrence() == key && reference.equals(pinned)
-						&& realization.supportClauses() instanceof NativeContinuitySupportClauses)
+				for(CandidateEmissionRealization realization : inventory.matchingRealizations(
+					emission, pinned.realization())) {
+					if(realization.supportClauses() instanceof NativeContinuitySupportClauses)
 						return true;
 				}
 		}
@@ -3850,7 +3903,8 @@ final class NativePlacementContinuity {
 		CandidateRuleFact matchedFact = null;
 		CandidateEmissionRealization matchedRealization = null;
 		NativeContinuitySupportClauses matchedRelation = null;
-		for(CandidateRuleFact fact : candidateFactsByKey.getOrDefault(key, List.of())) {
+		NativeRelationInventory inventory = nativeRelationInventory(key);
+		for(CandidateRuleFact fact : inventory.matchingFacts(pinned.rule())) {
 			if(fact.status() != CandidateEvaluationStatus.AVAILABLE
 				|| fact.key().parentOccurrence() != key || !fact.key().equals(pinned.rule())
 				|| isBroadcastRowProvablyUnselectable(fact)
@@ -3862,11 +3916,8 @@ final class NativePlacementContinuity {
 					|| state.fType() != witness.fType || emission.executionFType() != witness.fType
 					|| emission.derivedFoutAction() != null)
 					continue;
-				for(CandidateEmissionRealization realization : emission.realizations()) {
-					CandidateRealizationReference reference =
-						CandidateRealizationReference.of(fact.key(), realization);
-					if(reference.rule().parentOccurrence() != key || !reference.equals(pinned))
-						continue;
+				for(CandidateEmissionRealization realization : inventory.matchingRealizations(
+					emission, pinned.realization())) {
 					if(matchedRealization != null) {
 						if(metrics != null)
 							metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_PINNED_REJECT_DUPLICATE);
@@ -4227,57 +4278,34 @@ final class NativePlacementContinuity {
 			|| layout == PlacementIdentity.PlacementLayoutKind.DURABLE_MAP;
 	}
 
-	/**
-	 * Reuses the exact legacy handle bucket for an ordinary pin without reading
-	 * unrelated native sibling clauses. Restricted and full topologies have distinct
-	 * resident keys but share the same bounded LRU and row/metadata budget.
-	 */
-	private CandidateTopology candidatePinnedOrdinaryTopology(CompiledHopKey key,
-		NativePoolWitness witness, int pinnedHandle) {
-		long started = metrics == null ? 0L
-			: metrics.startPhaseHandle(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY);
-		try {
-			if(pinnedHandle <= 0) {
-				CandidateTopology topology = buildCandidateTopology(key, witness, pinnedHandle);
-				if(metrics != null)
-					metrics.recordTopologyExpansion(false, topology.rows.size());
-				return topology;
-			}
-			CandidateTopologyKey topologyKey = residentPinnedTopologyKey(
-				key, witness, pinnedHandle);
-			CandidateTopology cached = topologyKey == null ? null
-				: candidateTopologies.get(topologyKey);
-			if(cached != null) {
-				if(metrics != null) {
-					metrics.recordDirectWork(
-						SearchSpaceMetrics.DirectWork.NATIVE_PINNED_ORDINARY_RESIDENT_TOPOLOGY);
-					metrics.recordTopologyExpansion(true, 0);
-				}
-				return cached;
-			}
+	private CandidateTopology candidateTopologyForPin(CompiledHopKey key,
+		CandidateRealizationReference pinned, int pinnedHandle, NativePoolWitness witness) {
+		// The first ORDINARY return from native resolution is not an alias proof:
+		// a later declaration can expose native support under the very same key.
+		// Negative handles are exact resolver-local equality buckets after arena
+		// overflow; only zero denotes no pin. This slice never migrates revisions.
+		boolean ordinaryOnly = pinned != null && pinnedHandle != 0
+			&& pinned.rule().parentOccurrence() == key && hasNativeRelationOwner(key)
+			&& !hasNativeContinuityRelation(key, pinned) && declaresExactRealization(key, pinned);
+		if(ordinaryOnly && (topologyMaxEntries == 0 || topologyMaxRows == 0)) {
 			if(metrics != null)
-				metrics.recordDirectWork(
-					SearchSpaceMetrics.DirectWork.NATIVE_PINNED_ORDINARY_COLD_TOPOLOGY);
-			if(topologyKey != null)
-				forgetResidentTopologyKey(topologyKey);
-			topologyKey = new CandidateTopologyKey(key, witness, pinnedHandle);
-			CandidateTopology topology = buildCandidateTopology(key, witness, pinnedHandle);
-			cacheTopology(topologyKey, topology);
-			if(metrics != null)
-				metrics.recordTopologyExpansion(false, topology.rows.size());
-			return topology;
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.ORDINARY_TOPOLOGY_BYPASSES);
+			ordinaryOnly = false;
 		}
-		finally {
-			if(metrics != null)
-				metrics.finishPhase(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY, started);
-		}
+		return candidateTopology(key, witness, ordinaryOnly);
 	}
 
+	/** Generic consumers require complete coverage, never a cached ordinary slice. */
 	private CandidateTopology candidateTopology(CompiledHopKey key, NativePoolWitness witness) {
+		return candidateTopology(key, witness, false);
+	}
+
+	private CandidateTopology candidateTopology(CompiledHopKey key, NativePoolWitness witness,
+		boolean ordinaryOnly) {
 		long started = metrics == null ? 0L
 			: metrics.startPhaseHandle(SearchSpaceMetrics.Phase.PROOF_TOPOLOGY);
 		try {
-			return candidateTopologyMeasured(key, witness);
+			return candidateTopologyMeasured(key, witness, ordinaryOnly);
 		}
 		finally {
 			if(metrics != null)
@@ -4286,33 +4314,40 @@ final class NativePlacementContinuity {
 	}
 
 	private CandidateTopology candidateTopologyMeasured(CompiledHopKey key,
-		NativePoolWitness witness) {
+		NativePoolWitness witness, boolean ordinaryOnly) {
 		CandidateTopologyKey topologyKey = residentTopologyKey(key, witness);
 		CandidateTopology cached = topologyKey == null ? null : candidateTopologies.get(topologyKey);
-		if(cached != null) {
-			if(metrics != null)
+		if(cached != null && (ordinaryOnly || !cached.ordinaryOnly)) {
+			if(metrics != null) {
 				metrics.recordTopologyExpansion(true, 0);
+				if(cached.ordinaryOnly)
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.ORDINARY_TOPOLOGY_RESIDENT_HITS);
+			}
 			return cached;
 		}
-		if(topologyKey != null)
+		if(metrics != null) {
+			if(ordinaryOnly)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.ORDINARY_TOPOLOGY_BUILD_ATTEMPTS);
+			else if(cached != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.ORDINARY_TOPOLOGY_COMPLETE_UPGRADE_ATTEMPTS);
+		}
+		// Keep the slice indexed until complete admission succeeds. An oversized
+		// complete result may be returned without evicting useful ordinary coverage.
+		if(topologyKey != null && cached == null)
 			forgetResidentTopologyKey(topologyKey);
-		topologyKey = new CandidateTopologyKey(key, witness);
-		CandidateTopology topology = buildCandidateTopology(key, witness, null);
-		cacheTopology(topologyKey, topology);
-		if(metrics != null)
-			metrics.recordTopologyExpansion(false, topology.rows.size());
-		return topology;
-	}
-
-	/** Shared topology authority walker; a non-null handle restricts only row materialization. */
-	private CandidateTopology buildCandidateTopology(CompiledHopKey key,
-		NativePoolWitness witness, Integer pinnedHandle) {
+		if(topologyKey == null || cached == null)
+			topologyKey = new CandidateTopologyKey(key, witness);
 		Node node = nodesByKey.get(key);
 		Hop hop = originsByKey.get(key);
 		if(node == null || hop == null || incompleteSources.contains(key)
 			|| node.legalAlternatives().stream().noneMatch(state ->
-				state.output() == FederatedOutput.FOUT && state.fType() == witness.fType))
-			return new CandidateTopology(false, false, List.of(), Map.of(), Set.of());
+				state.output() == FederatedOutput.FOUT && state.fType() == witness.fType)) {
+			CandidateTopology unavailable = new CandidateTopology(false, false, List.of(), Map.of(), Set.of());
+			cacheTopology(topologyKey, unavailable);
+			if(metrics != null)
+				metrics.recordTopologyExpansion(false, 0);
+			return unavailable;
+		}
 		boolean nodeDirectGround = node.legalAlternatives().stream().anyMatch(state ->
 			state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
 				&& state.fType() == witness.fType) && node.anchors().stream()
@@ -4335,14 +4370,11 @@ final class NativePlacementContinuity {
 				if(emission.derivedFoutAction() != null) {
 					for(CandidateTopologyRow row : derivedFoutTopologyRows(
 						key, node, fact, emission, witness, metadataOwnerReads))
-						if((pinnedHandle == null
-							|| candidateHandle(row.reference()) == pinnedHandle)
-							&& seen.add(ContinuityEdgeKey.of(row)))
+						if(seen.add(ContinuityEdgeKey.of(row)))
 							rows.add(row);
 					continue;
 				}
-				if(isBroadcastRowProvablyUnselectable(fact)
-					|| !operationPreservesWitness(hop, witness, fact))
+				if(isBroadcastRowProvablyUnselectable(fact) || !operationPreservesWitness(hop, witness, fact))
 					continue;
 				var state = emission.emissionState().placementState();
 				if(state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT
@@ -4350,26 +4382,27 @@ final class NativePlacementContinuity {
 					|| emission.derivedFoutAction() != null)
 					continue;
 				for(CandidateEmissionRealization realization : emission.realizations()) {
+					if(ordinaryOnly
+						&& realization.supportClauses() instanceof NativeContinuitySupportClauses nativeRelation
+						&& nativeContinuityProductLayout(realization)) {
+						// Derived actions were processed above. These native layouts are
+						// not VALUE_MAP, hence carry no hidden metadata-owner reads.
+						// The selected pin cannot alias a skipped native reference.
+						if(metrics != null)
+							metrics.recordDirectWork(
+								SearchSpaceMetrics.DirectWork.ORDINARY_TOPOLOGY_NATIVE_LOGICAL_MEMBERS_SKIPPED,
+								nativeRelation.size());
+						continue;
+					}
 					if(metrics != null)
 						metrics.recordProofRowExamined();
 					CandidateRealizationReference reference = CandidateRealizationReference.of(
 						fact.key(), realization);
-					if(pinnedHandle != null && candidateHandle(reference) != pinnedHandle) {
-						// Full topology records VALUE_MAP metadata while visiting its clauses.
-						// Preserve that invalidation footprint without reading an unrelated
-						// support list in the handle-restricted path.
-						if(!realization.supportClauses().isEmpty()
-							&& realization.key().layoutKind()
-								== PlacementIdentity.PlacementLayoutKind.VALUE_MAP)
-							metadataOwnerReads.addAll(fixedValueMapResolution(reference).ownerReads());
-						continue;
-					}
 					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
 						if(metrics != null)
 							metrics.recordProofRowExamined();
 						FixedValueMapPool fixedMap = null;
-						if(realization.key().layoutKind()
-							== PlacementIdentity.PlacementLayoutKind.VALUE_MAP) {
+						if(realization.key().layoutKind() == PlacementIdentity.PlacementLayoutKind.VALUE_MAP) {
 							FixedValueMapResolution fixedResolution = fixedValueMapResolution(reference);
 							metadataOwnerReads.addAll(fixedResolution.ownerReads());
 							fixedMap = fixedResolution.pool();
@@ -4381,11 +4414,11 @@ final class NativePlacementContinuity {
 						if(dependencies != null) {
 							boolean realizationGround = realization.key().layoutKind()
 								== PlacementIdentity.PlacementLayoutKind.DURABLE_MAP
-									&& witness.matches(nativeWitness(realization.anchor()), true)
-								|| clause.nativeWorkerPoolWitness() != null
+								&& witness.matches(nativeWitness(realization.anchor()), true)
+							|| clause.nativeWorkerPoolWitness() != null
 									&& witness.matches(nativeWitness(clause.nativeWorkerPoolWitness()),
 										clause.nativeWorkerPoolLayoutExact())
-								|| fixedMapGround;
+							|| fixedMapGround;
 							CandidateTopologyRow row = CandidateTopologyRow.create(reference,
 								dependencies, realizationGround, witness);
 							if(seen.add(ContinuityEdgeKey.of(row)))
@@ -4401,13 +4434,29 @@ final class NativePlacementContinuity {
 			PlacementAnalysis.canonicalComparator();
 		List<CandidateTopologyRow> canonicalRows = rows.stream().sorted((left, right) ->
 			referenceOrder.compare(left.reference, right.reference)).toList();
-		Map<Integer,List<CandidateTopologyRow>> mutableRowsByHandle = new java.util.HashMap<>();
+		Map<Integer,List<CandidateTopologyRow>> mutableRowsByHandle =
+			new java.util.HashMap<>();
 		for(CandidateTopologyRow row : canonicalRows)
 			mutableRowsByHandle.computeIfAbsent(candidateHandle(row.reference),
 				ignored -> new ArrayList<>()).add(row);
 		mutableRowsByHandle.replaceAll((ignored, referenceRows) -> List.copyOf(referenceRows));
-		return new CandidateTopology(true, nodeDirectGround, canonicalRows,
-			Collections.unmodifiableMap(mutableRowsByHandle), metadataOwnerReads);
+		CandidateTopology topology = new CandidateTopology(true, nodeDirectGround, canonicalRows,
+			Collections.unmodifiableMap(mutableRowsByHandle), metadataOwnerReads, ordinaryOnly);
+		boolean admitted = cacheTopology(topologyKey, topology);
+		// Count every topology that was actually constructed, including an ordinary
+		// slice rejected by the shared cache budget before complete fallback builds.
+		if(metrics != null)
+			metrics.recordTopologyExpansion(false, canonicalRows.size());
+		if(ordinaryOnly) {
+			if(metrics != null)
+				metrics.recordDirectWork(admitted
+					? SearchSpaceMetrics.DirectWork.ORDINARY_TOPOLOGY_ADMISSIONS
+					: SearchSpaceMetrics.DirectWork.ORDINARY_TOPOLOGY_BYPASSES);
+			// Do not replace amortized legacy reuse with repeated uncached scans.
+			if(!admitted)
+				return candidateTopologyMeasured(key, witness, false);
+		}
+		return topology;
 	}
 
 	/** Shared action authority validation; failed checks still publish metadata reads. */
@@ -4515,9 +4564,7 @@ final class NativePlacementContinuity {
 				metrics.recordTopologyCacheBypass();
 			return false;
 		}
-		CandidateTopologyKey resident = key.pinnedHandle == 0
-			? residentTopologyKey(key.occurrence, key.witness)
-			: residentPinnedTopologyKey(key.occurrence, key.witness, key.pinnedHandle);
+		CandidateTopologyKey resident = residentTopologyKey(key.occurrence, key.witness);
 		CandidateTopologyKey cacheKey = resident == null ? key : resident;
 		CandidateTopology prior = candidateTopologies.remove(cacheKey);
 		if(prior != null) {
@@ -4536,16 +4583,9 @@ final class NativePlacementContinuity {
 				metrics.recordTopologyCacheEviction();
 		}
 		candidateTopologies.put(cacheKey, topology);
-		if(resident == null) {
-			if(cacheKey.pinnedHandle == 0)
-				candidateTopologyKeysByOwner.computeIfAbsent(cacheKey.occurrence,
-					ignored -> new java.util.HashMap<>()).put(cacheKey.witness, cacheKey);
-			else
-				candidatePinnedTopologyKeysByOwner.computeIfAbsent(cacheKey.occurrence,
-					ignored -> new java.util.HashMap<>())
-					.computeIfAbsent(cacheKey.witness, ignored -> new java.util.HashMap<>())
-					.put(cacheKey.pinnedHandle, cacheKey);
-		}
+		if(resident == null)
+			candidateTopologyKeysByOwner.computeIfAbsent(cacheKey.occurrence,
+				ignored -> new java.util.HashMap<>()).put(cacheKey.witness, cacheKey);
 		topologyRetainedRows += rows;
 		topologyRetainedOwnerReads += ownerReads;
 		if(metrics != null)
@@ -4559,30 +4599,7 @@ final class NativePlacementContinuity {
 		return byWitness == null ? null : byWitness.get(witness);
 	}
 
-	private CandidateTopologyKey residentPinnedTopologyKey(CompiledHopKey owner,
-		NativePoolWitness witness, int pinnedHandle) {
-		Map<NativePoolWitness,Map<Integer,CandidateTopologyKey>> byWitness =
-			candidatePinnedTopologyKeysByOwner.get(owner);
-		Map<Integer,CandidateTopologyKey> byHandle = byWitness == null ? null
-			: byWitness.get(witness);
-		return byHandle == null ? null : byHandle.get(pinnedHandle);
-	}
-
 	private void forgetResidentTopologyKey(CandidateTopologyKey key) {
-		if(key.pinnedHandle != 0) {
-			Map<NativePoolWitness,Map<Integer,CandidateTopologyKey>> byWitness =
-				candidatePinnedTopologyKeysByOwner.get(key.occurrence);
-			Map<Integer,CandidateTopologyKey> byHandle = byWitness == null ? null
-				: byWitness.get(key.witness);
-			if(byHandle == null || byHandle.get(key.pinnedHandle) != key)
-				return;
-			byHandle.remove(key.pinnedHandle);
-			if(byHandle.isEmpty())
-				byWitness.remove(key.witness);
-			if(byWitness.isEmpty())
-				candidatePinnedTopologyKeysByOwner.remove(key.occurrence);
-			return;
-		}
 		Map<NativePoolWitness,CandidateTopologyKey> byWitness =
 			candidateTopologyKeysByOwner.get(key.occurrence);
 		if(byWitness == null || byWitness.get(key.witness) != key)
@@ -5498,6 +5515,9 @@ final class NativePlacementContinuity {
 	}
 
 	private static final class CandidateTopology {
+		// A slice contains every ordinary/derived row, but not native sibling
+		// products. It may serve only non-aliased declared ordinary pins.
+		private final boolean ordinaryOnly;
 		private final boolean eligible;
 		private final boolean nodeDirectGround;
 		private final List<CandidateTopologyRow> rows;
@@ -5518,6 +5538,13 @@ final class NativePlacementContinuity {
 		private CandidateTopology(boolean eligible, boolean nodeDirectGround,
 			List<CandidateTopologyRow> rows, Map<Integer,List<CandidateTopologyRow>> rowsByHandle,
 			Set<CompiledHopKey> metadataOwnerReads) {
+			this(eligible, nodeDirectGround, rows, rowsByHandle, metadataOwnerReads, false);
+		}
+
+		private CandidateTopology(boolean eligible, boolean nodeDirectGround,
+			List<CandidateTopologyRow> rows, Map<Integer,List<CandidateTopologyRow>> rowsByHandle,
+			Set<CompiledHopKey> metadataOwnerReads, boolean ordinaryOnly) {
+			this.ordinaryOnly = ordinaryOnly;
 			this.eligible = eligible;
 			this.nodeDirectGround = nodeDirectGround;
 			this.rows = List.copyOf(rows);
@@ -5749,30 +5776,19 @@ final class NativePlacementContinuity {
 	private static final class CandidateTopologyKey {
 		private final CompiledHopKey occurrence;
 		private final NativePoolWitness witness;
-		private final int pinnedHandle;
 		private final int hashCode;
 
 		private CandidateTopologyKey(CompiledHopKey occurrence, NativePoolWitness witness) {
-			this(occurrence, witness, 0);
-		}
-
-		private CandidateTopologyKey(CompiledHopKey occurrence, NativePoolWitness witness,
-			int pinnedHandle) {
 			this.occurrence = Objects.requireNonNull(occurrence, "topology occurrence");
 			this.witness = Objects.requireNonNull(witness, "topology witness");
-			if(pinnedHandle < 0)
-				throw new IllegalArgumentException("Pinned topology handle must be nonnegative");
-			this.pinnedHandle = pinnedHandle;
-			int hash = 31 * System.identityHashCode(occurrence) + witness.hashCode();
-			hashCode = 31 * hash + pinnedHandle;
+			hashCode = 31 * System.identityHashCode(occurrence) + witness.hashCode();
 		}
 
 		@Override public int hashCode() { return hashCode; }
 
 		@Override public boolean equals(Object other) {
 			return this == other || other instanceof CandidateTopologyKey that
-				&& occurrence == that.occurrence && witness.equals(that.witness)
-				&& pinnedHandle == that.pinnedHandle;
+				&& occurrence == that.occurrence && witness.equals(that.witness);
 		}
 	}
 
