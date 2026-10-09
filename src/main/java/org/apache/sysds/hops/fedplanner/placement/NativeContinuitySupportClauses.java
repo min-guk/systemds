@@ -37,6 +37,8 @@ final class NativeContinuitySupportClauses
 	private final List<AuthorityDonor> authorityDonors;
 	private final ConcurrentHashMap<Integer,CandidateRealizationSupportClause> handles =
 		new ConcurrentHashMap<>();
+	private int cachedHash;
+	private volatile boolean hashComputed;
 
 	NativeContinuitySupportClauses(CompiledHopKey owner,
 		NativePlacementContinuity.NativeSupportProduct product,
@@ -333,6 +335,16 @@ final class NativeContinuitySupportClauses
 				&& Objects.equals(clauseWitness, that.clauseWitness)
 				&& sameStructuralProducts(that);
 		return super.equals(other);
+	}
+	@Override
+	public int hashCode() {
+		if(!hashComputed) {
+			// Preserve the ordered List hash exactly. Lazy handle creation changes
+			// neither membership nor member hashes; only the first call enumerates.
+			cachedHash = super.hashCode();
+			hashComputed = true;
+		}
+		return cachedHash;
 	}
 	String authoritySignature() {
 		return owner.normalizedSignature() + "|headers=" + products.stream()
