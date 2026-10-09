@@ -1511,8 +1511,12 @@ final class NativePlacementContinuity {
 				.map(binding -> continuityBindingProjectionOwned(binding, memo, donorMemo))
 				.toList())
 			.toList();
+		List<List<ContinuityBindingProjection>> excluded = product.conditionalComplement()
+			? product.excludedExactAxes().stream().map(axis -> axis.stream()
+				.map(binding -> continuityBindingProjectionOwned(binding, memo, donorMemo)).toList())
+				.toList() : null;
 		return new NativeProductContinuityProjection(
-			axes, product.clauseWitness(), product.clauseLayoutExact());
+			axes, excluded, product.clauseWitness(), product.clauseLayoutExact());
 	}
 
 	private static ContinuityBindingProjection continuityBindingProjectionOwned(
@@ -1594,8 +1598,11 @@ final class NativePlacementContinuity {
 		List<List<ContinuityBindingProjection>> axes = product.commonAxes().stream()
 			.map(axis -> axis.stream().map(ContinuityBindingProjection::new).toList())
 			.toList();
+		List<List<ContinuityBindingProjection>> excluded = product.conditionalComplement()
+			? product.excludedExactAxes().stream().map(axis -> axis.stream()
+				.map(ContinuityBindingProjection::new).toList()).toList() : null;
 		return new NativeProductContinuityProjection(
-			axes, product.clauseWitness(), product.clauseLayoutExact());
+			axes, excluded, product.clauseWitness(), product.clauseLayoutExact());
 	}
 
 	private static <E> Set<E> cachedSet(Set<E> ownedElements) {
@@ -1643,6 +1650,7 @@ final class NativePlacementContinuity {
 	}
 	private record NativeProductContinuityProjection(
 		List<List<ContinuityBindingProjection>> axes,
+		List<List<ContinuityBindingProjection>> excludedExactAxes,
 		DurableAnchorKey clauseWitness, boolean clauseLayoutExact) { }
 	private record ContinuityClauseProjection(List<ContinuityBindingProjection> bindings,
 		DurableAnchorKey nativeWorkerPoolWitness, boolean nativeWorkerPoolLayoutExact) { }
@@ -2317,6 +2325,8 @@ final class NativePlacementContinuity {
 			boolean unchangedBindings = certifiedRootFree || entry.root.equals(source);
 			if(unchangedBindings && entry.templates instanceof CandidateSupportTemplateProduct product)
 				return new NativeContinuityProofProduct(externalSeed, product);
+			if(unchangedBindings && entry.templates instanceof CandidateConditionalSupportTemplateProduct product)
+				return new NativeContinuityProofProduct(externalSeed, product);
 			List<NativeContinuityProof> proofs = new ArrayList<>(entry.templates.size());
 			for(CandidateSupportTemplate template : entry.templates) {
 				List<CandidateRealizationInputBinding> bindings = unchangedBindings
@@ -2389,6 +2399,8 @@ final class NativePlacementContinuity {
 
 	private static long estimatedSupportBytes(List<CandidateSupportTemplate> templates) {
 		if(templates instanceof CandidateSupportTemplateProduct product)
+			return product.estimatedRetainedBytes();
+		if(templates instanceof CandidateConditionalSupportTemplateProduct product)
 			return product.estimatedRetainedBytes();
 		long bytes = 0;
 		for(CandidateSupportTemplate template : templates) {
@@ -2677,6 +2689,15 @@ final class NativePlacementContinuity {
 				rawProofs[0] = product.size();
 		}
 		else {
+			CandidateConditionalSupportTemplateProduct conditional =
+				CandidateConditionalSupportTemplateProduct.tryCreateUnion(outputWitness,
+					witness.exactPartitionRanges, expandedSupportProducts);
+			if(conditional != null) {
+				distinct = conditional;
+				if(metrics != null)
+					rawProofs[0] = conditional.size();
+			}
+			else {
 			for(List<List<CandidateRealizationInputBinding>> options : expandedSupportProducts)
 				enumerateImmediateSupports(options, 0, new ArrayList<>(), support -> {
 					if(metrics != null)
@@ -2685,6 +2706,7 @@ final class NativePlacementContinuity {
 						witness.exactPartitionRanges, support));
 				});
 			distinct = List.copyOf(proofs);
+			}
 		}
 		if(distinct.isEmpty())
 			traceFailedCandidateSupport(source, root, graph, supported);
@@ -3841,7 +3863,6 @@ final class NativePlacementContinuity {
 		List<List<CandidateRealizationInputBinding>> axes = matchedRelation.commonAxes();
 		if(axes.isEmpty())
 			return null;
-
 		// One authoritative member supplies the existing rule-derived dependency
 		// skeleton. NativeContinuitySupportClauses differs across members only in its
 		// direct bindings/proof key, and candidateDependencySkeletons reads only those
@@ -3911,28 +3932,6 @@ final class NativePlacementContinuity {
 				return null;
 		}
 
-		List<CandidateProofDependency> consumerDependencies =
-			new ArrayList<>(invariant.size() + axes.size());
-		consumerDependencies.addAll(overlayDependencies(invariant, fixed));
-		for(int axis = 0; axis < axes.size(); axis++) {
-			List<CandidateRealizationInputBinding> options = axes.get(axis);
-			CompiledHopKey owner = options.get(0).source().rule().parentOccurrence();
-			List<SelectedCandidateProof> gateAlternatives = new ArrayList<>(options.size());
-			for(CandidateRealizationInputBinding option : options) {
-				CandidateRealizationReference source = option.source();
-				List<CandidateDependencySkeleton> optionSkeletons = new ArrayList<>(affected.get(axis).size());
-				for(CandidateDependencySkeleton skeleton : affected.get(axis))
-					optionSkeletons.add(new CandidateDependencySkeleton(skeleton.key(), source,
-						candidateHandle(source), skeleton.witness(), skeleton.inputPosition()));
-				List<CandidateProofDependency> optionDependencies =
-					overlayDependencies(optionSkeletons, fixed);
-				gateAlternatives.add(new SelectedCandidateProof(
-					source, optionDependencies, false, witness));
-			}
-			CandidateAxisGate gate = new CandidateAxisGate(owner,
-				options.get(0).inputPosition(), witness, gateAlternatives);
-			consumerDependencies.add(new CandidateProofDependency(gate));
-		}
 		// Mirror candidateTopology's exact grounding precedence. A durable
 		// realization owns its anchor independently of optional clause metadata;
 		// native lineage can be grounded only by the relation witness.
@@ -3942,8 +3941,50 @@ final class NativePlacementContinuity {
 			|| matchedRelation.clauseWitness() != null
 				&& witness.matches(nativeWitness(matchedRelation.clauseWitness()),
 					matchedRelation.clauseLayoutExact());
-		return new NativeFactoredProofAlternatives(List.of(new SelectedCandidateProof(
-			pinned, List.copyOf(consumerDependencies), directGround, witness)));
+		List<SelectedCandidateProof> roots = new ArrayList<>();
+		int firstPivot = matchedRelation.conditionalComplement() ? 0 : -1;
+		int lastPivot = matchedRelation.conditionalComplement() ? axes.size() - 1 : -1;
+		for(int pivot = firstPivot; pivot <= lastPivot; pivot++) {
+			List<CandidateProofDependency> consumerDependencies =
+				new ArrayList<>(invariant.size() + axes.size());
+			consumerDependencies.addAll(overlayDependencies(invariant, fixed));
+			boolean valid = true;
+			for(int axis = 0; axis < axes.size(); axis++) {
+				List<CandidateRealizationInputBinding> options = axes.get(axis);
+				if(pivot >= 0) {
+					int selectedAxis = axis;
+					int selectedPivot = pivot;
+					options = options.stream().filter(binding -> selectedAxis < selectedPivot
+						? matchedRelation.isExcludedExactBinding(selectedAxis, binding)
+						: selectedAxis == selectedPivot
+							? !matchedRelation.isExcludedExactBinding(selectedAxis, binding)
+							: true).toList();
+				}
+				if(options.isEmpty()) {
+					valid = false;
+					break;
+				}
+				CompiledHopKey owner = options.get(0).source().rule().parentOccurrence();
+				List<SelectedCandidateProof> gateAlternatives = new ArrayList<>(options.size());
+				for(CandidateRealizationInputBinding option : options) {
+					CandidateRealizationReference source = option.source();
+					List<CandidateDependencySkeleton> optionSkeletons =
+						new ArrayList<>(affected.get(axis).size());
+					for(CandidateDependencySkeleton skeleton : affected.get(axis))
+						optionSkeletons.add(new CandidateDependencySkeleton(skeleton.key(), source,
+							candidateHandle(source), skeleton.witness(), skeleton.inputPosition()));
+					gateAlternatives.add(new SelectedCandidateProof(source,
+						overlayDependencies(optionSkeletons, fixed), false, witness));
+				}
+				CandidateAxisGate gate = new CandidateAxisGate(owner,
+					options.get(0).inputPosition(), witness, gateAlternatives);
+				consumerDependencies.add(new CandidateProofDependency(gate));
+			}
+			if(valid)
+				roots.add(new SelectedCandidateProof(pinned,
+					List.copyOf(consumerDependencies), directGround, witness));
+		}
+		return roots.isEmpty() ? null : new NativeFactoredProofAlternatives(List.copyOf(roots));
 	}
 
 	/**
@@ -4013,13 +4054,13 @@ final class NativePlacementContinuity {
 						NativeFactoredProofAlternatives factored =
 							nativeFactoredProofAlternativesResolved(key, reference, witness, fixed,
 								node, hop, fact, realization, relation);
-						if(factored == null || factored.alternatives().size() != 1) {
+						if(factored == null || factored.alternatives().isEmpty()) {
 							if(metrics != null)
 								metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_REJECT_PRODUCT);
 							return null;
 						}
-						SelectedCandidateProof alternative = factored.alternatives().get(0);
-						rows.add(HybridTopologyRow.nativeRow(reference, alternative));
+						for(SelectedCandidateProof alternative : factored.alternatives())
+							rows.add(HybridTopologyRow.nativeRow(reference, alternative));
 						matchedNative = true;
 						continue;
 					}
@@ -4956,7 +4997,7 @@ final class NativePlacementContinuity {
 		}
 		NativeSupportProduct supportProduct() {
 			return proofs instanceof NativeContinuityProofProduct product
-				? product.product.nativeProduct(product.externalSeed) : null;
+				? product.nativeProduct() : null;
 		}
 	}
 
@@ -5789,6 +5830,8 @@ final class NativePlacementContinuity {
 			if(entry.templates instanceof CandidateSupportTemplateProduct product)
 				return product.axes.stream().flatMap(List::stream)
 					.anyMatch(binding -> binding.source().rule().parentOccurrence() == root);
+			if(entry.templates instanceof CandidateConditionalSupportTemplateProduct product)
+				return product.hasRealizableOwnerBinding(root);
 			for(CandidateSupportTemplate template : entry.templates)
 				for(CandidateRealizationInputBinding binding : template.immediateBindings)
 					if(binding.source().rule().parentOccurrence() == root)
@@ -5855,11 +5898,21 @@ final class NativePlacementContinuity {
 		private final List<List<CandidateRealizationInputBinding>> axes;
 		private final int size;
 		private final NativeCanonicalProductIndex canonicalIndex;
+		private final NativeSupportProduct excludedExactProduct;
 
 		private NativeSupportProduct(DurableAnchorKey externalSeed,
 			DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
 			List<List<CandidateRealizationInputBinding>> axes, int size,
 			NativeCanonicalProductIndex canonicalIndex) {
+			this(externalSeed, outputWorkerPoolWitness, exactPartitionRanges,
+				axes, size, canonicalIndex, null);
+		}
+
+		private NativeSupportProduct(DurableAnchorKey externalSeed,
+			DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
+			List<List<CandidateRealizationInputBinding>> axes, int size,
+			NativeCanonicalProductIndex canonicalIndex,
+			NativeSupportProduct excludedExactProduct) {
 			this.externalSeed = Objects.requireNonNull(externalSeed, "externalSeed");
 			this.outputWorkerPoolWitness = Objects.requireNonNull(
 				outputWorkerPoolWitness, "outputWorkerPoolWitness");
@@ -5867,6 +5920,7 @@ final class NativePlacementContinuity {
 			this.axes = axes;
 			this.size = size;
 			this.canonicalIndex = Objects.requireNonNull(canonicalIndex, "canonicalIndex");
+			this.excludedExactProduct = excludedExactProduct;
 		}
 
 		DurableAnchorKey externalSeed() { return externalSeed; }
@@ -5878,7 +5932,8 @@ final class NativePlacementContinuity {
 			long units = Math.addExact(1L + 2L * axes.size(), canonicalIndex.retainedMetadataUnits());
 			for(List<CandidateRealizationInputBinding> axis : axes)
 				units = Math.addExact(units, axis.size());
-			return units;
+			return excludedExactProduct == null ? units
+				: Math.addExact(units, excludedExactProduct.retainedMetadataUnits());
 		}
 		boolean sameHeaderAuthority(NativeSupportProduct that) {
 			return that != null && exactPartitionRanges == that.exactPartitionRanges
@@ -5900,6 +5955,57 @@ final class NativePlacementContinuity {
 			return tryCreate(externalSeed, outputWorkerPoolWitness,
 				exactPartitionRanges, axes, MAX_CANONICAL_LENGTH_STATES,
 				MAX_CANONICAL_LENGTH_TRANSITIONS);
+		}
+		static NativeSupportProduct tryCreateExactComplement(NativeSupportProduct base,
+			List<List<CandidateRealizationInputBinding>> exactAxes) {
+			return tryCreateExactComplement(base, exactAxes,
+				MAX_CANONICAL_LENGTH_STATES, MAX_CANONICAL_LENGTH_TRANSITIONS);
+		}
+		static NativeSupportProduct tryCreateExactComplement(NativeSupportProduct base,
+			List<List<CandidateRealizationInputBinding>> exactAxes,
+			int maximumLengthStates, long maximumLengthTransitions) {
+			if(maximumLengthStates < 0 || maximumLengthTransitions < 0)
+				return null;
+			if(base == null || base.excludedExactProduct != null || exactAxes == null
+				|| exactAxes.size() != base.axes.size())
+				return null;
+			for(int axis = 0; axis < exactAxes.size(); axis++) {
+				if(exactAxes.get(axis).isEmpty()
+					|| exactAxes.get(axis).size() > base.axes.get(axis).size())
+					return null;
+				for(CandidateRealizationInputBinding binding : exactAxes.get(axis))
+					if(!base.containsIdentityBinding(axis, binding))
+						return null;
+			}
+			long baseStates = base.canonicalIndex.retainedStateCount();
+			long baseTransitions = base.canonicalIndex.transitionCount();
+			if(baseStates > maximumLengthStates / 2
+				|| baseTransitions > maximumLengthTransitions / 2)
+				return null;
+			int remainingStates = (int)(maximumLengthStates - 2 * baseStates);
+			long remainingTransitions = maximumLengthTransitions - 2 * baseTransitions;
+			NativeSupportProduct excluded = tryCreate(base.externalSeed,
+				base.outputWorkerPoolWitness, base.exactPartitionRanges, exactAxes,
+				remainingStates, remainingTransitions);
+			long excludedStates = excluded == null ? Long.MAX_VALUE
+				: excluded.canonicalIndex.retainedStateCount();
+			long excludedTransitions = excluded == null ? Long.MAX_VALUE
+				: excluded.canonicalIndex.transitionCount();
+			if(excluded == null || excluded.size >= base.size
+				|| excludedStates > remainingStates
+				|| excludedTransitions > remainingTransitions)
+				return null;
+			return new NativeSupportProduct(base.externalSeed, base.outputWorkerPoolWitness,
+				base.exactPartitionRanges, base.axes, base.size - excluded.size,
+				base.canonicalIndex, excluded);
+		}
+		boolean conditionalComplement() { return excludedExactProduct != null; }
+		List<List<CandidateRealizationInputBinding>> excludedExactAxes() {
+			return excludedExactProduct == null ? List.of() : excludedExactProduct.axes;
+		}
+		boolean isExcludedExactBinding(int axis, CandidateRealizationInputBinding binding) {
+			return excludedExactProduct != null
+				&& excludedExactProduct.containsIdentityBinding(axis, binding);
 		}
 		static NativeSupportProduct tryCreate(DurableAnchorKey externalSeed,
 			DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
@@ -5923,7 +6029,8 @@ final class NativePlacementContinuity {
 			if(that == null || exactPartitionRanges != that.exactPartitionRanges
 				|| !externalSeed.equals(that.externalSeed)
 				|| !outputWorkerPoolWitness.equals(that.outputWorkerPoolWitness)
-				|| axes.size() != that.axes.size())
+				|| axes.size() != that.axes.size()
+				|| (excludedExactProduct == null) != (that.excludedExactProduct == null))
 				return false;
 			for(int axis = 0; axis < axes.size(); axis++) {
 				List<CandidateRealizationInputBinding> left = axes.get(axis);
@@ -5939,17 +6046,48 @@ final class NativePlacementContinuity {
 						return false;
 				}
 			}
+			return excludedExactProduct == null
+				|| excludedExactProduct.sameIdentityAxes(that.excludedExactProduct);
+		}
+		private boolean sameIdentityAxes(NativeSupportProduct that) {
+			if(that == null || axes.size() != that.axes.size())
+				return false;
+			for(int axis = 0; axis < axes.size(); axis++) {
+				if(axes.get(axis).size() != that.axes.get(axis).size())
+					return false;
+				for(int option = 0; option < axes.get(axis).size(); option++)
+					if(axes.get(axis).get(option) != that.axes.get(axis).get(option)
+						|| axes.get(axis).get(option).source().rule().parentOccurrence()
+							!= that.axes.get(axis).get(option).source().rule().parentOccurrence())
+						return false;
+			}
 			return true;
 		}
 		boolean sameStructuralAuthority(NativeSupportProduct that) {
 			return that != null && exactPartitionRanges == that.exactPartitionRanges
 				&& externalSeed.equals(that.externalSeed)
 				&& outputWorkerPoolWitness.equals(that.outputWorkerPoolWitness)
-				&& axes.equals(that.axes);
+				&& axes.equals(that.axes)
+				&& (excludedExactProduct == null ? that.excludedExactProduct == null
+					: excludedExactProduct.sameStructuralAuthority(that.excludedExactProduct));
 		}
 		NativeSupportProduct withAxes(List<List<CandidateRealizationInputBinding>> filtered) {
-			return tryCreate(externalSeed, outputWorkerPoolWitness,
+			NativeSupportProduct base = tryCreate(externalSeed, outputWorkerPoolWitness,
 				exactPartitionRanges, filtered);
+			if(base == null || excludedExactProduct == null)
+				return base;
+			List<List<CandidateRealizationInputBinding>> excluded = new ArrayList<>(filtered.size());
+			for(int axis = 0; axis < filtered.size(); axis++) {
+				List<CandidateRealizationInputBinding> retained = new ArrayList<>();
+				for(CandidateRealizationInputBinding binding : filtered.get(axis))
+					if(excludedExactProduct.containsExactBinding(axis, binding))
+						retained.add(binding);
+				if(retained.isEmpty())
+					return base;
+				excluded.add(List.copyOf(retained));
+			}
+			NativeSupportProduct conditional = tryCreateExactComplement(base, excluded);
+			return conditional;
 		}
 		java.util.Optional<NativeSupportProduct> oneAxisUnion(NativeSupportProduct that) {
 			return oneAxisUnion(that, MAX_CANONICAL_LENGTH_STATES,
@@ -5957,7 +6095,8 @@ final class NativePlacementContinuity {
 		}
 		java.util.Optional<NativeSupportProduct> oneAxisUnion(NativeSupportProduct that,
 			int maximumLengthStates, long maximumLengthTransitions) {
-			if(that == null || exactPartitionRanges != that.exactPartitionRanges
+			if(excludedExactProduct != null || that == null || that.excludedExactProduct != null
+				|| exactPartitionRanges != that.exactPartitionRanges
 				|| !externalSeed.equals(that.externalSeed)
 				|| !outputWorkerPoolWitness.equals(that.outputWorkerPoolWitness)
 				|| axes.size() != that.axes.size())
@@ -6052,18 +6191,53 @@ final class NativePlacementContinuity {
 					return true;
 			return false;
 		}
+		private boolean containsIdentityBinding(int axis,
+			CandidateRealizationInputBinding binding) {
+			if(axis < 0 || axis >= axes.size())
+				return false;
+			for(CandidateRealizationInputBinding candidate : axes.get(axis))
+				if(candidate == binding
+					&& candidate.source().rule().parentOccurrence()
+						== binding.source().rule().parentOccurrence())
+					return true;
+			return false;
+		}
 
 		List<CandidateRealizationInputBinding> bindingsAt(int ordinal) {
-			return canonicalIndex.bindingsAt(axes, size, ordinal);
+			if(excludedExactProduct == null)
+				return canonicalIndex.bindingsAt(axes, size, ordinal);
+			Objects.checkIndex(ordinal, size);
+			int low = 0, high = Math.addExact(size, excludedExactProduct.size) - 1;
+			while(low < high) {
+				int mid = (low + high) >>> 1;
+				List<CandidateRealizationInputBinding> member =
+					canonicalIndex.bindingsAt(axes, size + excludedExactProduct.size, mid);
+				int excludedThrough = excludedExactProduct.countAtOrBefore(member);
+				if(mid + 1 - excludedThrough >= ordinal + 1)
+					high = mid;
+				else
+					low = mid + 1;
+			}
+			List<CandidateRealizationInputBinding> selected =
+				canonicalIndex.bindingsAt(axes, size + excludedExactProduct.size, low);
+			if(excludedExactProduct.ordinalOfExactAuthorityBindings(selected) >= 0)
+				throw new IllegalStateException("Conditional native rank selected excluded member");
+			return selected;
 		}
 		int ordinalOfBindings(List<CandidateRealizationInputBinding> bindings) {
-			return canonicalIndex.ordinalOfBindings(axes, bindings);
+			int base = canonicalIndex.ordinalOfBindings(axes, bindings);
+			if(base < 0 || excludedExactProduct != null
+				&& excludedExactProduct.ordinalOfExactAuthorityBindings(bindings) >= 0)
+				return -1;
+			if(excludedExactProduct == null)
+				return base;
+			return base - excludedExactProduct.countBefore(bindings);
 		}
 		int ordinalOfExactAuthorityBindings(List<CandidateRealizationInputBinding> bindings) {
 			List<CandidateRealizationInputBinding> owned = exactOwnedBindings(bindings);
 			if(owned == null)
 				return -1;
-			return canonicalIndex.ordinalOfBindings(axes, owned);
+			return ordinalOfBindings(owned);
 		}
 		int bindingLength(List<CandidateRealizationInputBinding> bindings) {
 			List<CandidateRealizationInputBinding> owned = exactOwnedBindings(bindings);
@@ -6071,7 +6245,20 @@ final class NativePlacementContinuity {
 		}
 		int rankWithinBindingLength(List<CandidateRealizationInputBinding> bindings) {
 			List<CandidateRealizationInputBinding> owned = exactOwnedBindings(bindings);
-			return owned == null ? -1 : canonicalIndex.rankWithinBindingLength(axes, owned);
+			if(owned == null)
+				return -1;
+			if(excludedExactProduct == null)
+				return canonicalIndex.rankWithinBindingLength(axes, owned);
+			int ordinal = ordinalOfBindings(owned);
+			int length = bindingLength(owned);
+			if(ordinal < 0 || length < 0)
+				return -1;
+			for(var entry : bindingLengthCounts().entrySet()) {
+				if(entry.getKey() == length)
+					return ordinal;
+				ordinal -= entry.getValue();
+			}
+			return -1;
 		}
 		private List<CandidateRealizationInputBinding> exactOwnedBindings(
 			List<CandidateRealizationInputBinding> bindings) {
@@ -6095,17 +6282,59 @@ final class NativePlacementContinuity {
 		}
 		List<CandidateRealizationInputBinding> bindingsAtLengthRank(
 			int bindingLength, int rank) {
-			return canonicalIndex.bindingsAtLengthRank(axes, bindingLength, rank);
+			if(excludedExactProduct == null)
+				return canonicalIndex.bindingsAtLengthRank(axes, bindingLength, rank);
+			int ordinal = rank;
+			for(var entry : bindingLengthCounts().entrySet()) {
+				if(entry.getKey() == bindingLength)
+					return bindingsAt(ordinal);
+				ordinal = Math.addExact(ordinal, entry.getValue());
+			}
+			throw new IndexOutOfBoundsException("Native binding-length rank outside relation");
 		}
 		java.util.Map<Integer,Integer> bindingLengthCounts() {
-			return canonicalIndex.bindingLengthCounts();
+			if(excludedExactProduct == null)
+				return canonicalIndex.bindingLengthCounts();
+			java.util.Map<Integer,Integer> excludedCounts =
+				excludedExactProduct.bindingLengthCounts();
+			java.util.Map<Integer,Integer> counts = new java.util.LinkedHashMap<>();
+			for(NativeCanonicalLengthBucket bucket : canonicalIndex.orderedLengths) {
+				int count = bucket.count() - excludedCounts.getOrDefault(bucket.bindingLength(), 0);
+				if(count != 0)
+					counts.put(bucket.bindingLength(), count);
+			}
+			return java.util.Collections.unmodifiableMap(counts);
 		}
 		java.util.Map<Integer,NativeHashSequence> clauseHashSummaries(CompiledHopKey owner,
 			DurableAnchorKey clauseWitness, boolean clauseLayoutExact) {
-			return canonicalIndex.clauseHashSummaries(this, owner,
-				clauseWitness, clauseLayoutExact);
+			return excludedExactProduct == null
+				? canonicalIndex.clauseHashSummaries(this, owner, clauseWitness, clauseLayoutExact)
+				: canonicalIndex.conditionalClauseHashSummaries(this, excludedExactProduct,
+					owner, clauseWitness, clauseLayoutExact);
 		}
 		int fixedAuthorityLength() { return canonicalIndex.fixedAuthorityLength(); }
+		private int countBefore(List<CandidateRealizationInputBinding> bindings) {
+			if(bindings.size() != axes.size())
+				return 0;
+			PlacementAnalysis.NormalizedTextContext textContext =
+				new PlacementAnalysis.NormalizedTextContext();
+			int length = 0;
+			for(CandidateRealizationInputBinding binding : bindings)
+				length = Math.addExact(length, textContext.binding(binding).length());
+			int count = 0;
+			for(var entry : bindingLengthCounts().entrySet()) {
+				String left = Integer.toString(fixedAuthorityLength() + entry.getKey()) + ':';
+				String right = Integer.toString(fixedAuthorityLength() + length) + ':';
+				if(left.compareTo(right) < 0)
+					count = Math.addExact(count, entry.getValue());
+			}
+			return Math.addExact(count,
+				canonicalIndex.countBeforeAtLength(axes, bindings, length));
+		}
+		private int countAtOrBefore(List<CandidateRealizationInputBinding> bindings) {
+			int before = countBefore(bindings);
+			return ordinalOfExactAuthorityBindings(bindings) >= 0 ? before + 1 : before;
+		}
 		private static List<CandidateRealizationInputBinding> rowMajorBindingsAt(
 			List<List<CandidateRealizationInputBinding>> axes, int size, int ordinal) {
 			Objects.checkIndex(ordinal, size);
@@ -6145,21 +6374,28 @@ final class NativePlacementContinuity {
 		private final List<NativeCanonicalLengthBucket> orderedLengths;
 		private final int fixedAuthorityLength;
 		private final java.util.Map<Integer,Integer> bindingLengthCounts;
+		private final long retainedStateCount;
+		private final long transitionCount;
 
 		private NativeCanonicalProductIndex(boolean rowMajor,
 			List<int[]> optionLengths,
 			List<java.util.Map<Integer,Integer>> suffixLengthCounts,
-			List<NativeCanonicalLengthBucket> orderedLengths, int fixedAuthorityLength) {
+			List<NativeCanonicalLengthBucket> orderedLengths, int fixedAuthorityLength,
+			long retainedStateCount, long transitionCount) {
 			this.rowMajor = rowMajor;
 			this.optionLengths = optionLengths;
 			this.suffixLengthCounts = suffixLengthCounts;
 			this.orderedLengths = orderedLengths;
 			this.fixedAuthorityLength = fixedAuthorityLength;
+			this.retainedStateCount = retainedStateCount;
+			this.transitionCount = transitionCount;
 			java.util.Map<Integer,Integer> counts = new java.util.LinkedHashMap<>();
 			for(NativeCanonicalLengthBucket bucket : orderedLengths)
 				counts.put(bucket.bindingLength(), bucket.count());
-			bindingLengthCounts = java.util.Map.copyOf(counts);
+			bindingLengthCounts = java.util.Collections.unmodifiableMap(counts);
 		}
+		private long retainedStateCount() { return retainedStateCount; }
+		private long transitionCount() { return transitionCount; }
 
 		private long retainedMetadataUnits() {
 			long units = 1L + optionLengths.size() + suffixLengthCounts.size() + orderedLengths.size();
@@ -6209,7 +6445,8 @@ final class NativePlacementContinuity {
 						List.of(), List.of(new NativeCanonicalLengthBucket(
 							authorityLength - fixedAuthorityLength,
 							axes.stream().mapToInt(List::size).reduce(1, Math::multiplyExact),
-							Integer.toString(authorityLength) + ':')), fixedAuthorityLength);
+							Integer.toString(authorityLength) + ':')), fixedAuthorityLength,
+						axes.size() + 1L, axes.stream().mapToLong(List::size).sum());
 				}
 
 				List<java.util.Map<Integer,Integer>> suffix = new ArrayList<>(
@@ -6254,7 +6491,8 @@ final class NativePlacementContinuity {
 				}
 				ordered.sort(java.util.Comparator.comparing(NativeCanonicalLengthBucket::lengthPrefix));
 				return new NativeCanonicalProductIndex(false, List.copyOf(optionLengths),
-					List.copyOf(suffix), List.copyOf(ordered), fixedAuthorityLength);
+					List.copyOf(suffix), List.copyOf(ordered), fixedAuthorityLength,
+					retainedStates, transitions);
 			}
 			catch(ArithmeticException overflow) {
 				return null;
@@ -6297,6 +6535,93 @@ final class NativePlacementContinuity {
 					tuples.count(), tuples.sequencePower(), clauseWeighted));
 			}
 			return java.util.Collections.unmodifiableMap(result);
+		}
+
+		private java.util.Map<Integer,NativeHashSequence> conditionalClauseHashSummaries(
+			NativeSupportProduct product, NativeSupportProduct excluded,
+			CompiledHopKey owner, DurableAnchorKey clauseWitness, boolean clauseLayoutExact) {
+			PlacementAnalysis.NormalizedTextContext textContext =
+				new PlacementAnalysis.NormalizedTextContext();
+			java.util.Map<Integer,NativeTupleHashSummary> tuplesByLength =
+				conditionalTupleHashSummaries(product.axes(), excluded.axes(), textContext);
+			java.util.Map<Integer,NativeHashSequence> result = new java.util.LinkedHashMap<>();
+			String authorityPrefix = product.headerAuthoritySignature() + "|bindings=[";
+			int proofConstant = 31 * (31
+				* PlacementIdentity.PlacementProofKind.NATIVE_CONTINUITY.hashCode()
+				+ Objects.hashCode(owner));
+			int witnessHash = Objects.hashCode(clauseWitness);
+			int clauseConstant = 923521 + 29791 * proofConstant
+				+ 31 * witnessHash + Boolean.hashCode(clauseLayoutExact);
+			java.util.Map<Integer,Integer> acceptedCounts = product.bindingLengthCounts();
+			for(NativeCanonicalLengthBucket bucket : orderedLengths) {
+				Integer accepted = acceptedCounts.get(bucket.bindingLength());
+				if(accepted == null)
+					continue;
+				NativeTupleHashSummary tuples = tuplesByLength.get(bucket.bindingLength());
+				if(tuples == null || tuples.count() != accepted)
+					throw new IllegalStateException("Conditional native canonical hash index is inconsistent");
+				int authorityWeighted = authorityPrefix.hashCode()
+					* tuples.authorityCharPower() * tuples.geometric()
+					+ tuples.weightedAuthoritySuffix();
+				int bindingsWeighted = tuples.bindingsPower() * tuples.geometric()
+					+ tuples.weightedBindingsSuffix();
+				int clauseWeighted = clauseConstant * tuples.geometric()
+					+ 29791 * authorityWeighted + 961 * bindingsWeighted;
+				result.put(bucket.bindingLength(), new NativeHashSequence(
+					tuples.count(), tuples.sequencePower(), clauseWeighted));
+			}
+			return java.util.Collections.unmodifiableMap(result);
+		}
+
+		private java.util.Map<Integer,NativeTupleHashSummary> conditionalTupleHashSummaries(
+			List<List<CandidateRealizationInputBinding>> axes,
+			List<List<CandidateRealizationInputBinding>> excludedAxes,
+			PlacementAnalysis.NormalizedTextContext textContext) {
+			java.util.Map<Integer,NativeTupleHashSummary> allTail = java.util.Map.of(0,
+				new NativeTupleHashSummary(1, 31, 1, 31, ']', 1, 0));
+			java.util.Map<Integer,NativeTupleHashSummary> acceptedTail = java.util.Map.of();
+			for(int axis = axes.size() - 1; axis >= 0; axis--) {
+				java.util.Map<Integer,NativeTupleHashSummary> all = new java.util.HashMap<>();
+				java.util.Map<Integer,NativeTupleHashSummary> accepted = new java.util.HashMap<>();
+				for(int option = 0; option < axes.get(axis).size(); option++) {
+					CandidateRealizationInputBinding binding = axes.get(axis).get(option);
+					boolean exact = identityIndexOf(excludedAxes.get(axis), binding) >= 0;
+					appendTupleBlocks(all, binding, axis, axes.size(), optionLengths.get(axis)[option],
+						allTail, textContext);
+					appendTupleBlocks(accepted, binding, axis, axes.size(), optionLengths.get(axis)[option],
+						exact ? acceptedTail : allTail, textContext);
+				}
+				allTail = all;
+				acceptedTail = accepted;
+			}
+			return acceptedTail;
+		}
+
+		private static void appendTupleBlocks(
+			java.util.Map<Integer,NativeTupleHashSummary> destination,
+			CandidateRealizationInputBinding binding, int axis, int axisCount, int optionLength,
+			java.util.Map<Integer,NativeTupleHashSummary> tails,
+			PlacementAnalysis.NormalizedTextContext textContext) {
+			PlacementAnalysis.NormalizedText text = textContext.binding(binding);
+			int chunkLength = text.length();
+			int chunkHash = text.hashCode();
+			if(axis + 1 < axisCount) {
+				chunkHash = chunkHash * 961 + ", ".hashCode();
+				chunkLength += 2;
+			}
+			for(var tailEntry : tails.entrySet()) {
+				NativeTupleHashSummary tail = tailEntry.getValue();
+				int authorityPower = pow31(chunkLength) * tail.authorityCharPower();
+				int bindingPower = 31 * tail.bindingsPower();
+				NativeTupleHashSummary block = new NativeTupleHashSummary(tail.count(),
+					tail.sequencePower(), tail.geometric(), authorityPower,
+					chunkHash * tail.authorityCharPower() * tail.geometric()
+						+ tail.weightedAuthoritySuffix(), bindingPower,
+					binding.hashCode() * tail.bindingsPower() * tail.geometric()
+						+ tail.weightedBindingsSuffix());
+				int length = Math.addExact(optionLength, tailEntry.getKey());
+				destination.merge(length, block, NativeTupleHashSummary::append);
+			}
 		}
 
 		private java.util.Map<Integer,NativeTupleHashSummary> tupleHashSummaries(
@@ -6512,6 +6837,55 @@ final class NativePlacementContinuity {
 			return remainingLength == 0 ? rank : -1;
 		}
 
+		private int countBeforeAtLength(List<List<CandidateRealizationInputBinding>> axes,
+			List<CandidateRealizationInputBinding> bindings, int bindingLength) {
+			if(bindings.size() != axes.size())
+				return 0;
+			int rank = 0;
+			int remainingLength = bindingLength;
+			PlacementAnalysis.NormalizedTextContext textContext =
+				new PlacementAnalysis.NormalizedTextContext();
+			java.util.Comparator<PlacementAnalysis.NormalizedText> comparator =
+				PlacementAnalysis.normalizedTextComparator();
+			for(int axis = 0; axis < axes.size(); axis++) {
+				CandidateRealizationInputBinding selected = bindings.get(axis);
+				boolean continued = false;
+				for(int option = 0; option < axes.get(axis).size(); option++) {
+					CandidateRealizationInputBinding candidate = axes.get(axis).get(option);
+					int order = comparator.compare(
+						textContext.binding(candidate), textContext.binding(selected));
+					if(order < 0) {
+						int suffixLength = remainingLength - optionLengths.get(axis)[option];
+						if(suffixLength >= 0)
+							rank = Math.addExact(rank,
+								suffixCount(axes, axis + 1, suffixLength));
+						continue;
+					}
+					if(order == 0 && candidate == selected) {
+						remainingLength -= optionLengths.get(axis)[option];
+						continued = true;
+					}
+					break;
+				}
+				if(!continued)
+					return rank;
+			}
+			return rank;
+		}
+
+		private int suffixCount(List<List<CandidateRealizationInputBinding>> axes,
+			int axis, int length) {
+			if(!rowMajor)
+				return suffixLengthCounts.get(axis).getOrDefault(length, 0);
+			int expected = 0;
+			int count = 1;
+			for(int cursor = axis; cursor < axes.size(); cursor++) {
+				expected = Math.addExact(expected, optionLengths.get(cursor)[0]);
+				count = Math.multiplyExact(count, axes.get(cursor).size());
+			}
+			return expected == length ? count : 0;
+		}
+
 		private static int identityIndexOf(List<?> values, Object selected) {
 			for(int index = 0; index < values.size(); index++)
 				if(values.get(index) == selected)
@@ -6627,7 +7001,6 @@ final class NativePlacementContinuity {
 		}
 
 		@Override public int size() { return size; }
-
 		@Override public CandidateSupportTemplate get(int ordinal) {
 			return new CandidateSupportTemplate(outputWorkerPoolWitness,
 				exactPartitionRanges, NativeSupportProduct.rowMajorBindingsAt(axes, size, ordinal));
@@ -6653,18 +7026,181 @@ final class NativePlacementContinuity {
 		}
 	}
 
+	private static final class CandidateConditionalSupportTemplateProduct
+		extends AbstractList<CandidateSupportTemplate> implements java.util.RandomAccess {
+		private final CandidateSupportTemplateProduct base;
+		private final List<List<CandidateRealizationInputBinding>> exactAxes;
+		private final int size;
+		private CandidateConditionalSupportTemplateProduct(CandidateSupportTemplateProduct base,
+			List<List<CandidateRealizationInputBinding>> exactAxes, int size) {
+			this.base = base;
+			this.exactAxes = exactAxes;
+			this.size = size;
+		}
+		private static CandidateConditionalSupportTemplateProduct tryCreateUnion(
+			DurableAnchorKey witness, boolean exactRanges,
+			Set<List<List<CandidateRealizationInputBinding>>> descriptors) {
+			if(descriptors.size() < 2)
+				return null;
+			int axes = descriptors.iterator().next().size();
+			if(axes < 2)
+				return null;
+			List<List<CandidateRealizationInputBinding>> union = new ArrayList<>(axes);
+			for(int axis = 0; axis < axes; axis++) {
+				List<CandidateRealizationInputBinding> values = new ArrayList<>();
+				for(var descriptor : descriptors) {
+					if(descriptor.size() != axes)
+						return null;
+					for(var value : descriptor.get(axis))
+						if(values.stream().noneMatch(retained ->
+							NativeSupportProduct.sameExactBindingAuthority(retained, value)))
+							values.add(value);
+				}
+				values.sort(PlacementAnalysis.canonicalComparator());
+				union.add(List.copyOf(values));
+			}
+			List<List<CandidateRealizationInputBinding>> exact = new ArrayList<>(
+				Collections.nCopies(axes, null));
+			int cursor = 0;
+			for(var descriptor : descriptors) {
+				int pivot = -1;
+				for(int axis = cursor; axis < axes; axis++)
+					if(!sameAuthorityAxis(descriptor.get(axis), union.get(axis))) {
+						pivot = axis;
+						break;
+					}
+				if(pivot < 0)
+					return null;
+				for(int axis = 0; axis < pivot; axis++) {
+					if(exact.get(axis) == null)
+						exact.set(axis, union.get(axis));
+					if(!sameAuthorityAxis(descriptor.get(axis), exact.get(axis)))
+						return null;
+				}
+				for(int axis = pivot + 1; axis < axes; axis++)
+					if(!sameAuthorityAxis(descriptor.get(axis), union.get(axis)))
+						return null;
+				List<CandidateRealizationInputBinding> inexact = descriptor.get(pivot);
+				List<CandidateRealizationInputBinding> exactAxis = union.get(pivot).stream()
+					.filter(binding -> inexact.stream().noneMatch(value ->
+						NativeSupportProduct.sameExactBindingAuthority(value, binding))).toList();
+				if(exactAxis.isEmpty())
+					return null;
+				exact.set(pivot, exactAxis);
+				cursor = pivot + 1;
+			}
+			for(int axis = 0; axis < axes; axis++)
+				if(exact.get(axis) == null)
+					exact.set(axis, union.get(axis));
+			CandidateSupportTemplateProduct base = CandidateSupportTemplateProduct.tryCreate(
+				witness, exactRanges, union);
+			CandidateSupportTemplateProduct excluded = CandidateSupportTemplateProduct.tryCreate(
+				witness, exactRanges, exact);
+			if(base == null || excluded == null || excluded.size() >= base.size())
+				return null;
+			return new CandidateConditionalSupportTemplateProduct(base,
+				exact.stream().map(List::copyOf).toList(), base.size() - excluded.size());
+		}
+		private static boolean sameAuthorityAxis(
+			List<CandidateRealizationInputBinding> left,
+			List<CandidateRealizationInputBinding> right) {
+			if(left.size() != right.size())
+				return false;
+			for(int index = 0; index < left.size(); index++)
+				if(!NativeSupportProduct.sameExactBindingAuthority(
+					left.get(index), right.get(index)))
+					return false;
+			return true;
+		}
+		@Override public int size() { return size; }
+		private long estimatedRetainedBytes() {
+			long bytes = base.estimatedRetainedBytes() + 48L + 32L * exactAxes.size();
+			for(List<CandidateRealizationInputBinding> axis : exactAxes)
+				bytes = Math.addExact(bytes, 8L * axis.size());
+			return bytes;
+		}
+		private boolean hasRealizableOwnerBinding(CompiledHopKey owner) {
+			for(int axis = 0; axis < base.axes.size(); axis++) {
+				for(CandidateRealizationInputBinding binding : base.axes.get(axis)) {
+					if(binding.source().rule().parentOccurrence() != owner)
+						continue;
+					if(NativeCanonicalProductIndex.identityIndexOf(
+						exactAxes.get(axis), binding) < 0)
+						return true;
+					for(int other = 0; other < base.axes.size(); other++)
+						if(other != axis
+							&& base.axes.get(other).size() > exactAxes.get(other).size())
+							return true;
+				}
+			}
+			return false;
+		}
+		@Override public CandidateSupportTemplate get(int ordinal) {
+			Objects.checkIndex(ordinal, size);
+			int axes = base.axes.size();
+			int[] suffixAll = new int[axes + 1];
+			int[] suffixExact = new int[axes + 1];
+			suffixAll[axes] = suffixExact[axes] = 1;
+			for(int axis = axes - 1; axis >= 0; axis--) {
+				suffixAll[axis] = Math.multiplyExact(base.axes.get(axis).size(), suffixAll[axis + 1]);
+				suffixExact[axis] = Math.multiplyExact(exactAxes.get(axis).size(), suffixExact[axis + 1]);
+			}
+			List<CandidateRealizationInputBinding> selected = new ArrayList<>(axes);
+			boolean prefixExact = true;
+			int remaining = ordinal;
+			for(int axis = 0; axis < axes; axis++) {
+				boolean found = false;
+				for(CandidateRealizationInputBinding option : base.axes.get(axis)) {
+					boolean optionExact = NativeCanonicalProductIndex.identityIndexOf(
+						exactAxes.get(axis), option) >= 0;
+					int count = !prefixExact || !optionExact ? suffixAll[axis + 1]
+						: suffixAll[axis + 1] - suffixExact[axis + 1];
+					if(remaining >= count) {
+						remaining -= count;
+						continue;
+					}
+					selected.add(option);
+					prefixExact &= optionExact;
+					found = true;
+					break;
+				}
+				if(!found)
+					throw new IllegalStateException("Conditional support template index is inconsistent");
+			}
+			return new CandidateSupportTemplate(base.outputWorkerPoolWitness,
+				base.exactPartitionRanges, PlacementAnalysis.sharedAlreadyCanonicalComparableList(
+					selected, "conditional native support template binding"));
+		}
+	}
+
 	private static final class NativeContinuityProofProduct
 		extends AbstractList<NativeContinuityProof> implements java.util.RandomAccess {
 		private final DurableAnchorKey externalSeed;
 		private final CandidateSupportTemplateProduct product;
+		private final CandidateConditionalSupportTemplateProduct conditional;
+		private final NativeSupportProduct nativeProduct;
 
 		private NativeContinuityProofProduct(DurableAnchorKey externalSeed,
 			CandidateSupportTemplateProduct product) {
 			this.externalSeed = externalSeed;
 			this.product = product;
+			this.conditional = null;
+			this.nativeProduct = product.nativeProduct(externalSeed);
 		}
 
-		@Override public int size() { return product.size(); }
+		private NativeContinuityProofProduct(DurableAnchorKey externalSeed,
+			CandidateConditionalSupportTemplateProduct conditional) {
+			this.externalSeed = externalSeed;
+			this.product = conditional.base;
+			this.conditional = conditional;
+			NativeSupportProduct base = product.nativeProduct(externalSeed);
+			this.nativeProduct = base == null ? null
+				: NativeSupportProduct.tryCreateExactComplement(base, conditional.exactAxes);
+			if(nativeProduct == null)
+				throw new IllegalArgumentException("Conditional native proof product exceeds index bounds");
+		}
+
+		@Override public int size() { return conditional == null ? product.size() : conditional.size(); }
 
 		private long estimatedPublicMemoBytes() {
 			// Retain the proof wrapper, template product and outer immutable axis array.
@@ -6678,14 +7214,24 @@ final class NativePlacementContinuity {
 					return Long.MAX_VALUE;
 				bytes += retained;
 			}
+			if(conditional != null)
+				for(List<CandidateRealizationInputBinding> axis : conditional.exactAxes)
+					bytes = Math.addExact(bytes, 32L + 8L * axis.size());
 			return bytes;
 		}
 
 		@Override public NativeContinuityProof get(int ordinal) {
-			CandidateSupportTemplate template = product.get(ordinal);
+			// Public proofs preserve the legacy Cartesian encounter order. The separate
+			// nativeProduct remains the canonical UTF-16 rank used by published support
+			// clauses and exact member selection.
+			CandidateSupportTemplate template = conditional == null
+				? product.get(ordinal) : conditional.get(ordinal);
 			return new NativeContinuityProof(externalSeed,
 				template.outputWorkerPoolWitness, template.exactPartitionRanges,
 				template.immediateBindings, template.canonicalOrderingSuffixLength);
+		}
+		private NativeSupportProduct nativeProduct() {
+			return nativeProduct;
 		}
 	}
 	private record ComputedCandidateSupport(List<CandidateSupportTemplate> templates,
@@ -6694,7 +7240,8 @@ final class NativePlacementContinuity {
 		List<CandidateSupportTemplate> templates, Set<CompiledHopKey> occurrences,
 		long estimatedBytes, boolean rootIndependent) {
 		private SupportMemoEntry {
-			if(!(templates instanceof CandidateSupportTemplateProduct)) {
+			if(!(templates instanceof CandidateSupportTemplateProduct)
+				&& !(templates instanceof CandidateConditionalSupportTemplateProduct)) {
 				PlacementAnalysis.NormalizedTextContext textContext =
 					new PlacementAnalysis.NormalizedTextContext();
 				List<CanonicalSupportTemplate> canonical = new ArrayList<>(templates.size());

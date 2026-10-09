@@ -2,25 +2,35 @@
 
 ## 상태
 
-최신 완료 실측은 **v29 (`cbb0f62535`)**다. 동일 입력·seed·privacy·cost profile·JVM·CPU/메모리 조건의 COFEE 50K×128 W1 결과이며, 각 버전별 1회 관측이다. **20초 목표는 미달이다.**
+최신 완료 실측은 **v31 (`0232ad22fb`)**다. 같은 입력·seed·privacy·cost profile·JVM·CPU/메모리 조건의 COFEE 50K×128 W1 결과이며, 각 버전별 1회 관측이다. **20초 목표는 미달이다.**
 
 | 엔진 | LogReg 전체 초기 planning | GLM 전체 초기 planning |
 |---|---:|---:|
-| v27 | 373.092초 | 117.127초 |
 | v28 | 359.976초 | 116.389초 |
 | v29 | 361.813초 | 123.207초 |
+| v31 | 354.356초 | 124.597초 |
 
-세 버전 모두 numeric comparison, runtime audit, objective raw bits, assignment, 전체 선택 문자열과 receipt/section 동등성을 v19 기준과 비교해 통과했다. v29의 CostSurface 및 aggregate final fingerprint도 v28과 같다. 실제 workload의 모든 cost cell 전수 검증을 뜻하지는 않는다.
+v31은 v29 대비 LogReg가7.457초 줄고 GLM은1.390초 늘었다. 단일 실행이며 두 workload의 일관된 성능 개선을 주장하지 않는다. Numeric comparison, runtime audit(mismatch/missing0), objective raw bits, assignment, 전체 selected candidate 문자열과 receipt/section 동등성을 v19/v29 기준으로 통과했다. CostSurface 및 aggregate final fingerprint도 v29와 같다. 실제 workload의 모든 cost cell을 전수 비교한 결과는 아니다.
 
-v28의 carrier 기반 seed support 전파와 native boundary projection은 v27보다 전체 시간이 줄었다. v29의 반복 seed plan 재사용은 Analysis가 줄었지만 Model·Cost·Optimizer 시간이 늘어 전체 시간은 LogReg +1.837초, GLM +6.818초였다. 합성 fixture에서 120회 준비를 1회로 줄인 효과를 실제 전체 성능 향상으로 일반화하지 않는다.
+| v31 단계/메모리 | LogReg | GLM |
+|---|---:|---:|
+| PlacementAnalysis | 263.483초 | 78.584초 |
+| Physical Model | 5.869초 | 4.383초 |
+| Cost Surface | 9.719초 | 9.603초 |
+| Optimizer | 71.579초 | 26.981초 |
+| 실제 실행 | 4.413초 | 6.908초 |
+| Coordinator peak | 8,942,387,200B | 5,201,670,144B |
+| Worker peak | 735,903,744B | 756,994,048B |
 
-v29는 전체 1,320개와 probe 9개를 통과해 origin/main에 게시했다. 다음 v30은 재사용한 acyclic summary의 재생성을 생략하며 전체 1,322개와 probe 9개를 통과했다. 다중 입력 exactness complement는 아직 별도 lane에서 검증 중이다.
+v31은 acyclic summary 재사용과 sparse native skeleton 전파를 합쳤다. Selected FedPlanner1,325개/probe9개를 통과해 origin/main에 게시했다. v30 단독 실측은 없으므로 두 변경의 시간 효과를 분리하지 않는다.
 
-- v19-v29 비교 SHA `d1cfa787229b2c8e25397cb48817b9ee2b43a1c96cab5dadce936c9a8bedbc71`
-- v29 regression binding SHA `171936bd1f672165ba6a14a66a2f3f6025fe9c5c51ad0302e1b26941fef57686`
-- v29 evaluator FAIL SHA `4cd092ac4d26877e223ded34a3f0896109b3f386ed160db9514f95f8e74450e4`
+다음 v32(`bd44009fbb`)는 여러 입력 축에 exact/inexact source가 섞인 관계를 `전체 product − all-exact rectangle`으로 유지한다. 사전 index memory cap, identity별 mask, 기존 공개 proof 순서와 canonical clause 순서를 보존한다. 통합1,334개/probe9개 및 독립 검토를 통과했으며 같은 Docker에서 실측 중이다. Physical Model의 정확한 member 전개 fallback은 남아 있다. 전 과정의 전개가 제거됐다거나 실제 시간이 개선됐다고 아직 주장하지 않는다. 이후 원격 canonical 정렬 최적화를 v33으로 통합·검증한다.
 
-동일 엔진 3회씩 모두 20초 이하와 parity라는 완료 조건은 충족되지 않았다. 실패 checkpoint를 기록했고, 완료로 표시하지 않았다.
+- v19-v31 비교 SHA `b6a1538f1ef46eaa18921cd8ca90603938ed2ab28273f675d79cfecdeab10feb`
+- v29-v31 비교 SHA `d5d946a47de5885e28ed639fa84afd6ff430e748928e16aa12030d26894d6da4`
+- v31 evaluator FAIL SHA `ef833f172fe533a8672b06a31e85829b70738c3e3089645d65a1c2e15e76f05d`
+
+동일 엔진3회씩 모두20초 이하와 parity라는 완료 조건을 충족하지 못했다. 실패 checkpoint를 기록했으며 완료로 표시하지 않았다. 아래 역사 기록은 각 당시 상태이며, 최신 상태는 위 표를 따른다.
 
 이하 v27 및 이전 상세 관측이다.
 

@@ -708,8 +708,11 @@ public class EarlyNativeCoverageOptimizationTest {
 			NeutralPlacementGraphBuilder.PrivacyEvidenceMode.NONE, false);
 		TracedPublication traced = productPublicationWithTrace(closure, product, owner,
 			anchor("multiple-known-output"), "multiple-mixed-axes", sources);
-		Assert.assertNull(traced.publication());
-		Assert.assertEquals("MIXED_EXACTNESS_MULTIPLE_AXES", traced.outcome());
+		Assert.assertNotNull(traced.publication());
+		Assert.assertEquals(2, traced.publication().size());
+		Assert.assertEquals(4, traced.publication().stream()
+			.mapToInt(realization -> realization.supportClauses().size()).sum());
+		Assert.assertEquals("PARTITIONED", traced.outcome());
 	}
 
 	@Test

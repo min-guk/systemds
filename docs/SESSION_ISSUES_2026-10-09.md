@@ -1063,6 +1063,26 @@
 - **잔여/회귀 위험**: sparse 조회는 donor보다 relation이 클 때만 적용하며 없는/다른 authority를 수용하지 않는다. 다축 conditional complement는 별도 WIP라 이 버전에 포함하지 않는다. v30 단독 실측은 생략하고 두 변경의 통합 결과를 v31에서 측정하므로 각각의 실제 시간 효과를 분리해서 주장하지 않는다.20초 목표는 아직 미달이다.
 
 - **v31 통합 gate 완료**: selected FedPlanner1,325개PASS(187.558초),7,852 class/resource 실행 전후 변경0/source SHA 불일치0. 별도 probe9개PASS(1.565초). 근거 `evidence/native-sparse-transfer-merge-full-gate-v31/validation.json`. 통합 버전을 봉인해 실제 Docker로 검증하며 전체 저장소 Maven 통과나20초 달성으로 확대하지 않는다.
+
+
+### v32 / 다축 mixed-exactness support를 rectangle complement로 유지 (통합중)
+
+- **문제/원인**: exact와 inexact source가 여러 입력 축에 섞이면 기존 Closure는 all-exact 영역과 나머지 native 영역을 나누기 위해 tuple을 펼쳤다. 단순 독립 product로 바꾸면 all-exact 제외 영역이 되살아나거나 source/proof authority가 손실된다.
+- **설계/보존 근거**: native 영역을 원래 product에서 all-exact rectangle을 뺀 조건부 관계로 표현한다. Exact mask는 해당 base binding identity에 묶이며 count/rank/hash/restriction 및 fixed point는 이 제외 영역을 함께 소비한다. 공개 proof 순서는 기존 filtered row-major 순서이고, relation의 clause 인덱스는 기존 canonical UTF-16 순서라 두 계약을 분리한다. 공유 owner/복잡한 union/증명할 수 없는 authority는 기존 exact fallback을 유지한다. Physical 단계도 기존 exact fallback을 보존하며 downstream 전체 압축을 달성했다고 주장하지 않는다.
+- **변경 범위**: NativePlacementContinuity의 product/index/template/topology/캐시 projection, NativeContinuitySupportClauses, PlacementRelationClosure의 split publication, PlacementSupportRelations의 생존 판정과 관련 테스트. 기존 v31 summary cache 및 sparse transfer 변경을 덮어쓰지 않고 patch hunk로 통합한다.
+- **검증 근거/계획**: 분리 lane frozen production SHA b599348710bb675f2b545fb5524e50e20b2c9e6ccef95419f0a393df5125a5fa, tests SHA442b4cff851593a8dc438814554fbb78b08370b56efdc981371b3a90f6fa25a2.215 tests/failure0/error0/기존skip1. Exhaustive/fixed-seed rank/hash/authority, last-inexact 제거, changed-mask nextRevision warm/cold parity 포함. Root는 독립 ordinary relation에서 hole을 필터한 reference로 Physical/비용/Local/Exact/receipt 비교를 추가하며 incoming sparse ordinal wrapper도 retained/excluded·0 handle로 검사한다.
+- **검증 중 발견**: Physical test의 최초 compile은 분리 lane의 selected test build에 fixture bridge가 없어 실패했다. 검증된 v31 test classes 중 누락분만 별도 root build로 복사했다. 첫 실행은 Physical Alternative 순서가 raw clause 순서와 같다는 잘못된 테스트 가정으로2개 실패했다. 독립 explicit Physical Model의 실제 순서와 비교하도록 고쳤고, admitted reachability·hole exclusion·각 합법 조합의 비용/receipt 비교를 유지해2개PASS(4.474초). Production을 테스트에 맞춰 변경하지 않았다.
+- **잔여/위험**: 조건부 순서·제외 mask 무효화·authority donor가 주요 회귀 경계다. 두 index의 합산 budget을 지키며 한계를 넘으면 exact 경로를 유지한다. v31 실측 중이고 v32 대규모 성능 효과는 아직 미측정이다.
+
+- **v32 추가 Physical gate/검토**: 최종2 tests/4 hole fixtures PASS(3.430초). 각각3×3에서1×1,2×2,3×2,2×3을 제외하며 독립 explicit Physical 순서·모든 남은 member의 cost raw bits/receipt·전체 Local/Exact assignment와 모든 최종 receipt/shared lifetimes를 비교했다. Frozen production 독립 검토 CLEAR. v31 sparse lookup wrapper에도 제외 member−1/남은 member의 hole-adjusted ordinal/조회 중0 handle 검증을 통합했다. 아직 merged 전체 gate와 실제 workload 미완료다.
+
+- **v32 통합 중단/수정**: 독립 integration review가 frozen final2의 사전 cap 적용 hunk 누락을 발견했다. 첫 gate는 root가소유한 JUnit PID만 종료하여 exit143/미완료로 보존(`native-conditional-complement-superseded-cap-gate-v32`); 성공으로 처리하지 않았다. 기존 b599는 excluded index 생성 후 합산 cap을 검사했다. final2 SHA `364f525df1047423d703634c23eda0c4f1efef6d0220daa41b73012f7f310eb2`처럼 base budget을 먼저 확인하고 남은 state/transition 한도만 excluded index 생성에 전달하도록 narrow hunk를 적용했다. 합법성 변경이 아닌 생성 중 메모리 한도 보존이며 fresh merged gate를 재실행한다.
+
+- **v32 corrected 통합 gate 완료**: selected FedPlanner1,334개PASS(184.202초),7,855 class/resource 실행 전후 변경0/source SHA 불일치0. 근거 `evidence/native-conditional-complement-full-gate-v32/validation.json`. Final2 사전 budget hunk와 기존0232 summary/sparse helper 보존을 독립 검토 CLEAR로 재확인했다. Root Physical 전체 assignment/receipt fixture 및 sparse wrapper의 conditional retained/excluded lookup 검사가 포함된다. 다음 probe/봉인/실제 Docker 검증 전에는 실성능 향상을 주장하지 않는다.
+- **v31 LogReg 선행 결과**: fullInitial354.356084446초(analysis263.483/model5.869/cost9.719/optimizer71.579), runtime4.413초. Numeric/audit/objective PASS. v29 대비−7.457초인 단일관측이며 GLM/최종 cross-version parity는 진행 중이다. 원격 main98686749ce의 canonical surviving-run boundary 정렬 생략은 별도 독립 검토 CLEAR이고, v32 봉인 후 병합해 검증한다.
+
+- **v32 probe/게시 준비**: 별도probe9개PASS(1.266초). v31 완료 실측은LogReg354.356초/GLM124.597초로, 두 workload numeric/audit/전체선택raw parity PASS(v19/v29대조). v29대비−7.457초/+1.390초이며 두 workload 모두20초미달; evaluatorFAIL/checkpoint를 기록했다. v32는 별도엔진으로 봉인해 같은조건을 실행한다.
+
 - **V45 incoming 검토**: 0232ad22fb까지 병합(469c6663d8), 문서 append 충돌만 양쪽 보존. `cacheAcyclicRootChildren`은 reused summary의 alternatives와 footprint identity, supported 상태, retainedStates가 모두 일치할 때만 기존 admission helper로 같은 summary를 재입장시킨다. Generated-root 제외/cap/eviction 순서 동일. Actual independent review CLEAR, 기존 두 테스트 클래스에 추가된 negative·변경·eviction·work 검증도 최종182class gate에 포함된다.
 - **V45 병합 최종 검증**: fresh182selectedclasses **1,431tests/failure0/error0/skip1**, Maven package BUILD SUCCESS(2026-10-09 11:45:42+02). V45 및 incoming actual independent reviews CLEAR. Seal `candidate-v45-merged` JAR SHA256 `db6cdf9bcc58e3c2b4ac52612f909735094282961b8dcba1670c362f8b2c51f3`. 기존 supplemental baseline 실패/skip은 유지하며 전체 저장소 성공으로 확대하지 않는다. 동일 Docker 네 진단 실행을 이어간다.
 - **V45 동일 Docker 결과**: OFF·detailed × LogReg·GLM 모두 watchdog60초/fullInitial receipt 없음, 네 container 제거. OFF LogReg2,508samples/direct1,472(58.69%); GLM2,761/canonical8.37%/joint5.43%. Partial scalar LogReg1,167,860, GLM522,725로 완료 진척/속도 개선 수치가 아니다. 외부 build가 OFF24/detailed18 monitor samples에서 중첩됐고, 오래 실행 중인 외부 planner2개도 전 구간 기록됐다. 분석용 진단이며 깨끗한 비교시간으로 취급하지 않는다. 근거 R/evidence/v45-merged-{contention-summary.json,planner-breakdown.txt,publication.log}. 다음 V46은 native hybrid 경로의 실제 거부 사유를 기존 bounded DirectWork 계측으로 분리해, derived-FOUT 혼합 지원 확대 우선순위를 결정한다.
@@ -1074,3 +1094,14 @@
 - **검증**: V45 클래스에서 corrected RED4/2(누락 counter), 변경 후 focused4suites **19PASS**. 초기 derived fixture가 ordinary emission을 제거해0proof가 된 오류는 둘 다 보존하도록 수정했다. Public FULL query는 exact/dynamic witness를 각각 시도하므로 expected1회라는 초기 가정도 폐기했다. 최종 accepted fixture는 ACCEPTED1+NO_NATIVE1, derived fixture는 DERIVED2를 명시하고 모든 다른 outcome0/partition2를 검증한다. Metrics ON/OFF proof 순서/source owner identity/metadata footprint/handle 물질화 parity 유지. RED용 missing-enum catch는 제거했다. Actual independent final review CLEAR.
 - **수정 파일/잔여 위험**: `NativePlacementContinuity.java`, `SearchSpaceMetrics.java`, `NativeHybridUnpinnedTopologyTest.java`. 나머지4 reject branch는 별도 positive fixture가 없는 단순 계측 공백이며 semantic 변경은 없다. Cumulative182class gate와 동일 Docker 계측 진행 중; 20초와 전체 ML route 확대 미달.
 - **V46 최종 gate**: fresh182selectedclasses **1,433tests/failure0/error0/skip1**, Maven package BUILD SUCCESS(2026-10-09 12:02:23+02). Actual independent final review CLEAR. 같은 고정 Docker에서 새 first-terminal counter를 읽어 다음 최적화를 결정한다. 모든 연산/전체 저장소 테스트 성공을 뜻하지 않는다.
+
+
+### v33 / canonical run 정렬 최적화와 conditional complement 통합 (진행중)
+
+- **문제/원인**: origin/main98686749ce가 canonical clause run의 경계만 검사해 불필요한 재정렬을 생략하는 변경을 추가했다. v32의 conditional native clause도 canonical rank 순서를 보장하므로 함께 보존할 수 있다.
+- **해결/검증**: source 충돌 없이 병합하고 문서 append 양쪽을 보존했다. PlacementAnalysis의17LOC 변경과 관련 테스트를 독립 검토해 stable tie/첫 authority identity/dedup 순서 및 conditional carrier와의 계약 CLEAR를 확인했다. v32는 별도로1,334개/probe9를 통과한bd44009fbb로 먼저 봉인·실측하며, v33은 최신 source에서 새 full gate를 실행한다.
+- **잔여/위험**: 조합의 합법성·비용·runtime은 변경하지 않는다. Canonical run 계약 위반이 있으면 정렬 생략이 잘못될 수 있어 기존 ordinary/indexed/native canonical tests 및 conditional Physical receipt tests를 통합 gate로 재검증한다. 원격 문서에 보존된 별도4CPU/JFR 진단은 이 작업의 고정 COFEE8CPU/no-profiling 성능 근거에 포함하지 않는다.
+
+- **v33 통합 gate 완료**: selected FedPlanner1,335개PASS(195.373초),7,855 class/resource 실행 전후 변경0/source SHA 불일치0. 근거 `evidence/native-canonical-complement-merge-full-gate-v33/validation.json`. Incoming canonical run17LOC·conditional complement·summary 재사용·sparse transfer의 통합 회귀이며 독립 incoming/integration 검토 CLEAR. 별도 probe 뒤 origin/main에 게시한다. v32 actual은 별도 봉인 엔진으로 진행 중이다.
+
+- **v33 probe**: 별도9개PASS(1.871초). 통합1,335 selected tests와 source/class 무결성 검증을 마친 버전을 게시·봉인한다.
