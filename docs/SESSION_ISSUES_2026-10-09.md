@@ -670,3 +670,7 @@
 - origin/main `d0144c5f14`의 동일 single-mixed-axis 구현을 병합했다. 공통 production은 incoming admission/PARTITIONED 경로로 통일하고, root에서 발견한 equal-structural/foreign owner의 권한 대여 방지 fallback과 추가 binder 회귀를 유지했다. Incoming non-required staging option 보존 guard도 유지. 두 가지 테스트 모음과 constant numeric certificate를 함께 재검증한다.
 
 - d014 병합 focused gate에서 private singleton descriptor 생성 계약 차이를 확인했다(82개 중 최초1, early-return 실험시3 실패; 각각 증거 보존). Incoming은 singleton descriptor를 생성한 뒤 실제 admission에서 둘 다 scalar fallback하므로 해당 계약을 유지했다. 추가 테스트는 descriptor의 disjoint key/크기를 확인하고 기존 binder 테스트가 실제 fallback을 검증한다.
+
+- Full gate 1,161개 중 constant certificate 6개 실패(158.439초)는 병렬 lane의 verify.py가 하드코딩된 공통 class 출력 디렉터리를 덮어쓴 검증 오염으로 확인했다. Overlay lane javac 명령은 공통 `engine-integration-main-50855b5/classes`에 pre-certificate 소스를 출력했고, root 기대 source SHA와 달랐다. RED 근거 `evidence/split-constant-full-red-1161`은 보존하되 올바른 candidate의 회귀 결과로 사용하지 않는다. verify.py에 --build-root를 추가하고 v19 전용 출력 `engine-v19-exclusive-gate`를 사용한다. 테스트 의미/기대값이나 arbitrary lazy numeric fallback은 변경하지 않는다.
+
+- v19 exclusive full gate: 1,166 JUnit PASS / 183.996초. Main/test source SHA 불일치0, 실행 전후 7,776개 class/resource 파일 변화0. 근거 `evidence/mixed-overlay-constant-full-green-1166`. Single-mixed-axis publication + foreign-owner guard + constant finite numeric certificate + revision-local exact overlay/schedule memo 통합 검증이다. Overlay 캐시는 identity/positive handle/witness/template 조건별로 분리하고 revision에서 이월하지 않으며 LRU 축출/재계산 parity를 검증했다. Independent source review CLEAR. 전체 ML 성능은 다음 고정 Docker 실행으로 확인한다.
