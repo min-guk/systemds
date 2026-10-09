@@ -4018,12 +4018,20 @@ final class NativePlacementContinuity {
 				|| fact.key().parentOccurrence() != key)
 				continue;
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
-				// Derived authority is validated from action metadata by the legacy
-				// topology and cannot be inferred from native relation axes.
+				// Derived authority follows the same metadata validation as legacy
+				// topology. It contributes explicit ground rows, never native gates.
 				if(emission.derivedFoutAction() != null) {
-					if(metrics != null)
-						metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_REJECT_DERIVED);
-					return null;
+					for(CandidateTopologyRow row : derivedFoutTopologyRows(
+						key, node, fact, emission, witness, metadataOwnerReads)) {
+						if(!exactReferences.add(row.reference())) {
+							if(metrics != null)
+								metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_REJECT_REFERENCE);
+							return null;
+						}
+						if(defaultEdges.add(row.defaultEdge()))
+							rows.add(HybridTopologyRow.explicitRow(row));
+					}
+					continue;
 				}
 				if(isBroadcastRowProvablyUnselectable(fact)
 					|| !operationPreservesWitness(hop, witness, fact))
@@ -4212,32 +4220,10 @@ final class NativePlacementContinuity {
 				// Only published action authority can ground this root; prospective
 				// native generation templates still follow their separate strict path.
 				if(emission.derivedFoutAction() != null) {
-					var action = emission.derivedFoutAction();
-					metadataOwnerReads.add(action.durableAnchorOwner());
-					Node anchorOwner = nodesByKey.get(action.durableAnchorOwner());
-					boolean sourceAvailable = fact.allowedEmissionFacts().stream().anyMatch(source ->
-						source.derivedFoutAction() == null
-							&& source.emissionState().placementState().equals(action.sourcePlacement()));
-					if(action.producer() != key || action.candidateRule() != fact.key() || !sourceAvailable
-						|| !action.producerValueVersion().equals(node.valueVersion())
-						|| !action.statementBlockScope().equals(key.controlRegion().normalizedSignature())
-						|| anchorOwner == null || anchorOwner.legalAlternatives().stream().noneMatch(state ->
-							state.output() == FederatedOutput.FOUT && state.fType() == action.durableAnchorOwnerFType()))
-						continue;
-					boolean literalOwner = anchorOwner.anchors().stream().anyMatch(anchor ->
-						PlacementIdentity.samePhysicalWorkerPool(anchor, action.durableAnchor()));
-					if(!literalOwner && !declaresExactNativeOwnerAuthority(action))
-						continue;
-					for(CandidateEmissionRealization realization : emission.realizations())
-						if(realization.key().layoutKind() == PlacementIdentity.PlacementLayoutKind.DURABLE_MAP
-							&& realization.supportClauses().stream().anyMatch(clause -> clause.proofDependencies().stream()
-								.anyMatch(proof -> proof.authoritySignature().equals("derived-fout:" + action.normalizedSignature())))
-							&& witness.matches(nativeWitness(realization.anchor()), true)) {
-							CandidateTopologyRow row = CandidateTopologyRow.create(
-								CandidateRealizationReference.of(fact.key(), realization), List.of(), true, witness);
-							if(seen.add(ContinuityEdgeKey.of(row)))
-								rows.add(row);
-						}
+					for(CandidateTopologyRow row : derivedFoutTopologyRows(
+						key, node, fact, emission, witness, metadataOwnerReads))
+						if(seen.add(ContinuityEdgeKey.of(row)))
+							rows.add(row);
 					continue;
 				}
 				if(isBroadcastRowProvablyUnselectable(fact) || !operationPreservesWitness(hop, witness, fact))
@@ -4300,6 +4286,39 @@ final class NativePlacementContinuity {
 		if(metrics != null)
 			metrics.recordTopologyExpansion(false, canonicalRows.size());
 		return topology;
+	}
+
+	/** Shared action authority validation; failed checks still publish metadata reads. */
+	private List<CandidateTopologyRow> derivedFoutTopologyRows(CompiledHopKey key,
+		Node node, CandidateRuleFact fact, CandidateEmissionFact emission,
+		NativePoolWitness witness, Set<CompiledHopKey> metadataOwnerReads) {
+		var action = emission.derivedFoutAction();
+		metadataOwnerReads.add(action.durableAnchorOwner());
+		Node anchorOwner = nodesByKey.get(action.durableAnchorOwner());
+		boolean sourceAvailable = fact.allowedEmissionFacts().stream().anyMatch(source ->
+			source.derivedFoutAction() == null
+				&& source.emissionState().placementState().equals(action.sourcePlacement()));
+		if(action.producer() != key || action.candidateRule() != fact.key() || !sourceAvailable
+			|| !action.producerValueVersion().equals(node.valueVersion())
+			|| !action.statementBlockScope().equals(key.controlRegion().normalizedSignature())
+			|| anchorOwner == null || anchorOwner.legalAlternatives().stream().noneMatch(state ->
+				state.output() == FederatedOutput.FOUT && state.fType() == action.durableAnchorOwnerFType()))
+			return List.of();
+		boolean literalOwner = anchorOwner.anchors().stream().anyMatch(anchor ->
+			PlacementIdentity.samePhysicalWorkerPool(anchor, action.durableAnchor()));
+		if(!literalOwner && !declaresExactNativeOwnerAuthority(action))
+			return List.of();
+		List<CandidateTopologyRow> rows = new ArrayList<>();
+		for(CandidateEmissionRealization realization : emission.realizations())
+			if(realization.key().layoutKind() == PlacementIdentity.PlacementLayoutKind.DURABLE_MAP
+				&& realization.supportClauses().stream().anyMatch(clause -> clause.proofDependencies().stream()
+					.anyMatch(proof -> proof.authoritySignature().equals("derived-fout:" + action.normalizedSignature())))
+				&& witness.matches(nativeWitness(realization.anchor()), true)) {
+				CandidateTopologyRow row = CandidateTopologyRow.create(
+					CandidateRealizationReference.of(fact.key(), realization), List.of(), true, witness);
+				rows.add(row);
+			}
+		return rows;
 	}
 
 	/**
