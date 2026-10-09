@@ -104,6 +104,7 @@ final class NativePlacementContinuity {
 	private final Map<CompiledHopKey,Hop> originsByKey;
 	private final CandidateFactsSnapshot candidateFactsSnapshot;
 	private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByKey;
+	private final Map<CompiledHopKey,Boolean> nativeRelationOwners = new IdentityHashMap<>();
 	private Map<CompiledHopKey,List<CompiledHopKey>> boundCandidateReadersBySource;
 	private long boundSourceProjectionScans;
 	private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> edgesByConsumer;
@@ -3371,10 +3372,9 @@ final class NativePlacementContinuity {
 			metrics.recordTopologyOverlayEvaluation();
 		if(generation != null)
 			return generatedRootAlternative(key, pinned, witness, fixed, fixedHandles, generation);
-		NativeFactoredProofAlternatives factored = pinned == null
-			? nativeUnpinnedFactoredProofAlternatives(key, witness, fixed, fixedHandles)
-			: nativeFactoredProofAlternatives(
-				key, pinned, witness, fixed, fixedHandles);
+		NativeFactoredProofAlternatives factored = !hasNativeRelationOwner(key) ? null
+			: pinned == null ? nativeUnpinnedFactoredProofAlternatives(key, witness, fixed, fixedHandles)
+				: nativeFactoredProofAlternatives(key, pinned, witness, fixed, fixedHandles);
 		if(factored != null)
 			return factored.alternatives;
 		CandidateTopology topology = candidateTopology(key, witness);
@@ -3466,6 +3466,22 @@ final class NativePlacementContinuity {
 						false, witness));
 			}
 		return List.copyOf(alternatives);
+	}
+
+	/** Snapshot-local representation check; it carries no source or proof authority. */
+	private boolean hasNativeRelationOwner(CompiledHopKey owner) {
+		List<CandidateRuleFact> facts = candidateFactsByKey.get(owner);
+		if(facts == null)
+			return false;
+		Boolean known = nativeRelationOwners.get(owner);
+		if(known != null)
+			return known;
+		boolean nativeRelation = facts.stream().flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream())
+			.anyMatch(realization -> realization.supportClauses() instanceof NativeContinuitySupportClauses);
+		// At most one Boolean per immutable snapshot owner. Revisions get a fresh map.
+		nativeRelationOwners.put(owner, nativeRelation);
+		return nativeRelation;
 	}
 
 	private List<SelectedCandidateProof> generatedRootAlternative(CompiledHopKey key,

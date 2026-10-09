@@ -2,7 +2,13 @@
 
 ## 상태
 
-최신 완료 v8(`3d8e59378f`, JAR `b502242c…`)의 전체 최초 planning은 LogReg **398.232339626초**, GLM **124.946316443초**다. v7의460.487/236.147초보다 줄었지만 **20초 목표는 미달**이다. 두 workload 모두 숫자 비교 PASS, runtime audit mismatch0, 이전과 동일한 plan fingerprint다. v8은 topology bucket 선형 검사와 sparse DP conditioning을 포함하며, 이후 native axis gate 변경은 포함하지 않는다. 각1회 관측이고 변경별 효과를 분리하거나 반복 분산을 측정하지 않았다.
+최신 완료 v10(`d59fa583c5`, JAR `b5973fad…`)은 LogReg **440.740278892초**, GLM **140.992530652초**다. 두 workload의 숫자 비교, runtime audit mismatch0, 이전과 같은 plan fingerprint는 통과했다. 그러나 v8의398.232/124.946초보다 느렸으며20초에는 미달했다. Pinned/unpinned native axis gate의 작은 fixture 압축 효과를 실제 workload 개선으로 채택하지 않는다. v10에는 이후 conditional DP 수정이 포함되지 않았다.
+
+실제 LogReg 정상 로그에서 generated graph miss147,551 중92,253건은 같은 fact/emission/witness의 certified support가 resident였다. 이는 재사용 가능성 계측이며 실제 회피한 graph 수가 아니다. 다음 후보는 이 범위의 generated template 재사용과 native representation이 없는 owner의 반복 gate eligibility 검사 생략이다. Root history/returned root binding/source-action authority를 보존하는 테스트와 별도 실측을 수행한다.
+
+아래는 v8 및 이전 완료 기록이다.
+
+이전 완료 v8(`3d8e59378f`, JAR `b502242c…`)의 전체 최초 planning은 LogReg **398.232339626초**, GLM **124.946316443초**다. v7의460.487/236.147초보다 줄었지만 **20초 목표는 미달**이다. 두 workload 모두 숫자 비교 PASS, runtime audit mismatch0, 이전과 동일한 plan fingerprint다. v8은 topology bucket 선형 검사와 sparse DP conditioning을 포함하며, 이후 native axis gate 변경은 포함하지 않는다. 각1회 관측이고 변경별 효과를 분리하거나 반복 분산을 측정하지 않았다.
 
 | v8 완료 측정 | LogReg | GLM |
 |---|---:|---:|
