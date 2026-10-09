@@ -29,6 +29,9 @@ final class IncrementalRegionalSeed {
 	static final class SupportStatistics {
 		long factorRevisions;
 		long visitedCells;
+		long conditionalRevisions;
+		long functionalRowsVisited;
+		long sparseCellsVisited;
 	}
 	private record SupportFactor(ExactCategoricalSolver.Factor factor, int[] scopeIndex) { }
 	private record SupportPlan(SupportFactor[] factors, int[][] incident, boolean[][] supported) { }
@@ -181,7 +184,7 @@ final class IncrementalRegionalSeed {
 				}
 				if(statistics != null)
 					statistics.factorRevisions++;
-				boolean finite = markFiniteSupports(factor, active, live, plan.supported(), 0, 0, statistics);
+				boolean finite = markStoredSupports(factor, active, live, plan.supported(), statistics);
 				if(!finite)
 					throw new IllegalArgumentException(INFEASIBLE);
 				for(int position = 0; position < factor.scopeIndex().length; position++) {
@@ -206,6 +209,89 @@ final class IncrementalRegionalSeed {
 			for(boolean factorDirty : dirty)
 				pending |= factorDirty;
 		} while(pending);
+	}
+
+	/**
+	 * Read certified hard relations in their stored form. All support is collected
+	 * before the caller removes values, preserving the legacy simultaneous revision
+	 * and dirty-factor order. CompactModel construction rejects duplicate scope axes.
+	 */
+	private static boolean markStoredSupports(SupportFactor factor, boolean[][] active,
+		ActiveDomains live, boolean[][] supported, SupportStatistics statistics) {
+		ExactCategoricalSolver.Factor relation = factor.factor();
+		if(relation.isConditionalSupport()) {
+			boolean[][] localActive = new boolean[factor.scopeIndex().length][];
+			for(int axis = 0; axis < localActive.length; axis++)
+				localActive[axis] = active[factor.scopeIndex()[axis]];
+			boolean[][] masks = relation.conditionalSupportedValues(localActive);
+			if(statistics != null)
+				statistics.conditionalRevisions++;
+			boolean finite = false;
+			for(int axis = 0; axis < masks.length; axis++) {
+				int variable = factor.scopeIndex()[axis];
+				for(int offset = 0; offset < live.sizes[variable]; offset++) {
+					int value = live.values[variable][offset];
+					supported[axis][value] = masks[axis][value];
+					finite |= masks[axis][value];
+				}
+			}
+			return finite;
+		}
+		ExactCategoricalSolver.FunctionalMap mapping = relation.functionalMapping();
+		if(mapping != null) {
+			int source = factor.scopeIndex()[0], target = factor.scopeIndex()[1];
+			boolean finite = false;
+			for(int offset = 0; offset < live.sizes[source]; offset++) {
+				int row = live.values[source][offset];
+				if(statistics != null)
+					statistics.functionalRowsVisited++;
+				int column = mapping.target(row);
+				if(column >= 0 && active[target][column]) {
+					supported[0][row] = true;
+					supported[1][column] = true;
+					finite = true;
+				}
+			}
+			return finite;
+		}
+		if(relation.isFiniteSupport()) {
+			int storedCells = relation.finiteSupportCellCount();
+			long activeCells = 1;
+			for(int variable : factor.scopeIndex()) {
+				if(activeCells >= storedCells)
+					break;
+				activeCells *= live.sizes[variable];
+			}
+			// A fixed seed can leave fewer active tuples than the sparse relation
+			// stores. Keep the existing small Cartesian lookup in that case.
+			if(storedCells <= activeCells) {
+				int[] values = new int[factor.scopeIndex().length];
+				boolean finite = false;
+				for(int ordinal = 0; ordinal < storedCells; ordinal++) {
+					int cell = relation.finiteSupportCellAt(ordinal);
+					if(statistics != null)
+						statistics.sparseCellsVisited++;
+					boolean admitted = true;
+					for(int axis = values.length - 1; axis >= 0; axis--) {
+						int variable = factor.scopeIndex()[axis];
+						int value = cell % active[variable].length;
+						cell /= active[variable].length;
+						if(!active[variable][value]) {
+							admitted = false;
+							break;
+						}
+						values[axis] = value;
+					}
+					if(admitted) {
+						finite = true;
+						for(int axis = 0; axis < values.length; axis++)
+							supported[axis][values[axis]] = true;
+					}
+				}
+				return finite;
+			}
+		}
+		return markFiniteSupports(factor, active, live, supported, 0, 0, statistics);
 	}
 
 	private static boolean markFiniteSupports(SupportFactor factor, boolean[][] active,
