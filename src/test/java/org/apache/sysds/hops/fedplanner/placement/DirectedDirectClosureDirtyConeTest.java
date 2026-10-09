@@ -93,6 +93,25 @@ public class DirectedDirectClosureDirtyConeTest {
 	}
 
 	@Test
+	public void noEligibleBindingClassificationRequiresEveryOwnerSlotToBeIneligible() throws Exception {
+		Node allIneligible = node("all-ineligible"), mixed = node("mixed-slots");
+		Node transientRead = node("transient-read"), noRows = node("no-rows");
+		List<CandidateRuleFact> facts = List.of(
+			directFact(allIneligible, CandidateEvaluationStatus.PRIVACY_EXCLUDED, true),
+			directFact(allIneligible, CandidateEvaluationStatus.AVAILABLE, false),
+			directFact(mixed, CandidateEvaluationStatus.PRIVACY_EXCLUDED, true),
+			directFact(mixed, CandidateEvaluationStatus.AVAILABLE, true),
+			directFact(transientRead, CandidateEvaluationStatus.AVAILABLE, true));
+		java.util.BitSet eligibleSlots = new java.util.BitSet(facts.size());
+		eligibleSlots.set(3);
+
+		Assert.assertEquals(keys(allIneligible, transientRead, noRows),
+			noEligibleDirectBindingOwners(
+				List.of(allIneligible.key(), mixed.key(), transientRead.key(), noRows.key()),
+				facts, eligibleSlots));
+	}
+
+	@Test
 	public void diamondVisitsOnlyChangedRowAndItsConsumers() throws Exception {
 		Node a = node("A"), b = node("B"), c = node("C"), d = node("D");
 		List<Node> nodes = List.of(a, b, c, d);
@@ -168,6 +187,210 @@ public class DirectedDirectClosureDirtyConeTest {
 			"INVALIDATION_INCOMPLETE_ONLY_NEW_PENDING_OWNERS"));
 		Assert.assertEquals(2, directMetric(metrics,
 			"INVALIDATION_INCOMPLETE_ONLY_EXTRA_OWNERS"));
+	}
+
+	@Test
+	public void newIncompletePendingWorkIsPartitionedByBindingAndInvalidationCause() throws Exception {
+		Node changed = node("cause-changed"), bridge = node("cause-bridge");
+		Node noBinding = node("cause-no-binding"), committed = node("cause-committed");
+		Node cancelled = node("cause-cancelled"), unknown = node("cause-unknown");
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential = dependencies(
+			changed, bridge, bridge, noBinding, noBinding, committed, committed, cancelled, cancelled, unknown);
+		Class<?> type = Class.forName(PlacementRelationClosure.class.getName() + "$DirectQuerySubscriptions");
+		Constructor<?> constructor = type.getDeclaredConstructor(Set.class);
+		constructor.setAccessible(true);
+		Object subscriptions = constructor.newInstance(keys(noBinding));
+		Map<CompiledHopKey,Set<CompiledHopKey>> receipts = Map.of(
+			bridge.key(), keys(bridge), noBinding.key(), keys(noBinding),
+			committed.key(), keys(committed), cancelled.key(), keys(cancelled));
+		Method replace = type.getDeclaredMethod("replace", Set.class, Map.class, Set.class);
+		replace.setAccessible(true);
+		replace.invoke(subscriptions, receipts.keySet(), receipts, Set.of());
+		Method invalidate = type.getDeclaredMethod("invalidate", Set.class);
+		invalidate.setAccessible(true);
+		invalidate.invoke(subscriptions, keys(noBinding, committed, cancelled));
+		Method causes = type.getDeclaredMethod("recordInvalidationCauses", Set.class, Set.class);
+		causes.setAccessible(true);
+		causes.invoke(subscriptions, keys(noBinding, committed, cancelled), keys(noBinding, committed));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		Set<CompiledHopKey> result = required(keys(changed), potential, Map.of(), Map.of(), Map.of(),
+			subscriptions, metrics, Set.of());
+		Object unmeasured = constructor.newInstance(keys(noBinding));
+		replace.invoke(unmeasured, receipts.keySet(), receipts, Set.of());
+		invalidate.invoke(unmeasured, keys(noBinding, committed, cancelled));
+		causes.invoke(unmeasured, keys(noBinding, committed, cancelled), keys(noBinding, committed));
+		assertSameKeys(result, required(keys(changed), potential, Map.of(), Map.of(), Map.of(),
+			unmeasured));
+		assertSameKeys(keys(changed, bridge, committed, cancelled, unknown), result);
+		Assert.assertEquals(3, directMetric(metrics, "INVALIDATION_INCOMPLETE_ONLY_NEW_PENDING_OWNERS"));
+		Assert.assertEquals(0, directMetric(metrics,
+			"INVALIDATION_INCOMPLETE_NEW_NO_BINDING_OWNERS"));
+		for(String category : List.of("COMMITTED", "CANCELLED", "OTHER"))
+			Assert.assertEquals(category, 1, directMetric(metrics,
+				"INVALIDATION_INCOMPLETE_NEW_" + category + "_OWNERS"));
+		// A fresh receipt must forget a previous cancellation/committed-change label.
+		replace.invoke(subscriptions, keys(committed), Map.of(committed.key(), keys(committed)), Set.of());
+		invalidate.invoke(subscriptions, keys(committed));
+		SearchSpaceMetrics fresh = new SearchSpaceMetrics();
+		required(keys(changed), potential, Map.of(), Map.of(), Map.of(), subscriptions, fresh, Set.of());
+		Assert.assertEquals(0, directMetric(fresh, "INVALIDATION_INCOMPLETE_NEW_COMMITTED_OWNERS"));
+		Assert.assertEquals(2, directMetric(fresh, "INVALIDATION_INCOMPLETE_NEW_OTHER_OWNERS"));
+	}
+
+	@Test
+	public void noBindingInvalidationPreservesOnlyExactSelfSingletonReceipt() throws Exception {
+		Node certified = node("certified-no-binding"), other = node("certified-other");
+		Node equalTwin = node("certified-no-binding");
+		Assert.assertEquals(certified.key(), equalTwin.key());
+		Assert.assertNotSame(certified.key(), equalTwin.key());
+		Class<?> type = Class.forName(PlacementRelationClosure.class.getName() + "$DirectQuerySubscriptions");
+		Constructor<?> constructor = type.getDeclaredConstructor(Set.class);
+		constructor.setAccessible(true);
+		Method replace = type.getDeclaredMethod("replace", Set.class, Map.class, Set.class);
+		replace.setAccessible(true);
+		Method invalidate = type.getDeclaredMethod("invalidate", Set.class);
+		invalidate.setAccessible(true);
+		Method complete = type.getDeclaredMethod("complete", CompiledHopKey.class);
+		complete.setAccessible(true);
+
+		Object exact = constructor.newInstance(keys(certified));
+		Assert.assertFalse("classification alone must not pre-complete an owner",
+			(boolean)complete.invoke(exact, certified.key()));
+		replace.invoke(exact, keys(certified), Map.of(certified.key(), keys(certified)), Set.of());
+		invalidate.invoke(exact, keys(certified));
+		Assert.assertTrue("an exact self-only receipt proves that no direct query can become stale",
+			(boolean)complete.invoke(exact, certified.key()));
+
+		for(Set<CompiledHopKey> unsafe : List.of(keys(certified, other), keys(equalTwin))) {
+			Object subscriptions = constructor.newInstance(keys(certified));
+			replace.invoke(subscriptions, keys(certified), Map.of(certified.key(), unsafe), Set.of());
+			invalidate.invoke(subscriptions, keys(certified));
+			Assert.assertFalse("non-singleton and structurally-equal foreign receipts must be removed",
+				(boolean)complete.invoke(subscriptions, certified.key()));
+		}
+
+		Object empty = constructor.newInstance(keys(certified));
+		replace.invoke(empty, keys(certified), Map.of(certified.key(), Set.of()), Set.of());
+		invalidate.invoke(empty, keys(certified));
+		Assert.assertFalse("an explicitly empty query receipt is not the exact self certificate",
+			(boolean)complete.invoke(empty, certified.key()));
+
+		Object incomplete = constructor.newInstance(keys(certified));
+		replace.invoke(incomplete, keys(certified), Map.of(certified.key(), keys(certified)), Set.of());
+		replace.invoke(incomplete, keys(certified), Map.of(certified.key(), keys(certified)), keys(certified));
+		invalidate.invoke(incomplete, keys(certified));
+		Assert.assertFalse("an incomplete replacement must withdraw the prior complete receipt",
+			(boolean)complete.invoke(incomplete, certified.key()));
+
+		Object ordinary = constructor.newInstance(Set.of());
+		replace.invoke(ordinary, keys(certified), Map.of(certified.key(), keys(certified)), Set.of());
+		invalidate.invoke(ordinary, keys(certified));
+		Assert.assertFalse((boolean)complete.invoke(ordinary, certified.key()));
+	}
+
+	@Test
+	public void cancelledBoundaryDeltaSkipsOnlyCertifiedFallbackWork() throws Exception {
+		Node boundary = node("boundary-rewrite-source");
+		Node bridge = node("boundary-rewrite-bridge");
+		Node noBinding = node("boundary-rewrite-no-binding");
+		Node consumer = node("boundary-rewrite-consumer");
+		List<CandidateRuleFact> original = List.of(localFact(boundary), localFact(bridge),
+			directFact(noBinding, CandidateEvaluationStatus.PRIVACY_EXCLUDED, true), localFact(consumer));
+		List<CandidateRuleFact> rewritten = List.of(excludedFact(boundary), original.get(1),
+			original.get(2), original.get(3));
+		Map<CompiledHopKey,Set<CompiledHopKey>> potential = dependencies(
+			boundary, bridge, bridge, noBinding, noBinding, consumer);
+
+		Class<?> type = Class.forName(PlacementRelationClosure.class.getName()
+			+ "$DirectQuerySubscriptions");
+		Constructor<?> constructor = type.getDeclaredConstructor(Set.class);
+		constructor.setAccessible(true);
+		Method replace = type.getDeclaredMethod("replace", Set.class, Map.class, Set.class);
+		replace.setAccessible(true);
+		Method invalidate = type.getDeclaredMethod("invalidate", Set.class);
+		invalidate.setAccessible(true);
+		Set<CompiledHopKey> owners = keys(boundary, bridge, noBinding, consumer);
+		Map<CompiledHopKey,Set<CompiledHopKey>> receipts = Map.of(
+			boundary.key(), keys(boundary), bridge.key(), keys(bridge),
+			noBinding.key(), keys(noBinding), consumer.key(), keys(noBinding, consumer));
+		Map<CompiledHopKey,List<Integer>> slots = new IdentityHashMap<>();
+		slots.put(boundary.key(), List.of(0));
+		slots.put(bridge.key(), List.of(1));
+		slots.put(noBinding.key(), List.of(2));
+		slots.put(consumer.key(), List.of(3));
+		Method changedOwners = PlacementRelationClosure.class.getDeclaredMethod(
+			"changedCandidateOwnersInSlots", List.class, List.class, Map.class, Set.class);
+		changedOwners.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		Set<CompiledHopKey> committedChanged = (Set<CompiledHopKey>)changedOwners.invoke(null,
+			original, rewritten, slots, keys(boundary, noBinding));
+		assertSameKeys(keys(boundary), committedChanged);
+
+		// A boundary rewrite that restores the no-binding row is a touched-but-cancelled
+		// write. The certificate may retain only its exact self receipt.
+		Object certified = constructor.newInstance(keys(noBinding));
+		Object conservative = constructor.newInstance(Set.of());
+		replace.invoke(certified, owners, receipts, Set.of());
+		replace.invoke(conservative, owners, receipts, Set.of());
+		invalidate.invoke(certified, keys(noBinding));
+		invalidate.invoke(conservative, keys(noBinding));
+
+		SearchSpaceMetrics certifiedMetrics = new SearchSpaceMetrics();
+		SearchSpaceMetrics conservativeMetrics = new SearchSpaceMetrics();
+		Set<CompiledHopKey> certifiedRequired = required(committedChanged, potential, Map.of(), Map.of(),
+			Map.of(), certified, certifiedMetrics, Set.of());
+		Set<CompiledHopKey> conservativeRequired = required(committedChanged, potential, Map.of(), Map.of(),
+			Map.of(), conservative, conservativeMetrics, Set.of());
+		assertSameKeys(keys(boundary, bridge), certifiedRequired);
+		assertSameKeys(keys(boundary, bridge, noBinding), conservativeRequired);
+		Assert.assertEquals(0, directMetric(certifiedMetrics,
+			"INVALIDATION_INCOMPLETE_ONLY_NEW_PENDING_OWNERS"));
+		Assert.assertEquals(1, directMetric(conservativeMetrics,
+			"INVALIDATION_INCOMPLETE_ONLY_NEW_PENDING_OWNERS"));
+
+		Constructor<?> unmeasuredConstructor = type.getDeclaredConstructor(Set.class, boolean.class);
+		unmeasuredConstructor.setAccessible(true);
+		Object certifiedUnmeasured = unmeasuredConstructor.newInstance(keys(noBinding), false);
+		Object conservativeUnmeasured = unmeasuredConstructor.newInstance(Set.of(), false);
+		replace.invoke(certifiedUnmeasured, owners, receipts, Set.of());
+		replace.invoke(conservativeUnmeasured, owners, receipts, Set.of());
+		invalidate.invoke(certifiedUnmeasured, keys(noBinding));
+		invalidate.invoke(conservativeUnmeasured, keys(noBinding));
+		assertSameKeys(certifiedRequired, required(committedChanged, potential, Map.of(), Map.of(),
+			Map.of(), certifiedUnmeasured));
+		assertSameKeys(conservativeRequired, required(committedChanged, potential, Map.of(), Map.of(),
+			Map.of(), conservativeUnmeasured));
+
+		// Withdrawing the query receipt disables the shortcut. Restoring the exact receipt
+		// on the next revision re-enables it without changing fact order or identity.
+		replace.invoke(certified, keys(noBinding), Map.of(), keys(noBinding));
+		assertSameKeys(conservativeRequired, required(committedChanged, potential, Map.of(), Map.of(),
+			Map.of(), certified));
+		replace.invoke(certified, keys(noBinding), Map.of(noBinding.key(), keys(noBinding)), Set.of());
+		invalidate.invoke(certified, keys(noBinding));
+		assertSameKeys(certifiedRequired, required(committedChanged, potential, Map.of(), Map.of(),
+			Map.of(), certified));
+	}
+
+	@Test
+	public void changedNoBindingOwnerStillSchedulesItselfAndItsSubscriber() throws Exception {
+		Node noBinding = node("changed-no-binding"), consumer = node("changed-consumer");
+		Class<?> type = Class.forName(PlacementRelationClosure.class.getName() + "$DirectQuerySubscriptions");
+		Constructor<?> constructor = type.getDeclaredConstructor(Set.class);
+		constructor.setAccessible(true);
+		Object subscriptions = constructor.newInstance(keys(noBinding));
+		Method replace = type.getDeclaredMethod("replace", Set.class, Map.class, Set.class);
+		replace.setAccessible(true);
+		replace.invoke(subscriptions, keys(noBinding, consumer), Map.of(
+			noBinding.key(), keys(noBinding), consumer.key(), keys(noBinding, consumer)), Set.of());
+		Method invalidate = type.getDeclaredMethod("invalidate", Set.class);
+		invalidate.setAccessible(true);
+		invalidate.invoke(subscriptions, keys(noBinding));
+		Method complete = type.getDeclaredMethod("complete", CompiledHopKey.class);
+		complete.setAccessible(true);
+		Assert.assertTrue((boolean)complete.invoke(subscriptions, noBinding.key()));
+		assertSameKeys(keys(noBinding, consumer), required(keys(noBinding), Map.of(),
+			Map.of(), Map.of(), Map.of(), subscriptions));
 	}
 
 	@Test
@@ -847,6 +1070,16 @@ public class DirectedDirectClosureDirtyConeTest {
 			"directBindingEligible", CandidateRuleFact.class, Map.class);
 		method.setAccessible(true);
 		return (boolean)method.invoke(null, fact, origins);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Set<CompiledHopKey> noEligibleDirectBindingOwners(
+		List<CompiledHopKey> owners, List<CandidateRuleFact> facts,
+		java.util.BitSet directBindingSlots) throws Exception {
+		Method method = PlacementRelationClosure.class.getDeclaredMethod(
+			"noEligibleDirectBindingOwners", List.class, List.class, java.util.BitSet.class);
+		method.setAccessible(true);
+		return (Set<CompiledHopKey>)method.invoke(null, owners, facts, directBindingSlots);
 	}
 
 	@SuppressWarnings("unchecked")
