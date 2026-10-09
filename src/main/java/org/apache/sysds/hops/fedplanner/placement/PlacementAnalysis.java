@@ -2114,8 +2114,11 @@ public final class PlacementAnalysis {
 		 */
 		static CandidateEmissionRealization fromAlreadyCanonicalSupportClauses(
 			PlacementRealizationKey key, List<CandidateRealizationSupportClause> supportClauses) {
-			return new CandidateEmissionRealization(key, sharedAlreadyCanonicalComparableList(
-				supportClauses, "realization support clause"));
+			// Native relations already retain canonical order and exact member authority.
+			// Keep their storage contract when rebinding; the constructor validates the key.
+			return new CandidateEmissionRealization(key,
+				supportClauses instanceof NativeContinuitySupportClauses ? supportClauses
+					: sharedAlreadyCanonicalComparableList(supportClauses, "realization support clause"));
 		}
 
 		public static CandidateEmissionRealization local(PlacementEmissionState emission) {

@@ -225,8 +225,14 @@ public class NeutralPlacementFixedPointCompositionTest {
 		if(first.supportLeaves() < logicalProofs)
 			Assert.assertTrue(first.supportProductDescriptorsExpanded() > 0);
 		Assert.assertTrue(first.factorizedClauses() > 0);
-		Assert.assertEquals("receipt slots preserve every clause without eager receipt objects",
-			first.factorizedClauses(), first.receiptRelationSlots());
+		long nativeSlots = instrumented.candidateRuleFacts().orderedFacts().stream()
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(emission -> emission.realizations().stream())
+			.filter(realization -> realization.supportClauses() instanceof NativeContinuitySupportClauses)
+			.mapToLong(realization -> realization.supportClauses().size()).sum();
+		Assert.assertTrue("native support remains compressed through final emission rebinding", nativeSlots > 0);
+		Assert.assertEquals("receipt slots include interned clauses and unexpanded native members",
+			first.factorizedClauses() + nativeSlots, first.receiptRelationSlots());
 		Assert.assertEquals(0, first.candidateReceiptsCreated());
 		Assert.assertTrue(first.factorizedProofListsReused() > 0);
 		Assert.assertTrue(first.factorizedBindingListsReused() > 0);

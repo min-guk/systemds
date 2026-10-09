@@ -263,6 +263,45 @@ public class NativeSingleAxisProductUnionTest {
 	}
 
 	@Test
+	public void identityScopedRestrictionRetainsStructurallyExactDonorBindings() {
+		CompiledHopKey owner = key("consumer");
+		CompiledHopKey firstSource = key("first-source");
+		CompiledHopKey secondSource = key("second-source");
+		DurableAnchorKey seed = pool("seed");
+		DurableAnchorKey output = pool("output");
+		var a = direct(0, "a", firstSource);
+		var b = direct(0, "b", firstSource);
+		var retained = direct(1, "retained", secondSource);
+		var added = direct(1, "added", secondSource);
+		NativeContinuitySupportClauses left = relation(owner, seed, output,
+			List.of(sorted(a, b), List.of(retained)));
+		NativeContinuitySupportClauses right = relation(owner, seed, output,
+			List.of(sorted(directLike(a), directLike(b)), List.of(added)));
+		CandidateRealizationSupportClause exactAdded = right.get(
+			right.product().ordinalOfExactAuthorityBindings(
+				List.of(directLike(a), added)));
+		NativeContinuitySupportClauses union = left.oneAxisUnion(right).orElseThrow();
+		java.util.Set<CandidateRealizationInputBinding> supported =
+			java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+		supported.add(union.product().axes().get(0).get(0));
+		supported.addAll(union.product().axes().get(1));
+		NativeContinuitySupportClauses restricted = union.restrictBindings(supported::contains)
+			.orElseThrow();
+		int addedOrdinal = restricted.product().ordinalOfExactAuthorityBindings(
+			List.of(a, added));
+		Assert.assertTrue(addedOrdinal >= 0);
+		Assert.assertSame("restriction must retain the donor by exact authority, not binding identity",
+			exactAdded, restricted.get(addedOrdinal));
+		CandidateEmissionRealization rebound = PlacementSupportRelations.rebindRealization(
+			new CandidateEmissionRealization(
+				PlacementRealizationKey.nativeLineage(emission(), "restricted-union"), restricted),
+			emission());
+		Assert.assertEquals(restricted.size(), rebound.supportClauses().size());
+		Assert.assertSame("the real rebinding traversal retains exact donor authority",
+			exactAdded, rebound.supportClauses().get(addedOrdinal));
+	}
+
+	@Test
 	public void differentHeadersForeignOwnersAndTwoChangedAxesFallBack() {
 		CompiledHopKey owner = key("consumer");
 		CompiledHopKey foreignOwner = cloneKey(owner);
