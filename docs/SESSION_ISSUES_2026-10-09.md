@@ -358,6 +358,17 @@
 
 - **v8 DP conditioning 통합 gate**: fresh main/test compile 및1,038 JUnit PASS(180.381초), source SHA mismatch0, independent static review CLEAR. 증거 `evidence/sparse-conditioning-full-green-1038`. 본 snapshot은689760의 linear topology check를 포함하나 별도 개발 중인 synthetic axis gate는 아직 포함하지 않는다.
 
+
+### COFEE v7 완료 및 native axis gate 후속 검증
+
+- **실제 결과**: 정확한 c6be/JAR5172e29a 봉인본의 LogReg fullInitial460.486971960초, GLM236.147365008초로 v6보다 느렸다. Analysis372.203410278/190.022935095초, optimizer73.826497478/25.564320545초다. 숫자 비교 PASS, audit mismatch0, v5/v6와 동일 plan fingerprint. Coordinator peak9,110,831,104/5,587,062,784B. 실제 소스에는 이후689 linear topology check와 sparse conditioning이 없으므로 이를 v7에 소급 포함하지 않는다. `evidence/cofee-50k128-v7-validation` 보존.20초 목표는 미달이다.
+- **후속 변경**: pinned native realization proof를 clause별 OR로 펼치는 대신 consumer AND와 입력별 OR gate로 유지한다. 기존 full product/distinct source owner/native authority 검사를 통과한 관계만 적용하며 기존 dependency skeleton에서 invariant와 owner별 pinned dependency를 분리한다. 실제 선택 exact authority는 원래 relation에 남기고 gate 자체는 authority가 아니다. query-local gate identity와 SCC/footprint 처리를 사용하며 mixed/ambiguous/unsupported 관계는 기존 경로로 돌아간다.
+- **검증 범위**: 기존20member product가 같은 ordered proof와 identity footprint를 유지하며 clause handle20→1, graph work가 감소한다. Representative1개는 dependency skeleton 추출용이며 전체경로0materialization으로 주장하지 않는다. 죽은 axis, self-cycle, nested source invalidation과 duplicate authority fallback을 검사했다. 고정 seed20회,1–4축/폭1–4의 exact/dynamic relation과 source withdrawal을 explicit reference에 비교했다. Random test independent review CLEAR. logical 조합 수는 그대로이며 줄인 것은 표현/작업이다.
+- **중간 실행**: 첫 integration JUnit 명령은 잘못된 test FQCN으로 initialization error였다(`evidence/native-axis-gate-integration-launch-error`). 실제 테스트 실패로 해석하지 않는다. 올바른 suite로 재실행한213tests는4.266초 PASS(`evidence/native-axis-gate-integration-green-213`). Random parity를 더한 fresh full gate는 별도로 실행한다.
+- **적용 제한**: 이 후보의 fast path는 exact source로 pinned된 state에 한정된다. Generated root가 unpinned native child를 읽는 경로는 아직 전체 topology를 펼칠 수 있어 별도 후속 수정/검증으로 분리했다. Physical multi-member 압축은 equal-cost receipt 반례 때문에 계속 제외한다.
+
+- **Pinned axis gate 최종 gate**: fresh main/test compile,1,042 JUnit PASS(168.145초), source SHA mismatch0, production/randomized test independent review CLEAR. 증거 `evidence/native-axis-gate-full-green-1042`. Unpinned 후속 경로와 actual workload 성능은 이 테스트 결과에 포함하지 않는다.
+
 ### v24 / 最新 native metadata·sparse DP 병합 (검증중)
 
 - **문제/원인**: v24 own gate 1,125 PASS 후 fetch에서 origin/main이6commits 앞선 `3d8e59378f`임을 확인했다. Native metadata 소비 및 sparse DP conditioning을 force push 없이 병합한다.
@@ -379,3 +390,11 @@
 - **v26 fixture 수정/최종 focused**: FULL public query가 exact+dynamic witness 둘을 검사하여64행 기대가128이 됐다. Cap1 재사용을 명확히 검사하도록 BROADCAST 단일 witness로 고쳤다. 추가 mixed fixture의 equal-but-foreign clause는 canonical duplicate여서 생성 자체가 거절됐으므로, 같은 producer의 미선언 durable realization을 dead pin으로 사용했다. Canonical 길이 prefix 때문에 삽입 위치와 정렬 위치가 달랐던 실패도 보존하고, 동일 길이의 앞서는 key와 실제 canonical 첫 binding assertSame으로 dead-first를 잠갔다. 이후 첫 root로 warm하고 둘째 root가 summary를 실제 재사용하는 counter 증가를 검사했다. 최종143tests/skip1PASS(1.062초), withdrawal/all-negative/restoration의 ordered proof와 identity footprint cold parity도 통과했다. 각 초기 fixture 실패는 evidence/v26-*에 보존한다.
 - **v26 독립 검토**: 새 architect가 실제 production diff를 읽어 CLEAR로 확인했다. HashSet은 출력 순서를 공급하지 않고 첫 생존 행만 남기며, null row도 witness를 정확히 비교한다. 중복 판정 뒤에만 grounded row를 할당한다. 원래 graph pruning/전체 footprint/음성 cache/root 제외/합계 budget은 유지한다. Fresh135class 전체 selected gate를 이어서 수행한다.
 - **v26 full gate**: fresh135class package **1,137 selected tests/failure0/error0/skip1**, BUILD SUCCESS04:50:38。원본 엔진을 별도 봉인한다. Fetch에서 incoming pinned native axis gate `6a7096f34b`를 발견해, 검증한 v26을 먼저 커밋하고3-way 병합·재검증 후 main에 게시한다. 실제시간은 아직 미측정이며20초 성공 주장은 없다.
+
+### v26 / pinned native axis gate 병합 (검증중)
+
+- **상태/해결**: v26 `c56baecf24`와 incoming `6a7096f34b`를3-way 병합했으며 production/test/docs 모두 자동 통합됐다. 새 query-local axis gate의 summary 제외 및 전체 footprint 처리를 v26 grounded-row 압축과 함께 독립 검토한다.
+- **검증/위험**: 기존135class selector가 새 NativePlacementContinuityTest 회귀4개도 포함한다. Fresh package 후 별도 엔진으로 봉인하여 원본 v26과 혼동하지 않는다. Synthetic gate는 proof authority가 아니며, SCC/고정 pin/identity/invalidation을 약화하지 않는다. v27 generated batch는 아직 미구현이며 새 gate와도 alpha-renaming 증명을 재검토한다.
+- **병합 독립 검토 BLOCK / 새 회귀 추가**: 기존 selected1,141tests는 통과했지만 reviewer가 incoming axis gate의 두 표현 경계를 발견했다. (1) query-fixed root와 다른 축 pin을 단순 제거하여 기존 A→B overlay와 달라질 수 있다. (2) 한 owner가 여러 compiled input position에 쓰일 때 gate가 하나의 position만 노출한다. 새 explicit-vs-factored 두 회귀를 먼저 실행하고, 확인되면 해당 표현에서만 legacy exact 경로로 fallback한다. 후보를 제거하거나 oracle/privacy를 완화하는 가드가 아니라, 아직 증명되지 않은 압축 표현을 사용하지 않는 조건이다. v27 alpha-renaming도 이 수정 이후 재검증한다.
+- **두 문제 실제 재현/수정**: 새125tests에서 두 기대 실패를 확인했다(`v26-axis-red-test.log`). 다른 root pin의 explicit 결과는 proof1개인데 gate는0개였고, 반복 producer의 explicit는0·1 양쪽 binding인데 gate는0만 반환했다. Fixed owner 축 또는 affected nonnegative position이 축의 단일 position과 정확히 일치하지 않으면 기존 exact topology를 사용한다. 적용 후149focused tests/skip1PASS(0.884초). 새 조건은 fast-path 적용 한계이며 지원 후보를 배제하지 않는다. 기존 canonical proof/order/full identity footprint 대조와 random axis gate 회귀를 유지한다.
+- **수정 병합 최종 gate**: 두 회귀 수정 후 fresh135class package **1,143 selected tests/failure0/error0/skip1**, BUILD SUCCESS04:59:29. 독립 architect는 두 fallback 및 v26 보존 조건을 실제 코드에서 재검토하여 CLEAR로 변경했다. Synthetic gate의 보수적 root-history 처리도 유지했다. 이 결과만 수정된 병합본 봉인·게시의 근거로 사용한다.
