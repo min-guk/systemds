@@ -1473,6 +1473,49 @@ public final class Rulesets {
   }
 
   /**
+   * NROW/NCOL read scalar dimensions from FederationMap metadata on the coordinator.
+   * The operation deliberately retains the historical no-rule CP/LOUT capability;
+   * this rule contributes only complete, shape-independent dependency authority for
+   * compact candidate publication.
+   */
+  public static final class FederationMapDimensionRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of(
+        OpOp1.NROW.toString(), OpOp1.NCOL.toString());
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      if(sig == null || sig.category() != category() || sig.arity() != 1
+          || !OPCODES.contains(normalizedOpcode(sig)))
+        return false;
+      OpSig.InputKind input = sig.inputKind(0);
+      return input == OpSig.InputKind.MATRIX || input == OpSig.InputKind.FRAME;
+    }
+
+    @Override
+    public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of()) : Optional.empty();
+    }
+
+    @Override
+    public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(), Set.of(), Set.of()) : Optional.empty();
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return FTypeProfile.empty();
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      return cpCaps(sig, ReasonCode.NO_RULE);
+    }
+  }
+
+  /**
    * Element-wise unary builtins executed per-partition.
    * Runtime parity: UnaryMatrixFEDInstruction.java:88-110 (callInstruction + setOutputFedMapping).
    * The opcode list intentionally stays conservative; extend it as additional builtins

@@ -620,8 +620,13 @@ public final class PlacementAnalysis {
 		private static final long ENTRY_OVERHEAD = 64;
 		private static final long LEDGER_BASE_OVERHEAD = 256;
 		private static final long LEDGER_IDENTITY_OVERHEAD = 128;
+		private static final int MAX_OBSERVED_PROOF_SEQUENCES = 4096;
 		private IdentityHashMap<Object,CanonicalText> values = new IdentityHashMap<>();
 		private IdentityHashMap<Object,Boolean> retainedDescriptors = new IdentityHashMap<>();
+		// Diagnostics only: this bounded identity set retains immutable proof lists until
+		// the active generation is replaced or its scope closes. It is not an exact heap
+		// bound and never participates in canonical construction or cache admission.
+		private IdentityHashMap<List<PlacementProofKey>,Boolean> observedProofSequences;
 		private final int maxEntries;
 		private final long maxWeight;
 		private long retainedWeight;
@@ -674,9 +679,38 @@ public final class PlacementAnalysis {
 			PreparedGeneration prepared = prepareGeneration(key, value);
 			if(prepared == null)
 				return;
+			clearObservedProofSequences();
 			values = prepared.values();
 			retainedDescriptors = prepared.descriptors();
 			retainedWeight = prepared.weight();
+		}
+
+		private void observeProofSequence(List<PlacementProofKey> proofs,
+			SearchSpaceMetrics metrics) {
+			if(observedProofSequences == null)
+				observedProofSequences = new IdentityHashMap<>();
+			if(observedProofSequences.containsKey(proofs)) {
+				metrics.recordDirectWork(
+					SearchSpaceMetrics.DirectWork.CANONICAL_PROOF_SEQUENCE_REPEATED);
+				metrics.recordDirectWork(
+					SearchSpaceMetrics.DirectWork.CANONICAL_PROOF_SEQUENCE_REPEATED_CHILDREN,
+					proofs.size());
+				return;
+			}
+			if(observedProofSequences.size() >= MAX_OBSERVED_PROOF_SEQUENCES) {
+				metrics.recordDirectWork(
+					SearchSpaceMetrics.DirectWork.CANONICAL_PROOF_SEQUENCE_OVERFLOW);
+				return;
+			}
+			observedProofSequences.put(proofs, Boolean.TRUE);
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.CANONICAL_PROOF_SEQUENCE_FIRST);
+		}
+
+		private void clearObservedProofSequences() {
+			if(observedProofSequences != null) {
+				observedProofSequences.clear();
+				observedProofSequences = null;
+			}
 		}
 
 		private void retain(Object key, CanonicalText value) {
@@ -745,6 +779,7 @@ public final class PlacementAnalysis {
 		private void clear() {
 			values.clear();
 			retainedDescriptors.clear();
+			clearObservedProofSequences();
 			retainedWeight = 0;
 		}
 	}
@@ -1103,6 +1138,7 @@ public final class PlacementAnalysis {
 		List<PlacementProofKey> proofs, List<CandidateRealizationInputBinding> bindings,
 		DurableAnchorKey nativeWorkerPoolWitness, boolean nativeWorkerPoolLayoutExact,
 		CanonicalTextContext context) {
+		observeCanonicalProofSequence(proofs);
 		CanonicalTextBuilder text = new CanonicalTextBuilder().append("proofs=[");
 		for(int index = 0; index < proofs.size(); index++) {
 			if(index > 0) text.append(", ");
@@ -1122,6 +1158,23 @@ public final class PlacementAnalysis {
 				text.append("|nativePoolLayout=dynamic");
 		}
 		return text.build();
+	}
+
+	private static void observeCanonicalProofSequence(List<PlacementProofKey> proofs) {
+		SearchSpaceMetrics metrics = PlacementIdentity.activeMetrics();
+		if(metrics == null)
+			return;
+		metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.CANONICAL_PROOF_SEQUENCE_REQUESTS);
+		if(proofs.size() < 2) {
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.CANONICAL_PROOF_SEQUENCE_INELIGIBLE);
+			return;
+		}
+		ScopedCanonicalTextCache active = ACTIVE_CANONICAL_TEXT_CACHE.get();
+		if(active == null) {
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.CANONICAL_PROOF_SEQUENCE_NO_SCOPE);
+			return;
+		}
+		active.observeProofSequence(proofs, metrics);
 	}
 
 	private static CanonicalText canonicalIndexedClauseOrderingText(
