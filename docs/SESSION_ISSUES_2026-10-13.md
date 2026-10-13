@@ -116,3 +116,59 @@
 - **결과**: 선택된 FedPlanner 회귀 **1,500 PASS / 215.979초**. 검사 중 class/resource 변경 0, source mismatch 0, class/resource 7,909개. 전체 repository Maven suite는 아니다.
 - **증거**: `evidence/gate-budget-replay-full-gate-v45/validation.json`. 이전 v44 실제 NPE 실패 증거는 보존했다. 이 결과는 실제 compilation 시간이나 20초 목표 달성의 증거가 아니다.
 - **별도 probe gate**: 9 PASS / 2.942초 (`evidence/v45-probe-gate/tests.log`). Frozen engine 생성 및 실제 Docker 검증으로 이어간다.
+
+## 다음 단계: 압축 관계의 retained union 실패로 인한 재전개
+
+- **문제 정의/관측**: v43 LogReg 최종 seq60의 PROOFS_CONSUMED 6,121,451은 PARTITIONED 3,425,335, MIXED_EXACTNESS_SINGLE_AXIS 1,649,618, RETAINED_UNION 949,972, REQUIRED_INPUTS 92,486, SINGLETON_OUTPUT 3,917, NO_PRODUCT 123으로 정확히 분해된다.
+- **가장 큰 확인 경로**: PARTITIONED_RETAINED_PROOFS 2,555,577(전체 소비의 약 41.75%)은 PlacementRelationClosure의 partitioned publication에서 retained union이 실패한 뒤 product를 개별 tuple로 순회하는 루프에 기록된다. 이 루프는 residual 생성에 성공하면 conditional residual을, 실패하면 원래 product를 순회한다. 현재 카운터는 두 경우를 나누지 않는다. 이미 만들어진 정확한 관계를 다시 순회한다는 점이 핵심이다.
+- **생성량 구분**: 이는 2,555,577개의 새 Clause 객체가 아니다. 같은 실행의 explicitSupportClauses는 2,322,698, publication memo hit는 3,926,538이며 outcome별 객체 생성 수가 없어 서로 동일시할 수 없다.
+- **수정 계획**: ordinary E와 conditional B\E가 동일 owner/header/witness/layout 및 binding identity를 공유하고 제외 영역이 정확히 E인 경우에만 B로 재결합한다. 기존 E와 새 residual의 개별 clause 권한은 donor scope로 유지한다. Identity 불일치, 부분 overlap/extra, multiheader, cap 초과 등은 exact fallback을 유지한다.
+- **검증 계획**: 실제 materialization 호출 RED/GREEN, 전수 소형 관계·고정 seed parity, retained/member Clause assertSame, withdrawal/re-add, canonical hash/order 및 Physical receipt parity. 실제 workload에서 이 제한된 경우의 적용 비중과 성능 효과는 아직 측정하지 않았다.
+- **원칙**: runtime/privacy/Oracle 규칙과 합법 후보를 변경하지 않고 표현의 재전개만 제거한다. source/action/proof 대표값을 서로 대체하지 않는다.
+
+- **적용 범위 보정**: `exactAuthorityIntersectionAxes`는 ordinary/ordinary만 허용한다. 따라서 실제 residual 생성은 retained rectangle E와 candidate rectangle B의 다축 성장 등에서 가능하다. 원래 candidate가 conditional이면 residual 생성은 실패할 수 있다. 또한 전체 emission의 staging guard와 exact-key residual guard가 다르다. 2,555,577건 전체가 새 재결합의 적용 대상이라고 주장하지 않으며 실제 경로 테스트·후속 workload로 범위를 확인한다.
+
+## 다음 단계: 동일 incumbent의 반복 projection 제거
+
+- **상태**: 독립 worktree에서 50 tests PASS, ROOT에 후속 wave로 통합 중. 실행 중인 frozen v45에는 포함되지 않는다.
+- **원인**: neighborhood마다 같은 incumbent의 전체 assignment를 펼친 뒤 원래 decision prefix만 추출했다.
+- **변경**: refinement 호출 안에서 incumbent 배열 identity와 한 개 decision projection만 유지한다. neighborhood는 복사본을 수정하며, 엄격한 개선으로 incumbent가 교체되면 즉시 다시 펼친다. 호출 간 cache는 없다.
+- **근거/검증**: incumbent는 in-place 변경되지 않고 accept에서 엄격한 개선 시 교체된다. 기존 버전은 안정된 두 neighborhood에서 실제 expandAssignment 호출 2회, 변경 후 1회. 첫 neighborhood에서 개선이 생기는 반례는 projection 2회와 accept 검증 2회를 유지하며 최종 assignment [1,1], objective raw bits 및 checkpoint 요약이 같다.
+- **잔여 위험**: 향후 incumbent를 in-place 변경하면 identity 계약이 깨질 수 있다. 명시적 교체 반례와 독립 검토·통합 회귀로 감지한다. 실제 workload 효과는 아직 미측정이다.
+
+## v45 실제 LogReg 성능 회귀 — 전역 gate 발견 제거 진행 중
+
+- **관측 결과**: 동일 COFEE 조건 LogReg 전체 초기 planning **438.335640203초**, v43 388.771218709초 대비 +49.564421494초. CandidateE2E Analysis 343.940421141초, Model 6.904664545초, Cost Surface 6.849345538초, Optimizer 76.903665119초. 별도 SEARCH_SPACE_LIVE Analysis timer는 343.890281686초이며 전체 단계 timer와 혼동하지 않는다. 한 번의 실행이며 반복 paired 측정의 인과 추정은 아니다.
+- **정확성**: numeric/audit/selected/objective 비교는 v43과 일치, cleanup 완료. v44의 NPE는 재발하지 않았다.
+- **생성량/작업량**: keys 27,442→25,137, facts 217,777→208,886, explicit clauses 2,322,698→2,312,593. PROOFS_CONSUMED 6,121,451과 graphs 103,616은 동일하다. Objects 일부 감소를 전체 작업 감소로 보고하지 않는다.
+- **캐시 추가 작업**: COMPONENT_FOOTPRINT_REQUESTS 159,880→1,900,563, RAW_EDGES 92,488,567→1,462,463,009, UNIQUE_EDGES 29,950,314→554,776,174. Summary rows examined 912,863→8,362,556, admissions 608,756→6,940,484, evictions 0→353,271. Graph states 29,771,479→31,849,922, alternatives 191,033,548→203,722,052, dependency edges 276,607,446→285,878,572도 증가했다.
+- **코드상 원인**: 전체 graph의 axis gate마다 전이 footprint를 다시 계산했다. 상위 child summary가 재사용 가능하더라도 이 작업을 수행한다. Gate가 남은 cache 공간만 써도, 이후 ordinary admission의 LRU에서 기존 ordinary summary가 간접 축출될 수 있다. 추가 방문량 증가는 코드와 부합하지만 전체 49.56초를 단일 함수의 측정값으로 주장하지 않는다.
+- **수정 결정**: `rememberNativeGateFootprints`의 전역 발견 호출과 사용되지 않는 helper를 제거한다. 기존 root-child footprint 경로는 유지한다. 하위 gate의 추가 발견은 bounded incremental 설계가 검증되기 전까지 적용하지 않는다. 보관 한계 상향이나 새로운 후보 pruning으로 문제를 감추지 않는다.
+- **검증 계획/위험**: Native continuity 전체 회귀 및 기존 v43과 같은 fixture의 warmed proof/owner/counter parity. 일부 nested-gate 재사용 기회를 잃을 수 있으므로 실제 전체 시간과 메모리를 재확인한다. GLM 및 최종 artifact binding 결과는 이어서 기록한다.
+
+### v45 실제 pair 최종 결과
+
+| Workload | v43 전체 planning (초) | v45 전체 planning (초) | v45 Analysis / Model / Cost / Optimizer (초) | coordinator peak (bytes) | worker peak (bytes) |
+|---|---:|---:|---|---:|---:|
+| LogReg | 388.771218709 | 438.335640203 | 343.940421141 / 6.904664545 / 6.849345538 / 76.903665119 | 8,789,852,160 | 726,630,400 |
+| GLM | 121.376056740 | 117.548185148 | 74.764857679 / 4.433866240 / 8.167961908 / 25.553646316 | 4,883,849,216 | 753,352,704 |
+
+- 두 workload numeric, audit, 원문 selected/section, selection fingerprint, objective raw bits/certificate, Cost Surface fingerprint가 v43과 일치한다. 모든 가능한 assignment의 비용 전수 동등성을 주장하지 않는다. 각 1회 관측이며 LogReg 회귀를 GLM 결과로 상쇄해 성공으로 판정하지 않는다.
+- GLM keys 16,157 / facts 125,264 / clauses 1,088,687 / handles 634. 두 원격 호스트 cleanup 완료.
+- Comparison SHA-256 `235eb25c1a08bb4eb4ce8e3cb0aeda90e503af6da83add02247e179c439cdeb0`; regression/parity binding `05927e1a3b0b17ead1fe26666e088e2c102e695e0eb5f125b133ec394e0833e0`; evaluator `459496d4631cdbdcf65e71a3dfd0d94a83bd9a1a5a7452de5caa33e8dcbe98d9`. 경로는 `evidence/cofee-50k128-v45-validation/` 및 `evidence/candidate-engine-gate-budget-replay-v45-20261013/`이다.
+- 20초 evaluator **FAIL**, workload별 accepted 0/3. OMX에 FAIL checkpoint를 기록하고 evaluator evidence-list를 v45로 갱신했다(이전 목록은 별도 보존).
+
+## Retained subset/complement 재결합 구현 및 독립 검증
+
+- **변경**: ordinary E와 candidate B의 exact residual B\E를 donor scope로 만들고, 제외 영역이 E와 같은 authority일 때 B를 복원한다. 최종 [E,B] 병합은 첫 donor가 정확히 기존 E이며 E⊆B임을 축별 교집합과 cardinality로 확인할 때만 흡수한다. Existing E의 clause와 새 영역의 candidate clause는 각각 원래 객체에서 복원한다.
+- **Closure**: 전체 emission hasStaging guard는 유지한다. 이미 존재하던 exact-key residual 경로에서만 재결합 publication을 사용한다. Same-key staging/explicit, foreign owner, 부분 overlap/extra, multiheader, 보관 cap 실패는 기존 scalar fallback이다.
+- **실제 생성 경로 검증**: partitioned 및 standalone binder RED에서 각 residual 소비 3회였다. GREEN에서 각각 **3→0**, 논리적 후보 수 6은 유지. Same-key staging/explicit 반례는 기존 scalar4 경로를 유지한다.
+- **검증**: 관련 65 PASS, independent review CLEAR. Hash/order, source withdrawal, authority cap 및 Conditional/Durable/Weighted Physical parity 포함. Projection 변경도 독립 검토 CLEAR, 50 tests PASS.
+- **증거**: `lanes/native_retained_complement_union/artifacts/native-retained-complement-union-20261013/`, production SHA-256 `d8de79db5930c36f9ec4a76823058b6aa741a97ecb53f850c48e8b29ec33636e`. 실제 workload의 2,555,577회 중 이 subset 적용률은 아직 미측정이다.
+
+## 새 origin/main 통합으로 gate 회귀 수정 방안 갱신
+
+- 원격 `7a44c1874b`에 root의 synthetic gate를 넘어 실제 child component를 먼저 재사용하는 수정, nested gate 발견 작업 전체의 budget, matrix CAST_AS_SCALAR CP family가 추가됐다. 로컬 fallback 검증 중 도착한 별도 변경이다.
+- 5660 기반 전역 nested 발견 제거는 단위 검증을 통과했고 별도 artifact로 보존했다. 그러나 새 원격 구현은 발견 알고리즘 자체가 달라졌으므로 같은 rollback을 그대로 적용하지 않는다. Real child 우선 admission과 제한된 추가 탐색을 통합한 뒤 실제 counter를 재검증한다.
+- Budget는 query별 graph scan/row/dependency/hidden owner/schedule/copy 작업 합계를 기존 state+alternative cap으로 제한한다. 이는 무제한 O(gates×graph) 반복을 막지만, 전체 query 수를 곱한 시간이 충분히 작다는 보장은 아니다. v46 실제에서 footprint requests/raw edges/admission work와 전체시간을 확인한다. 악화가 남으면 전역발견 제거를 fallback으로 사용한다.
+- 원격 변경을 통합하면서 기존 source/action/proof·CP/FED·privacy·staging 규칙과 테스트를 보존하고, 통합 full gate와 동일 실제 COFEE를 다시 수행한다.

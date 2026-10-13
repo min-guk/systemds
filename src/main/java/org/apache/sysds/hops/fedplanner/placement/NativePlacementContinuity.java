@@ -6442,6 +6442,10 @@ final class NativePlacementContinuity {
 			return excludedExactProduct != null
 				&& excludedExactProduct.containsIdentityBinding(axis, binding);
 		}
+		boolean excludesExactAuthority(NativeSupportProduct authority) {
+			return excludedExactProduct != null
+				&& excludedExactProduct.sameExactAuthority(authority);
+		}
 		static NativeSupportProduct tryCreate(DurableAnchorKey externalSeed,
 			DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
 			List<List<CandidateRealizationInputBinding>> axes, int maximumLengthStates) {

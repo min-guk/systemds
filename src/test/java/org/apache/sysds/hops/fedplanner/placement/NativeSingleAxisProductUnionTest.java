@@ -208,7 +208,7 @@ public class NativeSingleAxisProductUnionTest {
 	}
 
 	@Test
-	public void diagnosticsPreserveForeignOwnerAndConditionalFallbacks() {
+	public void diagnosticsPreserveForeignOwnerFallbackAndExactComplementCompletion() {
 		CompiledHopKey owner = key("diagnostic-fallback-consumer");
 		CompiledHopKey source = key("diagnostic-fallback-source");
 		CompiledHopKey foreignSource = cloneKey(source);
@@ -263,8 +263,15 @@ public class NativeSingleAxisProductUnionTest {
 		finally {
 			PlacementIdentity.setActiveMetrics(null);
 		}
-		Assert.assertFalse(conditionalMerged.realizations().get(0).supportClauses()
+		Assert.assertTrue(conditionalMerged.realizations().get(0).supportClauses()
 			instanceof NativeContinuitySupportClauses);
+		NativeContinuitySupportClauses completed = (NativeContinuitySupportClauses)
+			conditionalMerged.realizations().get(0).supportClauses();
+		Assert.assertEquals(2, completed.size());
+		Assert.assertSame(left.get(0), completed.get(
+			completed.product().ordinalOfExactAuthorityBindings(List.of(a))));
+		Assert.assertSame(conditional.get(0), completed.get(
+			completed.product().ordinalOfExactAuthorityBindings(List.of(b))));
 		Assert.assertEquals(0,
 			conditionalMetrics.duplicateMergeDiagnosticsSnapshot().nativeRelationDuplicateMembers());
 	}

@@ -342,3 +342,19 @@ LogReg에서는 skeleton 요청 약 1,970만 회 중 371만 회를 재사용했�
 두 workload 모두 20초를 넘었고, 동일 frozen engine에서 workload별 성공 3회라는 완료 조건도 충족하지 못했다.
 
 근거: workspace 밖 `evidence/cofee-50k128-v43-validation/v41-v43-comparison.json`, SHA-256 `e8070a6df3e19ed0fd5f018d4141ff8c307a47d4ab6ecf1c1b3a7c07e430003a`. Frozen JAR SHA-256 `9862117114b2746f579c5b504f441a3a46e8370f14907662cf47a80573e29eb8`.
+
+## 12. 후속 확인: v45에서 드러난 두 종류의 반복 작업
+
+커밋 `5660e734a4`의 동일 COFEE 실제 실행은 LogReg **438.336초**, GLM **117.548초**였다. v43 대비 각각 **49.564초 증가**, **3.828초 감소**다. 두 workload의 수치 결과·선택 계획·objective raw bits/certificate·Cost Surface fingerprint·receipt audit은 일치했다. 20초 목표는 미달성이다.
+
+첫 번째 문제는 캐시를 찾는 비용이다. 새 구현은 root의 직접 입력뿐 아니라 proof graph 안의 모든 입력 gate에 대해, 저장 가능한지 판단하려고 다시 하위 의존성을 탐색했다. LogReg에서 footprint의 raw edge 방문이 **92,488,567→1,462,463,009회**로 증가했다. Graph 수는 103,616으로 같았고 graph state·alternative·edge 수도 늘었다. 이미 상위 관계를 재사용할 수 있는데 작은 하위 관계까지 반복해서 조사한 셈이다. Gate의 직접 eviction을 막아도, gate가 차지한 공간 때문에 나중에 기존 큰 summary가 간접 축출될 수 있었다. 전역 하위 gate 발견은 제거하는 방향으로 수정 중이다.
+
+두 번째 문제는 **이미 정확하게 압축한 관계를 Closure가 다시 펼치는 것**이다. v43 LogReg의 proof 소비 6,121,451회 중 2,555,577회는 partitioned publication에서 기존 관계와 합치지 못한 product를 순회하는 경로였다. 이 경로는 residual 생성에 성공하면 residual을, 실패하면 원래 product를 순회한다. 현재 계측은 그 둘을 구별하지 않으므로 2,555,577회 전체가 제거 가능하다고 주장할 수 없다. 또한 이는 새 Clause 객체 개수와 다르다.
+
+예를 들어 기존에 검증된 입력 조합이 `E={a1}×{b1,b2}`, 새로 검증된 영역이 `B={a1,a2}×{b1,b2,b3}`라면, 추가 영역은 `B\E`다. 기존 흐름은 추가 영역을 개별 조합으로 복원한 뒤 다시 합칠 수 있다. 수정 방향은 포함 관계를 입력 축에서 증명하고, **B와 조합별 원래 proof 소유권을 함께 보관하는 것**이다. 전체 Cartesian product를 순회하지 않고, 최종 선택된 조합이 E에 속하면 기존 proof, 그 외에는 새 관계의 proof를 복원한다. 다른 source owner·proof·layout·staging이 섞인 경우에는 이 등식을 기계적으로 적용하지 않는다.
+
+DP에서도 두 반복을 구분한다. 검증이 끝난 동일 원본 선택을 conditional replay한 뒤 전체 비용 복원을 다시 하던 경로는 제거했다(실제 호출 2→1인 회귀 테스트). 같은 incumbent를 여러 neighborhood에서 매번 원본 decision으로 펼치던 경로는 호출 내부에서 한 번만 펼치고, incumbent가 개선되어 교체될 때 다시 펼치도록 후속 변경 중이다. 이 단위 테스트의 작업 감소를 실제 optimizer 시간 감소로 환산하지 않는다.
+
+현재 해결 대상은 ‘불법 후보를 더 많이 버리기’만이 아니다. **합법 관계를 다시 펼치는 작업, 변하지 않은 선택을 다시 계산하는 작업, 재사용 대상을 찾으려고 같은 graph를 반복 방문하는 작업**을 줄여야 한다. 후보 생성 개수·논리적 후보 개수·객체 개수·실제 방문 횟수를 구별해서 검증해야 한다.
+
+근거: `evidence/cofee-50k128-v45-validation/v43-v45-comparison.json` (SHA-256 `235eb25c1a08bb4eb4ce8e3cb0aeda90e503af6da83add02247e179c439cdeb0`). 후속 변경의 검증과 한계는 [세션 기록](SESSION_ISSUES_2026-10-13.md)에 누적한다.

@@ -620,6 +620,9 @@ final class IncrementalRegionalOptimizer {
 			? new SharedRegionalPreparation(problem,limits,limits,
 				options.maximumMergeAssignments(),options.maximumRetainedSlots(),compact)
 			: new SharedRegionalPreparation(problem,limits,compact);
+		// accept replaces (and never mutates) the incumbent on strict improvement.
+		int[] projectedIncumbent = null;
+		int[] projectedSource = null;
 		try {
 			for(Neighborhood neighborhood : rejectedNeighborhoods.values().stream()
 				.sorted(NEIGHBORHOOD_ORDER).toList()) {
@@ -628,9 +631,14 @@ final class IncrementalRegionalOptimizer {
 				if(options.boundedTest() && options.timeMillis() > 0
 					&& (System.nanoTime()-started)/1_000_000 >= options.timeMillis())
 					return;
-				List<Integer> expanded = root.expandAssignment(Arrays.stream(incumbent).boxed().toList());
-				int[] source = expanded.subList(0,problem.decisionCount()).stream()
-					.mapToInt(Integer::intValue).toArray();
+				if(projectedIncumbent != incumbent) {
+					List<Integer> expanded = root.expandAssignment(
+						Arrays.stream(incumbent).boxed().toList());
+					projectedSource = expanded.subList(0,problem.decisionCount()).stream()
+						.mapToInt(Integer::intValue).toArray();
+					projectedIncumbent = incumbent;
+				}
+				int[] source = projectedSource.clone(); // replay and solving mutate block values
 				if(FederatedPlannerTrace.isEnabled())
 					FederatedPlannerTrace.logGlobal("DP-ConditionalNeighborhood",
 						"potential=" + neighborhood.potential() + " originalVariables="

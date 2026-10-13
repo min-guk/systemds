@@ -5990,6 +5990,10 @@ final class PlacementRelationClosure {
 												NativeRetainedResidual residual =
 													grounded.retainedNativeResidual(publication);
 												if(residual != null) {
+													if(residual.publication() != null) {
+														bound.add(residual.publication());
+														continue;
+													}
 													if(residual.product() == null) {
 														coveredByRetained = true;
 														continue;
@@ -6065,7 +6069,9 @@ final class PlacementRelationClosure {
 											complexityMetrics.recordNativePublication(
 												NativePublicationOutcome.RETAINED_UNION,
 												supportResult.proofs().size());
-										if(residual.product() == null)
+										if(residual.publication() != null)
+											bound.add(residual.publication());
+										else if(residual.product() == null)
 											coveredByRetained = true;
 										else {
 											NativePlacementContinuity.NativeSupportProduct product =
@@ -6586,7 +6592,8 @@ final class PlacementRelationClosure {
 	}
 	private record NativeRetainedUnion(CandidateEmissionRealization publication, boolean covered) { }
 	private record NativeRetainedResidual(
-		NativePlacementContinuity.NativeSupportProduct product) { }
+		NativePlacementContinuity.NativeSupportProduct product,
+		CandidateEmissionRealization publication) { }
 
 	private static Optional<NativeContinuitySupportClauses> nativeRelationUnion(
 		NativeContinuitySupportClauses left, NativeContinuitySupportClauses right) {
@@ -6746,7 +6753,15 @@ final class PlacementRelationClosure {
 				return null;
 			NativeContinuitySupportClauses.ExactAuthorityResidual residual =
 				relation.exactAuthorityResidualAfter(retainedRelations.get(0));
-			return residual == null ? null : new NativeRetainedResidual(residual.product());
+			if(residual == null)
+				return null;
+			CandidateEmissionRealization publication = null;
+			if(residual.relation() != null) {
+				var completed = nativeRelationUnion(retainedRelations.get(0), residual.relation());
+				if(completed.isPresent())
+					publication = new CandidateEmissionRealization(candidate.key(), completed.get());
+			}
+			return new NativeRetainedResidual(residual.product(), publication);
 		}
 		private boolean coversRetainedNative(
 			NativePlacementContinuity.NativeContinuityProof proof, CompiledHopKey owner,
