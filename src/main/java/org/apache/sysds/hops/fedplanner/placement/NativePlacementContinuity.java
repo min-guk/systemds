@@ -2706,8 +2706,8 @@ final class NativePlacementContinuity {
 				viable = graph;
 				// In a DAG every surviving row reaches a direct leaf after dead pruning.
 				supported = viableCandidateStates(viable);
-			cacheAcyclicRootChildren(childFootprints, viable, supported,
-				generation == null ? null : root.key(), traversal);
+				cacheAcyclicRootChildren(childFootprints, viable, supported,
+					generation == null ? null : root.key(), traversal);
 			}
 			if(metrics != null)
 				metrics.recordProofGraphPath(traversal.cycleDetected, acyclicRemoved);
@@ -3136,6 +3136,12 @@ final class NativePlacementContinuity {
 	private long pruneDeadAcyclicAlternatives(
 		Map<CandidateProofState,List<SelectedCandidateProof>> graph,
 		List<CandidateProofState> completionOrder) {
+		return pruneDeadAcyclicAlternatives(graph, completionOrder, null);
+	}
+
+	private long pruneDeadAcyclicAlternatives(
+		Map<CandidateProofState,List<SelectedCandidateProof>> graph,
+		List<CandidateProofState> completionOrder, NativeGateAdmissionBudget gateBudget) {
 		long removed = 0;
 		// Dependencies are complete before their owners in DFS completion order.
 		// Only replace values so graph key order and revision-invalidation footprint stay intact.
@@ -3187,8 +3193,11 @@ final class NativePlacementContinuity {
 				else if(survivors != null)
 					survivors.add(alternative);
 			}
-			if(survivors != null)
+			if(survivors != null) {
+				if(gateBudget != null)
+					gateBudget.preserveRows(state, alternatives);
 				graph.put(state, List.copyOf(survivors));
+			}
 		}
 		return removed;
 	}
@@ -3328,6 +3337,8 @@ final class NativePlacementContinuity {
 		}
 		if(graph.containsKey(state))
 			return;
+		if(state.axisGate() != null)
+			traversal.hasNativeAxisGates = true;
 		boolean generatedRoot = generation != null && state.key() == root.key()
 			&& Objects.equals(state.realization(), root.realization());
 		// A proposed-root recurrence reads the same primitive recipe, not the
@@ -3512,45 +3523,57 @@ final class NativePlacementContinuity {
 		footprints.put(child, acyclicComponentFootprint(child, graph, traversal));
 	}
 
-	private void rememberNativeGateFootprints(
+	private void cacheNativeGateComponents(
 		Map<CandidateProofState,List<SelectedCandidateProof>> graph,
-		CandidateProofTraversal traversal,
-		Map<CandidateProofState,AcyclicComponentFootprint> footprints) {
-		if(acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
-			|| acyclicComponentMaxAlternatives == 0)
+		CandidateProofTraversal traversal, Set<CandidateProofState> supported,
+		CompiledHopKey generatedRoot, NativeGateAdmissionBudget budget) {
+		if(budget == null || budget.exhausted || acyclicComponentMaxEntries == 0
+			|| acyclicComponentMaxStates == 0 || acyclicComponentMaxAlternatives == 0)
 			return;
-		// LRU limits do not bound the cost of constructing overlapping suffix
-		// footprints. Meter this optional pass as a whole, including nongate scans.
-		NativeGateAdmissionBudget budget = new NativeGateAdmissionBudget();
+		// Root boundaries are real owners, not synthetic gates. Stream only the
+		// latter in original graph order, after the ordinary admission pass.
 		for(CandidateProofState state : graph.keySet()) {
 			if(!budget.work(1))
 				break;
-			if(state.axisGate() == null || footprints.containsKey(state))
+			if(state.axisGate() == null)
 				continue;
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_GATE_ADMISSION_ATTEMPTS);
+			AcyclicComponentSummary prior = acyclicComponentMemo.get(state);
+			long stateHeadroom = acyclicComponentMaxStates - acyclicComponentRetainedStates
+				+ (prior == null ? 0 : prior.retainedStates);
+			long rowHeadroom = acyclicComponentMaxAlternatives - acyclicComponentRetainedAlternatives
+				+ (prior == null ? 0 : prior.retainedAlternatives);
+			if(acyclicComponentMemo.size() - (prior == null ? 0 : 1) >= acyclicComponentMaxEntries
+				|| stateHeadroom < 1 || state.axisGate().retainedUnits() > rowHeadroom) {
+				if(metrics != null)
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_GATE_ADMISSION_CAPACITY_BYPASSES);
+				continue;
+			}
+			budget.footprintStateLimit = Math.min(stateHeadroom, budget.statesRemaining);
 			List<SelectedCandidateProof> rows = graph.get(state);
 			long rowUnits = saturatedAdd(rows.size(), state.axisGate().retainedUnits());
 			if(!budget.canStageRows(rowUnits))
 				break;
-			// Prepay an upper bound for later summary extraction (every row,
-			// dependency check and output-row copy), even if pruning removes rows.
+			// Summary extraction uses viable rows; footprint traversal alone reads
+			// the bounded original-row journal, retaining negative dependencies.
 			for(SelectedCandidateProof row : rows)
 				if(!budget.work(2L + row.dependencies.size()))
 					break;
 			if(budget.exhausted)
 				break;
-			AcyclicComponentFootprint footprint = acyclicComponentFootprint(
-				state, graph, traversal, budget);
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_GATE_ADMISSION_FOOTPRINTS);
+			AcyclicComponentFootprint footprint = acyclicComponentFootprint(state, graph, traversal, budget);
 			if(footprint == null) {
 				if(budget.exhausted)
 					break;
-				continue; // Optional failure is not an empty/negative proof.
+				continue;
 			}
-			// Prepay the immutable summary's owner copy. Completed earlier entries
-			// remain safe to admit when a later attempt exhausts the shared budget.
 			if(!budget.work(footprint.occurrences.size())
 				|| !budget.stage(footprint.retainedStates, rowUnits))
 				break;
-			footprints.put(state, footprint);
+			cacheAcyclicChild(state, footprint, graph, supported, generatedRoot, traversal);
 		}
 	}
 
@@ -3562,6 +3585,47 @@ final class NativePlacementContinuity {
 		private long rowsRemaining = acyclicComponentMaxAlternatives;
 		private int entriesRemaining = acyclicComponentMaxEntries;
 		private boolean exhausted;
+		private long footprintStateLimit = acyclicComponentMaxStates;
+		private Map<CandidateProofState,List<SelectedCandidateProof>> originalRows;
+
+		private void preserveRows(CandidateProofState state, List<SelectedCandidateProof> rows) {
+			if(exhausted)
+				return;
+			long rowUnits = rows.size();
+			// Prepay insertion and eventual cleanup. A sizing pass reads only list
+			// sizes; it never constructs an optional traversal schedule.
+			boolean complete = statesRemaining > 0 && work(2);
+			DefaultTraversalSchedule schedule = rows instanceof DefaultAlternativeList defaults
+				? defaults.schedule : null;
+			if(complete && schedule != null && schedule.filteredAlternatives == rows)
+				rowUnits = saturatedAdd(rowUnits, schedule.rawDependencyCount);
+			else if(complete)
+				for(SelectedCandidateProof row : rows) {
+					if(!work(1)) {
+						complete = false;
+						break;
+					}
+					rowUnits = saturatedAdd(rowUnits, row.dependencies.size());
+					if(rowUnits > rowsRemaining)
+						break;
+				}
+			if(!complete || rowUnits > rowsRemaining) {
+				bypass();
+				// An incomplete journal must NEVER fall back to pruned dependencies.
+				// Only optional memo work is abandoned; exact pruning continues.
+				originalRows = null;
+				return;
+			}
+			statesRemaining--;
+			rowsRemaining -= rowUnits;
+			if(originalRows == null)
+				originalRows = new java.util.HashMap<>();
+			originalRows.put(state, rows);
+			if(metrics != null) {
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_GATE_ADMISSION_SNAPSHOT_STATES);
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_GATE_ADMISSION_SNAPSHOT_ROWS, rowUnits);
+			}
+		}
 
 		private boolean work(long units) {
 			if(exhausted || units > workRemaining)
@@ -3609,6 +3673,7 @@ final class NativePlacementContinuity {
 	private AcyclicComponentFootprint acyclicComponentFootprint(CandidateProofState child,
 		Map<CandidateProofState,List<SelectedCandidateProof>> graph,
 		CandidateProofTraversal traversal, NativeGateAdmissionBudget budget) {
+		long stateLimit = budget == null ? acyclicComponentMaxStates : budget.footprintStateLimit;
 		if(budget != null && !budget.work(2))
 			return null;
 		if(metrics != null)
@@ -3619,7 +3684,7 @@ final class NativePlacementContinuity {
 			// hidden graph rows. Its summary already owns the complete immutable identity
 			// footprint; sharing it avoids copying every transitive owner again.
 			long retainedStates = Math.max(boundary.retainedStates, boundary.occurrences.size());
-			if(retainedStates > acyclicComponentMaxStates) {
+			if(retainedStates > stateLimit) {
 				if(metrics != null)
 					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_STATE_BYPASS);
 				return null;
@@ -3644,11 +3709,17 @@ final class NativePlacementContinuity {
 				continue;
 			AcyclicComponentSummary reused = traversal.reusedComponents.get(state);
 			if(reused != null) {
+				if(budget != null && (reused.retainedStates > stateLimit
+					|| reused.occurrences.size() > stateLimit)) {
+					if(metrics != null)
+						metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_STATE_BYPASS);
+					return null;
+				}
 				if(budget != null && !budget.work(reused.occurrences.size()))
 					return null;
 				occurrences.addAll(reused.occurrences);
 				retainedStates += reused.retainedStates;
-				if(retainedStates > acyclicComponentMaxStates) {
+				if(retainedStates > stateLimit || budget != null && occurrences.size() > stateLimit) {
 					if(metrics != null)
 						metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_STATE_BYPASS);
 					return null;
@@ -3656,17 +3727,25 @@ final class NativePlacementContinuity {
 				continue;
 			}
 			Set<CompiledHopKey> hidden = traversal.hiddenOwnerReadsByState.getOrDefault(state, Set.of());
+			if(budget != null && hidden.size() > stateLimit) {
+				if(metrics != null)
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_STATE_BYPASS);
+				return null;
+			}
 			if(budget != null && !budget.work(1L + hidden.size()))
 				return null;
 			occurrences.add(state.key());
 			occurrences.addAll(hidden);
 			retainedStates++;
-			if(retainedStates > acyclicComponentMaxStates) {
+			if(retainedStates > stateLimit || budget != null && occurrences.size() > stateLimit) {
 				if(metrics != null)
 					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_STATE_BYPASS);
 				return null;
 			}
-			List<SelectedCandidateProof> alternatives = graph.getOrDefault(state, List.of());
+			List<SelectedCandidateProof> alternatives = budget == null || budget.originalRows == null
+				? null : budget.originalRows.get(state);
+			if(alternatives == null)
+				alternatives = graph.getOrDefault(state, List.of());
 			DefaultTraversalSchedule schedule = alternatives instanceof DefaultAlternativeList defaults
 				? (budget == null ? defaults.traversalSchedule(null) : defaults.schedule) : null;
 			if(schedule != null) {
@@ -3697,7 +3776,7 @@ final class NativePlacementContinuity {
 				}
 		}
 		retainedStates = Math.max(retainedStates, occurrences.size());
-		if(retainedStates > acyclicComponentMaxStates) {
+		if(retainedStates > stateLimit) {
 			if(metrics != null)
 				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_STATE_BYPASS);
 			return null;
@@ -3717,23 +3796,27 @@ final class NativePlacementContinuity {
 			return;
 		}
 		for(var entry : childFootprints.entrySet())
-			if(generatedRoot == null || !entry.getValue().occurrences.contains(generatedRoot)) {
-				CandidateProofState child = entry.getKey();
-				AcyclicComponentFootprint footprint = entry.getValue();
-				AcyclicComponentSummary reused = traversal.reusedComponents.get(child);
-				// This exact grounded boundary already has canonical, distinct rows.
-				// Preserve admission/eviction order, including after an intervening
-				// eviction, but do not reconstruct an unchanged summary or footprint.
-				if(reused != null && viable.get(child) == reused.supportedAlternatives
-					&& supported.contains(child) == !reused.supportedAlternatives.isEmpty()
-					&& footprint.occurrences == reused.occurrences
-					&& footprint.retainedStates == reused.retainedStates)
-					cacheAcyclicSummary(child, reused);
-				else
-					cacheAcyclicComponent(child, footprint, viable, supported);
-			}
-			else if(metrics != null)
+			cacheAcyclicChild(entry.getKey(), entry.getValue(), viable, supported, generatedRoot, traversal);
+	}
+
+	private void cacheAcyclicChild(CandidateProofState child, AcyclicComponentFootprint footprint,
+		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
+		Set<CandidateProofState> supported, CompiledHopKey generatedRoot,
+		CandidateProofTraversal traversal) {
+		if(generatedRoot != null && footprint.occurrences.contains(generatedRoot)) {
+			if(metrics != null)
 				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_ROOT_DEPENDENCE_REJECT);
+			return;
+		}
+		AcyclicComponentSummary reused = traversal.reusedComponents.get(child);
+		// Preserve admission/eviction order without rebuilding an unchanged summary.
+		if(reused != null && viable.get(child) == reused.supportedAlternatives
+			&& supported.contains(child) == !reused.supportedAlternatives.isEmpty()
+			&& footprint.occurrences == reused.occurrences
+			&& footprint.retainedStates == reused.retainedStates)
+			cacheAcyclicSummary(child, reused);
+		else
+			cacheAcyclicComponent(child, footprint, viable, supported);
 	}
 
 	private void cacheAcyclicComponent(CandidateProofState child, AcyclicComponentFootprint footprint,
@@ -3812,8 +3895,11 @@ final class NativePlacementContinuity {
 				|| saturatedAdd(acyclicComponentRetainedStates - priorStates,
 					retainedStates) > acyclicComponentMaxStates
 				|| saturatedAdd(acyclicComponentRetainedAlternatives - priorAlternatives,
-					summary.retainedAlternatives) > acyclicComponentMaxAlternatives)
+					summary.retainedAlternatives) > acyclicComponentMaxAlternatives) {
+				if(metrics != null)
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_GATE_ADMISSION_FINAL_CAPACITY_BYPASSES);
 				return;
+			}
 		}
 		prior = acyclicComponentMemo.remove(child);
 		if(prior != null) {
@@ -3842,6 +3928,8 @@ final class NativePlacementContinuity {
 		acyclicComponentRetainedAlternatives += summary.retainedAlternatives;
 		if(metrics != null) {
 			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_CACHE_ADMISSIONS);
+			if(child.axisGate() != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_GATE_ADMISSION_ADMISSIONS);
 			metrics.recordDirectWork(
 				SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_ADMITTED_ROWS,
 				supportedAlternatives.size());
@@ -7961,6 +8049,7 @@ final class NativePlacementContinuity {
 		private final Map<CandidateProofState,Set<CompiledHopKey>> hiddenOwnerReadsByState =
 			new java.util.HashMap<>();
 		private boolean cycleDetected;
+		private boolean hasNativeAxisGates;
 		private boolean generatedRootPublishedHistoryObserved;
 		private long emptyFilteredStates;
 	}

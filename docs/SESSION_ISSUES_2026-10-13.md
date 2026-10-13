@@ -307,3 +307,36 @@
 - **포함 변경**: retained subset/complement의 조합별 전개 제거, incumbent projection 재사용, 전역 gate suffix 탐색 제거, empty scalar-map에서의 lazy native handle 복원 제거. Real-child 재사용, populated scalar-map의 exact reuse, source/action/proof 계약은 유지한다.
 - **근거**: `evidence/relation-union-projection-full-gate-v46/validation.json`, `evidence/v46-probe-gate/tests.log`. 실패 2건 및 conservative guard의 이전 성공 gate는 각각 별도 폴더로 보존했다.
 - **원격 변경 분리**: 검증 완료 후 origin/main `1b77bf7a01`이 도착했다. 현재 검증 소스의 커밋/JAR을 먼저 고정해 v46 실측을 수행하고, incoming 변경은 이후 통합 빌드에서 검증한다. v46 실측을 incoming 이후 엔진의 검증으로 표시하지 않는다. 20초 목표는 여전히 미달성이다.
+
+## V55 실측: 선택적 gate cache의 사전 footprint 작업 — 진행 중
+
+- **문제/증상**: 네 Docker trial 모두 60초 watchdog, fullInitial 미완료. 추가 gate footprint work가 LR 95,171,210 / GLM 47,732,346 누적. OFF LR footprint sample 243개 중 153개가 추가 gate 수집 경로다.
+- **원인**: ordinary root summary admission 이전에 모든 선택적 gate footprint를 구축하고, 실제 잔여 cache capacity 거절은 나중에 한다. 각 query의 work 상한은 안전성만 보장하며 반복 suffix 탐색 비용 자체를 없애지 못한다.
+- **해결 방향**: V56에서 root summary를 먼저 확정하고 추가 gate capacity를 먼저 검사한다. Pruning 이전 원본 의존성은 실패/제거 alternative와 hidden owner를 포함해 유지해야 한다. 단순히 pruned graph만 순회하는 변경은 허용하지 않는다.
+- **수정 대상**: `NativePlacementContinuity.java`, gate admission 회귀 tests/metrics. 아직 V56 production 변경 없음.
+- **검증/근거**: `R/evidence/v55-footprint-witness-callers.json`, `v55-planner-breakdown.txt`, `candidate-v55-detailed-topology-outcomes.json`; V55 선택 gate 210 classes / 1613 tests / 0 failures / 0 errors / 3 skips. 모든 own Docker container 정리 완료.
+- **잔여 이슈**: actual gate admission/capacity rejection 전용 계측은 없음. 20초 목표와 전체 ML coverage 미달성. Witness intern/identity fast path는 이미 구현돼 있어 중복 최적화하지 않는다.
+- **잠재 회귀/감지**: phase 순서 변경이 negative dependency invalidation, generated-root exclusion, cache policy를 훼손할 수 있다. 회귀 먼저 추가하고 proof/owner identity parity 및 work 절감을 검증한다.
+- **의사결정 근거**: candidate/pruning 합법성은 그대로 두고 optional cache 준비 작업 순서만 최적화한다. 외부 build 중첩(OFF 13/25, detailed 14/25) 때문에 partial sample을 완료 시간 개선으로 주장하지 않는다.
+
+### V56 phase 순서 수정 및 회귀 검증 — 통합 gate 진행 중
+
+- **변경**: ordinary root summary admission 뒤에 gate를 하나씩 처리한다. 현재 entries/states/rows 잔여 용량과 동일 key 교체 credit을 footprint보다 먼저 검사한다. 최종 exact non-evicting guard도 유지한다.
+- **Negative authority 보존**: DAG pruning이 덮어쓰는 모든 원본 list(일반 descendant 포함)를 query-local journal에 보관한다. Footprint는 원본 list, summary는 viable list를 읽는다. Journal이 불완전하면 참조를 버리고 optional gate pass만 중단한다. Root/cyclic proof 경로는 유지한다.
+- **예산**: journal+staging은 기존 S/A를 공유하고 W=S+A work cap 안에서 동작한다. 남은 실제 cache state headroom까지 footprint 순회 ceiling에 반영한다. 물리 heap byte 상한을 주장하지 않는다.
+- **RED/GREEN**: full ordinary cache에서도 gate footprint를 구축하는 반례(7 tests 중 의도된 1 failure) 보존. 새 private-boundary 회귀 14 PASS, 기존 public continuity/owner/FULL-seed 회귀 190 PASS. 합산 journal+staging 상한, 부분 journal overflow, dead ordinary+hidden owner, generated root, 교체 credit, 순차 admission, E/S/A 각각의 용량 거절을 검증했다.
+- **독립 검토**: production 의미 보존 CLEAR. Preflight `get`은 access-order LRU를 갱신할 수 있으므로 모든 cache 순서 불변을 주장하지 않는다. Synthetic tests의 null source로 실제 donor identity를 입증했다고 주장하지 않는다; 기존 public 회귀를 함께 검증한다.
+- **근거**: `R/V56_NATIVE_GATE_PHASE_ORDER_PLAN.md`, `evidence/v56-capacity-order-red.log`, `v56-budget-final-focused.log`, `v56-existing-focused.log`, `v56-production-review.txt`.
+- **잔여 검증**: 최신 최종 테스트를 포함한 통합 package, main 병합 확인, 동일 Docker 실측. 20초 달성 주장은 아직 불가하다.
+
+### V56 최종 선택 통합 gate 통과
+
+- 최종 shared-budget/E·S·A saturation oracle까지 포함해 **210 actual classes / 1,621 tests / failures 0 / errors 0 / skipped 3**. BUILD SUCCESS 2026-10-13 07:47:19+02, `R/evidence/candidate-v56-package.log`.
+- 초기 gate도 같은 수로 통과했지만 테스트 oracle 강화 이전 결과는 `candidate-v56-before-final-budget-oracle-package.log`로 별도 보존했다.
+- Main fetch 결과 추가 incoming 없음. 검증본을 게시·봉인하고 동일 조건 Docker 실측으로 이어간다. 시간 목표와 ML 전체 coverage는 아직 미완료다.
+
+## origin/main 1b77의 gate phase 변경 병합
+
+- Incoming은 pruning의 원본 row journal과 `cacheNativeGateComponents` 호출을 새로 도입했다. 이전 helper 이름의 호출만 제거하면 journal 작업은 남으므로, 두 경로를 함께 제외했다.
+- 현재 production은 gate admission budget을 만들지 않고 기존 2인자 DAG pruning과 real-child cache만 실행한다. Incoming helper·metrics·전용 회귀는 보존하되 production에서 실행하지 않는다. 위 V55/V56 기록은 다른 엔진의 이력이며 이번 통합 엔진의 활성 경로가 아니다.
+- 별도 독립 검토에서 root-child cache 추출은 의미가 같고, gate journal/budget/새 counters는 비활성 경로 안에 있음을 확인했다. 통합 소스의 새 gate로 재검증한다. Frozen v46 a59c23069b/JAR8b941b3396은 변경하지 않는다.
