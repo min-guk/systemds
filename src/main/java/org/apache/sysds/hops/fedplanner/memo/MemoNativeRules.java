@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 
 import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.DataType;
@@ -147,10 +148,46 @@ public final class MemoNativeRules {
 
 	public record CacheStats(long hits, long misses, int entries) { }
 
-	private record CacheKey(String operator, int workers, ShapeHint.DiagnosticSnapshot shape) { }
+	// The only native request identity. Callers obtain it through RequestFactory;
+	// they must not reconstruct operator selectors or substitute a shape-only key.
+	record RequestKey(String operator, int workers, ShapeHint.DiagnosticSnapshot shape) { }
+	static final class Request {
+		private final Hop hop;
+		private final int workers;
+		private final ShapeHint.DiagnosticSnapshot shape;
+		private final RequestKey key;
+		private Request(Hop hop,int workers,ShapeHint.DiagnosticSnapshot shape,RequestKey key) {
+			this.hop=hop; this.workers=workers; this.shape=shape; this.key=key;
+		}
+		RequestKey key() { return key; }
+	}
+	record PreparationStats(long preparedRequests,long canonicalStringsCreated,
+		long canonicalStringsReused,long uncacheableRequests) { }
+	/** Build-local, thread-confined preparation. Only immutable strings enter the interner. */
+	static final class RequestFactory {
+		private final Map<CharSequence,String> operators = new TreeMap<>(CharSequence::compare);
+		private final StringBuilder buffer = new StringBuilder(128);
+		private long prepared,created,reused,uncacheable;
+		Request prepare(Hop hop,int workers,ShapeHint hint) {
+			Request request=prepareRequest(hop,workers,hint,this);
+			prepared++;
+			if(request.key()==null) uncacheable++;
+			return request;
+		}
+		private String operator(Hop hop) {
+			buffer.setLength(0);
+			appendOperatorKey(hop,buffer);
+			String cached=operators.get(buffer);
+			if(cached!=null) { reused++; return cached; }
+			String key=buffer.toString();
+			operators.put(key,key); created++;
+			return key;
+		}
+		PreparationStats statistics() { return new PreparationStats(prepared,created,reused,uncacheable); }
+	}
 
 	private final OracleFacade oracle;
-	private final Map<CacheKey, Result> cache = new LinkedHashMap<>();
+	private final Map<RequestKey, Result> cache = new LinkedHashMap<>();
 	private long cacheHits;
 	private long cacheMisses;
 	private final GenerationCounter generation = new GenerationCounter();
@@ -169,27 +206,38 @@ public final class MemoNativeRules {
 	 * as a coverage obligation rather than guessed from a source realization.
 	 */
 	public synchronized Result rules(Hop hop, int workers, ShapeHint explicitShape) {
+		return rules(prepareRequest(hop,workers,explicitShape,null));
+	}
+
+	private static Request prepareRequest(Hop hop,int workers,ShapeHint explicitShape,RequestFactory factory) {
 		Objects.requireNonNull(hop, "hop");
 		Objects.requireNonNull(explicitShape, "explicit shape hint");
 		if(workers < 1)
 			throw new IllegalArgumentException("A worker pool must be nonempty");
 		ShapeHint.DiagnosticSnapshot shape = explicitShape.diagnosticSnapshot();
-		if(!cacheable(hop)) {
+		RequestKey key=cacheable(hop) ? new RequestKey(factory==null ? operatorKey(hop)
+			: factory.operator(hop),workers,shape) : null;
+		return new Request(hop,workers,shape,key);
+	}
+
+	/** Evaluate immediately against the unmodified private view used to prepare this request. */
+	synchronized Result rules(Request request) {
+		Objects.requireNonNull(request,"request");
+		if(request.key==null) {
 			cacheMisses++;
-			Result result=enumerate(hop,workers,shape);
+			Result result=enumerate(request.hop,request.workers,request.shape);
 			generation.add(result.generation());
 			return result;
 		}
-		CacheKey key = new CacheKey(operatorKey(hop), workers, shape);
-		Result cached = cache.get(key);
+		Result cached = cache.get(request.key);
 		if(cached != null) {
 			cacheHits++;
 			return cached;
 		}
 		cacheMisses++;
-		Result result = enumerate(hop, workers, shape);
+		Result result = enumerate(request.hop,request.workers,request.shape);
 		generation.add(result.generation());
-		cache.put(key, result);
+		cache.put(request.key, result);
 		return result;
 	}
 
@@ -706,7 +754,10 @@ public final class MemoNativeRules {
 	}
 
 	private static String operatorKey(Hop hop) {
-		StringBuilder key = new StringBuilder(128).append(hop.getClass().getName()).append('|')
+		return appendOperatorKey(hop,new StringBuilder(128)).toString();
+	}
+	private static StringBuilder appendOperatorKey(Hop hop,StringBuilder key) {
+		key.append(hop.getClass().getName()).append('|')
 			.append(hop.getOpString()).append('|').append(hop.getDataType()).append('|')
 			.append(hop.getValueType()).append('|').append(hop.getDim1()).append('x')
 			.append(hop.getDim2()).append('|').append(hop.getBlocksize());
@@ -720,7 +771,7 @@ public final class MemoNativeRules {
 		for(Hop input : hop.getInput())
 			key.append("|in:").append(input.getDataType()).append(':').append(input.getValueType())
 				.append(':').append(input.getDim1()).append('x').append(input.getDim2());
-		return key.toString();
+		return key;
 	}
 
 	private static boolean cacheable(Hop hop) {

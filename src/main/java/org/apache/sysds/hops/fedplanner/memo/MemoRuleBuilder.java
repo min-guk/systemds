@@ -17,6 +17,7 @@ package org.apache.sysds.hops.fedplanner.memo;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
@@ -34,9 +35,34 @@ import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.EvaluationContext;
 import org.apache.sysds.hops.fedplanner.memo.MemoNativeRules.InputRole;
 import org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.OccurrenceContext;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 
 /** Build immutable native domains once. Transparent value bindings have no native rule. */
 public final class MemoRuleBuilder {
+	public record RequestStatistics(long preparedRequests,long reusedResults,long oracleRequests,
+		long canonicalStringsCreated,long canonicalStringsReused,long uncacheableRequests) { }
+	/** Results have the same full identity as the catalog cache, scoped to this build. */
+	private static final class NativeRequests {
+		private final MemoNativeRules oracle;
+		private final MemoNativeRules.RequestFactory factory = new MemoNativeRules.RequestFactory();
+		private final Map<MemoNativeRules.RequestKey,MemoNativeRules.Result> results = new HashMap<>();
+		private long reused,requested;
+		private NativeRequests(MemoNativeRules oracle) { this.oracle=oracle; }
+		private MemoNativeRules.Result rules(Hop hop,int workers,ShapeHint hint) {
+			MemoNativeRules.Request request=factory.prepare(hop,workers,hint);
+			MemoNativeRules.Result cached=request.key()==null ? null : results.get(request.key());
+			if(cached!=null) { reused++; return cached; }
+			requested++;
+			MemoNativeRules.Result result=oracle.rules(request);
+			if(request.key()!=null) results.put(request.key(),result);
+			return result;
+		}
+		private RequestStatistics statistics() {
+			MemoNativeRules.PreparationStats preparation=factory.statistics();
+			return new RequestStatistics(preparation.preparedRequests(),reused,requested,
+				preparation.canonicalStringsCreated(),preparation.canonicalStringsReused(),preparation.uncacheableRequests());
+		}
+	}
 	private static final class RuleIntersection {
 		private LinkedHashSet<RuleMemo.Rule> rules;
 		private List<InputRole> roles;
@@ -55,11 +81,12 @@ public final class MemoRuleBuilder {
 	}
 	/** Immutable rule domains plus request-confined semantic analyses; not shared across planning epochs. */
 	public record Result(RuleMemo memo,List<List<InputRole>> inputRoles,List<String> diagnostics,
-		MemoShapes shapes,MemoPrivacy privacy) {
+		MemoShapes shapes,MemoPrivacy privacy,RequestStatistics requests) {
 		public Result {
 			Objects.requireNonNull(memo, "rule memo");
 			Objects.requireNonNull(shapes, "shape authority");
 			Objects.requireNonNull(privacy, "request privacy analysis");
+			Objects.requireNonNull(requests, "native request statistics");
 			inputRoles = inputRoles.stream().map(List::copyOf).toList();
 			diagnostics = List.copyOf(diagnostics);
 		}
@@ -85,6 +112,7 @@ public final class MemoRuleBuilder {
 		MemoBindingResolver bindingResolver=new MemoBindingResolver(facts);
 		MemoReachableContexts reachableContexts=new MemoReachableContexts(facts,bindingResolver);
 		MemoPrivacy privacy = new MemoPrivacy(facts,bindingResolver,sources);
+		NativeRequests nativeRequests = new NativeRequests(oracle);
 		for(int owner = 0; owner < facts.compiledOwnerCount(); owner++) {
 			final int currentOwner=owner;
 			Hop hop = shapes.view(owner);
@@ -126,8 +154,8 @@ public final class MemoRuleBuilder {
 					MemoBindingResolver.VisitResult activation=reachableContexts.visit(occurrence,base,active -> {
 						if(!visitShapeContexts(shapes,occurrence.id(),active,context -> {
 							Hop occurrenceHop=shapes.viewAt(occurrence.id(),context);
-							MemoNativeRules.Result nativeRules=oracle.rules(occurrenceHop,Math.max(1,sources.workers()),
-								shapes.hintAt(occurrence.id(),context));
+							MemoNativeRules.Result nativeRules=nativeRequests.rules(occurrenceHop,
+								Math.max(1,sources.workers()),MemoShapes.hintForView(occurrenceHop));
 							intersection.intersect(nativeRules);
 							if(intersection.roles==null) intersection.roles=nativeRules.inputRoles();
 							else if(!intersection.roles.equals(nativeRules.inputRoles())) {
@@ -150,7 +178,7 @@ public final class MemoRuleBuilder {
 				}
 			}
 			if(intersection.rules == null) {
-				MemoNativeRules.Result nativeRules = oracle.rules(hop,Math.max(1,sources.workers()),shapes.hint(owner));
+				MemoNativeRules.Result nativeRules = nativeRequests.rules(hop,Math.max(1,sources.workers()),shapes.hint(owner));
 				intersection.intersect(nativeRules);
 				intersection.roles = nativeRules.inputRoles();
 				complete[owner] &= nativeRules.complete();
@@ -181,7 +209,7 @@ public final class MemoRuleBuilder {
 			rules.add(List.copyOf(privacyFiltered));
 			roles.add(selectedRoles);
 		}
-		return new Result(new RuleMemo(rules,complete),roles,diagnostics,shapes,privacy);
+		return new Result(new RuleMemo(rules,complete),roles,diagnostics,shapes,privacy,nativeRequests.statistics());
 	}
 
 	private static boolean sourceGroundedPrivacy(MemoProgramFacts.Occurrence occurrence,

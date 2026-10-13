@@ -79,6 +79,7 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 		MemoRuleBuilder.Result universe = MemoRuleBuilder.build(facts,sources,oracle);
 		long rulesFinished = System.nanoTime();
 		tracePhase("rules",rulesFinished-factsFinished);
+		traceNativeRequests(universe.requests());
 		traceNativeGeneration(oracle.generationStats());
 		MemoProgramModel model = new MemoProgramModel(facts,sources,universe,MemoProgramModel.Profile.defaults());
 		long modelFinished = System.nanoTime();
@@ -174,6 +175,15 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 				+ " cost=" + solution.optimization().cost().toPlainString());
 		}
 		return new Receipt(facts,solution);
+	}
+	private static void traceNativeRequests(MemoRuleBuilder.RequestStatistics statistics) {
+		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+			System.err.println("[MemoNativeRequests] preparedRequests=" + statistics.preparedRequests()
+				+ " reusedResults=" + statistics.reusedResults()
+				+ " oracleRequests=" + statistics.oracleRequests()
+				+ " canonicalStringsCreated=" + statistics.canonicalStringsCreated()
+				+ " canonicalStringsReused=" + statistics.canonicalStringsReused()
+				+ " uncacheableRequests=" + statistics.uncacheableRequests());
 	}
 	private static void traceNativeGeneration(MemoNativeRules.GenerationStats statistics) {
 		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))

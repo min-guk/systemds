@@ -106,7 +106,8 @@ public class MemoOwnerRuleIntersectionTest {
 			MemoNativeRules oracle = new MemoNativeRules();
 			MemoRuleBuilder.Result result = MemoRuleBuilder.build(fixture.facts(), fixture.sources(), oracle);
 			int owner = fixture.facts().compiledOwnerId(fixture.kernel());
-			Assert.assertTrue("the fixture must exercise full-key Oracle cache reuse", oracle.cacheStats().hits() > 0);
+			Assert.assertTrue("the fixture must reuse full-key requests before the Oracle", result.requests().reusedResults() > 0);
+			Assert.assertEquals("duplicate contexts must not reach the Oracle cache", 0, oracle.cacheStats().hits());
 			Assert.assertFalse("repeated known contexts cannot clear UNKNOWN", result.memo().complete(owner));
 			Assert.assertTrue(result.memo().rules(owner).stream().anyMatch(rule -> rule.exec() == ExecType.CP));
 			for(int index = 0; index < columns.length; index++) {
@@ -117,6 +118,36 @@ public class MemoOwnerRuleIntersectionTest {
 						"owner=" + owner + " occurrence=" + unknownOccurrence + " ")));
 			}
 		}
+	}
+
+	@Test
+	public void repeatedContextsAvoidOracleCallsAndKeepTheExactHintAndOrderedDomain() {
+		Fixture fixture = fixture(3, 1, 3, 1);
+		MemoNativeRules oracle = new MemoNativeRules();
+		MemoRuleBuilder.Result result = MemoRuleBuilder.build(fixture.facts(), fixture.sources(), oracle);
+		MemoRuleBuilder.RequestStatistics requests = result.requests();
+		Assert.assertTrue(requests.reusedResults() > 0);
+		Assert.assertEquals(requests.preparedRequests(), requests.reusedResults() + requests.oracleRequests());
+		Assert.assertEquals(requests.oracleRequests(), oracle.cacheStats().misses());
+		Assert.assertEquals(0, oracle.cacheStats().hits());
+		Assert.assertTrue("canonical strings are reused too", requests.canonicalStringsReused() > 0);
+		Assert.assertEquals(requests.preparedRequests(), requests.canonicalStringsCreated()
+			+ requests.canonicalStringsReused() + requests.uncacheableRequests());
+		List<RuleMemo.Rule> expected = null;
+		MemoNativeRules reference = new MemoNativeRules();
+		for(int occurrence : fixture.facts().occurrenceIds(fixture.kernel())) {
+			MemoBindingResolver.EvaluationContext context = MemoBindingResolver.EvaluationContext.empty();
+			Hop view = result.shapes().viewAt(occurrence, context);
+			Assert.assertEquals(result.shapes().hintAt(occurrence, context).diagnosticSnapshot(),
+				MemoShapes.hintForView(view).diagnosticSnapshot());
+			MemoNativeRules.Result nativeRules = reference.rules(view, 2, result.shapes().hintAt(occurrence, context));
+			if(expected == null) expected = new ArrayList<>(nativeRules.rules());
+			else expected.retainAll(nativeRules.rules());
+		}
+		Assert.assertEquals(expected, result.memo().rules(fixture.facts().compiledOwnerId(fixture.kernel())));
+		Assert.assertEquals("the reference deliberately makes every request", 4,
+			reference.cacheStats().hits() + reference.cacheStats().misses());
+		Assert.assertEquals(2, reference.cacheStats().hits());
 	}
 
 	@Test

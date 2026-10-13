@@ -60,6 +60,21 @@ class JointBoundaryE2ETest(unittest.TestCase):
         self.assertEqual(3, evidence["costProjection"][0]["projectedContexts"])
         self.assertEqual([], runner.memo_planning_statistics(trace))
 
+    def test_native_request_reuse_counters_keep_invocations_and_unknown_failures(self):
+        trace = ("[MemoNativeRequests] preparedRequests=8 reusedResults=5 oracleRequests=3 "
+                 "canonicalStringsCreated=2 canonicalStringsReused=5 uncacheableRequests=1\n"
+                 "[MemoNativeRequests] preparedRequests=4 reusedResults=1 oracleRequests=3\n"
+                 "[MemoNativeRequests] preparedRequests=unknown reusedResults=-1\n"
+                 "Memo planner did not prove an optimum: UNRESOLVED\n")
+        rows = runner.memo_construction_statistics(trace)["nativeRequests"]
+        self.assertEqual(2, len(rows))
+        self.assertEqual(8, rows[0]["preparedRequests"])
+        self.assertEqual(3, rows[0]["oracleRequests"])
+        self.assertEqual(5, rows[0]["reusedResults"])
+        self.assertEqual(2, rows[0]["canonicalStringsCreated"])
+        self.assertEqual(4, rows[1]["preparedRequests"])
+        self.assertEqual([], runner.memo_planning_statistics(trace))
+
     def test_memo_construction_counters_keep_invocations_separate(self):
         trace = ("[MemoCostProjection] projectedContexts=2 primitiveValues=6\n"
                  "[MemoCostProjection] projectedContexts=7 primitiveValues=21\n"

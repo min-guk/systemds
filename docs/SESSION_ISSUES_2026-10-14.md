@@ -93,3 +93,16 @@
 - **잔여 이슈:** 이번 단순화의 실제 workload 효과는 미측정이다. 기존 GLM 완료·numeric parity gate, LogReg 전체 성능 목표, 기존 training inventory golden drift는 해결된 것으로 표시하지 않는다. 사용자 제한에 따라 새 Docker/LogReg/GLM workload는 실행하지 않았다.
 - **잠재 회귀 위험/감지:** owner 밖으로 identity cache를 공유하거나 coverage까지 건너뛰면 잘못된 domain/complete 판정이 생길 수 있다. Cache 수명은 owner 내부로 제한하고 UNKNOWN 반복·순서·진단 회귀로 검사한다. Privacy premise를 owner 전체 boolean으로 축약하지 않으며 mixed-occurrence 회귀로 확인한다.
 - **의사결정 근거:** 수정은 원래 합법성 및 정확한 비용 의미가 같은 반복에 한정한다. 근거가 없는 family pruning, UNKNOWN→NO, source identity 병합 또는 부정확한 비용 합산은 도입하지 않는다.
+
+## Oracle 호출 전 full-identity 중복 제거
+
+- **문제/상태:** 사용자가 동일 Oracle 입력의 반복 요청8,880회 중cache hit7,823회를 호출 전에 제거하도록 명시적으로 요청했다. 이전 교집합 최적화는 Oracle 진입을 줄이지 못했다. 구현·회귀·독립 검토 및 변경 전후 Docker 각1회 측정 완료.
+- **기준/환경:** baseline `2cf36e8d80`의 source/classes를 `experiments/oracle-request-dedup-20261014/baseline-engine`에 동결했다. 새 요구사항5에 따라 LogReg 변경 전/후 각1회 비교를 실행한다. 원본 workspace, 기존 실험 evidence, 기존 GLM 상태는 바꾸지 않는다.
+- **원인:** context마다 fresh HOP과 별도 hint용 HOP을 만들고 canonical 문자열을 생성한 뒤 Oracle cache에 진입했다. 같은 native 결과라도 activation/UNKNOWN/privacy 의무는 별개라 context 자체를 삭제하는 방식은 사용할 수 없다.
+- **해결:** `MemoNativeRules`의 canonical writer를 공유하는 prepared Request API를 추가했다. Builder는 기존 완전한 key의 immutable Result만 build-local map에서 재사용한다. Noncacheable은 매번 평가한다. Context별 검사·진단은 그대로 실행한다. StringBuilder와 immutable String interner로 중복 문자열 생성을 줄이고 같은 contextual view에서 hint를 얻는다.
+- **수정 파일:** MemoNativeRules, MemoRuleBuilder, MemoShapes(hint helper만), FederatedPlanMemo trace; MemoNativeRequestTest 신규/owner 회귀; Docker harness와parser테스트; [상세 보고서](FEDPLANNER_ORACLE_REQUEST_DEDUP_2026-10-14_KO.md).
+- **검증:** 수정 전23 tests PASS, clean compile38.989초 PASS와review수정javac PASS; targeted29 PASS; 최종44 classes/413 tests PASS, Python45 PASS, py_compile/diff check PASS. 기존 golden drift class5개는 제외했다. 독립 reviewer가 synchronized 계약·full key·mutable buffer/HOP 경계·UNKNOWN·noncacheable 동작을 확인했다.
+- **변경 전 측정:** 새 baseline LogReg1회 PASS, requests8,880/hits7,823/misses1,057/rules1.948574090초/planning40.489338563초/runtime2.200초. Exact objective와 CP/FED numeric parity 정상. 이전40초대 측정을 이번 baseline으로 재사용하지 않았다.
+- **변경 후 측정:** LogReg1회 PASS. 요청1,057/hit0/miss1,057, prepared8,880/reuse7,823, canonical 문자열 생성77/재사용7,823/noncacheable980. 요청88.1% 감소, Rules1.579905977초로18.9% 감소했다. 전체 planning39.712663042초(-1.9%)지만 runtime2.819초로증가했다. 원래 exact objective, native rules920, nodes2,933,891, definition/supply 진단과8×2 출력 parity가동일하다. 단일표본이며 일반적인 speedup이나optimizer개선으로과장하지않는다.
+- **잔여 이슈/위험:** 새 key probe/shape snapshot은 context마다 여전히 필요하다. 문자열 생성 수와 RequestKey 생성 수를 혼동하지 않도록 counter를 `canonicalStrings*`로 명명했다. 중복 요청 제거가 exact search 자체를 줄인다고 주장하지 않는다. Request는 prepare한 unmodified private view로 즉시 평가하는 계약이며 mutable HOP을 cache 값으로 공유하지 않는다.
+- **의사결정 근거:** 기존 canonical identity와 cacheability 계약을 그대로 사용한 동일 입력 결과 재사용이다. Oracle family capability나 전역 합법 공간, 원본 비용 계산을 변경하지 않는다.

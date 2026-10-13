@@ -648,7 +648,11 @@ public final class MemoShapes {
 	}
 
 	public ShapeHint hintAt(int occurrence, EvaluationContext context) {
-		Hop hop = viewAt(occurrence,context);
+		return hintForView(viewAt(occurrence,context));
+	}
+
+	/** Derive the same explicit hint from an already-created private contextual view. */
+	static ShapeHint hintForView(Hop hop) {
 		Shape output = fromView(hop);
 		List<Shape> payloads = new ArrayList<>(2);
 		for(int position=0; position<hop.getInput().size() && payloads.size()<2; position++)

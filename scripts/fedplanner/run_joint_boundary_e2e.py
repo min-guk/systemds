@@ -964,8 +964,9 @@ def memo_construction_statistics(text: str) -> dict[str, list[dict[str, int]]]:
     primitiveValueBytes is the primitive double-array payload, excluding JVM headers
     and other model objects; it is not a peak-memory measurement.
     """
-    result = {"nativeGeneration": [], "costProjection": []}
-    for marker, name in (("MemoNativeGeneration", "nativeGeneration"),
+    result = {"nativeRequests": [], "nativeGeneration": [], "costProjection": []}
+    for marker, name in (("MemoNativeRequests", "nativeRequests"),
+                         ("MemoNativeGeneration", "nativeGeneration"),
                          ("MemoCostProjection", "costProjection")):
         for line in re.findall(rf"(?m)^\[{marker}\] (.*)$", text):
             fields = dict(re.findall(r"(\w+)=([^\s]+)", line))
