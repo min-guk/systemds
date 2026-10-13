@@ -511,3 +511,23 @@
 - 최종 selected211-class package gate를 fresh 실행 중이며, 실측 전에는 이 변경의 workload 효과를 주장하지 않는다.
 
 - 최종 병합 선택 gate **211 classes / 1,649 tests / failures0 / errors0 / skipped3**, BUILD SUCCESS09:03:05+02. 근거 `R/evidence/candidate-v59-package.log`. 전체 repo 테스트가 아니며 실제 성능은 미측정이다.
+
+## V59 원본 회로 공유 실측 완료 — 다음 구조적 경계
+
+- **상태/검증**: `ec6de943a2` 게시 후 fixed Docker4회 모두 watchdog60/no fullInitial. 기존211classes1649test gate PASS와 성능 목표 FAIL을 구분한다.
+- **제거한 작업**: LR native circuit756,278/915,034회 재사용, gate row10,185,764회 재생성 생략. GLM21,503/110,870회 재사용,261,282rows 생략. Optional capacity bypass0.
+- **남은 원인**: LR OFF 첫 planner frame witness.equals146, pruneDead129, graph build121/2595. Skeleton inclusive의 generic topology190/hybrid85 sample은 여전히 row 재구성이 있음을 보여준다. 단일 sampled profile로 제거 가능 시간은 단정하지 않는다.
+- **방향/위험**: V59 resident-host 적용률은 충분하므로 native-only coverage나 추가 cache budget을 도입하지 않는다. Existing ordinary topology의 raw row를 hybrid 경로에서도 재사용하는 것과 static gate schedule 공유를 검토하되 exact authority/first donor/metadata reads/current fixed overlay/DFS를 보존한다.
+- **근거/환경**: R/evidence/v59-hot-callers.json 및 topology-outcomes. External build OFF1/25,detailed25/25; own heavy jobs 격리. 명시적 retained donor 때문에 압축 publication이 다시 개별 proof 순회로 돌아가는 실패도 실제 counters로 확인했다(상단 진행 보고서).
+
+## V60 hybrid 경로의 ordinary row 재구성 제거 — 경계 검증 중
+
+- **문제/원인**: native/ordinary 혼합 owner의 unpinned query가 이미 topology에 저장한 ordinary row까지 매번 skeleton→dependency→edge로 다시 만든다. V59 OFF LR hybrid skeleton85/materialization35 caller samples로 실제 경로를 확인했다.
+- **해결/규칙**: 기존 eligible owner/witness host에서 positive rowsByHandle bucket만 빌린다. Exact owner identity와 reference equality를 검사하며 missing/empty/inexact bucket은 원래 clause 경로로 간다. 새 host/cache/admission/예산 없음. 모든 inventory·duplicate 검사는 계속 수행하고 default-edge first donor 및 현재 query overlay를 보존한다. Derived/VALUE_MAP metadata 처리는 그대로 둔다. Candidate legality나 runtime 규칙 변경 없음.
+- **변경 파일**: NativePlacementContinuity.java, SearchSpaceMetrics.java, NativeHybridUnpinnedTopologyTest.java.
+- **검증**: V59 상 public warm ordinary→native→distinct outer 실제 hybrid 경로 RED31tests/1 intended failure; 변경 후 native focused238PASS/1 ignored fixture. Explicit/cold/no-host와 ordered proof·source/owner identity parity 및 실제 graph 실행 확인. 추가 fixed-owner/negative boundary 검토 중.
+- **잔여/위험**: positive bucket을 negative proof로 해석하거나 later alias 검사를 건너뛰면 authority가 바뀐다. 해당 shortcut은 하지 않는다. Warm fixed-source overlay 및 metadata/duplicate fallback 회귀와 독립 검토, 최종 selected gate/실측이 필요하다. 근거 R/evidence/v60-hybrid-row-red.log, v60-hybrid-focused.log, R/V60_HYBRID_ROW_REUSE_PLAN.md.
+
+- V60 추가 경계 focused **239 PASS / 1 ignored**, `R/evidence/v60-boundary-focused.log`. 별도 실제 hidden reaching owner를 고정한 cold/warm hybrid raw alternative 비교로 현재 pin reference/owner identity와 effective edge 순서를 검증했다. Positive bucket 및 missing/foreign-owner 거절을 확인했다. Production 독립 검토 CLEAR, 경계 테스트 독립 검토/최종 selected gate 진행 중. Reused-row counter는 나중에 alias로 거절된 시도에서도 발생할 수 있는 raw 작업량이며 accepted-query 절감량이라고 해석하지 않는다.
+
+- V60 최종 selected **211classes/1650tests/0fail/0error/3skip**, BUILD SUCCESS09:29:00+02. 독립 frozen 경계 검토 CLEAR. 현재 source에서 later duplicate rejection은 그대로지만 warmed hybrid duplicate 전용 fixture는 없으며, 기존 pinned duplicate/실제 migrated-host query로 보완한다. 실측 전 효과 미확인.

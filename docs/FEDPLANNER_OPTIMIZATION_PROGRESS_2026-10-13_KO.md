@@ -1,12 +1,29 @@
 # FedPlanner 최적화 진행 현황 보고서
 
+## V60 기존 ordinary topology의 혼합 경로 공유 — 검증 통과
+
+- Native/ordinary 혼합 query가 이미 저장된 ordinary row를 skeleton/dependency/edge로 다시 만들던 작업을 제거했다. **새 cache·budget·후보 축소 없이** positive resident row만 재사용한다. Missing bucket은 기존 경로로 처리하고, duplicate authority 검사·first donor·현재 fixed overlay는 유지한다. Derived/VALUE_MAP metadata 처리는 그대로다.
+- Public 실제 혼합 경로 RED31/1 → native focused239PASS/1 ignored. Hidden fixed-owner overlay, positive/missing/foreign-owner bucket 및 기존 migration 회귀를 포함했다. 독립 production/경계 검토 CLEAR.
+- Fresh selected **211 classes / 1,650 tests / failures0 / errors0 / skipped3**, package BUILD SUCCESS09:29:00+02. 전체 repo 테스트가 아니라 선택 FedPlanner gate다.
+- 게시 및 동일 Docker 후속 측정 단계다. V59까지 네 실행 모두 watchdog60이며 **20초 목표 미완료**.
+
+
 ## V59 native 원본 회로 공유 — 통합 검증 통과
 
 - V58은 `5483ecbc6f`로 게시했다. 외부 build 중첩은 OFF/detailed 모두0/25였지만 네 실행 모두 watchdog60, 완료 시간 증거 없음. OFF LogReg direct binding62.86%, GLM canonical9.32%/joint7.03%로 근본 반복 작업이 남아 있다.
 - LogReg detailed native gate alternatives는14,745,571회 구성됐다. V59는 **이미 존재하는 ordinary/complete topology에만 원본 회로를 부착**한다. 새로운 부분 coverage를 만들거나 더 큰 예산을 추가하지 않는다.
 - 동일 snapshot의 exact fact·realization·relation identity와 witness를 유지하며, raw gates만 공유한다. Fixed-axis 거절, invariant overlay, 현재 root reference, graph DFS/cycle/pruning은 query별로 유지한다. Revision에는 이 payload를 옮기지 않는다.
 - 공개 두-root 반례 RED27/1(expected gate total2/actual4) → native focused206PASS. 같은 query 결과 재사용이 아니라 두 번째 graph도 실제로 구축하면서 추가 gate만0개다. Replacement/eviction/revision/budget/fixed-boundary 및 raw invariant/current-root 재바인딩을 추가해 동결된 focused **211 PASS**를 확인했다. 독립 production/경계 테스트 검토 CLEAR. 최신 main의 conditional growth/key-first lazy-read 변경을 병합한 fresh 선택 통합 gate도 **211 classes / 1,649 tests / 0 failures / 0 errors / 3 skipped**, package BUILD SUCCESS(09:03:05+02)를 통과했다.
-- **V59 미게시·성능 미측정**. Raw 회로 공유를 proof/viability 공유나20초 달성으로 보고하지 않는다.
+- V59는 `ec6de943a2`로 origin/main 게시·remote SHA 검증했다. 봉인 JAR SHA-256 `11dd140a10821bf4169dccd1c49ec71ecb0b7e38681138ccc543ae3a738839ce`. Raw 회로 공유를 proof/viability 공유나20초 달성으로 보고하지 않는다.
+
+### V59 실제 적용 확인 — 전체 시간 목표는 여전히 미달
+
+- 동일 Docker 네 실행 모두 watchdog60/no fullInitial/own container 제거. OFF LR2595samples/direct65.05%/peak5.232GB, GLM2729samples/canonical7.51%/joint7.84%/peak3.446GB. 완료 속도 향상으로 해석할 수 없다.
+- Detailed native circuit: LR 조회915,034/재사용756,278/생략 gate rows10,185,764; GLM110,870/21,503/261,282. 예산 우회0 양쪽. 이는 실제 제거한 반복 생성량이며 서로 다른 실행의 partial count 차이를 속도 향상으로 계산하지 않는다. LR의 적용률이 이미 높아 native-only host나 예산 확대는 하지 않는다.
+- 남은 explicit-retained 병합 장벽: LR residual7,662회 중 explicit 거절7,578+표현 불가84, GLM12,094 중12,049+45. 성공0. 두 합계가 일치한다. 원본 explicit donor를 보존하는 압축 관계 확장이 필요하며, 최신 main의 별도 구현과 중복하지 않도록 확인한다.
+- 외부 build 중첩 OFF1/25, detailed25/25 monitor samples; 기존 외부 planner2개는 계속 존재했다. 자체 build/JFR parsing은 timed trial 이후로 분리했다.
+- 다음 조사: hybrid unpinned 경로가 이미 resident인 ordinary topology row까지 재구성하는 구조, 그리고 immutable gate의 기존 traversal schedule 활용 여부. 원본 authority와 query별 overlay/순환/생존 검사는 유지한다.
+- 근거 `R/evidence/v59-planner-breakdown.txt`, `v59-hot-callers.json`, `candidate-v59-detailed-topology-outcomes.json`, `v59-contention-summary.json`. **20초 및 전체 ML 연산 압축 coverage는 미완료**다.
 
 ## V58 중간 작업 제거 — 선택 통합 검증 통과
 

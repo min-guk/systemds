@@ -607,6 +607,9 @@ public class NativeHybridUnpinnedTopologyTest {
 		NativePlacementContinuity.CandidateSupportResult coldOuter = scenario.queryCurrent(cold);
 		Assert.assertTrue("a native-only query must not create reusable topology coverage",
 			directWork(coldMetrics, "NATIVE_AXIS_GATE_BUILDS") > coldBuilds);
+		Assert.assertEquals("without a resident host the hybrid path rebuilds ordinary rows",
+			0, directWorkIfPresent(coldMetrics,
+				"NATIVE_HYBRID_ORDINARY_RESIDENT_ROWS_REUSED"));
 		Assert.assertNull("native queries alone cannot manufacture a topology host",
 			residentTopology(cold, scenario.childKey(), scenario.pool()));
 
@@ -635,6 +638,8 @@ public class NativeHybridUnpinnedTopologyTest {
 			buildsAfterPinned > buildsBeforePinned);
 
 		long graphsBeforeOuter = metrics.snapshot().proofGraphsBuilt();
+		long ordinaryRowsBeforeOuter = directWorkIfPresent(metrics,
+			"NATIVE_HYBRID_ORDINARY_RESIDENT_ROWS_REUSED");
 		NativePlacementContinuity.CandidateSupportResult actualOuter =
 			scenario.queryCurrent(resolver);
 		Assert.assertFalse(actualOuter.proofs().isEmpty());
@@ -642,6 +647,9 @@ public class NativeHybridUnpinnedTopologyTest {
 			metrics.snapshot().proofGraphsBuilt() > graphsBeforeOuter);
 		Assert.assertEquals("the resident owner/witness host reuses the exact raw native circuit",
 			buildsAfterPinned, directWork(metrics, "NATIVE_AXIS_GATE_BUILDS"));
+		Assert.assertTrue("the actual hybrid query must reuse resident ordinary rows",
+			directWorkIfPresent(metrics, "NATIVE_HYBRID_ORDINARY_RESIDENT_ROWS_REUSED")
+				> ordinaryRowsBeforeOuter);
 
 		assertResultParity(explicitPinned, coldPinned, actualPinned);
 		assertResultParity(explicitOuter, coldOuter, actualOuter);
@@ -649,6 +657,71 @@ public class NativeHybridUnpinnedTopologyTest {
 			host, residentTopology(resolver, scenario.childKey(), scenario.pool()));
 		Assert.assertEquals("all lazy queries remain representative-only",
 			1, lazy.materializedHandleCount());
+	}
+
+	@Test
+	public void residentOrdinaryRowsRetainCurrentFixedOwnerOverlayAndRejectForeignBuckets()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		List<CandidateInputState> unary =
+			List.of(CandidateInputState.present(FType.FULL));
+		Object fixedSeed = invoke(scenario.fixture(), "source",
+			"resident-row-fixed-seed", scenario.pool());
+		Object fixedOwnerNode = invoke(scenario.fixture(), "unary",
+			"resident-row-fixed-owner", OpOp1.LOG, fixedSeed, false);
+		invoke(scenario.fixture(), "samePoolRealizations", fixedOwnerNode, unary,
+			new DurableAnchorKey[] {scenario.pool()});
+		CompiledHopKey fixedOwner = (CompiledHopKey)invoke(fixedOwnerNode, "key");
+		CandidateRealizationReference fixedReference =
+			(CandidateRealizationReference)invoke(
+				scenario.fixture(), "reference", fixedOwnerNode, unary);
+		addReachingDefinition(scenario.fixture(), scenario.childKey(), fixedOwner);
+		scenario.install(false);
+
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 0, 0L);
+		Object cold = nativeUnpinnedFactoredAlternatives(resolver, scenario.childKey(),
+			scenario.pool(), fixedOwner, fixedReference);
+		Assert.assertNotNull("the cold authoritative hybrid path accepts the overlay fixture", cold);
+		Assert.assertEquals(0,
+			directWork(metrics, "NATIVE_HYBRID_ORDINARY_RESIDENT_ROWS_REUSED"));
+
+		scenario.queryInstalled("a-choice", resolver);
+		Object host = residentTopology(resolver, scenario.childKey(), scenario.pool());
+		Assert.assertNotNull(host);
+		CandidateRealizationReference ordinary = scenario.installedReference("a-choice");
+		Assert.assertNotNull("the real ordinary handle owns resident rows",
+			residentHybridOrdinaryRows(resolver, host, scenario.childKey(), ordinary));
+		Assert.assertNull("the partial host has no native-realization bucket",
+			residentHybridOrdinaryRows(resolver, host, scenario.childKey(),
+				scenario.installedReference("m-choice")));
+		CandidateRealizationReference missing = new CandidateRealizationReference(
+			ordinary.rule(), PlacementRealizationKey.nativeLineage(
+				ordinary.realization().emissionState(), "resident-row-missing"));
+		Assert.assertNull("a missing realization handle cannot borrow a resident bucket",
+			residentHybridOrdinaryRows(
+				resolver, host, scenario.childKey(), missing));
+		CompiledHopKey owner = scenario.childKey();
+		CompiledHopKey foreignOwner = new CompiledHopKey(owner.programFingerprint(),
+			owner.functionNamespace(), owner.callSitePath(), owner.recompileContext(),
+			owner.controlRegion(), owner.emittedHopInstance(), owner.canonicalSourceOrigin());
+		Assert.assertEquals(owner, foreignOwner);
+		Assert.assertNotSame(owner, foreignOwner);
+		Assert.assertNull("equal foreign owner identity cannot borrow a positive row bucket",
+			residentHybridOrdinaryRows(resolver, host, foreignOwner, ordinary));
+
+		long reused = directWork(metrics, "NATIVE_HYBRID_ORDINARY_RESIDENT_ROWS_REUSED");
+		Object warm = nativeUnpinnedFactoredAlternatives(resolver, scenario.childKey(),
+			scenario.pool(), fixedOwner, fixedReference);
+		Assert.assertNotNull(warm);
+		Assert.assertEquals("resident ordinary rows preserve cold ordering and exact effective edges",
+			ordinaryFactoredAlternatives(cold, "m-choice"),
+			ordinaryFactoredAlternatives(warm, "m-choice"));
+		Assert.assertTrue("the warm boundary consumes actual resident ordinary rows",
+			directWork(metrics, "NATIVE_HYBRID_ORDINARY_RESIDENT_ROWS_REUSED") > reused);
+		assertFactoredDependencyIdentity(cold, fixedOwner, fixedReference);
+		assertFactoredDependencyIdentity(warm, fixedOwner, fixedReference);
 	}
 
 	@Test
@@ -1888,6 +1961,15 @@ public class NativeHybridUnpinnedTopologyTest {
 		return metrics.directWorkCount(SearchSpaceMetrics.DirectWork.valueOf(name));
 	}
 
+	private static long directWorkIfPresent(SearchSpaceMetrics metrics, String name) {
+		try {
+			return directWork(metrics, name);
+		}
+		catch(IllegalArgumentException missingInBaseline) {
+			return 0;
+		}
+	}
+
 	private static boolean hasNativeContinuityRelation(NativePlacementContinuity resolver,
 		CompiledHopKey owner, CandidateRealizationReference pinned) throws Exception {
 		Method method = NativePlacementContinuity.class.getDeclaredMethod(
@@ -1924,6 +2006,91 @@ public class NativeHybridUnpinnedTopologyTest {
 			CandidateRealizationReference.class, nested("NativePoolWitness"), fixedType);
 		method.setAccessible(true);
 		return method.invoke(resolver, owner, pinned, witness, fixed);
+	}
+
+	private static Object nativeUnpinnedFactoredAlternatives(
+		NativePlacementContinuity resolver, CompiledHopKey owner, DurableAnchorKey pool,
+		CompiledHopKey fixedOwner, CandidateRealizationReference fixedPinned) throws Exception {
+		Method handleMethod = NativePlacementContinuity.class.getDeclaredMethod(
+			"candidateHandle", CandidateRealizationReference.class);
+		handleMethod.setAccessible(true);
+		int fixedHandle = (int)handleMethod.invoke(resolver, fixedPinned);
+		Method witnessMethod = NativePlacementContinuity.class.getDeclaredMethod(
+			"nativeWitness", DurableAnchorKey.class);
+		witnessMethod.setAccessible(true);
+		Object witness = witnessMethod.invoke(resolver, pool);
+		Class<?> fixedType = nested("FixedCandidateBoundary");
+		Constructor<?> fixedConstructor = fixedType.getDeclaredConstructor(
+			CompiledHopKey.class, CandidateRealizationReference.class, int.class);
+		fixedConstructor.setAccessible(true);
+		Object fixed = fixedConstructor.newInstance(fixedOwner, fixedPinned, fixedHandle);
+		Method method = NativePlacementContinuity.class.getDeclaredMethod(
+			"nativeUnpinnedFactoredProofAlternatives", CompiledHopKey.class,
+			nested("NativePoolWitness"), fixedType, nested("CandidateProofTraversal"));
+		method.setAccessible(true);
+		return method.invoke(resolver, owner, witness, fixed, null);
+	}
+
+	private static Object residentHybridOrdinaryRows(NativePlacementContinuity resolver,
+		Object host, CompiledHopKey owner, CandidateRealizationReference reference)
+		throws Exception {
+		Method method = NativePlacementContinuity.class.getDeclaredMethod(
+			"residentHybridOrdinaryRows", nested("CandidateTopology"),
+			CompiledHopKey.class, CandidateRealizationReference.class);
+		method.setAccessible(true);
+		return method.invoke(resolver, host, owner, reference);
+	}
+
+	private static List<?> factoredAlternatives(Object factored) throws Exception {
+		Method method = factored.getClass().getDeclaredMethod("alternatives");
+		method.setAccessible(true);
+		return (List<?>)method.invoke(factored);
+	}
+
+	private static List<?> ordinaryFactoredAlternatives(Object factored,
+		String nativeLineage) throws Exception {
+		List<Object> ordinary = new ArrayList<>();
+		for(Object alternative : factoredAlternatives(factored)) {
+			Method realization = alternative.getClass().getDeclaredMethod("realization");
+			realization.setAccessible(true);
+			CandidateRealizationReference reference =
+				(CandidateRealizationReference)realization.invoke(alternative);
+			if(reference != null
+				&& !nativeLineage.equals(reference.realization().nativeLineage()))
+				ordinary.add(alternative);
+		}
+		return List.copyOf(ordinary);
+	}
+
+	private static void assertFactoredDependencyIdentity(Object factored,
+		CompiledHopKey owner, CandidateRealizationReference reference) throws Exception {
+		boolean found = false;
+		for(Object alternative : factoredAlternatives(factored)) {
+			Method dependencies = alternative.getClass().getDeclaredMethod("dependencies");
+			dependencies.setAccessible(true);
+			for(Object dependency : (List<?>)dependencies.invoke(alternative)) {
+				Field key = dependency.getClass().getDeclaredField("key");
+				Field realization = dependency.getClass().getDeclaredField("realization");
+				key.setAccessible(true);
+				realization.setAccessible(true);
+				if(key.get(dependency) == owner && realization.get(dependency) == reference)
+					found = true;
+			}
+		}
+		Assert.assertTrue("the current fixed reference must own the effective overlay dependency", found);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static void addReachingDefinition(Object fixture, CompiledHopKey consumer,
+		CompiledHopKey source) throws Exception {
+		Field field = fixture.getClass().getDeclaredField("reaching");
+		field.setAccessible(true);
+		Map<CompiledHopKey,List<CompiledHopKey>> reaching =
+			(Map<CompiledHopKey,List<CompiledHopKey>>)field.get(fixture);
+		List<CompiledHopKey> sources = new ArrayList<>(
+			reaching.getOrDefault(consumer, List.of()));
+		sources.add(source);
+		reaching.put(consumer, List.copyOf(sources));
 	}
 
 	@SuppressWarnings("unchecked")

@@ -4721,10 +4721,9 @@ final class NativePlacementContinuity {
 
 	/**
 	 * Keeps rectangular native alternatives factorized inside an otherwise explicit
-	 * unpinned occurrence. The result remains query-local: explicit rows retain the
-	 * legacy overlay and metadata reads, while native gates never enter topology
-	 * caches. Any ambiguous or unsupported native authority returns to the complete
-	 * legacy topology.
+	 * unpinned occurrence. Raw rows/circuits may come from an existing topology, but
+	 * the current overlay, metadata reads and viability remain query-local. Any
+	 * ambiguous or unsupported native authority returns to the complete legacy topology.
 	 */
 	private NativeFactoredProofAlternatives nativeUnpinnedFactoredProofAlternatives(
 		CompiledHopKey key, NativePoolWitness witness, FixedCandidateBoundary fixed,
@@ -4740,6 +4739,8 @@ final class NativePlacementContinuity {
 				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_REJECT_CONTEXT);
 			return null;
 		}
+		CandidateTopologyKey residentKey = residentTopologyKey(key, witness);
+		CandidateTopology resident = residentKey == null ? null : candidateTopologies.get(residentKey);
 		List<HybridTopologyRow> rows = new ArrayList<>();
 		Set<ContinuityEdgeKey> defaultEdges = new java.util.HashSet<>();
 		Set<CompiledHopKey> metadataOwnerReads =
@@ -4803,6 +4804,24 @@ final class NativePlacementContinuity {
 						for(SelectedCandidateProof alternative : factored.alternatives())
 							rows.add(HybridTopologyRow.nativeRow(reference, alternative));
 						matchedNative = true;
+						continue;
+					}
+					// Ordinary slices and complete topologies both own these raw rows.
+					// Keep VALUE_MAP/derived metadata resolution on its original path;
+					// a missing bucket is not a negative proof or permission to expand.
+					List<CandidateTopologyRow> residentRows = realization.key().layoutKind()
+						== PlacementIdentity.PlacementLayoutKind.VALUE_MAP ? null
+						: residentHybridOrdinaryRows(resident, key, reference);
+					if(residentRows != null) {
+						for(CandidateTopologyRow row : residentRows)
+							if(defaultEdges.add(row.defaultEdge()))
+								rows.add(HybridTopologyRow.explicitRow(row));
+							else if(metrics != null)
+								metrics.recordTopologyRowCollapsed();
+						if(metrics != null)
+							metrics.recordDirectWork(
+								SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_ORDINARY_RESIDENT_ROWS_REUSED,
+								residentRows.size());
 						continue;
 					}
 					for(CandidateRealizationSupportClause clause : realization.supportClauses()) {
@@ -4890,6 +4909,21 @@ final class NativePlacementContinuity {
 			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_ACCEPTED);
 		return new NativeFactoredProofAlternatives(List.copyOf(alternatives),
 			metadataOwnerReads);
+	}
+
+	private List<CandidateTopologyRow> residentHybridOrdinaryRows(CandidateTopology resident,
+		CompiledHopKey owner, CandidateRealizationReference reference) {
+		if(metrics != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_ORDINARY_RESIDENT_LOOKUPS);
+		if(resident == null || !resident.eligible)
+			return null;
+		List<CandidateTopologyRow> rows = resident.rowsByHandle.get(candidateHandle(reference));
+		if(rows == null || rows.isEmpty())
+			return null;
+		for(CandidateTopologyRow row : rows)
+			if(row.reference().rule().parentOccurrence() != owner || !row.reference().equals(reference))
+				return null;
+		return rows;
 	}
 
 	private static boolean nativeContinuityProductLayout(
