@@ -26,7 +26,7 @@ V53의 exact row ↔ CP family closure 오류를 수정했다. 후보를 제거�
 | V55 중복 footprint 순회 | optional admission의 총 작업·중간 보존량 제한; 원래 proof/candidate 불변 |
 | V55 CAST_AS_SCALAR | MATRIX→SCALAR 불변 capability에 dependency authority 추가; focused 21 PASS |
 
-V55 native/physical 강화 focused는 **202 PASS**이며 전체 통합 gate와 실측은 진행 중이다. `origin/main`의 exact gate reuse/physical no-op 변경을 함께 검증하고 있다. Gate key의 정확한 owner·fact·relation identity, fixed-owner 제외 및 revision 격리는 유지한다.
+V55 native/physical 강화 focused는 **202 PASS**, 최신 main 병합 통합 gate는 **209 classes / 1,608 tests / 실패·오류 0 / skip 3**이다. V55 동일 Docker 실측은 다음 단계다. `origin/main`의 exact gate reuse/physical no-op 변경을 함께 검증하고 있다. Gate key의 정확한 owner·fact·relation identity, fixed-owner 제외 및 revision 격리는 유지한다.
 
 CAST_AS_SCALAR의 ML10 출현 77회는 압축 적용 실적이 아니라 frozen DML의 문법적 출현 수다. 실제 PA-derived PUBLIC fixture는 singleton exact라 family 0건이다. 모든 연산에 빈 dependency를 붙이는 식의 일반화는 합법성 증명을 깨뜨리므로 적용하지 않았다.
 

@@ -140,3 +140,17 @@
 - 209 actual classes, **1607/0/0/3 (tests/failures/errors/skipped)**, package BUILD SUCCESS (07:06:50+02). 강화 native/physical focused 202 PASS.
 - Deep duplicate enqueue, 실제 hidden/reused owner 복사 경계의 예산 소진도 검증했다. 독립 coverage review CLEAR; reused-summary 과대 owner fixture는 defensive 경계 시험임을 구분한다.
 - 검증 중 origin/main에 별도 null-footprint correction `5bd1c76369`가 게시됐다. 우리 bounded admission이 같은 원인을 해결하지만 incoming 회귀도 보존해 병합 후 다시 검증한다.
+## v44 실제 LogReg 실패와 gate budget 반례 수정
+
+- **실행 결과**: 커밋 `53f458fa69`, JAR SHA-256 `dfd46a34c037654b884af46dd0b42088b03890caa0e32089a12b6017c82d7ef3`의 실제 COFEE LogReg이 `cacheAcyclicRootChildren:3576`의 NullPointerException으로 종료했다. GLM은 실행하지 않았다. 전체 planning은 −1이며 정상 terminal counters가 없으므로 시간·생성량 비교에 사용하지 않는다. Docker cleanup은 완료됐다.
+- **누락했던 경계**: footprint 탐색은 보관 한계를 넘는 항목을 null로 기록해 중복 탐색을 막는다. 기존 root-child 경로가 null을 제거한 이후 새 native-gate 경로가 null을 다시 추가했고, admission 단계가 이를 정상 footprint처럼 읽었다. 1,494개 회귀와 probe가 이 추가 경로의 예산 거절 상황을 검증하지 못했다.
+- **수정**: gate 탐색이 끝난 뒤 null 거절 기록을 admission 대상에서 제거한다. 그래프·합법 후보·support·proof를 삭제하는 변경이 아니다. 한계를 넘은 gate는 보관하지 않고 기존 정확한 계산을 계속한다.
+- **반례 검증**: native gate가 생기는 공개 질의에서 `maxStates=1`로 같은 NPE를 재현했다. 수정 전 157 tests / failure 1, 수정 후 157 PASS / 1.395초. 캐시 없는 resolver와 전체 proofs 및 identity 기반 dependency footprint가 일치하고 oversized gate가 보관되지 않음을 확인했다. 독립 source review CLEAR.
+- **실패 증거**: `evidence/cofee-50k128-v44-validation/runtime-failure-binding.json`, SHA-256 `f72f4dedc90902cd44a65453ddd6a575dc1a8e2697a0613359e044a28cd8da35`. 반례 증거는 `evidence/v45-gate-budget-regression/`에 보존한다.
+- **다음 검증**: 새 frozen v45의 통합 gate와 실제 실행. v43이 마지막 정상 완료된 비교 기준이며 v44를 성공이나 성능 개선으로 보고하지 않는다. 20초 목표는 계속 미달성이다.
+
+### V55 최신 main 병합 검증
+
+- `5bd1c76369`의 null-footprint correction은 bounded collector가 이미 포함하는 의미이므로 production 함수는 그대로 보존하고 incoming 회귀와 문서는 추가했다.
+- Fresh **209 actual classes / 1,608 tests / failures 0 / errors 0 / skipped 3**, package BUILD SUCCESS (07:10:29+02). 근거 `evidence/candidate-v55-package.log`. 전체 저장소 gate가 아니라 지정 FedPlanner 회귀 gate다.
+- V55 실측은 이후 동일 자원 Docker로 수행한다. 이 테스트 통과를 20초 목표 달성이나 모든 ML 연산 압축 완료로 간주하지 않는다.
