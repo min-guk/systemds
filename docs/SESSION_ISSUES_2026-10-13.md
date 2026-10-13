@@ -575,3 +575,14 @@
 
 - V62 최종 independent production+경계검토 CLEAR. 남은 test-only gap(새 dense 경로의 retention 거절)을1×64 exact prefix/1001×1001 unread candidate로 보강했다. 새 outcome REJECT_CAP/null/capRejected 및0handles를 확인한다.
 - 보강 후 fresh 선택 gate **211classes/1661tests/0fail/0error/3skip**, BUILD SUCCESS10:47:25+02. 이전10:40:48 gate는 `v62-package-before-dense-cap-assertion.log`로 보존했다. 전체 repo suite나 실측 성능 통과를 뜻하지 않는다. 게시/봉인/동일Docker 측정으로 이어간다.
+
+### V62 실측 — dense 압축 적용 0회, authority 경계가 다음 원인
+
+- 게시 `86fa49373a`, 봉인 JAR `0cafa1c572d61833c9eb958460a1601fb7c2c27951a832f2a60821930abe20dc`. Fixed Docker 네 실행 모두watchdog60/no fullInitial/owncontainersremoved. **20초 실패 유지**다.
+- Detailed seq12 dense 요청 **LR9,186 / GLM5,740**, 전부 `REJECT_AUTHORITY`, admitted/reused/cap/nonrectangular/index 모두0. V61의 count cap 아래에 실제로 다른 authority 경계가 있었다. 현재 dense 경로가 이 workload를 빠르게 했다는 주장은 하지 않는다.
+- 전체 explicit bridge 요청 LR17,260/GLM16,313, 성공2,087/391, authority 거절15,173/15,922, cap0/mixed0. Dense input clause 합계4,562,763/4,114,046은 요청별 입력목록 크기의 합이지 실제 검증 완료 row 수나 고유 clause 수가 아니다. Bridge/dense terminal 합계 검증 PASS.
+- Partial retained proof 순회497,535/83,119, residual 성공0. OFFLR2472samples/direct63.55%/peak5.452GB; GLM2797/direct23.63%/canonical7.40%/joint6.08%/peak3.563GB. DetailedLR1913/4.775GB,GLM2605/3.299GB. Partial 수치로 완료 속도 향상·회귀를 단정하지 않는다.
+- 다음은 rejection을 relation shape, proof 개수·kind·owner, clause witness/layout, FULL descriptor header/bindings, 입력 domain으로 분리해 실제 retained 표현을 확인한다. Authority 검사를 완화하거나 cap을 늘리지 않는다. 현재 native header의 subset인 경우만 다루는 표현이 실제 지원 조합에 충분한지를 근거로 판단한다.
+- 근거 `R/evidence/v62-analysis-driver.log`, `v62-planner-breakdown.txt`, `candidate-v62-detailed-topology-outcomes.json`, `v62-contention-summary.json`.
+
+- External contention: {"candidate-v62-off-jfr": {"samples": 25, "externalBuildOverlapSamples": 0, "externalPlannerCounts": {"2": 25}}, "candidate-v62-detailed": {"samples": 25, "externalBuildOverlapSamples": 0, "externalPlannerCounts": {"2": 25}}}; own heavy jobs는 timed실행 이후 분리했다.

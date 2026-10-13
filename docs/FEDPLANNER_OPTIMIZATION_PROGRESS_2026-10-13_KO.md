@@ -1,7 +1,7 @@
 # FedPlanner 최적화 진행 현황 보고서
 
 
-## V62 dense explicit donor — 정확성 검증 완료, 실측 대기
+## V62 dense explicit donor — 정확성 검증 통과, 실제 dense 적용 없음
 
 - **구조적 수정**: explicit clause마다 singleton donor를 만들던 표현을 개선했다. 기존 explicit domain이 새 native product 안의 정확한 빈틈없는 곱집합임을 검증할 수 있을 때 **원본 clause 전체를 하나의 leaf donor**에 보관한다. 원본 객체와 first-donor 순서를 유지하며 후보를 제거하지 않는다.
 - **제한 유지**: FULL seed·proof/source owner identity·witness/layout 일치, 모든 row 검증 후 dedup, 축 cardinality로 rectangle 증명. Sparse hole/foreign authority는 기존 exact fallback이다. 기존64 donor/1M logical retention-unit 예산을 늘리지 않고 임시 maps와 dense 보관량도 사전 검사한다. 이 unit 예산은 실제 heap-byte 상한 주장이 아니다.
@@ -10,6 +10,16 @@
 - **최종 선택 gate**: **211 classes / 1,661 tests / failures0 / errors0 / skipped3**, fresh package BUILD SUCCESS10:47:25+02. 전체 repository suite는 아니다. 최종 production 및 경계테스트 독립 검토 CLEAR.
 - **남은 확인**: 동일 Docker 실측에서 새 dense outcome counter로 실제 적용률을 확인한다. V61까지 네 trial 모두 watchdog60이며 **20초 목표와 전체 ML 연산 압축 coverage는 미완료**다. 테스트의 작업량 감소를 전체 workload 속도 향상으로 대신 보고하지 않는다.
 - 근거 `R/V62_DENSE_EXPLICIT_DONOR_PLAN.md`, `R/evidence/v62-production-review.txt`, `v62-dense-final-focused.log`, `candidate-v62-package.log`.
+
+
+### V62 실측 — dense 압축 적용 0회, authority 경계가 다음 원인
+
+- 게시 `86fa49373a`, 봉인 JAR `0cafa1c572d61833c9eb958460a1601fb7c2c27951a832f2a60821930abe20dc`. Fixed Docker 네 실행 모두watchdog60/no fullInitial/owncontainersremoved. **20초 실패 유지**다.
+- Detailed seq12 dense 요청 **LR9,186 / GLM5,740**, 전부 `REJECT_AUTHORITY`, admitted/reused/cap/nonrectangular/index 모두0. V61의 count cap 아래에 실제로 다른 authority 경계가 있었다. 현재 dense 경로가 이 workload를 빠르게 했다는 주장은 하지 않는다.
+- 전체 explicit bridge 요청 LR17,260/GLM16,313, 성공2,087/391, authority 거절15,173/15,922, cap0/mixed0. Dense input clause 합계4,562,763/4,114,046은 요청별 입력목록 크기의 합이지 실제 검증 완료 row 수나 고유 clause 수가 아니다. Bridge/dense terminal 합계 검증 PASS.
+- Partial retained proof 순회497,535/83,119, residual 성공0. OFFLR2472samples/direct63.55%/peak5.452GB; GLM2797/direct23.63%/canonical7.40%/joint6.08%/peak3.563GB. DetailedLR1913/4.775GB,GLM2605/3.299GB. Partial 수치로 완료 속도 향상·회귀를 단정하지 않는다.
+- 다음은 rejection을 relation shape, proof 개수·kind·owner, clause witness/layout, FULL descriptor header/bindings, 입력 domain으로 분리해 실제 retained 표현을 확인한다. Authority 검사를 완화하거나 cap을 늘리지 않는다. 현재 native header의 subset인 경우만 다루는 표현이 실제 지원 조합에 충분한지를 근거로 판단한다.
+- 근거 `R/evidence/v62-analysis-driver.log`, `v62-planner-breakdown.txt`, `candidate-v62-detailed-topology-outcomes.json`, `v62-contention-summary.json`.
 
 ## V61 explicit retained support의 압축 publication — 실측 완료, 20초 미달
 
