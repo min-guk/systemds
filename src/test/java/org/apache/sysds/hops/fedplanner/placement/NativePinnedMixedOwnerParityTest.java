@@ -51,8 +51,8 @@ public class NativePinnedMixedOwnerParityTest {
 		NativePlacementContinuity.CandidateSupportResult actual =
 			queryInstalled(scenario, resolver, "empty-ordinary");
 		assertParity(eager, actual);
-		Assert.assertEquals("equal empty rows retain their legacy structural handle bucket",
-			1, relation.materializedHandleCount());
+		Assert.assertEquals("equal empty rows retain their bucket without reading native support",
+			0, relation.materializedHandleCount());
 		Assert.assertEquals(0, ownerTopologyCount(resolver, childKey(scenario)));
 	}
 
@@ -73,7 +73,7 @@ public class NativePinnedMixedOwnerParityTest {
 		NativePlacementContinuity.CandidateSupportResult actual =
 			queryInstalled(scenario, initial, "a-choice");
 		assertParity(eager, actual);
-		Assert.assertEquals("only the native circuit representative may be read", 1,
+		Assert.assertEquals("the native circuit relation remains unread", 0,
 			relation.materializedHandleCount());
 		Assert.assertEquals("ordinary coverage must not populate full-owner topology", 0,
 			ownerTopologyCount(initial, childKey(scenario)));
@@ -120,8 +120,8 @@ public class NativePinnedMixedOwnerParityTest {
 		NativePlacementContinuity.CandidateSupportResult actual = queryInstalled(
 			scenario, lazyResolver, "a-choice");
 		assertParity(eager, actual);
-		Assert.assertEquals("rejection may read only the relation's one circuit representative",
-			1, lazyCycle.materializedHandleCount());
+		Assert.assertEquals("rejection leaves the relation unread",
+			0, lazyCycle.materializedHandleCount());
 		Assert.assertEquals("ordinary coverage must not populate full-owner topology", 0,
 			ownerTopologyCount(lazyResolver, childKey(scenario)));
 	}
@@ -148,8 +148,8 @@ public class NativePinnedMixedOwnerParityTest {
 		NativePlacementContinuity.CandidateSupportResult actual = queryInstalled(
 			scenario, installResolver(scenario, false, List.of(lazyMissing)), "a-choice");
 		assertParity(eager, actual);
-		Assert.assertEquals("template rejection may read only the relation representative",
-			1, lazyRelation.materializedHandleCount());
+		Assert.assertEquals("template rejection leaves the relation unread",
+			0, lazyRelation.materializedHandleCount());
 	}
 
 	private static Object scenario() throws Exception {

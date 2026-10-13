@@ -4,7 +4,7 @@
 
 본문 1–11절의 코드 기준: `33384c0054becbfefba6a4e51a5de7aefe745988`. 이후 통합·실측은 12절에 별도로 기록한다.
 
-성능 근거: v41·v43·v45의 동일 COFEE 50K×128 W1 Docker 실행을 구분한다. 최신 완료 실행 v45는 LogReg 438.34초, GLM 117.55초이며, 20초 목표는 미달성이다. v46은 회귀 수정·검증 중으로 실제 성능 결과가 없다.
+성능 근거: v41·v43·v45의 동일 COFEE 50K×128 W1 Docker 실행을 구분한다. 최신 완료 실행 v46은 LogReg 379.14초, GLM 118.34초이며, 20초 목표는 미달성이다. v46의 코드·측정·한계는 13절에 기록한다.
 
 ## 1. 현재 문제에 대한 판단
 
@@ -358,3 +358,46 @@ DP에서도 두 반복을 구분한다. 검증이 끝난 동일 원본 선택을
 현재 해결 대상은 ‘불법 후보를 더 많이 버리기’만이 아니다. **합법 관계를 다시 펼치는 작업, 변하지 않은 선택을 다시 계산하는 작업, 재사용 대상을 찾으려고 같은 graph를 반복 방문하는 작업**을 줄여야 한다. 후보 생성 개수·논리적 후보 개수·객체 개수·실제 방문 횟수를 구별해서 검증해야 한다.
 
 근거: `evidence/cofee-50k128-v45-validation/v43-v45-comparison.json` (SHA-256 `235eb25c1a08bb4eb4ce8e3cb0aeda90e503af6da83add02247e179c439cdeb0`). 후속 변경의 검증과 한계는 [세션 기록](SESSION_ISSUES_2026-10-13.md)에 누적한다.
+
+## 13. 후속 확인: v46의 실제 효과와 남은 핵심 병목
+
+동일 COFEE 50K×128 W1 입력·privacy·DML·seed·cost profile·Docker/JVM 조건으로 실행했다. 엔진은 `a59c23069b50fe75238f040413817510dfd91f31`이며, 실행 도중 도착한 origin/main 변경은 이 JAR에 포함하지 않았다.
+
+| 지표 | LogReg | GLM |
+|---|---:|---:|
+| 전체 초기 플래닝 | **379.142초** | **118.345초** |
+| Analysis·Closure | 287.023초 | 74.842초 |
+| Physical Model | 6.539초 | 4.513초 |
+| Cost Surface | 8.395초 | 9.389초 |
+| Optimizer | 73.385초 | 24.998초 |
+| Coordinator peak | 8,482,996,224 bytes | 4,977,336,320 bytes |
+| Worker peak | 748,265,472 bytes | 755,060,736 bytes |
+| v45 대비 전체 시간 | −59.194초 | +0.796초 |
+| gate 추가 전 v43 대비 | −9.629초 | −3.031초 |
+
+각 workload 한 번의 관측이다. 동일 frozen engine에서 20초 이하 3회라는 완료 조건을 충족하지 못했으며 evaluator는 FAIL이다. 전체 시간은 phase 합계 밖의 준비 작업도 포함한다.
+
+**실제로 제거한 반복**은 전역 gate suffix 탐색이다. LogReg footprint raw edge 방문은 v45의 1,462,463,009회에서 **92,488,567회**로 줄어 v43과 같아졌다. Request 159,880회, unique edge 29,950,314회도 v43과 같다. 추가 cache를 찾기 위한 반복 탐색 회귀를 제거한 증거다.
+
+반면 **주요 조합 전개는 아직 그대로**다. LogReg proof 소비 6,121,451회, PARTITIONED_RETAINED 순회 2,555,577회, graph 103,616개, row 16,687,362개는 v43과 같다. GLM proof 소비도 688,373회, retained 순회 113,551회로 같다. v45 대비 새 Clause 객체 감소는 LogReg **40개**, GLM **51개**이고 key/fact 생성 수는 변하지 않았다. Ordinary subset/complement 재결합의 단위 테스트 성공을 실제 workload의 대규모 전개 제거로 일반화할 수 없다.
+
+따라서 다음 우선순위는 retained 관계 병합이 실패하는 실제 경로를 압축 상태로 연결하는 것이다. 같은 제외 영역을 유지하며 여러 입력 축이 커지는 conditional 관계를 대상으로 구현·검증 중이다. Explicit clause나 staging 때문에 exact 경로가 필요한 경우와, 표현 능력 부족 때문에 재전개하는 경우도 기존 분기 카운터로 구분한다. 단순히 캐시를 더 늘리거나 불법 후보 rejection 수를 높이는 것을 목표로 삼지 않는다.
+
+정확성은 두 workload 모두 numeric comparator·receipt audit 및 v43/v45 대비 선택된 candidate 원문·section·objective raw bits/certificate·Cost Surface fingerprint·selection fingerprint가 일치했다. 이는 실제 선택 결과와 회귀 테스트의 증거이며 모든 가능한 assignment를 전수 비교한 것은 아니다.
+
+검증된 수정과 최신 원격 통합은 `9fa1eceb10`까지 origin/main에 게시했다. Frozen v46은 selected 회귀 1,521 PASS와 probe 9 PASS, 이후 원격 병합 코드는 별도 selected 회귀 1,529 PASS로 검증했다.
+
+근거: `evidence/cofee-50k128-v46-validation/v43-v45-v46-comparison.json`, SHA-256 `1e5e69f48d578ab6dc32fb07b1ee5139b2260bdc0517d7b8db3049061cb87acc`; 실제 parity binding SHA-256 `4006dcad84c727cf356eb2724d41067655cff75718d837992f9366d0087021ef`.
+
+
+## 14. 후속 구조 수정: relation이 커져도 기존 조합을 다시 만들지 않기
+
+현재 검증 중인 v47은 conditional relation의 반복 갱신을 대상으로 한다. 예를 들어 두 입력 축이 각각 `{a1,a2}`, `{b1,b2}`이고 제외 영역이 `{a1}×{b1}`이면 합법 조합은 3개다. 두 축에 선택지가 하나씩 추가되면 `3×3−1=8`, 다시 추가되면 `4×4−1=15`가 된다. 논리적으로 가능한 조합 수는 늘어나지만, 각 단계에서 8개·15개의 clause를 새로 만들 필요는 없다.
+
+수정은 같은 제외 영역과 exact source·proof·layout 권한이 보존되는 경우, 확장된 입력 축과 제외 영역을 그대로 보관한다. 선택한 조합이 이전 영역에 속하면 이전 clause 소유자에서 복원하고, 새 영역에 속하면 이번 relation의 소유자에서 복원한다. 여러 차례 갱신돼도 이전 소유자 목록의 순서와 정확한 객체 권한을 보존한다. Hole이 달라지거나 source owner가 다르거나 기존 보관 한도를 넘으면 기존 exact 경로를 유지한다.
+
+실제 binder 단위 테스트에서 8개 관계를 명시적 목록으로 만들던 경로를 native relation으로 유지했고, 두 번째 확장의 15개 관계에서도 선택 전 새 handle 수는 0이다. 이미 읽었던 이전 8개 clause는 같은 객체로 복원됨을 검사한다. 이 fixture의 기존 retained-loop counter는 0이었다. 따라서 논리적으로 새로 생긴 5개 조합을 ‘실측 순회 5회 제거’라고 보고하지 않는다.
+
+별도 문제로, 두 realization의 중복 여부를 비교할 때 record의 자동 `equals`가 key보다 support를 먼저 읽어 사용하지 않을 native clause를 만들었다. Key가 다르면 즉시 비교를 끝내고, key가 같을 때는 기존 record equality를 그대로 적용하도록 수정했다. 이는 합법 후보나 source authority를 합치는 변경이 아니라 결과가 이미 정해진 비교를 조기에 끝내는 변경이다.
+
+실제 COFEE 적용 여부는 별도로 검증한다. Retained 순회를 ordinary/conditional 및 전체/residual의 네 종류로 나누고, residual 생성 거절을 staging·explicit clause·relation 수·표현 불가로 구분한다. 기존 분기에 카운터만 추가했으며 별도 조합 순회나 profiler는 추가하지 않았다. 전체 retained counter가 네 세부 counter의 합과 같은지도 검증한다. 이 결과를 통해 작은 fixture의 성공과 실제 대규모 반복 제거를 구분한다.

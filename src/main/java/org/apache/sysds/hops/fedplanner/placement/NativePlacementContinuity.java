@@ -6809,6 +6809,62 @@ final class NativePlacementContinuity {
 				: java.util.Optional.of(new ConditionalUnion(union, rightOnly, false));
 		}
 
+		NativeSupportProduct conditionalGrowthResidualAfter(NativeSupportProduct retained) {
+			return conditionalGrowthResidualAfter(retained,
+				MAX_CANONICAL_LENGTH_STATES, MAX_CANONICAL_LENGTH_TRANSITIONS);
+		}
+
+		NativeSupportProduct conditionalGrowthResidualAfter(NativeSupportProduct retained,
+			int maximumLengthStates, long maximumLengthTransitions) {
+			List<List<CandidateRealizationInputBinding>> retainedAxes =
+				mappedConditionalBaseAxes(retained);
+			if(retainedAxes == null)
+				return null;
+			NativeSupportProduct rightOnly = tryCreateExactComplement(
+				baseProduct(), retainedAxes, maximumLengthStates, maximumLengthTransitions);
+			if(rightOnly == null)
+				return null;
+			try {
+				return rightOnly.size == Math.subtractExact(size, retained.size)
+					? rightOnly : null;
+			}
+			catch(ArithmeticException overflow) {
+				return null;
+			}
+		}
+
+		boolean containsConditionalBaseAuthority(NativeSupportProduct retained) {
+			return mappedConditionalBaseAxes(retained) != null;
+		}
+
+		private List<List<CandidateRealizationInputBinding>> mappedConditionalBaseAxes(
+			NativeSupportProduct retained) {
+			// This constructs a donor-routed union rather than substituting one
+			// authority representative for another. Rebind equivalent wrappers onto
+			// the candidate axes while exact parent-owner identity remains mandatory.
+			if(retained == null || excludedExactProduct == null
+				|| retained.excludedExactProduct == null || !sameHeaderAuthority(retained)
+				|| !excludedExactProduct.sameExactAxes(retained.excludedExactProduct)
+				|| axes.size() != retained.axes.size())
+				return null;
+			boolean growth = false;
+			List<List<CandidateRealizationInputBinding>> mapped = new ArrayList<>(axes.size());
+			for(int axis = 0; axis < axes.size(); axis++) {
+				List<CandidateRealizationInputBinding> retainedAxis = retained.axes.get(axis);
+				if(retainedAxis.isEmpty() || retainedAxis.size() > axes.get(axis).size())
+					return null;
+				growth |= retainedAxis.size() < axes.get(axis).size();
+				List<CandidateRealizationInputBinding> candidateOwned = new ArrayList<>();
+				for(CandidateRealizationInputBinding binding : axes.get(axis))
+					if(retained.containsExactBinding(axis, binding))
+						candidateOwned.add(binding);
+				if(candidateOwned.size() != retainedAxis.size())
+					return null;
+				mapped.add(List.copyOf(candidateOwned));
+			}
+			return growth ? List.copyOf(mapped) : null;
+		}
+
 		private NativeSupportProduct baseProduct() {
 			return excludedExactProduct == null ? this : new NativeSupportProduct(
 				externalSeed, outputWorkerPoolWitness, exactPartitionRanges,

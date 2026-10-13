@@ -125,8 +125,8 @@ public class NativeHybridUnpinnedTopologyTest {
 			nativeFirst, scenario.childKey(), ordinaryPin, scenario.pool()));
 		Assert.assertEquals(0, directWork(duplicateMetrics, "NATIVE_PINNED_REJECT_ORDINARY"));
 		Assert.assertEquals(1, directWork(duplicateMetrics, "NATIVE_PINNED_REJECT_DUPLICATE"));
-		Assert.assertEquals("classification must not enumerate either native alias",
-			1, relation.materializedHandleCount());
+		Assert.assertEquals("key-first canonicalization must not read either native alias",
+			0, relation.materializedHandleCount());
 	}
 
 	@Test
@@ -281,8 +281,8 @@ public class NativeHybridUnpinnedTopologyTest {
 		NativeContinuitySupportClauses lazy = scenario.install(false);
 		Assert.assertEquals("an ordinary pin must precede and follow the native pin",
 			1, scenario.installedNativeOrdinal());
-		Assert.assertEquals("canonical candidate construction reads only the representative member",
-			1, lazy.materializedHandleCount());
+		Assert.assertEquals("key-first canonical candidate construction reads no native member",
+			0, lazy.materializedHandleCount());
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		NativePlacementContinuity nativeResolver = (NativePlacementContinuity)invoke(
 			scenario.fixture(), "resolver", metrics, 128, 2048L);
@@ -295,7 +295,7 @@ public class NativeHybridUnpinnedTopologyTest {
 		assertBindingSourceIdentity(metricsOff, metricsOn);
 		assertIdentitySetEquals(eager.dependencyOccurrences(), metricsOn.dependencyOccurrences());
 		assertIdentitySetEquals(metricsOff.dependencyOccurrences(), metricsOn.dependencyOccurrences());
-		Assert.assertEquals("the accepted native pin does not expand beyond the representative",
+		Assert.assertEquals("the accepted native pin reads only its representative",
 			1, lazy.materializedHandleCount());
 		assertNativePinnedCounts(metrics);
 
@@ -477,8 +477,8 @@ public class NativeHybridUnpinnedTopologyTest {
 			scenario.queryInstalled("z-choice", offResolver);
 
 		NativeContinuitySupportClauses lazy = scenario.install(false);
-		Assert.assertEquals("candidate construction reads exactly one representative",
-			1, lazy.materializedHandleCount());
+		Assert.assertEquals("candidate construction reads no native representative",
+			0, lazy.materializedHandleCount());
 		List<CandidateRuleFact> unchangedFacts = List.copyOf(candidateFacts(scenario.fixture()));
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
@@ -487,27 +487,27 @@ public class NativeHybridUnpinnedTopologyTest {
 		NativePlacementContinuity.CandidateSupportResult actualA =
 			scenario.queryInstalled("a-choice", resolver);
 		assertResultParity(eagerA, offA, actualA);
-		Assert.assertEquals("projecting the first ordinary pin must not enumerate the product",
-			1, lazy.materializedHandleCount());
+		Assert.assertEquals("projecting the first ordinary pin must not read the product",
+			0, lazy.materializedHandleCount());
 		NativePlacementContinuity.CandidateSupportResult actualZ =
 			scenario.queryInstalled("z-choice", resolver);
 		assertResultParity(eagerZ, offZ, actualZ);
-		Assert.assertEquals("a second ordinary pin must also avoid native product expansion",
-			1, lazy.materializedHandleCount());
+		Assert.assertEquals("a second ordinary pin must also avoid native product reads",
+			0, lazy.materializedHandleCount());
 
 		NativePlacementContinuity.CandidateSupportResult replayA =
 			scenario.queryInstalled("a-choice", resolver);
 		assertResultParity(eagerA, offA, replayA);
-		Assert.assertEquals("a warm replay must retain the representative-only relation",
-			1, lazy.materializedHandleCount());
+		Assert.assertEquals("a warm replay must retain the unread native relation",
+			0, lazy.materializedHandleCount());
 
 		NativePlacementContinuity unchanged = resolver.nextRevisionWithCompleteCandidateDelta(
 			unchangedFacts, Set.of());
 		NativePlacementContinuity.CandidateSupportResult revisedZ =
 			scenario.queryInstalled("z-choice", unchanged);
 		assertResultParity(eagerZ, offZ, revisedZ);
-		Assert.assertEquals("an exact unmodified revision must retain lazy projected authority",
-			1, lazy.materializedHandleCount());
+		Assert.assertEquals("an exact unmodified revision retains unread lazy authority",
+			0, lazy.materializedHandleCount());
 	}
 
 	@Test
@@ -557,7 +557,8 @@ public class NativeHybridUnpinnedTopologyTest {
 		Assert.assertSame(partial, residentTopology(resolver, scenario.childKey(), scenario.pool()));
 		Assert.assertTrue("a repeated first pin also hits the same resident topology",
 			directWork(metrics, "ORDINARY_TOPOLOGY_RESIDENT_HITS") > hits);
-		Assert.assertEquals(1, lazy.materializedHandleCount());
+		Assert.assertEquals("ordinary coverage does not read a native representative",
+			0, lazy.materializedHandleCount());
 
 		Object complete = genericCandidateTopology(resolver, scenario.childKey(), scenario.pool());
 		Assert.assertNotSame("generic traversal replaces rather than reuses an incomplete topology",
@@ -608,7 +609,8 @@ public class NativeHybridUnpinnedTopologyTest {
 				Object partial = residentTopology(resolver, scenario.childKey(), scenario.pool());
 				Assert.assertNotNull(partial);
 				Assert.assertTrue(ordinaryOnly(partial));
-				Assert.assertEquals(1, lazy.materializedHandleCount());
+				Assert.assertEquals("a rejected complete upgrade leaves native support unread",
+					0, lazy.materializedHandleCount());
 
 				long bypasses = metrics.snapshot().topologyCacheBypasses();
 				Object complete = genericCandidateTopology(resolver,
@@ -678,8 +680,8 @@ public class NativeHybridUnpinnedTopologyTest {
 						assertBindingSourceIdentity(eager, actual);
 						assertIdentitySetEquals(eager.dependencyOccurrences(),
 							actual.dependencyOccurrences());
-						Assert.assertEquals("either handle authority keeps the native family compressed",
-							1, lazy.materializedHandleCount());
+						Assert.assertEquals("either handle authority keeps the native family unread",
+							0, lazy.materializedHandleCount());
 						Object partial = residentTopology(resolver,
 							scenario.childKey(), scenario.pool());
 						Assert.assertNotNull(partial);
@@ -894,7 +896,8 @@ public class NativeHybridUnpinnedTopologyTest {
 		Assert.assertTrue(ordinaryOnly(rebuilt));
 		Assert.assertTrue("the first query in the revision admits a fresh partial topology",
 			directWork(metrics, "ORDINARY_TOPOLOGY_ADMISSIONS") > admissions);
-		Assert.assertEquals(1, lazy.materializedHandleCount());
+		Assert.assertEquals("revision rebuild keeps native support unread",
+			0, lazy.materializedHandleCount());
 	}
 
 	@Test
@@ -935,8 +938,8 @@ public class NativeHybridUnpinnedTopologyTest {
 		Assert.assertFalse("the hidden metadata owner is outside the native product axes",
 			lazy.commonAxes().stream().flatMap(List::stream)
 				.anyMatch(binding -> binding.source().rule().parentOccurrence() == hiddenOwner));
-		Assert.assertEquals("the ordinary pin must not expand the native product",
-			1, lazy.materializedHandleCount());
+		Assert.assertEquals("the ordinary pin must not read the native product",
+			0, lazy.materializedHandleCount());
 		Assert.assertTrue("the root-independent ordinary pin admits bounded root reuse",
 			acyclicRootMemoSize(resolver) > 0);
 
@@ -960,7 +963,7 @@ public class NativeHybridUnpinnedTopologyTest {
 			withdrawnActual.dependencyOccurrences().stream().anyMatch(owner -> owner == hiddenOwner));
 		Assert.assertTrue("withdrawing only hidden metadata must invalidate completed support",
 			metrics.snapshot().proofGraphsBuilt() > beforeWithdrawal);
-		Assert.assertEquals(1, lazy.materializedHandleCount());
+		Assert.assertEquals(0, lazy.materializedHandleCount());
 
 		long beforeRestoration = metrics.snapshot().proofGraphsBuilt();
 		NativePlacementContinuity restored = withdrawn.nextRevisionWithCompleteCandidateDelta(
@@ -980,8 +983,8 @@ public class NativeHybridUnpinnedTopologyTest {
 			.anyMatch(owner -> owner == hiddenOwner));
 		Assert.assertTrue("restoring only hidden metadata must invalidate withdrawn support",
 			metrics.snapshot().proofGraphsBuilt() > beforeRestoration);
-		Assert.assertEquals("withdrawal and restoration must preserve lazy projected authority",
-			1, lazy.materializedHandleCount());
+		Assert.assertEquals("withdrawal and restoration preserve unread projected authority",
+			0, lazy.materializedHandleCount());
 	}
 
 	@Test
@@ -1029,8 +1032,8 @@ public class NativeHybridUnpinnedTopologyTest {
 		Assert.assertFalse("the hidden derived owner is outside every native product axis",
 			lazy.commonAxes().stream().flatMap(List::stream)
 				.anyMatch(binding -> binding.source().rule().parentOccurrence() == hiddenOwner));
-		Assert.assertEquals("invalid sibling metadata must not force native product expansion",
-			1, lazy.materializedHandleCount());
+		Assert.assertEquals("invalid sibling metadata must not read native support",
+			0, lazy.materializedHandleCount());
 
 		long beforeValidation = metrics.snapshot().proofGraphsBuilt();
 		NativePlacementContinuity valid = invalid.nextRevisionWithCompleteCandidateDelta(
@@ -1047,7 +1050,7 @@ public class NativeHybridUnpinnedTopologyTest {
 			.anyMatch(owner -> owner == hiddenOwner));
 		Assert.assertTrue("validating only the hidden owner must invalidate pinned support",
 			metrics.snapshot().proofGraphsBuilt() > beforeValidation);
-		Assert.assertEquals(1, lazy.materializedHandleCount());
+		Assert.assertEquals(0, lazy.materializedHandleCount());
 
 		long beforeWithdrawal = metrics.snapshot().proofGraphsBuilt();
 		NativePlacementContinuity withdrawn = valid.nextRevisionWithCompleteCandidateDelta(
@@ -1072,8 +1075,8 @@ public class NativeHybridUnpinnedTopologyTest {
 			restoredActual.dependencyOccurrences());
 		Assert.assertTrue("restoring hidden derived authority must invalidate pinned support",
 			metrics.snapshot().proofGraphsBuilt() > beforeRestoration);
-		Assert.assertEquals("every lifecycle wave preserves the native representative only",
-			1, lazy.materializedHandleCount());
+		Assert.assertEquals("every lifecycle wave preserves unread native authority",
+			0, lazy.materializedHandleCount());
 	}
 
 	@Test

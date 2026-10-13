@@ -40,8 +40,8 @@ public class NativeMissingPinCoverageTest {
 					NativePlacementContinuity.CandidateSupportResult.class,
 					NativePlacementContinuity.CandidateSupportResult.class);
 				parity.setAccessible(true); parity.invoke(null, expected, actual);
-				Assert.assertEquals("missing template pin must not expand unrelated native authority",
-					1, nativeRelation.materializedHandleCount());
+				Assert.assertEquals("missing template pin must not read unrelated native authority",
+					0, nativeRelation.materializedHandleCount());
 			}
 			finally { if(scoped) PlacementIdentity.endAnalysisScope(); }
 		}
@@ -61,7 +61,8 @@ public class NativeMissingPinCoverageTest {
 			(NativeContinuitySupportClauses)invoke(scenario, "install", false);
 		List<?> actual = alternatives(scenario, resolver(scenario), missing);
 		Assert.assertEquals(expected, actual);
-		Assert.assertEquals(1, nativeRelation.materializedHandleCount());
+		Assert.assertEquals("direct missing-pin overlay keeps native support unread",
+			0, nativeRelation.materializedHandleCount());
 	}
 
 	private static List<?> alternatives(Object scenario, NativePlacementContinuity resolver,

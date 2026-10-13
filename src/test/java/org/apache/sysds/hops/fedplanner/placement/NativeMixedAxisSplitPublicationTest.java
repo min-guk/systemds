@@ -246,6 +246,138 @@ public class NativeMixedAxisSplitPublicationTest {
 	}
 
 	@Test
+	public void conditionalRegionGrowthAcrossTwoAxesStaysRelationNative() throws Exception {
+		CompiledHopKey leftOwner = fixtureKey("conditional-growth-left");
+		CompiledHopKey rightOwner = fixtureKey("conditional-growth-right");
+		CompiledHopKey consumerOwner = fixtureKey("conditional-growth-consumer");
+		DurableAnchorKey pool = anchor("conditional-growth-pool");
+		CandidateRuleKey leftKey = new CandidateRuleKey(leftOwner, List.of());
+		CandidateEmissionRealization leftExact = sourceRealization(
+			leftOwner, pool, "conditional-growth-left-exact", true);
+		CandidateEmissionRealization leftMap0 = valueMapSource(
+			"conditional-growth-left-map-0", leftKey, leftExact);
+		CandidateEmissionRealization leftMap1 = valueMapSource(
+			"conditional-growth-left-map-1", leftKey, leftExact);
+		CandidateEmissionRealization leftMap2 = valueMapSource(
+			"conditional-growth-left-map-2", leftKey, leftExact);
+		CandidateRuleKey rightKey = new CandidateRuleKey(rightOwner, List.of());
+		CandidateEmissionRealization rightExact = sourceRealization(
+			rightOwner, pool, "conditional-growth-right-exact", true);
+		CandidateEmissionRealization rightMap0 = valueMapSource(
+			"conditional-growth-right-map-0", rightKey, rightExact);
+		CandidateEmissionRealization rightMap1 = valueMapSource(
+			"conditional-growth-right-map-1", rightKey, rightExact);
+		CandidateEmissionRealization rightMap2 = valueMapSource(
+			"conditional-growth-right-map-2", rightKey, rightExact);
+		CandidateRuleFact initialLeft = fact(leftKey, List.of(leftExact, leftMap0));
+		CandidateRuleFact initialRight = fact(rightKey, List.of(rightExact, rightMap0));
+		CandidateRuleFact staging = binaryConsumerFact(consumerOwner);
+		DataOp leftHop = dataHop("conditional-growth-left");
+		DataOp rightHop = dataHop("conditional-growth-right");
+		BinaryOp consumerHop = new BinaryOp("conditional-growth-consumer", DataType.MATRIX,
+			ValueType.FP64, OpOp2.PLUS, leftHop, rightHop);
+		CandidateRuleFact retained = bindBinary(closure(), initialLeft, initialRight, staging,
+			leftHop, rightHop, consumerHop, pool, 4);
+		CandidateEmissionRealization retainedConditional = products(retained).stream()
+			.filter(value -> value.key().layoutKind() == PlacementLayoutKind.NATIVE_LINEAGE)
+			.findFirst().orElseThrow();
+		Assert.assertEquals(3, retainedConditional.supportClauses().size());
+		List<CandidateRealizationSupportClause> retainedClauses =
+			List.copyOf(retainedConditional.supportClauses());
+
+		CandidateRuleFact grownLeft = fact(leftKey, List.of(leftExact, leftMap0, leftMap1));
+		CandidateRuleFact grownRight = fact(rightKey, List.of(rightExact, rightMap0, rightMap1));
+		CandidateRuleFact coldGrown = bindBinary(closure(), grownLeft, grownRight, staging,
+			leftHop, rightHop, consumerHop, pool, 9);
+		NativeContinuitySupportClauses retainedRelation =
+			(NativeContinuitySupportClauses)retainedConditional.supportClauses();
+		NativeContinuitySupportClauses coldRelation = (NativeContinuitySupportClauses)products(coldGrown)
+			.stream().filter(value -> value.key().equals(retainedConditional.key()))
+			.findFirst().orElseThrow().supportClauses();
+		Assert.assertTrue("fixture must isolate a same-hole conditional base growth; retained="
+			+ retainedRelation.authoritySignature() + ";candidate=" + coldRelation.authoritySignature(),
+			retainedRelation.oneAxisUnion(coldRelation).isPresent());
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		CandidateRuleFact grown = bindBinary(closure(metrics), grownLeft, grownRight, retained,
+			leftHop, rightHop, consumerHop, pool, 9);
+		CandidateEmissionRealization grownConditional = products(grown).stream()
+			.filter(value -> value.key().equals(retainedConditional.key()))
+			.findFirst().orElseThrow(() -> new AssertionError("conditional relation was expanded; retained="
+				+ metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS)
+				+ ";realizations=" + grown.allowedEmissionFacts().get(0).realizations().stream()
+					.map(value -> value.key().layoutKind() + ":" + value.supportClauses().getClass()
+						.getSimpleName() + ':' + value.supportClauses().size()).toList()));
+		Assert.assertTrue(grownConditional.supportClauses()
+			instanceof NativeContinuitySupportClauses);
+		Assert.assertEquals(8, grownConditional.supportClauses().size());
+		Assert.assertEquals("conditional growth must not materialize the five added tuples", 0L,
+			metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS));
+		Assert.assertEquals(0,
+			((NativeContinuitySupportClauses)grownConditional.supportClauses())
+				.materializedHandleCount());
+		NativeContinuitySupportClauses grownRelation =
+			(NativeContinuitySupportClauses)grownConditional.supportClauses();
+		List<CandidateRealizationSupportClause> coldClauses = List.copyOf(coldRelation);
+		for(int ordinal = 0; ordinal < grownRelation.size(); ordinal++) {
+			CandidateRealizationSupportClause clause = grownRelation.get(ordinal);
+			int retainedOrdinal = retainedRelation.product()
+				.ordinalOfExactAuthorityBindings(clause.inputBindings());
+			if(retainedOrdinal >= 0)
+				Assert.assertSame("the old conditional region keeps exact donor identity",
+					retainedClauses.get(retainedOrdinal), clause);
+			else {
+				int coldOrdinal = coldRelation.product()
+					.ordinalOfExactAuthorityBindings(clause.inputBindings());
+				Assert.assertNotSame("only the five added tuples use fresh candidate authority",
+					coldClauses.get(coldOrdinal), clause);
+				Assert.assertEquals(coldClauses.get(coldOrdinal).normalizedSignature(),
+					clause.normalizedSignature());
+				Assert.assertSame(leftOwner,
+					clause.inputBindings().get(0).source().rule().parentOccurrence());
+				Assert.assertSame(rightOwner,
+					clause.inputBindings().get(1).source().rule().parentOccurrence());
+			}
+		}
+
+		long retainedFallback = metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS);
+		long ordinaryFull = metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_ORDINARY_FULL_PROOFS);
+		long ordinaryResidual = metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_ORDINARY_RESIDUAL_PROOFS);
+		long conditionalFull = metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_CONDITIONAL_FULL_PROOFS);
+		long conditionalResidual = metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_CONDITIONAL_RESIDUAL_PROOFS);
+		Assert.assertEquals(retainedFallback,
+			ordinaryFull + ordinaryResidual + conditionalFull + conditionalResidual);
+
+		CandidateRuleFact secondGrownLeft = fact(leftKey,
+			List.of(leftExact, leftMap0, leftMap1, leftMap2));
+		CandidateRuleFact secondGrownRight = fact(rightKey,
+			List.of(rightExact, rightMap0, rightMap1, rightMap2));
+		CandidateRuleFact secondGrown = bindBinary(closure(), secondGrownLeft, secondGrownRight,
+			grown, leftHop, rightHop, consumerHop, pool, 16);
+		CandidateEmissionRealization secondConditional = products(secondGrown).stream()
+			.filter(value -> value.key().equals(retainedConditional.key())).findFirst().orElseThrow();
+		Assert.assertTrue(secondConditional.supportClauses()
+			instanceof NativeContinuitySupportClauses);
+		Assert.assertEquals(15, secondConditional.supportClauses().size());
+		Assert.assertEquals("repeated growth must retain the flattened donor relation", 0,
+			((NativeContinuitySupportClauses)secondConditional.supportClauses())
+				.materializedHandleCount());
+		NativeContinuitySupportClauses secondRelation =
+			(NativeContinuitySupportClauses)secondConditional.supportClauses();
+		for(int ordinal = 0; ordinal < grownRelation.size(); ordinal++) {
+			CandidateRealizationSupportClause prior = grownRelation.get(ordinal);
+			int secondOrdinal = secondRelation.product()
+				.ordinalOfExactAuthorityBindings(prior.inputBindings());
+			Assert.assertSame("repeated growth preserves the complete prior donor prefix",
+				prior, secondRelation.get(secondOrdinal));
+		}
+	}
+
+	@Test
 	public void structurallyEqualForeignSourceOwnerCannotEnterSplitAuthority() throws Exception {
 		CompiledHopKey consumer = key("identity-consumer");
 		Axis canonical = axis(key("identity-source"), 0, "identity", 2, 2);

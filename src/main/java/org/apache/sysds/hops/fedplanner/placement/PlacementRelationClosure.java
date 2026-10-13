@@ -5986,6 +5986,10 @@ final class PlacementRelationClosure {
 										else {
 											NativePlacementContinuity.NativeSupportProduct product =
 												((NativeContinuitySupportClauses)publication.supportClauses()).singleProduct().orElseThrow();
+											boolean conditionalProduct =
+												((NativeContinuitySupportClauses)publication.supportClauses())
+													.conditionalComplement();
+											boolean residualProduct = false;
 											if(admission.outcome() == NativePublicationOutcome.RETAINED_UNION) {
 												NativeRetainedResidual residual =
 													grounded.retainedNativeResidual(publication);
@@ -5999,9 +6003,10 @@ final class PlacementRelationClosure {
 														continue;
 													}
 													product = residual.product();
+													residualProduct = true;
 												}
 											}
-											if(complexityMetrics != null)
+											if(complexityMetrics != null) {
 												complexityMetrics.recordDirectWork(
 													admission.outcome() == NativePublicationOutcome.OUTPUT_COLLISION
 														? DirectWork.PARTITIONED_COLLISION_PROOFS
@@ -6009,6 +6014,16 @@ final class PlacementRelationClosure {
 															? DirectWork.PARTITIONED_RETAINED_PROOFS
 															: DirectWork.PARTITIONED_SINGLETON_PROOFS,
 													product.size());
+												if(admission.outcome() == NativePublicationOutcome.RETAINED_UNION)
+													complexityMetrics.recordDirectWork(conditionalProduct
+														? residualProduct
+															? DirectWork.PARTITIONED_RETAINED_CONDITIONAL_RESIDUAL_PROOFS
+															: DirectWork.PARTITIONED_RETAINED_CONDITIONAL_FULL_PROOFS
+														: residualProduct
+															? DirectWork.PARTITIONED_RETAINED_ORDINARY_RESIDUAL_PROOFS
+															: DirectWork.PARTITIONED_RETAINED_ORDINARY_FULL_PROOFS,
+														product.size());
+											}
 											for(int ordinal = 0; ordinal < product.size(); ordinal++) {
 												if(complexityMetrics != null) {
 													complexityMetrics.recordNativePublicationProofConsumed(
@@ -6740,21 +6755,44 @@ final class PlacementRelationClosure {
 			CandidateEmissionRealization candidate) {
 			// Staging under another realization key cannot merge with this exact residual.
 			// Whole-emission reuse and retained-product union keep the global staging guard.
-			if(stagingKeys.contains(candidate.key()) || hasConflictingEqualAuthority
-				|| !(candidate.supportClauses() instanceof NativeContinuitySupportClauses relation))
+			if(metrics != null) {
+				metrics.recordDirectWork(DirectWork.RETAINED_RESIDUAL_REQUESTS);
+				metrics.recordDirectWork(DirectWork.RETAINED_RESIDUAL_LOGICAL_MEMBERS,
+					candidate.supportClauses().size());
+			}
+			if(stagingKeys.contains(candidate.key()) || hasConflictingEqualAuthority) {
+				if(metrics != null)
+					metrics.recordDirectWork(DirectWork.RETAINED_RESIDUAL_REJECT_STAGING_OR_CONFLICT);
 				return null;
+			}
+			if(!(candidate.supportClauses() instanceof NativeContinuitySupportClauses relation)) {
+				if(metrics != null)
+					metrics.recordDirectWork(DirectWork.RETAINED_RESIDUAL_REJECT_UNREPRESENTABLE);
+				return null;
+			}
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> explicit =
 				prior.get(candidate.key());
-			if(explicit != null && !explicit.isEmpty())
+			if(explicit != null && !explicit.isEmpty()) {
+				if(metrics != null)
+					metrics.recordDirectWork(DirectWork.RETAINED_RESIDUAL_REJECT_EXPLICIT);
 				return null;
+			}
 			List<NativeContinuitySupportClauses> retainedRelations =
 				nativeProducts.get(candidate.key());
-			if(retainedRelations == null || retainedRelations.size() != 1)
+			if(retainedRelations == null || retainedRelations.size() != 1) {
+				if(metrics != null)
+					metrics.recordDirectWork(DirectWork.RETAINED_RESIDUAL_REJECT_RELATION_COUNT);
 				return null;
+			}
 			NativeContinuitySupportClauses.ExactAuthorityResidual residual =
 				relation.exactAuthorityResidualAfter(retainedRelations.get(0));
-			if(residual == null)
+			if(residual == null) {
+				if(metrics != null)
+					metrics.recordDirectWork(DirectWork.RETAINED_RESIDUAL_REJECT_UNREPRESENTABLE);
 				return null;
+			}
+			if(metrics != null)
+				metrics.recordDirectWork(DirectWork.RETAINED_RESIDUAL_SUCCESSES);
 			CandidateEmissionRealization publication = null;
 			if(residual.relation() != null) {
 				var completed = nativeRelationUnion(retainedRelations.get(0), residual.relation());

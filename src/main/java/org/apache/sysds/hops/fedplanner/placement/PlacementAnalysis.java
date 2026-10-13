@@ -2738,9 +2738,15 @@ public final class PlacementAnalysis {
 			List<CandidateEmissionRealization> canonical = new ArrayList<>(decorated.size());
 			for(RealizationOrderingEntry entry : decorated)
 				canonical.add(entry.value());
-			for(int index = 1; index < canonical.size(); index++)
-				if(canonical.get(index - 1).equals(canonical.get(index)))
+			for(int index = 1; index < canonical.size(); index++) {
+				CandidateEmissionRealization previous = canonical.get(index - 1);
+				CandidateEmissionRealization current = canonical.get(index);
+				// Record equality compares support before the key on this JVM. Reject a
+				// different key before it can probe a lazy native support relation, while
+				// retaining the exact legacy equality contract for equal keys.
+				if(previous.key().equals(current.key()) && previous.equals(current))
 					throw new IllegalArgumentException("Duplicate candidate emission realization");
+			}
 			return new SharedCanonicalList<>(List.copyOf(canonical));
 		}
 
