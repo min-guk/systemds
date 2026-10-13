@@ -702,7 +702,7 @@ public class NativeSingleAxisProductUnionTest {
 		Assert.assertNotNull(boundary.relation());
 		Assert.assertFalse(boundary.capRejected());
 		Assert.assertEquals(64, boundary.relation().authorityDonorCount());
-		var capped = relation.withExplicitAuthority(explicit.subList(0, 64));
+		var capped = boundary.relation().withExplicitAuthority(explicit.subList(0, 64));
 		Assert.assertNull(capped.relation());
 		Assert.assertTrue(capped.capRejected());
 		Assert.assertEquals(0, relation.materializedHandleCount());
@@ -725,6 +725,184 @@ public class NativeSingleAxisProductUnionTest {
 		Assert.assertNull(retentionRejected.relation());
 		Assert.assertTrue(retentionRejected.capRejected());
 		Assert.assertEquals(0, wide.materializedHandleCount());
+
+		List<CandidateRealizationSupportClause> denseRows = explicit(owner, seed, output,
+			List.of(List.of(directLike(left.get(0))), right.subList(0, 64).stream()
+				.map(NativeSingleAxisProductUnionTest::directLike).toList()));
+		Assert.assertEquals(64, denseRows.size());
+		var denseRetentionRejected = wide.withExplicitAuthority(denseRows);
+		Assert.assertNull(denseRetentionRejected.relation());
+		Assert.assertTrue(denseRetentionRejected.capRejected());
+		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityOutcome.REJECT_CAP,
+			denseRetentionRejected.denseOutcome());
+		Assert.assertEquals(0, wide.materializedHandleCount());
+	}
+
+	@Test
+	public void denseExplicitPrefixUsesOneLazyAuthorityLeafAcrossPairAndGroupedMerges() {
+		CompiledHopKey owner = key("dense-explicit-bridge-owner");
+		CompiledHopKey leftOwner = key("dense-explicit-bridge-left");
+		CompiledHopKey rightOwner = key("dense-explicit-bridge-right");
+		DurableAnchorKey seed = pool("dense-explicit-bridge-seed");
+		DurableAnchorKey output = pool("dense-explicit-bridge-output");
+		List<CandidateRealizationInputBinding> left = new ArrayList<>();
+		List<CandidateRealizationInputBinding> right = new ArrayList<>();
+		for(int index = 0; index < 9; index++) {
+			left.add(direct(0, "left-" + "x".repeat(index + 1), leftOwner));
+			right.add(direct(1, "right-" + "y".repeat(2 * index + 1), rightOwner));
+		}
+		left.sort(PlacementAnalysis.canonicalComparator());
+		right.sort(PlacementAnalysis.canonicalComparator());
+		List<List<CandidateRealizationInputBinding>> denseAxes = List.of(
+			List.copyOf(left.subList(0, 8)), List.copyOf(right.subList(0, 8)));
+		List<List<CandidateRealizationInputBinding>> grownAxes = List.of(
+			List.copyOf(left), List.copyOf(right));
+		List<List<CandidateRealizationInputBinding>> explicitDenseAxes = denseAxes.stream()
+			.map(axis -> axis.stream().map(
+				NativeSingleAxisProductUnionTest::directLike).toList()).toList();
+		List<List<CandidateRealizationInputBinding>> explicitGrownAxes = grownAxes.stream()
+			.map(axis -> axis.stream().map(
+				NativeSingleAxisProductUnionTest::directLike).toList()).toList();
+		List<CandidateRealizationSupportClause> densePrefix = explicit(
+			owner, seed, output, explicitDenseAxes);
+		List<CandidateRealizationSupportClause> oracle = explicit(
+			owner, seed, output, explicitGrownAxes);
+		Assert.assertEquals(64, densePrefix.size());
+		Assert.assertEquals(81, oracle.size());
+		PlacementRealizationKey realizationKey =
+			PlacementRealizationKey.nativeLineage(emission(), "dense-explicit-bridge-output");
+		NativeContinuitySupportClauses saturatedCandidate = relation(
+			owner, seed, output, grownAxes);
+		NativeContinuitySupportClauses sixtyThreeDonors = saturatedCandidate
+			.withExplicitAuthority(densePrefix.subList(0, 62)).relation();
+		Assert.assertEquals(63, sixtyThreeDonors.authorityDonorCount());
+		var saturatedAdmission = sixtyThreeDonors.withExplicitAuthority(densePrefix);
+		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityOutcome.ADMITTED,
+			saturatedAdmission.denseOutcome());
+		Assert.assertEquals(64, saturatedAdmission.relation().authorityDonorCount());
+		var saturatedReplay = saturatedAdmission.relation().withExplicitAuthority(densePrefix);
+		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityOutcome.REUSED,
+			saturatedReplay.denseOutcome());
+		Assert.assertSame("exact dense replay wins before the saturated donor-cap check",
+			saturatedAdmission.relation(), saturatedReplay.relation());
+		List<CandidateRealizationSupportClause> replacements = densePrefix.stream()
+			.map(clause -> new CandidateRealizationSupportClause(clause.proofDependencies(),
+				clause.inputBindings(), clause.nativeWorkerPoolWitness(),
+				clause.nativeWorkerPoolLayoutExact())).toList();
+		var saturatedReplacement = saturatedAdmission.relation()
+			.withExplicitAuthority(replacements);
+		Assert.assertNull("equal-distinct authority needs a new donor and cannot exceed the cap",
+			saturatedReplacement.relation());
+		Assert.assertTrue(saturatedReplacement.capRejected());
+		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityOutcome.REJECT_CAP,
+			saturatedReplacement.denseOutcome());
+		Assert.assertEquals(64, saturatedAdmission.relation().authorityDonorCount());
+		Assert.assertEquals(0, saturatedCandidate.materializedHandleCount());
+
+		NativeContinuitySupportClauses pairCandidate = relation(
+			owner, seed, output, grownAxes);
+		CandidateEmissionFact pair = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+			new CandidateEmissionRealization(realizationKey, densePrefix),
+			new CandidateEmissionRealization(realizationKey, pairCandidate)));
+		Assert.assertTrue("a dense explicit prefix must remain native",
+			pair.realizations().get(0).supportClauses() instanceof NativeContinuitySupportClauses);
+		NativeContinuitySupportClauses pairBridge = (NativeContinuitySupportClauses)
+			pair.realizations().get(0).supportClauses();
+		assertDenseExplicitBridge(pairBridge, pairCandidate, densePrefix, oracle);
+
+		CandidateEmissionFact repeated = new CandidateEmissionFact(emission(), FType.ROW, null,
+			List.of(new CandidateEmissionRealization(realizationKey, densePrefix),
+				pair.realizations().get(0)));
+		Assert.assertSame("the same dense prefix reuses its compact authority overlay",
+			pairBridge, repeated.realizations().get(0).supportClauses());
+		Assert.assertEquals(2, pairBridge.authorityDonorCount());
+		Assert.assertEquals(0, pairCandidate.materializedHandleCount());
+
+		NativeContinuitySupportClauses groupCandidate = relation(
+			owner, seed, output, grownAxes);
+		CandidateEmissionRealization unrelated = CandidateEmissionRealization.nativeLineage(
+			emission(), "dense-explicit-bridge-unrelated", List.of(), List.of());
+		CandidateEmissionFact grouped = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+			new CandidateEmissionRealization(realizationKey, densePrefix),
+			new CandidateEmissionRealization(realizationKey, groupCandidate), unrelated));
+		CandidateEmissionRealization groupedTarget = grouped.realizations().stream()
+			.filter(realization -> realization.key().equals(realizationKey)).findFirst().orElseThrow();
+		NativeContinuitySupportClauses groupBridge =
+			(NativeContinuitySupportClauses)groupedTarget.supportClauses();
+		assertDenseExplicitBridge(groupBridge, groupCandidate, densePrefix, oracle);
+		assertCanonicalClauseParity(oracle, groupBridge);
+
+		CandidateRealizationInputBinding withdrawnRight = right.get(7);
+		CandidateRealizationSupportClause withdrawnClause = densePrefix.stream()
+			.filter(clause -> clause.inputBindings().get(0).equals(left.get(7))
+				&& clause.inputBindings().get(1).equals(withdrawnRight))
+			.findFirst().orElseThrow();
+		NativeContinuitySupportClauses withdrawn = pairBridge.restrictBindings(
+			binding -> !binding.equals(withdrawnRight)).orElseThrow();
+		Assert.assertEquals(-1, withdrawn.ordinalOfExactAuthorityClause(withdrawnClause));
+		NativeContinuitySupportClauses readded = relation(owner, seed, output,
+			List.of(List.copyOf(left), List.of(directLike(withdrawnRight))));
+		int readdedOrdinal = readded.product().ordinalOfExactAuthorityBindings(
+			withdrawnClause.inputBindings());
+		CandidateRealizationSupportClause current = readded.get(readdedOrdinal);
+		NativeContinuitySupportClauses restored = withdrawn.oneAxisUnion(readded).orElseThrow();
+		int restoredOrdinal = restored.product().ordinalOfExactAuthorityBindings(
+			withdrawnClause.inputBindings());
+		Assert.assertSame("re-addition uses current authority after dense-leaf withdrawal",
+			current, restored.get(restoredOrdinal));
+		Assert.assertNotSame(withdrawnClause, restored.get(restoredOrdinal));
+		Assert.assertEquals(0, pairCandidate.materializedHandleCount());
+		assertCanonicalClauseParity(oracle, pairBridge);
+	}
+
+	@Test
+	public void sparseOrInexactSixtyFourMemberPrefixCannotClaimDenseAuthority() {
+		CompiledHopKey owner = key("dense-explicit-reject-owner");
+		CompiledHopKey leftOwner = key("dense-explicit-reject-left");
+		CompiledHopKey rightOwner = key("dense-explicit-reject-right");
+		DurableAnchorKey seed = pool("dense-explicit-reject-seed");
+		DurableAnchorKey output = pool("dense-explicit-reject-output");
+		List<CandidateRealizationInputBinding> left = new ArrayList<>();
+		List<CandidateRealizationInputBinding> right = new ArrayList<>();
+		for(int index = 0; index < 9; index++) {
+			left.add(direct(0, "left-" + index, leftOwner));
+			right.add(direct(1, "right-" + index, rightOwner));
+		}
+		left.sort(PlacementAnalysis.canonicalComparator());
+		right.sort(PlacementAnalysis.canonicalComparator());
+		List<List<CandidateRealizationInputBinding>> grownAxes = List.of(
+			List.copyOf(left), List.copyOf(right));
+		NativeContinuitySupportClauses candidate = relation(owner, seed, output, grownAxes);
+		List<CandidateRealizationSupportClause> dense = new ArrayList<>(explicit(owner, seed, output,
+			List.of(List.copyOf(left.subList(0, 8)), List.copyOf(right.subList(0, 8)))));
+		CandidateRealizationSupportClause extra = explicit(owner, seed, output,
+			List.of(List.of(directLike(left.get(8))), List.of(directLike(right.get(0))))).get(0);
+		List<CandidateRealizationSupportClause> sparse = new ArrayList<>(dense.subList(0, 63));
+		sparse.add(extra);
+		Assert.assertEquals(64, sparse.size());
+		long projectedLeft = sparse.stream().map(clause -> clause.inputBindings().get(0))
+			.distinct().count();
+		long projectedRight = sparse.stream().map(clause -> clause.inputBindings().get(1))
+			.distinct().count();
+		Assert.assertTrue(projectedLeft * projectedRight > sparse.size());
+		Assert.assertNull("a hole plus a ninth projected option is not a dense 64-member product",
+			candidate.withExplicitAuthority(sparse).relation());
+
+		List<CandidateRealizationSupportClause> foreignOwner = new ArrayList<>(dense);
+		foreignOwner.set(63, explicit(cloneKey(owner), seed, output,
+			List.of(List.of(directLike(left.get(7))), List.of(directLike(right.get(7))))).get(0));
+		Assert.assertNull(candidate.withExplicitAuthority(foreignOwner).relation());
+		List<CandidateRealizationSupportClause> foreignSeed = new ArrayList<>(dense);
+		foreignSeed.set(63, explicit(owner, pool("dense-explicit-reject-foreign-seed"), output,
+			List.of(List.of(directLike(left.get(7))), List.of(directLike(right.get(7))))).get(0));
+		Assert.assertNull(candidate.withExplicitAuthority(foreignSeed).relation());
+		List<CandidateRealizationSupportClause> duplicateOrdinal = new ArrayList<>(dense);
+		CandidateRealizationSupportClause first = dense.get(0);
+		duplicateOrdinal.set(63, new CandidateRealizationSupportClause(
+			first.proofDependencies(), first.inputBindings(), first.nativeWorkerPoolWitness(),
+			first.nativeWorkerPoolLayoutExact()));
+		Assert.assertNull(candidate.withExplicitAuthority(duplicateOrdinal).relation());
+		Assert.assertEquals(0, candidate.materializedHandleCount());
 	}
 
 	@Test
@@ -1036,6 +1214,35 @@ public class NativeSingleAxisProductUnionTest {
 		Assert.assertNull(rejected.relation());
 		Assert.assertFalse(rejected.capRejected());
 		Assert.assertEquals(handles, relation.materializedHandleCount());
+	}
+
+	private static void assertDenseExplicitBridge(NativeContinuitySupportClauses bridge,
+		NativeContinuitySupportClauses candidate,
+		List<CandidateRealizationSupportClause> densePrefix,
+		List<CandidateRealizationSupportClause> oracle) {
+		Assert.assertEquals(81, bridge.size());
+		Assert.assertEquals("one dense leaf plus the unread native fallback", 2,
+			bridge.authorityDonorCount());
+		Assert.assertEquals(0, candidate.materializedHandleCount());
+		Assert.assertEquals(oracle.hashCode(), bridge.hashCode());
+		Assert.assertEquals("hashing the bridge must not read candidate members", 0,
+			candidate.materializedHandleCount());
+		for(CandidateRealizationSupportClause clause : densePrefix) {
+			int ordinal = bridge.ordinalOfExactAuthorityClause(clause);
+			Assert.assertTrue(ordinal >= 0);
+			Assert.assertSame(clause, bridge.get(ordinal));
+		}
+		Assert.assertEquals("dense donor lookup must not read candidate members", 0,
+			candidate.materializedHandleCount());
+	}
+
+	private static void assertCanonicalClauseParity(
+		List<CandidateRealizationSupportClause> oracle,
+		List<CandidateRealizationSupportClause> actual) {
+		Assert.assertEquals(oracle.stream().map(
+			CandidateRealizationSupportClause::normalizedSignature).toList(), actual.stream().map(
+				CandidateRealizationSupportClause::normalizedSignature).toList());
+		Assert.assertEquals(oracle, actual);
 	}
 
 	private static List<CandidateRealizationInputBinding> sorted(

@@ -574,6 +574,62 @@ public class NativeMixedAxisSplitPublicationTest {
 	}
 
 	@Test
+	public void denseRetainedExplicitRectangleKeepsActualStandaloneBinderLazy() throws Exception {
+		CompiledHopKey leftOwner = fixtureKey("dense-explicit-left");
+		CompiledHopKey rightOwner = fixtureKey("dense-explicit-right");
+		CompiledHopKey consumerOwner = fixtureKey("dense-explicit-consumer");
+		DurableAnchorKey pool = anchor("dense-explicit-pool");
+		BinderAxis left = binderAxis(leftOwner, "dense-explicit-left", 9, 0, pool);
+		BinderAxis right = binderAxis(rightOwner, "dense-explicit-right", 9, 0, pool);
+		CandidateRuleFact staging = binaryConsumerFact(consumerOwner);
+		BinaryOp consumerHop = new BinaryOp("dense-explicit-consumer", DataType.MATRIX,
+			ValueType.FP64, OpOp2.PLUS, left.sourceHop(), right.sourceHop());
+		CandidateRuleFact cold = bindBinary(closure(), left, right, staging, consumerHop);
+		CandidateEmissionRealization complete = cold.allowedEmissionFacts().get(0).realizations().get(0);
+		NativeContinuitySupportClauses completeRelation =
+			(NativeContinuitySupportClauses)complete.supportClauses();
+		Assert.assertEquals(81, completeRelation.size());
+		var product = completeRelation.product();
+		List<CandidateRealizationSupportClause> explicit = new ArrayList<>();
+		for(var a : product.axes().get(0).subList(0, 8))
+			for(var b : product.axes().get(1).subList(0, 8)) {
+				List<CandidateRealizationInputBinding> bindings = List.of(a, b);
+				var proof = new NativeContinuityProof(product.externalSeed(),
+					product.outputWorkerPoolWitness(), product.exactPartitionRanges(), bindings);
+				explicit.add(new CandidateRealizationSupportClause(
+					List.of(proof.continuityProofKey(consumerOwner)), bindings,
+					completeRelation.clauseWitness(), completeRelation.clauseLayoutExact()));
+			}
+		Assert.assertEquals(0, completeRelation.materializedHandleCount());
+		CandidateRuleFact retained = fact(staging.key(), List.of(
+			new CandidateEmissionRealization(complete.key(), explicit)));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		CandidateRuleFact rebound = bindBinary(closure(metrics), left, right, retained, consumerHop);
+		Assert.assertEquals("dense retained members must not force the 81-member product to expand",
+			0L, metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+		Assert.assertEquals(1L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.RETAINED_EXPLICIT_BRIDGE_SUCCESSES));
+		Assert.assertEquals(1L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.RETAINED_EXPLICIT_DENSE_REQUESTS));
+		Assert.assertEquals(1L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.RETAINED_EXPLICIT_DENSE_ADMITTED));
+		Assert.assertEquals(64L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.RETAINED_EXPLICIT_DENSE_INPUT_CLAUSES));
+		List<CandidateRealizationSupportClause> clauses =
+			rebound.allowedEmissionFacts().get(0).realizations().get(0).supportClauses();
+		Assert.assertTrue(clauses instanceof NativeContinuitySupportClauses);
+		NativeContinuitySupportClauses relation = (NativeContinuitySupportClauses)clauses;
+		Assert.assertEquals(81, relation.size());
+		Assert.assertEquals(0, relation.materializedHandleCount());
+		Assert.assertEquals(2, relation.authorityDonorCount());
+		Assert.assertEquals(completeRelation.hashCode(), relation.hashCode());
+		for(CandidateRealizationSupportClause original : explicit)
+			Assert.assertSame(original, relation.get(relation.ordinalOfExactAuthorityClause(original)));
+		Assert.assertEquals(0, completeRelation.materializedHandleCount());
+		Assert.assertEquals(exactMemberSignatures(cold), exactMemberSignatures(rebound));
+	}
+
+	@Test
 	public void standaloneRetainedUnionConsumesOnlyTheExactResidual() throws Exception {
 		assertStandaloneRetainedPublication(false);
 	}

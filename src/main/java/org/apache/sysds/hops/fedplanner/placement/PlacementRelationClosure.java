@@ -6764,6 +6764,20 @@ final class PlacementRelationClosure {
 					return null;
 				}
 				var overlay = relation.withExplicitAuthority(ordered);
+				if(metrics != null && overlay.denseOutcome()
+					!= NativeContinuitySupportClauses.DenseAuthorityOutcome.NOT_ATTEMPTED) {
+					metrics.recordDirectWork(DirectWork.RETAINED_EXPLICIT_DENSE_REQUESTS);
+					metrics.recordDirectWork(DirectWork.RETAINED_EXPLICIT_DENSE_INPUT_CLAUSES, ordered.size());
+					metrics.recordDirectWork(switch(overlay.denseOutcome()) {
+						case REUSED -> DirectWork.RETAINED_EXPLICIT_DENSE_REUSED;
+						case ADMITTED -> DirectWork.RETAINED_EXPLICIT_DENSE_ADMITTED;
+						case REJECT_AUTHORITY -> DirectWork.RETAINED_EXPLICIT_DENSE_REJECT_AUTHORITY;
+						case REJECT_NONRECTANGULAR -> DirectWork.RETAINED_EXPLICIT_DENSE_REJECT_NONRECTANGULAR;
+						case REJECT_INDEX -> DirectWork.RETAINED_EXPLICIT_DENSE_REJECT_INDEX;
+						case REJECT_CAP -> DirectWork.RETAINED_EXPLICIT_DENSE_REJECT_CAP;
+						case NOT_ATTEMPTED -> throw new IllegalStateException("Dense outcome changed");
+					});
+				}
 				if(overlay.relation() == null) {
 					if(metrics != null)
 						metrics.recordDirectWork(overlay.capRejected()

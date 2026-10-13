@@ -199,6 +199,11 @@ public final class PlacementAnalysis {
 
 	private record CanonicalEntry<T>(T value, CanonicalText orderingKey) { }
 
+	static List<CandidateRealizationSupportClause> canonicalExplicitSupportClauses(
+		java.util.Collection<CandidateRealizationSupportClause> clauses) {
+		return canonicalComparableList(clauses, "explicit realization support clause", true);
+	}
+
 	/**
 	 * Immutable segmented UTF-16 text used only for canonical comparison. It keeps
 	 * shared child signatures as segments and therefore does not allocate the full
@@ -2880,16 +2885,22 @@ public final class PlacementAnalysis {
 						|| clauses instanceof IndexedSupportClauses)
 						return null;
 					explicitClauses = Math.addExact(explicitClauses, clauses.size());
-					if(!NativeContinuitySupportClauses
-						.explicitAuthorityPrefixWithinCountLimit(explicitClauses))
-						return null;
 				}
 			}
 			if(firstNative <= 0)
 				return null;
-			List<CandidateRealizationSupportClause> prefix = new ArrayList<>(explicitClauses);
-			for(int index = 0; index < firstNative; index++)
-				prefix.addAll(group.get(index).supportClauses());
+			java.util.Collection<CandidateRealizationSupportClause> prefix;
+			if(firstNative == 1)
+				prefix = group.get(0).supportClauses();
+			else {
+				if(!NativeContinuitySupportClauses
+					.explicitAuthorityPrefixWithinCountLimit(explicitClauses))
+					return null;
+				List<CandidateRealizationSupportClause> combined = new ArrayList<>(explicitClauses);
+				for(int index = 0; index < firstNative; index++)
+					combined.addAll(group.get(index).supportClauses());
+				prefix = combined;
+			}
 			NativeContinuitySupportClauses union =
 				(NativeContinuitySupportClauses)group.get(firstNative).supportClauses();
 			var overlay = union.withExplicitAuthority(prefix);

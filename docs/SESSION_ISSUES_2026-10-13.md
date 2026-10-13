@@ -559,3 +559,19 @@
 - Singleton-per-explicit donor count cap 거절 LR10004/GLM5374, authority/표현 거절6562/9665, mixed0. Cap은 검증 이전 count gate이므로 모두 새 dense 표현으로 해결된다고 단정하지 않는다. 두 terminal sum검증 PASS.
 - 다음 V62는 dense exact rectangular explicit prefix를 한 donor leaf로 보관하는 구조를 검토한다. 예산 확대는 하지 않는다. 입력목록의 canonical ordinal과 original clause handles 보존, quadratic axis membership scan 회피, sparsehole/foreign authority/cap fallback 및 bounded preflight가 핵심이다. Architect 설계/독립 RED 준비 중, 아직 생산 수정 없음.
 - OFFLRdirect65.76%,GLMcanonical8.76%/joint8.04%. Externalbuild0/25 양phase, oldplanners2개25/25. Partial samples/counts를 완료 속도 향상으로 해석하지 않는다.
+
+## V62 dense explicit donor 압축 — 구현 중
+
+- **문제/원인**: V61은 large retained explicit prefix를 singleton donor 여러 개로 표현해 count cap에 먼저 걸린다. 예산 확대 대신 정확한 full rectangular prefix를 단일 native leaf로 표현한다.
+- **설계 근거**: 각 기존 clause의 FULL header·owner/source identity를 검증한 뒤 first-donor exact dedup을 한다. 축별 option 집합의 곱이 unique tuple 수와 같을 때만 빈틈없는 rectangle이다. 기존 canonical order의 원본 clause들을 leaf handles에 배치하고 native product는 읽지 않는다. Sparse hole/foreign authority/conditional 등은 기존 fallback이다.
+- **안전/성능 경계**: per-row native ordinal 검색은 축 크기만큼 선형이므로 bounded 임시 axis map을 사용한다. 기존 retained budget과 temporary containers+new dense donor upper bound를 합쳐1M내로 제한한다. donor cap64 및 기존 canonical-index cap은 그대로다. 같은 dense donor 재병합은 포화 상태에서도 추가 donor 없이 재사용해야 한다.
+- **RED**: V61 상 public21tests/1failure(native가 아니라 explicit list), 실제 binder13tests/1failure(81 proofs 소비, 기대0). 근거 `R/evidence/v62-dense-donor-red.log`, `v62-dense-publication-red.log`.
+- **수정 예정/진행 파일**: NativeContinuitySupportClauses.java, PlacementAnalysis.java, PlacementRelationClosure.java, SearchSpaceMetrics.java, NativeSingleAxisProductUnionTest.java, NativeMixedAxisSplitPublicationTest.java.
+- **잔여**: 구현/독립검토/focused 및 selected gate/동일Docker 모두 진행중이다. 정확한 rectangle의 실제 workload 빈도는 아직 알 수 없으며20초·전체MLcoverage 미완료다.
+
+- V62 최종 source/test 동결 focused **309PASS/1ignored** (`v62-dense-final-focused.log`). 실제 binder64retained→81product scalar 소비81→0, dense donor1+fallback1, 원본64개 identity/hash/canonical 순서·0 candidate handles 확인. Variable-length canonical ordering, sparsehole/foreign/duplicate rejection, withdrawal/readd 및 포화64 donor에서 exact replay 재사용·equal-distinct 교체 거절 포함.
+- 리뷰 중 사전예산 검사 전 임시 map 생성, N×arity row-vector 추가보관, idempotence의 예산 전 정렬, 각 row의 native unrank 재검증으로 생기는 quadratic 작업을 발견해 구현 단계에서 제거했다. 최종 구현은 O(axes) 사전계수→공유 예산 검사→bounded map→모든 authority 검증→exact clause first-donor dedup→density proof→canonical handle seeding 순서다. 원본 clause canonical order와 native index ordering 일치는 variable-length 회귀로 검증하며 불필요한 rank/unrank 작업은 하지 않는다.
+- 선택211-class package gate 실행 중이며, 독립 최종 검토/실측 전에는 workload 이득을 주장하지 않는다.
+
+- V62 최종 independent production+경계검토 CLEAR. 남은 test-only gap(새 dense 경로의 retention 거절)을1×64 exact prefix/1001×1001 unread candidate로 보강했다. 새 outcome REJECT_CAP/null/capRejected 및0handles를 확인한다.
+- 보강 후 fresh 선택 gate **211classes/1661tests/0fail/0error/3skip**, BUILD SUCCESS10:47:25+02. 이전10:40:48 gate는 `v62-package-before-dense-cap-assertion.log`로 보존했다. 전체 repo suite나 실측 성능 통과를 뜻하지 않는다. 게시/봉인/동일Docker 측정으로 이어간다.

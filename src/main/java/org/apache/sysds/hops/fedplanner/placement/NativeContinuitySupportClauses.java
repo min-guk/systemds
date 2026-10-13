@@ -140,18 +140,22 @@ final class NativeContinuitySupportClauses
 	}
 
 	/**
-	 * Retains bounded earlier explicit members as singleton first-authority donors
-	 * without reading any member of this native relation. Every clause must be one
-	 * exact member of this relation; otherwise the caller keeps the ordinary merge.
+	 * Retains bounded earlier explicit members as first-authority donors without
+	 * reading this native relation. Small prefixes use singleton leaves; large
+	 * prefixes must prove one exact dense sub-product before sharing a single leaf.
 	 */
 	ExplicitAuthorityOverlay withExplicitAuthority(
 		java.util.Collection<CandidateRealizationSupportClause> explicitClauses) {
 		if(explicitClauses == null || explicitClauses.isEmpty())
 			return new ExplicitAuthorityOverlay(this, false);
+		boolean denseRequest = !explicitAuthorityPrefixWithinCountLimit(explicitClauses.size());
 		if(products.size() != 1 || conditionalComplement())
-			return new ExplicitAuthorityOverlay(null, false);
-		if(!explicitAuthorityPrefixWithinCountLimit(explicitClauses.size()))
-			return new ExplicitAuthorityOverlay(null, true);
+			return denseRequest
+				? new ExplicitAuthorityOverlay(null, false,
+					DenseAuthorityOutcome.REJECT_AUTHORITY)
+				: new ExplicitAuthorityOverlay(null, false);
+		if(denseRequest)
+			return withDenseExplicitAuthority(explicitClauses);
 		List<AuthorityDonor> prefix = new java.util.ArrayList<>(explicitClauses.size());
 		java.util.Set<Integer> ordinals = new java.util.HashSet<>();
 		for(CandidateRealizationSupportClause clause : explicitClauses) {
@@ -190,9 +194,244 @@ final class NativeContinuitySupportClauses
 	}
 
 	record ExplicitAuthorityOverlay(NativeContinuitySupportClauses relation,
-		boolean capRejected) { }
+		boolean capRejected, DenseAuthorityOutcome denseOutcome) {
+		ExplicitAuthorityOverlay(NativeContinuitySupportClauses relation, boolean capRejected) {
+			this(relation, capRejected, DenseAuthorityOutcome.NOT_ATTEMPTED);
+		}
+	}
+	enum DenseAuthorityOutcome {
+		NOT_ATTEMPTED,
+		REUSED,
+		ADMITTED,
+		REJECT_AUTHORITY,
+		REJECT_NONRECTANGULAR,
+		REJECT_CAP,
+		REJECT_INDEX
+	}
 	static boolean explicitAuthorityPrefixWithinCountLimit(int count) {
 		return count > 0 && count < MAX_AUTHORITY_DONORS;
+	}
+
+	private ExplicitAuthorityOverlay withDenseExplicitAuthority(
+		java.util.Collection<CandidateRealizationSupportClause> explicitClauses) {
+		NativePlacementContinuity.NativeSupportProduct candidate = products.get(0);
+		int axesCount = candidate.axes().size();
+		int rowCount = explicitClauses.size();
+		if(reusesDenseExplicitAuthority(candidate, explicitClauses))
+			return new ExplicitAuthorityOverlay(this, false,
+				DenseAuthorityOutcome.REUSED);
+		long baseUnits = authorityRetentionUnits(products, 0, authoritySources());
+		long minimumUnits = denseRetentionPreflightUnits(
+			baseUnits, rowCount, axesCount, 0, 0, false);
+		if(minimumUnits > MAX_AUTHORITY_RETENTION_UNITS)
+			return new ExplicitAuthorityOverlay(null, true,
+				DenseAuthorityOutcome.REJECT_CAP);
+
+		long optionCount = 0;
+		int previousInputPosition = -1;
+		for(int axis = 0; axis < axesCount; axis++) {
+			List<CandidateRealizationInputBinding> options = candidate.axes().get(axis);
+			if(options.isEmpty())
+				return new ExplicitAuthorityOverlay(null, false,
+					DenseAuthorityOutcome.REJECT_AUTHORITY);
+			int position = options.get(0).inputPosition();
+			if(position <= previousInputPosition)
+				return new ExplicitAuthorityOverlay(null, false,
+					DenseAuthorityOutcome.REJECT_AUTHORITY);
+			previousInputPosition = position;
+			for(CandidateRealizationInputBinding option : options) {
+				if(option.inputPosition() != position)
+					return new ExplicitAuthorityOverlay(null, false,
+						DenseAuthorityOutcome.REJECT_AUTHORITY);
+			}
+			try {
+				optionCount = Math.addExact(optionCount, (long)options.size());
+			}
+			catch(ArithmeticException overflow) {
+				return new ExplicitAuthorityOverlay(null, true,
+					DenseAuthorityOutcome.REJECT_CAP);
+			}
+		}
+		long stagedUnits = denseRetentionPreflightUnits(baseUnits, rowCount, axesCount,
+			optionCount, candidate.retainedMetadataUnits(), true);
+		if(stagedUnits > MAX_AUTHORITY_RETENTION_UNITS)
+			return new ExplicitAuthorityOverlay(null, true,
+				DenseAuthorityOutcome.REJECT_CAP);
+		List<java.util.Map<ExactBindingAuthorityKey,
+			CandidateRealizationInputBinding>> optionsByAxis = new java.util.ArrayList<>(axesCount);
+		java.util.Map<Integer,Integer> axisByPosition = new java.util.HashMap<>();
+		for(int axis = 0; axis < axesCount; axis++) {
+			List<CandidateRealizationInputBinding> options = candidate.axes().get(axis);
+			int position = options.get(0).inputPosition();
+			axisByPosition.put(position, axis);
+			java.util.Map<ExactBindingAuthorityKey,
+				CandidateRealizationInputBinding> byEquality = new java.util.HashMap<>();
+			for(CandidateRealizationInputBinding option : options)
+				if(byEquality.put(ExactBindingAuthorityKey.of(option), option) != null)
+					return new ExplicitAuthorityOverlay(null, false,
+						DenseAuthorityOutcome.REJECT_AUTHORITY);
+			optionsByAxis.add(byEquality);
+		}
+
+		java.util.Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> firstRows =
+			new java.util.LinkedHashMap<>();
+		List<java.util.Set<CandidateRealizationInputBinding>> selected =
+			new java.util.ArrayList<>(axesCount);
+		for(int axis = 0; axis < axesCount; axis++)
+			selected.add(java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+		for(CandidateRealizationSupportClause clause : explicitClauses) {
+			if(!matchesExactClauseHeader(clause, candidate)
+				|| clause.inputBindings().size() != axesCount)
+				return new ExplicitAuthorityOverlay(null, false,
+					DenseAuthorityOutcome.REJECT_AUTHORITY);
+			CandidateRealizationInputBinding[] tuple =
+				new CandidateRealizationInputBinding[axesCount];
+			for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
+				Integer axis = axisByPosition.get(binding.inputPosition());
+				if(axis == null || tuple[axis] != null)
+					return new ExplicitAuthorityOverlay(null, false,
+						DenseAuthorityOutcome.REJECT_AUTHORITY);
+				CandidateRealizationInputBinding canonical = optionsByAxis.get(axis).get(
+					ExactBindingAuthorityKey.of(binding));
+				if(canonical == null)
+					return new ExplicitAuthorityOverlay(null, false,
+						DenseAuthorityOutcome.REJECT_AUTHORITY);
+				tuple[axis] = canonical;
+			}
+			for(CandidateRealizationInputBinding binding : tuple)
+				if(binding == null)
+					return new ExplicitAuthorityOverlay(null, false,
+						DenseAuthorityOutcome.REJECT_AUTHORITY);
+			if(firstRows.putIfAbsent(clause, clause) == null)
+				for(int axis = 0; axis < axesCount; axis++)
+					selected.get(axis).add(tuple[axis]);
+		}
+		List<List<CandidateRealizationInputBinding>> denseAxes =
+			new java.util.ArrayList<>(axesCount);
+		long cardinality = 1;
+		try {
+			for(int axis = 0; axis < axesCount; axis++) {
+				java.util.Set<CandidateRealizationInputBinding> selectedAxis = selected.get(axis);
+				List<CandidateRealizationInputBinding> retained = candidate.axes().get(axis).stream()
+					.filter(selectedAxis::contains).toList();
+				if(retained.isEmpty())
+					return new ExplicitAuthorityOverlay(null, false,
+						DenseAuthorityOutcome.REJECT_NONRECTANGULAR);
+				cardinality = Math.multiplyExact(cardinality, retained.size());
+				denseAxes.add(retained);
+			}
+		}
+		catch(ArithmeticException overflow) {
+			return new ExplicitAuthorityOverlay(null, true,
+				DenseAuthorityOutcome.REJECT_CAP);
+		}
+		if(cardinality != firstRows.size())
+			return new ExplicitAuthorityOverlay(null, false,
+				DenseAuthorityOutcome.REJECT_NONRECTANGULAR);
+		NativePlacementContinuity.NativeSupportProduct denseProduct = candidate.withAxes(denseAxes);
+		if(denseProduct == null || denseProduct.size() != firstRows.size())
+			return new ExplicitAuthorityOverlay(null, false,
+				DenseAuthorityOutcome.REJECT_INDEX);
+		List<CandidateRealizationSupportClause> canonicalRows;
+		try {
+			canonicalRows = PlacementAnalysis.canonicalExplicitSupportClauses(firstRows.values());
+		}
+		catch(IllegalArgumentException duplicate) {
+			return new ExplicitAuthorityOverlay(null, false,
+				DenseAuthorityOutcome.REJECT_NONRECTANGULAR);
+		}
+		if(reusesDenseExplicitAuthority(denseProduct, canonicalRows))
+			return new ExplicitAuthorityOverlay(this, false,
+				DenseAuthorityOutcome.REUSED);
+		if(authoritySources().size() >= MAX_AUTHORITY_DONORS)
+			return new ExplicitAuthorityOverlay(null, true,
+				DenseAuthorityOutcome.REJECT_CAP);
+		NativeContinuitySupportClauses leaf = new NativeContinuitySupportClauses(
+			owner, denseProduct, clauseWitness, clauseLayoutExact, List.of());
+		for(int ordinal = 0; ordinal < canonicalRows.size(); ordinal++)
+			leaf.handles.put(ordinal, canonicalRows.get(ordinal));
+		List<AuthorityDonor> donors = new java.util.ArrayList<>(1 + authoritySources().size());
+		donors.add(new AuthorityDonor(leaf, denseProduct));
+		donors.addAll(authoritySources());
+		if(!withinAuthorityRetentionBudget(products, 0, donors))
+			return new ExplicitAuthorityOverlay(null, true,
+				DenseAuthorityOutcome.REJECT_CAP);
+		return new ExplicitAuthorityOverlay(new NativeContinuitySupportClauses(owner, products,
+			clauseWitness, clauseLayoutExact, donors), false,
+			DenseAuthorityOutcome.ADMITTED);
+	}
+
+	private boolean reusesDenseExplicitAuthority(
+		NativePlacementContinuity.NativeSupportProduct candidate,
+		java.util.Collection<CandidateRealizationSupportClause> explicitClauses) {
+		if(authorityDonors.isEmpty())
+			return false;
+		AuthorityDonor first = authorityDonors.get(0);
+		NativePlacementContinuity.NativeSupportProduct leafProduct =
+			first.relation().singleProduct().orElse(null);
+		if(leafProduct == null || !first.scope().sameExactAuthority(leafProduct)
+			|| explicitClauses.size() != leafProduct.size()
+			|| first.relation().handles.size() != leafProduct.size()
+			|| !candidate.sameHeaderAuthority(leafProduct))
+			return false;
+		int ordinal = 0;
+		for(CandidateRealizationSupportClause clause : explicitClauses)
+			if(first.relation().handles.get(ordinal++) != clause)
+				return false;
+		return true;
+	}
+
+	private boolean reusesDenseExplicitAuthority(
+		NativePlacementContinuity.NativeSupportProduct denseProduct,
+		List<CandidateRealizationSupportClause> canonicalRows) {
+		if(authorityDonors.isEmpty())
+			return false;
+		AuthorityDonor first = authorityDonors.get(0);
+		NativePlacementContinuity.NativeSupportProduct leafProduct =
+			first.relation().singleProduct().orElse(null);
+		if(leafProduct == null || !first.scope().sameExactAuthority(denseProduct)
+			|| !leafProduct.sameExactAuthority(denseProduct)
+			|| first.relation().handles.size() != canonicalRows.size())
+			return false;
+		for(int ordinal = 0; ordinal < canonicalRows.size(); ordinal++)
+			if(first.relation().handles.get(ordinal) != canonicalRows.get(ordinal))
+				return false;
+		return true;
+	}
+
+	private boolean matchesExactClauseHeader(CandidateRealizationSupportClause clause,
+		NativePlacementContinuity.NativeSupportProduct product) {
+		if(clause.proofDependencies().size() != 1
+			|| clause.nativeWorkerPoolLayoutExact() != clauseLayoutExact
+			|| !Objects.equals(clause.nativeWorkerPoolWitness(), clauseWitness))
+			return false;
+		var key = clause.proofDependencies().get(0);
+		if(key.kind() != PlacementProofKind.NATIVE_CONTINUITY || key.owner() != owner)
+			return false;
+		var proof = new NativePlacementContinuity.NativeContinuityProof(
+			product.externalSeed(), product.outputWorkerPoolWitness(),
+			product.exactPartitionRanges(), clause.inputBindings());
+		return key.hasNativeContinuityDescriptor()
+			? key.matchesNativeContinuityDescriptor(proof)
+			: key.authoritySignature().equals(proof.normalizedSignature());
+	}
+
+	private static long denseRetentionPreflightUnits(long baseUnits, int rows, int axes,
+		long options, long candidateMetadata, boolean includeStaging) {
+		try {
+			long units = Math.addExact(baseUnits, 2L);
+			units = Math.addExact(units, Math.multiplyExact((long)rows, axes + 1L));
+			if(includeStaging) {
+				long staging = Math.addExact(Math.multiplyExact(4L, options),
+					Math.addExact(Math.multiplyExact(8L, rows), Math.multiplyExact(4L, axes)));
+				units = Math.addExact(units, staging);
+				units = Math.addExact(units, Math.multiplyExact(2L, candidateMetadata));
+			}
+			return units;
+		}
+		catch(ArithmeticException overflow) {
+			return Long.MAX_VALUE;
+		}
 	}
 
 	private CandidateRealizationSupportClause firstAuthorityClause(NativeMember member) {
@@ -604,6 +843,12 @@ final class NativeContinuitySupportClauses
 		long relationMetadataUnits, List<AuthorityDonor> donors) {
 		if(donors.size() > MAX_AUTHORITY_DONORS)
 			return false;
+		return authorityRetentionUnits(products, relationMetadataUnits, donors)
+			<= MAX_AUTHORITY_RETENTION_UNITS;
+	}
+	private static long authorityRetentionUnits(
+		List<NativePlacementContinuity.NativeSupportProduct> products,
+		long relationMetadataUnits, List<AuthorityDonor> donors) {
 		try {
 			long units = relationMetadataUnits;
 			for(var product : products)
@@ -613,23 +858,23 @@ final class NativeContinuitySupportClauses
 				// Donors are flattened leaves. Charge all original possible handles:
 				// an alias may materialize members outside this donor's restricted scope.
 				if(!donor.relation().authorityDonors.isEmpty())
-					return false;
+					return Long.MAX_VALUE;
 				NativePlacementContinuity.NativeSupportProduct donorProduct =
 					donor.relation().singleProduct().orElse(null);
 				if(donorProduct == null)
-					return false;
+					return Long.MAX_VALUE;
 				long original = Math.addExact(donorProduct.retainedMetadataUnits(),
 					Math.multiplyExact((long)donor.relation().size(),
 						donorProduct.axes().size() + 1L));
 				units = Math.addExact(units, Math.addExact(2L,
 					Math.addExact(original, donor.scope().retainedMetadataUnits())));
 				if(units > MAX_AUTHORITY_RETENTION_UNITS)
-					return false;
+					return units;
 			}
-			return units <= MAX_AUTHORITY_RETENTION_UNITS;
+			return units;
 		}
 		catch(ArithmeticException overflow) {
-			return false;
+			return Long.MAX_VALUE;
 		}
 	}
 	private record AuthorityDonor(NativeContinuitySupportClauses relation,
@@ -793,6 +1038,21 @@ final class NativeContinuitySupportClauses
 			if(canonical.get(index - 1).sameHeaderAuthority(canonical.get(index)))
 				throw new IllegalArgumentException("Duplicate native proof header");
 		return List.copyOf(canonical);
+	}
+
+	private record ExactBindingAuthorityKey(CandidateRealizationInputBinding binding,
+		CompiledHopKey sourceOwner) {
+		private static ExactBindingAuthorityKey of(CandidateRealizationInputBinding binding) {
+			return new ExactBindingAuthorityKey(binding,
+				binding.source().rule().parentOccurrence());
+		}
+		@Override public boolean equals(Object other) {
+			return this == other || other instanceof ExactBindingAuthorityKey that
+				&& binding.equals(that.binding) && sourceOwner == that.sourceOwner;
+		}
+		@Override public int hashCode() {
+			return 31 * binding.hashCode() + System.identityHashCode(sourceOwner);
+		}
 	}
 
 	private record NativeMember(NativePlacementContinuity.NativeSupportProduct product,

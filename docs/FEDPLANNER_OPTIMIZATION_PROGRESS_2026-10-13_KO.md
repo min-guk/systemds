@@ -1,5 +1,16 @@
 # FedPlanner 최적화 진행 현황 보고서
 
+
+## V62 dense explicit donor — 정확성 검증 완료, 실측 대기
+
+- **구조적 수정**: explicit clause마다 singleton donor를 만들던 표현을 개선했다. 기존 explicit domain이 새 native product 안의 정확한 빈틈없는 곱집합임을 검증할 수 있을 때 **원본 clause 전체를 하나의 leaf donor**에 보관한다. 원본 객체와 first-donor 순서를 유지하며 후보를 제거하지 않는다.
+- **제한 유지**: FULL seed·proof/source owner identity·witness/layout 일치, 모든 row 검증 후 dedup, 축 cardinality로 rectangle 증명. Sparse hole/foreign authority는 기존 exact fallback이다. 기존64 donor/1M logical retention-unit 예산을 늘리지 않고 임시 maps와 dense 보관량도 사전 검사한다. 이 unit 예산은 실제 heap-byte 상한 주장이 아니다.
+- **숨은 반복 제거**: axis 전처리를 선형으로 유지하고 N×arity row-vector 보관 및 row마다 native rank/unrank 재계산을 없앴다. 원본 canonical clause 순서로 handle을 직접 배치한다. 포화64 donor에서도 동일 객체 prefix의 재병합은 추가 할당 없이 재사용하며 equal-distinct 교체는 cap을 적용한다.
+- **검증**: 유효 RED pair21/1, 실제 binder13/1 → focused309PASS/1ignored. 실제 binder64retained→81product의 scalar proof 소비 **81→0**, donor2, candidate handles0. Variable-length 순서/모든64 original identity/hash/oracle parity, sparse/foreign/cap, withdrawal-readd를 검증했다. 추가1×64 dense prefix의1M preflight 거절도 검증했다.
+- **최종 선택 gate**: **211 classes / 1,661 tests / failures0 / errors0 / skipped3**, fresh package BUILD SUCCESS10:47:25+02. 전체 repository suite는 아니다. 최종 production 및 경계테스트 독립 검토 CLEAR.
+- **남은 확인**: 동일 Docker 실측에서 새 dense outcome counter로 실제 적용률을 확인한다. V61까지 네 trial 모두 watchdog60이며 **20초 목표와 전체 ML 연산 압축 coverage는 미완료**다. 테스트의 작업량 감소를 전체 workload 속도 향상으로 대신 보고하지 않는다.
+- 근거 `R/V62_DENSE_EXPLICIT_DONOR_PLAN.md`, `R/evidence/v62-production-review.txt`, `v62-dense-final-focused.log`, `candidate-v62-package.log`.
+
 ## V61 explicit retained support의 압축 publication — 실측 완료, 20초 미달
 
 - **근본 경계**: 이전 explicit support 하나 때문에 새 native Cartesian product를 다시 전부 펼치던 경로를 수정했다. 기존 clause가 새 ordinary single-header product의 exact member인 경우에만 원본 객체를 singleton first-donor로 보존한다. 최종 pair/K-group merge와 `containsExact`의 숨은 member 순회까지 함께 막았다.
