@@ -441,6 +441,88 @@ public class NativeSkeletonMaterializationMemoTest {
 			directWork(metrics, "SKELETON_MATERIALIZATION_DEPENDENCIES_BUILT"));
 	}
 
+	@Test
+	public void nativeAxisBindingMatchesLegacyOverlayWithoutIntermediateSkeletons() throws Exception {
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.beginAnalysisScope(metrics);
+		try {
+			NativePlacementContinuity resolver = empty(metrics);
+			CompiledHopKey sourceOwner = owner("axis-source");
+			CandidateRealizationReference representative = reference(sourceOwner, "representative");
+			CandidateRealizationReference source = reference(sourceOwner, "selected");
+			Object full = witness();
+			Object distinctEqualFull = witness();
+			List<Object> affected = List.of(
+				axisSkeleton(sourceOwner, representative, -7, full, -1),
+				axisSkeleton(sourceOwner, representative, -7, distinctEqualFull, 0),
+				axisSkeleton(sourceOwner, representative, -7, full, 0));
+			long before = metrics.snapshot().structuralHandleLookups();
+			List<Object> legacySkeletons = new ArrayList<>();
+			for(Object skeleton : affected)
+				legacySkeletons.add(axisSkeleton(sourceOwner, source,
+					candidateHandle(resolver, source), field(skeleton, "witness"),
+					(int)field(skeleton, "inputPosition")));
+			Assert.assertEquals(3, metrics.snapshot().structuralHandleLookups() - before);
+			CompiledHopKey unrelated = owner("unrelated-fixed");
+			CandidateRealizationReference fixed = reference(unrelated, "fixed");
+			List<?> legacy = overlay(resolver, legacySkeletons, fixedBoundary(unrelated, fixed, -9));
+			before = metrics.snapshot().structuralHandleLookups();
+			List<?> direct = nativeAxisDependencies(resolver, affected, source);
+			Assert.assertEquals("one selected source handle, not one per dependency slot", 1,
+				metrics.snapshot().structuralHandleLookups() - before);
+			Assert.assertEquals(legacy, direct);
+			Assert.assertEquals("encounter order and duplicate slots are preserved", 3, direct.size());
+			for(int index = 0; index < direct.size(); index++) {
+				Assert.assertSame(sourceOwner, field(direct.get(index), "key"));
+				Assert.assertSame(source, field(direct.get(index), "realization"));
+				Assert.assertSame(field(affected.get(index), "witness"), field(direct.get(index), "witness"));
+				Assert.assertEquals(false, field(direct.get(index), "templateRoot"));
+				Assert.assertEquals(field(legacy.get(index), "state"), field(direct.get(index), "state"));
+				Assert.assertSame(representative, field(affected.get(index), "clausePinned"));
+			}
+			CandidateRealizationReference copied = new CandidateRealizationReference(source.rule(), source.realization());
+			List<?> rebound = nativeAxisDependencies(resolver, affected, copied);
+			Assert.assertEquals(direct, rebound);
+			Assert.assertSame("equal source values cannot replace the selected source object",
+				copied, field(rebound.get(0), "realization"));
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+		}
+	}
+
+	@Test
+	public void emptyNativeAxisBindingDoesNotResolveAnUnusedSourceHandle() throws Exception {
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.beginAnalysisScope(metrics);
+		try {
+			NativePlacementContinuity resolver = empty(metrics);
+			CandidateRealizationReference source = reference(owner("empty-axis"), "unused");
+			long before = metrics.snapshot().structuralHandleLookups();
+			Assert.assertTrue(nativeAxisDependencies(resolver, List.of(), source).isEmpty());
+			Assert.assertEquals(before, metrics.snapshot().structuralHandleLookups());
+			Assert.assertTrue(nativeAxisDependencies(empty(null), List.of(), source).isEmpty());
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+		}
+	}
+
+	private static Object axisSkeleton(CompiledHopKey owner, CandidateRealizationReference source,
+		int handle, Object witness, int position) throws Exception {
+		Constructor<?> constructor = nested("CandidateDependencySkeleton").getDeclaredConstructor(
+			CompiledHopKey.class, CandidateRealizationReference.class, int.class,
+			nested("NativePoolWitness"), int.class);
+		constructor.setAccessible(true);
+		return constructor.newInstance(owner, source, handle, witness, position);
+	}
+
+	private static List<?> nativeAxisDependencies(NativePlacementContinuity resolver,
+		List<?> skeletons, CandidateRealizationReference source) throws Exception {
+		return (List<?>)method(NativePlacementContinuity.class, "nativeAxisDependencies", List.class,
+			CandidateRealizationReference.class).invoke(resolver, skeletons, source);
+	}
+
 	private static void assertPinned(List<?> dependencies, int index,
 		CompiledHopKey owner, CandidateRealizationReference expected) throws Exception {
 		Object dependency = dependencies.get(index);
