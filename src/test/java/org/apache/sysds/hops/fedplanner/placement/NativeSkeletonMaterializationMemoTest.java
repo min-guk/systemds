@@ -508,6 +508,76 @@ public class NativeSkeletonMaterializationMemoTest {
 		}
 	}
 
+	@Test
+	public void compiledNativeCircuitRebindsRawInvariantAndCurrentRootNotTheFirstOverlay()
+		throws Exception {
+		// A binding-boundary test, not an admissibility or grounding certificate.
+		NativePlacementContinuity resolver = empty(null);
+		Object witness = witness();
+		CompiledHopKey axisOwner = owner("circuit-axis");
+		CandidateRealizationReference axisSource = reference(axisOwner, "axis");
+		Constructor<?> selectedConstructor = nested("SelectedCandidateProof").getDeclaredConstructor(
+			CandidateRealizationReference.class, List.class, boolean.class, nested("NativePoolWitness"));
+		selectedConstructor.setAccessible(true);
+		Object axisRow = selectedConstructor.newInstance(axisSource,
+			nativeAxisDependencies(resolver, List.of(axisSkeleton(axisOwner, axisSource, 0, witness, 0)),
+				axisSource), false, witness);
+		Constructor<?> gateConstructor = nested("CandidateAxisGate").getDeclaredConstructor(
+			nested("NativeAxisGateKey"), CompiledHopKey.class, int.class,
+			nested("NativePoolWitness"), List.class);
+		gateConstructor.setAccessible(true);
+		Object gate = gateConstructor.newInstance(null, axisOwner, 0, witness, List.of(axisRow));
+		Constructor<?> gateDependencyConstructor = nested("CandidateProofDependency")
+			.getDeclaredConstructor(nested("CandidateAxisGate"));
+		gateDependencyConstructor.setAccessible(true);
+		Object gateDependency = gateDependencyConstructor.newInstance(gate);
+
+		CompiledHopKey invariantOwner = owner("circuit-invariant");
+		CandidateRealizationReference original = reference(invariantOwner, "original");
+		CandidateRealizationReference firstPin = reference(invariantOwner, "first-overlay");
+		CandidateRealizationReference secondPin = reference(invariantOwner, "second-overlay");
+		List<Object> invariant = List.of(axisSkeleton(invariantOwner, original,
+			candidateHandle(resolver, original), witness, -1));
+		Object firstFixed = fixedBoundary(invariantOwner, firstPin, candidateHandle(resolver, firstPin));
+		List<Object> firstDependencies = new ArrayList<>(overlay(resolver, invariant, firstFixed));
+		firstDependencies.add(gateDependency);
+		CompiledHopKey rootOwner = owner("circuit-root");
+		CandidateRealizationReference firstRoot = reference(rootOwner, "first-root");
+		Object coldRoot = selectedConstructor.newInstance(firstRoot, firstDependencies, false, witness);
+		Constructor<?> circuitConstructor = nested("CompiledNativeCircuit").getDeclaredConstructor(
+			java.util.Set.class, List.class, List.class, long.class);
+		circuitConstructor.setAccessible(true);
+		Object circuit = circuitConstructor.newInstance(java.util.Set.of(axisOwner), invariant,
+			List.of(coldRoot), 1L);
+		CandidateRealizationReference currentRoot = reference(rootOwner, "current-root");
+		Object currentWitness = witness();
+		Object secondFixed = fixedBoundary(invariantOwner, secondPin, candidateHandle(resolver, secondPin));
+		Object bound = method(NativePlacementContinuity.class, "bindNativeCircuit",
+			nested("CompiledNativeCircuit"), CandidateRealizationReference.class,
+			nested("NativePoolWitness"), nested("FixedCandidateBoundary"))
+			.invoke(resolver, circuit, currentRoot, currentWitness, secondFixed);
+		Object root = ((List<?>)field(bound, "alternatives")).get(0);
+		List<?> actual = (List<?>)field(root, "dependencies");
+		Assert.assertSame(currentRoot, field(root, "realization"));
+		Assert.assertSame(currentWitness, field(root, "witness"));
+		Assert.assertSame(secondPin, field(actual.get(0), "realization"));
+		Assert.assertEquals(true, field(actual.get(0), "templateRoot"));
+		Assert.assertEquals(overlay(resolver, invariant, secondFixed).get(0), actual.get(0));
+		Assert.assertSame("the immutable raw gate is shared, not re-proved here", gateDependency, actual.get(1));
+		Assert.assertSame("the first fixed pin never replaces the raw invariant authority", original,
+			field(((List<?>)field(circuit, "defaultInvariant")).get(0), "realization"));
+
+		Object unrelated = fixedBoundary(rootOwner, currentRoot, candidateHandle(resolver, currentRoot));
+		Object unpinned = method(NativePlacementContinuity.class, "bindNativeCircuit",
+			nested("CompiledNativeCircuit"), CandidateRealizationReference.class,
+			nested("NativePoolWitness"), nested("FixedCandidateBoundary"))
+			.invoke(resolver, circuit, currentRoot, witness, unrelated);
+		Object unpinnedRoot = ((List<?>)field(unpinned, "alternatives")).get(0);
+		Object dependency = ((List<?>)field(unpinnedRoot, "dependencies")).get(0);
+		Assert.assertSame(original, field(dependency, "realization"));
+		Assert.assertEquals(false, field(dependency, "templateRoot"));
+	}
+
 	private static Object axisSkeleton(CompiledHopKey owner, CandidateRealizationReference source,
 		int handle, Object witness, int position) throws Exception {
 		Constructor<?> constructor = nested("CandidateDependencySkeleton").getDeclaredConstructor(

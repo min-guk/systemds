@@ -1,11 +1,19 @@
 # FedPlanner 최적화 진행 현황 보고서
 
+## V59 native 원본 회로 공유 — 경계 검증 진행 중
+
+- V58은 `5483ecbc6f`로 게시했다. 외부 build 중첩은 OFF/detailed 모두0/25였지만 네 실행 모두 watchdog60, 완료 시간 증거 없음. OFF LogReg direct binding62.86%, GLM canonical9.32%/joint7.03%로 근본 반복 작업이 남아 있다.
+- LogReg detailed native gate alternatives는14,745,571회 구성됐다. V59는 **이미 존재하는 ordinary/complete topology에만 원본 회로를 부착**한다. 새로운 부분 coverage를 만들거나 더 큰 예산을 추가하지 않는다.
+- 동일 snapshot의 exact fact·realization·relation identity와 witness를 유지하며, raw gates만 공유한다. Fixed-axis 거절, invariant overlay, 현재 root reference, graph DFS/cycle/pruning은 query별로 유지한다. Revision에는 이 payload를 옮기지 않는다.
+- 공개 두-root 반례 RED27/1(expected gate total2/actual4) → native focused206PASS. 같은 query 결과 재사용이 아니라 두 번째 graph도 실제로 구축하면서 추가 gate만0개다. 이후 replacement/eviction/revision/budget/fixed-boundary 검증을 추가 중이다.
+- **V59 미게시·성능 미측정**. Raw 회로 공유를 proof/viability 공유나20초 달성으로 보고하지 않는다.
+
 ## V58 중간 작업 제거 — 선택 통합 검증 통과
 
 - **211 classes / 1,638 tests / failures 0 / errors 0 / skipped 3**, package BUILD SUCCESS 2026-10-13 08:33:38+02.
 - Native gate option skeleton을 만든 뒤 dependency로 다시 복사하던 경로를 직접 바인딩으로 교체했다. Source·owner·witness·순서·query 고정 경계를 보존하며 fixture의 source handle 조회는 3→1이다. Native focused205 PASS, 독립 review CLEAR.
 - Two-list merge는 exact duplicate의 canonical 비교를 생략한다. K-way merge는 exact dedup 후 살아남은 clause의 missing key만 만든다. First donor와 indexed ordering/tie fallback/diagnostics 유지, focused64 PASS.
-- 새 cache나 예산 확대 없이 중간 객체·문자열 작업만 제거했다. 동일 Docker 실측은 다음 단계이며 **20초 달성은 아직 아니다**.
+- 새 cache나 예산 확대 없이 중간 객체·문자열 작업만 제거했다. 동일 Docker 실측 네 번도 모두 watchdog60/fullInitial receipt 없음으로 **20초 목표 미달성**이다.
 - 다음 구조 설계는 동일 snapshot의 native 원본 회로를 query마다 다시 만들지 않는 것이다. Raw 회로 공유와 query별 viability 증명을 구분하며, 아직 구현 완료로 보고하지 않는다.
 
 ## V57 실측 완료 — 작은 cache 확대만으로 해결되지 않음

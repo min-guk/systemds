@@ -143,6 +143,11 @@ final class NativePlacementContinuity {
 	private final long topologyMaxRows;
 	private long topologyRetainedRows;
 	private long topologyRetainedOwnerReads;
+	// Raw native circuits may borrow an existing topology host, never its coverage
+	// or viability authority. This resolver-local sidecar is not revision-migrated.
+	private final Map<CandidateTopology,NativeCircuitBucket> nativeCircuitTopologies =
+		new java.util.LinkedHashMap<>();
+	private long nativeCircuitRetainedUnits;
 	// Query-local fixed-boundary overlays are immutable for one candidate revision.
 	// Keep the overlaid list, rather than only its shared topology, so its lazy DFS
 	// schedule is also reused. Exact positive analysis handles and owner identity are
@@ -4190,13 +4195,20 @@ final class NativePlacementContinuity {
 	}
 
 	private boolean hasTopologyBudgetFor(int additionalEntries, long additionalRows) {
+		long retained = saturatedAdd(saturatedAdd(topologyRetainedRows, topologyRetainedOwnerReads),
+			saturatedAdd(fixedBoundaryOverlayRetainedRows, nativeCircuitRetainedUnits));
 		return (long)candidateTopologies.size() + fixedBoundaryOverlays.size() + additionalEntries
 				<= topologyMaxEntries
-			&& topologyRetainedRows + topologyRetainedOwnerReads
-				+ fixedBoundaryOverlayRetainedRows + additionalRows <= topologyMaxRows;
+			&& additionalRows >= 0 && retained <= topologyMaxRows
+			&& additionalRows <= topologyMaxRows - retained;
 	}
 
 	private void evictOptionalOverlaysForTopologyBudget(int additionalEntries, long additionalRows) {
+		// Ordinary topology and existing overlay policy have priority over optional
+		// raw-circuit construction reuse. Never evict an ordinary host to keep this.
+		while(!nativeCircuitTopologies.isEmpty()
+			&& !hasTopologyBudgetFor(additionalEntries, additionalRows))
+			removeNativeCircuitPayload(nativeCircuitTopologies.keySet().iterator().next());
 		while(!fixedBoundaryOverlays.isEmpty()
 			&& !hasTopologyBudgetFor(additionalEntries, additionalRows)) {
 			var oldest = fixedBoundaryOverlays.entrySet().iterator().next();
@@ -4451,6 +4463,29 @@ final class NativePlacementContinuity {
 		List<List<CandidateRealizationInputBinding>> axes = matchedRelation.commonAxes();
 		if(axes.isEmpty())
 			return null;
+		CandidateTopologyKey hostKey = residentTopologyKey(key, witness);
+		CandidateTopology host = hostKey == null ? null : candidateTopologies.get(hostKey);
+		NativeCircuitKey circuitKey = host == null ? null : new NativeCircuitKey(
+			matchedFact, matchedRealization, matchedRelation, witness);
+		if(metrics != null) {
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_CIRCUIT_LOOKUPS);
+			if(host == null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_CIRCUIT_NO_HOST);
+		}
+		NativeCircuitBucket bucket = host == null ? null : nativeCircuitTopologies.get(host);
+		CompiledNativeCircuit compiled = bucket == null ? null : bucket.recipes.get(circuitKey);
+		if(compiled != null) {
+			// Same check as the cold path: a fixed axis owner requires the legacy
+			// overlay semantics, not a filter of the published source choices.
+			if(compiled.axisOwners.stream().anyMatch(fixed::matches))
+				return null;
+			if(metrics != null) {
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_CIRCUIT_REUSES);
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_CIRCUIT_ROWS_AVOIDED,
+					compiled.gateRows);
+			}
+			return bindNativeCircuit(compiled, pinned, witness, fixed);
+		}
 		// One authoritative member supplies the existing rule-derived dependency
 		// skeleton. NativeContinuitySupportClauses differs across members only in its
 		// direct bindings/proof key, and candidateDependencySkeletons reads only those
@@ -4589,7 +4624,82 @@ final class NativePlacementContinuity {
 				roots.add(new SelectedCandidateProof(pinned,
 					List.copyOf(consumerDependencies), directGround, witness));
 		}
-		return roots.isEmpty() ? null : new NativeFactoredProofAlternatives(List.copyOf(roots));
+		if(roots.isEmpty())
+			return null;
+		if(metrics != null) {
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_CIRCUIT_BUILDS);
+			if(host == null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_CIRCUIT_BUILT_WITHOUT_HOST);
+		}
+		if(host != null)
+			rememberNativeCircuit(hostKey, host, circuitKey, ownerAxes.keySet(), invariant, roots);
+		return new NativeFactoredProofAlternatives(List.copyOf(roots));
+	}
+
+	private NativeFactoredProofAlternatives bindNativeCircuit(CompiledNativeCircuit compiled,
+		CandidateRealizationReference pinned, NativePoolWitness witness, FixedCandidateBoundary fixed) {
+		List<CandidateProofDependency> invariantDependencies = overlayDependencies(
+			compiled.invariant, compiled.defaultInvariant, fixed);
+		List<SelectedCandidateProof> alternatives = new ArrayList<>(compiled.branches.size());
+		for(List<CandidateProofDependency> branch : compiled.branches) {
+			List<CandidateProofDependency> dependencies =
+				new ArrayList<>(invariantDependencies.size() + branch.size());
+			dependencies.addAll(invariantDependencies);
+			dependencies.addAll(branch);
+			// Preserve this caller's root reference/witness, not the compiler's pin.
+			alternatives.add(new SelectedCandidateProof(pinned, List.copyOf(dependencies),
+				compiled.directGround, witness));
+		}
+		return new NativeFactoredProofAlternatives(alternatives);
+	}
+
+	private void rememberNativeCircuit(CandidateTopologyKey hostKey, CandidateTopology host,
+		NativeCircuitKey key, Set<CompiledHopKey> axisOwners,
+		List<CandidateDependencySkeleton> invariant, List<SelectedCandidateProof> roots) {
+		if(candidateTopologies.get(hostKey) != host)
+			return;
+		NativeCircuitBucket bucket = nativeCircuitTopologies.get(host);
+		if(bucket != null && bucket.recipes.containsKey(key))
+			return;
+		// Charge headers, owner/slot references, branches, and raw gate bodies. Gate
+		// body units are precomputed; admission never walks a dependency suffix.
+		long units = 5L + axisOwners.size() + 3L * invariant.size() + roots.size();
+		long gateRows = 0;
+		for(SelectedCandidateProof root : roots)
+			for(int position = invariant.size(); position < root.dependencies.size(); position++) {
+				CandidateAxisGate gate = root.dependencies.get(position).state().axisGate();
+				units = saturatedAdd(units, saturatedAdd(6L, gate.retainedUnits()));
+				gateRows = saturatedAdd(gateRows, gate.alternatives.size());
+			}
+		long additional = saturatedAdd(units, bucket == null ? 1 : 0);
+		if(!hasTopologyBudgetFor(0, additional)) {
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_CIRCUIT_CAPACITY_BYPASSES);
+			return;
+		}
+		CompiledNativeCircuit circuit = new CompiledNativeCircuit(
+			axisOwners, invariant, roots, gateRows);
+		if(bucket == null) {
+			bucket = new NativeCircuitBucket();
+			nativeCircuitTopologies.put(host, bucket);
+		}
+		bucket.recipes.put(key, circuit);
+		bucket.retainedUnits += units;
+		nativeCircuitRetainedUnits += additional;
+		if(metrics != null) {
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_CIRCUIT_ADMISSIONS);
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_CIRCUIT_ADMITTED_UNITS, additional);
+		}
+	}
+
+	private void removeNativeCircuitPayload(CandidateTopology host) {
+		NativeCircuitBucket removed = nativeCircuitTopologies.remove(host);
+		if(removed != null) {
+			nativeCircuitRetainedUnits -= removed.retainedUnits;
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_CIRCUIT_RELEASED_UNITS,
+					removed.retainedUnits);
+		}
 	}
 
 	/**
@@ -5082,6 +5192,7 @@ final class NativePlacementContinuity {
 		CandidateTopologyKey cacheKey = resident == null ? key : resident;
 		CandidateTopology prior = candidateTopologies.remove(cacheKey);
 		if(prior != null) {
+			removeNativeCircuitPayload(prior);
 			topologyRetainedRows -= prior.rows.size();
 			topologyRetainedOwnerReads -= prior.metadataOwnerReads.size();
 		}
@@ -5089,6 +5200,7 @@ final class NativePlacementContinuity {
 		while(!candidateTopologies.isEmpty()
 			&& !hasTopologyBudgetFor(1, rows + ownerReads)) {
 			var oldest = candidateTopologies.entrySet().iterator().next();
+			removeNativeCircuitPayload(oldest.getValue());
 			topologyRetainedRows -= oldest.getValue().rows.size();
 			topologyRetainedOwnerReads -= oldest.getValue().metadataOwnerReads.size();
 			candidateTopologies.remove(oldest.getKey());
@@ -8211,6 +8323,47 @@ final class NativePlacementContinuity {
 				return axisGate == that.axisGate;
 			return templateRoot == that.templateRoot && key == that.key
 				&& realizationHandle == that.realizationHandle && witness.equals(that.witness);
+		}
+	}
+
+	private record NativeCircuitKey(CandidateRuleFact fact, CandidateEmissionRealization realization,
+		NativeContinuitySupportClauses relation, NativePoolWitness witness) {
+		@Override public int hashCode() {
+			int hash = 31 * System.identityHashCode(fact) + System.identityHashCode(realization);
+			return 31 * (31 * hash + System.identityHashCode(relation)) + witness.hashCode();
+		}
+		@Override public boolean equals(Object other) {
+			return this == other || other instanceof NativeCircuitKey that
+				&& fact == that.fact && realization == that.realization
+				&& relation == that.relation && witness.equals(that.witness);
+		}
+	}
+
+	private static final class NativeCircuitBucket {
+		private final Map<NativeCircuitKey,CompiledNativeCircuit> recipes = new HashMap<>();
+		private long retainedUnits = 1; // nonempty host/map header
+	}
+
+	private static final class CompiledNativeCircuit {
+		private final List<CompiledHopKey> axisOwners;
+		private final List<CandidateDependencySkeleton> invariant;
+		private final List<CandidateProofDependency> defaultInvariant;
+		private final List<List<CandidateProofDependency>> branches;
+		private final boolean directGround;
+		private final long gateRows;
+
+		private CompiledNativeCircuit(Set<CompiledHopKey> axisOwners,
+			List<CandidateDependencySkeleton> invariant, List<SelectedCandidateProof> roots,
+			long gateRows) {
+			this.axisOwners = List.copyOf(axisOwners);
+			this.invariant = List.copyOf(invariant);
+			defaultInvariant = invariant.stream().map(skeleton -> new CandidateProofDependency(
+				skeleton.key(), skeleton.clausePinned(), skeleton.clausePinnedHandle(),
+				skeleton.witness(), skeleton.inputPosition(), false)).toList();
+			branches = roots.stream().map(root -> List.copyOf(
+				root.dependencies.subList(invariant.size(), root.dependencies.size()))).toList();
+			directGround = roots.get(0).directGround;
+			this.gateRows = gateRows;
 		}
 	}
 

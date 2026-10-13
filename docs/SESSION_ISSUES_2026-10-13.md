@@ -415,3 +415,19 @@
 - Fresh211classes /1,638tests /failures0 /errors0 /skipped3, package BUILD SUCCESS08:33:38+02. 전체 repo suite가 아닌 selected FedPlanner gate다.
 - 근거 `R/evidence/candidate-v58-package.log`. Native205/merge64 focused와 최종 통합 검증에서 의미 회귀 없음. Main fetch 추가 incoming 없음. 독립 최종 검토 이후 게시/봉인/동일Docker로 진행한다.
 - 이 통합 테스트 통과는 전체 planning 시간이나20초 달성의 증거가 아니다.
+
+### V58 실측 완료 — 여전히 공통 분석 미완료
+
+- published5483ecbc6f, sealb1504500acbd9588db0bb245e279268475d481070d6999597836d316223f316c. 네 fixedDocker trial 모두watchdog60/no fullInitial/owncontainersremoved.
+- OFF LR2154samples/direct62.86%/peak5.735GB; GLM2704samples/canonical9.32%/joint7.03%/peak3.040GB. DetailedLR gatebuild1,956,950/gaterows14,745,571. 외부 build overlap0/25 양phase(기존외부planner2개는존재), 자체heavy도trial이후로분리.
+- 근거 R/evidence/v58-analysis-driver.log, v58-planner-breakdown.txt, candidate-v58-detailed-topology-outcomes.json, v58-contention-summary.json. 샘플 비율이나 진행량 증가를 완료 속도 향상으로 해석하지 않는다.
+
+## V59 원본 native circuit 반복 구성 제거 — 진행 중
+
+- **원인**: ordinary rows는 topology 기본 표현을 재사용하지만 native accepted path는 매 query마다 대표 skeleton/axis partition/gate rows를 재구성한다. 이미 증명된 graph 결과를 넓게 공유하는 대신 immutable 원본 표현의 재구성을 제거한다.
+- **구현**: 기존 resident CandidateTopology에만 resolver-local exact recipe sidecar를 부착한다. Fact/realization/relation identity+witness가 일치해야 한다. Host coverage는 바꾸지 않고 새로운 native-only entry도 만들지 않는다. Gate는 raw alternatives 그대로이며 DFS/cycle/pruning/현재fixed-root overlay를 우회하지 않는다.
+- **예산/수명**: 기존 topology E/rows 안에서 headers·axis/invariant/branch/row/dependency 단위를 청구한다(실제 heap-byte 보장 아님). Optional admission은 기존 topology/overlay를 밀어내지 않으며 normal admission은 circuit을 먼저 반환한다. Host 교체/퇴출 시 정확히 반환하고 revision sidecar는 비운다. Admission은 gate의 미리 계산된 크기만 읽어 suffix graph를 재순회하지 않는다.
+- **수정 파일**: NativePlacementContinuity.java, SearchSpaceMetrics.java, NativeHybridUnpinnedTopologyTest.java, NativeSkeletonMaterializationMemoTest.java.
+- **검증**: 공개 ordinary warm-host/fixed-C→fixed-R 반례RED27/1expected2actual4, 초기focused206PASS. 두 query 모두 graph가 실행되며 proof/signature/source·owner identity가 explicit/cold와 같다. Lifecycle/예산/고정경계 회귀 추가 진행. Production 독립 검토 CLEAR; 최신 경계테스트 최종 검토 대기.
+- **주의**: 첫 lifecycle same-object assertion은 AnalysisScope 미설정으로 정상 reindex를 관측해 실패했다. 실제 stablehandle scope로 fixture를 수정했으며 해당 실패로그는 분리한다. Pure bind test의 nullgatekey는 source authority 증명이 아니라 raw invariant/current pin 바인딩 경계 검증이다.
+- **잔여**: 최종 통합 gate/동일Docker payoff 확인. 이미 resident host인 native query의 비율은 미측정이므로 실제 적용률을 새로운 NATIVE_CIRCUIT counters로 판단한다.20초/전체MLcoverage 미완료.

@@ -576,6 +576,285 @@ public class NativeHybridUnpinnedTopologyTest {
 	}
 
 	@Test
+	public void residentOrdinaryTopologySharesOneExactNativeCircuitAcrossDistinctRoots()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		Assert.assertEquals("the fixture must expose a genuine two-by-three native product",
+			6, scenario.product().size());
+
+		// Freeze explicit oracles before installing the lazy relation used by every
+		// measured resolver below.
+		scenario.install(true);
+		NativePlacementContinuity explicitResolver =
+			(NativePlacementContinuity)invoke(scenario.fixture(), "resolver", null, 0, 0L);
+		NativePlacementContinuity.CandidateSupportResult explicitPinned =
+			scenario.queryInstalled("m-choice", explicitResolver);
+		NativePlacementContinuity.CandidateSupportResult explicitOuter =
+			scenario.queryCurrent(explicitResolver);
+
+		NativeContinuitySupportClauses lazy = scenario.install(false);
+		SearchSpaceMetrics coldMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity cold = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", coldMetrics, 0, 0L);
+		Assert.assertNull(residentTopology(cold, scenario.childKey(), scenario.pool()));
+		long coldBuilds = directWork(coldMetrics, "NATIVE_AXIS_GATE_BUILDS");
+		NativePlacementContinuity.CandidateSupportResult coldPinned =
+			scenario.queryInstalled("m-choice", cold);
+		Assert.assertTrue("without an ordinary host the pinned native query builds exact gates",
+			directWork(coldMetrics, "NATIVE_AXIS_GATE_BUILDS") > coldBuilds);
+		coldBuilds = directWork(coldMetrics, "NATIVE_AXIS_GATE_BUILDS");
+		NativePlacementContinuity.CandidateSupportResult coldOuter = scenario.queryCurrent(cold);
+		Assert.assertTrue("a native-only query must not create reusable topology coverage",
+			directWork(coldMetrics, "NATIVE_AXIS_GATE_BUILDS") > coldBuilds);
+		Assert.assertNull("native queries alone cannot manufacture a topology host",
+			residentTopology(cold, scenario.childKey(), scenario.pool()));
+
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 0, 0L);
+		NativePlacementContinuity.CandidateSupportResult ordinary =
+			scenario.queryInstalled("a-choice", resolver);
+		Assert.assertFalse(ordinary.proofs().isEmpty());
+		Object host = residentTopology(resolver, scenario.childKey(), scenario.pool());
+		Assert.assertNotNull("the fixture explicitly prewarms an ordinary topology host", host);
+		Assert.assertTrue("the precondition is partial ordinary coverage", ordinaryOnly(host));
+		Assert.assertFalse("the prewarmed host does not claim the native realization row",
+			topologyContainsHandle(host,
+				candidateHandle(resolver, scenario.installedReference("m-choice"))));
+
+		long graphsBeforePinned = metrics.snapshot().proofGraphsBuilt();
+		long buildsBeforePinned = directWork(metrics, "NATIVE_AXIS_GATE_BUILDS");
+		NativePlacementContinuity.CandidateSupportResult actualPinned =
+			scenario.queryInstalled("m-choice", resolver);
+		long buildsAfterPinned = directWork(metrics, "NATIVE_AXIS_GATE_BUILDS");
+		Assert.assertFalse(actualPinned.proofs().isEmpty());
+		Assert.assertTrue("the first native root executes its own proof graph",
+			metrics.snapshot().proofGraphsBuilt() > graphsBeforePinned);
+		Assert.assertTrue("the first native root constructs the exact raw circuit",
+			buildsAfterPinned > buildsBeforePinned);
+
+		long graphsBeforeOuter = metrics.snapshot().proofGraphsBuilt();
+		NativePlacementContinuity.CandidateSupportResult actualOuter =
+			scenario.queryCurrent(resolver);
+		Assert.assertFalse(actualOuter.proofs().isEmpty());
+		Assert.assertTrue("the distinct outer root cannot reuse a completed result graph",
+			metrics.snapshot().proofGraphsBuilt() > graphsBeforeOuter);
+		Assert.assertEquals("the resident owner/witness host reuses the exact raw native circuit",
+			buildsAfterPinned, directWork(metrics, "NATIVE_AXIS_GATE_BUILDS"));
+
+		assertResultParity(explicitPinned, coldPinned, actualPinned);
+		assertResultParity(explicitOuter, coldOuter, actualOuter);
+		Assert.assertSame("circuit attachment must not replace its ordinary topology host",
+			host, residentTopology(resolver, scenario.childKey(), scenario.pool()));
+		Assert.assertEquals("all lazy queries remain representative-only",
+			1, lazy.materializedHandleCount());
+	}
+
+	@Test
+	public void tightTopologyBudgetBypassesNativeCircuitWithoutDisplacingItsHost()
+		throws Exception {
+		synchronized(NativeHybridUnpinnedTopologyTest.class) {
+			String entriesKey = "sysds.fedplanner.continuityTopology.maxEntries";
+			String rowsKey = "sysds.fedplanner.continuityTopology.maxRows";
+			String oldEntries = System.getProperty(entriesKey);
+			String oldRows = System.getProperty(rowsKey);
+			try {
+				Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+				scenario.install(true);
+				NativePlacementContinuity.CandidateSupportResult explicit =
+					scenario.queryInstalled("m-choice",
+						(NativePlacementContinuity)invoke(scenario.fixture(), "resolver", null, 0, 0L));
+				scenario.install(false);
+
+				System.setProperty(entriesKey, "8");
+				System.setProperty(rowsKey, "4096");
+				NativePlacementContinuity sizing = (NativePlacementContinuity)invoke(
+					scenario.fixture(), "resolver", null, 0, 0L);
+				scenario.queryInstalled("a-choice", sizing);
+				long hostUnits = resolverLong(sizing, "topologyRetainedRows")
+					+ resolverLong(sizing, "topologyRetainedOwnerReads")
+					+ resolverLong(sizing, "fixedBoundaryOverlayRetainedRows");
+				Assert.assertTrue("the ordinary host must consume a positive shared budget", hostUnits > 0);
+
+				System.setProperty(rowsKey, Long.toString(hostUnits));
+				SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+				NativePlacementContinuity tight = (NativePlacementContinuity)invoke(
+					scenario.fixture(), "resolver", metrics, 0, 0L);
+				scenario.queryInstalled("a-choice", tight);
+				Object host = residentTopology(tight, scenario.childKey(), scenario.pool());
+				Assert.assertNotNull(host);
+				Assert.assertTrue(ordinaryOnly(host));
+				Assert.assertEquals("the fixture leaves no shared row unit for an optional circuit",
+					hostUnits, resolverLong(tight, "topologyRetainedRows")
+						+ resolverLong(tight, "topologyRetainedOwnerReads")
+						+ resolverLong(tight, "fixedBoundaryOverlayRetainedRows"));
+
+				NativePlacementContinuity.CandidateSupportResult actual =
+					scenario.queryInstalled("m-choice", tight);
+				assertResultParity(explicit, actual, actual);
+				Assert.assertTrue("the exact query proceeds after optional retention is rejected",
+					directWork(metrics, "NATIVE_AXIS_GATE_BUILDS") > 0);
+				Assert.assertTrue(directWork(metrics, "NATIVE_CIRCUIT_CAPACITY_BYPASSES") > 0);
+				Assert.assertEquals(0, directWork(metrics, "NATIVE_CIRCUIT_ADMISSIONS"));
+				Assert.assertEquals(0, resolverLong(tight, "nativeCircuitRetainedUnits"));
+				Assert.assertEquals(0, resolverMapSize(tight, "nativeCircuitTopologies"));
+				Assert.assertSame("an optional circuit cannot displace its ordinary host",
+					host, residentTopology(tight, scenario.childKey(), scenario.pool()));
+			}
+			finally {
+				restoreProperty(entriesKey, oldEntries);
+				restoreProperty(rowsKey, oldRows);
+			}
+		}
+	}
+
+	@Test
+	public void topologyReplacementAndRevisionDropNativeCircuitPayloadExactly()
+		throws Exception {
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.beginAnalysisScope(metrics);
+		try {
+			Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+			scenario.install(false);
+			List<CandidateRuleFact> unchangedFacts = List.copyOf(candidateFacts(scenario.fixture()));
+			NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+				scenario.fixture(), "resolver", metrics, 0, 0L);
+			scenario.queryInstalled("a-choice", resolver);
+			Object partial = residentTopology(resolver, scenario.childKey(), scenario.pool());
+			Assert.assertNotNull(partial);
+			Assert.assertTrue(ordinaryOnly(partial));
+
+			scenario.queryInstalled("m-choice", resolver);
+			long firstRetained = resolverLong(resolver, "nativeCircuitRetainedUnits");
+			Assert.assertTrue(firstRetained > 0);
+			Assert.assertEquals(1, resolverMapSize(resolver, "nativeCircuitTopologies"));
+			Assert.assertEquals(firstRetained,
+				directWork(metrics, "NATIVE_CIRCUIT_ADMITTED_UNITS"));
+			Assert.assertTrue(directWork(metrics, "NATIVE_CIRCUIT_ADMISSIONS") > 0);
+
+			Object complete = genericCandidateTopology(resolver, scenario.childKey(), scenario.pool());
+			Assert.assertNotSame(partial, complete);
+			Assert.assertFalse(ordinaryOnly(complete));
+			Assert.assertSame(complete, residentTopology(resolver, scenario.childKey(), scenario.pool()));
+			Assert.assertEquals("host replacement releases every circuit and bucket unit",
+				0, resolverLong(resolver, "nativeCircuitRetainedUnits"));
+			Assert.assertEquals(0, resolverMapSize(resolver, "nativeCircuitTopologies"));
+			Assert.assertEquals("released accounting must exactly match the first admission",
+				firstRetained, directWork(metrics, "NATIVE_CIRCUIT_RELEASED_UNITS"));
+
+			long admissionsBeforeFresh = directWork(metrics, "NATIVE_CIRCUIT_ADMISSIONS");
+			scenario.queryInstalled("m-choice", resolver);
+			Assert.assertTrue("the replacement host admits a fresh resolver-local circuit",
+				directWork(metrics, "NATIVE_CIRCUIT_ADMISSIONS") > admissionsBeforeFresh);
+			Assert.assertEquals(1, resolverMapSize(resolver, "nativeCircuitTopologies"));
+			Assert.assertEquals("retained units equal cumulative admissions minus releases",
+				directWork(metrics, "NATIVE_CIRCUIT_ADMITTED_UNITS")
+					- directWork(metrics, "NATIVE_CIRCUIT_RELEASED_UNITS"),
+				resolverLong(resolver, "nativeCircuitRetainedUnits"));
+
+			NativePlacementContinuity revision = resolver.nextRevisionWithCompleteCandidateDelta(
+				unchangedFacts, Set.of());
+			Assert.assertSame("the complete immutable topology may migrate by identity",
+				complete, residentTopology(revision, scenario.childKey(), scenario.pool()));
+			Assert.assertEquals("native circuits are resolver-local and never revision-migrated",
+				0, resolverLong(revision, "nativeCircuitRetainedUnits"));
+			Assert.assertEquals(0, resolverMapSize(revision, "nativeCircuitTopologies"));
+			long graphs = metrics.snapshot().proofGraphsBuilt();
+			long admissions = directWork(metrics, "NATIVE_CIRCUIT_ADMISSIONS");
+			scenario.queryCurrent(revision);
+			Assert.assertTrue("disabled result memos force a fresh proof graph in the revision",
+				metrics.snapshot().proofGraphsBuilt() > graphs);
+			Assert.assertTrue("the migrated host may admit only a fresh destination circuit",
+				directWork(metrics, "NATIVE_CIRCUIT_ADMISSIONS") > admissions);
+			Assert.assertEquals(1, resolverMapSize(revision, "nativeCircuitTopologies"));
+		}
+		finally {
+			PlacementIdentity.endAnalysisScope();
+		}
+	}
+
+	@Test
+	public void warmNativeCircuitDoesNotBypassFixedAxisOwnerRejection()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		scenario.install(false);
+		CandidateRealizationReference nativeRoot = scenario.installedReference("m-choice");
+		CandidateRealizationReference fixedAxis = scenario.product().axes().get(0).get(0).source();
+		CompiledHopKey fixedOwner = fixedAxis.rule().parentOccurrence();
+
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity warm = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 0, 0L);
+		scenario.queryInstalled("a-choice", warm);
+		scenario.queryInstalled("m-choice", warm);
+		Assert.assertEquals(1, resolverMapSize(warm, "nativeCircuitTopologies"));
+		long reuses = directWork(metrics, "NATIVE_CIRCUIT_REUSES");
+		long builds = directWork(metrics, "NATIVE_AXIS_GATE_BUILDS");
+		Assert.assertNull("a fixed axis owner must keep the legacy rejection path",
+			nativeFactoredAlternatives(warm, scenario.childKey(), nativeRoot,
+				scenario.pool(), fixedOwner, fixedAxis));
+		Assert.assertEquals("rejected fixed-axis requests cannot consume the warm circuit",
+			reuses, directWork(metrics, "NATIVE_CIRCUIT_REUSES"));
+		Assert.assertEquals("rejection occurs before rebuilding any gate",
+			builds, directWork(metrics, "NATIVE_AXIS_GATE_BUILDS"));
+
+		NativePlacementContinuity cold = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", null, 0, 0L);
+		Assert.assertNull("the cold authoritative path rejects the same fixed axis",
+			nativeFactoredAlternatives(cold, scenario.childKey(), nativeRoot,
+				scenario.pool(), fixedOwner, fixedAxis));
+	}
+
+	@Test
+	public void topologyCacheAdmissionEvictionReleasesCircuitBeforeItsHost()
+		throws Exception {
+		synchronized(NativeHybridUnpinnedTopologyTest.class) {
+			String entriesKey = "sysds.fedplanner.continuityTopology.maxEntries";
+			String rowsKey = "sysds.fedplanner.continuityTopology.maxRows";
+			String oldEntries = System.getProperty(entriesKey);
+			String oldRows = System.getProperty(rowsKey);
+			try {
+				System.setProperty(entriesKey, "1");
+				System.setProperty(rowsKey, "4096");
+				Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+				scenario.install(false);
+				SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+				NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+					scenario.fixture(), "resolver", metrics, 0, 0L);
+				Object nativeHost = genericCandidateTopology(
+					resolver, scenario.childKey(), scenario.pool());
+				Assert.assertNotNull(nativeHost);
+				CandidateRealizationReference nativeRoot =
+					scenario.installedReference("m-choice");
+				Assert.assertNotNull("the exact validated seam attaches a real native circuit",
+					nativeFactoredAlternatives(
+						resolver, scenario.childKey(), nativeRoot, scenario.pool()));
+				long retained = resolverLong(resolver, "nativeCircuitRetainedUnits");
+				Assert.assertTrue(retained > 0);
+
+				CompiledHopKey replacementOwner =
+					scenario.product().axes().get(0).get(0).source().rule().parentOccurrence();
+				Object replacement = genericCandidateTopology(
+					resolver, replacementOwner, scenario.pool());
+				Assert.assertNotNull(replacement);
+				Assert.assertNull("the cache-admission seam evicts the old circuit host",
+					residentTopology(resolver, scenario.childKey(), scenario.pool()));
+				Assert.assertSame(replacement,
+					residentTopology(resolver, replacementOwner, scenario.pool()));
+				Assert.assertEquals(0, resolverMapSize(resolver, "nativeCircuitTopologies"));
+				Assert.assertEquals(0, resolverLong(resolver, "nativeCircuitRetainedUnits"));
+				Assert.assertEquals("eviction releases the exact bucket charge",
+					retained, directWork(metrics, "NATIVE_CIRCUIT_RELEASED_UNITS"));
+				Assert.assertTrue(metrics.snapshot().topologyCacheEvictions() > 0);
+			}
+			finally {
+				restoreProperty(entriesKey, oldEntries);
+				restoreProperty(rowsKey, oldRows);
+			}
+		}
+	}
+
+	@Test
 	public void failedCompleteUpgradeKeepsTheResidentOrdinaryPartialTopology()
 		throws Exception {
 		synchronized(NativeHybridUnpinnedTopologyTest.class) {
@@ -1618,10 +1897,16 @@ public class NativeHybridUnpinnedTopologyTest {
 	private static Object nativeFactoredAlternatives(NativePlacementContinuity resolver,
 		CompiledHopKey owner, CandidateRealizationReference pinned, DurableAnchorKey pool)
 		throws Exception {
+		return nativeFactoredAlternatives(resolver, owner, pinned, pool, owner, pinned);
+	}
+
+	private static Object nativeFactoredAlternatives(NativePlacementContinuity resolver,
+		CompiledHopKey owner, CandidateRealizationReference pinned, DurableAnchorKey pool,
+		CompiledHopKey fixedOwner, CandidateRealizationReference fixedPinned) throws Exception {
 		Method handleMethod = NativePlacementContinuity.class.getDeclaredMethod(
 			"candidateHandle", CandidateRealizationReference.class);
 		handleMethod.setAccessible(true);
-		int handle = (int)handleMethod.invoke(resolver, pinned);
+		int fixedHandle = (int)handleMethod.invoke(resolver, fixedPinned);
 		Method witnessMethod = NativePlacementContinuity.class.getDeclaredMethod(
 			"nativeWitness", DurableAnchorKey.class);
 		witnessMethod.setAccessible(true);
@@ -1630,7 +1915,7 @@ public class NativeHybridUnpinnedTopologyTest {
 		Constructor<?> fixedConstructor = fixedType.getDeclaredConstructor(
 			CompiledHopKey.class, CandidateRealizationReference.class, int.class);
 		fixedConstructor.setAccessible(true);
-		Object fixed = fixedConstructor.newInstance(owner, pinned, handle);
+		Object fixed = fixedConstructor.newInstance(fixedOwner, fixedPinned, fixedHandle);
 		Method method = NativePlacementContinuity.class.getDeclaredMethod(
 			"nativeFactoredProofAlternatives", CompiledHopKey.class,
 			CandidateRealizationReference.class, nested("NativePoolWitness"), fixedType);
@@ -1686,6 +1971,20 @@ public class NativeHybridUnpinnedTopologyTest {
 			"candidateHandle", CandidateRealizationReference.class);
 		method.setAccessible(true);
 		return (int)method.invoke(resolver, reference);
+	}
+
+	private static long resolverLong(NativePlacementContinuity resolver, String name)
+		throws Exception {
+		Field field = NativePlacementContinuity.class.getDeclaredField(name);
+		field.setAccessible(true);
+		return field.getLong(resolver);
+	}
+
+	private static int resolverMapSize(NativePlacementContinuity resolver, String name)
+		throws Exception {
+		Field field = NativePlacementContinuity.class.getDeclaredField(name);
+		field.setAccessible(true);
+		return ((Map<?,?>)field.get(resolver)).size();
 	}
 
 	private static Object genericCandidateTopology(NativePlacementContinuity resolver,
