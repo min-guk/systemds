@@ -32,6 +32,7 @@ final class NativeContinuitySupportClauses
 	private static final long MAX_AUTHORITY_RETENTION_UNITS = 1_000_000L;
 	private final CompiledHopKey owner;
 	private final List<NativePlacementContinuity.NativeSupportProduct> products;
+	private final NativePlacementContinuity.NativeSupportProduct dominantProduct;
 	private final NativeMultiHeaderIndex canonicalIndex;
 	private final DurableAnchorKey clauseWitness;
 	private final boolean clauseLayoutExact;
@@ -69,6 +70,7 @@ final class NativeContinuitySupportClauses
 		List<AuthorityDonor> authorityDonors) {
 		this.owner = Objects.requireNonNull(owner, "native continuity proof owner");
 		this.products = canonicalProducts(products);
+		this.dominantProduct = dominantProduct(this.products);
 		this.canonicalIndex = this.products.size() == 1 ? null : Objects.requireNonNull(
 			NativeMultiHeaderIndex.tryCreate(this.products), "native support relation index");
 		if(clauseWitness == null && !clauseLayoutExact)
@@ -194,6 +196,142 @@ final class NativeContinuitySupportClauses
 			return new ExplicitAuthorityOverlay(null, true);
 		return new ExplicitAuthorityOverlay(new NativeContinuitySupportClauses(owner, products,
 			clauseWitness, clauseLayoutExact, donors), false);
+	}
+
+	ExplicitHeaderUnion explicitNativeHeaderUnion(
+		java.util.Collection<CandidateRealizationSupportClause> explicitClauses) {
+		if(explicitClauses == null || explicitClauses.size() < MAX_AUTHORITY_DONORS)
+			return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_NOT_TYPED);
+		if(conditionalComplement())
+			return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_DOMAIN);
+		if(reusesExplicitHeaderPrefix(explicitClauses))
+			return new ExplicitHeaderUnion(this, HeaderUnionOutcome.REUSED);
+		int maximumArity = 0;
+		for(CandidateRealizationSupportClause clause : explicitClauses) {
+			if(clause.proofDependencies().size() != 1)
+				return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_NOT_TYPED);
+			var proof = clause.proofDependencies().get(0);
+			if(proof.kind() != PlacementProofKind.NATIVE_CONTINUITY
+				|| !proof.hasNativeContinuityDescriptor())
+				return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_NOT_TYPED);
+			if(proof.owner() != owner
+				|| clause.nativeWorkerPoolLayoutExact() != clauseLayoutExact
+				|| !Objects.equals(clause.nativeWorkerPoolWitness(), clauseWitness))
+				return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_CLAUSE);
+			var descriptor = proof.nativeContinuityDescriptorView();
+			if(!sameExactBindingAuthority(
+				descriptor.immediateBindings(), clause.inputBindings()))
+				return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_CLAUSE);
+			maximumArity = Math.max(maximumArity, clause.inputBindings().size());
+		}
+		if(headerRecoveryPreflightUnits(explicitClauses.size(), maximumArity)
+			> MAX_AUTHORITY_RETENTION_UNITS)
+			return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_CAP);
+
+		java.util.Map<HeaderAuthority,ExplicitHeaderRows> grouped = new java.util.LinkedHashMap<>();
+		for(CandidateRealizationSupportClause clause : explicitClauses) {
+			var descriptor = clause.proofDependencies().get(0).nativeContinuityDescriptorView();
+			if(descriptor.exactPartitionRanges() != dominantProduct.exactPartitionRanges()
+				|| !descriptor.outputWorkerPoolWitness()
+					.equals(dominantProduct.outputWorkerPoolWitness()))
+				return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_OUTPUT);
+			HeaderAuthority header = new HeaderAuthority(descriptor.externalSeed(),
+				descriptor.outputWorkerPoolWitness(), descriptor.exactPartitionRanges());
+			ExplicitHeaderRows rows = grouped.get(header);
+			if(rows == null) {
+				if(grouped.size() >= MAX_AUTHORITY_DONORS)
+					return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_CAP);
+				rows = new ExplicitHeaderRows(header);
+				grouped.put(header, rows);
+			}
+			if(!rows.add(clause))
+				return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_CLAUSE);
+		}
+		DominantAxisProjection currentProjection =
+			DominantAxisProjection.tryCreate(dominantProduct);
+		if(currentProjection == null)
+			return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_DOMAIN);
+		for(ExplicitHeaderRows rows : grouped.values())
+			if(!currentProjection.contains(rows))
+				return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_DOMAIN);
+		if(headerRecoveryAggregateUnits(explicitClauses.size(), maximumArity, grouped)
+			> MAX_AUTHORITY_RETENTION_UNITS)
+			return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_CAP);
+
+		List<RecoveredHeader> recovered = new java.util.ArrayList<>(grouped.size());
+		for(ExplicitHeaderRows rows : grouped.values()) {
+			RecoveredHeader header = rows.recover();
+			if(header == null)
+				return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_DOMAIN);
+			recovered.add(header);
+		}
+		boolean allReused = true;
+		List<NativePlacementContinuity.NativeSupportProduct> merged =
+			new java.util.ArrayList<>(products);
+		List<RecoveredHeader> additions = new java.util.ArrayList<>();
+		for(RecoveredHeader header : recovered) {
+			NativePlacementContinuity.NativeSupportProduct matching = null;
+			for(var product : merged)
+				if(product.sameHeaderAuthority(header.product())) {
+					matching = product;
+					break;
+				}
+			if(reusesExplicitHeader(header.product(), header.canonicalRows()))
+				continue;
+			allReused = false;
+			if(matching == null)
+				merged.add(header.product());
+			else if(!containsExactAxes(matching, header.product()))
+				return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_DOMAIN);
+			additions.add(header);
+		}
+		if(allReused)
+			return new ExplicitHeaderUnion(this, HeaderUnionOutcome.REUSED);
+		merged = dominantHeaderFamily(merged);
+		if(merged == null)
+			return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_DOMAIN);
+		NativeMultiHeaderIndex index = merged.size() == 1 ? null
+			: NativeMultiHeaderIndex.tryCreate(canonicalProducts(merged));
+		if(merged.size() > 1 && index == null)
+			return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_INDEX);
+		List<AuthorityDonor> donors = new java.util.ArrayList<>(
+			additions.size() + authoritySources().size());
+		NativePlacementContinuity.NativeSupportProduct dominant = dominantProduct(merged);
+		for(RecoveredHeader addition : additions) {
+			if(donors.size() + authoritySources().size() >= MAX_AUTHORITY_DONORS)
+				return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_CAP);
+			NativePlacementContinuity.NativeSupportProduct scope =
+				normalizeToDominant(dominant, addition.product());
+			if(scope == null)
+				return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_DOMAIN);
+			NativeContinuitySupportClauses leaf = new NativeContinuitySupportClauses(
+				owner, addition.product(), clauseWitness, clauseLayoutExact);
+			for(int ordinal = 0; ordinal < addition.canonicalRows().size(); ordinal++)
+				leaf.handles.put(ordinal, addition.canonicalRows().get(ordinal));
+				donors.add(new AuthorityDonor(leaf, scope));
+		}
+		donors.addAll(authoritySources());
+		donors = normalizeAuthorityDonors(dominant, donors);
+		if(donors == null)
+			return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_DOMAIN);
+		long indexUnits = index == null ? 0 : index.retainedMetadataUnits();
+		if(!withinAuthorityRetentionBudget(merged, indexUnits, donors))
+			return new ExplicitHeaderUnion(null, HeaderUnionOutcome.REJECT_CAP);
+		return new ExplicitHeaderUnion(new NativeContinuitySupportClauses(owner, merged,
+			clauseWitness, clauseLayoutExact, donors), HeaderUnionOutcome.ADMITTED);
+	}
+
+	record ExplicitHeaderUnion(NativeContinuitySupportClauses relation,
+		HeaderUnionOutcome outcome) { }
+	enum HeaderUnionOutcome {
+		ADMITTED,
+		REUSED,
+		REJECT_NOT_TYPED,
+		REJECT_CLAUSE,
+		REJECT_OUTPUT,
+		REJECT_DOMAIN,
+		REJECT_CAP,
+		REJECT_INDEX
 	}
 
 	record ExplicitAuthorityOverlay(NativeContinuitySupportClauses relation,
@@ -496,7 +634,13 @@ final class NativeContinuitySupportClauses
 		return products.size() == 1 ? java.util.Optional.of(products.get(0))
 			: java.util.Optional.empty();
 	}
-	List<List<CandidateRealizationInputBinding>> commonAxes() { return products.get(0).axes(); }
+	List<List<CandidateRealizationInputBinding>> commonAxes() { return dominantProduct.axes(); }
+	boolean hasUniformHeaderAxes() {
+		for(var product : products)
+			if(!dominantProduct.sameExactAxes(product))
+				return false;
+		return true;
+	}
 	boolean conditionalComplement() { return products.get(0).conditionalComplement(); }
 	List<List<CandidateRealizationInputBinding>> excludedExactAxes() {
 		return products.get(0).excludedExactAxes();
@@ -545,21 +689,51 @@ final class NativeContinuitySupportClauses
 		NativeContinuitySupportClauses relation, long coveredMembers) { }
 	java.util.Optional<NativeContinuitySupportClauses> restrictBindings(
 		Predicate<CandidateRealizationInputBinding> supported) {
-		List<List<CandidateRealizationInputBinding>> axes = commonAxes().stream()
-			.map(axis -> axis.stream().filter(supported).toList()).toList();
-		if(axes.stream().anyMatch(List::isEmpty))
-			return java.util.Optional.empty();
+		if(hasUniformHeaderAxes()) {
+			List<List<CandidateRealizationInputBinding>> axes = commonAxes().stream()
+				.map(axis -> axis.stream().filter(supported).toList()).toList();
+			if(axes.stream().anyMatch(List::isEmpty))
+				return java.util.Optional.empty();
+			boolean unchanged = true;
+			for(int axis = 0; axis < axes.size(); axis++)
+				unchanged &= axes.get(axis).size() == commonAxes().get(axis).size();
+			if(unchanged)
+				return java.util.Optional.of(this);
+			List<NativePlacementContinuity.NativeSupportProduct> restricted =
+				new java.util.ArrayList<>();
+			for(var product : products) {
+				var next = product.withAxes(axes);
+				if(next == null)
+					return java.util.Optional.empty();
+				restricted.add(next);
+			}
+			return java.util.Optional.of(new NativeContinuitySupportClauses(owner,
+				restricted, clauseWitness, clauseLayoutExact, restrictAuthorityDonors(restricted)));
+		}
 		boolean unchanged = true;
-		for(int axis = 0; axis < axes.size(); axis++)
-			unchanged &= axes.get(axis).size() == commonAxes().get(axis).size();
-		if(unchanged)
-			return java.util.Optional.of(this);
 		List<NativePlacementContinuity.NativeSupportProduct> restricted = new java.util.ArrayList<>();
 		for(var product : products) {
+			List<List<CandidateRealizationInputBinding>> axes = product.axes().stream()
+				.map(axis -> axis.stream().filter(supported).toList()).toList();
+			if(axes.stream().anyMatch(List::isEmpty)) {
+				unchanged = false;
+				continue;
+			}
+			for(int axis = 0; axis < axes.size(); axis++)
+				unchanged &= axes.get(axis).size() == product.axes().get(axis).size();
 			var next = product.withAxes(axes);
 			if(next == null)
 				return java.util.Optional.empty();
 			restricted.add(next);
+		}
+		if(restricted.isEmpty())
+			return java.util.Optional.empty();
+		if(unchanged)
+			return java.util.Optional.of(this);
+		if(restricted.size() > 1 && !restricted.get(0).conditionalComplement()) {
+			restricted = dominantHeaderFamily(restricted);
+			if(restricted == null)
+				return java.util.Optional.empty();
 		}
 		return java.util.Optional.of(new NativeContinuitySupportClauses(owner,
 			restricted, clauseWitness, clauseLayoutExact, restrictAuthorityDonors(restricted)));
@@ -696,7 +870,8 @@ final class NativeContinuitySupportClauses
 		NativeContinuitySupportClauses that) {
 		// Header growth and axis growth together need a correlated union. Only
 		// the identical complete header set can share this rectangular axis union.
-		if(products.size() != that.products.size())
+		if(!hasUniformHeaderAxes() || !that.hasUniformHeaderAxes()
+			|| products.size() != that.products.size())
 			return java.util.Optional.empty();
 		for(int header = 0; header < products.size(); header++)
 			if(!products.get(header).sameHeaderAuthority(that.products.get(header)))
@@ -747,13 +922,11 @@ final class NativeContinuitySupportClauses
 		if(that == null || owner != that.owner
 			|| clauseLayoutExact != that.clauseLayoutExact
 			|| !Objects.equals(clauseWitness, that.clauseWitness)
-			|| !products.get(0).sameExactAxes(that.products.get(0))
 			|| !products.get(0).sameOutputHeaderAuthority(that.products.get(0)))
 			return java.util.Optional.empty();
 		for(var product : products)
 			for(var candidate : that.products)
-				if(!product.sameExactAxes(candidate)
-					|| !product.sameOutputHeaderAuthority(candidate))
+				if(!product.sameOutputHeaderAuthority(candidate))
 					return java.util.Optional.empty();
 		List<NativePlacementContinuity.NativeSupportProduct> merged =
 			new java.util.ArrayList<>(products);
@@ -771,16 +944,164 @@ final class NativeContinuitySupportClauses
 		}
 		if(merged.size() == products.size())
 			return java.util.Optional.of(this);
+		boolean conditionalFamily = conditionalComplement();
+		boolean uniformAxes = true;
+		for(int index = 1; index < merged.size(); index++)
+			uniformAxes &= merged.get(0).sameExactAxes(merged.get(index));
+		boolean heterogeneousFamily = !conditionalFamily && !uniformAxes;
+		List<AuthorityDonor> donors = new java.util.ArrayList<>(authoritySources());
+		donors.addAll(that.authoritySources());
+		if(heterogeneousFamily) {
+			long projectedIndexUnits = nativeMultiHeaderIndexUnits(merged);
+			if(!withinTransientNormalizationBudget(merged, projectedIndexUnits, donors))
+				return java.util.Optional.empty();
+			merged = dominantHeaderFamily(merged);
+			if(merged == null)
+				return java.util.Optional.empty();
+		}
 		NativeMultiHeaderIndex mergedIndex =
 			NativeMultiHeaderIndex.tryCreate(canonicalProducts(merged));
 		if(mergedIndex == null)
 			return java.util.Optional.empty();
-		List<AuthorityDonor> donors = new java.util.ArrayList<>(authoritySources());
-		donors.addAll(that.authoritySources());
+		if(heterogeneousFamily) {
+			donors = normalizeAuthorityDonors(dominantProduct(merged), donors);
+			if(donors == null)
+				return java.util.Optional.empty();
+		}
 		if(!withinAuthorityRetentionBudget(merged, mergedIndex.retainedMetadataUnits(), donors))
 			return java.util.Optional.empty();
 		return java.util.Optional.of(new NativeContinuitySupportClauses(owner, merged,
 			clauseWitness, clauseLayoutExact, donors));
+	}
+
+	private static List<NativePlacementContinuity.NativeSupportProduct> dominantHeaderFamily(
+		List<NativePlacementContinuity.NativeSupportProduct> supplied) {
+		if(supplied.isEmpty() || supplied.stream().anyMatch(
+			NativePlacementContinuity.NativeSupportProduct::conditionalComplement))
+			return null;
+		NativePlacementContinuity.NativeSupportProduct dominant = dominantProduct(supplied);
+		DominantAxisProjection projection = DominantAxisProjection.tryCreate(dominant);
+		if(projection == null)
+			return null;
+		List<NativePlacementContinuity.NativeSupportProduct> normalized =
+			new java.util.ArrayList<>(supplied.size());
+		for(var product : supplied) {
+			var replacement = projection.normalize(product);
+			if(replacement == null)
+				return null;
+			normalized.add(replacement);
+		}
+		return List.copyOf(normalized);
+	}
+
+	private static NativePlacementContinuity.NativeSupportProduct normalizeToDominant(
+		NativePlacementContinuity.NativeSupportProduct dominant,
+		NativePlacementContinuity.NativeSupportProduct product) {
+		DominantAxisProjection projection = DominantAxisProjection.tryCreate(dominant);
+		return projection == null ? null : projection.normalize(product);
+	}
+
+	private static List<AuthorityDonor> normalizeAuthorityDonors(
+		NativePlacementContinuity.NativeSupportProduct dominant, List<AuthorityDonor> donors) {
+		DominantAxisProjection projection = DominantAxisProjection.tryCreate(dominant);
+		if(projection == null)
+			return null;
+		List<AuthorityDonor> normalized = new java.util.ArrayList<>(donors.size());
+		for(AuthorityDonor donor : donors) {
+			var scope = projection.normalize(donor.scope());
+			if(scope == null)
+				return null;
+			normalized.add(scope == donor.scope() ? donor : new AuthorityDonor(donor.relation(), scope));
+		}
+		return List.copyOf(normalized);
+	}
+
+	private static final class DominantAxisProjection {
+		private final NativePlacementContinuity.NativeSupportProduct dominant;
+		private final List<java.util.Map<ExactBindingAuthorityKey,
+			CandidateRealizationInputBinding>> axes;
+		private DominantAxisProjection(NativePlacementContinuity.NativeSupportProduct dominant,
+			List<java.util.Map<ExactBindingAuthorityKey,CandidateRealizationInputBinding>> axes) {
+			this.dominant = dominant;
+			this.axes = axes;
+		}
+		private static DominantAxisProjection tryCreate(
+			NativePlacementContinuity.NativeSupportProduct dominant) {
+			List<java.util.Map<ExactBindingAuthorityKey,CandidateRealizationInputBinding>> axes =
+				new java.util.ArrayList<>(dominant.axes().size());
+			for(List<CandidateRealizationInputBinding> axis : dominant.axes()) {
+				java.util.Map<ExactBindingAuthorityKey,CandidateRealizationInputBinding> indexed =
+					new java.util.HashMap<>();
+				for(CandidateRealizationInputBinding binding : axis)
+					if(indexed.put(ExactBindingAuthorityKey.of(binding), binding) != null)
+						return null;
+				axes.add(indexed);
+			}
+			return new DominantAxisProjection(dominant, List.copyOf(axes));
+		}
+		private NativePlacementContinuity.NativeSupportProduct normalize(
+			NativePlacementContinuity.NativeSupportProduct product) {
+			if(!dominant.sameOutputHeaderAuthority(product)
+				|| product.axes().size() != dominant.axes().size())
+				return null;
+			boolean unchanged = true;
+			List<List<CandidateRealizationInputBinding>> projectedAxes =
+				new java.util.ArrayList<>(product.axes().size());
+			for(int axis = 0; axis < product.axes().size(); axis++) {
+				List<CandidateRealizationInputBinding> source = product.axes().get(axis);
+				if(source.isEmpty() || dominant.axes().get(axis).isEmpty()
+					|| source.get(0).inputPosition()
+						!= dominant.axes().get(axis).get(0).inputPosition())
+					return null;
+				List<CandidateRealizationInputBinding> projected =
+					new java.util.ArrayList<>(source.size());
+				for(CandidateRealizationInputBinding binding : source) {
+					CandidateRealizationInputBinding canonical = axes.get(axis).get(
+						ExactBindingAuthorityKey.of(binding));
+					if(canonical == null)
+						return null;
+					unchanged &= binding == canonical;
+					projected.add(canonical);
+				}
+				projectedAxes.add(List.copyOf(projected));
+			}
+			if(unchanged)
+				return product;
+			var replacement = product.withAxes(List.copyOf(projectedAxes));
+			return replacement != null && replacement.size() == product.size()
+				? replacement : null;
+		}
+		private boolean contains(
+			NativePlacementContinuity.NativeSupportProduct product) {
+			if(!dominant.sameOutputHeaderAuthority(product)
+				|| product.axes().size() != axes.size())
+				return false;
+			for(int axis = 0; axis < axes.size(); axis++) {
+				List<CandidateRealizationInputBinding> source = product.axes().get(axis);
+				if(source.isEmpty() || dominant.axes().get(axis).isEmpty()
+					|| source.get(0).inputPosition()
+						!= dominant.axes().get(axis).get(0).inputPosition())
+					return false;
+				for(CandidateRealizationInputBinding binding : source)
+					if(!axes.get(axis).containsKey(ExactBindingAuthorityKey.of(binding)))
+						return false;
+			}
+			return true;
+		}
+		private boolean contains(ExplicitHeaderRows rows) {
+			if(rows.axes.size() != axes.size() || rows.positions.size() != axes.size())
+				return false;
+			for(int axis = 0; axis < axes.size(); axis++) {
+				if(dominant.axes().get(axis).isEmpty()
+					|| rows.positions.get(axis)
+						!= dominant.axes().get(axis).get(0).inputPosition())
+					return false;
+				for(ExactBindingAuthorityKey binding : rows.axes.get(axis).keySet())
+					if(!axes.get(axis).containsKey(binding))
+						return false;
+			}
+			return true;
+		}
 	}
 	/** Complete-key union: finish each proof header before comparing shared domains. */
 	static java.util.Optional<NativeContinuitySupportClauses> unionSameAxesHeaderGroup(
@@ -845,6 +1166,211 @@ final class NativeContinuitySupportClauses
 	}
 	private record HeaderAuthority(DurableAnchorKey seed, DurableAnchorKey output,
 		boolean exactRanges) { }
+	private record RecoveredHeader(NativePlacementContinuity.NativeSupportProduct product,
+		List<CandidateRealizationSupportClause> canonicalRows) { }
+	private static final class ExplicitHeaderRows {
+		private final HeaderAuthority header;
+		private final List<Integer> positions = new java.util.ArrayList<>();
+		private final List<java.util.Map<ExactBindingAuthorityKey,
+			CandidateRealizationInputBinding>> axes = new java.util.ArrayList<>();
+		private final java.util.Map<CandidateRealizationSupportClause,
+			CandidateRealizationSupportClause> rows = new java.util.LinkedHashMap<>();
+		private ExplicitHeaderRows(HeaderAuthority header) { this.header = header; }
+		private boolean add(CandidateRealizationSupportClause clause) {
+			List<CandidateRealizationInputBinding> bindings = clause.inputBindings();
+			if(positions.isEmpty()) {
+				int prior = -1;
+				for(CandidateRealizationInputBinding binding : bindings) {
+					if(binding.inputPosition() <= prior)
+						return false;
+					prior = binding.inputPosition();
+					positions.add(prior);
+					axes.add(new java.util.LinkedHashMap<>());
+				}
+			}
+			if(bindings.size() != positions.size())
+				return false;
+			for(int axis = 0; axis < bindings.size(); axis++) {
+				CandidateRealizationInputBinding binding = bindings.get(axis);
+				if(binding.inputPosition() != positions.get(axis))
+					return false;
+				axes.get(axis).putIfAbsent(ExactBindingAuthorityKey.of(binding), binding);
+			}
+			rows.putIfAbsent(clause, clause);
+			return true;
+		}
+		private RecoveredHeader recover() {
+			if(rows.isEmpty() || axes.isEmpty())
+				return null;
+			long cardinality = 1;
+			List<List<CandidateRealizationInputBinding>> recoveredAxes =
+				new java.util.ArrayList<>(axes.size());
+			try {
+				for(var axis : axes) {
+					if(axis.isEmpty())
+						return null;
+					cardinality = Math.multiplyExact(cardinality, axis.size());
+					recoveredAxes.add(axis.values().stream()
+						.sorted(PlacementAnalysis.canonicalComparator()).toList());
+				}
+			}
+			catch(ArithmeticException overflow) {
+				return null;
+			}
+			if(cardinality != rows.size())
+				return null;
+			var product = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				header.seed(), header.output(), header.exactRanges(), recoveredAxes);
+			if(product == null || product.size() != rows.size())
+				return null;
+			List<CandidateRealizationSupportClause> canonical;
+			try {
+				canonical = PlacementAnalysis.canonicalExplicitSupportClauses(rows.values());
+			}
+			catch(IllegalArgumentException duplicate) {
+				return null;
+			}
+			return new RecoveredHeader(product, canonical);
+		}
+	}
+
+	private boolean reusesExplicitHeader(
+		NativePlacementContinuity.NativeSupportProduct product,
+		List<CandidateRealizationSupportClause> canonicalRows) {
+		for(AuthorityDonor donor : authorityDonors) {
+			if(!donor.scope().sameHeaderAuthority(product))
+				continue;
+			NativePlacementContinuity.NativeSupportProduct leaf =
+				donor.relation().singleProduct().orElse(null);
+			if(!donor.scope().sameExactAuthority(product) || leaf == null
+				|| !leaf.sameExactAuthority(product)
+				|| donor.relation().handles.size() != canonicalRows.size())
+				return false;
+			boolean same = true;
+			for(int ordinal = 0; ordinal < canonicalRows.size(); ordinal++)
+				same &= donor.relation().handles.get(ordinal) == canonicalRows.get(ordinal);
+			return same;
+		}
+		return false;
+	}
+
+	private static boolean sameExactBindingAuthority(
+		List<CandidateRealizationInputBinding> left,
+		List<CandidateRealizationInputBinding> right) {
+		if(left.size() != right.size())
+			return false;
+		for(int index = 0; index < left.size(); index++)
+			if(!ExactBindingAuthorityKey.of(left.get(index))
+				.equals(ExactBindingAuthorityKey.of(right.get(index))))
+				return false;
+		return true;
+	}
+
+	private static boolean containsExactAxes(
+		NativePlacementContinuity.NativeSupportProduct containing,
+		NativePlacementContinuity.NativeSupportProduct contained) {
+		DominantAxisProjection projection = DominantAxisProjection.tryCreate(containing);
+		return projection != null && projection.contains(contained);
+	}
+
+	private boolean reusesExplicitHeaderPrefix(
+		java.util.Collection<CandidateRealizationSupportClause> explicitClauses) {
+		if(authorityDonors.isEmpty())
+			return false;
+		int[] consumed = new int[authorityDonors.size()];
+		for(CandidateRealizationSupportClause clause : explicitClauses) {
+			if(clause.proofDependencies().size() != 1)
+				return false;
+			var proof = clause.proofDependencies().get(0);
+			if(proof.kind() != PlacementProofKind.NATIVE_CONTINUITY
+				|| !proof.hasNativeContinuityDescriptor() || proof.owner() != owner
+				|| clause.nativeWorkerPoolLayoutExact() != clauseLayoutExact
+				|| !Objects.equals(clause.nativeWorkerPoolWitness(), clauseWitness))
+				return false;
+			var descriptor = proof.nativeContinuityDescriptorView();
+			if(!sameExactBindingAuthority(
+				descriptor.immediateBindings(), clause.inputBindings()))
+				return false;
+			int matching = -1;
+			for(int index = 0; index < authorityDonors.size(); index++) {
+				var scope = authorityDonors.get(index).scope();
+				if(scope.exactPartitionRanges() == descriptor.exactPartitionRanges()
+					&& scope.externalSeed().equals(descriptor.externalSeed())
+					&& scope.outputWorkerPoolWitness()
+						.equals(descriptor.outputWorkerPoolWitness())) {
+					matching = index;
+					break;
+				}
+			}
+			if(matching < 0)
+				return false;
+			AuthorityDonor donor = authorityDonors.get(matching);
+			if(consumed[matching] == 0) {
+				var leaf = donor.relation().singleProduct().orElse(null);
+				if(leaf == null || !donor.scope().sameExactAuthority(leaf)
+					|| donor.relation().handles.size() != donor.relation().size())
+					return false;
+			}
+			int ordinal = consumed[matching]++;
+			if(ordinal >= donor.relation().size()
+				|| donor.relation().handles.get(ordinal) != clause)
+				return false;
+		}
+		for(int index = 0; index < consumed.length; index++)
+			if(consumed[index] != 0
+				&& consumed[index] != authorityDonors.get(index).relation().size())
+				return false;
+		return true;
+	}
+
+	private long headerRecoveryPreflightUnits(int rows, int maximumArity) {
+		try {
+			long retained = authorityRetentionUnits(products,
+				canonicalIndex == null ? 0 : canonicalIndex.retainedMetadataUnits(),
+				authoritySources());
+			long perRow = Math.addExact(Math.multiplyExact(3L, maximumArity), 12L);
+			return Math.addExact(retained, Math.multiplyExact((long)rows, perRow));
+		}
+		catch(ArithmeticException overflow) {
+			return Long.MAX_VALUE;
+		}
+	}
+
+	private long headerRecoveryAggregateUnits(int rowCount, int maximumArity,
+		java.util.Map<HeaderAuthority,ExplicitHeaderRows> grouped) {
+		try {
+			long units = authorityRetentionUnits(products,
+				canonicalIndex == null ? 0 : canonicalIndex.retainedMetadataUnits(),
+				authoritySources());
+			units = Math.addExact(units, Math.multiplyExact((long)rowCount,
+				Math.addExact(Math.multiplyExact(6L, maximumArity), 24L)));
+			// Recovery constructs a validated multi-header index and the result constructor
+			// constructs its retained copy. Charge both, including long FULL headers.
+			long existingIndexUnits = nativeMultiHeaderIndexUnits(products);
+			if(existingIndexUnits == Long.MAX_VALUE)
+				return Long.MAX_VALUE;
+			units = Math.addExact(units, Math.multiplyExact(2L, existingIndexUnits));
+			long options = 0;
+			for(ExplicitHeaderRows rows : grouped.values()) {
+				for(var axis : rows.axes)
+					options = Math.addExact(options, axis.size());
+				long headerChars = Math.addExact(
+					rows.header.seed().normalizedSignature().length(),
+					Math.addExact(rows.header.output().normalizedSignature().length(), 80L));
+				long maximumBuckets = dominantProduct.bindingLengthCounts().size();
+				long bucketUnits = Math.multiplyExact(maximumBuckets,
+					Math.addExact(headerChars, 21L));
+				units = Math.addExact(units, Math.multiplyExact(2L, bucketUnits));
+			}
+			units = Math.addExact(units, Math.multiplyExact(8L, options));
+			units = Math.addExact(units, Math.multiplyExact(
+				4L * grouped.size(), dominantProduct.retainedMetadataUnits()));
+			return units;
+		}
+		catch(ArithmeticException overflow) {
+			return Long.MAX_VALUE;
+		}
+	}
 
 	private List<AuthorityDonor> authoritySources() {
 		return authorityDonors.isEmpty()
@@ -870,6 +1396,55 @@ final class NativeContinuitySupportClauses
 		}
 		return List.copyOf(restricted);
 	}
+	private static boolean withinTransientNormalizationBudget(
+		List<NativePlacementContinuity.NativeSupportProduct> products,
+		long relationMetadataUnits, List<AuthorityDonor> donors) {
+		if(relationMetadataUnits == Long.MAX_VALUE || donors.size() > MAX_AUTHORITY_DONORS)
+			return false;
+		try {
+			long units = authorityRetentionUnits(products, relationMetadataUnits, donors);
+			// The validated index and the result constructor's retained copy coexist.
+			units = Math.addExact(units, relationMetadataUnits);
+			for(var product : products)
+				units = Math.addExact(units,
+					Math.addExact(product.retainedMetadataUnits(), product.size()));
+			for(AuthorityDonor donor : donors)
+				units = Math.addExact(units, donor.scope().retainedMetadataUnits());
+			return units <= MAX_AUTHORITY_RETENTION_UNITS;
+		}
+		catch(ArithmeticException overflow) {
+			return false;
+		}
+	}
+
+	private static long nativeMultiHeaderIndexUnits(
+		List<NativePlacementContinuity.NativeSupportProduct> products) {
+		try {
+			long units = 2;
+			int bucketCount = 0;
+			for(var product : products) {
+				long headerLength = product.externalSeed().normalizedSignature().length()
+					+ "|outputPool=".length()
+					+ product.outputWorkerPoolWitness().normalizedSignature().length()
+					+ "|partitionRanges=".length()
+					+ (product.exactPartitionRanges() ? "exact".length() : "dynamic".length())
+					+ "|bindings=[".length();
+				for(int bindingLength : product.bindingLengthCounts().keySet()) {
+					if(bucketCount++ >= NativeMultiHeaderIndex.MAXIMUM_HEADER_BUCKETS)
+						return Long.MAX_VALUE;
+					int totalLength = Math.addExact(
+						product.fixedAuthorityLength(), bindingLength);
+					units = Math.addExact(units, Math.addExact(5L, Math.addExact(
+						headerLength, Integer.toString(totalLength).length() + 1L)));
+				}
+			}
+			return units;
+		}
+		catch(ArithmeticException overflow) {
+			return Long.MAX_VALUE;
+		}
+	}
+
 	private static boolean withinAuthorityRetentionBudget(
 		List<NativePlacementContinuity.NativeSupportProduct> products,
 		List<AuthorityDonor> donors) {
@@ -939,8 +1514,8 @@ final class NativeContinuitySupportClauses
 				scope.axes().size());
 			for(int axis = 0; axis < scope.axes().size(); axis++) {
 				List<CandidateRealizationInputBinding> retained = new java.util.ArrayList<>();
-				for(CandidateRealizationInputBinding binding : scope.axes().get(axis))
-					if(supportedProduct.containsExactBinding(axis, binding))
+				for(CandidateRealizationInputBinding binding : supportedProduct.axes().get(axis))
+					if(scope.containsExactBinding(axis, binding))
 						retained.add(binding);
 				if(retained.isEmpty())
 					return null;
@@ -974,9 +1549,9 @@ final class NativeContinuitySupportClauses
 	}
 	String authoritySignature() {
 		return owner.normalizedSignature() + "|headers=" + products.stream()
-			.map(NativePlacementContinuity.NativeSupportProduct::headerAuthoritySignature).toList()
-			+ "|axes=" + commonAxes().stream().map(axis -> axis.stream()
-				.map(CandidateRealizationInputBinding::normalizedSignature).toList()).toList()
+			.map(product -> product.headerAuthoritySignature() + "|axes="
+				+ product.axes().stream().map(axis -> axis.stream()
+					.map(CandidateRealizationInputBinding::normalizedSignature).toList()).toList()).toList()
 			+ (conditionalComplement() ? "|excludeExact=" + excludedExactAxes().stream()
 				.map(axis -> axis.stream().map(CandidateRealizationInputBinding::normalizedSignature)
 					.toList()).toList() : "")
@@ -1075,6 +1650,15 @@ final class NativeContinuitySupportClauses
 			if(canonical.get(index - 1).sameHeaderAuthority(canonical.get(index)))
 				throw new IllegalArgumentException("Duplicate native proof header");
 		return List.copyOf(canonical);
+	}
+
+	private static NativePlacementContinuity.NativeSupportProduct dominantProduct(
+		List<NativePlacementContinuity.NativeSupportProduct> products) {
+		NativePlacementContinuity.NativeSupportProduct dominant = products.get(0);
+		for(int index = 1; index < products.size(); index++)
+			if(products.get(index).size() > dominant.size())
+				dominant = products.get(index);
+		return dominant;
 	}
 
 	private record ExactBindingAuthorityKey(CandidateRealizationInputBinding binding,

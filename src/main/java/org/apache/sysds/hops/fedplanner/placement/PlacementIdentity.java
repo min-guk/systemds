@@ -473,7 +473,7 @@ public final class PlacementIdentity {
 		private final PlacementProofKind kind;
 		private final CompiledHopKey owner;
 		private final String authoritySignature;
-		private final NativeContinuityDescriptor nativeContinuityDescriptor;
+		private final NativeContinuityDescriptorView nativeContinuityDescriptor;
 		private final int hash;
 
 		public PlacementProofKey(PlacementProofKind kind, CompiledHopKey owner,
@@ -487,7 +487,7 @@ public final class PlacementIdentity {
 
 		private PlacementProofKey(PlacementProofKind kind, CompiledHopKey owner,
 			String authoritySignature, int authorityHash,
-			NativeContinuityDescriptor nativeContinuityDescriptor) {
+			NativeContinuityDescriptorView nativeContinuityDescriptor) {
 			this.kind = Objects.requireNonNull(kind, "kind");
 			this.owner = owner;
 			this.authoritySignature = requireText(authoritySignature, "authoritySignature");
@@ -509,7 +509,7 @@ public final class PlacementIdentity {
 			int authorityHash = proof.normalizedSignatureHash();
 			String authority = proof.normalizedSignature();
 			return new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY, owner,
-				authority, authorityHash, new NativeContinuityDescriptor(proof.externalSeed(),
+				authority, authorityHash, new NativeContinuityDescriptorView(proof.externalSeed(),
 					proof.outputWorkerPoolWitness(), proof.exactPartitionRanges(),
 					proof.immediateBindings()));
 		}
@@ -518,6 +518,9 @@ public final class PlacementIdentity {
 		int nativeContinuityStructuralHash() { return nativeContinuityDescriptor.hashCode(); }
 		List<CandidateRealizationInputBinding> nativeContinuityImmediateBindings() {
 			return nativeContinuityDescriptor.immediateBindings();
+		}
+		NativeContinuityDescriptorView nativeContinuityDescriptorView() {
+			return nativeContinuityDescriptor;
 		}
 		boolean matchesNativeContinuityDescriptor(
 			NativePlacementContinuity.NativeContinuityProof proof) {
@@ -531,10 +534,10 @@ public final class PlacementIdentity {
 					.equals(proof.immediateBindings());
 		}
 
-		private record NativeContinuityDescriptor(DurableAnchorKey externalSeed,
+		record NativeContinuityDescriptorView(DurableAnchorKey externalSeed,
 			DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
 			List<CandidateRealizationInputBinding> immediateBindings) {
-			private NativeContinuityDescriptor {
+			NativeContinuityDescriptorView {
 				Objects.requireNonNull(externalSeed, "externalSeed");
 				Objects.requireNonNull(outputWorkerPoolWitness, "outputWorkerPoolWitness");
 				immediateBindings = PlacementAnalysis.sharedAlreadyCanonicalComparableList(

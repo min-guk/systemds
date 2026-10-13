@@ -615,3 +615,19 @@
 - OFFLR2530samples/direct62.29%/peak5.027GB;GLM2653/direct23.22%/canonical7.24%/joint5.96%/peak3.471GB. Detailed1889/4.801GB,2562/3.606GB. 부분 진행량·샘플 변화로 전체 speedup을 주장하지 않는다.
 - 다음은 **다른 FULL native header들을 독립 support 대안으로 보존하면서 typed explicit blocks를 압축할 수 있는지** 검토한다. 현재 single-header subset donor 경로의 조건을 푸는 것이 아니라, 별개 header의 정확한 합집합·canonical ordering·원본 authority를 지원하는 방향이다. GLM multiproof는 auxiliary proof를 보존하는 별도 OR 표현이 필요하며 뒤에서 다룬다.
 - 근거 R/evidence/candidate-v63-detailed-topology-outcomes.json, v63-analysis-driver.log, v63-planner-breakdown.txt, v63-contention-summary.json. Externalbuild 양phase0/25; 기존externalplanner2개25/25, 자체heavy 분리.
+
+## V64 실제 dominant rectangle을 갖는 FULL-header family — 구현 중
+
+- **문제/원인**: LogReg의 주요 거절은 서로 다른 typed FULL proof header다. 현재 index 자체는 header별 다른 domain을 저장할 수 있지만 commonAxes 기반 continuity/fixedpoint 소비자는 하나의 실제 직교 domain을 요구한다. 같은 축 조건만 지우면 dependencies와 invalidation count가 틀린다.
+- **제한된 해결**: 각 header의 원래 직교 domain은 유지하고, 다른 모든 domain을 exact-owned subset으로 포함하는 **실제 product 하나**가 있을 때만 이 product를 투영 domain으로 쓴다. Seed별64+81은145이지162가 아니다. 비포함/nonnested/conditional/output authority 차이·legacy/multiproof는 기존fallback. 합법 후보나 proof 조건을 완화하지 않는다.
+- **필수 수정**: NCS dominant certificate/원본 handle 보존/각 header 독립 restriction·signature, normalized option identity, PSR header별livecount와 incidence, PRC union크기 coverage, PA final explicit-prefix replay. 기존64donor/1M 예산 안에 전체 grouping/index/staging/보관량을 사전 계산한다.
+- **RED**: V63 class 위26tests/3의도실패: nested8×8+9×9 native union 없음, 실제binder64+81 및81+81이 각각 기대0 대신81scalar 소비. Header별전체oracle/hash/원본identity와138등이 아닌정확145/162를 검증한다. 근거 R/evidence/v64-dominant-header-red.log.
+- **상태/회귀 위험**: 설계 독립검토CLEAR, 구현 진행중이며 실제diff/테스트/통합gate/실측 미완료. Fixedpoint option 하나제거 시 공통headerCount를 곱하면 과다계수하므로 perheader9/17 및 identity-backed restriction을 회귀로 확인한다. 함수루프/fixed-owner query의 기존계약 유지.
+- 계획 R/V64_DOMINANT_HEADER_FAMILY_PLAN.md. 전체20초·전체MLcoverage 미완료.
+
+- V64 독립 production 검토 CLEAR. 검토에서 실제 header-bucket 상한 대신 임의256을 쓰던 예산, normalized scope/index의 임시 복사 누락, 앞선 partial donor를 건너뛰는 replay, conditional/uniform 기존 경로 회귀를 발견해 수정했다. 새 recovery는 기존 dominant의 정확한 subset임을 **product 생성 전에** 증명하고 실제 length-bucket 수와 동시 index 복사2개까지 기존1Munits 안에 사전 계수한다. 기존 동일축 경로는 추가 normalization 없이 유지한다.
+- 포화 상태의 동일 원본 prefix replay는 성장 예산 전 재사용하며 first same-header donor만 인정한다. Immutable donor의 domain 검증은 row마다 반복하지 않고 donor당1회 수행한다. 생산6파일 overlay 컴파일 PASS(incubator 경고만). PSR per-header fixedpoint 및 새 recovery budget 경계 회귀를 마무리한 뒤 fresh gate를 실행한다. 근거 `R/evidence/v64-production-review.txt`, `v64-production-compile.log`.
+- Final focused **340PASS/1ignored (2.82s)**, production와 경계 테스트 independent CLEAR. 최초 추가 fixture2개는 서로 다른 source owner를 한 축에 넣거나 single-header 전용 overlay를 multi-header에 호출해 실패했다. **생산 guard를 풀지 않고 fixture를 고쳤으며** 실패 로그를 `v64-focused-before-fixture-repair.log`에 보존했다. 최종 테스트는 공유option5/후보전용option3의 queue invalidation 및 초기 dead option, 전체ordered oracle/원본identity, donor64 포화 replay, donor cap과 구별된 긴 FULL-header 임시index 예산을 검증한다.
+- Read-only upstream 조사: 초기 DURABLE_MAP singleton의 `worthwhile` 표현 선택과 admission 실패 scalar publication이 retained explicit의 가능한 최초 생성 지점이다. `canonicalExplicitSupportClauses`는 이미 펼쳐진 row를 정렬할 뿐이며, auxiliary durable proof append는 literal FEDERATED DataOp 한정이다. 실제 원인 비중은 **미계측**이므로 V64 적용 결과 후 판단한다. 근거 `R/evidence/native-explicit-origin-review.txt`.
+
+- V64 fresh 선택 gate **211classes/1669tests/0fail/0error/3skip**, package BUILD SUCCESS11:47:20+02. Frozen production/test hash 검증 후 origin/main에 게시하고 동일Docker4회를 측정한다. 단위/선택gate 통과는20초 달성 또는 전체repo suite 통과가 아니다.

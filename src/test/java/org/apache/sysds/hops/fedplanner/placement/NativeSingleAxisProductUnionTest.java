@@ -824,6 +824,27 @@ public class NativeSingleAxisProductUnionTest {
 		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityRejectReason.NONE,
 			denseRetentionRejected.denseRejectReason());
 		Assert.assertEquals(0, wide.materializedHandleCount());
+
+		NativeContinuitySupportClauses typedCandidate = relation(owner,
+			pool("typed-retention-candidate"), output,
+			List.of(List.of(left.get(0), left.get(1)), List.of(right.get(0))));
+		List<CandidateRealizationSupportClause> typedHeaders = new ArrayList<>();
+		String longHeader = "h".repeat(12_000);
+		for(int header = 0; header < 63; header++) {
+			List<CandidateRealizationInputBinding> headerLeft = header == 0
+				? List.of(directLike(left.get(0)), directLike(left.get(1)))
+				: List.of(directLike(left.get(0)));
+			typedHeaders.addAll(explicit(owner, pool("typed-retention-" + header + longHeader),
+				output, List.of(headerLeft, List.of(directLike(right.get(0))))));
+		}
+		Assert.assertEquals("63 recovered headers contribute 64 rows and fit the donor cap",
+			64, typedHeaders.size());
+		var typedRetentionRejected = typedCandidate.explicitNativeHeaderUnion(typedHeaders);
+		Assert.assertEquals("two simultaneous multi-header indexes must charge long FULL headers",
+			NativeContinuitySupportClauses.HeaderUnionOutcome.REJECT_CAP,
+			typedRetentionRejected.outcome());
+		Assert.assertNull(typedRetentionRejected.relation());
+		Assert.assertEquals(0, typedCandidate.materializedHandleCount());
 	}
 
 	@Test
@@ -947,6 +968,83 @@ public class NativeSingleAxisProductUnionTest {
 		Assert.assertNotSame(withdrawnClause, restored.get(restoredOrdinal));
 		Assert.assertEquals(0, pairCandidate.materializedHandleCount());
 		assertCanonicalClauseParity(oracle, pairBridge);
+	}
+
+	@Test
+	public void typedHeaderRecoveryDoesNotSkipAnEarlierPartialDonor() {
+		CompiledHopKey owner = key("typed-header-precedence-owner");
+		CompiledHopKey leftOwner = key("typed-header-precedence-left");
+		CompiledHopKey rightOwner = key("typed-header-precedence-right");
+		DurableAnchorKey oldSeed = pool("typed-header-precedence-old-seed");
+		DurableAnchorKey newSeed = pool("typed-header-precedence-new-seed");
+		DurableAnchorKey output = pool("typed-header-precedence-output");
+		List<CandidateRealizationInputBinding> left = new ArrayList<>();
+		List<CandidateRealizationInputBinding> right = new ArrayList<>();
+		for(int index = 0; index < 9; index++) {
+			left.add(direct(0, "left-" + index, leftOwner));
+			right.add(direct(1, "right-" + index, rightOwner));
+		}
+		left.sort(PlacementAnalysis.canonicalComparator());
+		right.sort(PlacementAnalysis.canonicalComparator());
+		List<List<CandidateRealizationInputBinding>> oldAxes = List.of(
+			List.copyOf(left.subList(0, 8)), List.copyOf(right.subList(0, 8)));
+		List<List<CandidateRealizationInputBinding>> newAxes = List.of(
+			List.copyOf(left), List.copyOf(right));
+		List<CandidateRealizationSupportClause> densePrefix = explicit(owner, oldSeed, output,
+			oldAxes.stream().map(axis -> axis.stream().map(
+				NativeSingleAxisProductUnionTest::directLike).toList()).toList());
+		CandidateRealizationSupportClause replacement = new CandidateRealizationSupportClause(
+			densePrefix.get(0).proofDependencies(), densePrefix.get(0).inputBindings(), output, true);
+		NativeContinuitySupportClauses oldHeader = relation(owner, oldSeed, output, oldAxes);
+		NativeContinuitySupportClauses partialFirst = oldHeader
+			.withExplicitAuthority(List.of(replacement)).relation();
+		NativeContinuitySupportClauses candidate = relation(owner, newSeed, output, newAxes);
+		NativeContinuitySupportClauses family = partialFirst.multiHeaderUnion(candidate).orElseThrow();
+
+		var recovered = family.explicitNativeHeaderUnion(densePrefix);
+		Assert.assertEquals(NativeContinuitySupportClauses.HeaderUnionOutcome.ADMITTED,
+			recovered.outcome());
+		Assert.assertNotNull(recovered.relation());
+		Assert.assertEquals(145, recovered.relation().size());
+		int ordinal = recovered.relation().ordinalOfExactAuthorityClause(densePrefix.get(0));
+		Assert.assertTrue(ordinal >= 0);
+		Assert.assertSame("the complete new prefix must preempt an earlier equal-distinct partial donor",
+			densePrefix.get(0), recovered.relation().get(ordinal));
+		Assert.assertNotSame(replacement, recovered.relation().get(ordinal));
+		var replay = recovered.relation().explicitNativeHeaderUnion(densePrefix);
+		Assert.assertEquals(NativeContinuitySupportClauses.HeaderUnionOutcome.REUSED,
+			replay.outcome());
+		Assert.assertSame(recovered.relation(), replay.relation());
+
+		List<CandidateRealizationSupportClause> newHeaderRows = explicit(
+			owner, newSeed, output, newAxes.stream().map(axis -> axis.stream()
+				.map(NativeSingleAxisProductUnionTest::directLike).toList()).toList());
+		NativeContinuitySupportClauses saturatedCandidate = relation(
+			owner, newSeed, output, newAxes);
+		NativeContinuitySupportClauses sixtyThreeDonors = saturatedCandidate
+			.withExplicitAuthority(newHeaderRows.subList(0, 62)).relation();
+		Assert.assertNotNull(sixtyThreeDonors);
+		Assert.assertEquals(63, sixtyThreeDonors.authorityDonorCount());
+		var saturatedAdmission = sixtyThreeDonors.explicitNativeHeaderUnion(densePrefix);
+		Assert.assertEquals(NativeContinuitySupportClauses.HeaderUnionOutcome.ADMITTED,
+			saturatedAdmission.outcome());
+		NativeContinuitySupportClauses saturated = saturatedAdmission.relation();
+		Assert.assertNotNull(saturated);
+		Assert.assertEquals(64, saturated.authorityDonorCount());
+		var saturatedReplay = saturated.explicitNativeHeaderUnion(densePrefix);
+		Assert.assertEquals("identity replay must precede the saturated donor/budget checks",
+			NativeContinuitySupportClauses.HeaderUnionOutcome.REUSED, saturatedReplay.outcome());
+		Assert.assertSame(saturated, saturatedReplay.relation());
+		List<CandidateRealizationSupportClause> equalDistinct = densePrefix.stream()
+			.map(clause -> new CandidateRealizationSupportClause(clause.proofDependencies(),
+				clause.inputBindings(), clause.nativeWorkerPoolWitness(),
+				clause.nativeWorkerPoolLayoutExact())).toList();
+		var replacementAtCapacity = saturated.explicitNativeHeaderUnion(equalDistinct);
+		Assert.assertEquals(NativeContinuitySupportClauses.HeaderUnionOutcome.REJECT_CAP,
+			replacementAtCapacity.outcome());
+		Assert.assertNull(replacementAtCapacity.relation());
+		Assert.assertEquals(0, saturatedCandidate.materializedHandleCount());
+		Assert.assertEquals(0, candidate.materializedHandleCount());
 	}
 
 	@Test
@@ -1150,6 +1248,207 @@ public class NativeSingleAxisProductUnionTest {
 		Assert.assertEquals(restricted.size(), rebound.supportClauses().size());
 		Assert.assertSame("the real rebinding traversal retains exact donor authority",
 			exactAdded, rebound.supportClauses().get(addedOrdinal));
+	}
+
+	@Test
+	public void dominantHeaderFixedPointCountsSharedOptionIncidencePerHeader() {
+		CompiledHopKey consumerOwner = key("dominant-fixed-point-shared-consumer");
+		CompiledHopKey alternativesOwner = key("dominant-fixed-point-shared-alternatives");
+		CompiledHopKey secondAxisOwner = key("dominant-fixed-point-shared-second-axis");
+		DurableAnchorKey output = pool("dominant-fixed-point-shared-output");
+		CandidateRuleKey missingKey = new CandidateRuleKey(
+			key("dominant-fixed-point-shared-missing"), List.of());
+		CandidateRealizationReference missing = new CandidateRealizationReference(
+			missingKey, sourceRealization("dominant-fixed-point-shared-missing").key());
+		CandidateRuleKey doomedKey = new CandidateRuleKey(
+			key("dominant-fixed-point-shared-doomed"),
+			List.of(CandidateInputState.present(FType.ROW)));
+		CandidateEmissionRealization doomed = dependentSourceRealization(
+			"dominant-fixed-point-shared-doomed", CandidateRealizationInputBinding.direct(0, missing));
+		CandidateRuleFact doomedSource = fact(doomedKey,
+			new CandidateEmissionFact(emission(), FType.ROW, null, List.of(doomed)));
+		CandidateRuleKey alternativesKey = new CandidateRuleKey(alternativesOwner,
+			List.of(CandidateInputState.present(FType.ROW)));
+		CandidateEmissionRealization aRealization = dependentSourceRealization(
+			"dominant-fixed-point-shared-a", CandidateRealizationInputBinding.direct(0,
+				CandidateRealizationReference.of(doomedKey, doomed)));
+		CandidateEmissionRealization bRealization = sourceRealization("dominant-fixed-point-shared-b");
+		CandidateEmissionRealization cRealization = sourceRealization("dominant-fixed-point-shared-c");
+		CandidateRuleFact alternatives = fact(alternativesKey,
+			new CandidateEmissionFact(emission(), FType.ROW, null,
+				List.of(aRealization, bRealization, cRealization)));
+		CandidateRuleFact secondAxis = fact(secondAxisOwner, List.of(
+			sourceRealization("dominant-fixed-point-shared-x"),
+			sourceRealization("dominant-fixed-point-shared-y"),
+			sourceRealization("dominant-fixed-point-shared-z")));
+		List<CandidateEmissionRealization> secondRealizations = secondAxis.allowedEmissionFacts()
+			.get(0).realizations();
+		var a = sourceBinding(0, alternatives, aRealization);
+		var b = sourceBinding(0, alternatives, bRealization);
+		var c = sourceBinding(0, alternatives, cRealization);
+		var x = sourceBinding(1, secondAxis, secondRealizations.get(0));
+		var y = sourceBinding(1, secondAxis, secondRealizations.get(1));
+		var z = sourceBinding(1, secondAxis, secondRealizations.get(2));
+		NativeContinuitySupportClauses small = relation(consumerOwner,
+			pool("dominant-fixed-point-small-seed"), output,
+			List.of(sorted(a, b), sorted(x, y)));
+		NativeContinuitySupportClauses large = relation(consumerOwner,
+			pool("dominant-fixed-point-large-seed"), output,
+			List.of(sorted(directLike(a), directLike(b), directLike(c)),
+				sorted(directLike(x), directLike(y), directLike(z))));
+		CandidateRealizationSupportClause smallSurvivor = small.get(
+			small.product().ordinalOfExactAuthorityBindings(List.of(b, x)));
+		CandidateRealizationSupportClause largeSurvivor = large.get(
+			large.product().ordinalOfExactAuthorityBindings(List.of(directLike(c), directLike(z))));
+		NativeContinuitySupportClauses union = small.multiHeaderUnion(large).orElseThrow();
+		Assert.assertEquals(13, union.size());
+		PlacementRealizationKey outputKey = PlacementRealizationKey.nativeLineage(
+			emission(), "dominant-fixed-point-shared-output");
+		CandidateRuleFact consumer = fact(new CandidateRuleKey(consumerOwner, List.of(
+			CandidateInputState.present(FType.ROW), CandidateInputState.present(FType.ROW))),
+			new CandidateEmissionFact(emission(), FType.ROW, null,
+				List.of(new CandidateEmissionRealization(outputKey, union))));
+		List<CandidateRuleFact> facts = List.of(doomedSource, alternatives, secondAxis, consumer);
+		List<CandidateRuleFact> initial = PlacementSupportRelations.pruneUnsupportedRealizations(facts);
+		NativeContinuitySupportClauses initiallyRetained = (NativeContinuitySupportClauses)initial.stream()
+			.filter(fact -> fact.key().parentOccurrence() == consumerOwner)
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(fact -> fact.realizations().stream()).findFirst().orElseThrow().supportClauses();
+		Assert.assertEquals("the shared option remains until its dependency is queue-deleted",
+			13, initiallyRetained.size());
+		PlacementSupportRelations.WorklistResult fixedPoint = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPointWithWork(facts, null, List.of(), Map.of());
+		Assert.assertEquals("shared a removes two small-header rows and three dominant-header rows",
+			6L, fixedPoint.work().invalidatedClauses());
+		NativeContinuitySupportClauses restricted = (NativeContinuitySupportClauses)fixedPoint.facts()
+			.stream().filter(fact -> fact.key().parentOccurrence() == consumerOwner)
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(fact -> fact.realizations().stream()).findFirst().orElseThrow().supportClauses();
+		Assert.assertEquals(8, restricted.size());
+		Assert.assertSame(smallSurvivor,
+			restricted.get(restricted.ordinalOfExactAuthorityClause(smallSurvivor)));
+		Assert.assertSame(largeSurvivor,
+			restricted.get(restricted.ordinalOfExactAuthorityClause(largeSurvivor)));
+		List<CandidateRealizationSupportClause> sharedOracle = new ArrayList<>();
+		sharedOracle.addAll(explicit(consumerOwner, pool("dominant-fixed-point-small-seed"),
+			output, List.of(List.of(directLike(b)), sorted(directLike(x), directLike(y)))));
+		sharedOracle.addAll(explicit(consumerOwner, pool("dominant-fixed-point-large-seed"),
+			output, List.of(sorted(directLike(b), directLike(c)),
+				sorted(directLike(x), directLike(y), directLike(z)))));
+		sharedOracle.sort(PlacementAnalysis.canonicalComparator());
+		assertCanonicalClauseParity(sharedOracle, restricted);
+
+		CompiledHopKey candidateOnlyOwner = key("dominant-fixed-point-candidate-only-consumer");
+		NativeContinuitySupportClauses candidateOnlySmall = relation(candidateOnlyOwner,
+			pool("dominant-fixed-point-candidate-only-small"), output,
+			List.of(sorted(b, c), sorted(x, y)));
+		NativeContinuitySupportClauses candidateOnlyLarge = relation(candidateOnlyOwner,
+			pool("dominant-fixed-point-candidate-only-large"), output,
+			List.of(sorted(directLike(a), directLike(b), directLike(c)),
+				sorted(directLike(x), directLike(y), directLike(z))));
+		NativeContinuitySupportClauses candidateOnlyUnion = candidateOnlySmall
+			.multiHeaderUnion(candidateOnlyLarge).orElseThrow();
+		PlacementRealizationKey candidateOnlyKey = PlacementRealizationKey.nativeLineage(
+			emission(), "dominant-fixed-point-candidate-only-output");
+		CandidateRuleFact candidateOnlyConsumer = fact(new CandidateRuleKey(candidateOnlyOwner,
+			List.of(CandidateInputState.present(FType.ROW), CandidateInputState.present(FType.ROW))),
+			new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+				new CandidateEmissionRealization(candidateOnlyKey, candidateOnlyUnion))));
+		List<CandidateRuleFact> candidateOnlyFacts = List.of(
+			doomedSource, alternatives, secondAxis, candidateOnlyConsumer);
+		NativeContinuitySupportClauses candidateOnlyInitial = (NativeContinuitySupportClauses)
+			PlacementSupportRelations.pruneUnsupportedRealizations(candidateOnlyFacts).stream()
+				.filter(fact -> fact.key().parentOccurrence() == candidateOnlyOwner)
+				.flatMap(fact -> fact.allowedEmissionFacts().stream())
+				.flatMap(fact -> fact.realizations().stream()).findFirst().orElseThrow().supportClauses();
+		Assert.assertEquals(13, candidateOnlyInitial.size());
+		PlacementSupportRelations.WorklistResult candidateOnlyFixed = PlacementSupportRelations
+			.pruneUnsupportedRealizationsToFixedPointWithWork(
+				candidateOnlyFacts, null, List.of(), Map.of());
+		Assert.assertEquals("dominant-only a removes its three rows after one dependency deletion",
+			4L, candidateOnlyFixed.work().invalidatedClauses());
+		NativeContinuitySupportClauses candidateOnlyRestricted = (NativeContinuitySupportClauses)
+			candidateOnlyFixed.facts().stream()
+				.filter(fact -> fact.key().parentOccurrence() == candidateOnlyOwner)
+				.flatMap(fact -> fact.allowedEmissionFacts().stream())
+				.flatMap(fact -> fact.realizations().stream()).findFirst().orElseThrow().supportClauses();
+		Assert.assertEquals(10, candidateOnlyRestricted.size());
+		List<CandidateRealizationSupportClause> candidateOnlyOracle = new ArrayList<>();
+		candidateOnlyOracle.addAll(explicit(candidateOnlyOwner,
+			pool("dominant-fixed-point-candidate-only-small"), output,
+			List.of(sorted(directLike(b), directLike(c)),
+				sorted(directLike(x), directLike(y)))));
+		candidateOnlyOracle.addAll(explicit(candidateOnlyOwner,
+			pool("dominant-fixed-point-candidate-only-large"), output,
+			List.of(sorted(directLike(b), directLike(c)),
+				sorted(directLike(x), directLike(y), directLike(z)))));
+		candidateOnlyOracle.sort(PlacementAnalysis.canonicalComparator());
+		assertCanonicalClauseParity(candidateOnlyOracle, candidateOnlyRestricted);
+	}
+
+	@Test
+	public void dominantHeaderInitialPruneCountsCandidateOnlyOptionInItsHeader() {
+		CompiledHopKey consumerOwner = key("dominant-initial-candidate-consumer");
+		CompiledHopKey firstAxisOwner = key("dominant-initial-candidate-first-axis");
+		CompiledHopKey secondAxisOwner = key("dominant-initial-candidate-second-axis");
+		DurableAnchorKey output = pool("dominant-initial-candidate-output");
+		CandidateRuleFact firstAxis = fact(firstAxisOwner, List.of(
+			sourceRealization("dominant-initial-candidate-a"),
+			sourceRealization("dominant-initial-candidate-b")));
+		CandidateRuleFact secondAxis = fact(secondAxisOwner, List.of(
+			sourceRealization("dominant-initial-candidate-x"),
+			sourceRealization("dominant-initial-candidate-y"),
+			sourceRealization("dominant-initial-candidate-z")));
+		List<CandidateEmissionRealization> firstRealizations = firstAxis.allowedEmissionFacts()
+			.get(0).realizations();
+		List<CandidateEmissionRealization> secondRealizations = secondAxis.allowedEmissionFacts()
+			.get(0).realizations();
+		var a = sourceBinding(0, firstAxis, firstRealizations.get(0));
+		var b = sourceBinding(0, firstAxis, firstRealizations.get(1));
+		var c = CandidateRealizationInputBinding.direct(0, new CandidateRealizationReference(
+			firstAxis.key(), sourceRealization("dominant-initial-candidate-absent").key()));
+		var x = sourceBinding(1, secondAxis, secondRealizations.get(0));
+		var y = sourceBinding(1, secondAxis, secondRealizations.get(1));
+		var z = sourceBinding(1, secondAxis, secondRealizations.get(2));
+		NativeContinuitySupportClauses small = relation(consumerOwner,
+			pool("dominant-initial-small-seed"), output,
+			List.of(sorted(a, b), sorted(x, y)));
+		NativeContinuitySupportClauses large = relation(consumerOwner,
+			pool("dominant-initial-large-seed"), output,
+			List.of(sorted(directLike(a), directLike(b), c),
+				sorted(directLike(x), directLike(y), directLike(z))));
+		CandidateRealizationSupportClause smallSurvivor = small.get(
+			small.product().ordinalOfExactAuthorityBindings(List.of(a, x)));
+		CandidateRealizationSupportClause largeSurvivor = large.get(
+			large.product().ordinalOfExactAuthorityBindings(List.of(directLike(b), directLike(z))));
+		NativeContinuitySupportClauses union = small.multiHeaderUnion(large).orElseThrow();
+		PlacementRealizationKey outputKey = PlacementRealizationKey.nativeLineage(
+			emission(), "dominant-initial-candidate-output");
+		CandidateRuleFact consumer = fact(new CandidateRuleKey(consumerOwner, List.of(
+			CandidateInputState.present(FType.ROW), CandidateInputState.present(FType.ROW))),
+			new CandidateEmissionFact(emission(), FType.ROW, null,
+				List.of(new CandidateEmissionRealization(outputKey, union))));
+		List<CandidateRuleFact> pruned = PlacementSupportRelations.pruneUnsupportedRealizations(
+			List.of(firstAxis, secondAxis, consumer));
+		NativeContinuitySupportClauses restricted = (NativeContinuitySupportClauses)pruned.stream()
+			.filter(fact -> fact.key().parentOccurrence() == consumerOwner)
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.flatMap(fact -> fact.realizations().stream()).findFirst().orElseThrow().supportClauses();
+		Assert.assertEquals("candidate-only c removes its three rows, not a subordinate-header row",
+			10, restricted.size());
+		Assert.assertSame(smallSurvivor,
+			restricted.get(restricted.ordinalOfExactAuthorityClause(smallSurvivor)));
+		Assert.assertSame(largeSurvivor,
+			restricted.get(restricted.ordinalOfExactAuthorityClause(largeSurvivor)));
+		List<CandidateRealizationSupportClause> oracle = new ArrayList<>();
+		oracle.addAll(explicit(consumerOwner, pool("dominant-initial-small-seed"), output,
+			List.of(sorted(directLike(a), directLike(b)),
+				sorted(directLike(x), directLike(y)))));
+		oracle.addAll(explicit(consumerOwner, pool("dominant-initial-large-seed"), output,
+			List.of(sorted(directLike(a), directLike(b)),
+				sorted(directLike(x), directLike(y), directLike(z)))));
+		oracle.sort(PlacementAnalysis.canonicalComparator());
+		assertCanonicalClauseParity(oracle, restricted);
 	}
 
 	@Test

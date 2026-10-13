@@ -6796,22 +6796,43 @@ final class PlacementRelationClosure {
 							case NONE -> DirectWork.RETAINED_EXPLICIT_DENSE_AUTHORITY_UNCLASSIFIED;
 						});
 				}
-				if(overlay.relation() == null) {
+				NativeContinuitySupportClauses union = overlay.relation();
+				if(union == null) {
 					if(metrics != null)
 						metrics.recordDirectWork(overlay.capRejected()
 							? DirectWork.RETAINED_EXPLICIT_BRIDGE_REJECT_CAP
 							: DirectWork.RETAINED_EXPLICIT_BRIDGE_REJECT_AUTHORITY);
-					return null;
+					if(overlay.capRejected() || NativeContinuitySupportClauses
+						.explicitAuthorityPrefixWithinCountLimit(ordered.size()))
+						return null;
+					var recovered = relation.explicitNativeHeaderUnion(ordered);
+					if(metrics != null) {
+						metrics.recordDirectWork(DirectWork.RETAINED_EXPLICIT_HEADER_REQUESTS);
+						metrics.recordDirectWork(switch(recovered.outcome()) {
+							case ADMITTED -> DirectWork.RETAINED_EXPLICIT_HEADER_ADMITTED;
+							case REUSED -> DirectWork.RETAINED_EXPLICIT_HEADER_REUSED;
+							case REJECT_NOT_TYPED -> DirectWork.RETAINED_EXPLICIT_HEADER_REJECT_NOT_TYPED;
+							case REJECT_CLAUSE -> DirectWork.RETAINED_EXPLICIT_HEADER_REJECT_CLAUSE;
+							case REJECT_OUTPUT -> DirectWork.RETAINED_EXPLICIT_HEADER_REJECT_OUTPUT;
+							case REJECT_DOMAIN -> DirectWork.RETAINED_EXPLICIT_HEADER_REJECT_DOMAIN;
+							case REJECT_CAP -> DirectWork.RETAINED_EXPLICIT_HEADER_REJECT_CAP;
+							case REJECT_INDEX -> DirectWork.RETAINED_EXPLICIT_HEADER_REJECT_INDEX;
+						});
+					}
+					union = recovered.relation();
+					if(union == null)
+						return null;
 				}
-				if(metrics != null) {
+				else if(metrics != null) {
 					metrics.recordDirectWork(DirectWork.RETAINED_EXPLICIT_BRIDGE_SUCCESSES);
 					metrics.recordDirectWork(DirectWork.RETAINED_EXPLICIT_BRIDGE_ACCEPTED_MEMBERS,
 						relation.size());
 				}
-				// Exact unique subset plus equal cardinality proves complete coverage.
-				return ordered.size() == relation.size() ? new NativeRetainedUnion(null, true)
+				// All original rows survive in the exact union. Equal UNION cardinality,
+				// not equal candidate cardinality, proves retained coverage across headers.
+				return ordered.size() == union.size() ? new NativeRetainedUnion(null, true)
 					: new NativeRetainedUnion(new CandidateEmissionRealization(
-						candidate.key(), overlay.relation()), false);
+						candidate.key(), union), false);
 			}
 			if(retainedRelations == null || retainedRelations.isEmpty())
 				return null;

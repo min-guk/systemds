@@ -71,7 +71,7 @@ public class NativeHeaderAxisGrowthUnionTest {
 	}
 
 	@Test
-	public void partialHeaderGrowthFallsBackWithoutInventingCorrelatedHole() {
+	public void partialHeaderGrowthKeepsSeparateDomainsWithoutInventingCorrelatedHole() {
 		Fixture fixture = fixture();
 		CandidateRealizationSupportClause oldB = fixture.oldB.get(
 			fixture.oldB.product().ordinalOfExactAuthorityBindings(List.of(fixture.b)));
@@ -80,7 +80,7 @@ public class NativeHeaderAxisGrowthUnionTest {
 		CandidateEmissionFact partial = mergeRealizations(fixture.outputKey,
 			retained, fixture.grownA);
 		Assert.assertEquals(1, partial.realizations().size());
-		Assert.assertFalse("a rectangular family would invent the unsupported seed-B/c member",
+		Assert.assertTrue("dominant projection must not widen the subordinate seed-B domain",
 			partial.realizations().get(0).supportClauses() instanceof NativeContinuitySupportClauses);
 		Assert.assertEquals(5, partial.realizations().get(0).supportClauses().size());
 		List<CandidateRealizationSupportClause> expected = explicit(fixture.owner,
@@ -88,7 +88,7 @@ public class NativeHeaderAxisGrowthUnionTest {
 				new Header(fixture.seedB, List.of(sorted(fixture.a, fixture.b)))), fixture.output);
 		Assert.assertEquals(signatures(expected),
 			signatures(partial.realizations().get(0).supportClauses()));
-		Assert.assertTrue("fallback retains old seed-B clause identity",
+		Assert.assertTrue("the subordinate header retains old seed-B clause identity",
 			partial.realizations().get(0).supportClauses().stream()
 				.anyMatch(clause -> clause == oldB));
 		Assert.assertFalse(partial.realizations().get(0).supportClauses().stream()
@@ -99,7 +99,7 @@ public class NativeHeaderAxisGrowthUnionTest {
 	}
 
 	@Test
-	public void completeTwoAxisGrowthCompressesButPartialGrowthFallsBack() {
+	public void completeAndDominatedPartialGrowthKeepTheirExactHeaderDomains() {
 		CompiledHopKey owner = key("two-axis-owner");
 		CompiledHopKey firstOwner = key("two-axis-first");
 		CompiledHopKey secondOwner = key("two-axis-second");
@@ -141,7 +141,7 @@ public class NativeHeaderAxisGrowthUnionTest {
 		Assert.assertTrue(completeMembers.stream().anyMatch(clause -> clause == retained));
 
 		CandidateEmissionFact partial = mergeRealizations(outputKey, oldFamily, grownA);
-		Assert.assertFalse(partial.realizations().get(0).supportClauses()
+		Assert.assertTrue(partial.realizations().get(0).supportClauses()
 			instanceof NativeContinuitySupportClauses);
 		Assert.assertEquals(10, partial.realizations().get(0).supportClauses().size());
 		List<CandidateRealizationSupportClause> expectedPartial = explicit(owner, List.of(

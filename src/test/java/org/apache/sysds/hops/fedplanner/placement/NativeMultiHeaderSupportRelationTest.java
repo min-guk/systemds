@@ -30,6 +30,131 @@ import org.junit.Test;
 
 public class NativeMultiHeaderSupportRelationTest {
 	@Test
+	public void nestedHeaderAxesUseTheDominantProjectionWithoutCoveringDistinctProofs() {
+		CompiledHopKey owner = key("nested-consumer");
+		CompiledHopKey leftOwner = key("nested-left");
+		CompiledHopKey rightOwner = key("nested-right");
+		DurableAnchorKey output = pool("nested-output");
+		List<CandidateRealizationInputBinding> left = new ArrayList<>();
+		List<CandidateRealizationInputBinding> right = new ArrayList<>();
+		for(int option = 0; option < 9; option++) {
+			left.add(direct(0, "left-" + "x".repeat(option + 1), leftOwner));
+			right.add(direct(1, "right-" + "y".repeat(2 * option + 1), rightOwner));
+		}
+		left.sort(PlacementAnalysis.canonicalComparator());
+		right.sort(PlacementAnalysis.canonicalComparator());
+		List<List<CandidateRealizationInputBinding>> dominantAxes = List.of(
+			List.copyOf(left), List.copyOf(right));
+		List<List<CandidateRealizationInputBinding>> subordinateAxes = List.of(
+			left.subList(0, 8).stream().map(
+				NativeMultiHeaderSupportRelationTest::directLike).toList(),
+			right.subList(0, 8).stream().map(
+				NativeMultiHeaderSupportRelationTest::directLike).toList());
+		NativeContinuitySupportClauses subordinate = relation(
+			owner, pool("nested-small-seed"), output, subordinateAxes);
+		NativeContinuitySupportClauses dominant = relation(
+			owner, pool("nested-large-seed-with-variable-length"), output, dominantAxes);
+		List<CandidateRealizationSupportClause> subordinateDonors = new ArrayList<>(subordinate);
+		List<CandidateRealizationSupportClause> dominantDonors = new ArrayList<>(dominant);
+		List<CandidateRealizationSupportClause> oracle = new ArrayList<>(subordinateDonors);
+		oracle.addAll(dominantDonors);
+		oracle.sort(PlacementAnalysis.canonicalComparator());
+
+		NativeContinuitySupportClauses union = subordinate.multiHeaderUnion(dominant).orElseThrow();
+		Assert.assertEquals(145, union.size());
+		Assert.assertEquals(2, union.headerCount());
+		Assert.assertEquals(dominantAxes, union.commonAxes());
+		Assert.assertEquals(oracle.hashCode(), union.hashCode());
+		Assert.assertEquals("hashing the header family stays lazy", 0,
+			union.materializedHandleCount());
+		java.util.Map<String,CandidateRealizationSupportClause> donors = new java.util.HashMap<>();
+		for(CandidateRealizationSupportClause clause : oracle)
+			donors.put(clause.normalizedSignature(), clause);
+		for(int ordinal = 0; ordinal < union.size(); ordinal++) {
+			CandidateRealizationSupportClause expected = oracle.get(ordinal);
+			Assert.assertEquals(expected.normalizedSignature(),
+				union.get(ordinal).normalizedSignature());
+			Assert.assertSame(donors.get(expected.normalizedSignature()), union.get(ordinal));
+		}
+
+		CandidateRealizationInputBinding dominantOnlyLeft = left.get(8);
+		NativeContinuitySupportClauses restricted = union.restrictBindings(binding ->
+			binding != dominantOnlyLeft).orElseThrow();
+		Assert.assertEquals("one dominant-only left option removes its nine tuples", 136,
+			restricted.size());
+		for(CandidateRealizationSupportClause donor : subordinateDonors)
+			Assert.assertTrue("the subordinate header keeps all 64 exact donors",
+				identityOrdinal(restricted, donor) >= 0);
+		for(CandidateRealizationSupportClause donor : dominantDonors)
+			Assert.assertEquals(donor.inputBindings().contains(dominantOnlyLeft),
+				identityOrdinal(restricted, donor) < 0);
+		List<CandidateRealizationSupportClause> restrictedOracle = oracle.stream()
+			.filter(clause -> !clause.inputBindings().contains(dominantOnlyLeft))
+			.sorted(PlacementAnalysis.canonicalComparator()).toList();
+		Assert.assertEquals(restrictedOracle.hashCode(), restricted.hashCode());
+		Assert.assertEquals(restrictedOracle.stream().map(
+			CandidateRealizationSupportClause::normalizedSignature).toList(), restricted.stream().map(
+				CandidateRealizationSupportClause::normalizedSignature).toList());
+
+		NativeContinuitySupportClauses equalDomain = relation(owner,
+			pool("nested-equal-domain-seed"), output, dominantAxes.stream().map(axis ->
+				axis.stream().map(NativeMultiHeaderSupportRelationTest::directLike).toList()).toList());
+		NativeContinuitySupportClauses equalDomainUnion = dominant
+			.multiHeaderUnion(equalDomain).orElseThrow();
+		Assert.assertEquals("equal Cartesian domains remain distinct full-header proofs", 162,
+			equalDomainUnion.size());
+	}
+
+	@Test
+	public void dominantHeaderUnionRejectsNonnestedConditionalAndOutputAuthority() {
+		CompiledHopKey owner = key("dominant-reject-consumer");
+		CompiledHopKey leftOwner = key("dominant-reject-left");
+		CompiledHopKey rightOwner = key("dominant-reject-right");
+		DurableAnchorKey output = pool("dominant-reject-output");
+		var leftA = direct(0, "left-a", leftOwner);
+		var leftB = direct(0, "left-bb", leftOwner);
+		var leftC = direct(0, "left-ccc", leftOwner);
+		var rightA = direct(1, "right-a", rightOwner);
+		var rightB = direct(1, "right-bb", rightOwner);
+		var rightC = direct(1, "right-ccc", rightOwner);
+		List<List<CandidateRealizationInputBinding>> dominantAxes = List.of(
+			sorted(leftA, leftB, leftC), sorted(rightA, rightB, rightC));
+		NativeContinuitySupportClauses dominant = relation(
+			owner, pool("dominant-reject-large-seed"), output, dominantAxes);
+		List<List<CandidateRealizationInputBinding>> nonnestedAxes = List.of(
+			sorted(directLike(leftA), direct(0, "foreign-left", leftOwner)),
+			sorted(directLike(rightA), directLike(rightB)));
+		NativeContinuitySupportClauses nonnested = relation(
+			owner, pool("dominant-reject-nonnested-seed"), output, nonnestedAxes);
+		Assert.assertTrue(dominant.multiHeaderUnion(nonnested).isEmpty());
+
+		NativePlacementContinuity.NativeSupportProduct conditionalBase =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				pool("dominant-reject-conditional-seed"), output, true,
+				List.of(sorted(directLike(leftA), directLike(leftB)),
+					sorted(directLike(rightA), directLike(rightB))));
+		NativeContinuitySupportClauses conditional = NativeContinuitySupportClauses.exactComplement(
+			owner, conditionalBase,
+			List.of(List.of(conditionalBase.axes().get(0).get(0)),
+				List.of(conditionalBase.axes().get(1).get(0))), output, true);
+		Assert.assertNotNull(conditional);
+		Assert.assertTrue(dominant.multiHeaderUnion(conditional).isEmpty());
+
+		var foreignOutputProduct = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			pool("dominant-reject-output-seed"), pool("dominant-reject-foreign-output"), true,
+			dominantAxes.stream().map(axis -> axis.stream().map(
+				NativeMultiHeaderSupportRelationTest::directLike).toList()).toList());
+		Assert.assertNotNull(foreignOutputProduct);
+		NativeContinuitySupportClauses foreignOutput = new NativeContinuitySupportClauses(
+			owner, foreignOutputProduct, output, true);
+		Assert.assertTrue(dominant.multiHeaderUnion(foreignOutput).isEmpty());
+		Assert.assertEquals(0, dominant.materializedHandleCount());
+		Assert.assertEquals(0, nonnested.materializedHandleCount());
+		Assert.assertEquals(0, conditional.materializedHandleCount());
+		Assert.assertEquals(0, foreignOutput.materializedHandleCount());
+	}
+
+	@Test
 	public void fixedSeedOneAxisGrowthMatchesExplicitUnionAndOriginalDonorObjects() {
 		Random random = new Random(0x47524f5748445253L);
 		for(int trial = 0; trial < 60; trial++) {
@@ -335,8 +460,10 @@ public class NativeMultiHeaderSupportRelationTest {
 
 		Assert.assertTrue(first.multiHeaderUnion(relation(key("foreign"), pool("seed-c"),
 			output, List.of(sorted(directLike(a), directLike(b))))).isEmpty());
-		Assert.assertTrue(first.multiHeaderUnion(relation(owner, pool("seed-c"), output,
-			List.of(List.of(directLike(a))))).isEmpty());
+		NativeContinuitySupportClauses nested = first.multiHeaderUnion(relation(
+			owner, pool("seed-c"), output, List.of(List.of(directLike(a))))).orElseThrow();
+		Assert.assertEquals(3, nested.size());
+		Assert.assertEquals(first.commonAxes(), nested.commonAxes());
 		CompiledHopKey foreignSource = cloneKey(source);
 		Assert.assertTrue(first.multiHeaderUnion(relation(owner, pool("seed-c"), output,
 			List.of(sorted(direct(0, "a", foreignSource), direct(0, "b", foreignSource))))).isEmpty());

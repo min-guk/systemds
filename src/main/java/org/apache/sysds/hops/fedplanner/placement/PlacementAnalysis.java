@@ -2480,13 +2480,16 @@ public final class PlacementAnalysis {
 					&& !(leftClauses instanceof IndexedSupportClauses)
 					&& rightClauses instanceof NativeContinuitySupportClauses rightNative) {
 					var overlay = rightNative.withExplicitAuthority(leftClauses);
-					if(overlay.relation() != null) {
-						NativeContinuitySupportClauses union = overlay.relation();
+					NativeContinuitySupportClauses union = overlay.relation();
+					if(union == null)
+						union = rightNative.explicitNativeHeaderUnion(leftClauses).relation();
+					if(union != null) {
 						boolean reused = union == rightNative;
 						if(metrics != null) {
 							metrics.recordRealizationMergeInput();
 							metrics.recordRealizationMergeInput();
-							metrics.recordRealizationMergeClauses(union.size(), leftClauses.size());
+							metrics.recordRealizationMergeClauses(union.size(),
+								(long)leftClauses.size() + rightClauses.size() - union.size());
 							if(reused)
 								metrics.recordRealizationMergeReuse();
 							if(metrics.hasDuplicateMergeDiagnostics())
@@ -2904,9 +2907,10 @@ public final class PlacementAnalysis {
 			NativeContinuitySupportClauses union =
 				(NativeContinuitySupportClauses)group.get(firstNative).supportClauses();
 			var overlay = union.withExplicitAuthority(prefix);
-			if(overlay.relation() == null)
+			union = overlay.relation() != null ? overlay.relation()
+				: union.explicitNativeHeaderUnion(prefix).relation();
+			if(union == null)
 				return null;
-			union = overlay.relation();
 			for(int index = firstNative + 1; index < group.size(); index++) {
 				NativeContinuitySupportClauses next =
 					(NativeContinuitySupportClauses)group.get(index).supportClauses();

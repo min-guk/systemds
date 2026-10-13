@@ -749,6 +749,10 @@ final class PlacementSupportRelations {
 		private final List<Integer> liveExactByAxis;
 		private final Map<CandidateRealizationInputBinding,NativeFixedPointOption> options =
 			new IdentityHashMap<>();
+		// Only heterogeneous ordinary header families need per-header incidence.
+		// Their projected tuple domain is still one actual dominant product.
+		private final int[][] liveByHeaderAxis;
+		private final Map<CandidateRealizationInputBinding,java.util.BitSet> headersByBinding;
 		private NativeFixedPointSupport(FixedPointRealization realization,
 			NativeContinuitySupportClauses original) {
 			this.realization = realization;
@@ -757,11 +761,29 @@ final class PlacementSupportRelations {
 				original.commonAxes().size(), 0));
 			liveExactByAxis = new ArrayList<>(Collections.nCopies(
 				original.commonAxes().size(), 0));
+			if(original.hasUniformHeaderAxes()) {
+				liveByHeaderAxis = null;
+				headersByBinding = null;
+			}
+			else {
+				liveByHeaderAxis = new int[original.headerCount()][original.commonAxes().size()];
+				headersByBinding = new IdentityHashMap<>();
+				for(int header = 0; header < original.headerCount(); header++)
+					for(List<CandidateRealizationInputBinding> axis : original.products().get(header).axes())
+						for(CandidateRealizationInputBinding binding : axis)
+							headersByBinding.computeIfAbsent(binding, ignored -> new java.util.BitSet())
+								.set(header);
+			}
 		}
 		private NativeFixedPointOption add(int axis, CandidateRealizationInputBinding binding) {
 			NativeFixedPointOption option = new NativeFixedPointOption(this, axis, binding);
 			options.put(binding, option);
 			liveByAxis.set(axis, liveByAxis.get(axis) + 1);
+			if(headersByBinding != null) {
+				java.util.BitSet headers = headersByBinding.get(binding);
+				for(int header = headers.nextSetBit(0); header >= 0; header = headers.nextSetBit(header + 1))
+					liveByHeaderAxis[header][axis]++;
+			}
 			if(original.isExcludedExactBinding(axis, binding))
 				liveExactByAxis.set(axis, liveExactByAxis.get(axis) + 1);
 			return option;
@@ -778,6 +800,20 @@ final class PlacementSupportRelations {
 		}
 		private long invalidate(NativeFixedPointOption option) {
 			option.live = false;
+			if(headersByBinding != null) {
+				long removed = 0;
+				java.util.BitSet headers = headersByBinding.get(option.binding);
+				for(int header = headers.nextSetBit(0); header >= 0; header = headers.nextSetBit(header + 1)) {
+					long rows = 1;
+					for(int axis = 0; axis < liveByAxis.size(); axis++)
+						if(axis != option.axis)
+							rows = Math.multiplyExact(rows, liveByHeaderAxis[header][axis]);
+					removed = Math.addExact(removed, rows);
+					liveByHeaderAxis[header][option.axis]--;
+				}
+				liveByAxis.set(option.axis, liveByAxis.get(option.axis) - 1);
+				return removed;
+			}
 			long removed = original.headerCount();
 			long all = 1, excluded = 1;
 			for(int axis = 0; axis < liveByAxis.size(); axis++)

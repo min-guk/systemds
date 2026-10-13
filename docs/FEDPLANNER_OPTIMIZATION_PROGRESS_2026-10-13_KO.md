@@ -1,5 +1,16 @@
 # FedPlanner 최적화 진행 현황 보고서
 
+## V64 서로 다른 native header의 정확한 압축 합집합 — 검증 통과, 실측 예정
+
+- **구조적 개선**: 서로 다른 FULL proof header마다 원래 rectangular support domain을 보존한다. 실제 product 하나가 모든 domain을 포함할 때만 이를 공통 투영 domain으로 사용한다. 8×8과9×9의 합집합은 **145개**이며, 오래된 header에 없던 조합을 채워162개로 만들지 않는다. 같은9×9의 서로 다른 두 header는162개를 유지한다.
+- **재전개 방지**: typed explicit prefix를 원본 객체·first donor 순서 그대로 회수해 native family에 병합한다. 실제 binder64+81 및81+81 fixture에서 새 scalar proof 소비 **81→0**, lazy145/162 및 전체ordered oracle/원본identity를 확인했다. 이것은 테스트에서 검증한 작업 절감이지 전체 workload 속도 향상 수치가 아니다.
+- **공통 소비자 수정**: fixed-point invalidation을 header별 실제 option incidence로 계산한다. 공통 header 수를 일괄 곱하지 않으므로 공유option·후보전용option·처음부터 죽은 source의 삭제 후에도 정확한 domain을 유지한다. Final retained coverage는 새 candidate 크기가 아니라 union 크기로 판정한다.
+- **안전 경계**: conditional/legacy/multiproof/비포함·다른 output authority는 기존 exact fallback이다. 기존64donor/1M logical retention-unit 한도 안에 grouping·normalized scope·동시 index 복사2개·긴 FULL-header 텍스트를 사전 계수한다. 동일 원본 replay는 포화 전용 성장 없이 재사용한다. 합법 후보/privacy/runtime/DP 비용은 변경하지 않았다.
+- **검증**: independent production 및 boundary-test review CLEAR; frozen focused340PASS/1ignored. Fresh 선택 **211classes/1669tests/0fail/0error/3skip**, package BUILD SUCCESS11:47:20+02. 전체 repository suite는 아니다.
+- **다음**: 게시·봉인 후 동일4CPU/16GiB/10GiBheap/JFR55/watchdog60 조건에서 LogReg/GLM을 측정해 실제 header recovery 적용률과 남은 거절 원인을 확인한다. **20초 목표 및 전체 ML 연산의 압축 coverage는 아직 미완료**다.
+- 근거 `R/V64_DOMINANT_HEADER_FAMILY_PLAN.md`, `evidence/v64-production-review.txt`, `v64-header-final-focused.log`, `candidate-v64-package.log`.
+
+
 
 ## V63 authority 거절 진단 — 실측 완료, workload별 원인 분리
 
