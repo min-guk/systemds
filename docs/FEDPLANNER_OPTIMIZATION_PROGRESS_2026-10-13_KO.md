@@ -1,5 +1,26 @@
 # FedPlanner 최적화 진행 현황 보고서
 
+## V56 검증 완료 — 실측 대기
+
+캐시에 들어갈 수 없는 gate의 footprint를 먼저 구축하던 순서를 수정했다. Root summary를 먼저 보관하고, gate는 settled capacity를 먼저 검사한다. Pruning으로 사라진 원본 의존성은 bounded journal로 보존하며 불완전하면 optional cache만 포기한다.
+
+- 최종 선택 통합 gate: **210 classes / 1,621 tests / failures 0 / errors 0 / skipped 3**, BUILD SUCCESS (2026-10-13 07:47:19+02).
+- 회귀: gate phase/budget 14 PASS, 기존 native continuity/identity 190 PASS. 독립 production 검토 CLEAR; shared journal+staging budget assertion을 추가해 다시 전체 선택 gate를 통과했다.
+- 근거: `R/evidence/candidate-v56-package.log`, `v56-capacity-order-red.log`, `v56-budget-final-focused.log`, `v56-production-review.txt`.
+- 이는 불필요한 순회를 제거한 검증이며 **전체 planning 성능 개선이나 20초 달성의 증거는 아니다**. 다음은 동일 Docker 4회 실측이다.
+
+## V55 실측 완료 및 V56 우선순위
+
+- 게시 commit `7a44c1874b`, 선택 gate **210 classes / 1,613 tests / failures 0 / errors 0 / skipped 3**. JAR SHA-256 `51172e693f4a9ebac9ed695a240e6ec84b5e98ed2e27a6fc656cfe98cebe1a3e`.
+- 동일 Docker 4 CPU / 16 GiB / JVM 10 GiB / JFR 55초 / watchdog 60초에서 LogReg·GLM × OFF·detailed **네 실행 모두 watchdog 종료**. fullInitial 완료 receipt 없음. **20초 목표 미달성**.
+- 추가 gate footprint 탐색의 누적 work: LogReg **95,171,210**, GLM **47,732,346**. 누적 staging은 실제 캐시 보관량/성공 admission과 다르다.
+- OFF JFR의 footprint inclusive sample은 LogReg 243/2,256개(그중 추가 gate 153개), GLM 89/2,822개(추가 gate 65개). 캐시 재사용 확대가 추가 의존성 탐색 비용을 만들고 있다.
+- 현재 실제 용량 거절은 footprint 생성 뒤에 판정한다. V56은 ordinary root summary admission 이후 **용량 판정을 먼저 하고** 추가 gate를 처리하는 구조를 검토한다. Dead alternative에만 있던 의존성과 hidden owner까지 원본 footprint에 보존해야 한다.
+- 외부 build 중첩: OFF 13/25, detailed 14/25 samples. 자체 build/분석은 timed trial과 겹치지 않았다. 완료 시간 개선/악화는 아직 입증하지 못했다.
+- 근거: `R/evidence/v55-planner-breakdown.txt`, `candidate-v55-detailed-topology-outcomes.json`, `v55-footprint-witness-callers.json`, `v55-contention-summary.json`.
+- 전체 ML 연산 rule-directed/압축 coverage도 미완료. CAST_AS_SCALAR의 syntactic 77회와 실제 family publication 수를 혼동하지 않는다.
+
+
 작성일: 2026년 10월 13일
 
 최신 빌드 및 실측 근거: 2026년 10월 13일
@@ -26,7 +47,7 @@ V53의 exact row ↔ CP family closure 오류를 수정했다. 후보를 제거�
 | V55 중복 footprint 순회 | optional admission의 총 작업·중간 보존량 제한; 원래 proof/candidate 불변 |
 | V55 CAST_AS_SCALAR | MATRIX→SCALAR 불변 capability에 dependency authority 추가; focused 21 PASS |
 
-V55 native/physical 강화 focused는 **202 PASS**, 최신 main 병합 통합 gate는 **210 classes / 1,613 tests / 실패·오류 0 / skip 3**이다. V55 동일 Docker 실측은 다음 단계다. `origin/main`의 exact gate reuse/physical no-op 변경을 함께 검증하고 있다. Gate key의 정확한 owner·fact·relation identity, fixed-owner 제외 및 revision 격리는 유지한다.
+V55 native/physical 강화 focused는 **202 PASS**, 최신 main 병합 통합 gate는 **210 classes / 1,613 tests / 실패·오류 0 / skip 3**이다. V55 동일 Docker 실측은 완료했으며 네 실행 모두 watchdog 종료했다(상단 최신 결과 참조). `origin/main`의 exact gate reuse/physical no-op 변경을 함께 검증하고 있다. Gate key의 정확한 owner·fact·relation identity, fixed-owner 제외 및 revision 격리는 유지한다.
 
 CAST_AS_SCALAR의 ML10 출현 77회는 압축 적용 실적이 아니라 frozen DML의 문법적 출현 수다. 실제 PA-derived PUBLIC fixture는 singleton exact라 family 0건이다. 모든 연산에 빈 dependency를 붙이는 식의 일반화는 합법성 증명을 깨뜨리므로 적용하지 않았다.
 
