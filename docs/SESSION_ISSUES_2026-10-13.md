@@ -531,3 +531,8 @@
 - V60 추가 경계 focused **239 PASS / 1 ignored**, `R/evidence/v60-boundary-focused.log`. 별도 실제 hidden reaching owner를 고정한 cold/warm hybrid raw alternative 비교로 현재 pin reference/owner identity와 effective edge 순서를 검증했다. Positive bucket 및 missing/foreign-owner 거절을 확인했다. Production 독립 검토 CLEAR, 경계 테스트 독립 검토/최종 selected gate 진행 중. Reused-row counter는 나중에 alias로 거절된 시도에서도 발생할 수 있는 raw 작업량이며 accepted-query 절감량이라고 해석하지 않는다.
 
 - V60 최종 selected **211classes/1650tests/0fail/0error/3skip**, BUILD SUCCESS09:29:00+02. 독립 frozen 경계 검토 CLEAR. 현재 source에서 later duplicate rejection은 그대로지만 warmed hybrid duplicate 전용 fixture는 없으며, 기존 pinned duplicate/실제 migrated-host query로 보완한다. 실측 전 효과 미확인.
+
+### V60 동일 Docker 측정 완료 — 20초 실패 유지
+
+- `eb1e8c47db` frozen4회 모두watchdog60/no fullInitial/own container 제거. LR267,389/GLM6,226 raw ordinary rows 재사용은 실제 적용 증거지만 전체 완료 시간은 없다. OFF direct63.48%/21.94%, GLM canonical7.91%/joint7.68%.
+- External build OFF/detailed 각15/25, own heavy 격리. 근거 R/evidence/v60-*.log/txt/json. 반복 row 생성 감소만으로 근본 product 재전개 문제를 해결하지 못했다. 다음 acceptance는 earlier explicit clause와 later native product의 first-donor 보존 압축 merge다.

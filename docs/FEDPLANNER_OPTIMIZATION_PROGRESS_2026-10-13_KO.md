@@ -5,8 +5,25 @@
 - Native/ordinary 혼합 query가 이미 저장된 ordinary row를 skeleton/dependency/edge로 다시 만들던 작업을 제거했다. **새 cache·budget·후보 축소 없이** positive resident row만 재사용한다. Missing bucket은 기존 경로로 처리하고, duplicate authority 검사·first donor·현재 fixed overlay는 유지한다. Derived/VALUE_MAP metadata 처리는 그대로다.
 - Public 실제 혼합 경로 RED31/1 → native focused239PASS/1 ignored. Hidden fixed-owner overlay, positive/missing/foreign-owner bucket 및 기존 migration 회귀를 포함했다. 독립 production/경계 검토 CLEAR.
 - Fresh selected **211 classes / 1,650 tests / failures0 / errors0 / skipped3**, package BUILD SUCCESS09:29:00+02. 전체 repo 테스트가 아니라 선택 FedPlanner gate다.
-- 게시 및 동일 Docker 후속 측정 단계다. V59까지 네 실행 모두 watchdog60이며 **20초 목표 미완료**.
+- `eb1e8c47db`로 origin/main 게시·SHA 검증했다. 봉인 JAR `d9c58f98fc13e9a26e41c0c5fa430d6bfeca2265831146f2f3b7a027ff3141a6`. V60 동일 Docker 네 실행도 모두 watchdog60이며 **20초 목표 미완료**.
 
+
+### V60 실측 및 다음 우선순위
+
+- Detailed raw ordinary row 재사용: **LogReg267,389 / GLM6,226 rows**. 조회44,189/7,546회이며 rows와 query 수는 단위가 다르다. Native 회로 재사용923,010/21,857회, 생략 gate rows12,385,139/265,000회.
+- OFF LR2659samples/direct63.48%/peak4.796GB, GLM2616samples/canonical7.91%/joint7.68%/peak3.224GB. 네 실행 모두 fullInitial receipt 없음. 반복 생성 감소를 완료 planning 속도 향상으로 대신 보고하지 않는다.
+- External build overlap은 OFF/detailed 각15/25 monitor samples. 기존 외부 planner2개는 유지됐고 자체 heavy 작업은 timed 실측 이후로 분리했다.
+- 다음 최우선은 **explicit retained support와 새 native product를 병합할 때 압축을 유지하는 것**이다. 기존 원본 clause의 first-donor identity·FULL seed·owner authority를 보존해야 하며, native membership이 정확히 증명되지 않으면 기존 경로를 유지한다. 다른 main 작업과 중복하기 전에 독립 acceptance 회귀를 마련한다.
+- 근거 `R/evidence/candidate-v60-detailed-topology-outcomes.json`, `v60-planner-breakdown.txt`, `v60-analysis-driver.log`, `v60-contention-summary.json`.
+
+### 전체 ML 연산 확대의 정확한 현재 경계
+
+V59 실제 seq12 route 계측에서 CP_FAMILY는 두 workload 모두0회다. Cartesian 표시가 곧 rule-directed 미구현은 아니다. MM/binary/append 등은 이미 모든 입력 의존성을 선언하고 있으며, 모든 varying axis가 determinant이면 Oracle가 같은 크기의 seed table을 먼저 만들지 않도록 relation을 생략한다. 모든 입력을 읽는 기존 규칙에서 determinant를 임의로 제거하면 정확성을 잃는다.
+
+- 실제 Cartesian numeric 호출(LR/GLM): MM257/531, binary228/895, fused ternary97/147, nary23/29, cbind12/83, indexing28/54, ifelse17/2, castdts57/238. MM MRV34/82는 별도다. Literal/TRead/function 등도 존재한다. 이는 **호출 수이지 tuple 수·시간이 아니다**. EXACT_RULE_RESIDUAL과 중복 합산하지 않는다.
+- Conditional decision region의 다음 후보는 ternary leader/shape가 고정된 뒤 다른 축의 outer 조건이 불변인 영역이다. 다만 profile이 모든 입력을 읽으므로 capability만 같다고 emission/support family를 승인할 수 없다.
+- 일반 FED family 확대의 핵심 누락은 whitelist보다 **tuple별 lineage/support/derived-action을 닫는 범용 authority builder**다. 기존 `CandidateRuleRelation.MemberEmissions`를 활용하되 대표값 성공을 전체 domain의 증명으로 사용하지 않는다. WSIGMOID의 matrix 비결정 축은 후속 시험 후보이며 현재 LogReg/GLM에서 실제 해당 domain이 발생했다는 증거는 없다.
+- 따라서 전체 ML 연산 압축 완료를 주장하지 않는다. 정확한 candidate 집합을 보존하면서 logical tuple 작업량과 압축을 잃는 위치를 기준으로 확장한다.
 
 ## V59 native 원본 회로 공유 — 통합 검증 통과
 
