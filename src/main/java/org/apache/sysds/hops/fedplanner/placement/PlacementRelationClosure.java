@@ -6825,6 +6825,13 @@ final class PlacementRelationClosure {
 					clauses = prior.get(realization.key());
 				if(clauses == null)
 					return false;
+				// Native retained products are indexed separately and deliberately do not
+				// populate an otherwise empty scalar clause map. Such a map cannot prove
+				// exact scalar reuse; fail before probing a lazy relation member. Preserve
+				// the existing comparison when same-key explicit clauses populated the map.
+				if(clauses.isEmpty()
+					&& realization.supportClauses() instanceof NativeContinuitySupportClauses)
+					return false;
 				for(CandidateRealizationSupportClause candidate : realization.supportClauses()) {
 					CandidateRealizationSupportClause retainedClause = clauses.get(candidate);
 					if(retainedClause == null || !sameDirectSupportAuthority(retainedClause, candidate))

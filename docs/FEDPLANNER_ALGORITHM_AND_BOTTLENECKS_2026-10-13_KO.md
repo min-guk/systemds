@@ -2,9 +2,9 @@
 
 작성일: 2026-10-13
 
-코드 기준: `33384c0054becbfefba6a4e51a5de7aefe745988`
+본문 1–11절의 코드 기준: `33384c0054becbfefba6a4e51a5de7aefe745988`. 이후 통합·실측은 12절에 별도로 기록한다.
 
-성능 근거: v41의 동일 COFEE 50K×128 W1 Docker 실행. 최신 코드인 v43의 실측 결과가 아니다.
+성능 근거: v41·v43·v45의 동일 COFEE 50K×128 W1 Docker 실행을 구분한다. 최신 완료 실행 v45는 LogReg 438.34초, GLM 117.55초이며, 20초 목표는 미달성이다. v46은 회귀 수정·검증 중으로 실제 성능 결과가 없다.
 
 ## 1. 현재 문제에 대한 판단
 
@@ -347,7 +347,7 @@ LogReg에서는 skeleton 요청 약 1,970만 회 중 371만 회를 재사용했�
 
 커밋 `5660e734a4`의 동일 COFEE 실제 실행은 LogReg **438.336초**, GLM **117.548초**였다. v43 대비 각각 **49.564초 증가**, **3.828초 감소**다. 두 workload의 수치 결과·선택 계획·objective raw bits/certificate·Cost Surface fingerprint·receipt audit은 일치했다. 20초 목표는 미달성이다.
 
-첫 번째 문제는 캐시를 찾는 비용이다. 새 구현은 root의 직접 입력뿐 아니라 proof graph 안의 모든 입력 gate에 대해, 저장 가능한지 판단하려고 다시 하위 의존성을 탐색했다. LogReg에서 footprint의 raw edge 방문이 **92,488,567→1,462,463,009회**로 증가했다. Graph 수는 103,616으로 같았고 graph state·alternative·edge 수도 늘었다. 이미 상위 관계를 재사용할 수 있는데 작은 하위 관계까지 반복해서 조사한 셈이다. Gate의 직접 eviction을 막아도, gate가 차지한 공간 때문에 나중에 기존 큰 summary가 간접 축출될 수 있었다. 전역 하위 gate 발견은 제거하는 방향으로 수정 중이다.
+첫 번째 문제는 캐시를 찾는 비용이다. 새 구현은 root의 직접 입력뿐 아니라 proof graph 안의 모든 입력 gate에 대해, 저장 가능한지 판단하려고 다시 하위 의존성을 탐색했다. LogReg에서 footprint의 raw edge 방문이 **92,488,567→1,462,463,009회**로 증가했다. Graph 수는 103,616으로 같았고 graph state·alternative·edge 수도 늘었다. 이미 상위 관계를 재사용할 수 있는데 작은 하위 관계까지 반복해서 조사한 셈이다. Gate의 직접 eviction을 막아도, gate가 차지한 공간 때문에 나중에 기존 큰 summary가 간접 축출될 수 있었다. 원격의 실제 child 재사용 개선을 유지하면서, 전역 하위 gate 발견 호출을 제외하는 방향으로 수정 중이다.
 
 두 번째 문제는 **이미 정확하게 압축한 관계를 Closure가 다시 펼치는 것**이다. v43 LogReg의 proof 소비 6,121,451회 중 2,555,577회는 partitioned publication에서 기존 관계와 합치지 못한 product를 순회하는 경로였다. 이 경로는 residual 생성에 성공하면 residual을, 실패하면 원래 product를 순회한다. 현재 계측은 그 둘을 구별하지 않으므로 2,555,577회 전체가 제거 가능하다고 주장할 수 없다. 또한 이는 새 Clause 객체 개수와 다르다.
 

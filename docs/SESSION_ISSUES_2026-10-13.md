@@ -252,3 +252,58 @@
 
 - **210 actual classes / 1613 tests / failures 0 / errors 0 / skipped 3**, package BUILD SUCCESS (07:16:00+02). Incoming non-evicting gate/replay production과 우리 bounded admission/CAST 경로를 함께 검증했다.
 - 근거 `evidence/candidate-v55-package.log`; 병합 전 두 성공 로그도 별도 보존한다.
+
+### Incoming gate 통합 정책 최종 결정
+
+- 두 검토를 비교한 결과, query별 default allowance 163,840은 v45 평균 footprint raw work 약 14,114/query보다 크므로 실제 반복 비용을 없앤다는 근거가 되지 못한다. Work credit와 raw edge는 같은 단위가 아니며 정확한 초 단위 추정도 아니지만, 제한이 존재한다는 사실만으로 해당 회귀를 해결했다고 볼 수 없다.
+- **최종 변경**: real-child frontier와 CAST CP family는 유지하고 production의 전역 `rememberNativeGateFootprints` 호출을 제거한다. 새로운 옵션이나 cap 조정은 없다. Incoming의 bounded helper 및 전용 regression test는 이번 통합에서 보존하지만 production에서는 호출되지 않는다. 이 dead helper/test는 후속 정리 대상으로 명시한다.
+- 첫 통합 full gate는 이 정책 결정 전 소스로 시작됐으므로, 정확한 PID/부모/build 경로를 검증한 뒤 해당 JUnit만 중단하고 로그를 보존했다. 중단된 gate를 성공으로 보고하지 않는다. 최종 소스의 full gate를 새로 수행한다.
+- Public native fixture에서 cold proof/source/owner parity, real child summary reuse의 상태·edge 감소, gate admission work 0을 확인한다. 기존 native/gate-budget 테스트를 삭제하거나 ignore하지 않는다.
+
+## v46 최종 통합에서 발견된 scalar handle 재전개 회귀 (진행 중)
+
+- **증상**: 선택된 FedPlanner 회귀 1,520건 중 2건 실패 / 184.526초. EarlyNativeCoverageOptimizationTest와 NativeMultiSeedPublicationTest의 실제 binder 검증에서 scalar handle 생성 기대 0, 관측 1이다. Main/test 컴파일은 성공했고 class/resource 변경 0, source mismatch 0이다.
+- **원인/대응**: retained complement 재결합 통합 경로를 조사한다. 기존 0 기대를 1로 완화하지 않고 불필요한 scalar 복원 경로를 수정한 뒤 관련 반례와 전체 gate를 재실행한다. 실패 엔진은 Docker 검증·성공 발행에 사용하지 않는다.
+- **근거**: `evidence/relation-union-projection-full-gate-v46-pre-fix-two-failures/validation.json` 및 `tests.log`에 원본 실패 증거를 복사 보존했다.
+- **별도 검증**: global gate 탐색 호출 제거는 independent review CLEAR, author focused 190 PASS, 독립 copied-build 189 PASS/기존 ignore 1. Real child 재사용과 proof/source authority는 유지한다. 이 결과로 다른 두 실패를 대체하지 않는다.
+- **잔여 위험/감지**: donor authority가 맞아도 publication 경로가 scalar handle을 만들 수 있으므로 실제 binder 객체 counter 및 권한 동일성 검증을 함께 유지한다. Oracle/runtime/합법 후보 정의는 변경하지 않는다.
+
+### v46 scalar handle 재전개 원인 및 수정
+
+- **원인**: `GroundedNativePreparation.containsExact`가 native support를 scalar prior clause map에서 찾으려고 순회했다. Preparation은 native retained product를 별도 인덱스에만 넣으므로 이 비교는 성공할 수 없지만, false를 반환하기 전에 lazy `get(0)`가 실행되어 handle 1개를 생성했다.
+- **수정**: native support는 scalar map 비교 전에 false를 반환한다. 기존 conservative rebuild 경로와 합법성·authority는 동일하고, 결과가 없는 scalar 조회만 제거한다. `PlacementRelationClosure.java`의 private helper로 범위를 제한했다.
+- **검증**: 동일 22 tests에서 RED 2 failures → GREEN 22 PASS. Complement/native/hash/rebind/materialization/multiheader 관련 109 PASS. `NativeMixedAxisSplitPublicationTest`도 최종 관계의 local handle 기대를 1에서 0으로 강화했다. 기존 초기 retained donor의 handle identity는 계속 검사한다.
+- **증거**: `lanes/native_complement_handle_regression/artifacts/native-complement-handle-regression-20261013/`, production SHA-256 `c63e42ace157c5e55d71ef8358c93722a019233ac7fb6848a96ddfc0aed18ec4`. 최종 통합 gate 및 independent review 진행 중이다.
+- **잔여 위험/감지**: 향후 scalar prior map에 native authority를 포함하도록 계약이 바뀌면 guard도 재검토해야 한다. Current map construction과 cold/warm authority·생성량 회귀를 함께 검증한다.
+
+- **Independent review**: scalar handle guard CLEAR. Retained prefix는 이미 identity로 확인되고 native retained clauses는 scalar prior map에 들어가지 않는다. Suffix에 same-key explicit map이 있어도 early false는 이미 계산된 ordered realization을 그대로 재구성하는 경로이며 후보나 coverage 검사를 생략하지 않는다.
+
+## v46 실제 검증 evidence builder의 실패 판정 강화
+
+- **증상/원인**: 기존 실행 비교 helper는 parity 검사값과 무관하게 binding을 passed로 기록할 수 있었다. Extraction이 실패해도 원본 runtime status=passed를 복사하면 누락된 필드에서 실패 증거 기록 전에 예외가 날 수 있었다.
+- **수정**: 두 workload의 runtime/numeric/audit, 모든 v43·v45 parity, 실제 frozen JAR/manifest SHA와 receipt의 엔진 binding이 모두 맞아야 성공이다. Extraction failure의 effective status는 failed로 유지하고 원본 상태는 runtimeStatus로 별도 보존한다. 실패 기록을 저장한 뒤 nonzero로 종료한다.
+- **검증**: positive, false parity, failed workload, SHA mismatch, empty/missing workload, runtime passed+missing receipt의 synthetic end-to-end 반례 통과. Production optimizer와 workload 조건은 변경하지 않았다.
+- **근거/잔여 범위**: `artifacts/build-v46-runtime-evidence.py` SHA-256 `887494e5a5ce23b353140a74da96564a6d4153620693fd6d1e413d58cc627854`, `evidence/cofee-50k128-v46-validation/builder-negative-tests/output.log`. 이 helper 검증은 실제 workload 성공이나 시간 개선의 근거가 아니다.
+
+### v46 guard 범위를 empty scalar map으로 한정
+
+- Conservative native guard는 선택된 회귀 **1,520 PASS / 199.511초**, class/resource 변경 0, source mismatch 0으로 통과했다. 근거는 `evidence/relation-union-projection-full-gate-v46-conservative-guard/`에 보존했다.
+- 추가 검토에서 same-key explicit clause가 scalar map을 채운 경우 기존 exact-authority 비교로 emission identity를 재사용할 수 있음을 확인했다. 넓은 guard는 정확성을 해치지는 않지만 이 재사용을 놓친다.
+- 최종 guard는 **scalar map이 비어 있고 support가 native인 경우**에만 조기 false를 반환한다. Map이 채워진 경우의 기존 비교·reuse를 유지한다. 앞선 “native 비교가 언제나 불가능” 설명은 이 empty-map 조건으로 한정한다.
+- Production SHA-256 `f9cfb288c5d210f129eacf4fb49fc6b0294179a44991f69c43d7c8e5fcad944b`, 관련 109 PASS, independent review CLEAR. 소스가 바뀌었으므로 이전 1,520 PASS를 최종 엔진 검증으로 재사용하지 않고 다시 수행한다.
+
+- **재사용 보존 반례 추가**: 동일 grounded explicit map과 동등한 native suffix의 reuse certificate를 검사했다. 넓은 guard RED 13 tests/1 failure, 최종 empty-map guard GREEN 13 PASS. `NativeSingleAxisProductUnionTest.sameKeyExplicitMapCanCertifyAnEquivalentNativeSuffix`, incremental patch SHA-256 `1b744835b4cd11c665b4c64b1e26c919c46cd9154f0bb7301b6a7493c439adeb`. Independent test review CLEAR.
+
+## 다음 구조 개선: 같은 hole을 유지하는 conditional relation 성장 (진행 중)
+
+- **코드상 단절**: `oneAxisUnion`의 conditional 경로는 같은 base axes를 요구한다. Base가 커지면 conditional union이 실패하고, ordinary만 지원하는 residual 교집합도 실패해 개별 proof 소비로 돌아갈 수 있다.
+- **구현 범위**: retained `BL\E`, candidate `BR\E`에서 exact authority와 hole이 같고 `BL⊆BR`, `E⊆BL`인 경우만 처리한다. 최종 relation은 `BR\E`; 기존 donor는 `BL\E`, 새 donor는 `BR\BL`을 맡는다. Source/action/proof와 sparse hole을 그대로 유지하면서 기존 conditional index 표현을 사용한다.
+- **검증 계획**: retained 2×2−1=3, candidate 3×3−1=8인 실제 binder 반례에서 추가 5개 tuple 순회를 0으로 줄이는지 확인한다. Logical8, selection 전 handles0, retained/new donor identity, changed-hole/foreign authority/staging/cap negative 및 physical/cost parity를 검사한다.
+- **경계/잔여 한계**: 임의의 다른 hole·부분 overlap·동일 header의 여러 region까지 지원하려면 rank/hash/restrict/downstream API 확장이 필요하다. 현재 제한된 경우의 실제 workload 적용 비중은 미측정이다. 이 후속 구현은 검증 중인 frozen v46과 분리한다.
+
+## v46 최종 회귀 gate 및 frozen 실측 준비
+
+- **최종 소스 검증**: selected FedPlanner **1,521 PASS / 181.537초**, 별도 probe **9 PASS / 1.435초**. Class/resource 7,917개, 실행 중 변경 0, source mismatch 0. 전체 repository Maven suite는 아니다.
+- **포함 변경**: retained subset/complement의 조합별 전개 제거, incumbent projection 재사용, 전역 gate suffix 탐색 제거, empty scalar-map에서의 lazy native handle 복원 제거. Real-child 재사용, populated scalar-map의 exact reuse, source/action/proof 계약은 유지한다.
+- **근거**: `evidence/relation-union-projection-full-gate-v46/validation.json`, `evidence/v46-probe-gate/tests.log`. 실패 2건 및 conservative guard의 이전 성공 gate는 각각 별도 폴더로 보존했다.
+- **원격 변경 분리**: 검증 완료 후 origin/main `1b77bf7a01`이 도착했다. 현재 검증 소스의 커밋/JAR을 먼저 고정해 v46 실측을 수행하고, incoming 변경은 이후 통합 빌드에서 검증한다. v46 실측을 incoming 이후 엔진의 검증으로 표시하지 않는다. 20초 목표는 여전히 미달성이다.

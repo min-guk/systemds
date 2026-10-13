@@ -2694,7 +2694,9 @@ final class NativePlacementContinuity {
 					acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
 						|| acyclicComponentMaxAlternatives == 0 ? Map.of()
 						: acyclicRootChildFootprints(root, graph, traversal);
-				rememberNativeGateFootprints(graph, traversal, childFootprints);
+				// Root-boundary traversal above already admits the reusable real children.
+				// Do not rescan every synthetic gate suffix: the bounded helper remains for
+				// isolated contract tests, but is intentionally unused in production.
 				if(traversal.emptyFilteredStates == 0) {
 					if(metrics != null)
 						metrics.recordNoEmptyDagPruningSkip();

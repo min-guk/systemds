@@ -384,7 +384,6 @@ public class NativeMixedAxisSplitPublicationTest {
 			retainedBindings::contains).orElseThrow();
 		Assert.assertEquals(1, retainedRelation.size());
 		CandidateRealizationSupportClause retainedClause = retainedRelation.get(0);
-		int retainedHandles = retainedRelation.materializedHandleCount();
 		CandidateEmissionRealization partialDurable = new CandidateEmissionRealization(
 			durable.key(), retainedRelation);
 		CandidateRuleFact retained = fact(staging.key(), List.of(partialDurable, nativePart));
@@ -398,7 +397,7 @@ public class NativeMixedAxisSplitPublicationTest {
 			.findFirst().orElseThrow();
 		Assert.assertTrue(reboundDurable.supportClauses()
 			instanceof NativeContinuitySupportClauses);
-		Assert.assertEquals("the completed relation creates no additional member handles", retainedHandles,
+		Assert.assertEquals("the completed relation creates no scalar member handles", 0,
 			((NativeContinuitySupportClauses)reboundDurable.supportClauses())
 				.materializedHandleCount());
 		Assert.assertEquals("residual publication must preserve every cold source/proof member",
@@ -456,7 +455,6 @@ public class NativeMixedAxisSplitPublicationTest {
 		NativeContinuitySupportClauses retainedRelation = completeRelation.restrictBindings(
 			retainedBindings::contains).orElseThrow();
 		CandidateRealizationSupportClause retainedClause = retainedRelation.get(0);
-		int retainedHandles = retainedRelation.materializedHandleCount();
 		CandidateEmissionRealization retainedRealization = new CandidateEmissionRealization(
 			complete.key(), retainedRelation);
 		CandidateRuleFact retained = fact(staging.key(), List.of(retainedRealization));
@@ -468,8 +466,7 @@ public class NativeMixedAxisSplitPublicationTest {
 		CandidateEmissionRealization merged = rebound.allowedEmissionFacts().get(0)
 			.realizations().get(0);
 		Assert.assertTrue(merged.supportClauses() instanceof NativeContinuitySupportClauses);
-		Assert.assertEquals("the completed relation creates no additional member handles",
-			retainedHandles,
+		Assert.assertEquals("the completed relation creates no scalar member handles", 0,
 			((NativeContinuitySupportClauses)merged.supportClauses()).materializedHandleCount());
 		CandidateEmissionFact template = staging.allowedEmissionFacts().get(0);
 		CandidateEmissionFact explicitReference = new CandidateEmissionFact(

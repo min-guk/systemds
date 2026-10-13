@@ -38,6 +38,39 @@ import org.junit.Test;
 
 public class NativeSingleAxisProductUnionTest {
 	@Test
+	public void sameKeyExplicitMapCanCertifyAnEquivalentNativeSuffix() throws Exception {
+		CompiledHopKey owner = key("explicit-native-reuse-owner");
+		CompiledHopKey source = key("explicit-native-reuse-source");
+		DurableAnchorKey seed = pool("explicit-native-reuse-seed");
+		DurableAnchorKey output = pool("explicit-native-reuse-output");
+		List<List<CandidateRealizationInputBinding>> axes = List.of(
+			List.of(direct(0, "explicit-native-reuse", source)));
+		PlacementRealizationKey outputKey =
+			PlacementRealizationKey.nativeLineage(emission(), "explicit-native-reuse");
+		CandidateEmissionRealization explicitRealization = new CandidateEmissionRealization(
+			outputKey, explicit(owner, seed, output, axes));
+		CandidateEmissionFact grounded = new CandidateEmissionFact(
+			emission(), FType.ROW, null, List.of(explicitRealization));
+
+		Method prepare = PlacementRelationClosure.class.getDeclaredMethod(
+			"prepareGroundedNativeSupport", CandidateEmissionFact.class);
+		prepare.setAccessible(true);
+		Object preparation = prepare.invoke(null, grounded);
+		Method retained = preparation.getClass().getDeclaredMethod("retained");
+		retained.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		List<CandidateEmissionRealization> scheduled = new ArrayList<>(
+			(List<CandidateEmissionRealization>)retained.invoke(preparation));
+		scheduled.add(new CandidateEmissionRealization(
+			outputKey, relation(owner, seed, output, axes)));
+		Method containsExact = preparation.getClass().getDeclaredMethod(
+			"containsExact", List.class);
+		containsExact.setAccessible(true);
+		Assert.assertTrue("same-key explicit clauses must retain the exact emission reuse certificate",
+			(boolean)containsExact.invoke(preparation, scheduled));
+	}
+
+	@Test
 	public void diagnosticsKeepTwoWayNativeUnionsLazyAndCountLogicalDuplicates() {
 		CompiledHopKey owner = key("diagnostic-consumer");
 		CompiledHopKey source = key("diagnostic-source");
