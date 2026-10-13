@@ -25,7 +25,7 @@
 
 - **원인**: 질의 root가 달라도 동일 relation의 입력 gate와 의존성을 다시 만들었다. Physical closure는 동일 snapshot의 변하지 않은 consumer를 여러 dirty input edge에서 반복 재생성했다.
 - **변경**: 정확한 fact/realization/relation identity 및 witness/pivot/axis가 같은 gate를 기존 bounded component summary와 함께 보관·퇴거한다. 전체 source 및 숨은 metadata footprint가 현재 root에 의존하면 summary를 재사용하지 않는다. Revision 간 gate 이동은 금지한다. Physical frontier는 호출 내부에서만 유지하며 모든 authority commit에서 초기화한다.
-- **실제 생성량 검증**: 두 dirty input의 동일 consumer에서 keys 4→2, facts 28→14, clauses 20→10. 폭 256 gate의 후속 질의에서 생성 alternative 512→256, 의존성 방문 1,028→516. 논리적 후보는 동일하다. 이 작은 fixture의 수치를 COFEE 성능으로 일반화하지 않는다.
+- **실제 생성량 검증**: 두 dirty input의 동일 consumer에서 keys 4→2, facts 28→14, clauses 20→10. 폭 256 gate에서는 새 코드의 cold 질의 대비 warm 질의가 alternative 512→256, 의존성 방문 1,028→516이었다. 이 gate 비교는 이전 코드의 warm 질의와 비교한 결과가 아니며, 아래 직접 비교에서 cap=1 회귀가 발견됐다. 논리적 후보는 동일하다. 이 작은 fixture의 수치를 COFEE 성능으로 일반화하지 않는다.
 - **반례**: 중간 source 변경 후 frontier 초기화를 제거한 복사 빌드는 FULL/ROW가 되어야 할 consumer에 FULL/FULL을 남겨 실패했다. 초기화가 있는 버전은 전체 nodes/keys/facts/source/proof 비교를 통과했다.
 - **검증**: 선택된 FedPlanner 회귀 1,453 PASS / 186.537초. 실행 중 class/resource 변경 0, source mismatch 0. 별도 gate 반례 복사 빌드 156 PASS / 기존 ignore 1: 값은 같지만 identity가 다른 fact/realization/relation의 gate 차용 금지, revision 후 gate 미이월 및 cold 결과 일치. Metrics on/off parity 및 독립 source review CLEAR.
 - **미완료**: 병합 전 결과다. 새 origin/main의 CP family closure 수정과 통합한 뒤 재검증하고 실제 COFEE를 실행한다. 전체 candidate/Physical Model/DP가 완전히 relation-native가 됐다는 주장은 하지 않는다.
@@ -154,3 +154,45 @@
 - `5bd1c76369`의 null-footprint correction은 bounded collector가 이미 포함하는 의미이므로 production 함수는 그대로 보존하고 incoming 회귀와 문서는 추가했다.
 - Fresh **209 actual classes / 1,608 tests / failures 0 / errors 0 / skipped 3**, package BUILD SUCCESS (07:10:29+02). 근거 `evidence/candidate-v55-package.log`. 전체 저장소 gate가 아니라 지정 FedPlanner 회귀 gate다.
 - V55 실측은 이후 동일 자원 Docker로 수행한다. 이 테스트 통과를 20초 목표 달성이나 모든 ML 연산 압축 완료로 간주하지 않는다.
+## Gate admission의 기존 warm 경로 비교 — cap=1 회귀 발견
+
+- **검증 보완**: 동일 generated-history fixture를 v43과 수정된 v45 복사 빌드에서 각각 두 번 실행했다. 새 코드 내부의 cold/warm 차이만으로 기존 구현 대비 효과를 판단하지 않았다.
+- **결과**: 기본 cap에서 두 버전의 두 번째 질의는 graphs 1 / states 3 / alternatives 3 / edges 2 / raw footprint edges 0으로 같았다. `maxEntries=1`에서는 v43이 같은 1/3/3/2/0, v45가 1/8/10/8/4로 악화했다. Per-JVM lineage ID를 정규화한 proofs와 dependency-owner footprint는 일치했다.
+- **원인**: 새 gate admission이 동일 예산의 기존 root-child summary를 축출했다. 더 작은 부분을 재사용하려다 이미 가능했던 더 큰 부분의 재사용을 잃었다.
+- **수정 방향**: gate는 기존 summary를 축출하지 않고 남은 공간만 사용한다. 기존 ordinary summary의 eviction 계약은 유지한다. 값만 같은 서로 다른 authority를 합치거나 보관 한계를 늘리는 방식으로 해결하지 않는다.
+- **증거**: `lanes/gate_baseline_probe/artifacts/old-v43-vs-v45-20261013/comparison.json`. 이 상태는 성능 회귀로 판정했으며 실제 v45 실행 전에 수정·재검증한다.
+
+## DP의 검증 완료된 동일 선택 재계산 제거 — 독립 검증 통과
+
+- **원인**: Conditional replay가 동일 원본 decision 선택을 복원한 뒤에도 전체 support 전파와 보조 변수 복원을 다시 실행했다.
+- **정확성 근거**: cache entry는 canonical 비개선 증명 또는 성공한 lift·accept 뒤에만 만들어진다. 원본 decision이 같고 root·cost가 불변이면 canonical objective도 같다. `upper`는 감소하기만 하므로 이미 확인한 선택은 이후 엄격한 개선이 될 수 없다. 동률에서 기존 auxiliary assignment를 유지하는 계약도 동일하다.
+- **변경**: 검증된 replay에서 lift와 accept를 생략한다. 다른 block·외부 decision, cache miss, 자원 실패 등은 기존 경로를 따른다. 추가 assignment 배열이나 테스트 전용 production counter를 저장하지 않는다.
+- **실제 작업 검증**: 기존 `Prepared.lift`에 spy를 연결한 동일 fixture에서 변경 전 실제 호출 2회, 변경 후 1회. 전체 assignment, 별도로 복원한 assignment, objective raw bits, conditionalAttempts, 4개 시간 필드를 제외한 전체 checkpoint가 동일하다. 관련 48 tests PASS, 독립 proof review CLEAR.
+- **한계**: 실제 COFEE에서 이 replay가 얼마나 발생하는지는 아직 확인하지 않았다. 이 단위 테스트로 전체 optimizer 시간을 추정하지 않는다.
+- **증거**: `lanes/regional_replay_lift/artifacts/regional-replay-lift-final2-20261013/`. Production patch SHA-256 `ae94dbdc037924f1070093d82277a2c2e8613c5b8781b15665c2777065ceccde`.
+
+### Gate admission 회귀 수정 및 이전 버전 직접 비교
+
+- **상태**: 수정·독립 검증 통과. Gate admission은 기존 entry를 제거하기 전에 공유 entries/states/alternatives의 잔여 예산을 O(1)로 확인한다. 자기 entry 갱신이면 그 사용량만 차감한다. Gate는 기존 summary를 축출하지 않으며 일반 summary의 LRU 정책은 유지한다.
+- **반례**: 수정 전 production을 복원한 RED가 gate의 ordinary summary 축출로 실패했다. 수정 후 cap=1의 두 번째 질의는 v43과 동일한 graphs/states/alternatives/edges/rawFootprint = 1/3/3/2/0이다. 기본 cap에서도 두 버전이 같다.
+- **효과가 있는 경계**: 같은 fixture에서 maxEntries=1, maxStates=5로 전체 child는 크고 일부 gate는 들어가는 경우, v43의 1/10/12/12/2가 수정본 1/8/10/8/2로 줄었다. Proof와 owner footprint 의미는 같다. 실제 workload 효과를 이 수치로 추정하지 않는다.
+- **검증**: NativePlacementContinuityTest 157 PASS / 기존 skip 1. 독립 검토 CLEAR. 비교 증거 `lanes/gate_baseline_probe/artifacts/opportunistic-gate-old-v43-comparison-20261013/comparison.json`, SHA-256 prefix `8b6de613`.
+- **수정 파일**: NativePlacementContinuity.java, NativePlacementContinuityTest.java.
+- **잔여 위험**: 기존 캐시를 밀어내지 않는 것은 증명했지만 gate 발견·보관 자체의 비용이 이득보다 클 수 있다. 전체 통합 gate 후 실제 COFEE LogReg·GLM을 v43과 비교한다.
+
+## v45 통합 회귀 gate
+
+- **검증 범위**: gate budget null 경계 수정, opportunistic gate admission, 검증 완료 DP replay의 중복 lift 제거를 CP family closure·physical frontier 변경과 함께 검증했다.
+- **결과**: 선택된 FedPlanner 회귀 **1,500 PASS / 215.979초**. 검사 중 class/resource 변경 0, source mismatch 0, class/resource 7,909개. 전체 repository Maven suite는 아니다.
+- **증거**: `evidence/gate-budget-replay-full-gate-v45/validation.json`. 이전 v44 실제 NPE 실패 증거는 보존했다. 이 결과는 실제 compilation 시간이나 20초 목표 달성의 증거가 아니다.
+- **별도 probe gate**: 9 PASS / 2.942초 (`evidence/v45-probe-gate/tests.log`). Frozen engine 생성 및 실제 Docker 검증으로 이어간다.
+
+### 발행 직전 추가 main 변경 병합
+
+- `5660e734a4`는 gate가 기존 ordinary summary를 축출하지 않도록 하고, 검증 완료된 동일 DP replay의 lift를 생략한다. 두 경로를 독립 source review한 뒤 통합했다. 신규 `IncrementalConditionalReplayTest`를 selected gate에 추가한다.
+- 이전 209-class gate는 이 후속 production 변경을 검증한 결과가 아니므로 별도 재검증 로그로 구분한다. 아직 V55 Docker는 시작하지 않았다.
+
+### V55 gate/replay 통합 최종 gate
+
+- **210 actual classes / 1613 tests / failures 0 / errors 0 / skipped 3**, package BUILD SUCCESS (07:16:00+02). Incoming non-evicting gate/replay production과 우리 bounded admission/CAST 경로를 함께 검증했다.
+- 근거 `evidence/candidate-v55-package.log`; 병합 전 두 성공 로그도 별도 보존한다.

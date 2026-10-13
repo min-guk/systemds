@@ -4963,7 +4963,8 @@ public class NativePlacementContinuityTest {
 		full.edges.removeIf(edge -> edge.consumer() == root.key && edge.inputPosition() == 1);
 		full.edges.add(new CompiledInputEdgeFact(hidden.key, root.key, 1));
 		// The hidden VALUE_MAP reads the published first root, preventing batch reuse.
-		// The one-entry component cache ends with the last root-free native gate resident.
+		// With one entry, the native gate is opportunistic and cannot displace the
+		// ordinary root-child summary retained by the legacy cache.
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		NativePlacementContinuity resolver = full.resolver(metrics, 128, 2048);
 		NativePlacementContinuity.GeneratedSupportBatch batch =
@@ -4982,15 +4983,14 @@ public class NativePlacementContinuityTest {
 				throw new AssertionError(failure);
 			}
 		}).toList();
-		Assert.assertEquals("the bounded cache must retain the last exact native gate", 1,
-			gateStates.size());
-		Object firstGate = accessibleField(gateStates.get(0).getClass(), "axisGate")
-			.get(gateStates.get(0));
+		Assert.assertTrue("a gate cannot displace an existing ordinary summary",
+			gateStates.isEmpty());
+		long graphsBeforeSecond = metrics.snapshot().proofGraphsBuilt();
+		long statesBeforeSecond = metrics.snapshot().proofStatesBuilt();
+		long alternativesBeforeSecond = metrics.snapshot().proofAlternativesBuilt();
 		long edgesBeforeSecond = metrics.snapshot().proofDependencyEdgesBuilt();
-		long reuseBeforeSecond = batchWork(metrics, "COMPONENT_SUMMARY_REUSE_HITS");
-		long gateBuildsBeforeSecond = batchWork(metrics, "NATIVE_AXIS_GATE_BUILDS");
-		long gateAlternativesBeforeSecond = batchWork(metrics,
-			"NATIVE_AXIS_GATE_ALTERNATIVES_CREATED");
+		long rawFootprintEdgesBeforeSecond = batchWork(metrics,
+			"COMPONENT_FOOTPRINT_RAW_EDGES");
 		NativePlacementContinuity.CandidateSupportResult secondResult = resolver
 			.proveGeneratedCandidateSupport(base, emission, second, pool, batch);
 		Assert.assertFalse(secondResult.proofs().isEmpty());
@@ -5002,17 +5002,19 @@ public class NativePlacementContinuityTest {
 				throw new AssertionError(failure);
 			}
 		}).toList();
-		Assert.assertEquals(1, gateStates.size());
-		Assert.assertSame(firstGate, accessibleField(gateStates.get(0).getClass(), "axisGate")
-			.get(gateStates.get(0)));
+		Assert.assertTrue(gateStates.isEmpty());
 		Assert.assertTrue(batchWork(metrics, "GENERATED_BATCH_ROOT_HISTORY_REJECTIONS") > 0);
-		Assert.assertTrue("the exact-witness graph must run despite any independent dynamic reuse",
-			metrics.snapshot().proofGraphsBuilt() > 2);
-		Assert.assertTrue(batchWork(metrics, "COMPONENT_SUMMARY_REUSE_HITS")
-			> reuseBeforeSecond);
-		Assert.assertEquals(1, batchWork(metrics, "NATIVE_AXIS_GATE_REUSES"));
-		Assert.assertEquals("only the evicted axis gate is rebuilt", 1,
-			batchWork(metrics, "NATIVE_AXIS_GATE_BUILDS") - gateBuildsBeforeSecond);
+		Assert.assertEquals("the legacy warm query builds one exact graph", 1,
+			metrics.snapshot().proofGraphsBuilt() - graphsBeforeSecond);
+		Assert.assertEquals("the ordinary child summary preserves the legacy state work", 3,
+			metrics.snapshot().proofStatesBuilt() - statesBeforeSecond);
+		Assert.assertEquals(3,
+			metrics.snapshot().proofAlternativesBuilt() - alternativesBeforeSecond);
+		Assert.assertEquals(2,
+			metrics.snapshot().proofDependencyEdgesBuilt() - edgesBeforeSecond);
+		Assert.assertEquals("legacy warm reuse avoids raw footprint traversal", 0,
+			batchWork(metrics, "COMPONENT_FOOTPRINT_RAW_EDGES")
+				- rawFootprintEdgesBeforeSecond);
 
 		SearchSpaceMetrics coldMetrics = new SearchSpaceMetrics();
 		NativePlacementContinuity cold = full.resolver(coldMetrics, 128, 2048);
@@ -5029,13 +5031,9 @@ public class NativePlacementContinuityTest {
 		Assert.assertEquals(expected.proofs(), withoutMetrics.proofs());
 		assertIdentitySetEquals(expected.dependencyOccurrences(),
 			withoutMetrics.dependencyOccurrences());
-		long warmSecondEdges = metrics.snapshot().proofDependencyEdgesBuilt() - edgesBeforeSecond;
-		Assert.assertTrue("the resident gates must avoid rebuilding their option dependencies",
-			warmSecondEdges < coldMetrics.snapshot().proofDependencyEdgesBuilt());
-		Assert.assertTrue("the resident gate must avoid recreating its option alternatives",
-			batchWork(metrics, "NATIVE_AXIS_GATE_ALTERNATIVES_CREATED")
-				- gateAlternativesBeforeSecond
-				< batchWork(coldMetrics, "NATIVE_AXIS_GATE_ALTERNATIVES_CREATED"));
+		Assert.assertTrue("the ordinary summary must retain less work than the cold query",
+			metrics.snapshot().proofDependencyEdgesBuilt() - edgesBeforeSecond
+				< coldMetrics.snapshot().proofDependencyEdgesBuilt());
 		}
 		finally {
 			if(prior == null)
