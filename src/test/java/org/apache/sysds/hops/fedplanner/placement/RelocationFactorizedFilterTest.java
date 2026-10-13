@@ -117,7 +117,7 @@ public class RelocationFactorizedFilterTest {
 		BinderFixture input = fixture(new CandidateEmissionFact(
 			NATIVE, FType.ROW, null, List.of(baseline, product)), List.of());
 		int before = productClauses.materializedClauseCount();
-		Assert.assertEquals("canonical emission construction reads one representative", 1, before);
+		Assert.assertEquals("key-first canonical emission construction reads no member", 0, before);
 		List<CandidateEmissionRealization> rebound = realizations(bind(input));
 		Assert.assertEquals(List.of(baseline), rebound);
 		Assert.assertSame("the ordinary baseline retains its original clause authority",
@@ -190,9 +190,9 @@ public class RelocationFactorizedFilterTest {
 		int witnessedBefore = clauses(nativeWithWitness).materializedClauseCount();
 		List<CandidateEmissionRealization> witnessed = realizations(bind(witnessedInput));
 		Assert.assertTrue(witnessed.stream().anyMatch(realization -> realization == nativeWithWitness));
-		Assert.assertEquals(1, unwitnessedBefore);
+		Assert.assertEquals(0, unwitnessedBefore);
 		Assert.assertEquals(unwitnessedBefore, clauses(nativeWithoutWitness).materializedClauseCount());
-		Assert.assertEquals(1, witnessedBefore);
+		Assert.assertEquals(0, witnessedBefore);
 		Assert.assertEquals(witnessedBefore, clauses(nativeWithWitness).materializedClauseCount());
 	}
 
@@ -210,7 +210,7 @@ public class RelocationFactorizedFilterTest {
 		BinderFixture input = fixture(new CandidateEmissionFact(
 			NATIVE, FType.ROW, null, List.of(baseline, product)), List.of());
 		int before = clauses(product).materializedClauseCount();
-		Assert.assertEquals(1, before);
+		Assert.assertEquals("key-first canonicalization reads no factorized member", 0, before);
 		Assert.assertEquals(List.of(baseline), realizations(bind(input)));
 		Assert.assertEquals("a later all-relocation axis supersedes an earlier mixed axis",
 			before, clauses(product).materializedClauseCount());

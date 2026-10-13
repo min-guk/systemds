@@ -1,11 +1,11 @@
 # FedPlanner 최적화 진행 현황 보고서
 
-## V59 native 원본 회로 공유 — 경계 검증 진행 중
+## V59 native 원본 회로 공유 — 통합 검증 통과
 
 - V58은 `5483ecbc6f`로 게시했다. 외부 build 중첩은 OFF/detailed 모두0/25였지만 네 실행 모두 watchdog60, 완료 시간 증거 없음. OFF LogReg direct binding62.86%, GLM canonical9.32%/joint7.03%로 근본 반복 작업이 남아 있다.
 - LogReg detailed native gate alternatives는14,745,571회 구성됐다. V59는 **이미 존재하는 ordinary/complete topology에만 원본 회로를 부착**한다. 새로운 부분 coverage를 만들거나 더 큰 예산을 추가하지 않는다.
 - 동일 snapshot의 exact fact·realization·relation identity와 witness를 유지하며, raw gates만 공유한다. Fixed-axis 거절, invariant overlay, 현재 root reference, graph DFS/cycle/pruning은 query별로 유지한다. Revision에는 이 payload를 옮기지 않는다.
-- 공개 두-root 반례 RED27/1(expected gate total2/actual4) → native focused206PASS. 같은 query 결과 재사용이 아니라 두 번째 graph도 실제로 구축하면서 추가 gate만0개다. 이후 replacement/eviction/revision/budget/fixed-boundary 검증을 추가 중이다.
+- 공개 두-root 반례 RED27/1(expected gate total2/actual4) → native focused206PASS. 같은 query 결과 재사용이 아니라 두 번째 graph도 실제로 구축하면서 추가 gate만0개다. Replacement/eviction/revision/budget/fixed-boundary 및 raw invariant/current-root 재바인딩을 추가해 동결된 focused **211 PASS**를 확인했다. 독립 production/경계 테스트 검토 CLEAR. 최신 main의 conditional growth/key-first lazy-read 변경을 병합한 fresh 선택 통합 gate도 **211 classes / 1,649 tests / 0 failures / 0 errors / 3 skipped**, package BUILD SUCCESS(09:03:05+02)를 통과했다.
 - **V59 미게시·성능 미측정**. Raw 회로 공유를 proof/viability 공유나20초 달성으로 보고하지 않는다.
 
 ## V58 중간 작업 제거 — 선택 통합 검증 통과

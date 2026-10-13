@@ -48,8 +48,8 @@ public class NativeOrdinaryAcyclicRootReuseTest {
 			graphs + 1, metrics.snapshot().proofGraphsBuilt());
 		Assert.assertTrue("the second source is served by bounded acyclic-root support",
 			metrics.snapshot().supportMemoHits() > hits);
-		Assert.assertEquals("root sharing must not enumerate the native sibling relation",
-			1, lazy.materializedHandleCount());
+		Assert.assertEquals("root sharing must not read the native sibling relation",
+			0, lazy.materializedHandleCount());
 		Assert.assertTrue("the root relation and templates are charged to one aggregate unit budget",
 			longField(resolver, "acyclicRootRetainedUnits") > 0);
 		Assert.assertTrue("the root relation and templates are charged to one aggregate byte budget",
@@ -81,7 +81,8 @@ public class NativeOrdinaryAcyclicRootReuseTest {
 				Assert.assertEquals(0, longField(resolver, "acyclicRootRetainedUnits"));
 				Assert.assertEquals(0, longField(resolver,
 					"acyclicRootRetainedEstimatedBytes"));
-				Assert.assertEquals(1, lazy.materializedHandleCount());
+				Assert.assertEquals("rejected sharing still leaves native support unread",
+					0, lazy.materializedHandleCount());
 			}
 			finally {
 				if(prior == null)

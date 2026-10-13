@@ -371,6 +371,42 @@
 - `evidence/gate-disabled-incoming-full-gate-v46-main/validation.json`에 보존한다. Independent merge review CLEAR: gate budget/journal/global cache 호출은 비활성, 2인자 DAG pruning과 real-child cache는 유지한다.
 - v46 actual은 여전히 커밋 `a59c23069b50fe75238f040413817510dfd91f31`, JAR SHA-256 `8b941b339605fa68c0f952b26d075f02edda53f5623122b9dce1332904e18002`, manifest `de8774f94ce826db7b079dafe8cc0466545392f6099aace5afc2022c51dc20ee`이다. 이후 checkout으로 실측 엔진을 교체하지 않는다.
 
+## v46 실제 COFEE pair 완료 — correctness PASS / 20초 목표 FAIL
+
+- **관측**: LogReg 전체 379.142013755초, Analysis287.022919983 / Model6.539413515 / Cost8.395073625 / Optimizer73.384578917. GLM 전체118.344668550초, Analysis74.841736716 / Model4.512632992 / Cost9.389494162 / Optimizer24.997826467. 각1회이며 반복 paired causal claim은 하지 않는다.
+- **메모리**: LR coordinator8,482,996,224 / worker748,265,472 bytes, GLM4,977,336,320 /755,060,736 bytes.
+- **정확성**: numeric true/audit0; v43·v45 각각과 selected raw/fields/sections, objective bits/certificate, cost surface 및 selection fingerprints 모두 동일. 두 host cleanup 완료. JAR/manifest/receipt binding exact.
+- **실제 개선 범위**: LR footprint requests159,880/raw92,488,567/unique29,950,314로 v43 수준을 복원했다. 그러나 PROOFS_CONSUMED6,121,451, PARTITIONED_RETAINED2,555,577은 그대로다. GLM도 proofs688,373/retained113,551 그대로다. v45 대비 clauses는 LR−40/GLM−51, candidate key/fact는 변화0. Ordinary complement union이 실제 주요 전개 루프를 줄였다고 주장하지 않는다.
+- **잔여 문제**: Analysis와 DP가 여전히20초를 크게 넘는다. 후속 conditional growth와 key-first duplicate 검사, exact fallback 원인의 저비용 일반 카운터 구분을 진행한다. 후보/권한/비용 모델은 변경하지 않는다.
+- **증거**: comparison SHA`1e5e69f48d578ab6dc32fb07b1ee5139b2260bdc0517d7b8db3049061cb87acc`, binding SHA`4006dcad84c727cf356eb2724d41067655cff75718d837992f9366d0087021ef`, evaluator SHA`fb4eaa2a79e0618691a015918260f96321ca210002225f18e9c5bca84e4ea5c3`. Paths `evidence/cofee-50k128-v46-validation/` 및 `evidence/candidate-engine-relation-union-projection-v46-20261013/`.
+- **목표 상태**: evaluator FAIL, accepted0/3씩. OMX에 fail checkpoint 기록, canonical evidence-list를 v46으로 갱신하고 이전 목록은 보존했다. Evaluator의 accepted-engine 관련 부가 오류는 qualifying run0건에서 파생되며, 실제 두 receipt가 다른 JAR이라는 뜻은 아니다.
+
+## v47 conditional base growth 구현·검증
+
+- **변경**: 동일 exact source-owner authority와 제외 영역 E를 가진 `BL\E`, `BR\E`에 대해 `BL⊂BR`이면 BR\E를 유지한다. 새 영역 `BR\BL`은 candidate 원본 donor에서, 기존 영역은 이전 donor에서 복원한다. 여러 입력 축의 성장도 지원하며 기존 cap/staging/explicit 경계는 유지한다.
+- **반복 갱신 문제**: 첫 성장 뒤 donor는 leaf 목록으로 평탄화돼 있다. 기존 “첫 donor==이전 relation” 조건은 두 번째 성장의 final merge에서 실패해 다시 전개했다. 전체 이전 donor 목록을 **관계 객체 identity와 scope exact authority가 같은 순서의 prefix**로 확인하도록 수정했다. Nested donor를 보관하거나 예산을 확대하지 않았다.
+- **실제 binder RED/GREEN**: 기존 구현은 8개 조합을 `SharedCanonicalList`의 8개 member로 materialize했다. 이 fixture의 PARTITIONED_RETAINED counter는0이며, “추가5개”는 논리적 집합 크기 차이지 관측된 순회량이 아니다. 수정 후 2×2−1→3×3−1은 native size8/handles0, 다시4×4−1로 성장하면 size15/handles0이다. 이전8개 clause 객체를 새 ordinal에서도 assertSame으로 보존했다.
+- **Canonical 중복 검사**: key가 다른 realization의 record equality가 support부터 비교하여 lazy member를 복원했다. 먼저 key를 확인하고 같은 key에서 기존 record equals를 그대로 적용한다. 더 엄격한 exact-authority helper로 대체하면 기존 structural duplicate 거절 계약이 달라지므로 채택하지 않았다.
+- **권한 검토**: wrapper object identity와 source-owner authority를 구분한다. 기존 approved conditional union도 새 wrapper를 기존 축에 재대응시키며 원래 donor clause를 복원한다. 성장 union은 candidate의 BR\E를 그대로 출력하고 scoped donor를 유지한다. 따라서 같은 owner의 동등한 wrapper 재생성은 허용하지만 foreign owner는 거절한다. 초기 mask-identity 검토 우려는 이 기존 계약과 donor 경로를 재확인한 뒤 철회됐고 최종 independent review CLEAR다.
+- **검증**: 관련117 PASS, 고정 seed small-domain set/rank/hash/restrict, changed hole·owner/witness/layout·cap·staging·explicit 및 Physical Local/Exact 회귀 포함. 전체 통합 gate는 별도로 수행한다.
+- **카운터**: partitioned retained loop를 original product ordinary/conditional × residual/full의4개로 나눈다. 잔여 residual 요청 거절 이유는 staging/conflict, explicit, relation count, 표현 실패로 기록한다. 이 거절 카운터는 standalone을 포함한 모든 residual 요청 횟수이며 partitioned tuple 방문량과 같은 단위가 아니다. 기존 분기와 size만 사용하고 추가 tuple 순회는 없다.
+- **증거/한계**: `lanes/native_conditional_base_growth/artifacts/native-conditional-base-growth-final2-20261013/`; production SHA`10b46006729dd0065d58d8663ed76c32712862fce5b3272a251615d53a80614e`, tests SHA`8750b5e29eecefca3fcfad357642d3b2c2621e921ee79d8ed01eb77c47884f26`. 실제 LogReg/GLM 적용량과 시간·메모리 효과는 아직 미측정이다. 임의의 서로 다른 hole/base union을 지원한다고 주장하지 않는다.
+
+
+### v47 통합 gate: 불필요한 대표 clause 생성에 의존하던 기대값 갱신
+
+- 첫 selected gate는 1,534 tests / 20 failures / 179.286초였다. 컴파일 성공, class/resource 변경 0, source mismatch 0이며 실패 원본은 `evidence/conditional-growth-full-gate-v47-pre-expectation-update/`에 보존했다.
+- 20건 모두 key-first 비교 전 constructor가 읽던 native 대표 clause 수를 1로 기대했지만 실제로 0이 된 경우다. 다섯 테스트 클래스에서 unused native relation의 기대를 0으로 강화했다. Eager/lazy 결과·source/dependency identity·withdrawal/restoration·metadata·cache 검증은 유지한다.
+- 실제 native pin을 선택하는 테스트는 대표 clause 1개를 읽는 기존 기대를 유지하고, 완전 순회 fallback은 `product.size()` 기대를 유지했다. Test-only patch SHA-256 `8fc1e5904cb2d912745ed165865a04f94dbea1358337d5c0e71f117572686621`, focused 42 PASS, 독립 검토 CLEAR. 최종 소스로 전체 selected gate를 다시 실행한다.
+
+
+### v47 최종 회귀 gate 및 엔진 고정
+
+- Selected FedPlanner **1,534 PASS / 186.876초**, 별도 probe **9 PASS / 1.529초**. Class/resource 7,917개, 실행 중 변경 0, source mismatch 0이다. 전체 repository Maven suite를 실행한 것은 아니다.
+- 검증 대상은 conditional relation의 여러 축·여러 wave 성장, old-first donor 권한, key-first duplicate 비교, 기존 분기 counter다. Source·proof·layout·withdrawal·mixed/native/explicit 반례를 유지했다. Production 및 test-only 기대 강화는 각각 독립 검토 CLEAR다.
+- Gate `evidence/conditional-growth-full-gate-v47/validation.json` SHA-256 `d11eb55ff5b36381e4f2591fccfc06c4a2c33226a60df3fe8db46ac80413006c`. Probe는 `evidence/v47-probe-gate/tests.log`이다. 실패 20건은 별도 증거로 보존했다.
+- Gate 중 origin/main에 query-local gate interning `8b15621592` 및 merge `3b5040b7b1`이 도착했다. 현재 검증한 v47을 먼저 고정해 실제 pair를 실행하고 incoming은 별도 통합 gate에서 검증한다. 아직 실제 성능 개선을 주장하지 않는다.
+
 ### V57 최신 main 병합 경계
 
 - Incoming `9fa1eceb10`은 global synthetic-gate suffix sweep을 production에서 호출하지 않는다. V56 실측에서도 LR 추가 gate work 증가/footprint 비용을 확인했으므로 이 변경을 보존했다. 이는 optional cache 수집 중단이며 proof graph·합법 후보를 제거하지 않는다.
@@ -383,6 +419,19 @@
 - Fresh **211 actual classes / 1,634 tests / failures 0 / errors 0 / skipped 3**, package BUILD SUCCESS 2026-10-13 08:12:29+02. `R/evidence/candidate-v57-package.log`.
 - Local query-gate interning과 latest-main global sweep 중단/retained complement/DP projection reuse를 함께 검증했다. 전체 repository suite가 아닌 선택 FedPlanner gate다.
 - 검증본 merge commit을 게시·봉인한 후 같은 자원으로 네 Docker trial을 실행한다. 20초 및 전체 ML coverage 달성으로 보고하지 않는다.
+
+
+### v47 고정 이후 query-local gate interning 병합
+
+- Incoming `3b5040b7b1`의 query-local gate interning을 통합한다. Fact·realization·relation 객체 identity와 witness·pivot·axis가 같을 때만 같은 query 안에서 gate를 재사용하며, 갱신된 relation은 identity가 달라 재사용하지 않는다. Global suffix 탐색은 계속 비활성이다.
+- Independent review CLEAR. v47 conditional-growth production과 변경 영역이 분리돼 자동 병합됐다. 세션 기록 충돌은 양쪽 증거를 모두 보존해 해결했다. 병합 소스로 별도 selected gate를 수행한다.
+- 현재 실제 Docker v47은 고정된 `6713d749c9`/JAR `7641b78263699b074cd73f1d73d6a6d78b09ff5daf9d8e9f95b4b31753402feb`를 실행한다. 이 후속 병합의 성능 측정으로 혼동하지 않는다.
+
+
+### Query-local interning 병합 gate 통과
+
+- Merge `84ed273792`: selected FedPlanner **1,543 PASS / 208.946초**. Class/resource 7,919개, 실행 중 변경 0, source mismatch 0이다. Native query-gate identity/cap/release 및 v47 growth/권한 회귀를 함께 통과했다.
+- 근거 `evidence/query-interning-incoming-full-gate-v47-main/validation.json`. 실제 v47은 기존 frozen engine으로 계속 실행하고, 병합 엔진은 v48로 따로 고정한다.
 
 ### V57 실측 판정 및 다음 구조 개선 — 진행 중
 
@@ -431,3 +480,34 @@
 - **검증**: 공개 ordinary warm-host/fixed-C→fixed-R 반례RED27/1expected2actual4, 초기focused206PASS. 두 query 모두 graph가 실행되며 proof/signature/source·owner identity가 explicit/cold와 같다. Lifecycle/예산/고정경계 회귀 추가 진행. Production 독립 검토 CLEAR; 최신 경계테스트 최종 검토 대기.
 - **주의**: 첫 lifecycle same-object assertion은 AnalysisScope 미설정으로 정상 reindex를 관측해 실패했다. 실제 stablehandle scope로 fixture를 수정했으며 해당 실패로그는 분리한다. Pure bind test의 nullgatekey는 source authority 증명이 아니라 raw invariant/current pin 바인딩 경계 검증이다.
 - **잔여**: 최종 통합 gate/동일Docker payoff 확인. 이미 resident host인 native query의 비율은 미측정이므로 실제 적용률을 새로운 NATIVE_CIRCUIT counters로 판단한다.20초/전체MLcoverage 미완료.
+
+### v47 실제 LogReg 분기 결과: explicit retained authority가 주된 병합 거절
+
+- Analysis 종료 counter: `PARTITIONED_RETAINED_PROOFS=2,555,577`, ordinary full=2,542,629 / ordinary residual=0 / conditional full=12,948 / conditional residual=0. 네 합계 일치. 기존 v46의 proof 소비 6,121,451회가 그대로다.
+- Residual requests=60,677 중 explicit 거절=60,461, 표현 불가=216, staging/conflict=0, relation count=0, successes=0. 합계 일치. 요청의 약99.64%가 explicit 경계에서 멈춘다. 이 거절 counter는 standalone 요청도 포함하므로 retained 순회 개수와 직접 같은 단위로 취급하지 않는다.
+- 따라서 conditional base-growth 단위 개선이 실제 주요 경로를 줄였다고 보고하지 않는다. 다음 수정은 원래 explicit clause가 새 native domain 안의 exact 동일 member임을 증명할 수 있을 때만 기존 객체를 donor로 보존하며 relation을 발행하는 것이다. 임의 sparse extra/non-native/foreign authority는 기존 exact fallback이다.
+- Query-local interning 포함 v48은 별도 frozen 엔진으로 준비했다. 이후 incoming `5483ecbc6f`의 intermediate dependency 및 canonical 중복 작업 제거는 다시 별도 통합한다. Frozen v47/v48으로 해당 incoming 성능까지 검증했다고 주장하지 않는다.
+
+
+### v47 실제 COFEE pair 완료 — correctness PASS / 20초 FAIL
+
+- LR full376.506956632초 / Analysis283.123881412 / Model7.402964191 / Cost6.390780015 / Optimizer75.889831905. Peak coordinator8,674,181,120 / worker757,227,520 bytes. GLM full122.992459717초 / Analysis78.535269512 / Model4.460003007 / Cost8.529154043 / Optimizer27.544759933. Peak4,874,715,136 /770,875,392 bytes.
+- Objects(key/fact/clause/handle): LR25,137/208,886/2,312,553/2,232; GLM16,157/125,264/1,088,634/607. LR retained/proof 순회는 v46과 같다. GLM residual requests20,927 중 explicit20,882+표현불가45, successes0; retained 순회113,551은 모두 ordinary full이다. 두 counter 합계 검증 PASS.
+- 두 workload numerictrue/audit0, v46+v43 selected 원문/fields/sections/objective/certificate/cost/selection parity 모두 PASS. 각1회이며 all-assignment 전수 비용 증명은 아니다. 양쪽 cleanup 완료.
+- Comparison SHA `9483734cc27570cf2cc0157cc573e7d0f7fbf7b62ebeec99cea537bab2edaa1d`; binding `3bade438ae4dae85074295dc6eb3d13b6083f70364abac8cc4778e72bb8d1005`; evaluator `b4b6c56d87c63d4189c94c65d4144551f6ed681df33f216df98ba04e344a52d7`. Canonical evaluator rc1, OMX FAIL checkpoint 및 evidence-list 갱신. 이전 목록 별도 보존.
+- 다음 구현은 exact retained explicit member를 singleton donor로 보존하는 bounded overlay다. 기존64 donor/보관 cap을 유지하고, final mixed merge가 old-first 권한을 검증한 overlay를 그대로 발행하도록 한다. 순수 explicit retained + fresh native의 좁은 경로부터 검증하며, 상관·shared cost·함수 경계 합법성은 변경하지 않는다.
+
+
+### Intermediate dependency/canonical 작업 제거 통합 검증
+
+- Merge `322c12f907`: selected FedPlanner **1,547 PASS / 190.245초**, class/resource7,919개, 변경0/source mismatch0. Independent review CLEAR. Key-first realization guard를 보존했고 exact duplicate는 기존 full equality와 earliest authority를 유지한다.
+- 근거 `evidence/native-dependencies-incoming-full-gate-v48-main/validation.json`. Native axis의 fixed-boundary 배제 전제 및 invariant overlay를 유지한다. v48 frozen 엔진 이후의 변경이며 실제 성능 검증은 별도로 필요하다.
+
+### V59 경계 회귀 동결 및 최신 main 통합
+
+- 최종 동결 focused **211 tests PASS / 1 ignored PUBLIC fixture**, `R/evidence/v59-native-lifecycle-final-focused.log`. Public two-root reuse, no-host, zero-headroom fallback, replacement/revision/eviction exact release, warm fixed-axis rejection, raw invariant/current-root rebinding을 검증했다. Independent source/test review CLEAR.
+- Cap1 eviction의 초기 public DFS fixture는 host 자체가 탐색 도중 퇴출돼 의도한 admission을 만들지 못했다. 실제 native circuit admission을 먼저 확인한 뒤 다른 owner의 topology를 넣는 deterministic cache-admission seam으로 수정했다. Public 두-root integration은 별도로 유지한다. 잘못된 fixture의 실패 로그는 archive해 유효 RED와 구분한다.
+- 로컬 `23ed1144e1`에 incoming `6a212354b5`를 병합했다. 문서만 충돌했고 양쪽 기록을 보존했다. Key-first canonicalization은 native support를 실제 읽기 전 materialized count를1→0으로 바꾸지만, accepted native query 뒤 representative1 조건은 유지한다.
+- 최종 selected211-class package gate를 fresh 실행 중이며, 실측 전에는 이 변경의 workload 효과를 주장하지 않는다.
+
+- 최종 병합 선택 gate **211 classes / 1,649 tests / failures0 / errors0 / skipped3**, BUILD SUCCESS09:03:05+02. 근거 `R/evidence/candidate-v59-package.log`. 전체 repo 테스트가 아니며 실제 성능은 미측정이다.

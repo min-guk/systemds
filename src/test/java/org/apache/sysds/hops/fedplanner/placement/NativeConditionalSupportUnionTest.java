@@ -397,6 +397,171 @@ public class NativeConditionalSupportUnionTest {
 		Assert.assertEquals(0, overLimit.materializedHandleCount());
 	}
 
+	@Test
+	public void conditionalBaseGrowthPreservesBothAuthorityRegions() {
+		Fixture retainedFixture = fixture("base-growth", 2, 2);
+		List<List<CandidateRealizationInputBinding>> grownAxes = new ArrayList<>();
+		for(int axis = 0; axis < retainedFixture.axes.size(); axis++) {
+			List<CandidateRealizationInputBinding> grown = new ArrayList<>(retainedFixture.axes.get(axis));
+			grown.add(direct(axis, "base-growth-new-" + axis,
+				retainedFixture.sourceOwners.get(axis)));
+			grown.sort(PlacementAnalysis.canonicalComparator());
+			grownAxes.add(List.copyOf(grown));
+		}
+		Fixture grownFixture = new Fixture(retainedFixture.owner, retainedFixture.sourceOwners,
+			retainedFixture.seed, retainedFixture.output, List.copyOf(grownAxes),
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(retainedFixture.seed,
+				retainedFixture.output, true, grownAxes));
+		List<List<CandidateRealizationInputBinding>> hole = List.of(
+			List.of(retainedFixture.axes.get(0).get(0)),
+			List.of(retainedFixture.axes.get(1).get(0)));
+		var retained = conditional(retainedFixture, hole);
+		var candidate = conditional(grownFixture, hole);
+		List<CandidateRealizationSupportClause> retainedMembers = new ArrayList<>(retained);
+		List<CandidateRealizationSupportClause> candidateMembers = new ArrayList<>(candidate);
+
+		var union = retained.oneAxisUnion(candidate).orElseThrow();
+
+		Assert.assertTrue(union.conditionalComplement());
+		Assert.assertEquals(8, union.size());
+		Assert.assertEquals(0, union.materializedHandleCount());
+		Assert.assertEquals(signatures(candidate), signatures(union));
+		Assert.assertEquals(new ArrayList<>(union).hashCode(), union.hashCode());
+		for(int ordinal = 0; ordinal < union.size(); ordinal++) {
+			CandidateRealizationSupportClause member = union.get(ordinal);
+			int retainedOrdinal = retained.product()
+				.ordinalOfExactAuthorityBindings(member.inputBindings());
+			if(retainedOrdinal >= 0)
+				Assert.assertSame(retainedMembers.get(retainedOrdinal), member);
+			else {
+				int candidateOrdinal = candidate.product()
+					.ordinalOfExactAuthorityBindings(member.inputBindings());
+				Assert.assertSame(candidateMembers.get(candidateOrdinal), member);
+			}
+		}
+		var restricted = union.restrictBindings(binding ->
+			retained.product().containsExactBinding(binding.inputPosition(), binding)).orElseThrow();
+		Assert.assertEquals(retained.size(), restricted.size());
+		for(int ordinal = 0; ordinal < restricted.size(); ordinal++)
+			Assert.assertSame(retainedMembers.get(ordinal), restricted.get(ordinal));
+		Assert.assertNull(candidate.product().conditionalGrowthResidualAfter(
+			retained.product(), 0, 0));
+	}
+
+	@Test
+	public void conditionalBaseGrowthRejectsChangedHoleAndIncompleteBase() {
+		Fixture retainedFixture = fixture("base-growth-reject", 2, 2);
+		Fixture grownFixture = fixtureWithSharedPrefix("base-growth-reject", retainedFixture, 3, 3);
+		List<List<CandidateRealizationInputBinding>> hole = List.of(
+			List.of(retainedFixture.axes.get(0).get(0)),
+			List.of(retainedFixture.axes.get(1).get(0)));
+		var retained = conditional(retainedFixture, hole);
+		var changedHole = conditional(grownFixture, List.of(
+			List.of(grownFixture.axes.get(0).get(1)),
+			List.of(grownFixture.axes.get(1).get(0))));
+		Assert.assertTrue(retained.oneAxisUnion(changedHole).isEmpty());
+
+		CandidateRealizationInputBinding added = grownFixture.axes.get(0).stream()
+			.filter(binding -> !retainedFixture.axes.get(0).contains(binding)).findFirst().orElseThrow();
+		List<List<CandidateRealizationInputBinding>> incompleteAxes = List.of(
+			List.of(retainedFixture.axes.get(0).get(0), added),
+			grownFixture.axes.get(1));
+		Fixture incomplete = new Fixture(retainedFixture.owner, retainedFixture.sourceOwners,
+			retainedFixture.seed, retainedFixture.output, incompleteAxes,
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(retainedFixture.seed,
+				retainedFixture.output, true, incompleteAxes));
+		var incompleteCandidate = conditional(incomplete, hole);
+		Assert.assertTrue(retained.oneAxisUnion(incompleteCandidate).isEmpty());
+		var grownCandidate = conditional(grownFixture, hole);
+		CompiledHopKey foreignRelationOwner = new CompiledHopKey(
+			retainedFixture.owner.programFingerprint(), retainedFixture.owner.functionNamespace(),
+			retainedFixture.owner.callSitePath(), retainedFixture.owner.recompileContext(),
+			retainedFixture.owner.controlRegion(), retainedFixture.owner.emittedHopInstance(),
+			retainedFixture.owner.canonicalSourceOrigin());
+		Assert.assertEquals(retainedFixture.owner, foreignRelationOwner);
+		Assert.assertNotSame(retainedFixture.owner, foreignRelationOwner);
+		Assert.assertTrue(retained.oneAxisUnion(new NativeContinuitySupportClauses(
+			foreignRelationOwner, grownCandidate.product(), retainedFixture.output, true)).isEmpty());
+		Assert.assertTrue(retained.oneAxisUnion(new NativeContinuitySupportClauses(
+			retainedFixture.owner, grownCandidate.product(), pool("base-growth-other-output"), true))
+			.isEmpty());
+		Assert.assertTrue(retained.oneAxisUnion(new NativeContinuitySupportClauses(
+			retainedFixture.owner, grownCandidate.product(), retainedFixture.output, false)).isEmpty());
+		Assert.assertEquals(0, retained.materializedHandleCount());
+		Assert.assertEquals(0, changedHole.materializedHandleCount());
+		Assert.assertEquals(0, incompleteCandidate.materializedHandleCount());
+	}
+
+	@Test
+	public void conditionalBaseGrowthMatchesExplicitAcrossFixedSeedDomains() {
+		Random random = new Random(0x6ba5eL);
+		for(int trial = 0; trial < 24; trial++) {
+			Fixture retainedFixture = fixture("base-growth-random-" + trial,
+				2 + random.nextInt(2), 2 + random.nextInt(2));
+			Fixture grownFixture = fixtureWithSharedPrefix("base-growth-random-" + trial,
+				retainedFixture, retainedFixture.axes.get(0).size() + 1,
+				retainedFixture.axes.get(1).size() + 1);
+			List<List<CandidateRealizationInputBinding>> hole = List.of(
+				List.of(retainedFixture.axes.get(0).get(0)),
+				List.of(retainedFixture.axes.get(1).get(0)));
+			var retained = conditional(retainedFixture, hole);
+			var candidate = conditional(grownFixture, hole);
+			var union = retained.oneAxisUnion(candidate).orElseThrow();
+			Assert.assertEquals(signatures(candidate), signatures(union));
+			Assert.assertEquals(new ArrayList<>(candidate).hashCode(), union.hashCode());
+			for(int ordinal = 0; ordinal < union.size(); ordinal++)
+				Assert.assertEquals(ordinal, union.product().ordinalOfExactAuthorityBindings(
+					union.get(ordinal).inputBindings()));
+		}
+	}
+
+	@Test
+	public void canonicalRealizationBoundarySkipsUnrelatedLazySupportButKeepsLegacyDuplicates() {
+		Fixture fixture = fixture("canonical-boundary", 2, 2);
+		var nativeSupport = conditional(fixture, List.of(
+			List.of(fixture.axes.get(0).get(0)), List.of(fixture.axes.get(1).get(0))));
+		PlacementRealizationKey firstKey = PlacementRealizationKey.nativeLineage(
+			emission(), "canonical-a");
+		PlacementRealizationKey secondKey = PlacementRealizationKey.nativeLineage(
+			emission(), "canonical-b");
+		var explicit = new CandidateEmissionRealization(firstKey,
+			List.copyOf(nativeSupport));
+		var lazy = new NativeContinuitySupportClauses(fixture.owner,
+			nativeSupport.product(), fixture.output, true);
+		var nativeRealization = new CandidateEmissionRealization(secondKey, lazy);
+		lazy = new NativeContinuitySupportClauses(fixture.owner,
+			nativeSupport.product(), fixture.output, true);
+		nativeRealization = new CandidateEmissionRealization(secondKey, lazy);
+		List<CandidateEmissionRealization> canonical = PlacementAnalysis.CandidateEmissionFact
+			.canonicalRealizationList(List.of(explicit, nativeRealization));
+		Assert.assertEquals(2, canonical.size());
+		Assert.assertEquals(0, lazy.materializedHandleCount());
+
+		List<List<CandidateRealizationInputBinding>> clonedAxes = cloneAxes(fixture.axes, false);
+		var equalDistinctProduct = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			fixture.seed, fixture.output, true, clonedAxes);
+		var equalDistinct = new NativeContinuitySupportClauses(fixture.owner,
+			equalDistinctProduct, fixture.output, true);
+		PlacementRealizationKey equalKey = PlacementRealizationKey.nativeLineage(
+			emission(), "canonical-equal");
+		Assert.assertThrows(IllegalArgumentException.class, () ->
+			PlacementAnalysis.CandidateEmissionFact.canonicalRealizationList(List.of(
+				new CandidateEmissionRealization(equalKey, new NativeContinuitySupportClauses(
+					fixture.owner, fixture.base, fixture.output, true)),
+				new CandidateEmissionRealization(equalKey, equalDistinct))));
+		Assert.assertThrows(IllegalArgumentException.class, () ->
+			PlacementAnalysis.CandidateEmissionFact.canonicalRealizationList(List.of(
+				new CandidateEmissionRealization(equalKey, nativeSupport),
+				new CandidateEmissionRealization(equalKey, List.copyOf(nativeSupport)))));
+		List<CandidateEmissionRealization> distinctAuthority =
+			PlacementAnalysis.CandidateEmissionFact.canonicalRealizationList(List.of(
+				new CandidateEmissionRealization(equalKey, nativeSupport),
+				new CandidateEmissionRealization(equalKey, List.of(
+					new CandidateRealizationSupportClause(List.of(), List.of())))));
+		Assert.assertEquals("equal keys with different proof authority remain distinct",
+			2, distinctAuthority.size());
+	}
+
 	private static List<List<CandidateRealizationInputBinding>> randomMask(
 		Fixture fixture, Random random) {
 		List<List<CandidateRealizationInputBinding>> mask = new ArrayList<>();
@@ -466,6 +631,24 @@ public class NativeConditionalSupportUnionTest {
 		var base = NativePlacementContinuity.NativeSupportProduct.tryCreate(
 			seed, output, true, axes);
 		return new Fixture(owner, sourceOwners, seed, output, axes, base);
+	}
+
+	private static Fixture fixtureWithSharedPrefix(String id, Fixture prefix,
+		int leftWidth, int rightWidth) {
+		List<Integer> widths = List.of(leftWidth, rightWidth);
+		List<List<CandidateRealizationInputBinding>> axes = new ArrayList<>();
+		for(int axis = 0; axis < widths.size(); axis++) {
+			List<CandidateRealizationInputBinding> values = new ArrayList<>(prefix.axes.get(axis));
+			for(int option = values.size(); option < widths.get(axis); option++)
+				values.add(direct(axis, id + "-new-" + axis + '-' + option,
+					prefix.sourceOwners.get(axis)));
+			values.sort(PlacementAnalysis.canonicalComparator());
+			axes.add(List.copyOf(values));
+		}
+		var base = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			prefix.seed, prefix.output, true, axes);
+		return new Fixture(prefix.owner, prefix.sourceOwners, prefix.seed, prefix.output,
+			List.copyOf(axes), base);
 	}
 
 	private static List<CandidateRealizationInputBinding> axis(int position, int width,

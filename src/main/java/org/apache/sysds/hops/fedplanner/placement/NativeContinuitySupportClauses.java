@@ -222,13 +222,25 @@ final class NativeContinuitySupportClauses
 			|| clauseLayoutExact != that.clauseLayoutExact
 			|| !Objects.equals(clauseWitness, that.clauseWitness))
 			return java.util.Optional.empty();
-		if(!conditionalComplement() && !that.conditionalComplement()
-			&& that.firstAuthorityIs(this))
+		if(that.firstAuthorityIs(this))
 			return java.util.Optional.of(that);
 		if(!conditionalComplement() && that.conditionalComplement()) {
 			var completed = ordinaryComplementUnion(that);
 			if(completed.isPresent())
 				return completed;
+		}
+		if(conditionalComplement() && that.conditionalComplement()
+			&& products.size() == 1 && that.products.size() == 1
+			&& that.authorityDonors.isEmpty()) {
+			var rightOnly = that.products.get(0).conditionalGrowthResidualAfter(products.get(0));
+			if(rightOnly != null) {
+				List<AuthorityDonor> donors = new java.util.ArrayList<>(authoritySources());
+				donors.add(new AuthorityDonor(that, rightOnly));
+				if(!withinAuthorityRetentionBudget(that.products, donors))
+					return java.util.Optional.empty();
+				return java.util.Optional.of(new NativeContinuitySupportClauses(owner,
+					that.products, clauseWitness, clauseLayoutExact, donors));
+			}
 		}
 		if(conditionalComplement() || that.conditionalComplement()) {
 			if(!conditionalComplement() || !that.conditionalComplement()
@@ -305,11 +317,19 @@ final class NativeContinuitySupportClauses
 	private boolean firstAuthorityIs(NativeContinuitySupportClauses retained) {
 		if(authorityDonors.isEmpty() || products.size() != 1 || retained.products.size() != 1)
 			return false;
-		AuthorityDonor first = authorityDonors.get(0);
-		var retainedProduct = retained.products.get(0);
-		if(first.relation() != retained
-			|| !first.scope().sameExactAuthority(retainedProduct))
+		List<AuthorityDonor> retainedSources = retained.authoritySources();
+		if(authorityDonors.size() < retainedSources.size())
 			return false;
+		for(int index = 0; index < retainedSources.size(); index++) {
+			AuthorityDonor expected = retainedSources.get(index);
+			AuthorityDonor actual = authorityDonors.get(index);
+			if(actual.relation() != expected.relation()
+				|| !actual.scope().sameExactAuthority(expected.scope()))
+				return false;
+		}
+		var retainedProduct = retained.products.get(0);
+		if(products.get(0).containsConditionalBaseAuthority(retainedProduct))
+			return true;
 		List<List<CandidateRealizationInputBinding>> intersection =
 			products.get(0).exactAuthorityIntersectionAxes(retainedProduct);
 		if(intersection == null)
