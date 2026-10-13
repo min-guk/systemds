@@ -223,3 +223,28 @@
 - 최종 shared-budget/E·S·A saturation oracle까지 포함해 **210 actual classes / 1,621 tests / failures 0 / errors 0 / skipped 3**. BUILD SUCCESS 2026-10-13 07:47:19+02, `R/evidence/candidate-v56-package.log`.
 - 초기 gate도 같은 수로 통과했지만 테스트 oracle 강화 이전 결과는 `candidate-v56-before-final-budget-oracle-package.log`로 별도 보존했다.
 - Main fetch 결과 추가 incoming 없음. 검증본을 게시·봉인하고 동일 조건 Docker 실측으로 이어간다. 시간 목표와 ML 전체 coverage는 아직 미완료다.
+
+### V56 실측 완료: 용량 순서 수정만으로는 충분하지 않음
+
+- 네 실행 모두 watchdog60/fullInitial receipt 없음. 선택 gate 통과를 20초 목표 달성으로 간주하지 않는다.
+- LR gate attempts 303,837 / preflight capacity reject 22,544 / footprint starts 281,287 / actual admissions 161,885 / final capacity reject 0. Gate work **114,059,905**로 V55 95,171,210보다 크다. 단계별 기회와 조기 state-ceiling 거절이 달라져 단순 work 절감은 성립하지 않았다.
+- GLM attempts 115,974 / preflight reject 119 / actual admissions 96,427; gate work 42,527,709. 부분 progress 표본이므로 전체 완료 속도 개선을 입증하지 않는다.
+- OFF LR samples 2,311, direct binding 60.41%, footprint inclusive 270. OFF GLM samples 2,793, canonical 8.20%, joint 5.59%. 외부 build 중첩 OFF25/25, detailed18/25; 자체 heavy command는 네 timed trial 이후에만 실행했다.
+- 근거: `R/evidence/v56-planner-breakdown.txt`, `candidate-v56-detailed-topology-outcomes.json`, `v56-contention-summary.json`. 모든 own container 정리 완료.
+
+## V57 같은 query 내 동일 native gate 중복 생성 — 회귀 재현
+
+- **문제/원인**: gate identity는 proven summary가 cache에 들어간 뒤에만 발견 가능하다. 한 graph에서 같은 native X를 unpinned 및 pinned real state로 방문하면 동일 exact gate recipe를 각각 새 객체로 만든다.
+- **재현**: 공개 query fixture `R=X+log(X)`에서 log clause가 published X를 pin한다. 두 입력 축의 gate가 예상 2회 대신 실제 4회 생성된다. Explicit rectangle·zero-budget 경로와 ordered proofs 및 identity owner footprint는 같고 nonempty다. `v57-query-gate-red.log`: 158 tests / 의도된 1 failure.
+- **해결 방향**: 동일 query의 완성된 immutable gate만 기존 exact key로 공유한다. Proof나 grounded status를 공유하지 않으며 active gate는 기존 cycle 검사에 전달한다. Index는 graph construction 종료 때 폐기한다.
+- **예산/위험**: cumulative work W는 journal/admission과 공유한다. Index의 E/S/A live reservation은 폐기 후에만 반환해 cap1 memo 경로를 굶기지 않는다. Cycle detection, 다른 owner/fact/relation identity, FULL seed, 작은 budget을 회귀 검증한다.
+- **검증 계획/의사결정**: `R/V57_QUERY_GATE_INTERNING_PLAN.md`. 실제 local-hit 빈도가 낮으면 이 경로를 더 확대하지 않는다. Candidate/합법성 규칙 변경은 없다. 아직 V57 production 수정 전이다.
+
+### V57 query-local gate interning: 수정 및 focused 검증
+
+- **구현**: 기존 exact key로 동일 query 안의 immutable gate identity만 공유한다. Resident summary lookup이 우선이며, lookup 전에 기존 fixed-owner·source 검증을 유지한다. Active gate는 기존 cycle protocol을 그대로 통과한다.
+- **수명/예산**: graph build `finally`에서 index 참조를 해제하고 해당 E/S/A 예약만 반환한다. 공유 cumulative W는 초기화하지 않는다. Capacity miss는 이미 보관한 key의 lookup을 허용하지만 work 소진은 이후 optional 작업도 중단한다.
+- **테스트 fixture 정정**: 처음 positive fixture의 resolver memo 인수 `(0,0)`가 E/S/A까지 비활성화했다. 이는 production 오류가 아니므로 `*disabled-fixture-error.log`로 별도 보존했다. Fresh resolver `(32,256)`로 수정한 올바른 RED도 이전 V56에서 158 tests 중 의도된 1 failure(expected2/actual4)를 재현했다. 수정본은 public focused **199 PASS**, private 경계 **8 PASS**다.
+- **경계 테스트**: 동일 immutable row를 갖는 shared/unshared cyclic circuit의 실제 dead-row pruning, active gate 재방문, index 폐기, zero E/S/A, 중복 예약, cap1 반환 후 gate admission, combined work 상한과 sticky exhaustion을 검증했다. 잘못된 nested class qualifier compile 실패도 별도 archive 후 수정했다.
+- **독립 검토**: production 및 최종 test coverage CLEAR. 새 private key는 null fact/realization/relation을 쓰므로 full donor authority의 독립 증명으로 과장하지 않는다. 기존 public continuity/identity 회귀와 변경되지 않은 exact key/guard를 함께 근거로 삼는다.
+- **잔여**: full 통합 gate/실측 전. 새 main의 complement 유지·DP projection reuse와 global gate sweep 비활성화 변경을 검토·통합한다. Extra gate sweep은 후보 생성 규칙이 아닌 optional memo 최적화로, 비활성화는 합법 후보를 제거하지 않는다.

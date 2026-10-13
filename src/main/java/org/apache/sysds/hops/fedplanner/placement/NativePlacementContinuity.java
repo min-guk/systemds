@@ -2669,6 +2669,9 @@ final class NativePlacementContinuity {
 				metrics.recordProofGraph(graph.size(), graphWork[0], graphWork[1]);
 		}
 		finally {
+			// The graph owns its gates now. Release only optional index retention,
+			// never its cumulative work allowance, before journaling/admission.
+			releaseQueryNativeAxisGates(traversal);
 			if(metrics != null)
 				metrics.finishPhase(SearchSpaceMetrics.Phase.PROOF_OVERLAY, overlayStarted);
 		}
@@ -2696,7 +2699,8 @@ final class NativePlacementContinuity {
 						: acyclicRootChildFootprints(root, graph, traversal);
 				NativeGateAdmissionBudget gateBudget = !traversal.hasNativeAxisGates
 					|| acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
-					|| acyclicComponentMaxAlternatives == 0 ? null : new NativeGateAdmissionBudget();
+					|| acyclicComponentMaxAlternatives == 0 ? null
+					: traversal.gateBudget == null ? new NativeGateAdmissionBudget() : traversal.gateBudget;
 				if(traversal.emptyFilteredStates == 0) {
 					if(metrics != null)
 						metrics.recordNoEmptyDagPruningSkip();
@@ -3527,6 +3531,72 @@ final class NativePlacementContinuity {
 		footprints.put(child, acyclicComponentFootprint(child, graph, traversal));
 	}
 
+	/** Exact circuit identity only: never substitutes a grounded proof summary. */
+	private CandidateAxisGate queryNativeAxisGate(NativeAxisGateKey key,
+		CandidateProofTraversal traversal) {
+		if(traversal == null || acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
+			|| acyclicComponentMaxAlternatives == 0)
+			return null;
+		if(traversal.gateBudget == null)
+			traversal.gateBudget = new NativeGateAdmissionBudget();
+		NativeGateAdmissionBudget budget = traversal.gateBudget;
+		if(!budget.indexWork(1))
+			return null;
+		if(metrics != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_AXIS_GATE_QUERY_LOOKUPS);
+		CandidateAxisGate gate = budget.queryGates == null ? null : budget.queryGates.get(key);
+		if(gate != null && metrics != null) {
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_AXIS_GATE_QUERY_REUSES);
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_AXIS_GATE_QUERY_ROWS_AVOIDED,
+				gate.alternatives.size());
+		}
+		return gate;
+	}
+
+	private void rememberQueryNativeAxisGate(CandidateAxisGate gate,
+		CandidateProofTraversal traversal) {
+		NativeGateAdmissionBudget budget = traversal == null ? null : traversal.gateBudget;
+		if(budget == null || !budget.indexWork(1))
+			return;
+		if(budget.queryGates != null && budget.queryGates.containsKey(gate.key))
+			return;
+		long rows = gate.retainedUnits();
+		if(budget.entriesRemaining == 0 || budget.statesRemaining == 0 || rows > budget.rowsRemaining) {
+			// A retention miss does not disable lookups of already indexed gates.
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_AXIS_GATE_QUERY_CAPACITY_BYPASSES);
+			return;
+		}
+		if(!budget.indexWork(2)) // insertion and eventual index disposal
+			return;
+		if(budget.queryGates == null)
+			budget.queryGates = new java.util.HashMap<>();
+		budget.queryGates.put(gate.key, gate);
+		budget.entriesRemaining--;
+		budget.statesRemaining--;
+		budget.rowsRemaining -= rows;
+		budget.indexEntries++;
+		budget.indexRows += rows;
+		if(metrics != null) {
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_AXIS_GATE_QUERY_INDEXED_GATES);
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_AXIS_GATE_QUERY_INDEXED_ROWS, rows);
+		}
+	}
+
+	private void releaseQueryNativeAxisGates(CandidateProofTraversal traversal) {
+		NativeGateAdmissionBudget budget = traversal.gateBudget;
+		if(budget == null)
+			return;
+		budget.queryGates = null;
+		// E/S/A bound live optional retention, not cumulative activity in disjoint
+		// phases. Return only the discarded index's reservations; W is never reset.
+		budget.entriesRemaining += budget.indexEntries;
+		budget.statesRemaining += budget.indexEntries;
+		budget.rowsRemaining += budget.indexRows;
+		budget.indexEntries = 0;
+		budget.indexRows = 0;
+	}
+
 	private void cacheNativeGateComponents(
 		Map<CandidateProofState,List<SelectedCandidateProof>> graph,
 		CandidateProofTraversal traversal, Set<CandidateProofState> supported,
@@ -3591,6 +3661,9 @@ final class NativePlacementContinuity {
 		private boolean exhausted;
 		private long footprintStateLimit = acyclicComponentMaxStates;
 		private Map<CandidateProofState,List<SelectedCandidateProof>> originalRows;
+		private Map<NativeAxisGateKey,CandidateAxisGate> queryGates;
+		private int indexEntries;
+		private long indexRows;
 
 		private void preserveRows(CandidateProofState state, List<SelectedCandidateProof> rows) {
 			if(exhausted)
@@ -3632,11 +3705,20 @@ final class NativePlacementContinuity {
 		}
 
 		private boolean work(long units) {
+			return work(units, false);
+		}
+
+		private boolean indexWork(long units) {
+			return work(units, true);
+		}
+
+		private boolean work(long units, boolean index) {
 			if(exhausted || units > workRemaining)
 				return bypass();
 			workRemaining -= units;
 			if(metrics != null)
-				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_GATE_ADMISSION_WORK, units);
+				metrics.recordDirectWork(index ? SearchSpaceMetrics.DirectWork.NATIVE_AXIS_GATE_QUERY_WORK
+					: SearchSpaceMetrics.DirectWork.COMPONENT_GATE_ADMISSION_WORK, units);
 			return true;
 		}
 
@@ -3962,8 +4044,8 @@ final class NativePlacementContinuity {
 		if(generation != null)
 			return generatedRootAlternative(key, pinned, witness, fixed, generation);
 		NativeFactoredProofAlternatives factored = !hasNativeRelationOwner(key) ? null
-			: pinned == null ? nativeUnpinnedFactoredProofAlternatives(key, witness, fixed)
-				: nativeFactoredProofAlternatives(key, pinned, witness, fixed);
+			: pinned == null ? nativeUnpinnedFactoredProofAlternatives(key, witness, fixed, traversal)
+				: nativeFactoredProofAlternatives(key, pinned, witness, fixed, traversal);
 		if(factored != null) {
 			if(!factored.metadataOwnerReads().isEmpty())
 				traversal.hiddenOwnerReadsByState.put(
@@ -4284,6 +4366,12 @@ final class NativePlacementContinuity {
 	private NativeFactoredProofAlternatives nativeFactoredProofAlternatives(
 		CompiledHopKey key, CandidateRealizationReference pinned,
 		NativePoolWitness witness, FixedCandidateBoundary fixed) {
+		return nativeFactoredProofAlternatives(key, pinned, witness, fixed, null);
+	}
+
+	private NativeFactoredProofAlternatives nativeFactoredProofAlternatives(
+		CompiledHopKey key, CandidateRealizationReference pinned,
+		NativePoolWitness witness, FixedCandidateBoundary fixed, CandidateProofTraversal traversal) {
 		if(metrics != null)
 			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_PINNED_REQUESTS);
 		Node node = nodesByKey.get(key);
@@ -4346,7 +4434,7 @@ final class NativePlacementContinuity {
 			return null;
 		}
 		NativeFactoredProofAlternatives resolved = nativeFactoredProofAlternativesResolved(key, pinned, witness, fixed,
-			node, hop, matchedFact, matchedRealization, matchedRelation);
+			node, hop, matchedFact, matchedRealization, matchedRelation, traversal);
 		if(metrics != null)
 			metrics.recordDirectWork(resolved == null ? SearchSpaceMetrics.DirectWork.NATIVE_PINNED_REJECT_PRODUCT
 				: SearchSpaceMetrics.DirectWork.NATIVE_PINNED_ACCEPTED);
@@ -4359,7 +4447,7 @@ final class NativePlacementContinuity {
 		NativePoolWitness witness, FixedCandidateBoundary fixed,
 		Node node, Hop hop, CandidateRuleFact matchedFact,
 		CandidateEmissionRealization matchedRealization,
-		NativeContinuitySupportClauses matchedRelation) {
+		NativeContinuitySupportClauses matchedRelation, CandidateProofTraversal traversal) {
 		CandidateRealizationReference exact =
 			CandidateRealizationReference.of(matchedFact.key(), matchedRealization);
 		if(matchedFact.key().parentOccurrence() != key
@@ -4467,6 +4555,11 @@ final class NativePlacementContinuity {
 					consumerDependencies.add(new CandidateProofDependency(gate));
 					continue;
 				}
+				gate = queryNativeAxisGate(gateKey, traversal);
+				if(gate != null) {
+					consumerDependencies.add(new CandidateProofDependency(gate));
+					continue;
+				}
 				List<CandidateRealizationInputBinding> options = axes.get(axis);
 				if(pivot >= 0) {
 					int selectedAxis = axis;
@@ -4495,6 +4588,7 @@ final class NativePlacementContinuity {
 				}
 				gate = new CandidateAxisGate(gateKey, owner,
 					options.get(0).inputPosition(), witness, gateAlternatives);
+				rememberQueryNativeAxisGate(gate, traversal);
 				if(metrics != null) {
 					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_AXIS_GATE_BUILDS);
 					metrics.recordDirectWork(
@@ -4518,7 +4612,8 @@ final class NativePlacementContinuity {
 	 * legacy topology.
 	 */
 	private NativeFactoredProofAlternatives nativeUnpinnedFactoredProofAlternatives(
-		CompiledHopKey key, NativePoolWitness witness, FixedCandidateBoundary fixed) {
+		CompiledHopKey key, NativePoolWitness witness, FixedCandidateBoundary fixed,
+		CandidateProofTraversal traversal) {
 		if(metrics != null)
 			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_REQUESTS);
 		Node node = nodesByKey.get(key);
@@ -4584,7 +4679,7 @@ final class NativePlacementContinuity {
 						}
 						NativeFactoredProofAlternatives factored =
 							nativeFactoredProofAlternativesResolved(key, reference, witness, fixed,
-								node, hop, fact, realization, relation);
+								node, hop, fact, realization, relation, traversal);
 						if(factored == null || factored.alternatives().isEmpty()) {
 							if(metrics != null)
 								metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_HYBRID_REJECT_PRODUCT);
@@ -8050,6 +8145,7 @@ final class NativePlacementContinuity {
 			new java.util.HashMap<>();
 		private boolean cycleDetected;
 		private boolean hasNativeAxisGates;
+		private NativeGateAdmissionBudget gateBudget;
 		private boolean generatedRootPublishedHistoryObserved;
 		private long emptyFilteredStates;
 	}
