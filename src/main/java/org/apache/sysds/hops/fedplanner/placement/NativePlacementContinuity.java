@@ -3478,6 +3478,8 @@ final class NativePlacementContinuity {
 		for(CandidateProofState state : graph.keySet())
 			if(state.axisGate() != null)
 				rememberAcyclicComponentFootprint(state, graph, traversal, footprints);
+		// Budget rejections are negative discovery markers, never admission entries.
+		footprints.values().removeIf(Objects::isNull);
 	}
 
 	private AcyclicComponentFootprint acyclicComponentFootprint(CandidateProofState child,

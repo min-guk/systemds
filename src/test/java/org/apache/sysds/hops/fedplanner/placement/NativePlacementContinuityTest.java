@@ -4860,6 +4860,58 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void nativeGateFootprintBudgetRejectionKeepsExactProofs() throws Exception {
+		String property = "sysds.fedplanner.continuityAcyclicComponent.maxStates";
+		String prior = System.getProperty(property);
+		System.setProperty(property, "1");
+		try {
+			Fixture full = new Fixture(FType.FULL);
+			DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+			Ref seed = full.source("budget-gate-seed", pool);
+			List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+			Ref left = full.unary("budget-gate-left", OpOp1.LOG, seed, false);
+			Ref right = full.unary("budget-gate-right", OpOp1.LOG, seed, false);
+			full.samePoolRealizations(left, unary,
+				new DurableAnchorKey("budget-left-a", FType.FULL, pool.partitions()),
+				new DurableAnchorKey("budget-left-b", FType.FULL, pool.partitions()));
+			Ref child = full.binary("budget-gate-child", OpOp2.PLUS, left, right, false);
+			List<CandidateInputState> binary = List.of(
+				CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+			NativePlacementContinuity.NativeSupportProduct product = full.resolver(null, 0, 0)
+				.proveCandidateSupport(full.reference(child, binary), pool).supportProduct();
+			Assert.assertNotNull(product);
+			full.withClauses(child, binary,
+				new NativeContinuitySupportClauses(child.key, product, pool, true));
+			Ref root = full.unary("budget-gate-root", OpOp1.EXP, child, false);
+			CandidateRuleFact base = full.fact(root, unary);
+			CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+			CandidateRealizationReference proposed = CandidateRealizationReference.of(base.key(),
+				CandidateEmissionRealization.nativeLineage(
+					emission.emissionState(), "budget-gate-proposal", List.of(), List.of()));
+			NativePlacementContinuity.CandidateSupportResult expected = full.resolver(null, 0, 0)
+				.proveGeneratedCandidateSupport(base, emission, proposed, pool);
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity bounded = full.resolver(metrics, 128, 2048);
+			NativePlacementContinuity.CandidateSupportResult actual = bounded
+				.proveGeneratedCandidateSupport(base, emission, proposed, pool);
+			Assert.assertFalse(actual.proofs().isEmpty());
+			Assert.assertEquals(expected.proofs(), actual.proofs());
+			assertIdentitySetEquals(expected.dependencyOccurrences(), actual.dependencyOccurrences());
+			Assert.assertTrue(batchWork(metrics, "NATIVE_AXIS_GATE_BUILDS") > 0);
+			Assert.assertTrue(batchWork(metrics, "COMPONENT_FOOTPRINT_STATE_BYPASS") > 0);
+			Assert.assertTrue("oversized gates remain available for exact computation without retention",
+				((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+					"residentNativeAxisGates").get(bounded)).isEmpty());
+		}
+		finally {
+			if(prior == null)
+				System.clearProperty(property);
+			else
+				System.setProperty(property, prior);
+		}
+	}
+
+	@Test
 	public void generatedHistoryDependentRootReusesOnlyItsRootFreeNativeGate() throws Exception {
 		String property = "sysds.fedplanner.continuityAcyclicComponent.maxEntries";
 		String prior = System.getProperty(property);

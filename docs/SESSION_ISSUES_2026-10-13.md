@@ -74,3 +74,12 @@
 - **통합 검증**: 선택된 FedPlanner 회귀 **1,494 PASS / 183.505초**. 실행 중 class/resource 변경 0, source mismatch 0, 검사 대상 class/resource 7,909개. 전체 repository Maven suite와 구분한다. 테스트 resource `OPERATION_FAMILIES.tsv`도 병합본과 같은 SHA로 교체했다.
 - **추가 반례**: 별도 검증했던 equal-value/different-identity gate key와 revision 미이월 테스트를 실제 소스에 통합했다.
 - **증거**: workspace 밖 `evidence/native-gate-physical-frontier-merged-full-gate-v44/validation.json`. 실제 COFEE 성능은 이 gate 결과와 별도이며, frozen v44 실행 전에는 개선을 주장하지 않는다.
+
+## v44 실제 LogReg 실패와 gate budget 반례 수정
+
+- **실행 결과**: 커밋 `53f458fa69`, JAR SHA-256 `dfd46a34c037654b884af46dd0b42088b03890caa0e32089a12b6017c82d7ef3`의 실제 COFEE LogReg이 `cacheAcyclicRootChildren:3576`의 NullPointerException으로 종료했다. GLM은 실행하지 않았다. 전체 planning은 −1이며 정상 terminal counters가 없으므로 시간·생성량 비교에 사용하지 않는다. Docker cleanup은 완료됐다.
+- **누락했던 경계**: footprint 탐색은 보관 한계를 넘는 항목을 null로 기록해 중복 탐색을 막는다. 기존 root-child 경로가 null을 제거한 이후 새 native-gate 경로가 null을 다시 추가했고, admission 단계가 이를 정상 footprint처럼 읽었다. 1,494개 회귀와 probe가 이 추가 경로의 예산 거절 상황을 검증하지 못했다.
+- **수정**: gate 탐색이 끝난 뒤 null 거절 기록을 admission 대상에서 제거한다. 그래프·합법 후보·support·proof를 삭제하는 변경이 아니다. 한계를 넘은 gate는 보관하지 않고 기존 정확한 계산을 계속한다.
+- **반례 검증**: native gate가 생기는 공개 질의에서 `maxStates=1`로 같은 NPE를 재현했다. 수정 전 157 tests / failure 1, 수정 후 157 PASS / 1.395초. 캐시 없는 resolver와 전체 proofs 및 identity 기반 dependency footprint가 일치하고 oversized gate가 보관되지 않음을 확인했다. 독립 source review CLEAR.
+- **실패 증거**: `evidence/cofee-50k128-v44-validation/runtime-failure-binding.json`, SHA-256 `f72f4dedc90902cd44a65453ddd6a575dc1a8e2697a0613359e044a28cd8da35`. 반례 증거는 `evidence/v45-gate-budget-regression/`에 보존한다.
+- **다음 검증**: 새 frozen v45의 통합 gate와 실제 실행. v43이 마지막 정상 완료된 비교 기준이며 v44를 성공이나 성능 개선으로 보고하지 않는다. 20초 목표는 계속 미달성이다.
