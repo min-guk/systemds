@@ -328,6 +328,130 @@ public class NativeHybridUnpinnedTopologyTest {
 	}
 
 	@Test
+	public void oversizedNestedNativeGateBypassesMemoWithoutInterruptingProof() throws Exception {
+		assertOversizedNativeGateBypass(true);
+	}
+
+	@Test
+	public void oversizedOrdinaryNativeGateBypassesMemoWithoutInterruptingProof() throws Exception {
+		assertOversizedNativeGateBypass(false);
+	}
+
+	private static void assertOversizedNativeGateBypass(boolean generated) throws Exception {
+		Scenario scenario = scenarioWithRecursiveAxes("budget-native", List.of("ordinary"));
+		scenario.install(false);
+		NativePlacementContinuity cold =
+			(NativePlacementContinuity)invoke(scenario.fixture(), "resolver", null, 0, 0L);
+		NativePlacementContinuity.CandidateSupportResult expected = generated ? scenario.queryCurrent(cold)
+			: cold.proveCandidateSupport(scenario.installedReference("budget-native"), scenario.pool());
+		Assert.assertFalse(expected.proofs().isEmpty());
+		String property = "sysds.fedplanner.continuityAcyclicComponent.maxStates";
+		String previous = System.getProperty(property);
+		System.setProperty(property, "1");
+		try {
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity bounded =
+				(NativePlacementContinuity)invoke(scenario.fixture(), "resolver", metrics, 8, 128L);
+			NativePlacementContinuity.CandidateSupportResult actual = generated ? scenario.queryCurrent(bounded)
+				: bounded.proveCandidateSupport(scenario.installedReference("budget-native"), scenario.pool());
+			assertResultParity(expected, actual, actual);
+			Assert.assertTrue("the fixture must exceed the optional footprint budget",
+				directWork(metrics, "COMPONENT_FOOTPRINT_STATE_BYPASS") > 0);
+		}
+		finally {
+			if(previous == null)
+				System.clearProperty(property);
+			else
+				System.setProperty(property, previous);
+		}
+	}
+
+	@Test
+	public void pinnedNativeSiblingsReuseRealChildrenBehindAxisGates() throws Exception {
+		Scenario scenario = scenarioWithRecursiveAxes("m-native", List.of("ordinary"));
+		Assert.assertEquals("the recursive fixture must retain the two-by-three native product",
+			6, scenario.product().size());
+		DurableAnchorKey firstSeed = scenario.pool();
+		DurableAnchorKey secondSeed = new DurableAnchorKey("hybrid-second-full-seed",
+			FType.FULL, firstSeed.partitions());
+		Assert.assertNotEquals("the public queries must retain distinct FULL seed identities",
+			firstSeed, secondSeed);
+		Assert.assertTrue(PlacementIdentity.samePhysicalWorkerPool(firstSeed, secondSeed));
+
+		scenario.installNativeSibling(true, "z-native");
+		NativePlacementContinuity eager =
+			(NativePlacementContinuity)invoke(scenario.fixture(), "resolver");
+		NativePlacementContinuity.CandidateSupportResult eagerFirst = eager.proveCandidateSupport(
+			scenario.installedReference("m-native"), firstSeed);
+		NativePlacementContinuity.CandidateSupportResult eagerSecond = eager.proveCandidateSupport(
+			scenario.installedReference("z-native"), secondSeed);
+
+		scenario.installNativeSibling(false, "z-native");
+		NativePlacementContinuity metricsOff =
+			(NativePlacementContinuity)invoke(scenario.fixture(), "resolver", null, 0, 0L);
+		NativePlacementContinuity.CandidateSupportResult offFirst = metricsOff.proveCandidateSupport(
+			scenario.installedReference("m-native"), firstSeed);
+		NativePlacementContinuity.CandidateSupportResult offSecond = metricsOff.proveCandidateSupport(
+			scenario.installedReference("z-native"), secondSeed);
+
+		NativeContinuitySupportClauses lazy =
+			scenario.installNativeSibling(false, "z-native");
+		CandidateRuleFact installed = installedChildFact(scenario);
+		CandidateEmissionRealization firstNative = installed.allowedEmissionFacts().get(0)
+			.realizations().stream().filter(realization ->
+				"m-native".equals(realization.key().nativeLineage())).findFirst().orElseThrow();
+		CandidateEmissionRealization secondNative = installed.allowedEmissionFacts().get(0)
+			.realizations().stream().filter(realization ->
+				"z-native".equals(realization.key().nativeLineage())).findFirst().orElseThrow();
+		Assert.assertSame("both native roots must expose the same lazy support authority",
+			lazy, firstNative.supportClauses());
+		Assert.assertSame(lazy, secondNative.supportClauses());
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity observed =
+			(NativePlacementContinuity)invoke(scenario.fixture(), "resolver", metrics, 8, 128L);
+		NativePlacementContinuity.CandidateSupportResult actualFirst = observed.proveCandidateSupport(
+			scenario.installedReference("m-native"), firstSeed);
+		assertResultParity(eagerFirst, offFirst, actualFirst);
+		Assert.assertFalse(actualFirst.proofs().isEmpty());
+		Assert.assertTrue("the first native root must admit real axis children, not synthetic gates",
+			directWork(metrics, "COMPONENT_SUMMARY_CACHE_ADMISSIONS") > 0);
+		Assert.assertTrue(directWork(metrics, "COMPONENT_ROOT_GATES_TRAVERSED") > 0);
+		Assert.assertTrue(directWork(metrics, "COMPONENT_ROOT_GATE_BOUNDARY_DEPENDENCIES") > 0);
+		long firstGraphs = metrics.snapshot().proofGraphsBuilt();
+		long firstStates = metrics.snapshot().proofStatesBuilt();
+		long firstEdges = metrics.snapshot().proofDependencyEdgesBuilt();
+		long reuseBefore = directWork(metrics, "COMPONENT_SUMMARY_REUSE_HITS");
+
+		NativePlacementContinuity.CandidateSupportResult actualSecond = observed.proveCandidateSupport(
+			scenario.installedReference("z-native"), secondSeed);
+		assertResultParity(eagerSecond, offSecond, actualSecond);
+		Assert.assertFalse(actualSecond.proofs().isEmpty());
+		Assert.assertTrue("the second public query must build its own proof graph",
+			metrics.snapshot().proofGraphsBuilt() > firstGraphs);
+		Assert.assertEquals("distinct native root queries cannot hit the public-result memo", 0,
+			metrics.snapshot().memoHits());
+		Assert.assertEquals("distinct native roots cannot hit exact or ordinary-root support", 0,
+			metrics.snapshot().supportMemoHits());
+		Assert.assertTrue("the second native root must reuse a real child summary",
+			directWork(metrics, "COMPONENT_SUMMARY_REUSE_HITS") > reuseBefore);
+		Assert.assertTrue("component reuse must reduce rebuilt proof states",
+			metrics.snapshot().proofStatesBuilt() - firstStates < firstStates);
+		Assert.assertTrue("component reuse must reduce rebuilt dependency edges",
+			metrics.snapshot().proofDependencyEdgesBuilt() - firstEdges < firstEdges);
+		Assert.assertEquals("two native roots sharing one relation remain representative-only",
+			1, lazy.materializedHandleCount());
+		Assert.assertTrue(actualFirst.proofs().stream()
+			.allMatch(proof -> proof.externalSeed() == firstSeed));
+		Assert.assertTrue(actualSecond.proofs().stream()
+			.allMatch(proof -> proof.externalSeed() == secondSeed));
+		System.out.println("NativeGateBoundaryWork firstStates=" + firstStates
+			+ " secondStates=" + (metrics.snapshot().proofStatesBuilt() - firstStates)
+			+ " firstEdges=" + firstEdges
+			+ " secondEdges=" + (metrics.snapshot().proofDependencyEdgesBuilt() - firstEdges)
+			+ " reusedComponents=" + (directWork(metrics, "COMPONENT_SUMMARY_REUSE_HITS") - reuseBefore));
+	}
+
+	@Test
 	public void ordinaryPinsReusePartialTopologyWithoutExpandingTheNativeProduct()
 		throws Exception {
 		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
@@ -1220,19 +1344,35 @@ public class NativeHybridUnpinnedTopologyTest {
 
 	private static Scenario scenario(String nativeLineage,
 		List<String> explicitLineages) throws Exception {
+		return scenario(nativeLineage, explicitLineages, false);
+	}
+
+	private static Scenario scenarioWithRecursiveAxes(String nativeLineage,
+		List<String> explicitLineages) throws Exception {
+		return scenario(nativeLineage, explicitLineages, true);
+	}
+
+	private static Scenario scenario(String nativeLineage,
+		List<String> explicitLineages, boolean recursiveAxes) throws Exception {
 		Object fixture = newFixture(FType.FULL);
 		DurableAnchorKey pool = pool("hybrid-worker:8001", 0, 50);
 		Object seed = invoke(fixture, "source", "hybrid-seed", pool);
 		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
 		Object left = invoke(fixture, "unary", "hybrid-left", OpOp1.LOG, seed, false);
 		Object right = invoke(fixture, "unary", "hybrid-right", OpOp1.LOG, seed, false);
-		invoke(fixture, "samePoolRealizations", left, unary, new DurableAnchorKey[] {
-			new DurableAnchorKey("hybrid-left-a", FType.FULL, pool.partitions()),
-			new DurableAnchorKey("hybrid-left-b", FType.FULL, pool.partitions())});
-		invoke(fixture, "samePoolRealizations", right, unary, new DurableAnchorKey[] {
-			new DurableAnchorKey("hybrid-right-a", FType.FULL, pool.partitions()),
-			new DurableAnchorKey("hybrid-right-b", FType.FULL, pool.partitions()),
-			new DurableAnchorKey("hybrid-right-c", FType.FULL, pool.partitions())});
+		if(recursiveAxes) {
+			installRecursiveRealizations(fixture, left, unary, "hybrid-left", 2);
+			installRecursiveRealizations(fixture, right, unary, "hybrid-right", 3);
+		}
+		else {
+			invoke(fixture, "samePoolRealizations", left, unary, new DurableAnchorKey[] {
+				new DurableAnchorKey("hybrid-left-a", FType.FULL, pool.partitions()),
+				new DurableAnchorKey("hybrid-left-b", FType.FULL, pool.partitions())});
+			invoke(fixture, "samePoolRealizations", right, unary, new DurableAnchorKey[] {
+				new DurableAnchorKey("hybrid-right-a", FType.FULL, pool.partitions()),
+				new DurableAnchorKey("hybrid-right-b", FType.FULL, pool.partitions()),
+				new DurableAnchorKey("hybrid-right-c", FType.FULL, pool.partitions())});
+		}
 		Object child = invoke(fixture, "binary", "hybrid-child", OpOp2.PLUS,
 			left, right, false);
 		List<CandidateInputState> binary = List.of(
@@ -1254,6 +1394,20 @@ public class NativeHybridUnpinnedTopologyTest {
 				"hybrid-output", List.of(), List.of()));
 		return new Scenario(fixture, childKey, childFact, childEmission, product, pool,
 			nativeLineage, List.copyOf(explicitLineages), outerFact, outerEmission, proposed);
+	}
+
+	private static void installRecursiveRealizations(Object fixture, Object owner,
+		List<CandidateInputState> inputs, String lineagePrefix, int count) throws Exception {
+		CandidateRuleFact fact = (CandidateRuleFact)invoke(fixture, "fact", owner, inputs);
+		CandidateEmissionFact emission = fact.allowedEmissionFacts().get(0);
+		List<CandidateRealizationSupportClause> support =
+			emission.realizations().get(0).supportClauses();
+		List<CandidateEmissionRealization> realizations = new ArrayList<>(count);
+		for(int index = 0; index < count; index++)
+			realizations.add(new CandidateEmissionRealization(
+				PlacementRealizationKey.nativeLineage(emission.emissionState(),
+					lineagePrefix + '-' + index), support));
+		replaceChildFact(fixture, fact.key().parentOccurrence(), fact, emission, realizations);
 	}
 
 	private record Scenario(Object fixture, CompiledHopKey childKey,
@@ -1299,6 +1453,21 @@ public class NativeHybridUnpinnedTopologyTest {
 			// Encounter order intentionally differs from canonical reference order.
 			realizations.add(1, nativeRealization);
 			replaceChildFact(fixture, childKey, childFact, childEmission, realizations);
+			return relation;
+		}
+
+		private NativeContinuitySupportClauses installNativeSibling(boolean explicit,
+			String siblingLineage) throws Exception {
+			NativeContinuitySupportClauses relation = install(explicit);
+			CandidateRuleFact installed = candidateFacts(fixture).stream()
+				.filter(fact -> fact.key().parentOccurrence() == childKey).findFirst().orElseThrow();
+			CandidateEmissionFact emission = installed.allowedEmissionFacts().get(0);
+			List<CandidateEmissionRealization> realizations =
+				new ArrayList<>(emission.realizations());
+			realizations.add(new CandidateEmissionRealization(
+				PlacementRealizationKey.nativeLineage(emission.emissionState(), siblingLineage),
+				explicit ? List.copyOf(relation) : relation));
+			replaceChildFact(fixture, childKey, installed, emission, realizations);
 			return relation;
 		}
 

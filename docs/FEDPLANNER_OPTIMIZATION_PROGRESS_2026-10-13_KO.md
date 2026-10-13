@@ -2,7 +2,7 @@
 
 작성일: 2026년 10월 13일
 
-최신 빌드 및 실측 근거: 2026년 10월 9일
+최신 빌드 및 실측 근거: 2026년 10월 13일
 
 ## 재개 후 추가 검증 — 2026년 10월 13일
 
@@ -11,8 +11,26 @@ V53의 exact row ↔ CP family closure 오류를 수정했다. 후보를 제거�
 - 로컬 gate: 201개 클래스, 1,573 tests, 실패 0, 오류 0, 건너뜀 2.
 - 최신 main 병합 후 gate: **204개 클래스, 1,585 tests, 실패 0, 오류 0, 건너뜀 2**, package BUILD SUCCESS (06:25:42+02).
 - 구현 커밋 `58b6342d99`, 병합 검증본 `8cff64591b`. 독립 검토 CLEAR.
-- 새 Docker 성능 측정은 다음 단계다. **20초 목표와 전체 ML 연산 coverage는 여전히 미완료다.**
+- V53/V54의 새 Docker 실측도 모두 watchdog60에 도달했다. **20초 목표와 전체 ML 연산 coverage는 여전히 미완료다.**
 - 상세 수정·회귀 및 검증 한계: `docs/SESSION_ISSUES_2026-10-13.md`.
+
+### V54 실측과 V55 근본 원인 보완
+
+| 항목 | 확인 결과 |
+|---|---|
+| V54 회귀 gate | 205 classes / 1,587 tests / 실패·오류 0 / skip 2 |
+| V54 작은 proof fixture | 두 번째 query states 10→9, edges 12→7; proof·owner·FULL seed 동일 |
+| V54 실제 root gate 적용 | LogReg/GLM 모두 0회 — 이 경로만으로 workload 개선 근거 없음 |
+| V54 고정 Docker 4회 | 모두 watchdog60, fullInitial 완료 없음 |
+| V55 incoming gate memo 오류 | 예산 초과 시 일반/generated query NPE 재현 후 수정 |
+| V55 중복 footprint 순회 | optional admission의 총 작업·중간 보존량 제한; 원래 proof/candidate 불변 |
+| V55 CAST_AS_SCALAR | MATRIX→SCALAR 불변 capability에 dependency authority 추가; focused 21 PASS |
+
+V55 native/physical 강화 focused는 **202 PASS**, 최신 main 병합 통합 gate는 **210 classes / 1,613 tests / 실패·오류 0 / skip 3**이다. V55 동일 Docker 실측은 다음 단계다. `origin/main`의 exact gate reuse/physical no-op 변경을 함께 검증하고 있다. Gate key의 정확한 owner·fact·relation identity, fixed-owner 제외 및 revision 격리는 유지한다.
+
+CAST_AS_SCALAR의 ML10 출현 77회는 압축 적용 실적이 아니라 frozen DML의 문법적 출현 수다. 실제 PA-derived PUBLIC fixture는 singleton exact라 family 0건이다. 모든 연산에 빈 dependency를 붙이는 식의 일반화는 합법성 증명을 깨뜨리므로 적용하지 않았다.
+
+V54 OFF 표본에서 LogReg direct binding 61.49%, GLM canonical 8.15%/joint analysis 6.38%였다. 완료된 실행이 아니므로 표본 비율 변화는 속도 향상으로 해석하지 않는다. 외부 build 중첩은 OFF 0/25, detailed 1/25 samples; 기존 외부 planner 두 개는 계속 존재했다. 자체 build/JFR parsing은 timed 실행과 분리했다.
 
 아래 본문은 10월 9일 실측 및 재개 전 상태를 보존한 스냅샷이다. V53 미커밋·통합 오류 미해결·보조 에이전트 제한에 관한 당시 상태는 위 추가 검증으로 대체된다.
 

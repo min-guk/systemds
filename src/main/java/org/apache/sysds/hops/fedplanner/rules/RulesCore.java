@@ -469,6 +469,7 @@ public final class RulesCore {
     public static RuleRegistry createDefaultRegistry() {
       RuleRegistry rr = new RuleRegistry();
 
+      rr.register(new Rulesets.CastAsScalarRule());
       rr.register(new Rulesets.FederationMapDimensionRule());
       rr.register(new Rulesets.UnaryElemwiseRule());
       rr.register(new Rulesets.UnaryCumulativeRule());

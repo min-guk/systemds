@@ -1473,6 +1473,47 @@ public final class Rulesets {
   }
 
   /**
+   * CAST_AS_SCALAR collects a matrix value on the coordinator. The operation
+   * deliberately retains the historical no-rule CP/LOUT capability; this rule
+   * contributes only complete, shape-independent dependency authority for
+   * compact candidate publication. Scalar and frame inputs remain on the
+   * residual path.
+   */
+  public static final class CastAsScalarRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of(OpOp1.CAST_AS_SCALAR.toString());
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && sig.category() == category() && sig.arity() == 1
+          && OPCODES.contains(normalizedOpcode(sig))
+          && sig.inputKind(0) == OpSig.InputKind.MATRIX;
+    }
+
+    @Override
+    public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
+      return supports(sig) ? inputDecision(sig, Set.of()) : Optional.empty();
+    }
+
+    @Override
+    public Optional<RulesApi.CandidateFamilyDependencies> candidateFamilyDependencies(OpSig sig) {
+      return supports(sig) ? familyDependencies(sig, Set.of(), Set.of(), Set.of()) : Optional.empty();
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return FTypeProfile.empty();
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      return cpCaps(sig, ReasonCode.NO_RULE);
+    }
+  }
+
+  /**
    * NROW/NCOL read scalar dimensions from FederationMap metadata on the coordinator.
    * The operation deliberately retains the historical no-rule CP/LOUT capability;
    * this rule contributes only complete, shape-independent dependency authority for

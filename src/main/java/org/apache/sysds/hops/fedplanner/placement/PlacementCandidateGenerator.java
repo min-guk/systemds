@@ -591,7 +591,10 @@ final class PlacementCandidateGenerator {
 		boolean metadataDimension = hop instanceof UnaryOp unary
 			&& hop.getDataType().isScalar() && hop.getInput().size() == 1
 			&& (unary.getOp() == OpOp1.NROW || unary.getOp() == OpOp1.NCOL);
-		if(!weightedScalar && !metadataDimension)
+		boolean matrixCastAsScalar = hop instanceof UnaryOp unary
+			&& unary.getOp() == OpOp1.CAST_AS_SCALAR && hop.getDataType().isScalar()
+			&& hop.getInput().size() == 1 && hop.getInput().get(0).getDataType().isMatrix();
+		if(!weightedScalar && !metadataDimension && !matrixCastAsScalar)
 			return false;
 		return privacy != null && privacy.outputPrivacy() == Privacy.PUBLIC
 			&& privacy.protectedPayloadPositions().isEmpty();
