@@ -2670,7 +2670,7 @@ final class NativePlacementContinuity {
 		}
 		finally {
 			// The graph owns its gates now. Release only optional index retention,
-			// never its cumulative work allowance, before journaling/admission.
+			// never its cumulative work allowance.
 			releaseQueryNativeAxisGates(traversal);
 			if(metrics != null)
 				metrics.finishPhase(SearchSpaceMetrics.Phase.PROOF_OVERLAY, overlayStarted);
@@ -2697,25 +2697,20 @@ final class NativePlacementContinuity {
 					acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
 						|| acyclicComponentMaxAlternatives == 0 ? Map.of()
 						: acyclicRootChildFootprints(root, graph, traversal);
-				NativeGateAdmissionBudget gateBudget = !traversal.hasNativeAxisGates
-					|| acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
-					|| acyclicComponentMaxAlternatives == 0 ? null
-					: traversal.gateBudget == null ? new NativeGateAdmissionBudget() : traversal.gateBudget;
+				// Root-boundary traversal above already admits the reusable real children.
+				// Do not rescan every synthetic gate suffix: the bounded helper remains for
+				// isolated contract tests, but is intentionally unused in production.
 				if(traversal.emptyFilteredStates == 0) {
 					if(metrics != null)
 						metrics.recordNoEmptyDagPruningSkip();
 				}
 				else
-					acyclicRemoved = pruneDeadAcyclicAlternatives(graph, traversal.completionOrder, gateBudget);
+					acyclicRemoved = pruneDeadAcyclicAlternatives(graph, traversal.completionOrder);
 				viable = graph;
 				// In a DAG every surviving row reaches a direct leaf after dead pruning.
 				supported = viableCandidateStates(viable);
 				cacheAcyclicRootChildren(childFootprints, viable, supported,
 					generation == null ? null : root.key(), traversal);
-				// Ordinary boundaries settle first. Optional gates cannot evict them,
-				// so reject capacity misses before constructing transitive footprints.
-				cacheNativeGateComponents(viable, traversal, supported,
-					generation == null ? null : root.key(), gateBudget);
 			}
 			if(metrics != null)
 				metrics.recordProofGraphPath(traversal.cycleDetected, acyclicRemoved);
@@ -3345,8 +3340,6 @@ final class NativePlacementContinuity {
 		}
 		if(graph.containsKey(state))
 			return;
-		if(state.axisGate() != null)
-			traversal.hasNativeAxisGates = true;
 		boolean generatedRoot = generation != null && state.key() == root.key()
 			&& Objects.equals(state.realization(), root.realization());
 		// A proposed-root recurrence reads the same primitive recipe, not the
@@ -6771,6 +6764,10 @@ final class NativePlacementContinuity {
 			return excludedExactProduct != null
 				&& excludedExactProduct.containsIdentityBinding(axis, binding);
 		}
+		boolean excludesExactAuthority(NativeSupportProduct authority) {
+			return excludedExactProduct != null
+				&& excludedExactProduct.sameExactAuthority(authority);
+		}
 		static NativeSupportProduct tryCreate(DurableAnchorKey externalSeed,
 			DurableAnchorKey outputWorkerPoolWitness, boolean exactPartitionRanges,
 			List<List<CandidateRealizationInputBinding>> axes, int maximumLengthStates) {
@@ -8144,7 +8141,6 @@ final class NativePlacementContinuity {
 		private final Map<CandidateProofState,Set<CompiledHopKey>> hiddenOwnerReadsByState =
 			new java.util.HashMap<>();
 		private boolean cycleDetected;
-		private boolean hasNativeAxisGates;
 		private NativeGateAdmissionBudget gateBudget;
 		private boolean generatedRootPublishedHistoryObserved;
 		private long emptyFilteredStates;

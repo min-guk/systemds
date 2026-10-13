@@ -390,11 +390,18 @@ public class NativeMixedAxisSplitPublicationTest {
 
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(0);
 		CandidateRuleFact rebound = bindBinary(closure(metrics), left, right, retained, consumerHop);
-		Assert.assertEquals("residual publication must preserve every cold source/proof member",
-			exactMemberSignatures(cold), exactMemberSignatures(rebound));
+		Assert.assertEquals("the retained rectangle complement is not enumerated", 0L,
+			metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS));
 		CandidateEmissionRealization reboundDurable = rebound.allowedEmissionFacts().get(0)
 			.realizations().stream().filter(value -> value.key().equals(durable.key()))
 			.findFirst().orElseThrow();
+		Assert.assertTrue(reboundDurable.supportClauses()
+			instanceof NativeContinuitySupportClauses);
+		Assert.assertEquals("the completed relation creates no scalar member handles", 0,
+			((NativeContinuitySupportClauses)reboundDurable.supportClauses())
+				.materializedHandleCount());
+		Assert.assertEquals("residual publication must preserve every cold source/proof member",
+			exactMemberSignatures(cold), exactMemberSignatures(rebound));
 		Assert.assertTrue("the retained exact clause remains the first donor authority",
 			reboundDurable.supportClauses().stream().anyMatch(clause -> clause == retainedClause));
 		for(CandidateRealizationSupportClause clause : reboundDurable.supportClauses()) {
@@ -409,15 +416,15 @@ public class NativeMixedAxisSplitPublicationTest {
 				== SearchSpaceMetrics.NativePublicationOutcome.PARTITIONED)
 			.findFirst().orElseThrow();
 		Assert.assertEquals(6, partitioned.logicalProofs());
-		Assert.assertEquals("four exact tuples minus the retained 1x1 rectangle; retained="
+		Assert.assertEquals("the retained rectangle and exact complement restore one lazy base; retained="
 			+ metrics.directWorkCount(
 				SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS)
 				+ ":collision=" + metrics.directWorkCount(
 					SearchSpaceMetrics.DirectWork.PARTITIONED_COLLISION_PROOFS)
 				+ ":singleton=" + metrics.directWorkCount(
-					SearchSpaceMetrics.DirectWork.PARTITIONED_SINGLETON_PROOFS), 3,
+					SearchSpaceMetrics.DirectWork.PARTITIONED_SINGLETON_PROOFS), 0,
 			partitioned.consumedProofs());
-		Assert.assertEquals(3L, metrics.directWorkCount(
+		Assert.assertEquals(0L, metrics.directWorkCount(
 			SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS));
 	}
 
@@ -454,6 +461,13 @@ public class NativeMixedAxisSplitPublicationTest {
 
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(0);
 		CandidateRuleFact rebound = bindBinary(closure(metrics), left, right, retained, consumerHop);
+		Assert.assertEquals("the retained rectangle complement is not enumerated", 0L,
+			metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+		CandidateEmissionRealization merged = rebound.allowedEmissionFacts().get(0)
+			.realizations().get(0);
+		Assert.assertTrue(merged.supportClauses() instanceof NativeContinuitySupportClauses);
+		Assert.assertEquals("the completed relation creates no scalar member handles", 0,
+			((NativeContinuitySupportClauses)merged.supportClauses()).materializedHandleCount());
 		CandidateEmissionFact template = staging.allowedEmissionFacts().get(0);
 		CandidateEmissionFact explicitReference = new CandidateEmissionFact(
 			template.emissionState(), template.executionFType(), template.derivedFoutAction(),
@@ -461,8 +475,6 @@ public class NativeMixedAxisSplitPublicationTest {
 				complete.key(), List.copyOf(complete.supportClauses()))));
 		Assert.assertEquals("residual plus retained donor must equal a fresh explicit publication",
 			explicitReference.realizations(), rebound.allowedEmissionFacts().get(0).realizations());
-		CandidateEmissionRealization merged = rebound.allowedEmissionFacts().get(0)
-			.realizations().get(0);
 		Assert.assertTrue("the retained member remains the first exact donor",
 			merged.supportClauses().stream().anyMatch(clause -> clause == retainedClause));
 		for(CandidateRealizationSupportClause clause : merged.supportClauses()) {
@@ -477,9 +489,9 @@ public class NativeMixedAxisSplitPublicationTest {
 				== SearchSpaceMetrics.NativePublicationOutcome.RETAINED_UNION)
 			.findFirst().orElseThrow();
 		Assert.assertEquals(4, retainedCount.logicalProofs());
-		Assert.assertEquals("only the three candidate tuples outside retained 1x1 are consumed",
-			3, retainedCount.consumedProofs());
-		Assert.assertEquals(3L,
+		Assert.assertEquals("the retained rectangle and its complement restore the lazy base",
+			0, retainedCount.consumedProofs());
+		Assert.assertEquals(0L,
 			metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
 
 		CandidateEmissionRealization stagingRealization = staging.allowedEmissionFacts().get(0)
@@ -499,7 +511,7 @@ public class NativeMixedAxisSplitPublicationTest {
 			unrelatedStagingRebound.allowedEmissionFacts().get(0).realizations().stream()
 				.noneMatch(value -> value.key().equals(stagingRealization.key())));
 		Assert.assertEquals("unrelated staging must not force the retained tuple through scalar consumption",
-			3L, unrelatedStagingMetrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+			0L, unrelatedStagingMetrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
 
 		CandidateEmissionRealization sameKeyStaging = new CandidateEmissionRealization(
 			complete.key(), List.of(new CandidateRealizationSupportClause(List.of(), List.of())));

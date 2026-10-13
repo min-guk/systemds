@@ -30,6 +30,64 @@ import org.junit.Test;
 
 public class NativeConditionalSupportUnionTest {
 	@Test
+	public void exactOrdinaryMaskAndItsComplementRestoreTheBaseWithDonorAuthority() {
+		Fixture fixture = fixture("ordinary-complement", 2, 3);
+		List<List<CandidateRealizationInputBinding>> exactAxes = List.of(
+			List.of(fixture.axes.get(0).get(0)),
+			List.of(fixture.axes.get(1).get(1)));
+		var retainedProduct = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			fixture.seed, fixture.output, true, exactAxes);
+		var retained = new NativeContinuitySupportClauses(fixture.owner,
+			retainedProduct, fixture.output, true);
+		var complement = conditional(fixture, exactAxes);
+		var retainedClause = retained.get(0);
+		var complementClauses = new java.util.IdentityHashMap<
+			CandidateRealizationSupportClause,Boolean>();
+		for(int ordinal = 0; ordinal < complement.size(); ordinal++)
+			complementClauses.put(complement.get(ordinal), Boolean.TRUE);
+
+		var union = retained.oneAxisUnion(complement).orElseThrow();
+
+		Assert.assertFalse(union.conditionalComplement());
+		Assert.assertEquals(fixture.base.size(), union.size());
+		Assert.assertEquals(new ArrayList<>(union).hashCode(), union.hashCode());
+		Assert.assertEquals(signatures(new NativeContinuitySupportClauses(fixture.owner,
+			fixture.base, fixture.output, true)), signatures(union));
+		for(int ordinal = 0; ordinal < union.size(); ordinal++) {
+			CandidateRealizationSupportClause clause = union.get(ordinal);
+			if(retainedProduct.ordinalOfExactAuthorityBindings(clause.inputBindings()) >= 0)
+				Assert.assertSame(retainedClause, clause);
+			else
+				Assert.assertTrue("complement members retain their exact donor object",
+					complementClauses.containsKey(clause));
+		}
+		Assert.assertTrue("reverse order remains conservative",
+			complement.oneAxisUnion(retained).isEmpty());
+
+		List<List<CandidateRealizationInputBinding>> clonedExact = cloneAxes(exactAxes, false);
+		var equalDistinct = new NativeContinuitySupportClauses(fixture.owner,
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				fixture.seed, fixture.output, true, clonedExact), fixture.output, true);
+		var rebuiltUnion = equalDistinct.oneAxisUnion(complement).orElseThrow();
+		List<CandidateRealizationInputBinding> rebuiltOwned = List.of(
+			fixture.axes.get(0).get(0), fixture.axes.get(1).get(1));
+		Assert.assertSame("rebuilt binding wrappers retain their exact source authority",
+			equalDistinct.get(0), rebuiltUnion.get(
+				rebuiltUnion.product().ordinalOfExactAuthorityBindings(rebuiltOwned)));
+		List<List<CandidateRealizationInputBinding>> foreignExact = cloneAxes(exactAxes, true);
+		var foreign = new NativeContinuitySupportClauses(fixture.owner,
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(
+				fixture.seed, fixture.output, true, foreignExact), fixture.output, true);
+		Assert.assertTrue("structurally equal foreign owners cannot replace exact authority",
+			foreign.oneAxisUnion(complement).isEmpty());
+		var partial = new NativeContinuitySupportClauses(fixture.owner,
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(fixture.seed,
+				fixture.output, true, List.of(fixture.axes.get(0), exactAxes.get(1))),
+			fixture.output, true);
+		Assert.assertTrue(partial.oneAxisUnion(complement).isEmpty());
+	}
+
+	@Test
 	public void rebuiltBindingsKeepFirstDonorAndRightOnlyOwnedObjects() {
 		Fixture fixture = fixture("rebuilt", 3, 3);
 		List<List<CandidateRealizationInputBinding>> clonedAxes = cloneAxes(fixture.axes, false);

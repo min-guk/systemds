@@ -417,6 +417,8 @@ public class NativeHybridUnpinnedTopologyTest {
 			directWork(metrics, "COMPONENT_SUMMARY_CACHE_ADMISSIONS") > 0);
 		Assert.assertTrue(directWork(metrics, "COMPONENT_ROOT_GATES_TRAVERSED") > 0);
 		Assert.assertTrue(directWork(metrics, "COMPONENT_ROOT_GATE_BOUNDARY_DEPENDENCIES") > 0);
+		Assert.assertEquals("real-child reuse must not scan every native gate suffix", 0,
+			directWork(metrics, "COMPONENT_GATE_ADMISSION_WORK"));
 		long firstGraphs = metrics.snapshot().proofGraphsBuilt();
 		long firstStates = metrics.snapshot().proofStatesBuilt();
 		long firstEdges = metrics.snapshot().proofDependencyEdgesBuilt();

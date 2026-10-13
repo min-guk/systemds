@@ -11,7 +11,9 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.ExactCategoricalSolver.Factor;
@@ -151,6 +153,57 @@ public class IncrementalConditionalReplayTest {
 	}
 
 	@Test
+	public void unchangedIncumbentProjectsOriginalDecisionsOncePerRefinement() throws Exception {
+		Variable x = new Variable("projection-stable-x", 2);
+		Variable y = new Variable("projection-stable-y", 2);
+		List<Variable> variables = List.of(x, y);
+		List<Factor> factors = List.of(Factor.dense(List.of(x), 0, 5),
+			Factor.dense(List.of(y), 0, 5));
+		RegionalSearchProblem problem = RegionalSearchProblem.generic(variables, factors);
+		ExactPhysicalReducedSolver.CompactModel root = problem.reducedRoot(LIMITS);
+		IncrementalRegionalOptimizer optimizer = optimizer(problem, root, List.of(0, 0));
+		installNeighborhood(optimizer, new int[] {0}, 2d, 0);
+		installNeighborhood(optimizer, new int[] {1}, 1d, 1);
+		ExactPhysicalReducedSolver.CompactModel observed = spyRoot(optimizer);
+
+		refine(optimizer, "PROJECTION_STABLE");
+
+		Mockito.verify(observed, Mockito.times(1)).expandAssignment(Mockito.anyList());
+		Assert.assertArrayEquals(new int[] {0, 0}, incumbent(optimizer));
+		Assert.assertEquals(Double.doubleToRawLongBits(0d),
+			Double.doubleToRawLongBits(upper(optimizer)));
+		Assert.assertEquals(List.of(
+			List.of("PROJECTION_STABLE", 1, 0L),
+			List.of("PROJECTION_STABLE", 2, 0L)), checkpointSummary(optimizer));
+	}
+
+	@Test
+	public void strictImprovementInvalidatesTheInvocationProjection() throws Exception {
+		Variable x = new Variable("projection-change-x", 2);
+		Variable y = new Variable("projection-change-y", 2);
+		List<Variable> variables = List.of(x, y);
+		List<Factor> factors = List.of(Factor.dense(List.of(x), 10, 0),
+			Factor.dense(List.of(y), 10, 0));
+		RegionalSearchProblem problem = RegionalSearchProblem.generic(variables, factors);
+		ExactPhysicalReducedSolver.CompactModel root = problem.reducedRoot(LIMITS);
+		IncrementalRegionalOptimizer optimizer = optimizer(problem, root, List.of(0, 0));
+		installNeighborhood(optimizer, new int[] {0}, 2d, 0);
+		installNeighborhood(optimizer, new int[] {1}, 1d, 1);
+		ExactPhysicalReducedSolver.CompactModel observed = spyRoot(optimizer);
+
+		refine(optimizer, "PROJECTION_CHANGED");
+
+		// Two projections plus the two canonical validations performed by accept.
+		Mockito.verify(observed, Mockito.times(4)).expandAssignment(Mockito.anyList());
+		Assert.assertArrayEquals(new int[] {1, 1}, incumbent(optimizer));
+		Assert.assertEquals(Double.doubleToRawLongBits(0d),
+			Double.doubleToRawLongBits(upper(optimizer)));
+		Assert.assertEquals(List.of(
+			List.of("PROJECTION_CHANGED", 1, Double.doubleToRawLongBits(10d)),
+			List.of("PROJECTION_CHANGED", 2, 0L)), checkpointSummary(optimizer));
+	}
+
+	@Test
 	public void mappedWitnessSkipsOnlyCanonicalNonImprovementAndNeverChangesIncumbent()
 		throws Exception {
 		Variable decision = new Variable("mapped-decision", 2);
@@ -247,6 +300,59 @@ public class IncrementalConditionalReplayTest {
 		catch(ReflectiveOperationException failure) {
 			throw new AssertionError(failure);
 		}
+	}
+
+	private static ExactPhysicalReducedSolver.CompactModel spyRoot(
+		IncrementalRegionalOptimizer optimizer) throws Exception {
+		Field field = IncrementalRegionalOptimizer.class.getDeclaredField("root");
+		field.setAccessible(true);
+		ExactPhysicalReducedSolver.CompactModel root = Mockito.spy(
+			(ExactPhysicalReducedSolver.CompactModel)field.get(optimizer));
+		field.set(optimizer, root);
+		return root;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static void installNeighborhood(IncrementalRegionalOptimizer optimizer,
+		int[] block, double potential, int rank) throws Exception {
+		Class<?> type = Class.forName(IncrementalRegionalOptimizer.class.getName() + "$Neighborhood");
+		Constructor<?> constructor = type.getDeclaredConstructor(
+			int[].class, double.class, int.class, long.class, long.class, int.class);
+		constructor.setAccessible(true);
+		Object neighborhood = constructor.newInstance(block, potential, 0, 2L, 2L, rank);
+		Field rejected = IncrementalRegionalOptimizer.class.getDeclaredField("rejectedNeighborhoods");
+		rejected.setAccessible(true);
+		((Map<String,Object>)rejected.get(optimizer)).put(Arrays.toString(block), neighborhood);
+	}
+
+	private static void refine(IncrementalRegionalOptimizer optimizer, String phase) throws Exception {
+		Method method = IncrementalRegionalOptimizer.class.getDeclaredMethod(
+			"refineNeighborhoodsImpl", String.class);
+		method.setAccessible(true);
+		method.invoke(optimizer, phase);
+	}
+
+	private static int[] incumbent(IncrementalRegionalOptimizer optimizer) throws Exception {
+		Field field = IncrementalRegionalOptimizer.class.getDeclaredField("incumbent");
+		field.setAccessible(true);
+		return ((int[])field.get(optimizer)).clone();
+	}
+
+	private static double upper(IncrementalRegionalOptimizer optimizer) throws Exception {
+		Field field = IncrementalRegionalOptimizer.class.getDeclaredField("upper");
+		field.setAccessible(true);
+		return field.getDouble(optimizer);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<List<Object>> checkpointSummary(IncrementalRegionalOptimizer optimizer)
+		throws Exception {
+		Field field = IncrementalRegionalOptimizer.class.getDeclaredField("checkpoints");
+		field.setAccessible(true);
+		return ((List<IncrementalRegionalOptimizer.Checkpoint>)field.get(optimizer)).stream()
+			.map(checkpoint -> List.<Object>of(checkpoint.phase(), checkpoint.conditionalAttempts(),
+				Double.doubleToRawLongBits(checkpoint.upper())))
+			.toList();
 	}
 
 	private static List<List<Object>> deterministicCheckpoints(IncrementalRegionalOptimizer.Result result) {

@@ -8824,7 +8824,7 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
-	public void reviewerNativeAxisGatesNeverCrossCandidateRevision() {
+	public void reviewerNeverRetainsNativeAxisGatesAcrossCandidateRevisions() {
 		Fixture full = new Fixture(FType.FULL);
 		DurableAnchorKey pool = anchor(FType.FULL, "review-revision-worker", 0, 50);
 		Ref seed = full.source("review-revision-seed", pool);
@@ -8852,8 +8852,9 @@ public class NativePlacementContinuityTest {
 		long initialBuilds = batchWork(metrics, "NATIVE_AXIS_GATE_BUILDS");
 		Assert.assertTrue(initialBuilds > 0);
 		try {
-			Assert.assertFalse(((Map<?,?>)accessibleField(NativePlacementContinuity.class,
-				"residentNativeAxisGates").get(first)).isEmpty());
+			Assert.assertTrue("axis gates are built for the query but global suffix discovery is disabled",
+				((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+					"residentNativeAxisGates").get(first)).isEmpty());
 		}
 		catch(ReflectiveOperationException failure) {
 			throw new AssertionError(failure);
@@ -8864,7 +8865,7 @@ public class NativePlacementContinuityTest {
 				fact.profile(), fact.allowedEmissionFacts(), fact.failureCode())).toList();
 		NativePlacementContinuity revised = first.nextRevision(replacedFacts);
 		try {
-			Assert.assertTrue("resident gates are revision-local and cannot migrate",
+			Assert.assertTrue("a new revision also starts without retained synthetic gates",
 				((Map<?,?>)accessibleField(NativePlacementContinuity.class,
 					"residentNativeAxisGates").get(revised)).isEmpty());
 			Map<?,?> summaries = (Map<?,?>)accessibleField(NativePlacementContinuity.class,
