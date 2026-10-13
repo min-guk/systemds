@@ -328,6 +328,45 @@ public class NativeHybridUnpinnedTopologyTest {
 	}
 
 	@Test
+	public void oversizedNestedNativeGateBypassesMemoWithoutInterruptingProof() throws Exception {
+		assertOversizedNativeGateBypass(true);
+	}
+
+	@Test
+	public void oversizedOrdinaryNativeGateBypassesMemoWithoutInterruptingProof() throws Exception {
+		assertOversizedNativeGateBypass(false);
+	}
+
+	private static void assertOversizedNativeGateBypass(boolean generated) throws Exception {
+		Scenario scenario = scenarioWithRecursiveAxes("budget-native", List.of("ordinary"));
+		scenario.install(false);
+		NativePlacementContinuity cold =
+			(NativePlacementContinuity)invoke(scenario.fixture(), "resolver", null, 0, 0L);
+		NativePlacementContinuity.CandidateSupportResult expected = generated ? scenario.queryCurrent(cold)
+			: cold.proveCandidateSupport(scenario.installedReference("budget-native"), scenario.pool());
+		Assert.assertFalse(expected.proofs().isEmpty());
+		String property = "sysds.fedplanner.continuityAcyclicComponent.maxStates";
+		String previous = System.getProperty(property);
+		System.setProperty(property, "1");
+		try {
+			SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+			NativePlacementContinuity bounded =
+				(NativePlacementContinuity)invoke(scenario.fixture(), "resolver", metrics, 8, 128L);
+			NativePlacementContinuity.CandidateSupportResult actual = generated ? scenario.queryCurrent(bounded)
+				: bounded.proveCandidateSupport(scenario.installedReference("budget-native"), scenario.pool());
+			assertResultParity(expected, actual, actual);
+			Assert.assertTrue("the fixture must exceed the optional footprint budget",
+				directWork(metrics, "COMPONENT_FOOTPRINT_STATE_BYPASS") > 0);
+		}
+		finally {
+			if(previous == null)
+				System.clearProperty(property);
+			else
+				System.setProperty(property, previous);
+		}
+	}
+
+	@Test
 	public void pinnedNativeSiblingsReuseRealChildrenBehindAxisGates() throws Exception {
 		Scenario scenario = scenarioWithRecursiveAxes("m-native", List.of("ordinary"));
 		Assert.assertEquals("the recursive fixture must retain the two-by-three native product",

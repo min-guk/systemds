@@ -1,4 +1,36 @@
-# FedPlanner 세션 이슈 — 2026-10-13
+# 2026-10-13 세션 이슈
+
+## FedPlanner 단계별 동작과 병목 설명 문서화 — 작성 완료
+
+- **증상/요청**: 사용자가 조합 전개, 중복 처리, 여러 HOP에 걸친 의존성 확인 중 무엇이 실제 병목인지 이해할 수 있도록 설명 문서를 요청했다.
+- **코드/측정 기준**: 코드 `33384c0054becbfefba6a4e51a5de7aefe745988`; 성능은 v41 COFEE 50K×128 W1 정상 실행. 최신 v43 실측과 혼동하지 않는다.
+- **원인 분석**: Oracle execution region의 candidate별 재열거, 지원 family의 제한, native proof DFS와 gate 재사용 제외, Closure worklist의 후보 재생성, Physical Model의 입력·clause 재전개가 코드에 존재한다. 정상 지표에서 많은 누적 proof 소비·객체 생성과 PlacementAnalysis 시간이 확인된다.
+- **해결/변경 요약**: 단계별 설명, 예시, 코드 링크, 복잡도의 조건, 실측표, 확인 사실과 미확인 범위를 별도 보고서로 작성했다. 알고리즘·oracle·runtime 동작을 수정하지 않았다.
+- **수정 파일**: `docs/FEDPLANNER_ALGORITHM_AND_BOTTLENECKS_2026-10-13_KO.md`, 이 세션 기록.
+- **검증 방법/결과**: 기준 커밋과 비교 artifact SHA-256, 두 workload 표의 수치를 대조했다. Repository 상대 링크 23개와 해당 줄 번호의 존재, Markdown fence 짝을 확인했다. 첫 공백 검사에서 Markdown 줄바꿈용 trailing space 2건을 발견해 빈 줄로 바꿨다. 문서만 추가하므로 실행 테스트를 새로 수행하지 않았다. 문서 검증은 성능 목표 달성 증거가 아니다.
+- **잔여 이슈**: 최초 문서 작성 당시 v43 측정은 미완료였다. 아래 후속 측정으로 갱신했다. Native gate 개선, end-to-end relation 유지와 20초 목표는 별도로 검증해야 한다. 모든 방문을 불필요한 중복으로 분류할 수는 없다.
+- **잠재 회귀 위험/감지**: 코드 동작 회귀는 없으며, 누적 작업량을 고유 합법 후보 수로 오해하거나 예시 복잡도를 실제 알고리즘의 보편적 복잡도로 오해할 수 있다. 문서에 각 수치와 예시의 범위를 명시했다.
+- **의사결정 근거**: source/action/proof 및 공유 비용 의미를 유지해야 한다는 기존 계약을 바탕으로 설명했다. 합법성 완화나 후보 임의 삭제를 해결책으로 제시하지 않았다.
+
+## v43 실제 COFEE 측정 — 정확성 통과, 성능 목표 실패
+
+- **기준**: 커밋 `33384c0054`, frozen JAR SHA-256 `9862117114b2746f579c5b504f441a3a46e8370f14907662cf47a80573e29eb8`. 기존 Docker harness와 COFEE 50K×128 W1 조건 유지.
+- **결과**: 전체 초기 플래닝 LogReg 388.771218709초, GLM 121.376056740초. v41 대비 각각 +21.305282667초, −2.734416632초. 각 1회 관측이며 인과관계·일관된 개선을 주장하지 않는다.
+- **동등성**: numeric comparator PASS, audit mismatch 0, 원문 선택·section·objective raw bits·certificate·Cost Surface fingerprint 일치. 모든 assignment의 비용 전수 동등성은 미입증이다.
+- **작업량**: LogReg proof 소비·graph 수·rule fact 생성 불변. Skeleton 재사용 약 371만 회와 clause 객체 1,536개 감소만으로 전체 작업량 문제를 해결하지 못했다.
+- **후속 조치**: 기존 성능 evaluator에 FAIL checkpoint 기록. 변경 없는 physical consumer 재생성과 root에 독립적인 native gate의 반복 생성·방문을 줄이는 변경을 별도로 구현·검증 중이다.
+- **증거**: `evidence/cofee-50k128-v43-validation/v41-v43-comparison.json`, SHA-256 `e8070a6df3e19ed0fd5f018d4141ff8c307a47d4ab6ecf1c1b3a7c07e430003a`.
+
+## Native gate 공유와 physical no-change frontier — 병합 전 검증 통과
+
+- **원인**: 질의 root가 달라도 동일 relation의 입력 gate와 의존성을 다시 만들었다. Physical closure는 동일 snapshot의 변하지 않은 consumer를 여러 dirty input edge에서 반복 재생성했다.
+- **변경**: 정확한 fact/realization/relation identity 및 witness/pivot/axis가 같은 gate를 기존 bounded component summary와 함께 보관·퇴거한다. 전체 source 및 숨은 metadata footprint가 현재 root에 의존하면 summary를 재사용하지 않는다. Revision 간 gate 이동은 금지한다. Physical frontier는 호출 내부에서만 유지하며 모든 authority commit에서 초기화한다.
+- **실제 생성량 검증**: 두 dirty input의 동일 consumer에서 keys 4→2, facts 28→14, clauses 20→10. 폭 256 gate의 후속 질의에서 생성 alternative 512→256, 의존성 방문 1,028→516. 논리적 후보는 동일하다. 이 작은 fixture의 수치를 COFEE 성능으로 일반화하지 않는다.
+- **반례**: 중간 source 변경 후 frontier 초기화를 제거한 복사 빌드는 FULL/ROW가 되어야 할 consumer에 FULL/FULL을 남겨 실패했다. 초기화가 있는 버전은 전체 nodes/keys/facts/source/proof 비교를 통과했다.
+- **검증**: 선택된 FedPlanner 회귀 1,453 PASS / 186.537초. 실행 중 class/resource 변경 0, source mismatch 0. 별도 gate 반례 복사 빌드 156 PASS / 기존 ignore 1: 값은 같지만 identity가 다른 fact/realization/relation의 gate 차용 금지, revision 후 gate 미이월 및 cold 결과 일치. Metrics on/off parity 및 독립 source review CLEAR.
+- **미완료**: 병합 전 결과다. 새 origin/main의 CP family closure 수정과 통합한 뒤 재검증하고 실제 COFEE를 실행한다. 전체 candidate/Physical Model/DP가 완전히 relation-native가 됐다는 주장은 하지 않는다.
+
+## Origin/main에서 병합한 CP family closure 기록
 
 ## V53: exact row / CP family 표현 전환의 closure 계약 (진행 중)
 
@@ -61,3 +93,50 @@
 - 공개 API 회귀의 두 번째 query는 proof states **10→9**, dependency edges **12→7**, component reuse 5건이었다. 이는 작은 fixture의 작업량 검증이며 LogReg/GLM 속도 개선을 뜻하지 않는다.
 - 봉인 JAR SHA-256: `5e2af1624eb56094aaf180396a62958d2944991b4f6134b40eca1268c9e47bf1`; 근거 `evidence/candidate-v54-package.log`, `candidate-v54/seal.json`, `evidence/v54-gate-frontier-review.txt`.
 - 후속 source review: 실제 direct binding의 generated root는 native gate보다 먼저 ordinary dependency로 분기한다. V54는 root gate 경계만 복구하므로, 더 깊은 gate 뒤 반복 proof admission 문제까지 해결했다고 주장하지 않는다. 그 경계를 늘릴 때에는 기존 footprint walker의 중복 transitive traversal/owner 복사 비용도 총량 제한해야 한다.
+## Native gate/frontier + CP family closure 통합 gate
+
+- **병합**: 로컬 `fc66b0f415`와 origin/main `3639b09a2d`. 양쪽 세션 기록을 보존했다. Conflict는 family-only 변경 감지·frontier 초기화, gate의 전체 retained unit 예산·관측 카운터를 함께 유지해 해결했다.
+- **독립 검토**: CLEAR. Family 변경은 no-change shortcut을 막고 commit을 강제한다. 모든 commit은 frontier를 초기화한다. Gate 자체·선택지·의존성의 보관량과 summary가 같은 예산 및 eviction에 묶인다.
+- **통합 검증**: 선택된 FedPlanner 회귀 **1,494 PASS / 183.505초**. 실행 중 class/resource 변경 0, source mismatch 0, 검사 대상 class/resource 7,909개. 전체 repository Maven suite와 구분한다. 테스트 resource `OPERATION_FAMILIES.tsv`도 병합본과 같은 SHA로 교체했다.
+- **추가 반례**: 별도 검증했던 equal-value/different-identity gate key와 revision 미이월 테스트를 실제 소스에 통합했다.
+- **증거**: workspace 밖 `evidence/native-gate-physical-frontier-merged-full-gate-v44/validation.json`. 실제 COFEE 성능은 이 gate 결과와 별도이며, frozen v44 실행 전에는 개선을 주장하지 않는다.
+
+### V54 동일 Docker 실측
+
+- OFF/detailed × LogReg/GLM 네 실행 모두 watchdog60, fullInitial 완료 없음, container 제거 완료. **20초 목표 FAIL**.
+- OFF LogReg 2,262 samples/direct binding 61.49%/peak 5.068GB; GLM 2,553/canonical 8.15%/joint 6.38%/peak 3.223GB. 불완전한 서로 다른 진도이므로 완료 속도 개선을 주장하지 않는다.
+- 두 workload 모두 `COMPONENT_ROOT_GATES_TRAVERSED=0`, `COMPONENT_ROOT_GATE_BOUNDARY_DEPENDENCIES=0`. V54의 정확성/fixture 작업량 개선은 입증했지만 이번 workload 병목에 대한 적용은 관측되지 않았다.
+- 근거: `evidence/v54-{analysis-driver.log,topology-outcomes.log,planner-breakdown.txt,contention-summary.json}` 및 봉인별 `summary.json`.
+
+## V55: optional native gate memo의 실패 격리와 총 작업량 제한 (진행 중)
+
+- **증상/원인**: incoming `fc66b0f415`의 깊은 native gate cache가 root footprint null 정리 이후 gate footprint의 null 결과를 추가했다. 기존 예산 초과가 memo 생략이 아니라 planner NPE가 됐다.
+- **재현**: PUBLIC constraint fixture를 새로 만들지 않고 기존 native fixture에서 `continuityAcyclicComponent.maxStates=1` 사용. Generated query는 `footprint.occurrences`, ordinary query는 `footprint.retainedStates`에서 각각 실패한다. Corrected RED **183 tests / failures 2** (`v55-gate-budget-red.log`). 최초 빈 explicit-lineage fixture 오류는 별도 로그로 보존하고 수정했다.
+- **구조적 문제**: gate마다 전체 후손 footprint를 다시 만들면 alternating chain에서 합계가 제곱으로 증가한다. 최종 LRU 크기만 제한해서는 중간 순회/객체 생성 비용을 제한하지 못한다.
+- **해결 계획**: 기존 gate scan·footprint·후속 summary 생성 작업을 기존 state/row 예산에서 도출한 하나의 optional allowance로 제한한다. 완전한 footprint만 admission하며 예산 소진은 캐시 생략일 뿐 proof/candidate 축소가 아니다. Root frontier 및 privacy/runtime/TR-TW 계약 유지.
+- **수정 파일**: `NativePlacementContinuity.java`, `SearchSpaceMetrics.java`, native gate 회귀 테스트. Incoming merge의 constructor 변경에 맞춰 reflection fixture를 조정한다.
+- **검증/위험**: 일반/generated query parity, 깊은 chain·duplicate edge·hidden owner·disabled budget, 전체 gate 및 Docker 실측 예정. 새 reuse는 churn과 추가 작업을 일으킬 수 있어 런타임 이득은 별도 판단한다.
+- **의사결정 근거**: 후보를 제거하지 않고 optional memo의 실패 경계와 분석 알고리즘의 작업량을 수정한다.
+
+### V55 중간 검증
+
+- Native/physical incoming 통합 focused **199 PASS** (1 skipped 포함). 두 public budget NPE가 모두 해소됐다. 추가 aggregate adversary는 강화 후 재검증한다.
+- Aggregate baseline은 새 계측 enum만 제공하고 이전 NPC 구현을 사용해 재실행했다. **3 tests / failures 2**: 각 suffix는 예산에 들어가도 합계 retained states 초과, wide gate 19개가 entry budget 3을 초과. 계측 부재와 달리 실제 작업/보존 한계의 RED다 (`v55-gate-aggregate-behavior-red.log`).
+- 독립 source review는 proof 의미/예산 처리의 concrete blocker 없음. `WORK`는 선지불한 논리 credit이므로 element access의 정확한 수나 초 단위가 아니다. 보장 범위는 추가 optional admission의 O(W) 작업량과 staged logical S/A/E이며, scratch RSS가 S 이하라는 뜻도 아니다. Gate `retainedUnits` constructor의 1회 선형 계산은 이 credit 밖이다.
+- 검사 중 두 test fixture 컴파일/생성 오류도 수정했으며 별도 실패 로그를 보존했다. Production 우회로 통과시키지 않았다.
+
+## V55: MATRIX→SCALAR의 완전한 dependency authority (진행 중)
+
+- **문제/원인**: `CAST_AS_SCALAR`는 기존 CP/LOUT/NO_RULE 결과가 FType/shape에 무관한데 이를 명시하는 rule/family dependency authority가 없어 residual 후보 평가에 남았다.
+- **해결**: MATRIX 입력 1개 / scalar 출력 범위에서 기존 capability와 빈 profile을 그대로 유지하는 rule를 등록했다. Decision/family determinant가 모두 빈 집합임을 선언하고 기존 PUBLIC+unprotected gate 안에서만 CP family를 허용한다. Scalar/frame 입력 및 non-scalar 출력은 family로 확대하지 않는다.
+- **수정 파일**: `Rulesets.java`, `RulesCore.java`, `PlacementCandidateGenerator.java`, `CastAsScalarRuleTest.java`, `CastAsScalarCpFamilyParityTest.java`, ML operation manifest.
+- **검증**: focused **21 PASS**, 직접 PUBLIC fixture 2개 ignored 포함. PA-derived PUBLIC의 실제 DML `sum -> matrix -> as.scalar`, FType/null/shape/full·reversed domain/singleton oracle, private/masked 및 입력 종류 negative, metrics ON/OFF를 비교했다. Independent review CLEAR.
+- **적용 범위의 한계**: ML10 manifest의 castdts **77회(constructed 18 / rewritten 59)**는 문법적 연산 출현이며 실제 압축 publication 77건이 아니다. 이 실제 PA fixture는 singleton exact이고 family 0건이다. LogReg13/GLM29 출현만으로 workload 이득을 주장하지 않는다.
+- **잔여 이슈/위험**: 전체 ML 87개 family coverage는 아직 미완료다. Binary/matrix 연산의 FType·shape·alignment·binding dependency를 생략한 일괄 allowlist는 적용하지 않았다. 최종 전체 gate와 Docker 실측은 별도다.
+- **의사결정 근거**: 실행 가능 후보/개인정보 규칙은 바꾸지 않고 기존 불변 capability에 압축 표현의 완전한 의존성 증명을 부여했다.
+
+### V55 첫 통합 gate 통과
+
+- 209 actual classes, **1607/0/0/3 (tests/failures/errors/skipped)**, package BUILD SUCCESS (07:06:50+02). 강화 native/physical focused 202 PASS.
+- Deep duplicate enqueue, 실제 hidden/reused owner 복사 경계의 예산 소진도 검증했다. 독립 coverage review CLEAR; reused-summary 과대 owner fixture는 defensive 경계 시험임을 구분한다.
+- 검증 중 origin/main에 별도 null-footprint correction `5bd1c76369`가 게시됐다. 우리 bounded admission이 같은 원인을 해결하지만 incoming 회귀도 보존해 병합 후 다시 검증한다.

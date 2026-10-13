@@ -23,9 +23,11 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
+import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.AggUnaryOp;
+import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.UnaryOp;
@@ -335,6 +337,58 @@ public class PhysicalGenerationEnvelopeTest {
 				.durableAnchor().placementId().equals("pool-c")));
 	}
 
+	@Test
+	public void unchangedFanInConsumerRebuildsOncePerCommittedRevision() throws Exception {
+		PhysicalClosureFixture fixture = new PhysicalClosureFixture(false, true);
+		ReplayState settled = fixture.settle(fixture.initial(fixture.pool("pool-a", "worker-a")));
+		// Both producers already belong to the complete committed input snapshot.
+		// A second dirty edge must not regenerate its same unchanged consumer.
+		ReplayState oneDirty = new ReplayState(settled.nodes(), settled.domainKeys(), settled.facts(),
+			settled.logicalInputs(), List.of(0));
+		ReplayState twoDirty = new ReplayState(settled.nodes(), settled.domainKeys(), settled.facts(),
+			settled.logicalInputs(), List.of(0, 1));
+		fixture.close(oneDirty, fixture.edges);
+		SearchSpaceMetrics once = new SearchSpaceMetrics(), twice = new SearchSpaceMetrics();
+		ReplayState expected;
+		PlacementIdentity.beginAnalysisScope(once);
+		try { expected = fixture.close(oneDirty, fixture.edges); }
+		finally { PlacementIdentity.endAnalysisScope(); }
+		ReplayState actual;
+		PlacementIdentity.beginAnalysisScope(twice);
+		try { actual = fixture.close(twoDirty, fixture.edges); }
+		finally { PlacementIdentity.endAnalysisScope(); }
+		Assert.assertEquals("dirty-edge multiplicity must not change the closed authority",
+			expected.envelope(), actual.envelope());
+		Assert.assertTrue("the reference must actually generate candidate objects",
+			once.objectCreationSnapshot().candidateRuleFacts() > 0);
+		Assert.assertEquals("unchanged fan-in must not regenerate keys, facts or clauses",
+			once.objectCreationSnapshot(), twice.objectCreationSnapshot());
+	}
+
+	@Test
+	public void fanInNoChangeCertificatesDoNotSurviveInputAuthorityRevision() throws Exception {
+		PhysicalClosureFixture fixture = new PhysicalClosureFixture(false, true);
+		ReplayState settled = fixture.settle(fixture.initial(fixture.pool("pool-a", "worker-a")));
+		ReplayState repeated = new ReplayState(settled.nodes(), settled.domainKeys(), settled.facts(),
+			settled.logicalInputs(), List.of(0, 1));
+		Assert.assertEquals(settled.envelope(), fixture.close(repeated, fixture.edges).envelope());
+		ReplayState changed = fixture.withSourcePool(settled,
+			fixture.rowPool("pool-b", "worker-b-0", "worker-b-1"));
+		ReplayState reference = fixture.close(changed, fixture.edges);
+		ReplayState duplicateInputs = new ReplayState(changed.nodes(), changed.domainKeys(), changed.facts(),
+			changed.logicalInputs(), List.of(0, 1));
+		ReplayState actual = fixture.close(duplicateInputs, fixture.edges);
+		Assert.assertEquals("all source and materialization authority must match one exact transfer",
+			reference.envelope(), actual.envelope());
+		List<CandidateRuleFact> consumerFacts = fixture.ownedFacts(actual, fixture.secondKey);
+		Assert.assertFalse(consumerFacts.isEmpty());
+		Assert.assertNotEquals("the prior settled FULL input cannot survive a new source revision",
+			fixture.ownedFacts(settled, fixture.secondKey), consumerFacts);
+		Assert.assertTrue("the protected first input uses its current ROW authority",
+			consumerFacts.stream().allMatch(fact ->
+				fact.key().orderedInputs().get(0).equals(CandidateInputState.present(FType.ROW))));
+	}
+
 	private static final class Fixture {
 		private final String fingerprint;
 		private final ControlRegionKey region;
@@ -444,8 +498,9 @@ public class PhysicalGenerationEnvelopeTest {
 		private final ControlRegionKey region;
 		private final StatementBlock block = new StatementBlock();
 		private final DataOp sourceHop;
-		private final AggUnaryOp firstHop;
-		private final AggUnaryOp secondHop;
+		private final Hop firstHop;
+		private final Hop secondHop;
+		private final boolean independentInputs;
 		private final CompiledHopKey sourceKey;
 		private final CompiledHopKey firstKey;
 		private final CompiledHopKey secondKey;
@@ -463,28 +518,44 @@ public class PhysicalGenerationEnvelopeTest {
 		private final NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
 
 		private PhysicalClosureFixture(boolean chain) throws Exception {
+			this(chain, false);
+		}
+
+		private PhysicalClosureFixture(boolean chain, boolean independentInputs) throws Exception {
+			this.independentInputs = independentInputs;
 			fingerprint = "physical-proof-inventory-" + (chain ? "chain" : "siblings");
 			region = new ControlRegionKey(fingerprint, "main", List.of("body"), "main", "compiled");
 			sourceHop = new DataOp("source", DataType.MATRIX, ValueType.FP64,
 				OpOpData.TRANSIENTREAD, "source", 4, 2, 8, 1000);
-			firstHop = new AggUnaryOp("first", DataType.MATRIX, ValueType.FP64,
-				AggOp.SUM, Direction.Row, sourceHop);
-			secondHop = new AggUnaryOp("second", DataType.MATRIX, ValueType.FP64,
-				AggOp.SUM, Direction.Row, chain ? firstHop : sourceHop);
+			firstHop = independentInputs
+				? new DataOp("first", DataType.MATRIX, ValueType.FP64,
+					OpOpData.TRANSIENTREAD, "first", 4, 2, 8, 1000)
+				: new AggUnaryOp("first", DataType.MATRIX, ValueType.FP64,
+					AggOp.SUM, Direction.Row, sourceHop);
+			secondHop = independentInputs
+				? new BinaryOp("second", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, sourceHop, firstHop)
+				: new AggUnaryOp("second", DataType.MATRIX, ValueType.FP64,
+					AggOp.SUM, Direction.Row, chain ? firstHop : sourceHop);
 			block.setHops(new ArrayList<>(List.of(firstHop, secondHop)));
 			sourceKey = key("source");
 			firstKey = key("first");
 			secondKey = key("second");
 			sourceRule = new CandidateRuleKey(sourceKey, List.of());
-			firstRule = new CandidateRuleKey(firstKey, List.of(CandidateInputState.present(FType.FULL)));
-			secondRule = new CandidateRuleKey(secondKey, List.of(CandidateInputState.present(FType.FULL)));
+			firstRule = new CandidateRuleKey(firstKey, independentInputs ? List.of()
+				: List.of(CandidateInputState.present(FType.FULL)));
+			secondRule = new CandidateRuleKey(secondKey, independentInputs
+				? List.of(CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL))
+				: List.of(CandidateInputState.present(FType.FULL)));
 			occurrences = List.of(occurrence(sourceHop, "source"), occurrence(firstHop, "first"),
 				occurrence(secondHop, "second"));
-			edges = List.of(new CompiledInputEdgeFact(sourceKey, firstKey, 0),
-				new CompiledInputEdgeFact(chain ? firstKey : sourceKey, secondKey, 0));
+			edges = independentInputs
+				? List.of(new CompiledInputEdgeFact(sourceKey, secondKey, 0),
+					new CompiledInputEdgeFact(firstKey, secondKey, 1))
+				: List.of(new CompiledInputEdgeFact(sourceKey, firstKey, 0),
+					new CompiledInputEdgeFact(chain ? firstKey : sourceKey, secondKey, 0));
 			shapes = Map.of(sourceHop, new NodeShapeFact(DataType.MATRIX, 4, 2),
-				firstHop, new NodeShapeFact(DataType.MATRIX, 4, 1),
-				secondHop, new NodeShapeFact(DataType.MATRIX, 4, 1));
+				firstHop, new NodeShapeFact(DataType.MATRIX, 4, independentInputs ? 2 : 1),
+				secondHop, new NodeShapeFact(DataType.MATRIX, 4, independentInputs ? 2 : 1));
 			abstractShapes = Map.of(sourceHop, PlacementAnalysis.AbstractShapeFact.fromConcrete(shapes.get(sourceHop)),
 				firstHop, PlacementAnalysis.AbstractShapeFact.fromConcrete(shapes.get(firstHop)),
 				secondHop, PlacementAnalysis.AbstractShapeFact.fromConcrete(shapes.get(secondHop)));
@@ -511,8 +582,14 @@ public class PhysicalGenerationEnvelopeTest {
 				ExecType.FED, FederatedOutput.FOUT, pool.fType(), false);
 			Node source = new Node(sourceKey, NodeKind.OPERATION, version("source", 0), true,
 				List.of(sourceState), List.of(), List.of(pool));
-			Node first = rawOwner(firstKey, "first", 1);
-			Node second = rawOwner(secondKey, "second", 2);
+			Node first = independentInputs
+				? new Node(firstKey, NodeKind.OPERATION, version("first", 1), true,
+					List.of(sourceState), List.of(), List.of(pool))
+				: rawOwner(firstKey, "first", 1);
+			Node second = independentInputs
+				? new Node(secondKey, NodeKind.OPERATION, version("second", 2), false,
+					List.of(), List.of(), List.of())
+				: rawOwner(secondKey, "second", 2);
 			PlacementEmissionState sourceEmissionState = new PlacementEmissionState(sourceState, false);
 			CandidateEmissionFact sourceEmission = new CandidateEmissionFact(sourceEmissionState, pool.fType(),
 				null, List.of(CandidateEmissionRealization.durable(
@@ -522,9 +599,10 @@ public class PhysicalGenerationEnvelopeTest {
 			CandidateEmissionFact rawEmission = new CandidateEmissionFact(
 				new PlacementEmissionState(nativeOutput, false), FType.FULL);
 			return new ReplayState(List.of(source, first, second),
-				List.of(sourceRule, firstRule, secondRule),
-				List.of(fact(sourceRule, sourceEmission), fact(firstRule, rawEmission),
-					fact(secondRule, rawEmission)), List.of(), List.of(0));
+				independentInputs ? List.of(sourceRule, firstRule) : List.of(sourceRule, firstRule, secondRule),
+				independentInputs ? List.of(fact(sourceRule, sourceEmission), fact(firstRule, sourceEmission))
+					: List.of(fact(sourceRule, sourceEmission), fact(firstRule, rawEmission),
+						fact(secondRule, rawEmission)), List.of(), List.of(0));
 		}
 
 		private ReplayState withSourcePool(ReplayState settled, DurableAnchorKey pool) {

@@ -49,8 +49,8 @@ public class NativeAxisGateComponentReuseTest {
 			proof(proofType, List.of(dependent), witness),
 			proof(proofType, List.of(independent), witness));
 		Object gate = construct(nested("CandidateAxisGate"),
-			new Class<?>[] {CompiledHopKey.class, int.class, witness.getClass(), List.class},
-			dependentOwner, 0, witness, gateAlternatives);
+			new Class<?>[] {nested("NativeAxisGateKey"), CompiledHopKey.class, int.class, witness.getClass(), List.class},
+			null, dependentOwner, 0, witness, gateAlternatives);
 		Object gateDependency = construct(nested("CandidateProofDependency"),
 			new Class<?>[] {gate.getClass()}, gate);
 		Object gateState = accessor(gateDependency, "state");

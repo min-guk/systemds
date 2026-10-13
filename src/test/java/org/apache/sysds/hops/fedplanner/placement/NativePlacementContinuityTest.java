@@ -4860,6 +4860,140 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void generatedHistoryDependentRootReusesOnlyItsRootFreeNativeGate() throws Exception {
+		String property = "sysds.fedplanner.continuityAcyclicComponent.maxEntries";
+		String prior = System.getProperty(property);
+		System.setProperty(property, "1");
+		try {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+		Ref seed = full.source("generated-gate-seed", pool);
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Ref left = full.unary("generated-gate-left", OpOp1.LOG, seed, false);
+		Ref right = full.unary("generated-gate-right", OpOp1.LOG, seed, false);
+		full.samePoolRealizations(left, unary,
+			new DurableAnchorKey("generated-left-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("generated-left-b", FType.FULL, pool.partitions()));
+		full.samePoolRealizations(right, unary,
+			new DurableAnchorKey("generated-right-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("generated-right-b", FType.FULL, pool.partitions()));
+		Ref child = full.binary("generated-gate-child", OpOp2.PLUS, left, right, false);
+		List<CandidateInputState> binary = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+		NativePlacementContinuity.NativeSupportProduct product = full.resolver(null, 0, 0)
+			.proveCandidateSupport(full.reference(child, binary), pool).supportProduct();
+		Assert.assertNotNull(product);
+		Assert.assertEquals(4, product.size());
+		full.withClauses(child, binary,
+			new NativeContinuitySupportClauses(child.key, product, pool, true));
+		Ref root = full.binary("generated-gate-root", OpOp2.PLUS, child, seed, false);
+		CandidateRuleFact initialBase = full.fact(root, binary);
+		CandidateEmissionFact initialEmission = initialBase.allowedEmissionFacts().get(0);
+		CandidateEmissionRealization certified = CandidateEmissionRealization.nativeLineage(
+			initialEmission.emissionState(), "generated-gate-first", seed.anchor,
+			List.of(new PlacementProofKey(PlacementProofKind.NATIVE_CONTINUITY,
+				root.key, "generated-gate-first")), List.of());
+		CandidateRuleFact base = replaceRootRealization(
+			full, initialBase, initialEmission, certified);
+		CandidateEmissionFact emission = base.allowedEmissionFacts().get(0);
+		CandidateRealizationReference first = CandidateRealizationReference.of(base.key(), certified);
+		CandidateRealizationReference second = CandidateRealizationReference.of(base.key(),
+			CandidateEmissionRealization.nativeLineage(
+				emission.emissionState(), "generated-gate-second", List.of(), List.of()));
+		Ref hidden = full.read("generated-gate-hidden-value-map");
+		CandidateRuleKey hiddenRule = new CandidateRuleKey(hidden.key, List.of());
+		CandidateRealizationSupportClause hiddenClause = new CandidateRealizationSupportClause(
+			List.of(), List.of(CandidateRealizationInputBinding.direct(0, first)));
+		CandidateEmissionRealization valueMap = CandidateEmissionRealization.valueMap(
+			emission.emissionState(), "generated-gate-hidden-value-map", List.of(hiddenClause));
+		full.candidates.add(candidateFact(hiddenRule, List.of(new CandidateEmissionFact(
+			emission.emissionState(), FType.FULL, null, List.of(valueMap))), ExecType.FED));
+		full.edges.removeIf(edge -> edge.consumer() == root.key && edge.inputPosition() == 1);
+		full.edges.add(new CompiledInputEdgeFact(hidden.key, root.key, 1));
+		// The hidden VALUE_MAP reads the published first root, preventing batch reuse.
+		// The one-entry component cache ends with the last root-free native gate resident.
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = full.resolver(metrics, 128, 2048);
+		NativePlacementContinuity.GeneratedSupportBatch batch =
+			resolver.generatedSupportBatch(base, emission);
+		NativePlacementContinuity.CandidateSupportResult firstResult = resolver
+			.proveGeneratedCandidateSupport(base, emission, first, pool, batch);
+		Assert.assertFalse(firstResult.proofs().isEmpty());
+		@SuppressWarnings("unchecked")
+		Map<Object,Object> componentMemo = (Map<Object,Object>)accessibleField(
+			NativePlacementContinuity.class, "acyclicComponentMemo").get(resolver);
+		List<Object> gateStates = componentMemo.keySet().stream().filter(state -> {
+			try {
+				return accessibleField(state.getClass(), "axisGate").get(state) != null;
+			}
+			catch(ReflectiveOperationException failure) {
+				throw new AssertionError(failure);
+			}
+		}).toList();
+		Assert.assertEquals("the bounded cache must retain the last exact native gate", 1,
+			gateStates.size());
+		Object firstGate = accessibleField(gateStates.get(0).getClass(), "axisGate")
+			.get(gateStates.get(0));
+		long edgesBeforeSecond = metrics.snapshot().proofDependencyEdgesBuilt();
+		long reuseBeforeSecond = batchWork(metrics, "COMPONENT_SUMMARY_REUSE_HITS");
+		long gateBuildsBeforeSecond = batchWork(metrics, "NATIVE_AXIS_GATE_BUILDS");
+		long gateAlternativesBeforeSecond = batchWork(metrics,
+			"NATIVE_AXIS_GATE_ALTERNATIVES_CREATED");
+		NativePlacementContinuity.CandidateSupportResult secondResult = resolver
+			.proveGeneratedCandidateSupport(base, emission, second, pool, batch);
+		Assert.assertFalse(secondResult.proofs().isEmpty());
+		gateStates = componentMemo.keySet().stream().filter(state -> {
+			try {
+				return accessibleField(state.getClass(), "axisGate").get(state) != null;
+			}
+			catch(ReflectiveOperationException failure) {
+				throw new AssertionError(failure);
+			}
+		}).toList();
+		Assert.assertEquals(1, gateStates.size());
+		Assert.assertSame(firstGate, accessibleField(gateStates.get(0).getClass(), "axisGate")
+			.get(gateStates.get(0)));
+		Assert.assertTrue(batchWork(metrics, "GENERATED_BATCH_ROOT_HISTORY_REJECTIONS") > 0);
+		Assert.assertTrue("the exact-witness graph must run despite any independent dynamic reuse",
+			metrics.snapshot().proofGraphsBuilt() > 2);
+		Assert.assertTrue(batchWork(metrics, "COMPONENT_SUMMARY_REUSE_HITS")
+			> reuseBeforeSecond);
+		Assert.assertEquals(1, batchWork(metrics, "NATIVE_AXIS_GATE_REUSES"));
+		Assert.assertEquals("only the evicted axis gate is rebuilt", 1,
+			batchWork(metrics, "NATIVE_AXIS_GATE_BUILDS") - gateBuildsBeforeSecond);
+
+		SearchSpaceMetrics coldMetrics = new SearchSpaceMetrics();
+		NativePlacementContinuity cold = full.resolver(coldMetrics, 128, 2048);
+		NativePlacementContinuity.CandidateSupportResult expected = cold
+			.proveGeneratedCandidateSupport(base, emission, second, pool,
+				cold.generatedSupportBatch(base, emission));
+		Assert.assertEquals(expected.proofs(), secondResult.proofs());
+		assertIdentitySetEquals(expected.dependencyOccurrences(),
+			secondResult.dependencyOccurrences());
+		NativePlacementContinuity unmeasured = full.resolver();
+		NativePlacementContinuity.CandidateSupportResult withoutMetrics = unmeasured
+			.proveGeneratedCandidateSupport(base, emission, second, pool,
+				unmeasured.generatedSupportBatch(base, emission));
+		Assert.assertEquals(expected.proofs(), withoutMetrics.proofs());
+		assertIdentitySetEquals(expected.dependencyOccurrences(),
+			withoutMetrics.dependencyOccurrences());
+		long warmSecondEdges = metrics.snapshot().proofDependencyEdgesBuilt() - edgesBeforeSecond;
+		Assert.assertTrue("the resident gates must avoid rebuilding their option dependencies",
+			warmSecondEdges < coldMetrics.snapshot().proofDependencyEdgesBuilt());
+		Assert.assertTrue("the resident gate must avoid recreating its option alternatives",
+			batchWork(metrics, "NATIVE_AXIS_GATE_ALTERNATIVES_CREATED")
+				- gateAlternativesBeforeSecond
+				< batchWork(coldMetrics, "NATIVE_AXIS_GATE_ALTERNATIVES_CREATED"));
+		}
+		finally {
+			if(prior == null)
+				System.clearProperty(property);
+			else
+				System.setProperty(property, prior);
+		}
+	}
+
+	@Test
 	public void unpinnedNativeChildSummaryInvalidatesOnDeepAxisWithdrawalAndRestoration() {
 		Fixture full = new Fixture(FType.FULL);
 		DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
@@ -8469,5 +8603,126 @@ public class NativePlacementContinuityTest {
 		Assert.assertEquals(expected.size(), actual.size());
 		for(CompiledHopKey owner : expected)
 			Assert.assertTrue(actual.stream().anyMatch(candidate -> candidate == owner));
+	}
+
+	@Test
+	public void reviewerNativeAxisGateKeyRejectsEqualDistinctAuthority() throws Exception {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "review-key-worker", 0, 50);
+		Ref seed = full.source("review-key-seed", pool);
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Ref left = full.unary("review-key-left", OpOp1.LOG, seed, false);
+		Ref right = full.unary("review-key-right", OpOp1.LOG, seed, false);
+		full.samePoolRealizations(left, unary,
+			new DurableAnchorKey("review-key-left-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("review-key-left-b", FType.FULL, pool.partitions()));
+		full.samePoolRealizations(right, unary,
+			new DurableAnchorKey("review-key-right-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("review-key-right-b", FType.FULL, pool.partitions()));
+		Ref child = full.binary("review-key-child", OpOp2.PLUS, left, right, false);
+		List<CandidateInputState> binary = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+		NativePlacementContinuity.NativeSupportProduct product = full.resolver(null, 0, 0)
+			.proveCandidateSupport(full.reference(child, binary), pool).supportProduct();
+		NativeContinuitySupportClauses relation =
+			new NativeContinuitySupportClauses(child.key, product, pool, true);
+		full.withClauses(child, binary, relation);
+		CandidateRuleFact fact = full.fact(child, binary);
+		CandidateEmissionRealization realization = fact.allowedEmissionFacts().get(0).realizations().get(0);
+		CandidateRuleFact equalFact = new CandidateRuleFact(fact.key(), fact.status(), fact.capability(),
+			fact.shapeProof(), fact.profile(), fact.allowedEmissionFacts(), fact.failureCode());
+		CandidateEmissionRealization equalRealization =
+			new CandidateEmissionRealization(realization.key(), realization.supportClauses());
+		NativeContinuitySupportClauses equalRelation =
+			new NativeContinuitySupportClauses(child.key, product, pool, true);
+		Assert.assertEquals(fact, equalFact);
+		Assert.assertEquals(realization, equalRealization);
+		Assert.assertEquals(relation, equalRelation);
+
+		Class<?> witnessClass = Class.forName(NativePlacementContinuity.class.getName() + "$NativePoolWitness");
+		Method nativeWitness = NativePlacementContinuity.class.getDeclaredMethod(
+			"nativeWitness", DurableAnchorKey.class);
+		nativeWitness.setAccessible(true);
+		Object witness = nativeWitness.invoke(full.resolver(), pool);
+		Class<?> keyClass = Class.forName(NativePlacementContinuity.class.getName() + "$NativeAxisGateKey");
+		Constructor<?> constructor = keyClass.getDeclaredConstructor(CandidateRuleFact.class,
+			CandidateEmissionRealization.class, NativeContinuitySupportClauses.class,
+			witnessClass, int.class, int.class);
+		constructor.setAccessible(true);
+		Object exact = constructor.newInstance(fact, realization, relation, witness, -1, 0);
+		Map<Object,String> resident = new java.util.HashMap<>();
+		resident.put(exact, "exact");
+		for(Object foreign : List.of(
+			constructor.newInstance(equalFact, realization, relation, witness, -1, 0),
+			constructor.newInstance(fact, equalRealization, relation, witness, -1, 0),
+			constructor.newInstance(fact, realization, equalRelation, witness, -1, 0))) {
+			Assert.assertNotEquals("structural equality cannot borrow resident gate authority", exact, foreign);
+			Assert.assertNull(resident.get(foreign));
+		}
+	}
+
+	@Test
+	public void reviewerNativeAxisGatesNeverCrossCandidateRevision() {
+		Fixture full = new Fixture(FType.FULL);
+		DurableAnchorKey pool = anchor(FType.FULL, "review-revision-worker", 0, 50);
+		Ref seed = full.source("review-revision-seed", pool);
+		List<CandidateInputState> unary = List.of(CandidateInputState.present(FType.FULL));
+		Ref left = full.unary("review-revision-left", OpOp1.LOG, seed, false);
+		Ref right = full.unary("review-revision-right", OpOp1.LOG, seed, false);
+		full.samePoolRealizations(left, unary,
+			new DurableAnchorKey("review-revision-left-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("review-revision-left-b", FType.FULL, pool.partitions()));
+		full.samePoolRealizations(right, unary,
+			new DurableAnchorKey("review-revision-right-a", FType.FULL, pool.partitions()),
+			new DurableAnchorKey("review-revision-right-b", FType.FULL, pool.partitions()));
+		Ref child = full.binary("review-revision-child", OpOp2.PLUS, left, right, false);
+		List<CandidateInputState> binary = List.of(
+			CandidateInputState.present(FType.FULL), CandidateInputState.present(FType.FULL));
+		NativePlacementContinuity.NativeSupportProduct product = full.resolver(null, 0, 0)
+			.proveCandidateSupport(full.reference(child, binary), pool).supportProduct();
+		full.withClauses(child, binary,
+			new NativeContinuitySupportClauses(child.key, product, pool, true));
+		CandidateRealizationReference reference = full.reference(child, binary);
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity first = full.resolver(metrics, 128, 2048);
+		NativePlacementContinuity.CandidateSupportResult initial =
+			first.proveCandidateSupport(reference, pool);
+		long initialBuilds = batchWork(metrics, "NATIVE_AXIS_GATE_BUILDS");
+		Assert.assertTrue(initialBuilds > 0);
+		try {
+			Assert.assertFalse(((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+				"residentNativeAxisGates").get(first)).isEmpty());
+		}
+		catch(ReflectiveOperationException failure) {
+			throw new AssertionError(failure);
+		}
+
+		List<CandidateRuleFact> replacedFacts = full.candidates.stream().map(fact ->
+			new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+				fact.profile(), fact.allowedEmissionFacts(), fact.failureCode())).toList();
+		NativePlacementContinuity revised = first.nextRevision(replacedFacts);
+		try {
+			Assert.assertTrue("resident gates are revision-local and cannot migrate",
+				((Map<?,?>)accessibleField(NativePlacementContinuity.class,
+					"residentNativeAxisGates").get(revised)).isEmpty());
+			Map<?,?> summaries = (Map<?,?>)accessibleField(NativePlacementContinuity.class,
+				"acyclicComponentMemo").get(revised);
+			for(Object state : summaries.keySet())
+				Assert.assertNull("no successful gate summary may cross revisions",
+					accessibleField(state.getClass(), "axisGate").get(state));
+		}
+		catch(ReflectiveOperationException failure) {
+			throw new AssertionError(failure);
+		}
+		NativePlacementContinuity.CandidateSupportResult actual =
+			revised.proveCandidateSupport(reference, pool);
+
+		NativePlacementContinuity cold = new NativePlacementContinuity(full.nodes, full.origins,
+			replacedFacts, full.edges, full.reaching, Set.of(), full.privacy);
+		NativePlacementContinuity.CandidateSupportResult expected =
+			cold.proveCandidateSupport(reference, pool);
+		Assert.assertEquals(expected.proofs(), actual.proofs());
+		assertIdentitySetEquals(expected.dependencyOccurrences(), actual.dependencyOccurrences());
+		Assert.assertEquals(initial.proofs(), actual.proofs());
 	}
 }
