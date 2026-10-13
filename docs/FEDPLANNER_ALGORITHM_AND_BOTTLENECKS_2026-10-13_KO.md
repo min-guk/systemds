@@ -2,9 +2,9 @@
 
 작성일: 2026-10-13
 
-본문 1–11절의 코드 기준: `33384c0054becbfefba6a4e51a5de7aefe745988`. 이후 통합·실측은 12절에 별도로 기록한다.
+본문 1–11절의 코드 기준: `33384c0054becbfefba6a4e51a5de7aefe745988`. 이후 통합·실측은 12절 이후에 별도로 기록한다.
 
-성능 근거: v41·v43·v45의 동일 COFEE 50K×128 W1 Docker 실행을 구분한다. 최신 완료 실행 v46은 LogReg 379.14초, GLM 118.34초이며, 20초 목표는 미달성이다. v46의 코드·측정·한계는 13절에 기록한다.
+성능 근거: 동일 COFEE 50K×128 W1 Docker 실행을 엔진별로 구분한다. 최신 완료 실행 v47은 LogReg 376.51초, GLM 122.99초이며, 20초 목표는 미달성이다. 최신 측정과 확인된 병합 거절 원인은 15절에 기록한다.
 
 ## 1. 현재 문제에 대한 판단
 
@@ -401,3 +401,60 @@ DP에서도 두 반복을 구분한다. 검증이 끝난 동일 원본 선택을
 별도 문제로, 두 realization의 중복 여부를 비교할 때 record의 자동 `equals`가 key보다 support를 먼저 읽어 사용하지 않을 native clause를 만들었다. Key가 다르면 즉시 비교를 끝내고, key가 같을 때는 기존 record equality를 그대로 적용하도록 수정했다. 이는 합법 후보나 source authority를 합치는 변경이 아니라 결과가 이미 정해진 비교를 조기에 끝내는 변경이다.
 
 실제 COFEE 적용 여부는 별도로 검증한다. Retained 순회를 ordinary/conditional 및 전체/residual의 네 종류로 나누고, residual 생성 거절을 staging·explicit clause·relation 수·표현 불가로 구분한다. 기존 분기에 카운터만 추가했으며 별도 조합 순회나 profiler는 추가하지 않았다. 전체 retained counter가 네 세부 counter의 합과 같은지도 검증한다. 이 결과를 통해 작은 fixture의 성공과 실제 대규모 반복 제거를 구분한다.
+
+
+## 15. 실제 병합 거절 원인 확인: 기존 explicit clause와 새 native relation 사이의 단절
+
+v47은 `6713d749c9a843604c2f923212dfbffcd2aebb75`를 동일 COFEE 조건에서 실행했다. Conditional growth 및 key-first 비교를 포함하고, 이후 들어온 query-local gate interning은 포함하지 않는다.
+
+| 지표 | LogReg | GLM |
+|---|---:|---:|
+| 전체 초기 플래닝 | **376.507초** | **122.992초** |
+| Analysis·Closure | 283.124초 | 78.535초 |
+| Physical Model | 7.403초 | 4.460초 |
+| Cost Surface | 6.391초 | 8.529초 |
+| Optimizer | 75.890초 | 27.545초 |
+| Coordinator peak (bytes) | 8,674,181,120 | 4,874,715,136 |
+| Worker peak (bytes) | 757,227,520 | 770,875,392 |
+| v46 대비 전체 시간 | −2.635초 | +4.648초 |
+| 새 rule key / rule fact | 25,137 / 208,886 | 16,157 / 125,264 |
+| 새 explicit clause / indexed handle | 2,312,553 / 2,232 | 1,088,634 / 607 |
+
+각 1회 관측이며 개선의 인과 추정이나 반복 성공으로 해석하지 않는다. LogReg의 explicit clause 생성 수는 v46과 같고 handle만 22개 줄었다. GLM은 clause 2개, handle 27개가 줄었다. 두 workload의 주요 proof 소비·retained 순회는 그대로다. **이번 제한된 relation 성장 최적화는 실제 주요 전개 경로를 해결하지 못했다.**
+
+새 분기 counter로 어느 지점에서 압축이 끊기는지 확인했다.
+
+| Residual 병합 요청 결과 | LogReg | GLM |
+|---|---:|---:|
+| 전체 요청 | 60,677 | 20,927 |
+| 기존 explicit clause 때문에 거절 | **60,461** | **20,882** |
+| 남은 표현 불가 | 216 | 45 |
+| Same-key staging/authority 충돌 | 0 | 0 |
+| Retained relation 수 조건 실패 | 0 | 0 |
+| Residual 생성 성공 | **0** | **0** |
+
+전체 요청의 약99.64% / 99.78%가 explicit 경계에서 멈춘다. 이는 모든 플래닝 시간의 같은 비율을 설명한다는 뜻은 아니다. 이 counter는 standalone 요청도 포함하며, 아래 실제 partitioned 순회량과 구분해야 한다.
+
+- LogReg retained 순회 2,555,577개 = ordinary 전체 product 2,542,629개 + conditional 전체 product 12,948개. Residual만 순회한 경우는 0이다.
+- GLM retained 순회 113,551개 = ordinary 전체 product 113,551개. 나머지 세 분류는 0이다.
+- 전체 proof 소비는 LogReg 6,121,451회, GLM 688,373회다. Retained 순회는 그 일부이며 전부가 제거 가능하다고 증명된 것은 아니다.
+
+문제의 구체적인 흐름은 다음과 같다.
+
+```text
+이전 Closure wave: 같은 출력에 explicit clause 목록이 남음
+          ↓
+새 wave: Oracle/proof 관계를 native product로 확보
+          ↓
+동일 출력에 explicit 목록이 있다는 이유로 native 병합 거절
+          ↓
+새 product 전체를 proof별로 순회 → 다시 명시적 목록으로 병합
+```
+
+기존 clause가 새 product 안의 정확히 같은 조합이어도 이 경계에서 전개될 수 있다. 따라서 다음 구현은 기존 clause를 없애거나 다른 representative로 치환하는 것이 아니다. **동일 member임을 인덱스로 증명하고 기존 clause를 원래 권한의 donor로 보관하면서, 나머지 새 영역은 native relation으로 유지하는 것**이다. 최종 병합에서도 이 혼합 관계를 다시 펼치지 않아야 한다.
+
+첫 적용 범위는 exact-native overlap을 기존 donor 수·보관 한도 안에서 표현할 수 있는 경우로 제한한다. Native domain 밖의 clause, 다른 proof/source owner/layout, non-native proof, staging·공유 권한을 증명하지 못하는 경우는 기존 exact fallback을 유지한다. 이 새 구현의 실제 적용률과 시간 효과는 아직 검증 전이다.
+
+정확성: 두 workload 모두 numeric comparator·receipt audit을 통과했다. v46 및 v43 대비 selected 원문·필드·section, objective raw bits/certificate, Cost Surface fingerprint, selection fingerprint가 모두 일치했다. 모든 assignment의 비용 전수 비교를 의미하지 않는다. Gate는 1,534 PASS 및 probe9 PASS이며 20초 evaluator는 FAIL, workload별 accepted 0/3이다.
+
+근거: `evidence/cofee-50k128-v47-validation/v43-v46-v47-comparison.json`, SHA-256 `9483734cc27570cf2cc0157cc573e7d0f7fbf7b62ebeec99cea537bab2edaa1d`; parity binding SHA-256 `3bade438ae4dae85074295dc6eb3d13b6083f70364abac8cc4778e72bb8d1005`.

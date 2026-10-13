@@ -472,3 +472,18 @@
 - Residual requests=60,677 중 explicit 거절=60,461, 표현 불가=216, staging/conflict=0, relation count=0, successes=0. 합계 일치. 요청의 약99.64%가 explicit 경계에서 멈춘다. 이 거절 counter는 standalone 요청도 포함하므로 retained 순회 개수와 직접 같은 단위로 취급하지 않는다.
 - 따라서 conditional base-growth 단위 개선이 실제 주요 경로를 줄였다고 보고하지 않는다. 다음 수정은 원래 explicit clause가 새 native domain 안의 exact 동일 member임을 증명할 수 있을 때만 기존 객체를 donor로 보존하며 relation을 발행하는 것이다. 임의 sparse extra/non-native/foreign authority는 기존 exact fallback이다.
 - Query-local interning 포함 v48은 별도 frozen 엔진으로 준비했다. 이후 incoming `5483ecbc6f`의 intermediate dependency 및 canonical 중복 작업 제거는 다시 별도 통합한다. Frozen v47/v48으로 해당 incoming 성능까지 검증했다고 주장하지 않는다.
+
+
+### v47 실제 COFEE pair 완료 — correctness PASS / 20초 FAIL
+
+- LR full376.506956632초 / Analysis283.123881412 / Model7.402964191 / Cost6.390780015 / Optimizer75.889831905. Peak coordinator8,674,181,120 / worker757,227,520 bytes. GLM full122.992459717초 / Analysis78.535269512 / Model4.460003007 / Cost8.529154043 / Optimizer27.544759933. Peak4,874,715,136 /770,875,392 bytes.
+- Objects(key/fact/clause/handle): LR25,137/208,886/2,312,553/2,232; GLM16,157/125,264/1,088,634/607. LR retained/proof 순회는 v46과 같다. GLM residual requests20,927 중 explicit20,882+표현불가45, successes0; retained 순회113,551은 모두 ordinary full이다. 두 counter 합계 검증 PASS.
+- 두 workload numerictrue/audit0, v46+v43 selected 원문/fields/sections/objective/certificate/cost/selection parity 모두 PASS. 각1회이며 all-assignment 전수 비용 증명은 아니다. 양쪽 cleanup 완료.
+- Comparison SHA `9483734cc27570cf2cc0157cc573e7d0f7fbf7b62ebeec99cea537bab2edaa1d`; binding `3bade438ae4dae85074295dc6eb3d13b6083f70364abac8cc4778e72bb8d1005`; evaluator `b4b6c56d87c63d4189c94c65d4144551f6ed681df33f216df98ba04e344a52d7`. Canonical evaluator rc1, OMX FAIL checkpoint 및 evidence-list 갱신. 이전 목록 별도 보존.
+- 다음 구현은 exact retained explicit member를 singleton donor로 보존하는 bounded overlay다. 기존64 donor/보관 cap을 유지하고, final mixed merge가 old-first 권한을 검증한 overlay를 그대로 발행하도록 한다. 순수 explicit retained + fresh native의 좁은 경로부터 검증하며, 상관·shared cost·함수 경계 합법성은 변경하지 않는다.
+
+
+### Intermediate dependency/canonical 작업 제거 통합 검증
+
+- Merge `322c12f907`: selected FedPlanner **1,547 PASS / 190.245초**, class/resource7,919개, 변경0/source mismatch0. Independent review CLEAR. Key-first realization guard를 보존했고 exact duplicate는 기존 full equality와 earliest authority를 유지한다.
+- 근거 `evidence/native-dependencies-incoming-full-gate-v48-main/validation.json`. Native axis의 fixed-boundary 배제 전제 및 invariant overlay를 유지한다. v48 frozen 엔진 이후의 변경이며 실제 성능 검증은 별도로 필요하다.
