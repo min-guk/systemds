@@ -1,7 +1,7 @@
 # FedPlanner 최적화 진행 현황 보고서
 
 
-## V63 authority 거절 진단 — 검증 완료, 실측 대기
+## V63 authority 거절 진단 — 실측 완료, workload별 원인 분리
 
 V62의 dense 적용0회 원인을 분리하기 위해 acceptance를 바꾸지 않고 세부 reason만 기록한다. Relation shape, proof count/kind/owner, clause layout/witness, typed descriptor header/bindings, legacy signature, input arity/position/member authority를 구별한다. Auxiliary proof를 삭제하거나 single-proof 조건을 풀지 않는다.
 
@@ -9,6 +9,25 @@ V62의 dense 적용0회 원인을 분리하기 위해 acceptance를 바꾸지 �
 - Fresh 선택 **211classes/1663tests/0fail/0error/3skip**, package BUILD SUCCESS11:02:46+02. Independent production/test review CLEAR. 전체repo suite는 아니다.
 - 현재 appended 복수 proof가 원인일 수 있다는 것은 **가설**이다. 같은 bindings라도 proof conjunction이 다르면 서로 다른 support 대안이므로 donor 덮어쓰기를 해서는 안 된다. 측정 후 필요하면 기존 explicit OR native 경로를 별개로 유지하는 압축 표현을 검토한다.
 - 근거 `R/V63_EXPLICIT_AUTHORITY_DIAGNOSTICS_PLAN.md`, `R/evidence/v63-production-review.txt`, `v63-diagnostics-focused.log`, `candidate-v63-package.log`. 진단 iteration이며 속도 향상/20초 달성 증거가 아니다.
+
+
+### V63 실측 결과 — LogReg는 typed header, GLM은 복합 authority
+
+| Dense 첫 거절 reason | LogReg | GLM |
+|---|---:|---:|
+| 전체 dense 요청 (=authority 거절) | 8,982 | 5,708 |
+| Typed descriptor header | 8,847 | 997 |
+| Clause proof count | 0 | 2,447 |
+| Legacy signature authority | 0 | 2,228 |
+| Input member authority | 51 | 36 |
+| Conditional relation | 84 | 0 |
+| 기타/미분류 | 0 | 0 |
+
+- Aggregate/세부 reason conservation 모두 PASS. LogReg는98.5%가 typed header 불일치다. 따라서 앞서 제시한 multiproof 가설은 **GLM 일부에만 해당**하며 LogReg의 설명으로 사용하지 않는다. Header counter만으로 external seed/output witness/range 중 어느 필드인지 구분한 것은 아니다. Legacy signature는 parsing하지 않는다.
+- `d545500cfa` 게시·원격검증, JAR `d49da6ff1e22d4e06065cd6694c7e9f93c4159a0b3a98637b2bc1af67d0cfba5`. 네 동일Docker 모두watchdog60/no fullInitial/owncontainersremoved. **20초 실패 유지**.
+- OFFLR2530samples/direct62.29%/peak5.027GB;GLM2653/direct23.22%/canonical7.24%/joint5.96%/peak3.471GB. Detailed1889/4.801GB,2562/3.606GB. 부분 진행량·샘플 변화로 전체 speedup을 주장하지 않는다.
+- 다음은 **다른 FULL native header들을 독립 support 대안으로 보존하면서 typed explicit blocks를 압축할 수 있는지** 검토한다. 현재 single-header subset donor 경로의 조건을 푸는 것이 아니라, 별개 header의 정확한 합집합·canonical ordering·원본 authority를 지원하는 방향이다. GLM multiproof는 auxiliary proof를 보존하는 별도 OR 표현이 필요하며 뒤에서 다룬다.
+- 근거 R/evidence/candidate-v63-detailed-topology-outcomes.json, v63-analysis-driver.log, v63-planner-breakdown.txt, v63-contention-summary.json. Externalbuild 양phase0/25; 기존externalplanner2개25/25, 자체heavy 분리.
 
 ## V62 dense explicit donor — 정확성 검증 통과, 실제 dense 적용 없음
 

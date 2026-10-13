@@ -597,3 +597,21 @@
 - 근거 R/V63_EXPLICIT_AUTHORITY_DIAGNOSTICS_PLAN.md, R/evidence/v63-diagnostics-focused.log.
 
 - V63 frozen independent review CLEAR, fresh 선택211classes/1663tests/0fail/0error/3skip package BUILD SUCCESS11:02:46+02. 진단 reason은 첫 outer guard이며 descriptor header와 binding이 동시에 다르면 BINDINGS로 분류한다. Cap/replay가 authority 검사에 앞서는 기존 순서도 유지한다. 동일Docker로 실제 분포를 확인한다.
+
+### V63 실측 결과 — LogReg는 typed header, GLM은 복합 authority
+
+| Dense 첫 거절 reason | LogReg | GLM |
+|---|---:|---:|
+| 전체 dense 요청 (=authority 거절) | 8,982 | 5,708 |
+| Typed descriptor header | 8,847 | 997 |
+| Clause proof count | 0 | 2,447 |
+| Legacy signature authority | 0 | 2,228 |
+| Input member authority | 51 | 36 |
+| Conditional relation | 84 | 0 |
+| 기타/미분류 | 0 | 0 |
+
+- Aggregate/세부 reason conservation 모두 PASS. LogReg는98.5%가 typed header 불일치다. 따라서 앞서 제시한 multiproof 가설은 **GLM 일부에만 해당**하며 LogReg의 설명으로 사용하지 않는다. Header counter만으로 external seed/output witness/range 중 어느 필드인지 구분한 것은 아니다. Legacy signature는 parsing하지 않는다.
+- `d545500cfa` 게시·원격검증, JAR `d49da6ff1e22d4e06065cd6694c7e9f93c4159a0b3a98637b2bc1af67d0cfba5`. 네 동일Docker 모두watchdog60/no fullInitial/owncontainersremoved. **20초 실패 유지**.
+- OFFLR2530samples/direct62.29%/peak5.027GB;GLM2653/direct23.22%/canonical7.24%/joint5.96%/peak3.471GB. Detailed1889/4.801GB,2562/3.606GB. 부분 진행량·샘플 변화로 전체 speedup을 주장하지 않는다.
+- 다음은 **다른 FULL native header들을 독립 support 대안으로 보존하면서 typed explicit blocks를 압축할 수 있는지** 검토한다. 현재 single-header subset donor 경로의 조건을 푸는 것이 아니라, 별개 header의 정확한 합집합·canonical ordering·원본 authority를 지원하는 방향이다. GLM multiproof는 auxiliary proof를 보존하는 별도 OR 표현이 필요하며 뒤에서 다룬다.
+- 근거 R/evidence/candidate-v63-detailed-topology-outcomes.json, v63-analysis-driver.log, v63-planner-breakdown.txt, v63-contention-summary.json. Externalbuild 양phase0/25; 기존externalplanner2개25/25, 자체heavy 분리.
