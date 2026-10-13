@@ -650,3 +650,22 @@
 - 새로 남은 비용도 확인했다. OFF LogReg에서 explicit header 복구 호출245/2702samples, native materialization136samples 중63은 최종canonical merge,62는 candidate topology 구축의 member 읽기다. 따라서 복구만 반복하지 않도록 **최초 typed 정보 손실 및 이후 merge의 압축 해제 지점**을 다음 대상으로 삼는다.
 - 구체적 조사: scalar 비재생성 분기에 이미 존재하는 NativeContinuityProof를 문자열-only PlacementProofKey로 바꾸는 지점이 있다. 같은header의 두 축이 함께 증가하는 rectangle containment도 현재 single-axis union이 처리하지 못한다. 각각 실제binder 회귀/authority parity 및 표본 근거를 확보한 뒤 좁게 수정한다. Generic multiproof를 단일 proof로 취급하거나 auxiliary proof를 버리지 않는다.
 - External build overlap OFF/detailed 모두0/25, 기존 외부 planner2개25/25; 자체 heavy 작업은 측정 후 분리했다. 근거 `R/evidence/candidate-v64-detailed-topology-outcomes.json`, `v64-hot-callers.json`, `v64-analysis-driver.log`, `v64-planner-breakdown.txt`, `v64-contention-summary.json`.
+
+## V65 같은 FULL-header의 포함 rectangle — RED 준비
+
+- **문제/증거**: V64는 실제 압축 admission을 만들었지만 final canonical merge에서 native member를 다시 읽는 비용이 남았다. 같은 FULL header에서도 두 축이 함께 커지면 기존 single-axis union은 실제8×8⊂9×9 containment를 처리하지 못한다. 이미 존재하는 큰 product를 그대로 유지할 수 있는 표현 경계이며 workload 빈도는 새 counter로 검증한다.
+- **중요한 가설 정정**: 앞서 문자열-only proof 생성 지점을 GLM의 typed 정보 손실 후보로 제시했으나, 제안된 TRANSIENTREAD fixture는 그 분기 전에 skip된다. 현재 실측 경로라는 증거가 없어 **해당 수정의 우선순위를 철회**했다. LogicalBoundary/Transient compatibility의 의도적인 opaque proof는 typed primitive proof로 바꾸지 않는다.
+- **해결 계획**: 기존 one-axis 경로 실패 후 ordinary single-header exact-owned subset일 때 실제 큰 product와 left-first 원본 donor를 재사용한다. 임의 축 합집합·후보 pruning·conditional 완화·새 index를 하지 않는다. 기존64donor/1Munits와 임시 작업량 상한 유지. Non-nested diagonal/foreign-owner는 exact fallback.
+- **수정/검증**: NCS/metrics, public union 및 actual binder 두 회귀를 먼저 RED로 확인하고 독립검토·기존focused/211class gate·동일Docker 순서로 진행한다. 계획 `R/V65_CONTAINED_RECTANGLE_PLAN.md`. 아직20초/전체MLcoverage 미완료.
+- V65 유효 RED **43tests/2 의도실패 (0.936s)**: public same-header8×8→9×9 union과 실제binder의 old두header64+64→fresh한header81 final merge가 모두 explicit으로 펼쳐짐을 확인했다. 실제binder의 기대 합집합은145이며 기존128 original clause object와 모든authority를 보존해야 한다. 잘못된 foreign-owner fixture/괄호는 생산코드 변경 없이 수정했으며 최종RED는 두 회귀만 실패한다. 근거 `R/evidence/v65-contained-rectangle-red.log`.
+- V65 frozen production/boundary review CLEAR, fresh focused **343PASS/1ignored (3.663s)**. Same-header containment은 기존 one-axis 실패 뒤에만 시도하며 canonical 두 포인터로 allocation 없는 exact-owned subset을 확인한다. 실제 큰 product/index를 재생성하지 않고 first-donor scopes를 앞세운다. Replay/좌측포함은 성장 cap 전에 재사용, 새 성장만 donor64와1M+staging 경계를 적용한다.
+- 처음 focused의 두 실패는 (1) 개선 전 RETAINED_UNION outcome 기대를 이제 직접PUBLISHED로 수정, (2) explicit oracle의 중복64개를 first-donor dedup하지 않은 fixture를 수정한 것이다. 생산 semantics 변경 없이 최종343개 통과했으며 원본 실패 `v65-focused-before-oracle-repair.log` 보존. 추가 new-path1M 거절도 작은2×2와큰1001²/두donor/0handles로 확인했다.
+- Fresh 선택211class package 실행중. 근거 `R/evidence/v65-production-review.txt`, `v65-containment-final-focused.log`.
+
+### 마무리 — V65 선택 gate 통과, 실측은 미실행
+
+- **상태**: 구현/회귀/독립검토 완료. 사용자 마무리 요청으로 추가 최적화와 새 Docker 실험을 시작하지 않는다.
+- **최종 결과**: fresh211classes/1672tests/0fail/0error/3skip, package BUILD SUCCESS2026-10-13T12:15:37+02. Frozen source/test SHA 전부 일치; 최종focused343PASS/1ignored. 원본authority/정확한145합집합/0scalarproof를 실제binder fixture로 검증했다.
+- **배포/보존**: 최신origin/main 확인 후 검증된 소스와 보고서를 커밋·푸시하고 V65 JAR/소스hash/test reports를 `R/candidate-v65`에 봉인한다. JAR SHA256 `2e8ed671e02013ec2a19078c5dcd3425920bd9f88e1ac8eb9760b4534f1bd585`.
+- **잔여/위험**: V65 workload 성능은 미측정. 마지막V64 네trial은watchdog60이며20초 목표와전체ML압축coverage는미완료다. 실제 workload에서 containment 적용률·기존불필요한flatten 감소·memory 상한은 재개 후 동일Docker로 검증해야 한다. 단위테스트 통과를 전체성능승인으로 대신하지 않는다.
+- **재개 지점**: 새코드 변경보다 V65 sealed artifact의 기존네trial 및NATIVE_CONTAINMENT terminalconservation부터 수행한다. 외부planner/session은 건드리지 않고 현재자체build/test는 모두 종료됐다.

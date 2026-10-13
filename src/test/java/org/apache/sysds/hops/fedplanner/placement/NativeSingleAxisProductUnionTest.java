@@ -825,6 +825,13 @@ public class NativeSingleAxisProductUnionTest {
 			denseRetentionRejected.denseRejectReason());
 		Assert.assertEquals(0, wide.materializedHandleCount());
 
+		NativeContinuitySupportClauses smallRectangle = relation(owner, seed, output,
+			List.of(List.copyOf(left.subList(0, 2)), List.copyOf(right.subList(0, 2))));
+		Assert.assertTrue("two-donor containment must reject the 1M retention boundary, not flatten",
+			smallRectangle.oneAxisUnion(wide).isEmpty());
+		Assert.assertEquals(0, smallRectangle.materializedHandleCount());
+		Assert.assertEquals(0, wide.materializedHandleCount());
+
 		NativeContinuitySupportClauses typedCandidate = relation(owner,
 			pool("typed-retention-candidate"), output,
 			List.of(List.of(left.get(0), left.get(1)), List.of(right.get(0))));
@@ -845,6 +852,169 @@ public class NativeSingleAxisProductUnionTest {
 			typedRetentionRejected.outcome());
 		Assert.assertNull(typedRetentionRejected.relation());
 		Assert.assertEquals(0, typedCandidate.materializedHandleCount());
+	}
+
+	@Test
+	public void rectangularContainmentKeepsTheEarlierNativeAuthorityLazyAcrossTwoAxes() {
+		CompiledHopKey owner = key("rectangular-containment-owner");
+		CompiledHopKey leftOwner = key("rectangular-containment-left");
+		CompiledHopKey rightOwner = key("rectangular-containment-right");
+		DurableAnchorKey seed = pool("rectangular-containment-seed");
+		DurableAnchorKey output = pool("rectangular-containment-output");
+		List<CandidateRealizationInputBinding> left = new ArrayList<>();
+		List<CandidateRealizationInputBinding> right = new ArrayList<>();
+		for(int index = 0; index < 9; index++) {
+			left.add(direct(0, "contain-left-" + "x".repeat(index + 1), leftOwner));
+			right.add(direct(1, "contain-right-" + "y".repeat(index + 1), rightOwner));
+		}
+		left.sort(PlacementAnalysis.canonicalComparator());
+		right.sort(PlacementAnalysis.canonicalComparator());
+		List<List<CandidateRealizationInputBinding>> smallAxes = List.of(
+			List.copyOf(left.subList(0, 8)), List.copyOf(right.subList(0, 8)));
+		List<List<CandidateRealizationInputBinding>> largeAxes = List.of(
+			left.stream().map(NativeSingleAxisProductUnionTest::directLike).toList(),
+			right.stream().map(NativeSingleAxisProductUnionTest::directLike).toList());
+		NativeContinuitySupportClauses small = relation(owner, seed, output, smallAxes);
+		List<CandidateRealizationSupportClause> firstDonors = new ArrayList<>();
+		for(int ordinal = 0; ordinal < small.size(); ordinal++)
+			firstDonors.add(small.get(ordinal));
+		NativeContinuitySupportClauses large = relation(owner, seed, output, largeAxes);
+		List<CandidateRealizationSupportClause> oracle = explicit(owner, seed, output, largeAxes);
+		PlacementRealizationKey realizationKey = PlacementRealizationKey.nativeLineage(
+			emission(), "rectangular-containment-output");
+		CandidateEmissionFact pair = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+			new CandidateEmissionRealization(realizationKey, small),
+			new CandidateEmissionRealization(realizationKey, large)));
+		Assert.assertTrue("an exact two-axis subset must remain a native relation",
+			pair.realizations().get(0).supportClauses() instanceof NativeContinuitySupportClauses);
+		NativeContinuitySupportClauses union = (NativeContinuitySupportClauses)
+			pair.realizations().get(0).supportClauses();
+		Assert.assertEquals(81, union.size());
+		Assert.assertEquals("merge and native hash must not enumerate the wider candidate",
+			oracle.hashCode(), union.hashCode());
+		Assert.assertEquals(0, large.materializedHandleCount());
+		for(CandidateRealizationSupportClause donor : firstDonors) {
+			int ordinal = union.ordinalOfExactAuthorityClause(donor);
+			Assert.assertTrue(ordinal >= 0);
+			Assert.assertSame("every covered member keeps the earlier exact clause object",
+				donor, union.get(ordinal));
+		}
+		Assert.assertEquals("old-member lookup must not read the wider candidate", 0,
+			large.materializedHandleCount());
+
+		CandidateEmissionFact replay = new CandidateEmissionFact(emission(), FType.ROW, null,
+			List.of(pair.realizations().get(0),
+				new CandidateEmissionRealization(realizationKey,
+					relation(owner, seed, output, largeAxes))));
+		Assert.assertSame("an already published containment union must be idempotent",
+			union, replay.realizations().get(0).supportClauses());
+
+		NativeContinuitySupportClauses reverseLarge = relation(owner, seed, output, largeAxes);
+		NativeContinuitySupportClauses reverseSmall = relation(owner, seed, output, smallAxes);
+		CandidateEmissionFact reverse = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+			new CandidateEmissionRealization(realizationKey, reverseLarge),
+			new CandidateEmissionRealization(realizationKey, reverseSmall)));
+		Assert.assertSame("the earlier complete rectangle already owns every later member",
+			reverseLarge, reverse.realizations().get(0).supportClauses());
+		Assert.assertEquals(0, reverseLarge.materializedHandleCount());
+		Assert.assertEquals(0, reverseSmall.materializedHandleCount());
+		assertCanonicalClauseParity(oracle, union);
+
+		CandidateRealizationInputBinding addedLeft = largeAxes.get(0).get(8);
+		CandidateRealizationInputBinding addedRight = largeAxes.get(1).get(8);
+		CandidateRealizationSupportClause withdrawnAuthority = union.get(
+			union.product().ordinalOfExactAuthorityBindings(List.of(addedLeft, addedRight)));
+		NativeContinuitySupportClauses restricted = union.restrictBindings(
+			binding -> !binding.equals(addedLeft) && !binding.equals(addedRight)).orElseThrow();
+		Assert.assertEquals(64, restricted.size());
+		Assert.assertEquals(-1, restricted.ordinalOfExactAuthorityClause(withdrawnAuthority));
+		NativeContinuitySupportClauses currentLarge = relation(owner, seed, output, largeAxes);
+		CandidateRealizationSupportClause currentAuthority = currentLarge.get(
+			currentLarge.product().ordinalOfExactAuthorityBindings(List.of(addedLeft, addedRight)));
+		NativeContinuitySupportClauses restored = restricted.oneAxisUnion(currentLarge).orElseThrow();
+		Assert.assertSame(firstDonors.get(0), restored.get(
+			restored.ordinalOfExactAuthorityClause(firstDonors.get(0))));
+		Assert.assertSame("re-addition uses current authority rather than resurrecting withdrawn state",
+			currentAuthority, restored.get(restored.ordinalOfExactAuthorityClause(currentAuthority)));
+		Assert.assertNotSame(withdrawnAuthority,
+			restored.get(restored.ordinalOfExactAuthorityClause(currentAuthority)));
+
+		List<CandidateRealizationSupportClause> explicitSmall = explicit(
+			owner, seed, output, smallAxes);
+		NativeContinuitySupportClauses sixtyThreeDonors = relation(owner, seed, output, smallAxes)
+			.withExplicitAuthority(explicitSmall.subList(0, 62)).relation();
+		Assert.assertNotNull(sixtyThreeDonors);
+		Assert.assertEquals(63, sixtyThreeDonors.authorityDonorCount());
+		CandidateEmissionFact boundary = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+			new CandidateEmissionRealization(realizationKey, sixtyThreeDonors),
+			new CandidateEmissionRealization(realizationKey,
+				relation(owner, seed, output, largeAxes))));
+		Assert.assertTrue(boundary.realizations().get(0).supportClauses()
+			instanceof NativeContinuitySupportClauses);
+		NativeContinuitySupportClauses boundaryUnion = (NativeContinuitySupportClauses)
+			boundary.realizations().get(0).supportClauses();
+		Assert.assertEquals(64, boundaryUnion.authorityDonorCount());
+		CandidateEmissionFact saturatedReplay = new CandidateEmissionFact(
+			emission(), FType.ROW, null, List.of(boundary.realizations().get(0),
+				new CandidateEmissionRealization(realizationKey,
+					relation(owner, seed, output, largeAxes))));
+		Assert.assertSame("exact replay must win before the saturated containment cap check",
+			boundaryUnion, saturatedReplay.realizations().get(0).supportClauses());
+
+		NativeContinuitySupportClauses saturatedSmall = relation(owner, seed, output, smallAxes)
+			.withExplicitAuthority(explicitSmall.subList(0, 63)).relation();
+		Assert.assertNotNull(saturatedSmall);
+		Assert.assertEquals(64, saturatedSmall.authorityDonorCount());
+		CandidateEmissionFact capped = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+			new CandidateEmissionRealization(realizationKey, saturatedSmall),
+			new CandidateEmissionRealization(realizationKey,
+				relation(owner, seed, output, largeAxes))));
+		Assert.assertFalse("containment must fall back rather than exceed the unchanged donor cap",
+			capped.realizations().get(0).supportClauses() instanceof NativeContinuitySupportClauses);
+	}
+
+	@Test
+	public void rectangularContainmentRejectsForeignOwnersAndCorrelatedDiagonals() {
+		CompiledHopKey owner = key("rectangular-containment-reject-owner");
+		CompiledHopKey firstOwner = key("rectangular-containment-reject-first");
+		CompiledHopKey secondOwner = key("rectangular-containment-reject-second");
+		DurableAnchorKey seed = pool("rectangular-containment-reject-seed");
+		DurableAnchorKey output = pool("rectangular-containment-reject-output");
+		var a = direct(0, "contain-reject-a", firstOwner);
+		var b = direct(0, "contain-reject-b", firstOwner);
+		var c = direct(0, "contain-reject-c", firstOwner);
+		var x = direct(1, "contain-reject-x", secondOwner);
+		var y = direct(1, "contain-reject-y", secondOwner);
+		var z = direct(1, "contain-reject-z", secondOwner);
+		PlacementRealizationKey realizationKey = PlacementRealizationKey.nativeLineage(
+			emission(), "rectangular-containment-reject-output");
+		NativeContinuitySupportClauses diagonalLeft = relation(owner, seed, output,
+			List.of(sorted(a, b), sorted(x, y)));
+		NativeContinuitySupportClauses diagonalRight = relation(owner, seed, output,
+			List.of(sorted(directLike(b), directLike(c)), sorted(directLike(y), directLike(z))));
+		CandidateEmissionFact diagonal = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+			new CandidateEmissionRealization(realizationKey, diagonalLeft),
+			new CandidateEmissionRealization(realizationKey, diagonalRight)));
+		Assert.assertFalse("two correlated diagonals cannot claim a rectangular native product",
+			diagonal.realizations().get(0).supportClauses() instanceof NativeContinuitySupportClauses);
+		Assert.assertEquals(7, diagonal.realizations().get(0).supportClauses().size());
+
+		NativeContinuitySupportClauses exactSmall = relation(owner, seed, output,
+			List.of(sorted(a, b), sorted(x, y)));
+		CompiledHopKey foreignFirstOwner = cloneKey(firstOwner);
+		CompiledHopKey foreignSecondOwner = cloneKey(secondOwner);
+		NativeContinuitySupportClauses foreignLarge = relation(owner, seed, output,
+			List.of(sorted(direct(0, "contain-reject-a", foreignFirstOwner),
+				direct(0, "contain-reject-b", foreignFirstOwner),
+				direct(0, "contain-reject-c", foreignFirstOwner)),
+				sorted(direct(1, "contain-reject-x", foreignSecondOwner),
+					direct(1, "contain-reject-y", foreignSecondOwner),
+					direct(1, "contain-reject-z", foreignSecondOwner))));
+		CandidateEmissionFact foreign = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+			new CandidateEmissionRealization(realizationKey, exactSmall),
+			new CandidateEmissionRealization(realizationKey, foreignLarge)));
+		Assert.assertFalse("equal bindings from foreign source-owner identities must fall back",
+			foreign.realizations().get(0).supportClauses() instanceof NativeContinuitySupportClauses);
 	}
 
 	@Test

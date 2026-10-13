@@ -579,6 +579,73 @@ public class NativeMixedAxisSplitPublicationTest {
 	}
 
 	@Test
+	public void retainedHeaderFamilyKeepsTwoAxisGrowthLazyThroughTheActualBinder() throws Exception {
+		CompiledHopKey leftOwner = fixtureKey("contained-family-left");
+		CompiledHopKey rightOwner = fixtureKey("contained-family-right");
+		CompiledHopKey consumerOwner = fixtureKey("contained-family-consumer");
+		DurableAnchorKey pool = anchor("contained-family-pool");
+		BinderAxis left = binderAxis(leftOwner, "contained-family-left", 9, 0, pool);
+		BinderAxis right = binderAxis(rightOwner, "contained-family-right", 9, 0, pool);
+		CandidateRuleFact staging = binaryConsumerFact(consumerOwner);
+		BinaryOp consumerHop = new BinaryOp("contained-family-consumer", DataType.MATRIX,
+			ValueType.FP64, OpOp2.PLUS, left.sourceHop(), right.sourceHop());
+		CandidateRuleFact cold = bindBinary(closure(), left, right, staging, consumerHop);
+		CandidateEmissionRealization complete = cold.allowedEmissionFacts().get(0).realizations().get(0);
+		NativeContinuitySupportClauses completeRelation =
+			(NativeContinuitySupportClauses)complete.supportClauses();
+		var product = completeRelation.product();
+		List<List<CandidateRealizationInputBinding>> oldAxes = List.of(
+			List.copyOf(product.axes().get(0).subList(0, 8)),
+			List.copyOf(product.axes().get(1).subList(0, 8)));
+		NativeContinuitySupportClauses oldCurrent = new NativeContinuitySupportClauses(
+			consumerOwner, product.withAxes(oldAxes), completeRelation.clauseWitness(),
+			completeRelation.clauseLayoutExact());
+		var foreignProduct = NativePlacementContinuity.NativeSupportProduct.tryCreate(
+			anchor("contained-family-foreign-seed"), product.outputWorkerPoolWitness(),
+			product.exactPartitionRanges(), oldAxes);
+		Assert.assertNotNull(foreignProduct);
+		NativeContinuitySupportClauses oldForeign = new NativeContinuitySupportClauses(
+			consumerOwner, foreignProduct, completeRelation.clauseWitness(),
+			completeRelation.clauseLayoutExact());
+		NativeContinuitySupportClauses family = oldCurrent.multiHeaderUnion(oldForeign).orElseThrow();
+		List<CandidateRealizationSupportClause> originals = List.copyOf(family);
+		Assert.assertEquals(128, originals.size());
+		CandidateRuleFact retained = fact(staging.key(), List.of(
+			new CandidateEmissionRealization(complete.key(), family)));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		CandidateRuleFact rebound;
+		PlacementIdentity.setActiveMetrics(metrics);
+		try {
+			rebound = bindBinary(closure(metrics), left, right, retained, consumerHop);
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
+		var support = rebound.allowedEmissionFacts().get(0).realizations().get(0).supportClauses();
+		Assert.assertTrue("the final merge must not flatten a contained same-header rectangle",
+			support instanceof NativeContinuitySupportClauses);
+		Assert.assertEquals(145, support.size());
+		Assert.assertEquals(0, ((NativeContinuitySupportClauses)support).materializedHandleCount());
+		Assert.assertEquals(0L, metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+		Assert.assertTrue(metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.NATIVE_CONTAINMENT_ADMITTED) > 0);
+		Assert.assertEquals(metrics.directWorkCount(SearchSpaceMetrics.DirectWork.NATIVE_CONTAINMENT_REQUESTS),
+			metrics.directWorkCount(SearchSpaceMetrics.DirectWork.NATIVE_CONTAINMENT_ADMITTED)
+				+ metrics.directWorkCount(SearchSpaceMetrics.DirectWork.NATIVE_CONTAINMENT_REUSED)
+				+ metrics.directWorkCount(SearchSpaceMetrics.DirectWork.NATIVE_CONTAINMENT_REJECT_DOMAIN)
+				+ metrics.directWorkCount(SearchSpaceMetrics.DirectWork.NATIVE_CONTAINMENT_REJECT_CAP));
+		for(CandidateRealizationSupportClause original : originals)
+			Assert.assertSame(original, support.get(
+				((NativeContinuitySupportClauses)support).ordinalOfExactAuthorityClause(original)));
+		Set<CandidateRealizationSupportClause> expected = new java.util.LinkedHashSet<>(originals);
+		expected.addAll(completeRelation);
+		Assert.assertEquals(145, expected.size());
+		CandidateRuleFact oracle = fact(staging.key(), List.of(
+			new CandidateEmissionRealization(complete.key(), List.copyOf(expected))));
+		Assert.assertEquals(exactMemberSignatures(oracle), exactMemberSignatures(rebound));
+	}
+
+	@Test
 	public void denseRetainedForeignSeedPublishesSeparateLazyHeader() throws Exception {
 		assertDenseRetainedExplicitPublication(true, 8);
 	}
@@ -679,7 +746,7 @@ public class NativeMixedAxisSplitPublicationTest {
 	}
 
 	@Test
-	public void standaloneRetainedUnionConsumesOnlyTheExactResidual() throws Exception {
+	public void containedRetainedRectangleKeepsStandalonePublicationLazy() throws Exception {
 		assertStandaloneRetainedPublication(false);
 	}
 
@@ -749,8 +816,7 @@ public class NativeMixedAxisSplitPublicationTest {
 		}
 		SearchSpaceMetrics.NativePublicationCount retainedCount = metrics
 			.nativePublicationSnapshot().stream().filter(value -> value.outcome()
-				== (explicit ? SearchSpaceMetrics.NativePublicationOutcome.PUBLISHED
-				: SearchSpaceMetrics.NativePublicationOutcome.RETAINED_UNION))
+				== SearchSpaceMetrics.NativePublicationOutcome.PUBLISHED)
 			.findFirst().orElseThrow();
 		Assert.assertEquals(4, retainedCount.logicalProofs());
 		Assert.assertEquals("the retained rectangle and its complement restore the lazy base",

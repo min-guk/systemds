@@ -788,7 +788,7 @@ final class NativeContinuitySupportClauses
 		var thatProduct = that.products.get(0);
 		var union = product.oneAxisUnion(thatProduct);
 		if(union.isEmpty())
-			return java.util.Optional.empty();
+			return rectangularContainmentUnion(that, product, thatProduct);
 		if(product.sameExactAuthority(union.get()))
 			return java.util.Optional.of(this);
 		int changedAxis = -1;
@@ -815,6 +815,98 @@ final class NativeContinuitySupportClauses
 		return java.util.Optional.of(new NativeContinuitySupportClauses(owner,
 			union.get(), clauseWitness, clauseLayoutExact, donors));
 	}
+	private java.util.Optional<NativeContinuitySupportClauses> rectangularContainmentUnion(
+		NativeContinuitySupportClauses that,
+		NativePlacementContinuity.NativeSupportProduct product,
+		NativePlacementContinuity.NativeSupportProduct thatProduct) {
+		if(!product.sameHeaderAuthority(thatProduct))
+			return java.util.Optional.empty();
+		recordContainmentWork(SearchSpaceMetrics.DirectWork.NATIVE_CONTAINMENT_REQUESTS);
+		if(containsExactAxesWithoutIndex(product, thatProduct)) {
+			recordContainmentWork(SearchSpaceMetrics.DirectWork.NATIVE_CONTAINMENT_REUSED);
+			return java.util.Optional.of(this);
+		}
+		if(!containsExactAxesWithoutIndex(thatProduct, product)) {
+			recordContainmentWork(SearchSpaceMetrics.DirectWork.NATIVE_CONTAINMENT_REJECT_DOMAIN);
+			return java.util.Optional.empty();
+		}
+		int leftDonors = authorityDonors.isEmpty() ? 1 : authorityDonors.size();
+		int rightDonors = that.authorityDonors.isEmpty() ? 1 : that.authorityDonors.size();
+		if(leftDonors > MAX_AUTHORITY_DONORS - rightDonors) {
+			recordContainmentWork(SearchSpaceMetrics.DirectWork.NATIVE_CONTAINMENT_REJECT_CAP);
+			return java.util.Optional.empty();
+		}
+		List<AuthorityDonor> donors = new java.util.ArrayList<>(leftDonors + rightDonors);
+		donors.addAll(authoritySources());
+		donors.addAll(that.authoritySources());
+		if(!withinContainmentStagingBudget(thatProduct, donors)) {
+			recordContainmentWork(SearchSpaceMetrics.DirectWork.NATIVE_CONTAINMENT_REJECT_CAP);
+			return java.util.Optional.empty();
+		}
+		recordContainmentWork(SearchSpaceMetrics.DirectWork.NATIVE_CONTAINMENT_ADMITTED);
+		return java.util.Optional.of(new NativeContinuitySupportClauses(owner,
+			thatProduct, clauseWitness, clauseLayoutExact, donors));
+	}
+
+	private static boolean containsExactAxesWithoutIndex(
+		NativePlacementContinuity.NativeSupportProduct containing,
+		NativePlacementContinuity.NativeSupportProduct contained) {
+		if(!containing.sameHeaderAuthority(contained)
+			|| containing.axes().size() != contained.axes().size())
+			return false;
+		for(int axis = 0; axis < contained.axes().size(); axis++) {
+			List<CandidateRealizationInputBinding> superset = containing.axes().get(axis);
+			List<CandidateRealizationInputBinding> subset = contained.axes().get(axis);
+			if(superset.isEmpty() || subset.isEmpty()
+				|| superset.get(0).inputPosition() != subset.get(0).inputPosition()
+				|| superset.get(0).source().rule().parentOccurrence()
+					!= subset.get(0).source().rule().parentOccurrence())
+				return false;
+			int larger = 0;
+			int smaller = 0;
+			while(larger < superset.size() && smaller < subset.size()) {
+				CandidateRealizationInputBinding left = superset.get(larger);
+				CandidateRealizationInputBinding right = subset.get(smaller);
+				if(left.equals(right)
+					&& left.source().rule().parentOccurrence()
+						== right.source().rule().parentOccurrence()) {
+					larger++;
+					smaller++;
+					continue;
+				}
+				int order = left.compareTo(right);
+				if(order < 0)
+					larger++;
+				else
+					return false;
+			}
+			if(smaller != subset.size())
+				return false;
+		}
+		return true;
+	}
+
+	private static boolean withinContainmentStagingBudget(
+		NativePlacementContinuity.NativeSupportProduct product,
+		List<AuthorityDonor> donors) {
+		long retained = authorityRetentionUnits(List.of(product), 0, donors);
+		if(retained > MAX_AUTHORITY_RETENTION_UNITS)
+			return false;
+		try {
+			long staging = Math.addExact(Math.multiplyExact(2L, donors.size()), 8L);
+			return Math.addExact(retained, staging) <= MAX_AUTHORITY_RETENTION_UNITS;
+		}
+		catch(ArithmeticException overflow) {
+			return false;
+		}
+	}
+
+	private static void recordContainmentWork(SearchSpaceMetrics.DirectWork work) {
+		SearchSpaceMetrics metrics = PlacementIdentity.activeMetrics();
+		if(metrics != null)
+			metrics.recordDirectWork(work);
+	}
+
 	private java.util.Optional<NativeContinuitySupportClauses> ordinaryComplementUnion(
 		NativeContinuitySupportClauses that) {
 		if(products.size() != 1 || that.products.size() != 1)

@@ -1,5 +1,35 @@
 # FedPlanner 최적화 진행 현황 보고서
 
+## 최종 정리 — V65 검증 완료, 추가 최적화 종료
+
+사용자의 마무리 요청에 따라 현재 변경을 검증·보존하고 새 최적화 및 Docker 실험은 시작하지 않는다. **20초 목표 달성으로 종료하는 것은 아니다.** 마지막 실측 V64는 LogReg/GLM 모두 watchdog60/no fullInitial이며, V65의 전체 workload 성능은 아직 측정하지 않았다. 전체 ML 연산의 rule-directed/압축 coverage도 미완료다.
+
+### V65에서 해결한 구조적 문제
+
+- 같은 FULL proof header의8×8 support가9×9 support에 완전히 포함돼도, 두 축이 함께 커지면 기존 single-axis union이 실패해 최종 병합에서 압축을 풀었다.
+- 기존 fast path 실패 후에만 정확한 subset을 canonical 두 포인터로 검사한다. 이미 존재하는 큰 product를 그대로 사용하고 **기존 donor를 우선**한다. 새 Cartesian product/index/캐시나 membership map을 만들지 않는다.
+- 원본 clause identity, proof/source owner identity, FULL seed, privacy/runtime 제약, canonical ordering을 보존한다. 조건부·비포함·외부 owner는 기존 exact fallback이며 합법 후보를 제거하지 않는다.
+- 성장 시 기존64 donor/1M logical retention-unit 및 staging 예산을 유지한다. 같은 상태 replay나 좌측 완전포함은 추가 donor 없이 재사용한다.
+
+### 최종 검증
+
+| 검증 | 결과 |
+|---|---|
+| 변경 전 회귀 재현 |43tests 중2개 의도실패: public union 및 실제binder의 압축 해제|
+| 최종 집중 테스트 |343PASS/1ignored,3.663초|
+| 선택 FedPlanner package gate |**211classes /1,672tests /failures0 /errors0 /skipped3**|
+| 빌드 |BUILD SUCCESS,2026-10-13 12:15:37+02|
+| 독립 production/경계 검토 |CLEAR|
+| 실제binder 회귀 |기존 두header64+64와새한header81을 **lazy145**로 병합; 원본128객체·전체ordered oracle 보존, 새 scalar proof0|
+| 추가 안전 경계 |역순/replay, restrict→re-add, donor64/65, 독립1M 초과, foreign owner, 비직교 diagonal|
+| V65 전체 workload 성능 |**미측정 — 개선률/20초 달성 주장 없음**|
+
+선택 gate이며 전체 repository suite는 아니다. 재개 시 봉인한 V65 artifact로 기존 동일4CPU/16GiB/10GiBheap/JFR55/watchdog60 네 실행을 먼저 수행하고 `NATIVE_CONTAINMENT_*` 적용률·보존 합계를 확인한다. GLM의 의도적인 opaque/multiproof support는 별도 정확한 OR 표현이 필요할 수 있으며, 단일 native proof로 바꾸거나 auxiliary proof를 삭제하지 않는다.
+
+변경 파일: `NativeContinuitySupportClauses.java`, `SearchSpaceMetrics.java`, `NativeSingleAxisProductUnionTest.java`, `NativeMixedAxisSplitPublicationTest.java`; 본 보고서 및 `SESSION_ISSUES_2026-10-13.md`.
+근거: `R/V65_CONTAINED_RECTANGLE_PLAN.md`, `evidence/v65-contained-rectangle-red.log`, `v65-production-review.txt`, `v65-containment-final-focused.log`, `candidate-v65-package.log`. V65 JAR SHA-256: `2e8ed671e02013ec2a19078c5dcd3425920bd9f88e1ac8eb9760b4534f1bd585`.
+
+
 ## V64 서로 다른 native header의 정확한 압축 합집합 — 실측 완료
 
 - **구조적 개선**: 서로 다른 FULL proof header마다 원래 rectangular support domain을 보존한다. 실제 product 하나가 모든 domain을 포함할 때만 이를 공통 투영 domain으로 사용한다. 8×8과9×9의 합집합은 **145개**이며, 오래된 header에 없던 조합을 채워162개로 만들지 않는다. 같은9×9의 서로 다른 두 header는162개를 유지한다.
@@ -28,7 +58,7 @@
 - 게시 `98e3a39169`, JAR `40c849bc86d8526466610864838c070cab2fe72c026bd46868d132e2bdc17eaa`. 네 실행 모두watchdog60/no fullInitial/owncontainersremoved. **20초 목표 실패 유지**다.
 - OFF LogReg2702samples/direct69.87%/peak4.943GB;GLM2769/direct22.50%/canonical8.09%/joint5.78%/peak3.443GB. Detailed LogReg2036samples/peak6.091GB,GLM2582/3.311GB. Partial sample 구성·진행량 변화는 완주 speedup 증거가 아니다.
 - 새로 남은 비용도 확인했다. OFF LogReg에서 explicit header 복구 호출245/2702samples, native materialization136samples 중63은 최종canonical merge,62는 candidate topology 구축의 member 읽기다. 따라서 복구만 반복하지 않도록 **최초 typed 정보 손실 및 이후 merge의 압축 해제 지점**을 다음 대상으로 삼는다.
-- 구체적 조사: scalar 비재생성 분기에 이미 존재하는 NativeContinuityProof를 문자열-only PlacementProofKey로 바꾸는 지점이 있다. 같은header의 두 축이 함께 증가하는 rectangle containment도 현재 single-axis union이 처리하지 못한다. 각각 실제binder 회귀/authority parity 및 표본 근거를 확보한 뒤 좁게 수정한다. Generic multiproof를 단일 proof로 취급하거나 auxiliary proof를 버리지 않는다.
+- 후속 조사 정정: 문자열-only proof 생성 지점은 정상 workload에서 해당 분기에 도달한다는 증거가 없어 수정 우선순위에서 제외했다(제안된 TRANSIENTREAD fixture는 앞서 skip됨). 의도적인 opaque logical-boundary/transient proof를 typed primitive로 바꾸면 안 된다. 반면 같은header의 두 축이 함께 증가하는 rectangle containment는 실제binder에서도 압축 해제를 재현했으므로 V65에서 처리한다. Generic multiproof의 auxiliary proof는 그대로 보존한다.
 - External build overlap OFF/detailed 모두0/25, 기존 외부 planner2개25/25; 자체 heavy 작업은 측정 후 분리했다. 근거 `R/evidence/candidate-v64-detailed-topology-outcomes.json`, `v64-hot-callers.json`, `v64-analysis-driver.log`, `v64-planner-breakdown.txt`, `v64-contention-summary.json`.
 
 ## V63 authority 거절 진단 — 실측 완료, workload별 원인 분리
