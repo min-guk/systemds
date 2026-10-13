@@ -1,6 +1,6 @@
 # FedPlanner 최적화 진행 현황 보고서
 
-## V64 서로 다른 native header의 정확한 압축 합집합 — 검증 통과, 실측 예정
+## V64 서로 다른 native header의 정확한 압축 합집합 — 실측 완료
 
 - **구조적 개선**: 서로 다른 FULL proof header마다 원래 rectangular support domain을 보존한다. 실제 product 하나가 모든 domain을 포함할 때만 이를 공통 투영 domain으로 사용한다. 8×8과9×9의 합집합은 **145개**이며, 오래된 header에 없던 조합을 채워162개로 만들지 않는다. 같은9×9의 서로 다른 두 header는162개를 유지한다.
 - **재전개 방지**: typed explicit prefix를 원본 객체·first donor 순서 그대로 회수해 native family에 병합한다. 실제 binder64+81 및81+81 fixture에서 새 scalar proof 소비 **81→0**, lazy145/162 및 전체ordered oracle/원본identity를 확인했다. 이것은 테스트에서 검증한 작업 절감이지 전체 workload 속도 향상 수치가 아니다.
@@ -11,6 +11,25 @@
 - 근거 `R/V64_DOMINANT_HEADER_FAMILY_PLAN.md`, `evidence/v64-production-review.txt`, `v64-header-final-focused.log`, `candidate-v64-package.log`.
 
 
+
+
+### V64 동일 Docker 실측 — 실제 압축 적용 확인, 20초 미달
+
+| 새 header recovery outcome (detailed seq12) | LogReg | GLM |
+|---|---:|---:|
+| 요청 | 3,203 | 5,826 |
+| 압축 admission | **2,624** | **277** |
+| typed 단일 proof가 아님 | 0 | 5,485 |
+| domain 조건 불충족 | 411 | 64 |
+| 기존 메모리/donor 한도 | 168 | 0 |
+| 재사용/output/clause/index 거절 | 모두0 | 모두0 |
+
+- 새 header outcome 및 기존 모든 terminal counter conservation PASS. LogReg는요청81.9%, GLM은4.8%에서 실제 admission됐다. 요청은 고유 후보 수가 아니며 admission 수를 완료 속도 향상으로 해석하지 않는다.
+- 게시 `98e3a39169`, JAR `40c849bc86d8526466610864838c070cab2fe72c026bd46868d132e2bdc17eaa`. 네 실행 모두watchdog60/no fullInitial/owncontainersremoved. **20초 목표 실패 유지**다.
+- OFF LogReg2702samples/direct69.87%/peak4.943GB;GLM2769/direct22.50%/canonical8.09%/joint5.78%/peak3.443GB. Detailed LogReg2036samples/peak6.091GB,GLM2582/3.311GB. Partial sample 구성·진행량 변화는 완주 speedup 증거가 아니다.
+- 새로 남은 비용도 확인했다. OFF LogReg에서 explicit header 복구 호출245/2702samples, native materialization136samples 중63은 최종canonical merge,62는 candidate topology 구축의 member 읽기다. 따라서 복구만 반복하지 않도록 **최초 typed 정보 손실 및 이후 merge의 압축 해제 지점**을 다음 대상으로 삼는다.
+- 구체적 조사: scalar 비재생성 분기에 이미 존재하는 NativeContinuityProof를 문자열-only PlacementProofKey로 바꾸는 지점이 있다. 같은header의 두 축이 함께 증가하는 rectangle containment도 현재 single-axis union이 처리하지 못한다. 각각 실제binder 회귀/authority parity 및 표본 근거를 확보한 뒤 좁게 수정한다. Generic multiproof를 단일 proof로 취급하거나 auxiliary proof를 버리지 않는다.
+- External build overlap OFF/detailed 모두0/25, 기존 외부 planner2개25/25; 자체 heavy 작업은 측정 후 분리했다. 근거 `R/evidence/candidate-v64-detailed-topology-outcomes.json`, `v64-hot-callers.json`, `v64-analysis-driver.log`, `v64-planner-breakdown.txt`, `v64-contention-summary.json`.
 
 ## V63 authority 거절 진단 — 실측 완료, workload별 원인 분리
 

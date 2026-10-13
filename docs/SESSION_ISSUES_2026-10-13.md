@@ -631,3 +631,22 @@
 - Read-only upstream 조사: 초기 DURABLE_MAP singleton의 `worthwhile` 표현 선택과 admission 실패 scalar publication이 retained explicit의 가능한 최초 생성 지점이다. `canonicalExplicitSupportClauses`는 이미 펼쳐진 row를 정렬할 뿐이며, auxiliary durable proof append는 literal FEDERATED DataOp 한정이다. 실제 원인 비중은 **미계측**이므로 V64 적용 결과 후 판단한다. 근거 `R/evidence/native-explicit-origin-review.txt`.
 
 - V64 fresh 선택 gate **211classes/1669tests/0fail/0error/3skip**, package BUILD SUCCESS11:47:20+02. Frozen production/test hash 검증 후 origin/main에 게시하고 동일Docker4회를 측정한다. 단위/선택gate 통과는20초 달성 또는 전체repo suite 통과가 아니다.
+
+
+### V64 동일 Docker 실측 — 실제 압축 적용 확인, 20초 미달
+
+| 새 header recovery outcome (detailed seq12) | LogReg | GLM |
+|---|---:|---:|
+| 요청 | 3,203 | 5,826 |
+| 압축 admission | **2,624** | **277** |
+| typed 단일 proof가 아님 | 0 | 5,485 |
+| domain 조건 불충족 | 411 | 64 |
+| 기존 메모리/donor 한도 | 168 | 0 |
+| 재사용/output/clause/index 거절 | 모두0 | 모두0 |
+
+- 새 header outcome 및 기존 모든 terminal counter conservation PASS. LogReg는요청81.9%, GLM은4.8%에서 실제 admission됐다. 요청은 고유 후보 수가 아니며 admission 수를 완료 속도 향상으로 해석하지 않는다.
+- 게시 `98e3a39169`, JAR `40c849bc86d8526466610864838c070cab2fe72c026bd46868d132e2bdc17eaa`. 네 실행 모두watchdog60/no fullInitial/owncontainersremoved. **20초 목표 실패 유지**다.
+- OFF LogReg2702samples/direct69.87%/peak4.943GB;GLM2769/direct22.50%/canonical8.09%/joint5.78%/peak3.443GB. Detailed LogReg2036samples/peak6.091GB,GLM2582/3.311GB. Partial sample 구성·진행량 변화는 완주 speedup 증거가 아니다.
+- 새로 남은 비용도 확인했다. OFF LogReg에서 explicit header 복구 호출245/2702samples, native materialization136samples 중63은 최종canonical merge,62는 candidate topology 구축의 member 읽기다. 따라서 복구만 반복하지 않도록 **최초 typed 정보 손실 및 이후 merge의 압축 해제 지점**을 다음 대상으로 삼는다.
+- 구체적 조사: scalar 비재생성 분기에 이미 존재하는 NativeContinuityProof를 문자열-only PlacementProofKey로 바꾸는 지점이 있다. 같은header의 두 축이 함께 증가하는 rectangle containment도 현재 single-axis union이 처리하지 못한다. 각각 실제binder 회귀/authority parity 및 표본 근거를 확보한 뒤 좁게 수정한다. Generic multiproof를 단일 proof로 취급하거나 auxiliary proof를 버리지 않는다.
+- External build overlap OFF/detailed 모두0/25, 기존 외부 planner2개25/25; 자체 heavy 작업은 측정 후 분리했다. 근거 `R/evidence/candidate-v64-detailed-topology-outcomes.json`, `v64-hot-callers.json`, `v64-analysis-driver.log`, `v64-planner-breakdown.txt`, `v64-contention-summary.json`.
