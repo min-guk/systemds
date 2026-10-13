@@ -8985,6 +8985,10 @@ final class PlacementRelationClosure {
 		private final List<Node> nodes;
 		private final List<List<CandidateRuleKey>> keysByOrdinal;
 		private final List<List<CandidateRuleFact>> factsByOrdinal;
+		// A completed no-change transfer is independent of which dirty input edge
+		// requested it. Its certificate is valid only at this whole committed revision,
+		// including indirect source and metadata authority, not just the input layouts.
+		private final java.util.BitSet unchangedConsumers = new java.util.BitSet();
 		private CommittedProofInventory proofInventory;
 		private SinglePartitionProofIndex singlePartitionProofs;
 
@@ -8997,6 +9001,7 @@ final class PlacementRelationClosure {
 
 		private void commit(int ordinal, Hop hop, Node replacement, List<CandidateRuleKey> keys,
 			List<CandidateRuleFact> facts, Map<Hop,Node> exactBlockNodes) {
+			unchangedConsumers.clear();
 			if(proofInventory != null)
 				proofInventory = proofInventory.replaceOwnerOwned(ordinal, nodes.get(ordinal).key(),
 					replacement, facts);
@@ -9077,6 +9082,8 @@ final class PlacementRelationClosure {
 		while(!worklist.isEmpty()) {
 			int producerOrdinal = worklist.pollFirst();
 			for(int consumerOrdinal : consumersByProducer.get(producerOrdinal)) {
+				if(physicalState.unchangedConsumers.get(consumerOrdinal))
+					continue;
 				PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(consumerOrdinal);
 				Hop hop = occurrence.hop();
 				Node current = nodes.get(consumerOrdinal);
@@ -9189,6 +9196,7 @@ final class PlacementRelationClosure {
 						// Indirect runtime dependencies still traverse unchanged intermediates.
 						if(retainedPropagation.add(consumerOrdinal))
 							worklist.add(consumerOrdinal);
+						physicalState.unchangedConsumers.set(consumerOrdinal);
 						continue;
 					}
 				}
@@ -9207,8 +9215,10 @@ final class PlacementRelationClosure {
 				// closure reapplies the same privacy authority before publication.
 				boolean changed = !replacement.equals(current) || !replacementKeys.equals(priorKeys)
 					|| !replacementFacts.equals(priorFacts);
-				if(!changed)
+				if(!changed) {
+					physicalState.unchangedConsumers.set(consumerOrdinal);
 					continue;
+				}
 				boolean retainsExecutablePrior = priorFacts.stream()
 					.anyMatch(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE);
 				if(retainsExecutablePrior && (!replacement.legalAlternatives().containsAll(current.legalAlternatives())

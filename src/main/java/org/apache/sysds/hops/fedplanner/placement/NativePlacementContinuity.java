@@ -201,6 +201,12 @@ final class NativePlacementContinuity {
 	// supported boundary rows provide the fast path. The complete footprint guards
 	// the query-local root pin and revision invalidation.
 	private final Map<CandidateProofState,AcyclicComponentSummary> acyclicComponentMemo;
+	// The immutable fact, realization, and relation identities determine the exact
+	// dependency skeleton within this resolver: program structure is immutable and
+	// candidate handles are revision-local stable. Retain a gate only while its proven
+	// component summary is resident, never across revisions.
+	private final Map<NativeAxisGateKey,CandidateAxisGate> residentNativeAxisGates =
+		new java.util.HashMap<>();
 	private final int acyclicComponentMaxEntries;
 	private final long acyclicComponentMaxStates;
 	private final long acyclicComponentMaxAlternatives;
@@ -721,6 +727,8 @@ final class NativePlacementContinuity {
 		}
 		for(var entry : acyclicComponentMemo.entrySet()) {
 			AcyclicComponentSummary summary = entry.getValue();
+			if(entry.getKey().axisGate() != null)
+				continue;
 			boolean unchanged = summary.occurrences.stream().noneMatch(occurrence ->
 				!unchangedRows.computeIfAbsent(occurrence, key -> unchangedContinuityFacts(
 					next, key, changedOccurrences, comparisonWork, boundOwnerImpact)));
@@ -2686,6 +2694,7 @@ final class NativePlacementContinuity {
 					acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
 						|| acyclicComponentMaxAlternatives == 0 ? Map.of()
 						: acyclicRootChildFootprints(root, graph, traversal);
+				rememberNativeGateFootprints(graph, traversal, childFootprints);
 				if(traversal.emptyFilteredStates == 0) {
 					if(metrics != null)
 						metrics.recordNoEmptyDagPruningSkip();
@@ -3324,7 +3333,7 @@ final class NativePlacementContinuity {
 		// explicit metadata receipt below requires full published-root history.
 		if(generation != null && state.key() == root.key() && !generatedRoot)
 			traversal.generatedRootPublishedHistoryObserved = true;
-		AcyclicComponentSummary shared = generatedRoot || state.axisGate() != null
+		AcyclicComponentSummary shared = generatedRoot
 			? null : reusableAcyclicComponent(state, fixed.owner());
 		if(shared != null) {
 			// Failed summaries are retained for exact negative-result reuse too.
@@ -3408,7 +3417,7 @@ final class NativePlacementContinuity {
 		Map<CandidateProofState,AcyclicComponentFootprint> footprints = new java.util.LinkedHashMap<>();
 		for(SelectedCandidateProof alternative : graph.getOrDefault(root, List.of()))
 			for(CandidateProofDependency dependency : alternative.dependencies)
-				if(dependency.state().axisGate() == null && !dependency.state().equals(root))
+				if(!dependency.state().equals(root))
 					rememberAcyclicComponentFootprint(dependency.state(), graph, traversal, footprints);
 		footprints.values().removeIf(Objects::isNull);
 		return footprints;
@@ -3447,6 +3456,18 @@ final class NativePlacementContinuity {
 			return;
 		}
 		footprints.put(child, acyclicComponentFootprint(child, graph, traversal));
+	}
+
+	private void rememberNativeGateFootprints(
+		Map<CandidateProofState,List<SelectedCandidateProof>> graph,
+		CandidateProofTraversal traversal,
+		Map<CandidateProofState,AcyclicComponentFootprint> footprints) {
+		if(acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
+			|| acyclicComponentMaxAlternatives == 0)
+			return;
+		for(CandidateProofState state : graph.keySet())
+			if(state.axisGate() != null)
+				rememberAcyclicComponentFootprint(state, graph, traversal, footprints);
 	}
 
 	private AcyclicComponentFootprint acyclicComponentFootprint(CandidateProofState child,
@@ -3574,8 +3595,14 @@ final class NativePlacementContinuity {
 					supportedAlternatives.add(new SelectedCandidateProof(alternative.realization,
 						List.of(), true, alternative.witness));
 				}
+		long retainedAlternatives = supportedAlternatives.size();
+		if(child.axisGate() != null)
+			retainedAlternatives = saturatedAdd(retainedAlternatives,
+				child.axisGate().retainedUnits());
+		if(retainedAlternatives > acyclicComponentMaxAlternatives)
+			return;
 		AcyclicComponentSummary summary = new AcyclicComponentSummary(supportedAlternatives,
-			footprint.occurrences, retainedStates);
+			footprint.occurrences, retainedStates, retainedAlternatives);
 		cacheAcyclicSummary(child, summary);
 	}
 
@@ -3583,32 +3610,43 @@ final class NativePlacementContinuity {
 		if(acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
 			|| acyclicComponentMaxAlternatives == 0
 			|| summary.retainedStates > acyclicComponentMaxStates
-			|| summary.supportedAlternatives.size() > acyclicComponentMaxAlternatives)
+			|| summary.retainedAlternatives > acyclicComponentMaxAlternatives)
 			return;
 		long retainedStates = summary.retainedStates;
 		List<SelectedCandidateProof> supportedAlternatives = summary.supportedAlternatives;
 		AcyclicComponentSummary prior = acyclicComponentMemo.remove(child);
 		if(prior != null) {
 			acyclicComponentRetainedStates -= prior.retainedStates;
-			acyclicComponentRetainedAlternatives -= prior.supportedAlternatives.size();
+			acyclicComponentRetainedAlternatives -= prior.retainedAlternatives;
+			forgetResidentNativeAxisGate(child);
 		}
 		while(!acyclicComponentMemo.isEmpty()
 			&& (acyclicComponentMemo.size() >= acyclicComponentMaxEntries
 				|| acyclicComponentRetainedStates + retainedStates > acyclicComponentMaxStates
-				|| acyclicComponentRetainedAlternatives + supportedAlternatives.size()
+				|| saturatedAdd(acyclicComponentRetainedAlternatives,
+					summary.retainedAlternatives)
 					> acyclicComponentMaxAlternatives)) {
 			var oldest = acyclicComponentMemo.entrySet().iterator().next();
 			acyclicComponentRetainedStates -= oldest.getValue().retainedStates;
-			acyclicComponentRetainedAlternatives -= oldest.getValue().supportedAlternatives.size();
+			acyclicComponentRetainedAlternatives -= oldest.getValue().retainedAlternatives;
+			forgetResidentNativeAxisGate(oldest.getKey());
 			acyclicComponentMemo.remove(oldest.getKey());
 		}
 		acyclicComponentMemo.put(child, summary);
+		if(child.axisGate() != null)
+			residentNativeAxisGates.put(child.axisGate().key, child.axisGate());
 		acyclicComponentRetainedStates += retainedStates;
-		acyclicComponentRetainedAlternatives += supportedAlternatives.size();
+		acyclicComponentRetainedAlternatives += summary.retainedAlternatives;
 		if(metrics != null)
 			metrics.recordDirectWork(
 				SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_ADMITTED_ROWS,
 				supportedAlternatives.size());
+	}
+
+	private void forgetResidentNativeAxisGate(CandidateProofState state) {
+		CandidateAxisGate gate = state.axisGate();
+		if(gate != null)
+			residentNativeAxisGates.remove(gate.key, gate);
 	}
 
 	private List<SelectedCandidateProof> candidateProofAlternatives(CompiledHopKey key,
@@ -4122,6 +4160,16 @@ final class NativePlacementContinuity {
 			consumerDependencies.addAll(overlayDependencies(invariant, fixed));
 			boolean valid = true;
 			for(int axis = 0; axis < axes.size(); axis++) {
+				NativeAxisGateKey gateKey = new NativeAxisGateKey(matchedFact,
+					matchedRealization, matchedRelation, witness, pivot, axis);
+				CandidateAxisGate gate = residentNativeAxisGates.get(gateKey);
+				if(gate != null) {
+					if(metrics != null)
+						metrics.recordDirectWork(
+							SearchSpaceMetrics.DirectWork.NATIVE_AXIS_GATE_REUSES);
+					consumerDependencies.add(new CandidateProofDependency(gate));
+					continue;
+				}
 				List<CandidateRealizationInputBinding> options = axes.get(axis);
 				if(pivot >= 0) {
 					int selectedAxis = axis;
@@ -4148,8 +4196,14 @@ final class NativePlacementContinuity {
 					gateAlternatives.add(new SelectedCandidateProof(source,
 						overlayDependencies(optionSkeletons, fixed), false, witness));
 				}
-				CandidateAxisGate gate = new CandidateAxisGate(owner,
+				gate = new CandidateAxisGate(gateKey, owner,
 					options.get(0).inputPosition(), witness, gateAlternatives);
+				if(metrics != null) {
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.NATIVE_AXIS_GATE_BUILDS);
+					metrics.recordDirectWork(
+						SearchSpaceMetrics.DirectWork.NATIVE_AXIS_GATE_ALTERNATIVES_CREATED,
+						gateAlternatives.size());
+				}
 				consumerDependencies.add(new CandidateProofDependency(gate));
 			}
 			if(valid)
@@ -7638,7 +7692,13 @@ final class NativePlacementContinuity {
 	private record CanonicalSupportTemplate(CandidateSupportTemplate template,
 		PlacementAnalysis.NormalizedText orderingText) { }
 	private record AcyclicComponentSummary(List<SelectedCandidateProof> supportedAlternatives,
-		Set<CompiledHopKey> occurrences, long retainedStates) {
+		Set<CompiledHopKey> occurrences, long retainedStates, long retainedAlternatives) {
+		private AcyclicComponentSummary(List<SelectedCandidateProof> supportedAlternatives,
+			Set<CompiledHopKey> occurrences, long retainedStates) {
+			this(supportedAlternatives, occurrences, retainedStates,
+				supportedAlternatives.size());
+		}
+
 		private AcyclicComponentSummary {
 			supportedAlternatives = List.copyOf(supportedAlternatives);
 			Set<CompiledHopKey> immutableOccurrences =
@@ -7753,17 +7813,64 @@ final class NativePlacementContinuity {
 	}
 
 	private static final class CandidateAxisGate {
+		private final NativeAxisGateKey key;
 		private final CompiledHopKey owner;
 		private final int inputPosition;
 		private final NativePoolWitness witness;
 		private final List<SelectedCandidateProof> alternatives;
 
-		private CandidateAxisGate(CompiledHopKey owner, int inputPosition,
+		private CandidateAxisGate(NativeAxisGateKey key, CompiledHopKey owner, int inputPosition,
 			NativePoolWitness witness, List<SelectedCandidateProof> alternatives) {
+			this.key = key;
 			this.owner = owner;
 			this.inputPosition = inputPosition;
 			this.witness = witness;
 			this.alternatives = List.copyOf(alternatives);
+		}
+
+		private long retainedUnits() {
+			long units = 1L + alternatives.size();
+			for(SelectedCandidateProof alternative : alternatives)
+				units = saturatedAdd(units, alternative.dependencies.size());
+			return units;
+		}
+	}
+
+	private static final class NativeAxisGateKey {
+		private final CandidateRuleFact fact;
+		private final CandidateEmissionRealization realization;
+		private final NativeContinuitySupportClauses relation;
+		private final NativePoolWitness witness;
+		private final int pivot;
+		private final int axis;
+		private final int hashCode;
+
+		private NativeAxisGateKey(CandidateRuleFact fact,
+			CandidateEmissionRealization realization,
+			NativeContinuitySupportClauses relation, NativePoolWitness witness,
+			int pivot, int axis) {
+			this.fact = fact;
+			this.realization = realization;
+			this.relation = relation;
+			this.witness = witness;
+			this.pivot = pivot;
+			this.axis = axis;
+			int hash = 31 * System.identityHashCode(fact)
+				+ System.identityHashCode(realization);
+			hash = 31 * hash + System.identityHashCode(relation);
+			hash = 31 * hash + witness.hashCode();
+			hash = 31 * hash + pivot;
+			hashCode = 31 * hash + axis;
+		}
+
+		@Override public int hashCode() { return hashCode; }
+
+		@Override
+		public boolean equals(Object other) {
+			return this == other || other instanceof NativeAxisGateKey that
+				&& fact == that.fact && realization == that.realization
+				&& relation == that.relation && witness.equals(that.witness)
+				&& pivot == that.pivot && axis == that.axis;
 		}
 	}
 	private record SelectedCandidateProof(CandidateRealizationReference realization,
