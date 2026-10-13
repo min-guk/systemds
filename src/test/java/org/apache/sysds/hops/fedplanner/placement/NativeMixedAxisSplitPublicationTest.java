@@ -575,6 +575,15 @@ public class NativeMixedAxisSplitPublicationTest {
 
 	@Test
 	public void denseRetainedExplicitRectangleKeepsActualStandaloneBinderLazy() throws Exception {
+		assertDenseRetainedExplicitPublication(false);
+	}
+
+	@Test
+	public void denseRetainedForeignSeedReportsReasonAndPreservesActualFallback() throws Exception {
+		assertDenseRetainedExplicitPublication(true);
+	}
+
+	private static void assertDenseRetainedExplicitPublication(boolean foreignSeed) throws Exception {
 		CompiledHopKey leftOwner = fixtureKey("dense-explicit-left");
 		CompiledHopKey rightOwner = fixtureKey("dense-explicit-right");
 		CompiledHopKey consumerOwner = fixtureKey("dense-explicit-consumer");
@@ -594,7 +603,8 @@ public class NativeMixedAxisSplitPublicationTest {
 		for(var a : product.axes().get(0).subList(0, 8))
 			for(var b : product.axes().get(1).subList(0, 8)) {
 				List<CandidateRealizationInputBinding> bindings = List.of(a, b);
-				var proof = new NativeContinuityProof(product.externalSeed(),
+				var proof = new NativeContinuityProof(foreignSeed ? anchor("dense-foreign-seed")
+					: product.externalSeed(),
 					product.outputWorkerPoolWitness(), product.exactPartitionRanges(), bindings);
 				explicit.add(new CandidateRealizationSupportClause(
 					List.of(proof.continuityProofKey(consumerOwner)), bindings,
@@ -605,6 +615,28 @@ public class NativeMixedAxisSplitPublicationTest {
 			new CandidateEmissionRealization(complete.key(), explicit)));
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
 		CandidateRuleFact rebound = bindBinary(closure(metrics), left, right, retained, consumerHop);
+		if(foreignSeed) {
+			Assert.assertEquals(81L, metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+			Assert.assertEquals(1L, metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.RETAINED_EXPLICIT_DENSE_REQUESTS));
+			Assert.assertEquals(1L, metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.RETAINED_EXPLICIT_DENSE_REJECT_AUTHORITY));
+			Assert.assertEquals(1L, metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.RETAINED_EXPLICIT_DENSE_AUTHORITY_PROOF_DESCRIPTOR_HEADER));
+			Assert.assertEquals(0L, metrics.directWorkCount(
+				SearchSpaceMetrics.DirectWork.RETAINED_EXPLICIT_DENSE_AUTHORITY_UNCLASSIFIED));
+			List<CandidateRealizationSupportClause> clauses =
+				rebound.allowedEmissionFacts().get(0).realizations().get(0).supportClauses();
+			Assert.assertEquals(145, clauses.size());
+			for(CandidateRealizationSupportClause original : explicit)
+				Assert.assertTrue(clauses.stream().anyMatch(clause -> clause == original));
+			List<CandidateRealizationSupportClause> expected = new ArrayList<>(explicit);
+			expected.addAll(completeRelation);
+			CandidateRuleFact oracle = fact(staging.key(), List.of(
+				new CandidateEmissionRealization(complete.key(), expected)));
+			Assert.assertEquals(exactMemberSignatures(oracle), exactMemberSignatures(rebound));
+			return;
+		}
 		Assert.assertEquals("dense retained members must not force the 81-member product to expand",
 			0L, metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
 		Assert.assertEquals(1L, metrics.directWorkCount(

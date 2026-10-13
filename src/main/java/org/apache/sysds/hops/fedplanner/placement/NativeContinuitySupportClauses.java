@@ -149,10 +149,13 @@ final class NativeContinuitySupportClauses
 		if(explicitClauses == null || explicitClauses.isEmpty())
 			return new ExplicitAuthorityOverlay(this, false);
 		boolean denseRequest = !explicitAuthorityPrefixWithinCountLimit(explicitClauses.size());
-		if(products.size() != 1 || conditionalComplement())
+		if(products.size() != 1)
 			return denseRequest
-				? new ExplicitAuthorityOverlay(null, false,
-					DenseAuthorityOutcome.REJECT_AUTHORITY)
+				? rejectDenseAuthority(DenseAuthorityRejectReason.RELATION_MULTI_HEADER)
+				: new ExplicitAuthorityOverlay(null, false);
+		if(conditionalComplement())
+			return denseRequest
+				? rejectDenseAuthority(DenseAuthorityRejectReason.RELATION_CONDITIONAL)
 				: new ExplicitAuthorityOverlay(null, false);
 		if(denseRequest)
 			return withDenseExplicitAuthority(explicitClauses);
@@ -194,9 +197,15 @@ final class NativeContinuitySupportClauses
 	}
 
 	record ExplicitAuthorityOverlay(NativeContinuitySupportClauses relation,
-		boolean capRejected, DenseAuthorityOutcome denseOutcome) {
+		boolean capRejected, DenseAuthorityOutcome denseOutcome,
+		DenseAuthorityRejectReason denseRejectReason) {
 		ExplicitAuthorityOverlay(NativeContinuitySupportClauses relation, boolean capRejected) {
-			this(relation, capRejected, DenseAuthorityOutcome.NOT_ATTEMPTED);
+			this(relation, capRejected, DenseAuthorityOutcome.NOT_ATTEMPTED,
+				DenseAuthorityRejectReason.NONE);
+		}
+		ExplicitAuthorityOverlay(NativeContinuitySupportClauses relation, boolean capRejected,
+			DenseAuthorityOutcome denseOutcome) {
+			this(relation, capRejected, denseOutcome, DenseAuthorityRejectReason.NONE);
 		}
 	}
 	enum DenseAuthorityOutcome {
@@ -207,6 +216,28 @@ final class NativeContinuitySupportClauses
 		REJECT_NONRECTANGULAR,
 		REJECT_CAP,
 		REJECT_INDEX
+	}
+	enum DenseAuthorityRejectReason {
+		NONE,
+		RELATION_MULTI_HEADER,
+		RELATION_CONDITIONAL,
+		AXIS_DOMAIN,
+		CLAUSE_PROOF_COUNT,
+		CLAUSE_LAYOUT,
+		CLAUSE_WITNESS,
+		PROOF_KIND,
+		PROOF_OWNER,
+		PROOF_DESCRIPTOR_HEADER,
+		PROOF_DESCRIPTOR_BINDINGS,
+		PROOF_LEGACY_AUTHORITY,
+		INPUT_ARITY,
+		INPUT_POSITION,
+		INPUT_MEMBER_AUTHORITY
+	}
+	private static ExplicitAuthorityOverlay rejectDenseAuthority(
+		DenseAuthorityRejectReason reason) {
+		return new ExplicitAuthorityOverlay(null, false,
+			DenseAuthorityOutcome.REJECT_AUTHORITY, reason);
 	}
 	static boolean explicitAuthorityPrefixWithinCountLimit(int count) {
 		return count > 0 && count < MAX_AUTHORITY_DONORS;
@@ -232,17 +263,14 @@ final class NativeContinuitySupportClauses
 		for(int axis = 0; axis < axesCount; axis++) {
 			List<CandidateRealizationInputBinding> options = candidate.axes().get(axis);
 			if(options.isEmpty())
-				return new ExplicitAuthorityOverlay(null, false,
-					DenseAuthorityOutcome.REJECT_AUTHORITY);
+				return rejectDenseAuthority(DenseAuthorityRejectReason.AXIS_DOMAIN);
 			int position = options.get(0).inputPosition();
 			if(position <= previousInputPosition)
-				return new ExplicitAuthorityOverlay(null, false,
-					DenseAuthorityOutcome.REJECT_AUTHORITY);
+				return rejectDenseAuthority(DenseAuthorityRejectReason.AXIS_DOMAIN);
 			previousInputPosition = position;
 			for(CandidateRealizationInputBinding option : options) {
 				if(option.inputPosition() != position)
-					return new ExplicitAuthorityOverlay(null, false,
-						DenseAuthorityOutcome.REJECT_AUTHORITY);
+					return rejectDenseAuthority(DenseAuthorityRejectReason.AXIS_DOMAIN);
 			}
 			try {
 				optionCount = Math.addExact(optionCount, (long)options.size());
@@ -268,8 +296,7 @@ final class NativeContinuitySupportClauses
 				CandidateRealizationInputBinding> byEquality = new java.util.HashMap<>();
 			for(CandidateRealizationInputBinding option : options)
 				if(byEquality.put(ExactBindingAuthorityKey.of(option), option) != null)
-					return new ExplicitAuthorityOverlay(null, false,
-						DenseAuthorityOutcome.REJECT_AUTHORITY);
+					return rejectDenseAuthority(DenseAuthorityRejectReason.AXIS_DOMAIN);
 			optionsByAxis.add(byEquality);
 		}
 
@@ -280,28 +307,26 @@ final class NativeContinuitySupportClauses
 		for(int axis = 0; axis < axesCount; axis++)
 			selected.add(java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
 		for(CandidateRealizationSupportClause clause : explicitClauses) {
-			if(!matchesExactClauseHeader(clause, candidate)
-				|| clause.inputBindings().size() != axesCount)
-				return new ExplicitAuthorityOverlay(null, false,
-					DenseAuthorityOutcome.REJECT_AUTHORITY);
+			DenseAuthorityRejectReason headerReason = exactClauseHeaderRejectReason(clause, candidate);
+			if(headerReason != DenseAuthorityRejectReason.NONE)
+				return rejectDenseAuthority(headerReason);
+			if(clause.inputBindings().size() != axesCount)
+				return rejectDenseAuthority(DenseAuthorityRejectReason.INPUT_ARITY);
 			CandidateRealizationInputBinding[] tuple =
 				new CandidateRealizationInputBinding[axesCount];
 			for(CandidateRealizationInputBinding binding : clause.inputBindings()) {
 				Integer axis = axisByPosition.get(binding.inputPosition());
 				if(axis == null || tuple[axis] != null)
-					return new ExplicitAuthorityOverlay(null, false,
-						DenseAuthorityOutcome.REJECT_AUTHORITY);
+					return rejectDenseAuthority(DenseAuthorityRejectReason.INPUT_POSITION);
 				CandidateRealizationInputBinding canonical = optionsByAxis.get(axis).get(
 					ExactBindingAuthorityKey.of(binding));
 				if(canonical == null)
-					return new ExplicitAuthorityOverlay(null, false,
-						DenseAuthorityOutcome.REJECT_AUTHORITY);
+					return rejectDenseAuthority(DenseAuthorityRejectReason.INPUT_MEMBER_AUTHORITY);
 				tuple[axis] = canonical;
 			}
 			for(CandidateRealizationInputBinding binding : tuple)
 				if(binding == null)
-					return new ExplicitAuthorityOverlay(null, false,
-						DenseAuthorityOutcome.REJECT_AUTHORITY);
+					return rejectDenseAuthority(DenseAuthorityRejectReason.INPUT_POSITION);
 			if(firstRows.putIfAbsent(clause, clause) == null)
 				for(int axis = 0; axis < axesCount; axis++)
 					selected.get(axis).add(tuple[axis]);
@@ -399,21 +424,33 @@ final class NativeContinuitySupportClauses
 		return true;
 	}
 
-	private boolean matchesExactClauseHeader(CandidateRealizationSupportClause clause,
+	private DenseAuthorityRejectReason exactClauseHeaderRejectReason(
+		CandidateRealizationSupportClause clause,
 		NativePlacementContinuity.NativeSupportProduct product) {
-		if(clause.proofDependencies().size() != 1
-			|| clause.nativeWorkerPoolLayoutExact() != clauseLayoutExact
-			|| !Objects.equals(clause.nativeWorkerPoolWitness(), clauseWitness))
-			return false;
+		if(clause.proofDependencies().size() != 1)
+			return DenseAuthorityRejectReason.CLAUSE_PROOF_COUNT;
+		if(clause.nativeWorkerPoolLayoutExact() != clauseLayoutExact)
+			return DenseAuthorityRejectReason.CLAUSE_LAYOUT;
+		if(!Objects.equals(clause.nativeWorkerPoolWitness(), clauseWitness))
+			return DenseAuthorityRejectReason.CLAUSE_WITNESS;
 		var key = clause.proofDependencies().get(0);
-		if(key.kind() != PlacementProofKind.NATIVE_CONTINUITY || key.owner() != owner)
-			return false;
+		if(key.kind() != PlacementProofKind.NATIVE_CONTINUITY)
+			return DenseAuthorityRejectReason.PROOF_KIND;
+		if(key.owner() != owner)
+			return DenseAuthorityRejectReason.PROOF_OWNER;
 		var proof = new NativePlacementContinuity.NativeContinuityProof(
 			product.externalSeed(), product.outputWorkerPoolWitness(),
 			product.exactPartitionRanges(), clause.inputBindings());
-		return key.hasNativeContinuityDescriptor()
-			? key.matchesNativeContinuityDescriptor(proof)
-			: key.authoritySignature().equals(proof.normalizedSignature());
+		if(key.hasNativeContinuityDescriptor()) {
+			if(key.matchesNativeContinuityDescriptor(proof))
+				return DenseAuthorityRejectReason.NONE;
+			return key.nativeContinuityImmediateBindings().equals(clause.inputBindings())
+				? DenseAuthorityRejectReason.PROOF_DESCRIPTOR_HEADER
+				: DenseAuthorityRejectReason.PROOF_DESCRIPTOR_BINDINGS;
+		}
+		return key.authoritySignature().equals(proof.normalizedSignature())
+			? DenseAuthorityRejectReason.NONE
+			: DenseAuthorityRejectReason.PROOF_LEGACY_AUTHORITY;
 	}
 
 	private static long denseRetentionPreflightUnits(long baseUnits, int rows, int axes,

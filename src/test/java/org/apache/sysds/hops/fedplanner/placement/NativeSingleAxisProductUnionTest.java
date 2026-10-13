@@ -29,6 +29,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRea
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementProofKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.PlacementRealizationKey;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
@@ -685,6 +687,90 @@ public class NativeSingleAxisProductUnionTest {
 	}
 
 	@Test
+	public void denseAuthorityRejectionsReportTheirFirstExactBoundaryWithoutReads() {
+		CompiledHopKey owner = key("dense-reason-owner");
+		CompiledHopKey leftOwner = key("dense-reason-left");
+		CompiledHopKey rightOwner = key("dense-reason-right");
+		DurableAnchorKey seed = pool("dense-reason-seed");
+		DurableAnchorKey output = pool("dense-reason-output");
+		List<CandidateRealizationInputBinding> left = new ArrayList<>();
+		List<CandidateRealizationInputBinding> right = new ArrayList<>();
+		for(int index = 0; index < 8; index++) {
+			left.add(direct(0, "dense-reason-left-" + index, leftOwner));
+			right.add(direct(1, "dense-reason-right-" + index, rightOwner));
+		}
+		left.sort(PlacementAnalysis.canonicalComparator());
+		right.sort(PlacementAnalysis.canonicalComparator());
+		List<List<CandidateRealizationInputBinding>> axes = List.of(
+			List.copyOf(left), List.copyOf(right));
+		NativeContinuitySupportClauses candidate = relation(owner, seed, output, axes);
+		List<CandidateRealizationSupportClause> dense = explicit(owner, seed, output,
+			axes.stream().map(axis -> axis.stream().map(
+				NativeSingleAxisProductUnionTest::directLike).toList()).toList());
+		Assert.assertEquals(64, dense.size());
+		CandidateRealizationSupportClause first = dense.get(0);
+		PlacementProofKey retainedTemplateProof = new PlacementProofKey(
+			PlacementProofKind.DURABLE_ANCHOR, owner, "retained-template-proof");
+		assertDenseAuthorityRejected(candidate, replacingFirst(dense,
+			new CandidateRealizationSupportClause(
+				List.of(retainedTemplateProof, first.proofDependencies().get(0)),
+				first.inputBindings(), output, true)),
+			NativeContinuitySupportClauses.DenseAuthorityRejectReason.CLAUSE_PROOF_COUNT);
+		assertDenseAuthorityRejected(candidate, replacingFirst(dense,
+			new CandidateRealizationSupportClause(first.proofDependencies(), first.inputBindings(),
+				output, false)),
+			NativeContinuitySupportClauses.DenseAuthorityRejectReason.CLAUSE_LAYOUT);
+		assertDenseAuthorityRejected(candidate, replacingFirst(dense,
+			new CandidateRealizationSupportClause(first.proofDependencies(), first.inputBindings(),
+				pool("dense-reason-foreign-witness"), true)),
+			NativeContinuitySupportClauses.DenseAuthorityRejectReason.CLAUSE_WITNESS);
+		CandidateRealizationSupportClause foreignOwner = explicit(cloneKey(owner), seed, output,
+			List.of(List.of(directLike(first.inputBindings().get(0))),
+				List.of(directLike(first.inputBindings().get(1))))).get(0);
+		assertDenseAuthorityRejected(candidate, replacingFirst(dense, foreignOwner),
+			NativeContinuitySupportClauses.DenseAuthorityRejectReason.PROOF_OWNER);
+		CandidateRealizationSupportClause foreignSeed = explicit(owner,
+			pool("dense-reason-foreign-seed"), output,
+			List.of(List.of(directLike(first.inputBindings().get(0))),
+				List.of(directLike(first.inputBindings().get(1))))).get(0);
+		assertDenseAuthorityRejected(candidate, replacingFirst(dense, foreignSeed),
+			NativeContinuitySupportClauses.DenseAuthorityRejectReason.PROOF_DESCRIPTOR_HEADER);
+		assertDenseAuthorityRejected(candidate, replacingFirst(dense,
+			new CandidateRealizationSupportClause(dense.get(1).proofDependencies(),
+				first.inputBindings(), output, true)),
+			NativeContinuitySupportClauses.DenseAuthorityRejectReason.PROOF_DESCRIPTOR_BINDINGS);
+
+		List<CandidateRealizationInputBinding> oneBinding =
+			List.of(directLike(first.inputBindings().get(0)));
+		PlacementProofKey oneBindingProof = new NativePlacementContinuity.NativeContinuityProof(
+			seed, output, true, oneBinding).continuityProofKey(owner);
+		assertDenseAuthorityRejected(candidate, replacingFirst(dense,
+			new CandidateRealizationSupportClause(List.of(oneBindingProof), oneBinding, output, true)),
+			NativeContinuitySupportClauses.DenseAuthorityRejectReason.INPUT_ARITY);
+		List<CandidateRealizationInputBinding> outsideBindings = List.of(
+			direct(0, "dense-reason-outside", leftOwner),
+			directLike(first.inputBindings().get(1)));
+		PlacementProofKey outsideProof = new NativePlacementContinuity.NativeContinuityProof(
+			seed, output, true, outsideBindings).continuityProofKey(owner);
+		assertDenseAuthorityRejected(candidate, replacingFirst(dense,
+			new CandidateRealizationSupportClause(
+				List.of(outsideProof), outsideBindings, output, true)),
+			NativeContinuitySupportClauses.DenseAuthorityRejectReason.INPUT_MEMBER_AUTHORITY);
+
+		NativePlacementContinuity.NativeSupportProduct base =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(seed, output, true, axes);
+		NativeContinuitySupportClauses conditional = NativeContinuitySupportClauses.exactComplement(
+			owner, base, List.of(List.of(left.get(0)), List.of(right.get(0))), output, true);
+		Assert.assertNotNull(conditional);
+		assertDenseAuthorityRejected(conditional, dense,
+			NativeContinuitySupportClauses.DenseAuthorityRejectReason.RELATION_CONDITIONAL);
+		NativeContinuitySupportClauses multiHeader = candidate.multiHeaderUnion(relation(owner,
+			pool("dense-reason-second-seed"), output, axes)).orElseThrow();
+		assertDenseAuthorityRejected(multiHeader, dense,
+			NativeContinuitySupportClauses.DenseAuthorityRejectReason.RELATION_MULTI_HEADER);
+	}
+
+	@Test
 	public void explicitAuthorityBridgeHonorsDonorAndRetentionCapsWithoutMemberReads() {
 		CompiledHopKey owner = key("explicit-bridge-cap-owner");
 		CompiledHopKey sourceOwner = key("explicit-bridge-cap-source");
@@ -735,6 +821,8 @@ public class NativeSingleAxisProductUnionTest {
 		Assert.assertTrue(denseRetentionRejected.capRejected());
 		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityOutcome.REJECT_CAP,
 			denseRetentionRejected.denseOutcome());
+		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityRejectReason.NONE,
+			denseRetentionRejected.denseRejectReason());
 		Assert.assertEquals(0, wide.materializedHandleCount());
 	}
 
@@ -779,10 +867,14 @@ public class NativeSingleAxisProductUnionTest {
 		var saturatedAdmission = sixtyThreeDonors.withExplicitAuthority(densePrefix);
 		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityOutcome.ADMITTED,
 			saturatedAdmission.denseOutcome());
+		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityRejectReason.NONE,
+			saturatedAdmission.denseRejectReason());
 		Assert.assertEquals(64, saturatedAdmission.relation().authorityDonorCount());
 		var saturatedReplay = saturatedAdmission.relation().withExplicitAuthority(densePrefix);
 		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityOutcome.REUSED,
 			saturatedReplay.denseOutcome());
+		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityRejectReason.NONE,
+			saturatedReplay.denseRejectReason());
 		Assert.assertSame("exact dense replay wins before the saturated donor-cap check",
 			saturatedAdmission.relation(), saturatedReplay.relation());
 		List<CandidateRealizationSupportClause> replacements = densePrefix.stream()
@@ -796,6 +888,8 @@ public class NativeSingleAxisProductUnionTest {
 		Assert.assertTrue(saturatedReplacement.capRejected());
 		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityOutcome.REJECT_CAP,
 			saturatedReplacement.denseOutcome());
+		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityRejectReason.NONE,
+			saturatedReplacement.denseRejectReason());
 		Assert.assertEquals(64, saturatedAdmission.relation().authorityDonorCount());
 		Assert.assertEquals(0, saturatedCandidate.materializedHandleCount());
 
@@ -885,8 +979,13 @@ public class NativeSingleAxisProductUnionTest {
 		long projectedRight = sparse.stream().map(clause -> clause.inputBindings().get(1))
 			.distinct().count();
 		Assert.assertTrue(projectedLeft * projectedRight > sparse.size());
+		var sparseRejected = candidate.withExplicitAuthority(sparse);
 		Assert.assertNull("a hole plus a ninth projected option is not a dense 64-member product",
-			candidate.withExplicitAuthority(sparse).relation());
+			sparseRejected.relation());
+		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityOutcome.REJECT_NONRECTANGULAR,
+			sparseRejected.denseOutcome());
+		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityRejectReason.NONE,
+			sparseRejected.denseRejectReason());
 
 		List<CandidateRealizationSupportClause> foreignOwner = new ArrayList<>(dense);
 		foreignOwner.set(63, explicit(cloneKey(owner), seed, output,
@@ -1214,6 +1313,28 @@ public class NativeSingleAxisProductUnionTest {
 		Assert.assertNull(rejected.relation());
 		Assert.assertFalse(rejected.capRejected());
 		Assert.assertEquals(handles, relation.materializedHandleCount());
+	}
+
+	private static void assertDenseAuthorityRejected(NativeContinuitySupportClauses relation,
+		List<CandidateRealizationSupportClause> clauses,
+		NativeContinuitySupportClauses.DenseAuthorityRejectReason reason) {
+		Assert.assertTrue(clauses.size() >= 64);
+		int handles = relation.materializedHandleCount();
+		var rejected = relation.withExplicitAuthority(clauses);
+		Assert.assertNull(rejected.relation());
+		Assert.assertFalse(rejected.capRejected());
+		Assert.assertEquals(NativeContinuitySupportClauses.DenseAuthorityOutcome.REJECT_AUTHORITY,
+			rejected.denseOutcome());
+		Assert.assertEquals(reason, rejected.denseRejectReason());
+		Assert.assertEquals(handles, relation.materializedHandleCount());
+	}
+
+	private static List<CandidateRealizationSupportClause> replacingFirst(
+		List<CandidateRealizationSupportClause> clauses,
+		CandidateRealizationSupportClause replacement) {
+		List<CandidateRealizationSupportClause> replaced = new ArrayList<>(clauses);
+		replaced.set(0, replacement);
+		return List.copyOf(replaced);
 	}
 
 	private static void assertDenseExplicitBridge(NativeContinuitySupportClauses bridge,

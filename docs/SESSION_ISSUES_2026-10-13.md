@@ -586,3 +586,14 @@
 - 근거 `R/evidence/v62-analysis-driver.log`, `v62-planner-breakdown.txt`, `candidate-v62-detailed-topology-outcomes.json`, `v62-contention-summary.json`.
 
 - External contention: {"candidate-v62-off-jfr": {"samples": 25, "externalBuildOverlapSamples": 0, "externalPlannerCounts": {"2": 25}}, "candidate-v62-detailed": {"samples": 25, "externalBuildOverlapSamples": 0, "externalPlannerCounts": {"2": 25}}}; own heavy jobs는 timed실행 이후 분리했다.
+
+## V63 실제 explicit authority 거절 원인 분리 — 진단 구현 완료, 검증 중
+
+- **증상/원인**: V62 dense 요청 LR9186/GLM5740이 모두 authority로 실패하나 기존 counter는 어떤 계약이 맞지 않는지 구분하지 못했다. durable 재발행 경로의 appended 복수 proof가 원인일 수 있으나 아직 가설이다.
+- **변경/규칙**: 기존 guard 순서·accept/reject·retention 예산·row 순서 그대로, 첫 거절의 유한 reason을 overlay에 실어 aggregate와 세부 counter를 함께 기록한다. Descriptor-backed header/binding은 기존 typed fields로 구별하고 legacy signature는 불투명 exact 비교로 유지한다. Native member 읽기/새 cache/string parsing/authority 완화 없음.
+- **수정 파일**: NativeContinuitySupportClauses.java, PlacementRelationClosure.java, SearchSpaceMetrics.java; NativeSingleAxisProductUnionTest.java, NativeMixedAxisSplitPublicationTest.java.
+- **검증**: fresh focused311PASS/1ignored. 64-row 실제 dense prefix의 proof count/layout/witness/owner/FULL seed/descriptor binding/arity/member/conditional/multiheader 거절 및 nonauthority NONE 검증. 실제 binder foreignFULLseed64prefix에서 scalar81 fallback과 원본64+새81=145 전체ordered union을 유지하고 HEADER reason1을 확인했다.
+- **잔여/회귀 위험**: 선택211class gate 및 독립검토/동일Docker reason 계측 진행. 진단 iteration이며 성능 개선으로 보고하지 않는다. Multi-proof clause는 single-native-proof member와 같은 권한이 아니므로 proof-count guard를 풀거나 auxiliary proof를 버리지 않는다. 다음 표현은 실제 dominant reason 확인 후 정한다.
+- 근거 R/V63_EXPLICIT_AUTHORITY_DIAGNOSTICS_PLAN.md, R/evidence/v63-diagnostics-focused.log.
+
+- V63 frozen independent review CLEAR, fresh 선택211classes/1663tests/0fail/0error/3skip package BUILD SUCCESS11:02:46+02. 진단 reason은 첫 outer guard이며 descriptor header와 binding이 동시에 다르면 BINDINGS로 분류한다. Cap/replay가 authority 검사에 앞서는 기존 순서도 유지한다. 동일Docker로 실제 분포를 확인한다.

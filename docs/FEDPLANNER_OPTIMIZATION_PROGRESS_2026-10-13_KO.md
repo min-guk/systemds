@@ -1,6 +1,15 @@
 # FedPlanner 최적화 진행 현황 보고서
 
 
+## V63 authority 거절 진단 — 검증 완료, 실측 대기
+
+V62의 dense 적용0회 원인을 분리하기 위해 acceptance를 바꾸지 않고 세부 reason만 기록한다. Relation shape, proof count/kind/owner, clause layout/witness, typed descriptor header/bindings, legacy signature, input arity/position/member authority를 구별한다. Auxiliary proof를 삭제하거나 single-proof 조건을 풀지 않는다.
+
+- Frozen focused311PASS/1ignored; 실제 foreignFULLseed binder는 원래 scalar81+retained64=145 전체 support와 원본64 identity를 그대로 보존하며 HEADER reason1을 기록한다.
+- Fresh 선택 **211classes/1663tests/0fail/0error/3skip**, package BUILD SUCCESS11:02:46+02. Independent production/test review CLEAR. 전체repo suite는 아니다.
+- 현재 appended 복수 proof가 원인일 수 있다는 것은 **가설**이다. 같은 bindings라도 proof conjunction이 다르면 서로 다른 support 대안이므로 donor 덮어쓰기를 해서는 안 된다. 측정 후 필요하면 기존 explicit OR native 경로를 별개로 유지하는 압축 표현을 검토한다.
+- 근거 `R/V63_EXPLICIT_AUTHORITY_DIAGNOSTICS_PLAN.md`, `R/evidence/v63-production-review.txt`, `v63-diagnostics-focused.log`, `candidate-v63-package.log`. 진단 iteration이며 속도 향상/20초 달성 증거가 아니다.
+
 ## V62 dense explicit donor — 정확성 검증 통과, 실제 dense 적용 없음
 
 - **구조적 수정**: explicit clause마다 singleton donor를 만들던 표현을 개선했다. 기존 explicit domain이 새 native product 안의 정확한 빈틈없는 곱집합임을 검증할 수 있을 때 **원본 clause 전체를 하나의 leaf donor**에 보관한다. 원본 객체와 first-donor 순서를 유지하며 후보를 제거하지 않는다.
