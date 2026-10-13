@@ -335,6 +335,30 @@
 - 초기 gate도 같은 수로 통과했지만 테스트 oracle 강화 이전 결과는 `candidate-v56-before-final-budget-oracle-package.log`로 별도 보존했다.
 - Main fetch 결과 추가 incoming 없음. 검증본을 게시·봉인하고 동일 조건 Docker 실측으로 이어간다. 시간 목표와 ML 전체 coverage는 아직 미완료다.
 
+### V56 실측 완료: 용량 순서 수정만으로는 충분하지 않음
+
+- 네 실행 모두 watchdog60/fullInitial receipt 없음. 선택 gate 통과를 20초 목표 달성으로 간주하지 않는다.
+- LR gate attempts 303,837 / preflight capacity reject 22,544 / footprint starts 281,287 / actual admissions 161,885 / final capacity reject 0. Gate work **114,059,905**로 V55 95,171,210보다 크다. 단계별 기회와 조기 state-ceiling 거절이 달라져 단순 work 절감은 성립하지 않았다.
+- GLM attempts 115,974 / preflight reject 119 / actual admissions 96,427; gate work 42,527,709. 부분 progress 표본이므로 전체 완료 속도 개선을 입증하지 않는다.
+- OFF LR samples 2,311, direct binding 60.41%, footprint inclusive 270. OFF GLM samples 2,793, canonical 8.20%, joint 5.59%. 외부 build 중첩 OFF25/25, detailed18/25; 자체 heavy command는 네 timed trial 이후에만 실행했다.
+- 근거: `R/evidence/v56-planner-breakdown.txt`, `candidate-v56-detailed-topology-outcomes.json`, `v56-contention-summary.json`. 모든 own container 정리 완료.
+
+## V57 같은 query 내 동일 native gate 중복 생성 — 회귀 재현
+
+- **문제/원인**: gate identity는 proven summary가 cache에 들어간 뒤에만 발견 가능하다. 한 graph에서 같은 native X를 unpinned 및 pinned real state로 방문하면 동일 exact gate recipe를 각각 새 객체로 만든다.
+- **재현**: 공개 query fixture `R=X+log(X)`에서 log clause가 published X를 pin한다. 두 입력 축의 gate가 예상 2회 대신 실제 4회 생성된다. Explicit rectangle·zero-budget 경로와 ordered proofs 및 identity owner footprint는 같고 nonempty다. `v57-query-gate-red.log`: 158 tests / 의도된 1 failure.
+- **해결 방향**: 동일 query의 완성된 immutable gate만 기존 exact key로 공유한다. Proof나 grounded status를 공유하지 않으며 active gate는 기존 cycle 검사에 전달한다. Index는 graph construction 종료 때 폐기한다.
+- **예산/위험**: cumulative work W는 journal/admission과 공유한다. Index의 E/S/A live reservation은 폐기 후에만 반환해 cap1 memo 경로를 굶기지 않는다. Cycle detection, 다른 owner/fact/relation identity, FULL seed, 작은 budget을 회귀 검증한다.
+- **검증 계획/의사결정**: `R/V57_QUERY_GATE_INTERNING_PLAN.md`. 실제 local-hit 빈도가 낮으면 이 경로를 더 확대하지 않는다. Candidate/합법성 규칙 변경은 없다. 아직 V57 production 수정 전이다.
+
+### V57 query-local gate interning: 수정 및 focused 검증
+
+- **구현**: 기존 exact key로 동일 query 안의 immutable gate identity만 공유한다. Resident summary lookup이 우선이며, lookup 전에 기존 fixed-owner·source 검증을 유지한다. Active gate는 기존 cycle protocol을 그대로 통과한다.
+- **수명/예산**: graph build `finally`에서 index 참조를 해제하고 해당 E/S/A 예약만 반환한다. 공유 cumulative W는 초기화하지 않는다. Capacity miss는 이미 보관한 key의 lookup을 허용하지만 work 소진은 이후 optional 작업도 중단한다.
+- **테스트 fixture 정정**: 처음 positive fixture의 resolver memo 인수 `(0,0)`가 E/S/A까지 비활성화했다. 이는 production 오류가 아니므로 `*disabled-fixture-error.log`로 별도 보존했다. Fresh resolver `(32,256)`로 수정한 올바른 RED도 이전 V56에서 158 tests 중 의도된 1 failure(expected2/actual4)를 재현했다. 수정본은 public focused **199 PASS**, private 경계 **8 PASS**다.
+- **경계 테스트**: 동일 immutable row를 갖는 shared/unshared cyclic circuit의 실제 dead-row pruning, active gate 재방문, index 폐기, zero E/S/A, 중복 예약, cap1 반환 후 gate admission, combined work 상한과 sticky exhaustion을 검증했다. 잘못된 nested class qualifier compile 실패도 별도 archive 후 수정했다.
+- **독립 검토**: production 및 최종 test coverage CLEAR. 새 private key는 null fact/realization/relation을 쓰므로 full donor authority의 독립 증명으로 과장하지 않는다. 기존 public continuity/identity 회귀와 변경되지 않은 exact key/guard를 함께 근거로 삼는다.
+- **잔여**: full 통합 gate/실측 전. 새 main의 complement 유지·DP projection reuse와 global gate sweep 비활성화 변경을 검토·통합한다. Extra gate sweep은 후보 생성 규칙이 아닌 optional memo 최적화로, 비활성화는 합법 후보를 제거하지 않는다.
 ## origin/main 1b77의 gate phase 변경 병합
 
 - Incoming은 pruning의 원본 row journal과 `cacheNativeGateComponents` 호출을 새로 도입했다. 이전 helper 이름의 호출만 제거하면 journal 작업은 남으므로, 두 경로를 함께 제외했다.
@@ -382,3 +406,23 @@
 - 검증 대상은 conditional relation의 여러 축·여러 wave 성장, old-first donor 권한, key-first duplicate 비교, 기존 분기 counter다. Source·proof·layout·withdrawal·mixed/native/explicit 반례를 유지했다. Production 및 test-only 기대 강화는 각각 독립 검토 CLEAR다.
 - Gate `evidence/conditional-growth-full-gate-v47/validation.json` SHA-256 `d11eb55ff5b36381e4f2591fccfc06c4a2c33226a60df3fe8db46ac80413006c`. Probe는 `evidence/v47-probe-gate/tests.log`이다. 실패 20건은 별도 증거로 보존했다.
 - Gate 중 origin/main에 query-local gate interning `8b15621592` 및 merge `3b5040b7b1`이 도착했다. 현재 검증한 v47을 먼저 고정해 실제 pair를 실행하고 incoming은 별도 통합 gate에서 검증한다. 아직 실제 성능 개선을 주장하지 않는다.
+
+### V57 최신 main 병합 경계
+
+- Incoming `9fa1eceb10`은 global synthetic-gate suffix sweep을 production에서 호출하지 않는다. V56 실측에서도 LR 추가 gate work 증가/footprint 비용을 확인했으므로 이 변경을 보존했다. 이는 optional cache 수집 중단이며 proof graph·합법 후보를 제거하지 않는다.
+- V57 query-local exact circuit interning은 그대로 적용한다. Production에서는 graph 종료 후 index를 폐기하고 ordinary real-child summary만 처리한다. Journal/gate-admission helper는 upstream의 독립 계약 테스트 용도로 남지만 production 경로에서 실행되지 않는다. 따라서 “새 runtime에서 journal과 index가 같이 실행된다”는 주장은 하지 않는다.
+- Complement authority 보존, retained native support 불필요 materialization 제거, incumbent source projection reuse는 별도 독립 source review CLEAR다. 기존 FULL header·donor 순서·owner identity·strict improvement 제약을 유지한다.
+- Merge conflict는 NPC의 sweep 호출 제거를 채택하고 local query index를 보존했으며, 양쪽 세션 기록도 보존했다. 더 이상 읽히지 않는 `hasNativeAxisGates` flag만 제거했다. Fresh 선택 통합 gate로 전체 병합본을 검증한다.
+
+### V57 병합본 최종 선택 통합 gate 통과
+
+- Fresh **211 actual classes / 1,634 tests / failures 0 / errors 0 / skipped 3**, package BUILD SUCCESS 2026-10-13 08:12:29+02. `R/evidence/candidate-v57-package.log`.
+- Local query-gate interning과 latest-main global sweep 중단/retained complement/DP projection reuse를 함께 검증했다. 전체 repository suite가 아닌 선택 FedPlanner gate다.
+- 검증본 merge commit을 게시·봉인한 후 같은 자원으로 네 Docker trial을 실행한다. 20초 및 전체 ML coverage 달성으로 보고하지 않는다.
+
+
+### v47 고정 이후 query-local gate interning 병합
+
+- Incoming `3b5040b7b1`의 query-local gate interning을 통합한다. Fact·realization·relation 객체 identity와 witness·pivot·axis가 같을 때만 같은 query 안에서 gate를 재사용하며, 갱신된 relation은 identity가 달라 재사용하지 않는다. Global suffix 탐색은 계속 비활성이다.
+- Independent review CLEAR. v47 conditional-growth production과 변경 영역이 분리돼 자동 병합됐다. 세션 기록 충돌은 양쪽 증거를 모두 보존해 해결했다. 병합 소스로 별도 selected gate를 수행한다.
+- 현재 실제 Docker v47은 고정된 `6713d749c9`/JAR `7641b78263699b074cd73f1d73d6a6d78b09ff5daf9d8e9f95b4b31753402feb`를 실행한다. 이 후속 병합의 성능 측정으로 혼동하지 않는다.

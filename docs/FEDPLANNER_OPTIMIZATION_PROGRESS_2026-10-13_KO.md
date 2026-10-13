@@ -1,13 +1,22 @@
 # FedPlanner 최적화 진행 현황 보고서
 
-## V56 검증 완료 — 실측 대기
+## V57 최신 main 병합 검증 완료
+
+- **211 actual classes / 1,634 tests / failures 0 / errors 0 / skipped 3**, BUILD SUCCESS 2026-10-13 08:12:29+02. 근거 `R/evidence/candidate-v57-package.log`.
+- 동일 query에서 pinned/unpinned native 입력이 같은 gate를 중복 생성하는 문제를 수정했다. Public diamond fixture에서 **gate build 4→2**, ordered proof·identity footprint와 zero-budget 결과가 동일하다. Local positive fixture와 cycle/예산 경계는 각각 199/8 focused PASS다.
+- 최신 main의 global gate-suffix sweep 비활성화, native complement 보존, 불필요 support materialization 제거, DP incumbent projection 재사용을 함께 검증했다. Global sweep은 optional cache 수집이므로 끄더라도 합법 후보/proof graph를 제거하지 않는다. Query-local gate identity 공유는 계속 적용한다.
+- **V56 실측은 네 번 모두 watchdog60**이었다. LR extra-gate work는 95.2M→114.1M으로 늘어 처리 순서 수정만으로 충분하지 않았다. OFF LR footprint sample 270/2311 중 추가 sweep 193개였다. 이 결과를 근거로 global sweep 중단을 보존했다.
+- V57 동일 자원 실측은 다음 단계다. **20초 목표와 전체 ML 연산 압축 coverage는 아직 미완료**다.
+
+
+## V56 검증 및 실측 기록 — 목표 미달성
 
 캐시에 들어갈 수 없는 gate의 footprint를 먼저 구축하던 순서를 수정했다. Root summary를 먼저 보관하고, gate는 settled capacity를 먼저 검사한다. Pruning으로 사라진 원본 의존성은 bounded journal로 보존하며 불완전하면 optional cache만 포기한다.
 
 - 최종 선택 통합 gate: **210 classes / 1,621 tests / failures 0 / errors 0 / skipped 3**, BUILD SUCCESS (2026-10-13 07:47:19+02).
 - 회귀: gate phase/budget 14 PASS, 기존 native continuity/identity 190 PASS. 독립 production 검토 CLEAR; shared journal+staging budget assertion을 추가해 다시 전체 선택 gate를 통과했다.
 - 근거: `R/evidence/candidate-v56-package.log`, `v56-capacity-order-red.log`, `v56-budget-final-focused.log`, `v56-production-review.txt`.
-- 이는 불필요한 순회를 제거한 검증이며 **전체 planning 성능 개선이나 20초 달성의 증거는 아니다**. 다음은 동일 Docker 4회 실측이다.
+- 이는 불필요한 순회를 제거한 검증이며 **전체 planning 성능 개선이나 20초 달성의 증거는 아니다**. 동일 Docker 4회 실측은 완료했으며 모두 watchdog60이었다(상단 V57 결정 근거 참조).
 
 ## V55 실측 완료 및 V56 우선순위
 

@@ -4860,6 +4860,118 @@ public class NativePlacementContinuityTest {
 	}
 
 	@Test
+	public void generatedDiamondInternsOneExactGatePerAxisWithinTheQuery() {
+		String entriesProperty = "sysds.fedplanner.continuityAcyclicComponent.maxEntries";
+		String statesProperty = "sysds.fedplanner.continuityAcyclicComponent.maxStates";
+		String rowsProperty = "sysds.fedplanner.continuityAcyclicComponent.maxAlternatives";
+		String priorEntries = System.getProperty(entriesProperty);
+		String priorStates = System.getProperty(statesProperty);
+		String priorRows = System.getProperty(rowsProperty);
+		try {
+			System.setProperty(entriesProperty, "128");
+			System.setProperty(statesProperty, "2048");
+			System.setProperty(rowsProperty, "4096");
+			Fixture full = new Fixture(FType.FULL);
+			DurableAnchorKey pool = anchor(FType.FULL, "worker1:8001", 0, 50);
+			Ref seed = full.source("query-gate-seed", pool);
+			List<CandidateInputState> unary =
+				List.of(CandidateInputState.present(FType.FULL));
+			List<CandidateInputState> binary = List.of(
+				CandidateInputState.present(FType.FULL),
+				CandidateInputState.present(FType.FULL));
+			Ref left = full.unary("query-gate-left", OpOp1.LOG, seed, false);
+			Ref right = full.unary("query-gate-right", OpOp1.EXP, seed, false);
+			full.samePoolRealizations(left, unary,
+				new DurableAnchorKey("query-gate-left-a", FType.FULL, pool.partitions()),
+				new DurableAnchorKey("query-gate-left-b", FType.FULL, pool.partitions()));
+			full.samePoolRealizations(right, unary,
+				new DurableAnchorKey("query-gate-right-a", FType.FULL, pool.partitions()),
+				new DurableAnchorKey("query-gate-right-b", FType.FULL, pool.partitions()),
+				new DurableAnchorKey("query-gate-right-c", FType.FULL, pool.partitions()));
+			Ref x = full.binary("query-gate-x", OpOp2.PLUS, left, right, false);
+			NativePlacementContinuity.CandidateSupportResult generatedX = full.resolver()
+				.proveCandidateSupport(full.reference(x, binary), pool);
+			Assert.assertNotNull(generatedX.supportProduct());
+
+			NativeContinuitySupportClauses explicitX = new NativeContinuitySupportClauses(
+				x.key, generatedX.supportProduct(), pool, true);
+			CandidateRealizationReference explicitXReference = full.withClauses(
+				x, binary, List.copyOf(explicitX));
+			Ref y = full.unary("query-gate-y", OpOp1.LOG, x, false);
+			full.withClauses(y, unary, List.of(new CandidateRealizationSupportClause(
+				List.of(), List.of(CandidateRealizationInputBinding.direct(
+					0, explicitXReference)))));
+			Ref root = full.binary("query-gate-root", OpOp2.PLUS, x, y, false);
+			CandidateRuleFact rootFact = full.fact(root, binary);
+			CandidateEmissionFact rootEmission = rootFact.allowedEmissionFacts().get(0);
+			CandidateRealizationReference proposed = CandidateRealizationReference.of(
+				rootFact.key(), CandidateEmissionRealization.nativeLineage(
+					rootEmission.emissionState(), "query-gate-root-proposal", List.of(), List.of()));
+			SearchSpaceMetrics explicitMetrics = new SearchSpaceMetrics();
+			NativePlacementContinuity.CandidateSupportResult expected = full.resolver(
+				explicitMetrics, 32, 256).proveGeneratedCandidateSupport(
+					rootFact, rootEmission, proposed, pool);
+			Assert.assertFalse("the explicit rectangular diamond must be supported",
+				expected.proofs().isEmpty());
+			Assert.assertEquals(0L, batchWork(explicitMetrics, "NATIVE_AXIS_GATE_BUILDS"));
+
+			NativeContinuitySupportClauses factoredX = new NativeContinuitySupportClauses(
+				x.key, generatedX.supportProduct(), pool, true);
+			CandidateRealizationReference factoredXReference =
+				full.withClauses(x, binary, factoredX);
+			full.withClauses(y, unary, List.of(new CandidateRealizationSupportClause(
+				List.of(), List.of(CandidateRealizationInputBinding.direct(
+					0, factoredXReference)))));
+			SearchSpaceMetrics factoredMetrics = new SearchSpaceMetrics();
+			NativePlacementContinuity.CandidateSupportResult actual = full.resolver(
+				factoredMetrics, 32, 256).proveGeneratedCandidateSupport(
+					rootFact, rootEmission, proposed, pool);
+			Assert.assertFalse("query-local gate reuse must preserve a real proof",
+				actual.proofs().isEmpty());
+			Assert.assertEquals(expected.proofs().stream().map(
+				NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+				actual.proofs().stream().map(
+					NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+			assertIdentitySetEquals(expected.dependencyOccurrences(), actual.dependencyOccurrences());
+			Assert.assertEquals(Set.of(root.key, y.key, x.key, left.key, right.key, seed.key),
+				actual.dependencyOccurrences());
+			Assert.assertEquals("two axes of one exact X relation are built once per query",
+				2L, batchWork(factoredMetrics, "NATIVE_AXIS_GATE_BUILDS"));
+			Assert.assertTrue(batchWork(factoredMetrics,
+				"NATIVE_AXIS_GATE_QUERY_REUSES") >= 2L);
+			Assert.assertTrue(batchWork(factoredMetrics,
+				"NATIVE_AXIS_GATE_QUERY_WORK") > 0L);
+
+			System.setProperty(entriesProperty, "0");
+			SearchSpaceMetrics disabledMetrics = new SearchSpaceMetrics();
+			NativePlacementContinuity.CandidateSupportResult disabled = full.resolver(
+				disabledMetrics, 32, 256).proveGeneratedCandidateSupport(
+					rootFact, rootEmission, proposed, pool);
+			Assert.assertEquals(actual.proofs().stream().map(
+				NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList(),
+				disabled.proofs().stream().map(
+					NativePlacementContinuity.NativeContinuityProof::normalizedSignature).toList());
+			assertIdentitySetEquals(actual.dependencyOccurrences(), disabled.dependencyOccurrences());
+			Assert.assertEquals("disabling the bounded component budget disables local gate reuse",
+				4L, batchWork(disabledMetrics, "NATIVE_AXIS_GATE_BUILDS"));
+		}
+		finally {
+			if(priorEntries == null)
+				System.clearProperty(entriesProperty);
+			else
+				System.setProperty(entriesProperty, priorEntries);
+			if(priorStates == null)
+				System.clearProperty(statesProperty);
+			else
+				System.setProperty(statesProperty, priorStates);
+			if(priorRows == null)
+				System.clearProperty(rowsProperty);
+			else
+				System.setProperty(rowsProperty, priorRows);
+		}
+	}
+
+	@Test
 	public void nativeGateFootprintBudgetRejectionKeepsExactProofs() throws Exception {
 		String property = "sysds.fedplanner.continuityAcyclicComponent.maxStates";
 		String prior = System.getProperty(property);
