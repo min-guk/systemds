@@ -3661,7 +3661,19 @@ final class NativePlacementContinuity {
 		}
 		long retainedStates = summary.retainedStates;
 		List<SelectedCandidateProof> supportedAlternatives = summary.supportedAlternatives;
-		AcyclicComponentSummary prior = acyclicComponentMemo.remove(child);
+		AcyclicComponentSummary prior = acyclicComponentMemo.get(child);
+		if(child.axisGate() != null) {
+			int retainedEntries = acyclicComponentMemo.size() - (prior == null ? 0 : 1);
+			long priorStates = prior == null ? 0 : prior.retainedStates;
+			long priorAlternatives = prior == null ? 0 : prior.retainedAlternatives;
+			if(retainedEntries >= acyclicComponentMaxEntries
+				|| saturatedAdd(acyclicComponentRetainedStates - priorStates,
+					retainedStates) > acyclicComponentMaxStates
+				|| saturatedAdd(acyclicComponentRetainedAlternatives - priorAlternatives,
+					summary.retainedAlternatives) > acyclicComponentMaxAlternatives)
+				return;
+		}
+		prior = acyclicComponentMemo.remove(child);
 		if(prior != null) {
 			acyclicComponentRetainedStates -= prior.retainedStates;
 			acyclicComponentRetainedAlternatives -= prior.retainedAlternatives;

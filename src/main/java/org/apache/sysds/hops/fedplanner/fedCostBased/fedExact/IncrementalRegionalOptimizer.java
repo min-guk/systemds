@@ -667,7 +667,10 @@ final class IncrementalRegionalOptimizer {
 					}
 					// Conditioning can turn a canonical improvement/tie into a rounded
 					// local tie. Preserve the incumbent unless the full objective improves.
-					if(!skipLegacyLift)
+					// A replay entry is published only after this exact source assignment
+					// was canonically validated. The incumbent upper bound only decreases,
+					// so the same immutable-root plan cannot improve on a later replay.
+					if(!replayed && !skipLegacyLift)
 						accept(seedPreparation.lift(
 							Arrays.stream(source).boxed().toList(),conditionalLimits),false);
 					if(!replayed)
