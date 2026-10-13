@@ -957,6 +957,23 @@ def runtime_statistics(text: str) -> dict[str, float]:
     return {names[name]: float(value) for name, value in STATISTIC.findall(text)}
 
 
+def memo_construction_statistics(text: str) -> dict[str, list[dict[str, int]]]:
+    """Keep construction counters even when no complete plan is produced.
+
+    Records remain in invocation order and are not summed across compilations.
+    primitiveValueBytes is the primitive double-array payload, excluding JVM headers
+    and other model objects; it is not a peak-memory measurement.
+    """
+    result = {"nativeGeneration": [], "costProjection": []}
+    for marker, name in (("MemoNativeGeneration", "nativeGeneration"),
+                         ("MemoCostProjection", "costProjection")):
+        for line in re.findall(rf"(?m)^\[{marker}\] (.*)$", text):
+            fields = dict(re.findall(r"(\w+)=([^\s]+)", line))
+            if fields and all(re.fullmatch(r"\d+", value) for value in fields.values()):
+                result[name].append({key: int(value) for key, value in fields.items()})
+    return result
+
+
 def memo_planning_statistics(text: str) -> list[dict]:
     """Report complete planner invocations, separately from full compilation/runtime.
 
@@ -981,6 +998,19 @@ def memo_planning_statistics(text: str) -> list[dict]:
                 plan[name] = int(value)
         plans.append(plan)
     return plans
+
+
+def memo_search_statistics(text: str) -> list[dict]:
+    """Retain exact-search status and counters, including unresolved/budgeted runs."""
+    searches = []
+    for line in re.findall(r"(?m)^\[MemoSearch\] (.*)$", text):
+        fields = dict(re.findall(r"(\w+)=([^\s]+)", line))
+        status = fields.pop("status", "")
+        if status not in {"OPTIMAL", "INFEASIBLE", "UNRESOLVED", "RESOURCE_EXHAUSTED"}:
+            continue
+        if fields and all(re.fullmatch(r"\d+", value) for value in fields.values()):
+            searches.append({"status": status, **{key: int(value) for key, value in fields.items()}})
+    return searches
 
 
 def weighted_kernel_evidence(text: str, audit_rows: list[dict],
@@ -1227,6 +1257,8 @@ def evaluate(run: Path, container_returncode: int,
                       "canonicalProof": proof_evidence,
                       "memoEvidence": memo_evidence,
                       "memoPlanning": memo_planning_statistics(text) if planner == "memo" else [],
+                      "memoConstruction": memo_construction_statistics(text) if planner == "memo" else None,
+                      "memoSearch": memo_search_statistics(text) if planner == "memo" else [],
                       "lossProgress": loss_progress,
                       "cpStatistics": runtime_statistics(cp_text),
                       "fedStatistics": runtime_statistics(text),

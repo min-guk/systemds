@@ -37,6 +37,39 @@ def matrix_rank(values):
 
 
 class JointBoundaryE2ETest(unittest.TestCase):
+    def test_memo_search_counters_preserve_failed_status_and_invocation_boundaries(self):
+        trace = ("[MemoSearch] status=UNRESOLVED nodes=0 checkEvaluations=7\n"
+                 "[MemoSearch] status=RESOURCE_EXHAUSTED nodes=100 checkEvaluations=80\n"
+                 "[MemoSearch] status=OPTIMAL nodes=12 checkEvaluations=9\n"
+                 "[MemoSearch] status=OPTIMAL nodes=-1\n"
+                 "[MemoSearch] status=RUNNING nodes=1\n")
+        self.assertEqual([
+            {"status": "UNRESOLVED", "nodes": 0, "checkEvaluations": 7},
+            {"status": "RESOURCE_EXHAUSTED", "nodes": 100, "checkEvaluations": 80},
+            {"status": "OPTIMAL", "nodes": 12, "checkEvaluations": 9},
+        ], runner.memo_search_statistics(trace))
+        self.assertEqual([], runner.memo_planning_statistics(trace))
+
+    def test_memo_construction_counters_survive_an_unresolved_plan(self):
+        trace = ("[MemoNativeGeneration] prefixRequests=41 prunedPrefixes=9 visitedNativePatterns=12\n"
+                 "[MemoCostProjection] projectedContexts=3 primitiveValues=12 primitiveValueBytes=96\n"
+                 "Memo planner did not prove an optimum: UNRESOLVED\n")
+        evidence = runner.memo_construction_statistics(trace)
+        self.assertEqual([{"prefixRequests": 41, "prunedPrefixes": 9,
+                           "visitedNativePatterns": 12}], evidence["nativeGeneration"])
+        self.assertEqual(3, evidence["costProjection"][0]["projectedContexts"])
+        self.assertEqual([], runner.memo_planning_statistics(trace))
+
+    def test_memo_construction_counters_keep_invocations_separate(self):
+        trace = ("[MemoCostProjection] projectedContexts=2 primitiveValues=6\n"
+                 "[MemoCostProjection] projectedContexts=7 primitiveValues=21\n"
+                 "[MemoCostProjection] projectedContexts=unknown primitiveValues=-1\n")
+        evidence = runner.memo_construction_statistics(trace)
+        self.assertEqual([{"projectedContexts": 2, "primitiveValues": 6},
+                          {"projectedContexts": 7, "primitiveValues": 21}],
+                         evidence["costProjection"])
+        self.assertEqual([], evidence["nativeGeneration"])
+
     def test_memo_planning_time_is_not_full_compilation_time(self):
         trace = ("[MemoPlanner] status=OPTIMAL epoch=1 workers=3 nativeRules=920 "
                  "nodes=12 factsNs=100000000 rulesNs=200000000 modelNs=300000000 "

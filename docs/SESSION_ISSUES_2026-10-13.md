@@ -968,3 +968,31 @@
 - **검증 방법/결과:** 소스 함수/라인을 재확인했다. 신규 문서의 로컬 링크·라인 anchor 22개, code fence 및 공백 검사를 통과했다. 문서 작성 전후 `src`/`scripts` 9,058개 파일의 통합 SHA-256이 동일하다. Build/test/benchmark는 실행하지 않았으며, 문서 권고를 구현 검증이나 성능 향상 결과로 주장하지 않는다.
 - **잔여 이슈/버그:** Loop-carried 국소화의 분석 동등성, shape 수렴 계약, 공동 scheduling의 실제 이득 및 전체 GLM 완료 여부는 별도 검증 대상이다.
 - **수정으로 인한 버그 가능성/감지:** 문서 작성 자체로 실행 로직은 바뀌지 않는다. 후속 구현의 dependency 누락, 불완전한 cache key, 중간 privacy 상태 기반 pruning, search 상태의 semantic cache 오염을 상세 문서 §8의 회귀 fixture와 측정 항목으로 감지한다.
+
+## 독립 Oracle 비용 투영 구현 — 구현 완료, 전체 성능 gate 미달성
+
+- **문제/상태:** 사용자가 Oracle guided cost projection 설계의 독립 workspace 구현을 요청했다. `/home/mchoi/fedplanner-oracle-cost-20261013`에 별도 Git 저장소를 만들고 원본 파일 14,300개와 삭제 1개를 hash 확인해 baseline commit `abb5a4822a`로 보존했다. 원본 workspace와 런타임 상태는 변경하지 않는다.
+- **해결 방향:** NativeRules의 전체 layout 목록을 없애고 coverage-preserving Oracle prefix로 stream 생성한다. 비용은 binding DAG의 실제 선택 branch를 따라 관련 guard만 방문한다. 공유 owner 문맥 교집합, NNZ/scalar/정상 종료/loop phase, original binary64 exact sum 계약을 유지한다.
+- **기준 검증:** 전체 Maven main1682/test2197 compile44.505s PASS; 기존 관련103 tests PASS. Owner intersection 신규3 tests baseline PASS; unknown fixture의 첫 MM 버전은 capability 자체가 size를 요구하지 않아 CBIND canonical shape obligation으로 교정했다. 수정으로 baseline을 억지로 실패시키지 않았다.
+- **기준 Docker:** baseline-engine은 abb5a4822a source archive와 직후 compile output을 별도 보존·hash 확인했다. pinned image/W3/4CPU/8GiB에서 LogReg PASS(전체planning26.854743601s, CP numeric parity), GLM은 transpose owner974의 ROW/COL `CANONICAL_EFFECT_NOT_AUDITED`로 native coverage=false, optimizer UNRESOLVED다. 함께 출력된 branch/shared shape 및 movement width 진단은 이 조기 실패의 직접 원인이 아님을 별도 분석으로 확인했다. 새 변경의 성공/회귀와 구분한다.
+- **변경 범위:** Native lane은 MemoNativeRules/OracleFacade/RulesApi/RulesCore/Rulesets와 회귀; cost lane은 MemoShapes/MemoProgramModel와 회귀; 통합 lane은 FederatedPlanMemo trace, owner 회귀, Docker harness construction counters 및 문서. 상세 계획은 FEDPLANNER_ORACLE_COST_IMPLEMENTATION_PLAN_2026-10-13_KO.md.
+- **현재 검증:** Harness 기존41 PASS→새 counter 회귀2개 RED→구현 후43 PASS. Cost lane 독립 source A/B 각각101 origins에서도 비용 문맥1, tiny11x11 exact joint reference121, 중첩3문맥 비용 exact sum 회귀 등4 PASS. 통합 compile/인접전체회귀/수정후Docker/독립리뷰는 진행 중이다.
+- **잔여 이슈:** GLM baseline 미완료 원인의 독립 조사, source proof/UNKNOWN 보존 및 phase-context 루프 경계 검토, 통합성능 gate.
+- **회귀 위험/감지:** partial FED infeasibility가 RULE_ERROR/NOT_IMPLEMENTED/missing shape coverage를 숨길 수 있어 명시 coverage-preserving 계약과 negative tests로 제한한다. 비용 projection은 inactive guard를 지우되 privacy/availability 의무는 보존한다. 전수 source resolve가 helper 안에 재도입되지 않게 실제 binding/문맥/primitive counter와 scaling fixture를 검증한다.
+- **원칙:** UNKNOWN을 NO 또는 0 비용으로 바꾸지 않는다. 임의 source/opcode 제약, runtime fallback, 미완료 GLM을 OPTIMAL로 표시하는 우회 금지. PUBLIC/protected validation은 기존 PRINCIPLE_REBUTTAL_MEMO의 문서화된 정책을 따른다.
+
+- **중간 통합 검증:** clean Maven compile41.126s PASS, Memo/Oracle/공급·loop runtime 인접359 tests PASS(30.307s). 동결 baseline의 MemoFederatedModelTest8개도 PASS; 이 model-only fixture 성공을 실제 GLM Docker 성공으로 바꾸어 보고하지 않는다. Harness search status 분리 계측 추가 후44 PASS.
+- **독립 리뷰에서 발견한 수정 필요점:** repeat LOOP_HEAD를 무조건 invariant로 생략하면 NNZ/shape guard를 누락할 수 있어 entry-grounded 비용 통계 증명과 관련 회귀를 보강한다. FED nested shape fixture는 rule 생성이 합친 shape만 사용해 ROW coverage를 잃고, 이를 복구한 뒤 movement cost에서도 exact shape 문맥을 요구하는 문제가 드러났다. Activation-first rule 교집합과 movement shape projection을 함께 검증 중이다.
+
+### 최종 구현 및 각1회 Docker 검증
+
+- **해결/변경:** 위 중간 리뷰의 문제를 수정했다. `MemoReachableContexts`로 owner와 비용의 activation/caller/normal-continuation/phase 계약을 통합하고, phase 모순은 Oracle 전에 제거한다. 반복문은 closest repeat head의 entry-grounded shape/NNZ 증명으로만 축약한다. Movement는 exact source/target을 유지하며 필요한 shape 문맥을 반영한다. Native layout 전체 목록 생성은 제거하고 지원된 determinant 영역만 concrete rule로 확장한다.
+- **수정 파일:** `MemoNativeRules`, `OracleFacade`, `RulesApi/Core/Rulesets`, `MemoShapes`, `MemoReachableContexts`, `MemoRuleBuilder`, `MemoProgramModel`, `FederatedPlanMemo`; native/Oracle 및 신규 cost/owner/loop 회귀; Docker harness와 counter parser 회귀. 상세 대응은 [구현 결과 보고서](FEDPLANNER_ORACLE_COST_IMPLEMENTATION_RESULT_2026-10-13_KO.md).
+- **최종 검증:** clean Maven test-compile PASS40.834초. Java44 classes/410 tests 중409 PASS/1 FAIL. Python harness44 PASS, py_compile 및 git diff --check PASS. Lane별·중간 통과 수는 이 최종 수에 더하지 않는다.
+- **기존 golden 실패:** `TrainingWorkloadOperationCoverageTest.constructedAndRewrittenOccurrenceInventoryIsExact`는 정확한 frozen baseline `abb5a4822a`에서도 재현된다. Baseline GLM의 `stop` 변경과 이전 print/termination_code golden inventory 사이 drift다. 무관한 golden은 변경하지 않았다. `experiments/oracle-cost-projection-20261013/training-inventory-baseline.log`가 유효한 증거이며, 다른 프로젝트 baseline으로 실행한 초기 로그는 `training-inventory-wrong-baseline.log`로 격리했다.
+- **LogReg1회 비교:** baseline01→changed01 전체 planning26.854743601→42.020530838초(+15.165787237초,+56.5%). 모델 생성1.280704018→0.958387339초(-25.2%)지만 rule 생성0.280817334→1.888837577초, optimizer25.200000352→39.075807642초로 증가했다. 실행2.618→2.877초. 두 결과 OPTIMAL, rules920/nodes2,933,891/exact objective 동일, CP/FED16개 출력 오차1.6653345369377348e-16로 통과했다. 전체 speedup은 달성하지 못했다.
+- **GLM1회 비교:** baseline은 canonical-effect coverage UNRESOLVED. 변경은 해당 단계를 지나 모델 생성3.324612751초에 완료했지만 optimizer 단계에서 case timeout300초/returncode124로 종료했다. 완료 solver status와 FED 출력이 없어 전체 성능 및 numeric parity gate는 미달성이다. Host model-only 성공으로 대신하지 않는다.
+- **횟수 제한:** 사용자가1회씩으로 지정하기 직전 시작된 baseline02는 최적화 완료 전 중단했으며 비교 표본에서 제외했다. 이후 추가 LogReg 또는 GLM workload를 실행하지 않았다. 기준/변경01의 frozen Docker manifest와 실행 명령·로그를 보존한다.
+- **잔여 이슈/원인 경계:** Rule 생성은 full-context correctness 보강으로 Oracle 질의가 증가했다. Source-only 비용 문맥은 scaling에서 일정하지만 전체 exact search는 여전히 비싸다. LogReg node 수가 같아1회 시간 증가의 세부 원인은 미확정이다. GLM은 비용 모델 단계 뒤 timeout이며 UNKNOWN이나 해 없음으로 판정하지 않는다.
+- **잠재 회귀 위험/감지:** Oracle dependency 선언이 누락된 shape를 숨기거나 loop/caller 상관을 잃으면 합법성/비용이 바뀔 수 있다. Tiny rule-set parity, UNKNOWN negative tests, nested/NNZ/exact cost 회귀, selected-cost audit으로 검출한다. Profile0은 feasibility 불가능 근거로 쓰지 않는다. Raw coverage counter는 최종 owner coverage와 구분한다.
+- **의사결정 근거:** 원래의 합법 공간·runtime dispatch·정확한 source/privacy/movement 계약을 보존한 상태에서만 중복을 제거한다. 더 빠르게 보이도록 family를 닫거나 timeout을 성공으로 바꾸지 않는다. 사용자의1회 제한을 지켜 현재 관측과 미달성 gate를 문서화하고 측정을 종료한다.

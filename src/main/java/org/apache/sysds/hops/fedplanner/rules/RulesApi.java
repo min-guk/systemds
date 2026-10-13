@@ -442,6 +442,15 @@ public final class RulesApi {
     }
 
     /**
+     * True only when an INFEASIBLE partial result also proves that omitted
+     * completions contain no NOT_IMPLEMENTED, RULE_ERROR, or
+     * missing-required-shape obligation.
+     */
+    default boolean partialFedInfeasibilityPreservesCoverage() {
+      return false;
+    }
+
+    /**
      * Conservative feasibility check for a partially assigned input tuple.
      * ABSENT_LOCAL is an assigned {@code null}; unassigned positions are identified
      * only by {@link PartialInputs#isAssigned(int)}.

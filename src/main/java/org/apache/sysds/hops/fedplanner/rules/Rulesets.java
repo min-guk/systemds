@@ -3962,6 +3962,8 @@ public final class Rulesets {
 
     @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
     @Override public Set<String> opcodes() { return OPCODES; }
+    @Override public boolean supportsPartialFedFeasibility() { return true; }
+    @Override public boolean partialFedInfeasibilityPreservesCoverage() { return true; }
     @Override public Optional<RulesApi.DecisionDependencies> decisionDependencies(OpSig sig) {
       return supports(sig) ? shapeDecision(sig, allInputPositions(sig), allInputPositions(sig),
           "fullSinglePartition") : Optional.empty();
@@ -3992,6 +3994,54 @@ public final class Rulesets {
           outs.add(FType.FULL);
       }
       return profileOf(outs);
+    }
+
+    @Override
+    public PartialTruth partialFedFeasibility(OpSig sig, PartialInputs inputs, ShapeHint hint) {
+      if(inputs == null || inputs.values().isEmpty())
+        return PartialTruth.INFEASIBLE;
+      FType axis = null;
+      boolean hasFedInput = false;
+      boolean hasFullInput = false;
+      int localMatrixInputs = 0;
+      boolean unassignedMatrix = false;
+      for(int position = 0; position < inputs.values().size(); position++) {
+        if(!inputs.isAssigned(position)) {
+          unassignedMatrix |= sig.inputIsMatrix(position);
+          continue;
+        }
+        FType type = inputs.valueAt(position);
+        if(type == null) {
+          if(sig.inputIsMatrix(position))
+            localMatrixInputs++;
+          continue;
+        }
+        if(type == FType.BROADCAST)
+          continue;
+        if(type == FType.ROW || type == FType.COL) {
+          if(hasFullInput || axis != null && axis != type)
+            return PartialTruth.INFEASIBLE;
+          axis = type;
+          hasFedInput = true;
+          continue;
+        }
+        if(type == FType.FULL) {
+          if(axis != null)
+            return PartialTruth.INFEASIBLE;
+          hasFullInput = true;
+          hasFedInput = true;
+          continue;
+        }
+        return PartialTruth.INFEASIBLE;
+      }
+      if(unassignedMatrix)
+        return PartialTruth.UNKNOWN;
+      if(!hasFedInput)
+        return PartialTruth.INFEASIBLE;
+      if(hasFullInput && localMatrixInputs > 0
+          && (hint == null || !hint.fullSinglePartition().orElse(false)))
+        return PartialTruth.INFEASIBLE;
+      return Guard.eval(sig).isFail() ? PartialTruth.INFEASIBLE : PartialTruth.FEASIBLE;
     }
 
     @Override

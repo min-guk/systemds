@@ -366,6 +366,16 @@ public final class RulesCore {
       return false;
     }
 
+    public boolean partialFedInfeasibilityPreservesCoverage(OpSig sig) {
+      Optional<Rule> exact = reg.byOpcode(sig.opcode());
+      if(exact.isPresent())
+        return exact.get().partialFedInfeasibilityPreservesCoverage();
+      for(Rule rule : reg.ofCategory(sig.category()))
+        if(rule.supports(sig))
+          return rule.partialFedInfeasibilityPreservesCoverage();
+      return false;
+    }
+
     public Optional<ShapeIndependentDecision> shapeIndependentDecision(OpSig sig) {
       Optional<Rule> exact = reg.byOpcode(sig.opcode());
       if(exact.isPresent())

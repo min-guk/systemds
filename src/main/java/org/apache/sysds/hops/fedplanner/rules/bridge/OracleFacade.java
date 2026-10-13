@@ -3,6 +3,7 @@ package org.apache.sysds.hops.fedplanner.rules.bridge;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
@@ -175,6 +176,7 @@ public final class OracleFacade {
     private final java.util.function.BiFunction<RulesApi.PartialInputs,ShapeHint,
         RulesApi.PartialTruth> partialDecision;
     private final boolean partialDecisionSupported;
+    private final boolean partialInfeasibilityPreservesCoverage;
     private final ShapeHint.DiagnosticSnapshot partialShape;
     private final Optional<RulesApi.DecisionDependencies> decisionDependencies;
     private final boolean legacyShapeIndependentDeclaration;
@@ -188,6 +190,8 @@ public final class OracleFacade {
       decision = oracle.prepare(signature);
       partialDecision = oracle.preparePartial(signature);
       partialDecisionSupported = oracle.supportsPartial(signature);
+      partialInfeasibilityPreservesCoverage =
+          oracle.partialFedInfeasibilityPreservesCoverage(signature);
       legacyShapeIndependentDeclaration = oracle.shapeIndependentDecision(signature).isPresent();
       decisionDependencies = oracle.decisionDependencies(signature);
       candidateFamilyDependencies = oracle.candidateFamilyDependencies(signature);
@@ -662,6 +666,276 @@ public final class OracleFacade {
       }
     }
 
+    /**
+     * Visits exact input tuples without first materializing their Cartesian product.
+     * Coverage-certified partial NO prefixes and determinant regions with a known
+     * CP rejection are omitted. FED determinant regions expand only their
+     * non-determinant axes. An unresolved region emits one representative coverage
+     * obligation instead of being treated as unsupported.
+     */
+    public SupportedPatternDiagnostics visitSupportedPatterns(
+        List<List<FTypes.FType>> runtimeDomains,
+        java.util.function.Function<List<FType>,ShapeHint> exactHintForInputs,
+        SupportedPatternVisitor visitor) {
+      Objects.requireNonNull(runtimeDomains, "runtimeDomains");
+      Objects.requireNonNull(exactHintForInputs, "exactHintForInputs");
+      Objects.requireNonNull(visitor, "visitor");
+      if(runtimeDomains.size() != signature.arity())
+        throw new IllegalArgumentException("Supported-pattern input arity mismatch");
+      List<List<FType>> domains = new ArrayList<>(runtimeDomains.size());
+      for(List<FType> domain : runtimeDomains) {
+        if(domain == null || domain.isEmpty())
+          return new SupportedPatternDiagnostics(0, 0, 0, 0, 0, 0, 0, 0);
+        domains.add(Collections.unmodifiableList(new ArrayList<>(domain)));
+      }
+      SupportedPatternState state = new SupportedPatternState(domains, exactHintForInputs, visitor,
+          partialDecisionSupported && partialInfeasibilityPreservesCoverage);
+      state.visit(0);
+      return new SupportedPatternDiagnostics(state.prefixRequests, state.prunedPrefixes,
+          state.unknownPrefixes, state.visitedLeaves, state.determinantRegions,
+          state.oracleEvaluations, state.evidenceReuses, state.coverageObligations);
+    }
+
+    private final class SupportedPatternState {
+      private final List<List<FType>> domains;
+      private final java.util.function.Function<List<FType>,ShapeHint> exactHintForInputs;
+      private final SupportedPatternVisitor visitor;
+      private final List<FType> values;
+      private final List<Integer> ordinals;
+      private final java.util.BitSet assigned;
+      private final List<Integer> visitOrder;
+      private final int determinantCount;
+      private final boolean partialTraversal;
+      private long prefixRequests, prunedPrefixes, unknownPrefixes, visitedLeaves;
+      private long determinantRegions, oracleEvaluations, evidenceReuses, coverageObligations;
+      private boolean stopped;
+
+      private SupportedPatternState(List<List<FType>> domains,
+          java.util.function.Function<List<FType>,ShapeHint> exactHintForInputs,
+          SupportedPatternVisitor visitor, boolean partialTraversal) {
+        this.domains = domains;
+        this.exactHintForInputs = exactHintForInputs;
+        this.visitor = visitor;
+        this.partialTraversal = partialTraversal;
+        values = new ArrayList<>(domains.size());
+        ordinals = new ArrayList<>(domains.size());
+        for(List<FType> domain : domains) {
+          values.add(domain.get(0));
+          ordinals.add(0);
+        }
+        assigned = new java.util.BitSet(domains.size());
+        if(partialTraversal) {
+          visitOrder = java.util.stream.IntStream.range(0, domains.size()).boxed().toList();
+          determinantCount = domains.size();
+        }
+        else {
+          LinkedHashSet<Integer> determinants = decisionDependencies
+              .map(RulesApi.DecisionDependencies::enumeratedPositions)
+              .map(LinkedHashSet::new)
+              .orElseGet(() -> java.util.stream.IntStream.range(0, domains.size()).boxed()
+                  .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new)));
+          if(determinants.stream().anyMatch(position -> position < 0 || position >= domains.size()))
+            throw new IllegalArgumentException("Supported-pattern determinant exceeds input arity");
+          List<Integer> order = new ArrayList<>(domains.size());
+          order.addAll(determinants);
+          for(int position = 0; position < domains.size(); position++)
+            if(!determinants.contains(position))
+              order.add(position);
+          visitOrder = List.copyOf(order);
+          determinantCount = determinants.size();
+        }
+      }
+
+      private void visit(int offset) {
+        if(stopped)
+          return;
+        if(!partialTraversal && offset == determinantCount) {
+          visitDeterminantRegion(offset);
+          return;
+        }
+        if(offset == visitOrder.size()) {
+          visitExactLeaf(null, null);
+          return;
+        }
+        int position = visitOrder.get(offset);
+        for(int ordinal = 0; ordinal < domains.get(position).size() && !stopped; ordinal++) {
+          FType prior = values.set(position, domains.get(position).get(ordinal));
+          int priorOrdinal = ordinals.set(position, ordinal);
+          assigned.set(position);
+          try {
+            if(partialTraversal) {
+              RulesApi.PartialTruth support = support();
+              if(support == RulesApi.PartialTruth.INFEASIBLE) {
+                prunedPrefixes++;
+                continue;
+              }
+              if(support == RulesApi.PartialTruth.UNKNOWN)
+                unknownPrefixes++;
+            }
+            visit(offset + 1);
+          }
+          finally {
+            assigned.clear(position);
+            values.set(position, prior);
+            ordinals.set(position, priorOrdinal);
+          }
+        }
+      }
+
+      private void visitDeterminantRegion(int offset) {
+        determinantRegions++;
+        List<FType> tuple = snapshotValues();
+        DecisionEvidence evidence = null;
+        RuntimeException failure = null;
+        try {
+          oracleEvaluations++;
+          evidence = decideWithEvidence(tuple,
+              Objects.requireNonNull(exactHintForInputs.apply(tuple), "exact shape hint"));
+          verifyDeclaredShapeFacts(evidence);
+        }
+        catch(RuntimeException ex) {
+          failure = ex;
+        }
+        if(failure != null || coverageObligation(evidence)) {
+          coverageObligations++;
+          visitCoverageObligation(offset, evidence, failure);
+          return;
+        }
+        if(evidence.caps().exec() != org.apache.sysds.common.Types.ExecType.FED) {
+          prunedPrefixes++;
+          return;
+        }
+        long before = visitedLeaves;
+        visitRegionLeaves(offset, evidence);
+        if(visitedLeaves > before)
+          evidenceReuses += visitedLeaves - before - 1;
+      }
+
+      private void visitCoverageObligation(int offset,DecisionEvidence evidence,
+          RuntimeException failure) {
+        List<FType> priorValues=new ArrayList<>();
+        List<Integer> priorOrdinals=new ArrayList<>();
+        List<Integer> changedPositions=new ArrayList<>();
+        for(int index=offset;index<visitOrder.size();index++) {
+          int position=visitOrder.get(index);
+          int diagnosticOrdinal=firstNonLocalOrdinal(domains.get(position));
+          if(diagnosticOrdinal<0) continue;
+          changedPositions.add(position);
+          priorValues.add(values.set(position,domains.get(position).get(diagnosticOrdinal)));
+          priorOrdinals.add(ordinals.set(position,diagnosticOrdinal));
+        }
+        try {
+          visitExactLeaf(evidence,failure);
+        }
+        finally {
+          for(int index=changedPositions.size()-1;index>=0;index--) {
+            int position=changedPositions.get(index);
+            values.set(position,priorValues.get(index));
+            ordinals.set(position,priorOrdinals.get(index));
+          }
+        }
+      }
+
+      private int firstNonLocalOrdinal(List<FType> domain) {
+        for(int ordinal=0;ordinal<domain.size();ordinal++)
+          if(domain.get(ordinal)!=null)
+            return ordinal;
+        return -1;
+      }
+
+      private void visitRegionLeaves(int offset, DecisionEvidence evidence) {
+        if(stopped)
+          return;
+        if(offset == visitOrder.size()) {
+          visitExactLeaf(evidence, null);
+          return;
+        }
+        int position = visitOrder.get(offset);
+        for(int ordinal = 0; ordinal < domains.get(position).size() && !stopped; ordinal++) {
+          FType prior = values.set(position, domains.get(position).get(ordinal));
+          int priorOrdinal = ordinals.set(position, ordinal);
+          assigned.set(position);
+          try {
+            visitRegionLeaves(offset + 1, evidence);
+          }
+          finally {
+            assigned.clear(position);
+            values.set(position, prior);
+            ordinals.set(position, priorOrdinal);
+          }
+        }
+      }
+
+      private void visitExactLeaf(DecisionEvidence shared, RuntimeException sharedFailure) {
+        List<FType> tuple = snapshotValues();
+        DecisionEvidence evidence = shared;
+        RuntimeException failure = sharedFailure;
+        boolean evaluated = false;
+        if(evidence == null && failure == null) {
+          try {
+            oracleEvaluations++;
+            evidence = decideWithEvidence(tuple,
+                Objects.requireNonNull(exactHintForInputs.apply(tuple), "exact shape hint"));
+            evaluated = true;
+          }
+          catch(RuntimeException ex) {
+            failure = ex;
+            coverageObligations++;
+          }
+        }
+        if(evaluated && coverageObligation(evidence))
+          coverageObligations++;
+        visitedLeaves++;
+        stopped = !visitor.visit(Collections.unmodifiableList(new ArrayList<>(ordinals)),
+            tuple, evidence, failure);
+      }
+
+      private List<FType> snapshotValues() {
+        return Collections.unmodifiableList(new ArrayList<>(values));
+      }
+
+      private boolean coverageObligation(DecisionEvidence evidence) {
+        return evidence == null
+            || evidence.caps().reason() == RulesApi.ReasonCode.NOT_IMPLEMENTED
+            || evidence.caps().reason() == RulesApi.ReasonCode.RULE_ERROR
+            || !evidence.shapeProof().missingRequiredFacts().isEmpty();
+      }
+
+      private void verifyDeclaredShapeFacts(DecisionEvidence evidence) {
+        if(decisionDependencies.isEmpty())
+          return;
+        Set<String> allowed=decisionDependencies.get().allowedShapeFacts();
+        if(!allowed.containsAll(evidence.shapeProof().consultedFacts().keySet()))
+          throw new IllegalStateException("Rule consulted undeclared ShapeHint facts"
+              +"|opcode="+signature.opcode()+"|determinants="
+              +decisionDependencies.get().enumeratedPositions()+"|allowed="+allowed
+              +"|proof="+evidence.shapeProof());
+      }
+
+      private RulesApi.PartialTruth support() {
+        prefixRequests++;
+        Set<Integer> positions = new LinkedHashSet<>();
+        for(int position = assigned.nextSetBit(0); position >= 0;
+            position = assigned.nextSetBit(position + 1))
+          positions.add(position);
+        RulesApi.PartialInputs inputs = new RulesApi.PartialInputs(values, positions);
+        if(partialTraversal) {
+          try {
+            ShapeHint hint = Objects.requireNonNull(exactHintForInputs.apply(
+                Collections.unmodifiableList(new ArrayList<>(values))), "partial shape hint");
+            return partialFedFeasibility(inputs, hint);
+          }
+          catch(RuntimeException ignored) {
+            // Prefix failures cannot erase exact leaf diagnostics.
+            return RulesApi.PartialTruth.UNKNOWN;
+          }
+        }
+        // Determinant equivalence does not prove that omitted descendants carry
+        // no NOT_IMPLEMENTED, RULE_ERROR, or required-shape coverage diagnostic.
+        return RulesApi.PartialTruth.UNKNOWN;
+      }
+    }
+
     /** Shares this prepared operation signature without extending its node-build lifetime. */
     public PreparedProfile prepareProfile() {
       return new PreparedProfile(hop, signature);
@@ -686,6 +960,21 @@ public final class OracleFacade {
   }
 
   public record PartialDecisionDiagnostics(long requests, long evaluations) { }
+  /** oracleEvaluations counts attempted exact capability calls, including failures. */
+  public record SupportedPatternDiagnostics(long prefixRequests, long prunedPrefixes,
+      long unknownPrefixes, long visitedLeaves, long determinantRegions,
+      long oracleEvaluations, long evidenceReuses, long coverageObligations) {
+    public SupportedPatternDiagnostics(long prefixRequests, long prunedPrefixes,
+        long unknownPrefixes, long visitedLeaves) {
+      this(prefixRequests, prunedPrefixes, unknownPrefixes, visitedLeaves, 0, 0, 0, 0);
+    }
+  }
+  @FunctionalInterface
+  public interface SupportedPatternVisitor {
+    /** Return false to stop after this exact, non-pruned input tuple. */
+    boolean visit(List<Integer> optionOrdinals, List<FType> runtimeInputs,
+        DecisionEvidence evidence, RuntimeException failure);
+  }
   public record EarlyFedFeasibilityDiagnostics(long requests, long oracleEvaluations,
       int retainedEvidence, long completionVisits, long budgetExhaustions) { }
   public static final class ExecutionRegion {

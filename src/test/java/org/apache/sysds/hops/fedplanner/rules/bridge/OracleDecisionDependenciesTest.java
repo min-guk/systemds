@@ -12,7 +12,10 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 
 import org.apache.sysds.common.Types.AggOp;
@@ -184,6 +187,220 @@ public class OracleDecisionDependenciesTest {
         }).isEmpty());
     assertEquals("fallback is decided from domain cardinality before shape evaluation",
         0, shapeRequests.get());
+  }
+
+  @Test
+  public void supportedPatternVisitorMatchesEveryExactNaryDecision() {
+    Hop[] inputs = new Hop[] {matrix("A", 8, 4), matrix("B", 8, 4), matrix("C", 8, 4)};
+    NaryOp nary = new NaryOp("nary-product", DataType.MATRIX, ValueType.FP64,
+        OpOpN.MULT, inputs);
+    OracleFacade.PreparedDecision prepared = facade().prepareDecision(nary);
+    List<FType> domain = Arrays.asList(null, FType.ROW, FType.COL, FType.BROADCAST);
+    List<List<FType>> domains = List.of(domain, domain, domain);
+    Map<List<FType>,DecisionEvidence> visited = new LinkedHashMap<>();
+    var diagnostics = prepared.visitSupportedPatterns(domains, ignored -> unknown(),
+        (ordinals, tuple, evidence, failure) -> {
+          assertTrue(String.valueOf(failure), failure == null);
+          visited.put(tuple, evidence);
+          return true;
+        });
+
+    int exactFed = 0;
+    for(FType a : domain)
+      for(FType b : domain)
+        for(FType c : domain) {
+          List<FType> tuple = Arrays.asList(a, b, c);
+          DecisionEvidence exact = prepared.decideWithEvidence(tuple, unknown());
+          if(exact.caps().exec() == org.apache.sysds.common.Types.ExecType.FED) {
+            exactFed++;
+            assertTrue("supported FED tuple must be visited: " + tuple, visited.containsKey(tuple));
+            assertEvidence(exact, visited.get(tuple));
+          }
+          else {
+            assertFalse("proved non-FED tuple must not reach a leaf: " + tuple,
+                visited.containsKey(tuple));
+            assertFalse("pruning must not hide RULE_ERROR coverage",
+                exact.caps().reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR);
+            assertFalse("pruning must not hide NOT_IMPLEMENTED coverage",
+                exact.caps().reason()
+                    == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.NOT_IMPLEMENTED);
+            assertTrue("pruning must not hide required shape facts",
+                exact.shapeProof().missingRequiredFacts().isEmpty());
+          }
+        }
+    assertEquals(exactFed, visited.size());
+    assertTrue("known impossible prefixes are pruned", diagnostics.prunedPrefixes() > 0);
+    assertTrue("the visitor never materializes the 4^arity leaf set",
+        diagnostics.visitedLeaves() < 64);
+  }
+
+  @Test
+  public void determinantOnlyRuleCannotPruneNotImplementedCoverage() {
+    RulesCore.RuleRegistry registry = new RulesCore.RuleRegistry();
+    registry.register(new RulesCore.BaseRule() {
+      @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
+      @Override public Set<String> opcodes() { return Set.of(OpOp2.PLUS.toString()); }
+      @Override public java.util.Optional<org.apache.sysds.hops.fedplanner.rules.RulesApi.DecisionDependencies>
+          decisionDependencies(OpSig sig) {
+        return java.util.Optional.of(
+            new org.apache.sysds.hops.fedplanner.rules.RulesApi.DecisionDependencies(
+                Set.of(0), Set.of(), Set.of()));
+      }
+    });
+    BinaryOp plus = new BinaryOp("plus", DataType.MATRIX, ValueType.FP64,
+        OpOp2.PLUS, matrix("A", 8, 4), matrix("B", 8, 4));
+    OracleFacade.PreparedDecision prepared = new OracleFacade(registry).prepareDecision(plus);
+    List<FType> domain = Arrays.asList(null, FType.ROW);
+    Map<List<FType>,DecisionEvidence> visited = new LinkedHashMap<>();
+
+    var diagnostics = prepared.visitSupportedPatterns(List.of(domain, domain),
+        ignored -> unknown(), (ordinals, tuple, evidence, failure) -> {
+          assertTrue(String.valueOf(failure), failure == null);
+          visited.put(tuple, evidence);
+          return true;
+        });
+
+    assertEquals("one obligation per determinant region preserves NOT_IMPLEMENTED coverage",
+        2, visited.size());
+    assertEquals(0, diagnostics.prunedPrefixes());
+    assertEquals(2, diagnostics.visitedLeaves());
+    assertEquals(2, diagnostics.determinantRegions());
+    assertEquals(2, diagnostics.oracleEvaluations());
+    assertEquals(2, diagnostics.coverageObligations());
+    for(FType left : domain)
+      for(FType right : List.of(FType.ROW)) {
+        assertEquals(org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.NOT_IMPLEMENTED,
+            visited.get(Arrays.asList(left, right)).caps().reason());
+        assertEvidence(prepared.decideWithEvidence(Arrays.asList(left, right), unknown()),
+            visited.get(Arrays.asList(left, right)));
+      }
+  }
+
+  @Test
+  public void determinantRegionsEvaluateOnceAndExpandOnlySupportedOrdinals() {
+    RulesCore.RuleRegistry registry = new RulesCore.RuleRegistry();
+    registry.register(new RulesCore.BaseRule() {
+      @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
+      @Override public Set<String> opcodes() { return Set.of(OpOp2.PLUS.toString()); }
+      @Override public java.util.Optional<org.apache.sysds.hops.fedplanner.rules.RulesApi.DecisionDependencies>
+          decisionDependencies(OpSig sig) {
+        return java.util.Optional.of(
+            new org.apache.sysds.hops.fedplanner.rules.RulesApi.DecisionDependencies(
+                Set.of(0), Set.of(), Set.of()));
+      }
+      @Override public OpCaps caps(OpSig sig,List<FType> inputs,ShapeHint hint) {
+        boolean supported=inputs.get(0)==FType.ROW;
+        return OpCaps.newBuilder().category(sig.category()).opcode(sig.opcode())
+            .exec(supported ? org.apache.sysds.common.Types.ExecType.FED
+                : org.apache.sysds.common.Types.ExecType.CP)
+            .placement(supported
+                ? org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+                : org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT)
+            .fout(supported,supported ? FType.ROW : null)
+            .reason(supported
+                ? org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.OK
+                : org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.NO_FED_INPUT)
+            .build();
+      }
+    });
+    BinaryOp plus = new BinaryOp("plus",DataType.MATRIX,ValueType.FP64,
+        OpOp2.PLUS,matrix("A",8,4),matrix("B",8,4));
+    OracleFacade.PreparedDecision prepared=new OracleFacade(registry).prepareDecision(plus);
+    List<FType> domain=Arrays.asList(null,FType.ROW);
+    List<List<FType>> visited=new ArrayList<>();
+
+    var diagnostics=prepared.visitSupportedPatterns(List.of(domain,domain),ignored -> unknown(),
+        (ordinals,tuple,evidence,failure) -> {
+          assertTrue(String.valueOf(failure),failure==null);
+          visited.add(tuple);
+          return true;
+        });
+
+    assertEquals(List.of(Arrays.asList(FType.ROW,null),List.of(FType.ROW,FType.ROW)),visited);
+    assertEquals(2,diagnostics.determinantRegions());
+    assertEquals(2,diagnostics.oracleEvaluations());
+    assertEquals(1,diagnostics.prunedPrefixes());
+    assertEquals(1,diagnostics.evidenceReuses());
+  }
+
+  @Test
+  public void determinantReuseRejectsUndeclaredShapeFactsAsCoverageObligations() {
+    RulesCore.RuleRegistry registry=new RulesCore.RuleRegistry();
+    registry.register(new RulesCore.BaseRule() {
+      @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
+      @Override public Set<String> opcodes() { return Set.of(OpOp2.PLUS.toString()); }
+      @Override public java.util.Optional<org.apache.sysds.hops.fedplanner.rules.RulesApi.DecisionDependencies>
+          decisionDependencies(OpSig sig) {
+        return java.util.Optional.of(
+            new org.apache.sysds.hops.fedplanner.rules.RulesApi.DecisionDependencies(
+                Set.of(0),Set.of(),Set.of()));
+      }
+      @Override public OpCaps caps(OpSig sig,List<FType> inputs,ShapeHint hint) {
+        hint.rows();
+        return OpCaps.newBuilder().category(sig.category()).opcode(sig.opcode())
+            .exec(org.apache.sysds.common.Types.ExecType.FED)
+            .placement(org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT)
+            .fout(true,FType.ROW)
+            .reason(org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.OK).build();
+      }
+    });
+    BinaryOp plus=new BinaryOp("plus",DataType.MATRIX,ValueType.FP64,
+        OpOp2.PLUS,matrix("A",8,4),matrix("B",8,4));
+    OracleFacade.PreparedDecision prepared=new OracleFacade(registry).prepareDecision(plus);
+    List<RuntimeException> failures=new ArrayList<>();
+
+    var diagnostics=prepared.visitSupportedPatterns(
+        List.of(Arrays.asList(null,FType.ROW),Arrays.asList(null,FType.COL)),
+        ignored -> new ShapeHint(8,4,1000),(ordinals,tuple,evidence,failure) -> {
+          failures.add(failure);
+          return true;
+        });
+
+    assertEquals(2,failures.size());
+    assertTrue(failures.stream().allMatch(failure -> failure instanceof IllegalStateException
+        && failure.getMessage().contains("undeclared ShapeHint")));
+    assertEquals(2,diagnostics.oracleEvaluations());
+    assertEquals(2,diagnostics.coverageObligations());
+    assertEquals(0,diagnostics.evidenceReuses());
+  }
+
+  @Test
+  public void unresolvedRegionRepresentativeExposesNonLocalCompletions() {
+    RulesCore.RuleRegistry registry=new RulesCore.RuleRegistry();
+    registry.register(new RulesCore.BaseRule() {
+      @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
+      @Override public Set<String> opcodes() { return Set.of(OpOp2.PLUS.toString()); }
+      @Override public java.util.Optional<org.apache.sysds.hops.fedplanner.rules.RulesApi.DecisionDependencies>
+          decisionDependencies(OpSig sig) {
+        return java.util.Optional.of(
+            new org.apache.sysds.hops.fedplanner.rules.RulesApi.DecisionDependencies(
+                Set.of(0),Set.of(),Set.of("rows")));
+      }
+      @Override public OpCaps caps(OpSig sig,List<FType> inputs,ShapeHint hint) {
+        hint.rows();
+        return OpCaps.newBuilder().category(sig.category()).opcode(sig.opcode())
+            .exec(org.apache.sysds.common.Types.ExecType.CP)
+            .placement(org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT)
+            .reason(org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.NO_FED_INPUT).build();
+      }
+    });
+    BinaryOp plus=new BinaryOp("plus",DataType.MATRIX,ValueType.FP64,
+        OpOp2.PLUS,matrix("A",8,4),matrix("B",8,4));
+    OracleFacade.PreparedDecision prepared=new OracleFacade(registry).prepareDecision(plus);
+    List<List<FType>> obligations=new ArrayList<>();
+
+    var diagnostics=prepared.visitSupportedPatterns(
+        List.of(java.util.Collections.singletonList(null),Arrays.asList(null,FType.ROW)),
+        ignored -> unknown(),(ordinals,tuple,evidence,failure) -> {
+          assertTrue(failure==null);
+          assertFalse(evidence.shapeProof().missingRequiredFacts().isEmpty());
+          obligations.add(tuple);
+          return true;
+        });
+
+    assertEquals(List.of(Arrays.asList(null,FType.ROW)),obligations);
+    assertEquals(1,diagnostics.coverageObligations());
+    assertEquals(1,diagnostics.oracleEvaluations());
   }
 
   @Test

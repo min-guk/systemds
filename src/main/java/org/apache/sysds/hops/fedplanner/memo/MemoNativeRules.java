@@ -74,12 +74,19 @@ public final class MemoNativeRules {
 	}
 
 	public record Result(List<RuleMemo.Rule> rules, List<InputRole> inputRoles,
-		BitSet metadataInputs, boolean complete, List<Diagnostic> diagnostics) {
+		BitSet metadataInputs, boolean complete, List<Diagnostic> diagnostics,
+		GenerationStats generation) {
+		public Result(List<RuleMemo.Rule> rules,List<InputRole> inputRoles,BitSet metadataInputs,
+			boolean complete,List<Diagnostic> diagnostics) {
+			this(rules,inputRoles,metadataInputs,complete,diagnostics,
+				new GenerationStats(0,0,0,0,0));
+		}
 		public Result {
 			rules = List.copyOf(rules);
 			inputRoles = List.copyOf(inputRoles);
 			metadataInputs = (BitSet) metadataInputs.clone();
 			diagnostics = List.copyOf(diagnostics);
+			Objects.requireNonNull(generation);
 		}
 
 		@Override public BitSet metadataInputs() {
@@ -94,6 +101,49 @@ public final class MemoNativeRules {
 			return diagnostics.stream().filter(d -> d.kind() == DiagnosticKind.POLICY_EXCLUSION).toList();
 		}
 	}
+	public record GenerationStats(long cpPatterns, long prefixRequests, long prunedPrefixes,
+		long unknownPrefixes, long visitedNativePatterns, long determinantRegions,
+		long oracleEvaluations, long evidenceReuses, long publishedRules,
+		long coverageObligations) {
+		public GenerationStats(long cpPatterns,long prefixRequests,long prunedPrefixes,
+			long unknownPrefixes,long visitedNativePatterns) {
+			this(cpPatterns,prefixRequests,prunedPrefixes,unknownPrefixes,visitedNativePatterns,
+				0,0,0,0,0);
+		}
+	}
+	private static final class GenerationCounter {
+		private long cpPatterns, prefixRequests, prunedPrefixes, unknownPrefixes, visitedNativePatterns;
+		private long determinantRegions, oracleEvaluations, evidenceReuses, publishedRules;
+		private long coverageObligations;
+		private GenerationStats snapshot() {
+			return new GenerationStats(cpPatterns,prefixRequests,prunedPrefixes,unknownPrefixes,
+				visitedNativePatterns,determinantRegions,oracleEvaluations,evidenceReuses,
+				publishedRules,coverageObligations);
+		}
+		private void add(OracleFacade.SupportedPatternDiagnostics value) {
+			prefixRequests += value.prefixRequests();
+			prunedPrefixes += value.prunedPrefixes();
+			unknownPrefixes += value.unknownPrefixes();
+			visitedNativePatterns += value.visitedLeaves();
+			determinantRegions += value.determinantRegions();
+			oracleEvaluations += value.oracleEvaluations();
+			evidenceReuses += value.evidenceReuses();
+			coverageObligations += value.coverageObligations();
+		}
+		private void add(GenerationStats value) {
+			cpPatterns += value.cpPatterns();
+			prefixRequests += value.prefixRequests();
+			prunedPrefixes += value.prunedPrefixes();
+			unknownPrefixes += value.unknownPrefixes();
+			visitedNativePatterns += value.visitedNativePatterns();
+			determinantRegions += value.determinantRegions();
+			oracleEvaluations += value.oracleEvaluations();
+			evidenceReuses += value.evidenceReuses();
+			publishedRules += value.publishedRules();
+			coverageObligations += value.coverageObligations();
+		}
+		private void published() { publishedRules++; }
+	}
 
 	public record CacheStats(long hits, long misses, int entries) { }
 
@@ -103,6 +153,7 @@ public final class MemoNativeRules {
 	private final Map<CacheKey, Result> cache = new LinkedHashMap<>();
 	private long cacheHits;
 	private long cacheMisses;
+	private final GenerationCounter generation = new GenerationCounter();
 
 	public MemoNativeRules() {
 		this(new OracleFacade(RulesCore.RulesModule.createDefaultRegistry()));
@@ -125,7 +176,9 @@ public final class MemoNativeRules {
 		ShapeHint.DiagnosticSnapshot shape = explicitShape.diagnosticSnapshot();
 		if(!cacheable(hop)) {
 			cacheMisses++;
-			return enumerate(hop, workers, shape);
+			Result result=enumerate(hop,workers,shape);
+			generation.add(result.generation());
+			return result;
 		}
 		CacheKey key = new CacheKey(operatorKey(hop), workers, shape);
 		Result cached = cache.get(key);
@@ -135,6 +188,7 @@ public final class MemoNativeRules {
 		}
 		cacheMisses++;
 		Result result = enumerate(hop, workers, shape);
+		generation.add(result.generation());
 		cache.put(key, result);
 		return result;
 	}
@@ -142,8 +196,10 @@ public final class MemoNativeRules {
 	public synchronized CacheStats cacheStats() {
 		return new CacheStats(cacheHits, cacheMisses, cache.size());
 	}
+	public synchronized GenerationStats generationStats() { return generation.snapshot(); }
 
 	private Result enumerate(Hop hop, int workers, ShapeHint.DiagnosticSnapshot shape) {
+		GenerationCounter generation = new GenerationCounter();
 		List<InputRole> roles = inputRoles(hop);
 		BitSet metadata = new BitSet(roles.size());
 		for(int i = 0; i < roles.size(); i++)
@@ -158,58 +214,57 @@ public final class MemoNativeRules {
 			if(named == 0 || structural == 0 || named != structural) {
 				diagnostics.add(gap("MULTIRETURN_OUTPUT_CONTRACT_INCOMPLETE", "[]",
 					"The CP builtin requires matching named and structural output slots"));
-				return new Result(List.of(), roles, metadata, false, diagnostics);
+				return new Result(List.of(), roles, metadata, false, diagnostics,generation.snapshot());
 			}
 			String opcode = function.getFunctionName().toLowerCase(java.util.Locale.ROOT);
 			if(!cpMultiReturnBuiltin(opcode)) {
 				diagnostics.add(gap("MULTIRETURN_CP_RUNTIME_UNSUPPORTED", "[]",
 					"No verified CP multi-return instruction for " + opcode));
-				return new Result(List.of(), roles, metadata, false, diagnostics);
+				return new Result(List.of(), roles, metadata, false, diagnostics,generation.snapshot());
 			}
 			List<MemoPartition> inputs = roles.stream().map(ignored -> MemoPartition.LOCAL).toList();
 			List<MemoPartition> outputs = java.util.Collections.nCopies(structural, MemoPartition.LOCAL);
-			rules.add(new RuleMemo.Rule(ExecType.CP, inputs, outputs,
-				"cp/multireturn/" + opcode));
+			addRule(rules,new RuleMemo.Rule(ExecType.CP,inputs,outputs,
+				"cp/multireturn/"+opcode),generation);
 			if(opcode.equals(Opcodes.TRANSFORMENCODE.toString()))
-				enumerateTransformEncode(function,workers,shape,roles,prepared(function),rules,diagnostics);
+				enumerateTransformEncode(function,workers,shape,roles,prepared(function),rules,diagnostics,generation);
 			return new Result(new ArrayList<>(rules), roles, metadata,
-				diagnostics.stream().noneMatch(d -> d.kind() == DiagnosticKind.COVERAGE_GAP), diagnostics);
+				diagnostics.stream().noneMatch(d -> d.kind() == DiagnosticKind.COVERAGE_GAP), diagnostics,
+				generation.snapshot());
 		}
 
 		if(isBoundaryOrSource(hop)) {
 			diagnostics.add(gap("BOUNDARY_RULE_OWNED_BY_PROGRAM_FACTS", "[]",
 				"Sources, transient/function carriers and their exact bindings are not ordinary native operators"));
-			return new Result(List.of(), roles, metadata, false, diagnostics);
+			return new Result(List.of(), roles, metadata, false, diagnostics,generation.snapshot());
 		}
 
 		// CP payload kernels require LOCAL data. Metadata positions retain every
 		// abstract source layout because reading a FederationMap is not a COLLECT.
-		for(List<MemoPartition> cpPattern : cpPatterns(roles, workers))
-			rules.add(new RuleMemo.Rule(ExecType.CP, cpPattern, List.of(MemoPartition.LOCAL),
-				"cp/local"));
+		visitPatterns(patternAxes(roles,workers,true),cpPattern -> {
+			generation.cpPatterns++;
+			addRule(rules,new RuleMemo.Rule(ExecType.CP,cpPattern,List.of(MemoPartition.LOCAL),"cp/local"),
+				generation);
+		});
 
 		OracleFacade.PreparedDecision prepared = oracle.prepareDecision(hop);
-		for(List<MemoPartition> pattern : nativePatterns(roles, workers)) {
-			List<FType> runtime = runtimePattern(pattern, roles, workers);
-			OracleFacade.DecisionEvidence evidence;
-			try {
-				evidence = prepared.decideWithEvidence(runtime, freshHint(shape, workers, runtime));
-			}
-			catch(RuntimeException ex) {
+		OracleFacade.SupportedPatternDiagnostics generated=visitSupportedPatterns(prepared,roles,workers,shape,
+			(pattern,evidence,ex) -> {
+			if(ex!=null) {
 				diagnostics.add(gap("ORACLE_EXCEPTION", pattern.toString(),
 					ex.getClass().getSimpleName() + ": " + String.valueOf(ex.getMessage())));
-				continue;
+				return;
 			}
 			OpCaps caps = evidence.caps();
 			if(caps.reason() == ReasonCode.RULE_ERROR) {
 				diagnostics.add(gap("ORACLE_RULE_ERROR", pattern.toString(),
 					caps.detail().orElse("oracle returned RULE_ERROR")));
-				continue;
+				return;
 			}
 			if(caps.reason() == ReasonCode.NOT_IMPLEMENTED) {
 				diagnostics.add(gap("NATIVE_CATALOG_NOT_IMPLEMENTED", pattern.toString(),
 					caps.detail().orElse("the selected oracle rule has no capability implementation")));
-				continue;
+				return;
 			}
 			if(!evidence.shapeProof().missingRequiredFacts().isEmpty()) {
 				// An all-local pattern is already represented by the unconditional CP
@@ -217,32 +272,35 @@ public final class MemoNativeRules {
 				// Missing matrix dimensions are therefore not a native-coverage gap here.
 				if(caps.exec() != ExecType.FED && pattern.stream()
 					.allMatch(value -> value.normalize(workers) == MemoPartition.LOCAL))
-					continue;
+					return;
 				diagnostics.add(gap("MISSING_SHAPE_FACT", pattern.toString(),
 					evidence.shapeProof().missingRequiredFacts().toString()));
-				continue;
+				return;
 			}
 			if(caps.exec() != ExecType.FED)
-				continue;
+				return;
 
 			Optional<MemoPartition> vectorLineage = aggregateBinaryVectorLocalType(hop, pattern, workers);
 			String variant = caps.placement() == FederatedOutput.LOUT && vectorLineage.isPresent()
 				? "fed/vector-local/" + vectorLineage.get().name().toLowerCase()
 				: "oracle/" + caps.opcode() + '/' + caps.reason().name().toLowerCase();
 			Optional<MemoPartition> output = nativeOutput(hop, pattern, workers, shape, caps, diagnostics);
-			output.ifPresent(value -> rules.add(
-				new RuleMemo.Rule(ExecType.FED, pattern, List.of(value), variant)));
+			output.ifPresent(value -> addRule(rules,
+				new RuleMemo.Rule(ExecType.FED,pattern,List.of(value),variant),generation));
 
 			if(caps.placement() == FederatedOutput.FOUT
 				&& OracleFacade.supportsForcedLocalFederatedOutput(hop)) {
 				String localVariant = vectorLineage
 					.map(value -> "fed/vector-local/" + value.name().toLowerCase())
 					.orElse("fed/forced-local");
-				rules.add(new RuleMemo.Rule(ExecType.FED, pattern, List.of(MemoPartition.LOCAL), localVariant));
+				addRule(rules,new RuleMemo.Rule(ExecType.FED,pattern,List.of(MemoPartition.LOCAL),localVariant),
+					generation);
 			}
-		}
+		});
+		generation.add(generated);
 		return new Result(new ArrayList<>(rules), roles, metadata,
-			diagnostics.stream().noneMatch(d -> d.kind() == DiagnosticKind.COVERAGE_GAP), diagnostics);
+			diagnostics.stream().noneMatch(d -> d.kind() == DiagnosticKind.COVERAGE_GAP), diagnostics,
+			generation.snapshot());
 	}
 
 	private OracleFacade.PreparedDecision prepared(Hop hop) {
@@ -258,34 +316,56 @@ public final class MemoNativeRules {
 
 	private static void enumerateTransformEncode(FunctionOp hop,int workers,
 		ShapeHint.DiagnosticSnapshot shape,List<InputRole> roles,OracleFacade.PreparedDecision prepared,
-		LinkedHashSet<RuleMemo.Rule> rules,List<Diagnostic> diagnostics) {
-		for(List<MemoPartition> pattern : nativePatterns(roles,workers)) {
-			if(pattern.isEmpty() || pattern.get(0) == MemoPartition.LOCAL) continue;
-			List<FType> runtime=runtimePattern(pattern,roles,workers);
-			OracleFacade.DecisionEvidence evidence;
-			try { evidence=prepared.decideWithEvidence(runtime,freshHint(shape,workers,runtime)); }
-			catch(RuntimeException ex) {
+		LinkedHashSet<RuleMemo.Rule> rules,List<Diagnostic> diagnostics,GenerationCounter generation) {
+		OracleFacade.SupportedPatternDiagnostics generated=visitSupportedPatterns(prepared,roles,workers,shape,
+			(pattern,evidence,failure) -> {
+			if(pattern.isEmpty() || pattern.get(0) == MemoPartition.LOCAL) return;
+			if(failure!=null) {
 				diagnostics.add(gap("ORACLE_EXCEPTION",pattern.toString(),
-					ex.getClass().getSimpleName()+": "+String.valueOf(ex.getMessage())));
-				continue;
+					failure.getClass().getSimpleName()+": "+String.valueOf(failure.getMessage())));
+				return;
 			}
 			OpCaps caps=evidence.caps();
-			if(caps.exec()!=ExecType.FED) continue;
+			// Determinant-region compression may surface one unresolved obligation
+			// instead of every concrete CP leaf. Preserve it before filtering non-FED
+			// transformencode variants so multi-output coverage cannot become complete.
+			if(caps.reason()==ReasonCode.RULE_ERROR) {
+				diagnostics.add(gap("ORACLE_RULE_ERROR",pattern.toString(),
+					caps.detail().orElse("oracle returned RULE_ERROR")));
+				return;
+			}
+			if(caps.reason()==ReasonCode.NOT_IMPLEMENTED) {
+				diagnostics.add(gap("NATIVE_CATALOG_NOT_IMPLEMENTED",pattern.toString(),
+					caps.detail().orElse("the selected oracle rule has no capability implementation")));
+				return;
+			}
+			if(!evidence.shapeProof().missingRequiredFacts().isEmpty()) {
+				diagnostics.add(gap("MISSING_SHAPE_FACT",pattern.toString(),
+					evidence.shapeProof().missingRequiredFacts().toString()));
+				return;
+			}
+			if(caps.exec()!=ExecType.FED) return;
 			MemoPartition primary=pattern.get(0).normalize(workers);
 			if(primary==MemoPartition.COL) {
 				diagnostics.add(exclusion("TRANSFORMENCODE_NONCANONICAL_COL_OUTPUT",pattern.toString(),
 					"Encoding can change the partitioned column axis"));
-				continue;
+				return;
 			}
 			if(primary==MemoPartition.ROW && !transformEncodeRowCanonical(hop)) {
 				diagnostics.add(gap("TRANSFORMENCODE_ROW_CANONICALITY_UNRESOLVED",pattern.toString(),
 					"A literal recode/dummycode-only specification is required by the verified runtime proof"));
-				continue;
+				return;
 			}
-			if(primary!=MemoPartition.ROW && !(workers==1 && primary==MemoPartition.REP)) continue;
-			rules.add(new RuleMemo.Rule(ExecType.FED,pattern,List.of(primary,MemoPartition.LOCAL),
-				"oracle/transformencode/ok"));
-		}
+			if(primary!=MemoPartition.ROW && !(workers==1 && primary==MemoPartition.REP)) return;
+			addRule(rules,new RuleMemo.Rule(ExecType.FED,pattern,List.of(primary,MemoPartition.LOCAL),
+				"oracle/transformencode/ok"),generation);
+		});
+		generation.add(generated);
+	}
+
+	private static void addRule(LinkedHashSet<RuleMemo.Rule> rules,RuleMemo.Rule rule,
+		GenerationCounter generation) {
+		if(rules.add(rule)) generation.published();
 	}
 
 	private static boolean transformEncodeRowCanonical(FunctionOp hop) {
@@ -390,19 +470,12 @@ public final class MemoNativeRules {
 		return position == 0 && hop instanceof UnaryOp unary && unary.isMetadataOperation();
 	}
 
-	private static List<List<MemoPartition>> cpPatterns(List<InputRole> roles, int workers) {
+	private static List<List<MemoPartition>> patternAxes(List<InputRole> roles,int workers,boolean cp) {
 		List<List<MemoPartition>> axes = new ArrayList<>(roles.size());
 		for(InputRole role : roles)
-			axes.add(role == InputRole.METADATA ? partitions(workers) : List.of(MemoPartition.LOCAL));
-		return product(axes);
-	}
-
-	private static List<List<MemoPartition>> nativePatterns(List<InputRole> roles, int workers) {
-		List<List<MemoPartition>> axes = new ArrayList<>(roles.size());
-		for(InputRole role : roles)
-			axes.add(role == InputRole.PAYLOAD || role == InputRole.METADATA
+			axes.add((role == InputRole.METADATA || !cp && role == InputRole.PAYLOAD)
 				? partitions(workers) : List.of(MemoPartition.LOCAL));
-		return product(axes);
+		return List.copyOf(axes);
 	}
 
 	private static List<MemoPartition> partitions(int workers) {
@@ -410,23 +483,50 @@ public final class MemoNativeRules {
 			: List.of(MemoPartition.LOCAL, MemoPartition.ROW, MemoPartition.COL, MemoPartition.REP);
 	}
 
-	private static List<List<MemoPartition>> product(List<List<MemoPartition>> axes) {
-		List<List<MemoPartition>> result = new ArrayList<>();
-		product(axes, 0, new ArrayList<>(), result);
-		return result;
+	@FunctionalInterface private interface PatternVisitor {
+		void visit(List<MemoPartition> pattern);
 	}
-
-	private static void product(List<List<MemoPartition>> axes, int position,
-		List<MemoPartition> prefix, List<List<MemoPartition>> result) {
+	private static void visitPatterns(List<List<MemoPartition>> axes,PatternVisitor visitor) {
+		visitPatterns(axes,0,new ArrayList<>(),visitor);
+	}
+	private static void visitPatterns(List<List<MemoPartition>> axes,int position,
+		List<MemoPartition> prefix,PatternVisitor visitor) {
 		if(position == axes.size()) {
-			result.add(List.copyOf(prefix));
+			visitor.visit(List.copyOf(prefix));
 			return;
 		}
 		for(MemoPartition value : axes.get(position)) {
 			prefix.add(value);
-			product(axes, position + 1, prefix, result);
+			visitPatterns(axes,position+1,prefix,visitor);
 			prefix.remove(prefix.size() - 1);
 		}
+	}
+
+	@FunctionalInterface private interface SupportedPatternVisitor {
+		void visit(List<MemoPartition> pattern,OracleFacade.DecisionEvidence evidence,RuntimeException failure);
+	}
+	private static OracleFacade.SupportedPatternDiagnostics visitSupportedPatterns(
+		OracleFacade.PreparedDecision prepared,List<InputRole> roles,int workers,
+		ShapeHint.DiagnosticSnapshot shape,SupportedPatternVisitor visitor) {
+		List<List<MemoPartition>> axes=patternAxes(roles,workers,false);
+		List<List<FType>> domains=new ArrayList<>(axes.size());
+		for(int position=0;position<axes.size();position++) {
+			List<FType> values=new ArrayList<>(axes.get(position).size());
+			for(MemoPartition partition : axes.get(position))
+				values.add(runtimePartition(partition,roles.get(position),workers));
+			domains.add(java.util.Collections.unmodifiableList(new ArrayList<>(values)));
+		}
+		return prepared.visitSupportedPatterns(domains,
+			runtime -> freshHint(shape,workers,runtime),(ordinals,runtime,evidence,failure) -> {
+				List<MemoPartition> pattern=new ArrayList<>(ordinals.size());
+				for(int position=0;position<ordinals.size();position++)
+					pattern.add(axes.get(position).get(ordinals.get(position)));
+				visitor.visit(List.copyOf(pattern),evidence,failure);
+				return true;
+			});
+	}
+	private static FType runtimePartition(MemoPartition partition,InputRole role,int workers) {
+		return runtimePattern(List.of(partition),List.of(role),workers).get(0);
 	}
 
 	private static List<FType> runtimePattern(List<MemoPartition> pattern,

@@ -16,11 +16,9 @@ package org.apache.sysds.hops.fedplanner.memo;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.function.Consumer;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
@@ -30,17 +28,10 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.EvaluationContext;
 import org.apache.sysds.hops.fedplanner.memo.MemoNativeRules.InputRole;
-import org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.IterationPhase;
-import org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.LoopExecutionCase;
 import org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.OccurrenceContext;
-import org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.PhaseLoop;
-import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.LoopCardinalityDecision;
 
 /** Build immutable native domains once. Transparent value bindings have no native rule. */
 public final class MemoRuleBuilder {
-	private record ShapeContext(MemoShapes.Shape output,List<MemoShapes.Shape> inputs) {
-		private ShapeContext { inputs = List.copyOf(inputs); }
-	}
 	private static final class RuleIntersection {
 		private List<RuleMemo.Rule> rules;
 		private List<InputRole> roles;
@@ -79,6 +70,7 @@ public final class MemoRuleBuilder {
 				+ " " + diagnostic.code() + " " + diagnostic.message());
 		boolean[] complete = new boolean[facts.compiledOwnerCount()]; Arrays.fill(complete,true);
 		MemoBindingResolver bindingResolver=new MemoBindingResolver(facts);
+		MemoReachableContexts reachableContexts=new MemoReachableContexts(facts,bindingResolver);
 		MemoPrivacy privacy = new MemoPrivacy(facts,bindingResolver,sources);
 		for(int owner = 0; owner < facts.compiledOwnerCount(); owner++) {
 			final int currentOwner=owner;
@@ -107,9 +99,7 @@ public final class MemoRuleBuilder {
 			}
 			List<RuleMemo.Rule> commonRules = null;
 			List<InputRole> commonRoles = null;
-			Set<ShapeContext> evaluated = new LinkedHashSet<>();
 			for(MemoProgramFacts.Occurrence occurrence : occurrencesByOwner.get(owner)) {
-				Set<Integer> phaseSensitive=shapes.phaseSensitiveLoops(occurrence.id());
 				List<OccurrenceContext> occurrenceContexts=facts.occurrenceContexts(occurrence.id());
 				if(occurrenceContexts.isEmpty()) {
 					complete[owner]=false;
@@ -118,33 +108,35 @@ public final class MemoRuleBuilder {
 					continue;
 				}
 				for(OccurrenceContext occurrenceContext : occurrenceContexts) {
-					List<PhaseLoop> phaseLoops=occurrenceContext.phaseLoops().stream()
-						.filter(loop -> phaseSensitive.contains(loop.loopId())).toList();
 					EvaluationContext base=new EvaluationContext(Map.of(),Map.of(),
 						MemoBindingResolver.NO_SELECTION,4096,occurrenceContext.callFrame(),Map.of());
 					RuleIntersection intersection=new RuleIntersection(commonRules,commonRoles);
-					visitPhaseContexts(phaseLoops,0,base,context -> {
-						List<MemoShapes.Shape> inputShapes = new ArrayList<>();
-						for(int i=0; i<occurrence.hop().getInput().size(); i++)
-							inputShapes.add(shapes.inputShape(occurrence.id(),i,context));
-						ShapeContext shapeContext=new ShapeContext(shapes.shapeAt(occurrence.id(),context),inputShapes);
-						if(!evaluated.add(shapeContext)) return;
-						Hop occurrenceHop=shapes.viewAt(occurrence.id(),context);
-						MemoNativeRules.Result nativeRules=oracle.rules(occurrenceHop,Math.max(1,sources.workers()),
-							shapes.hintAt(occurrence.id(),context));
-						if(intersection.rules==null) intersection.rules=new ArrayList<>(nativeRules.rules());
-						else intersection.rules.retainAll(nativeRules.rules());
-						if(intersection.roles==null) intersection.roles=nativeRules.inputRoles();
-						else if(!intersection.roles.equals(nativeRules.inputRoles())) {
-							complete[currentOwner]=false;
-							diagnostics.add("owner="+currentOwner+" occurrence="+occurrence.id()
-								+" inconsistent input roles across shape contexts");
-						}
-						complete[currentOwner] &= nativeRules.complete();
-						for(var diagnostic : nativeRules.coverageGaps()) diagnostics.add("owner="+currentOwner
-							+" occurrence="+occurrence.id()+" hop="+hop.getHopID()+" op="
-							+hop.getOpString()+" "+diagnostic);
+					boolean[] unresolvedShape={false};
+					MemoBindingResolver.VisitResult activation=reachableContexts.visit(occurrence,base,active -> {
+						if(!visitShapeContexts(shapes,occurrence.id(),active,context -> {
+							Hop occurrenceHop=shapes.viewAt(occurrence.id(),context);
+							MemoNativeRules.Result nativeRules=oracle.rules(occurrenceHop,Math.max(1,sources.workers()),
+								shapes.hintAt(occurrence.id(),context));
+							if(intersection.rules==null) intersection.rules=new ArrayList<>(nativeRules.rules());
+							else intersection.rules.retainAll(nativeRules.rules());
+							if(intersection.roles==null) intersection.roles=nativeRules.inputRoles();
+							else if(!intersection.roles.equals(nativeRules.inputRoles())) {
+								complete[currentOwner]=false;
+								diagnostics.add("owner="+currentOwner+" occurrence="+occurrence.id()
+									+" inconsistent input roles across shape contexts");
+							}
+							complete[currentOwner] &= nativeRules.complete();
+							for(var diagnostic : nativeRules.coverageGaps()) diagnostics.add("owner="+currentOwner
+								+" occurrence="+occurrence.id()+" hop="+hop.getHopID()+" op="
+								+hop.getOpString()+" "+diagnostic);
+						})) unresolvedShape[0]=true;
+						return true;
 					});
+					if(activation.status()==MemoBindingResolver.VisitStatus.UNRESOLVED || unresolvedShape[0]) {
+						complete[owner]=false;
+						diagnostics.add("owner="+owner+" occurrence="+occurrence.id()
+							+" unresolved reachable shape context: "+activation.detail());
+					}
 					commonRules=intersection.rules;
 					commonRoles=intersection.roles;
 				}
@@ -211,31 +203,26 @@ public final class MemoRuleBuilder {
 			&& sources.privacy(source.compiledOwnerId())!=null;
 	}
 
-	/** Enumerate only the small phase boundary required by this occurrence. */
-	private static void visitPhaseContexts(List<PhaseLoop> loops,int position,EvaluationContext context,
+	/** Project shape-relevant guards only after activation has fixed correlated control decisions. */
+	private static boolean visitShapeContexts(MemoShapes shapes,int occurrence,EvaluationContext context,
 		Consumer<EvaluationContext> visitor) {
-		if(position==loops.size()) {
+		MemoShapes.CostGuardSearch search=shapes.firstUnfixedCostGuard(occurrence,context);
+		if(search.unresolved()) return false;
+		MemoBindingResolver.GuardDecision guard=search.guard();
+		if(guard==null) {
 			visitor.accept(context);
-			return;
+			return true;
 		}
-		PhaseLoop loop=loops.get(position);
-		List<LoopExecutionCase> cases=loop.executionCases().isEmpty()
-			? List.of(new LoopExecutionCase(MemoProgramFacts.LoopCardinality.MANY,-1,
-				loop.reachablePhases())) : loop.executionCases();
-		for(LoopExecutionCase executionCase : cases) {
-			for(IterationPhase phase : executionCase.bodyPhases()) {
-				Map<MemoBindingResolver.LoopDecision,IterationPhase> phases=
-					new java.util.LinkedHashMap<>(context.iterationPhases());
-				phases.put(new MemoBindingResolver.LoopDecision(loop.loopId(),loop.callFrame()),phase);
-				Map<LoopCardinalityDecision,MemoProgramFacts.LoopCardinality> cardinalities=
-					new java.util.LinkedHashMap<>(context.cardinalities());
-				cardinalities.put(new LoopCardinalityDecision(loop.loopId(),loop.callFrame()),
-					executionCase.cardinality());
-				EvaluationContext next=new EvaluationContext(context.guards(),context.loops(),context.selections(),
-					context.maxDepth(),context.callFrame(),phases,cardinalities);
-				visitPhaseContexts(loops,position+1,next,visitor);
-			}
+		boolean complete=true;
+		for(boolean value : new boolean[] {false,true}) {
+			Map<MemoBindingResolver.GuardDecision,Boolean> guards=
+				new java.util.LinkedHashMap<>(context.guards());
+			guards.put(guard,value);
+			EvaluationContext next=new EvaluationContext(guards,context.loops(),context.selections(),
+				context.maxDepth(),context.callFrame(),context.iterationPhases(),context.cardinalities());
+			complete &= visitShapeContexts(shapes,occurrence,next,visitor);
 		}
+		return complete;
 	}
 	public static boolean transparent(Hop hop) {
 		if(hop instanceof FunctionOp function) return function.getFunctionType() == FunctionOp.FunctionType.DML;

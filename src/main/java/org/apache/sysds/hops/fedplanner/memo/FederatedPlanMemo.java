@@ -79,12 +79,15 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 		MemoRuleBuilder.Result universe = MemoRuleBuilder.build(facts,sources,oracle);
 		long rulesFinished = System.nanoTime();
 		tracePhase("rules",rulesFinished-factsFinished);
+		traceNativeGeneration(oracle.generationStats());
 		MemoProgramModel model = new MemoProgramModel(facts,sources,universe,MemoProgramModel.Profile.defaults());
 		long modelFinished = System.nanoTime();
 		tracePhase("model",modelFinished-rulesFinished);
+		traceCostProjection(model.costProjectionStatistics());
 		MemoProgramModel.Solution solution = model.optimize(limits);
 		long optimizationFinished = System.nanoTime();
 		tracePhase("optimization",optimizationFinished-modelFinished);
+		traceSearch(solution.optimization());
 		if(solution.optimization().status() != MemoOptimizer.Status.OPTIMAL)
 			throw new IllegalStateException("Memo planner did not prove an optimum: "
 				+ solution.optimization().status() + " " + solution.diagnostics());
@@ -171,6 +174,52 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 				+ " cost=" + solution.optimization().cost().toPlainString());
 		}
 		return new Receipt(facts,solution);
+	}
+	private static void traceNativeGeneration(MemoNativeRules.GenerationStats statistics) {
+		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+			System.err.println("[MemoNativeGeneration] cpPatterns=" + statistics.cpPatterns()
+				+ " prefixRequests=" + statistics.prefixRequests()
+				+ " prunedPrefixes=" + statistics.prunedPrefixes()
+				+ " unknownPrefixes=" + statistics.unknownPrefixes()
+				+ " visitedNativePatterns=" + statistics.visitedNativePatterns()
+				+ " determinantRegions=" + statistics.determinantRegions()
+				+ " oracleEvaluations=" + statistics.oracleEvaluations()
+				+ " evidenceReuses=" + statistics.evidenceReuses()
+				+ " publishedRules=" + statistics.publishedRules()
+				+ " coverageObligations=" + statistics.coverageObligations());
+	}
+	private static void traceSearch(MemoOptimizer.Result result) {
+		if(!Boolean.getBoolean("sysds.fedplanner.memo.trace")) return;
+		MemoOptimizer.Statistics statistics=result.statistics();
+		System.err.println("[MemoSearch] status=" + result.status()
+			+ " nodes=" + statistics.nodes()
+			+ " checkEvaluations=" + statistics.checkEvaluations()
+			+ " checkCacheHits=" + statistics.checkCacheHits()
+			+ " supportQueries=" + statistics.supportQueries()
+			+ " worklistVisits=" + statistics.worklistVisits()
+			+ " removedRules=" + statistics.removedRules()
+			+ " costEvaluations=" + statistics.costEvaluations()
+			+ " costCacheHits=" + statistics.costCacheHits()
+			+ " boundPrunes=" + statistics.boundPrunes()
+			+ " conditionalBoundQueries=" + statistics.conditionalBoundQueries()
+			+ " conditionalBoundCacheHits=" + statistics.conditionalBoundCacheHits()
+			+ " wideBoundRelaxations=" + statistics.wideBoundRelaxations());
+	}
+	private static void traceCostProjection(MemoProgramModel.CostProjectionStatistics statistics) {
+		// Emit construction evidence even when the later exact search cannot prove an optimum.
+		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+			System.err.println("[MemoCostProjection] bindingDagVisits=" + statistics.bindingDagVisits()
+				+ " projectionCacheHits=" + statistics.projectionCacheHits()
+				+ " relevantGuardDecisions=" + statistics.relevantGuardDecisions()
+				+ " supportPrefixChecks=" + statistics.supportPrefixChecks()
+				+ " noRegionsSkipped=" + statistics.noRegionsSkipped()
+				+ " unknownObligations=" + statistics.unknownObligations()
+				+ " invariantProjectionStops=" + statistics.invariantProjectionStops()
+				+ " activationEnvironments=" + statistics.activationEnvironments()
+				+ " projectedContexts=" + statistics.projectedContexts()
+				+ " primitiveVectors=" + statistics.primitiveVectors()
+				+ " primitiveValues=" + statistics.primitiveValues()
+				+ " primitiveValueBytes=" + statistics.primitiveValueBytes());
 	}
 	private static void tracePhase(String phase,long elapsedNanos) {
 		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))

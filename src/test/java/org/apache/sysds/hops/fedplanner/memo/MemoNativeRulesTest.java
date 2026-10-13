@@ -18,8 +18,10 @@
  */
 package org.apache.sysds.hops.fedplanner.memo;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.DataType;
@@ -43,8 +45,14 @@ import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.UnaryOp;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.memo.MemoNativeRules.InputRole;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
+import org.apache.sysds.hops.fedplanner.rules.RulesCore;
+import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -58,6 +66,8 @@ public class MemoNativeRulesTest {
 
 		Assert.assertSame("cache identity excludes source name and realization", first, second);
 		Assert.assertEquals(new MemoNativeRules.CacheStats(1, 1, 1), catalog.cacheStats());
+		Assert.assertEquals("cache hits do not recount native generation",first.generation(),
+			catalog.generationStats());
 		Assert.assertTrue(first.diagnostics().toString(), first.complete());
 		Assert.assertTrue(first.rules().stream().anyMatch(rule -> rule.exec() == ExecType.CP
 			&& rule.inputs().equals(List.of(MemoPartition.LOCAL))
@@ -321,6 +331,100 @@ public class MemoNativeRulesTest {
 	}
 
 	@Test
+	public void highArityGenerationStreamsSupportedPrefixesAndCountsCacheMissOnly() {
+		Hop[] inputs=new Hop[8];
+		for(int position=0;position<inputs.length;position++)
+			inputs[position]=matrix("H"+position,8,4);
+		NaryOp product=new NaryOp("high-arity-product",DataType.MATRIX,ValueType.FP64,
+			OpOpN.MULT,inputs);
+		product.setDim1(8);
+		product.setDim2(4);
+		MemoNativeRules catalog=new MemoNativeRules();
+		MemoNativeRules.Result first=catalog.rules(product,2,shape(8,4,8,4,8,4));
+
+		Assert.assertTrue(first.diagnostics().toString(),first.complete());
+		Assert.assertTrue("the Oracle must remove known impossible descendants before leaf allocation",
+			first.generation().prunedPrefixes()>0);
+		Assert.assertTrue("streaming visits fewer leaves than the former 4^8 product",
+			first.generation().visitedNativePatterns()<65_536);
+		Assert.assertTrue(first.rules().stream().anyMatch(rule -> rule.exec()==ExecType.FED));
+		Assert.assertEquals("published-rule counter counts only successful RuleMemo insertions",
+			first.rules().size(),first.generation().publishedRules());
+		Assert.assertTrue(first.generation().oracleEvaluations()>0);
+
+		Assert.assertEquals(first.generation(),catalog.generationStats());
+	}
+
+	@Test
+	public void smallNaryCatalogMatchesTheCompleteConcreteRuleSet() {
+		NaryOp product=new NaryOp("small-product",DataType.MATRIX,ValueType.FP64,
+			OpOpN.MULT,matrix("A",8,4),matrix("B",8,4),matrix("C",8,4));
+		product.setDim1(8);
+		product.setDim2(4);
+		MemoNativeRules.Result result=new MemoNativeRules().rules(product,2,
+			shape(8,4,8,4,8,4));
+
+		LinkedHashSet<RuleMemo.Rule> expected=new LinkedHashSet<>();
+		expected.add(new RuleMemo.Rule(ExecType.CP,
+			List.of(MemoPartition.LOCAL,MemoPartition.LOCAL,MemoPartition.LOCAL),
+			List.of(MemoPartition.LOCAL),"cp/local"));
+		List<MemoPartition> domain=List.of(MemoPartition.LOCAL,MemoPartition.ROW,
+			MemoPartition.COL,MemoPartition.REP);
+		for(MemoPartition first : domain)
+			for(MemoPartition second : domain)
+				for(MemoPartition third : domain) {
+					List<MemoPartition> inputs=List.of(first,second,third);
+					boolean row=inputs.contains(MemoPartition.ROW);
+					boolean col=inputs.contains(MemoPartition.COL);
+					if(row == col)
+						continue;
+					expected.add(new RuleMemo.Rule(ExecType.FED,inputs,
+						List.of(row ? MemoPartition.ROW : MemoPartition.COL),"oracle/*/ok"));
+				}
+
+		Assert.assertTrue(result.diagnostics().toString(),result.complete());
+		Assert.assertEquals("prefix pruning must preserve the original concrete catalog",
+			expected.size(),result.rules().size());
+		Assert.assertEquals(expected.stream().map(MemoNativeRulesTest::ruleSemantics).collect(
+			java.util.stream.Collectors.toCollection(LinkedHashSet::new)),
+			result.rules().stream().map(MemoNativeRulesTest::ruleSemantics).collect(
+				java.util.stream.Collectors.toCollection(LinkedHashSet::new)));
+	}
+
+	@Test
+	public void unresolvedCompressedRegionCannotUseTheAllLocalCoverageExemption() {
+		RulesCore.RuleRegistry registry=new RulesCore.RuleRegistry();
+		registry.register(new RulesCore.BaseRule() {
+			@Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
+			@Override public Set<String> opcodes() { return Set.of(OpOp2.PLUS.toString()); }
+			@Override public java.util.Optional<org.apache.sysds.hops.fedplanner.rules.RulesApi.DecisionDependencies>
+				decisionDependencies(OpSig sig) {
+				return java.util.Optional.of(
+					new org.apache.sysds.hops.fedplanner.rules.RulesApi.DecisionDependencies(
+						Set.of(0),Set.of(),Set.of("rows")));
+			}
+			@Override public OpCaps caps(OpSig sig,List<FType> inputs,ShapeHint hint) {
+				hint.rows();
+				return OpCaps.newBuilder().category(sig.category()).opcode(sig.opcode())
+					.exec(ExecType.CP)
+					.placement(org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT)
+					.reason(org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.NO_FED_INPUT).build();
+			}
+		});
+		BinaryOp plus=new BinaryOp("plus",DataType.MATRIX,ValueType.FP64,OpOp2.PLUS,
+			matrix("A",8,4),matrix("B",8,4));
+		MemoNativeRules.Result result=new MemoNativeRules(new OracleFacade(registry)).rules(plus,2,
+			new ShapeHint(-1,4,1000));
+
+		Assert.assertFalse(result.complete());
+		Assert.assertTrue(result.diagnostics().stream().anyMatch(diagnostic ->
+			"MISSING_SHAPE_FACT".equals(diagnostic.code())
+				&& diagnostic.pattern().contains("ROW")));
+		Assert.assertEquals(4,result.generation().coverageObligations());
+		Assert.assertEquals(4,result.generation().visitedNativePatterns());
+	}
+
+	@Test
 	public void transientCarrierIsAnExplicitCoverageGapNotAnInventedOperatorRule() {
 		DataOp read = matrix("X", 8, 4);
 		MemoNativeRules.Result result = new MemoNativeRules().rules(read, 3,
@@ -338,6 +442,10 @@ public class MemoNativeRulesTest {
 		exp.setDim1(8);
 		exp.setDim2(4);
 		return exp;
+	}
+
+	private static String ruleSemantics(RuleMemo.Rule rule) {
+		return rule.exec()+"|"+rule.inputs()+"|"+rule.outputs();
 	}
 
 	private static DataOp matrix(String name, long rows, long cols) {

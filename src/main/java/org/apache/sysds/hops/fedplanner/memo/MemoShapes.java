@@ -231,6 +231,216 @@ public final class MemoShapes {
 		return Set.copyOf(result);
 	}
 
+	/**
+	 * Finds one unresolved cost-relevant guard by following the binding DAG under
+	 * the supplied partial context. Unlike {@link #guardSensitiveDecisions}, this
+	 * query never collects guards from an inactive SELECT arm and never resolves
+	 * concrete producer origins.
+	 */
+	CostGuardSearch firstUnfixedCostGuard(int occurrence,EvaluationContext context) {
+		EvaluationContext normalized=normalizeLoopPhases(context);
+		CostGuardAccumulator counters=new CostGuardAccumulator();
+		Map<PhaseVisit,CostGuardSearch> memo=new HashMap<>();
+		Set<PhaseVisit> active=new LinkedHashSet<>();
+		Hop hop=facts.occurrence(occurrence).hop();
+		boolean unknown=false;
+		for(int position=0;position<hop.getInput().size();position++) {
+			if(!costRelevantInput(hop,position)) continue;
+			CostGuardSearch search=firstUnfixedCostGuard(facts.inputBinding(occurrence,position),normalized,
+				memo,active,counters);
+			if(search.guard()!=null) return counters.result(search.guard(),unknown || search.unresolved());
+			unknown |= search.unresolved();
+		}
+		return counters.result(null,unknown);
+	}
+
+	CostGuardSearch firstUnfixedCostGuardForBinding(int binding,EvaluationContext context) {
+		EvaluationContext normalized=normalizeLoopPhases(context);
+		CostGuardAccumulator counters=new CostGuardAccumulator();
+		CostGuardSearch search=firstUnfixedCostGuard(binding,normalized,new HashMap<>(),
+			new LinkedHashSet<>(),counters);
+		return counters.result(search.guard(),search.unresolved());
+	}
+
+	record CostGuardSearch(MemoBindingResolver.GuardDecision guard,boolean unresolved,long bindingVisits,
+		long cacheHits,long invariantProjectionStops,long noRegionsSkipped) { }
+
+	private static final class CostGuardAccumulator {
+		private long bindingVisits;
+		private long cacheHits;
+		private long invariantProjectionStops;
+		private long noRegionsSkipped;
+		private CostGuardSearch result(MemoBindingResolver.GuardDecision guard,boolean unresolved) {
+			return new CostGuardSearch(guard,unresolved,bindingVisits,cacheHits,invariantProjectionStops,noRegionsSkipped);
+		}
+	}
+
+	private CostGuardSearch firstUnfixedCostGuard(int binding,EvaluationContext context,
+		Map<PhaseVisit,CostGuardSearch> memo,Set<PhaseVisit> active,CostGuardAccumulator counters) {
+		if(binding<0 || binding>=facts.bindings().size())
+			return new CostGuardSearch(null,true,0,0,0,0);
+		MemoProgramFacts.BindingNode node=facts.binding(binding);
+		if(node.kind()==BindingKind.UNBOUND || node.kind()==BindingKind.MISSING)
+			return new CostGuardSearch(null,true,0,0,0,0);
+		if(guardSensitiveByBinding.get(binding).isEmpty()) {
+			counters.invariantProjectionStops++;
+			return new CostGuardSearch(null,false,0,0,0,0);
+		}
+		PhaseVisit key=new PhaseVisit(false,binding,context.callFrame());
+		CostGuardSearch cached=memo.get(key);
+		if(cached!=null) { counters.cacheHits++; return cached; }
+		if(!active.add(key)) {
+			// Reaching definitions may close the recurrence before the LOOP_HEAD is
+			// encountered a second time (definition -> head -> backedge -> definition).
+			// The path to this point has already exposed every SELECT on the chosen
+			// backedge. Discharge only against an active repeat head whose complete
+			// first-to-middle cost statistics form an entry-grounded fixed point.
+			if(provesActiveRepeatHeadCostStats(active,context))
+				return new CostGuardSearch(null,false,0,0,0,0);
+			return new CostGuardSearch(null,true,0,0,0,0);
+		}
+		counters.bindingVisits++;
+		try {
+			if(node.kind()==BindingKind.SELECT) {
+				MemoBindingResolver.GuardDecision decision=facts.guardDecision(node.referenceId(),context.callFrame());
+				Boolean selected=context.guards().get(decision);
+				if(selected!=null)
+					selected=facts.branchGuardValue(node.referenceId(),context.callFrame(),selected);
+				int loop=facts.enclosingLoop(facts.guard(node.referenceId()).parentRegionId());
+				if(selected==null && loop>=0) {
+					IterationPhase phase=context.iterationPhases().get(new LoopDecision(loop,context.callFrame()));
+					if(phase!=null) selected=facts.guardValue(loop,node.referenceId(),phase);
+				}
+				if(selected==null) return new CostGuardSearch(decision,false,0,0,0,0);
+				int selectedIndex=selected ? 0 : 1;
+				int inactiveIndex=selected ? 1 : 0;
+				if(node.children().size()>inactiveIndex
+					&& !guardSensitiveByBinding.get(node.children().get(inactiveIndex)).isEmpty())
+					counters.noRegionsSkipped++;
+				return remember(key,firstUnfixedCostGuard(node.children().get(selectedIndex),context,memo,active,counters),memo);
+			}
+			if(node.kind()==BindingKind.LOOP_HEAD) {
+				IterationPhase phase=context.iterationPhases().get(new LoopDecision(node.referenceId(),context.callFrame()));
+				if(phase==null) return new CostGuardSearch(null,true,0,0,0,0);
+				// Follow the selected phase's value DAG. A retained-value backedge may
+				// encounter this head again; only that cycle edge is discharged by the
+				// entry-grounded full cost-statistics proof above.
+				int child=phase==IterationPhase.FIRST ? 0 : 1;
+				return node.children().size()>child
+					? remember(key,firstUnfixedCostGuard(node.children().get(child),context,memo,active,counters),memo)
+					: new CostGuardSearch(null,true,0,0,0,0);
+			}
+			if(node.kind()==BindingKind.LAST) {
+				LoopDecision loop=new LoopDecision(node.referenceId(),context.callFrame());
+				LoopCardinality cardinality=context.cardinalities().get(
+					new LoopCardinalityDecision(node.referenceId(),context.callFrame()));
+				if(cardinality==null) return new CostGuardSearch(null,true,0,0,0,0);
+				int child=cardinality==LoopCardinality.ZERO ? 0 : 1;
+				EvaluationContext selected=context;
+				if(cardinality!=LoopCardinality.ZERO) {
+					IterationPhase phase=cardinality==LoopCardinality.ONE
+						? IterationPhase.FIRST : IterationPhase.LAST;
+					selected=withPhase(context,loop,phase,LoopPhase.BACKEDGE);
+				}
+				return child<node.children().size()
+					? remember(key,firstUnfixedCostGuard(node.children().get(child),selected,memo,active,counters),memo)
+					: new CostGuardSearch(null,true,0,0,0,0);
+			}
+			if(node.kind()==BindingKind.FORMAL) {
+				for(int index=context.callFrame().size()-1;index>=0;index--) {
+					MemoProgramFacts.CallBinding call=facts.call(context.callFrame().get(index));
+					if(call.functionSummaryId()==node.referenceId() && node.position()>=0
+						&& node.position()<call.actualBindingIds().size())
+						return remember(key,firstUnfixedCostGuard(call.actualBindingIds().get(node.position()),
+							context.withCallFrame(context.callFrame().subList(0,index)),memo,active,counters),memo);
+				}
+				return new CostGuardSearch(null,true,0,0,0,0);
+			}
+			if(node.kind()==BindingKind.CALL_RETURN) {
+				// Cost callers must establish the call's NORMAL_CONTINUATION activation
+				// before following its payload. MemoProgramModel.visitActive owns that
+				// prerequisite; this traversal only projects the surviving return value.
+				if(node.children().isEmpty()) return new CostGuardSearch(null,true,0,0,0,0);
+				if(node.children().size()>1)
+					return remember(key,firstUnfixedCostGuard(node.children().get(1),context,memo,active,counters),memo);
+				List<Integer> frame=new ArrayList<>(context.callFrame()); frame.add(node.referenceId());
+				return remember(key,firstUnfixedCostGuard(node.children().get(0),context.withCallFrame(frame),
+					memo,active,counters),memo);
+			}
+			List<Integer> dependencies=new ArrayList<>();
+			if(node.kind()==BindingKind.CALL_ARG || !node.children().isEmpty()) dependencies.addAll(node.children());
+			else if(node.kind()==BindingKind.DEFINITION && node.referenceId()>=0
+				&& node.referenceId()<facts.occurrences().size()) {
+				MemoProgramFacts.Occurrence definition=facts.occurrence(node.referenceId());
+				for(int position=0;position<definition.hop().getInput().size();position++)
+					if(costRelevantInput(definition.hop(),position))
+						dependencies.add(facts.inputBinding(definition.id(),position));
+			}
+			boolean unknown=false;
+			for(int dependency:dependencies) {
+				CostGuardSearch search=firstUnfixedCostGuard(dependency,context,memo,active,counters);
+				if(search.guard()!=null) return remember(key,search,memo);
+				unknown |= search.unresolved();
+			}
+			CostGuardSearch result=new CostGuardSearch(null,unknown,0,0,0,0);
+			memo.put(key,result);
+			return result;
+		}
+		finally { active.remove(key); }
+	}
+
+	private boolean provesActiveRepeatHeadCostStats(Set<PhaseVisit> active,EvaluationContext context) {
+		List<PhaseVisit> path=new ArrayList<>(active);
+		for(int index=path.size()-1;index>=0;index--) {
+			PhaseVisit visit=path.get(index);
+			if(visit.occurrence()) continue;
+			MemoProgramFacts.BindingNode candidate=facts.binding(visit.id());
+			if(candidate.kind()!=BindingKind.LOOP_HEAD) continue;
+			// The closest active head owns this recurrence edge. An invariant outer
+			// head cannot discharge a changing or unresolved nested-loop cycle.
+			LoopDecision loop=new LoopDecision(candidate.referenceId(),visit.callFrame());
+			IterationPhase phase=context.iterationPhases().get(loop);
+			return phase!=null && phase!=IterationPhase.FIRST
+				&& provesRepeatHeadCostStats(candidate,loop,context.withCallFrame(visit.callFrame()));
+		}
+		return false;
+	}
+
+	private boolean provesRepeatHeadCostStats(MemoProgramFacts.BindingNode node,LoopDecision loop,
+		EvaluationContext context) {
+		// The frozen estimator assigns one symbolic outcome to an unproved canonical
+		// GuardDecision in this call frame. withPhase replaces that value only when
+		// ProgramFacts proves a phase-specific iterator outcome.
+		MemoProgramFacts.CarriedValue carried=facts.loop(loop.loopId()).carriedValues().stream()
+			.filter(value -> value.slot()==node.position()).findFirst().orElse(null);
+		if(carried==null) return false;
+		PhaseEvaluation evaluation=new PhaseEvaluation();
+		EvaluationContext first=withPhase(context,loop,IterationPhase.FIRST,LoopPhase.ENTRY);
+		Shape seed=resolvedBindingShape(carried.backedgeBindingId(),first,evaluation,new LinkedHashSet<>());
+		if(!knownCostStats(seed)) return false;
+		evaluation.heads.put(new LoopSlotKey(loop,node.position()),seed);
+		EvaluationContext middle=withPhase(context,loop,IterationPhase.MIDDLE,LoopPhase.BACKEDGE);
+		Shape repeat=resolvedBindingShape(carried.backedgeBindingId(),middle,evaluation,new LinkedHashSet<>());
+		return sameCostStats(seed,repeat);
+	}
+
+	private static boolean knownCostStats(Shape shape) {
+		// NNZ=-1 is itself the frozen estimator input. It is safe to preserve after
+		// the backedge walk has exposed and fixed every guard that can change it;
+		// requiring a nonnegative NNZ here would reject existing exact-size loops.
+		return shape!=null && shape.exact();
+	}
+
+	private static boolean sameCostStats(Shape left,Shape right) {
+		return knownCostStats(left) && knownCostStats(right) && left.equals(right);
+	}
+
+	private static CostGuardSearch remember(PhaseVisit key,CostGuardSearch result,
+		Map<PhaseVisit,CostGuardSearch> memo) {
+		memo.put(key,result);
+		return result;
+	}
+
 	private static boolean costRelevantInput(Hop hop,int position) {
 		Hop input=hop.getInput(position);
 		// Matrix/frame inputs contribute size and sparsity. Integer parameters can

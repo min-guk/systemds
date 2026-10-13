@@ -72,6 +72,11 @@ public final class MemoProgramModel {
 	public record CostBreakdown(BigDecimal nativeExecution,BigDecimal movement) {
 		public BigDecimal total() { return nativeExecution.add(movement); }
 	}
+	/** Aggregate counters; primitiveValueBytes counts double payloads only, excluding object/view overhead. */
+	public record CostProjectionStatistics(long bindingDagVisits,long projectionCacheHits,
+		long relevantGuardDecisions,long supportPrefixChecks,long noRegionsSkipped,long unknownObligations,
+		long invariantProjectionStops,long activationEnvironments,
+		long projectedContexts,long primitiveVectors,long primitiveValues,long primitiveValueBytes) { }
 	public record Solution(MemoOptimizer.Result optimization,
 		Map<Long,List<MemoSupplyRegistry.Supply>> supplies,List<String> diagnostics) {
 		public Solution { supplies = Map.copyOf(supplies); diagnostics = List.copyOf(diagnostics); }
@@ -98,6 +103,7 @@ public final class MemoProgramModel {
 	private final RuleMemo memo;
 	private final MemoShapes shapes;
 	private final MemoBindingResolver resolver;
+	private final MemoReachableContexts reachableContexts;
 	private final MemoPrivacy privacy;
 	private final Profile profile;
 	private final List<Head> heads = new ArrayList<>();
@@ -111,12 +117,34 @@ public final class MemoProgramModel {
 	private final int[] sizes;
 	private final boolean[] coverage;
 	private final double[][] nativeCosts;
+	private final Map<Integer,MutableCostProjectionStatistics> costProjectionStatistics=new LinkedHashMap<>();
+	private static final class MutableCostProjectionStatistics {
+		private long bindingDagVisits;
+		private long projectionCacheHits;
+		private long relevantGuardDecisions;
+		private long supportPrefixChecks;
+		private long noRegionsSkipped;
+		private long unknownObligations;
+		private long invariantProjectionStops;
+		private long activationEnvironments;
+		private long projectedContexts;
+		private long primitiveVectors;
+		private long primitiveValues;
+		private long primitiveValueBytes;
+		private CostProjectionStatistics snapshot() {
+			return new CostProjectionStatistics(bindingDagVisits,projectionCacheHits,relevantGuardDecisions,
+				supportPrefixChecks,noRegionsSkipped,unknownObligations,invariantProjectionStops,
+				activationEnvironments,projectedContexts,primitiveVectors,
+				primitiveValues,primitiveValueBytes);
+		}
+	}
 
 	public MemoProgramModel(MemoProgramFacts facts,MemoSources sources,
 		MemoRuleBuilder.Result universe,Profile profile) {
 		this.facts = facts; this.sources = sources; this.universe = universe; this.memo = universe.memo();
 		this.shapes = universe.shapes();
 		this.profile = profile; privacy = universe.privacy(); resolver = privacy.resolverFor(facts,sources);
+		reachableContexts = new MemoReachableContexts(facts,resolver);
 		shapes.requireRequest(facts,sources);
 		facts.requireComplete(); diagnostics.addAll(universe.diagnostics());
 		for(Occurrence occurrence : facts.occurrences()) {
@@ -194,6 +222,28 @@ public final class MemoProgramModel {
 	public RuleMemo memo() { return memo; }
 	public List<Head> heads() { return List.copyOf(heads); }
 	public List<Check> checks() { return List.copyOf(checks); }
+	public CostProjectionStatistics costProjectionStatistics(int owner) {
+		MutableCostProjectionStatistics statistics=costProjectionStatistics.get(owner);
+		return statistics==null ? emptyCostProjectionStatistics()
+			: statistics.snapshot();
+	}
+	public CostProjectionStatistics costProjectionStatistics() {
+		long[] total=new long[12];
+		for(MutableCostProjectionStatistics value:costProjectionStatistics.values()) {
+			CostProjectionStatistics statistics=value.snapshot();
+			total[0]+=statistics.bindingDagVisits(); total[1]+=statistics.projectionCacheHits();
+			total[2]+=statistics.relevantGuardDecisions(); total[3]+=statistics.supportPrefixChecks();
+			total[4]+=statistics.noRegionsSkipped(); total[5]+=statistics.unknownObligations();
+			total[6]+=statistics.invariantProjectionStops(); total[7]+=statistics.activationEnvironments();
+			total[8]+=statistics.projectedContexts(); total[9]+=statistics.primitiveVectors();
+			total[10]+=statistics.primitiveValues(); total[11]+=statistics.primitiveValueBytes();
+		}
+		return new CostProjectionStatistics(total[0],total[1],total[2],total[3],total[4],total[5],
+			total[6],total[7],total[8],total[9],total[10],total[11]);
+	}
+	private static CostProjectionStatistics emptyCostProjectionStatistics() {
+		return new CostProjectionStatistics(0,0,0,0,0,0,0,0,0,0,0,0);
+	}
 	public Solution optimize(MemoOptimizer.Limits limits) {
 		MemoOptimizer.Result result = new MemoOptimizer(sizes,coverage,nativeCosts,checks,costs,limits).optimize();
 		if(result.status()==MemoOptimizer.Status.OPTIMAL
@@ -523,7 +573,9 @@ public final class MemoProgramModel {
 		Activation(Map<GuardDecision,Boolean> guards,double weight) { this(guards,Map.of(),weight); }
 		Activation { guards = Map.copyOf(guards); phases=Map.copyOf(phases); }
 	}
-	private record MovementActivation(MemoBindingResolver.OriginIdentity identity,MemoPartition target) {
+	private record MovementActivation(MemoBindingResolver.OriginIdentity identity,MemoPartition target,
+		long unitCostBits) {
+		double unitCost() { return Double.longBitsToDouble(unitCostBits); }
 	}
 	/** Exact union under {@link Profile}'s correlated-per-GuardDecision estimator, not runtime reachability. */
 	static double activationUnion(List<Activation> input,double scopeWeight) {
@@ -590,7 +642,6 @@ public final class MemoProgramModel {
 	}
 	private double movementGroupCost(MovementGroup group,List<MovementEdge> edges,int[] selected) {
 		Map<MovementActivation,List<Activation>> events = new LinkedHashMap<>();
-		Map<MovementActivation,Double> units = new LinkedHashMap<>();
 		double[] unretainedCost = {0};
 		for(MovementEdge edge : edges) {
 			Use use = uses.get(edge.use()); int position = edge.position();
@@ -606,30 +657,32 @@ public final class MemoProgramModel {
 						return true;
 					MemoMovement.Kind kind = MemoMovement.kind(from,target,false);
 					if(kind == MemoMovement.Kind.DIRECT || kind == MemoMovement.Kind.IMPOSSIBLE) return true;
-					MovementActivation key = new MovementActivation(identity,target);
-					Context exact=context.withEnvironment(environment);
-					double weight=group.identity()==null
-						? frequency(use.consumer().regionId(),frame,exact.evaluation())
-							*environmentProbability(environment,context.evaluation())
-						: definitionActivationWeight(identity,environment,selected);
-					Hop view=shapes.viewAt(use.consumer().id(),exact.evaluation());
-					// The input view already carries the exact reaching output slot's
-					// frozen contextual shape. Live producer HOPs are emission identities,
-					// not cost authority (especially for heterogeneous builtin outputs).
-					double unit = MemoCostModel.movementCost(view.getInput(position),
-						from,target,Math.max(1,sources.workers()),1);
-					if(group.identity()==null) {
-						// This group is one unretained demand edge. It has no shared
-						// materialization activation, and its exact phase/call shape may
-						// legitimately change between dynamic environments.
-						unretainedCost[0] += unit*weight;
-						return true;
-					}
-					Double prior = units.putIfAbsent(key,unit);
-					if(prior != null && Double.doubleToLongBits(prior) != Double.doubleToLongBits(unit))
-						throw new IllegalStateException("One exact movement origin has inconsistent size costs");
-					events.computeIfAbsent(key,ignored -> new ArrayList<>()).add(new Activation(
-						activeGuards(environment),definitionPhases(identity,environment),weight));
+					Context supplied=context.withEnvironment(environment);
+					visitBindingCostContexts(use.bindings().get(position),supplied,exact -> {
+						ResolvedEnvironment refined=new ResolvedEnvironment(environment.origins(),
+							exact.evaluation().guards(),exact.evaluation().loops(),
+							exact.evaluation().iterationPhases(),exact.evaluation().cardinalities());
+						double weight=group.identity()==null
+							? frequency(use.consumer().regionId(),frame,exact.evaluation())
+								*environmentProbability(refined,context.evaluation())
+							: definitionActivationWeight(identity,refined,selected);
+						Hop view=shapes.viewAt(use.consumer().id(),exact.evaluation());
+						// The input view already carries the exact reaching output slot's
+						// frozen contextual shape. Live producer HOPs are emission identities,
+						// not cost authority (especially for heterogeneous builtin outputs).
+						double unit = MemoCostModel.movementCost(view.getInput(position),
+							from,target,Math.max(1,sources.workers()),1);
+						if(group.identity()==null) {
+							// This group is one unretained demand edge. It has no shared
+							// materialization activation, and its exact phase/call shape may
+							// legitimately change between dynamic environments.
+							unretainedCost[0] += unit*weight;
+							return;
+						}
+						MovementActivation key=new MovementActivation(identity,target,Double.doubleToLongBits(unit));
+						events.computeIfAbsent(key,ignored -> new ArrayList<>()).add(new Activation(
+							activeGuards(refined),definitionPhases(identity,refined),weight));
+					});
 					return true;
 				});
 				if(visit.status() == MemoBindingResolver.VisitStatus.UNRESOLVED)
@@ -640,7 +693,7 @@ public final class MemoProgramModel {
 		for(var entry : events.entrySet()) {
 			double activations=group.identity()==null ? entry.getValue().stream().mapToDouble(Activation::weight).sum()
 				: activationUnion(entry.getValue(),Double.POSITIVE_INFINITY,profile.branchThenProbability());
-			total += units.get(entry.getKey())*activations;
+			total += entry.getKey().unitCost()*activations;
 		}
 		return total;
 	}
@@ -714,8 +767,6 @@ public final class MemoProgramModel {
 		double[] total = {0}; var loop = facts.loop(head.slot().loopId());
 		for(List<Integer> frame : framesFor(loop.regionId())) {
 			if(!entryRequired(head,frame)) continue;
-			List<GuardDecision> shapeGuards=new ArrayList<>(
-				shapes.guardSensitiveDecisionsForBinding(head.value().entryBindingId(),frame));
 			for(LoopExecutionCase executionCase : loop.executionCases()) {
 				if(executionCase.cardinality()==LoopCardinality.ZERO) continue;
 				Context base=context(selected,loop.regionId(),frame);
@@ -728,7 +779,7 @@ public final class MemoProgramModel {
 						if(from!=null && from!=target
 							&& MemoMovement.kind(from,target,false)!=MemoMovement.Kind.IMPOSSIBLE) {
 							Context exact=first.withEnvironment(environment);
-							visitNativeShapeGuards(shapeGuards,0,exact,shaped -> {
+							visitBindingCostContexts(head.value().entryBindingId(),exact,shaped -> {
 								Hop source=origin.kind()==OriginKind.COMPILED_OWNER
 									? shapes.outputViewAt(origin.referenceId(),Math.max(0,origin.boundarySlot()),
 										shaped.evaluation().withCallFrame(origin.callFrame()))
@@ -901,16 +952,7 @@ public final class MemoProgramModel {
 	private MemoBindingResolver.VisitResult visitActive(Occurrence occurrence,List<Integer> bindings,Context context,
 		MemoBindingResolver.EnvironmentVisitor visitor) {
 		if(!context.reachable()) return unreachableGuardConjunction();
-		List<PhaseLoop> loops = phaseLoops(occurrence,context.evaluation().callFrame());
-		return visitPhases(loops,0,context,phase ->
-			visitActive(occurrence.activationBindingId(),bindings,phase,visitor));
-	}
-	/** ProgramFacts owns reachable call/phase contexts; the model only enumerates its compact alternatives lazily. */
-	private List<PhaseLoop> phaseLoops(Occurrence occurrence,List<Integer> frame) {
-		return facts.occurrenceContexts(occurrence.id()).stream()
-			.filter(context -> context.callFrame().equals(frame)).map(MemoProgramFacts.OccurrenceContext::phaseLoops)
-			.findFirst().orElseThrow(() -> new IllegalStateException(
-				"Missing occurrence context " + occurrence.id() + " frame=" + frame));
+		return reachableContexts.visitBindings(occurrence,context.evaluation(),bindings,visitor);
 	}
 	@FunctionalInterface private interface ContextVisitor {
 		MemoBindingResolver.VisitResult visit(Context context);
@@ -948,11 +990,13 @@ public final class MemoProgramModel {
 		// which exact producer realizes an input. Source-only branch products are
 		// intentionally absent; every remaining projected context stays a separate
 		// binary64 primitive and is summed exactly by the optimizer/audit.
-		List<GuardDecision> shapeGuards=new ArrayList<>(shapes.guardSensitiveDecisions(occurrence.id(),frame));
 		List<double[]> terms=new ArrayList<>();
+		MutableCostProjectionStatistics statistics=costProjectionStatistics.computeIfAbsent(owner,
+			ignored -> new MutableCostProjectionStatistics());
 		var visit=visitActive(occurrence,List.of(),base,environment -> {
+			statistics.activationEnvironments++;
 			Context active=base.withEnvironment(environment);
-			visitNativeShapeGuards(shapeGuards,0,active,exact -> {
+			visitNativeCostContexts(occurrence,active,statistics,exact -> {
 				ResolvedEnvironment projected=environment(exact.evaluation());
 				double weight=frequency(occurrence.regionId(),frame,exact.evaluation())
 					*environmentProbability(projected,base.evaluation());
@@ -961,6 +1005,10 @@ public final class MemoProgramModel {
 				Hop view=shapes.viewAt(occurrence.id(),exact.evaluation());
 				for(int rule=0;rule<values.length;rule++) values[rule]=MemoCostModel.nativeCost(view,
 					memo.rule(owner,rule),Math.max(1,sources.workers()),weight);
+				statistics.projectedContexts++;
+				statistics.primitiveVectors++;
+				statistics.primitiveValues+=values.length;
+				statistics.primitiveValueBytes+=(long)Double.BYTES*values.length;
 				terms.add(values);
 			});
 			return true;
@@ -970,16 +1018,34 @@ public final class MemoProgramModel {
 		return terms;
 	}
 	@FunctionalInterface private interface NativeContextVisitor { void visit(Context context); }
-	private void visitNativeShapeGuards(List<GuardDecision> guards,int index,Context context,
-		NativeContextVisitor visitor) {
-		if(index==guards.size()) { visitor.visit(context); return; }
-		GuardDecision guard=guards.get(index);
-		if(context.evaluation().guards().containsKey(guard)
-			|| phaseGuard(guard.guardId(),guard.callFrame(),context.evaluation().iterationPhases())!=null) {
-			visitNativeShapeGuards(guards,index+1,context,visitor); return;
+	private void visitNativeCostContexts(Occurrence occurrence,Context context,
+		MutableCostProjectionStatistics statistics,NativeContextVisitor visitor) {
+		statistics.supportPrefixChecks++;
+		MemoShapes.CostGuardSearch search=shapes.firstUnfixedCostGuard(occurrence.id(),context.evaluation());
+		statistics.bindingDagVisits+=search.bindingVisits();
+		statistics.projectionCacheHits+=search.cacheHits();
+		statistics.noRegionsSkipped+=search.noRegionsSkipped();
+		statistics.invariantProjectionStops+=search.invariantProjectionStops();
+		if(search.unresolved()) {
+			statistics.unknownObligations++;
+			throw new IllegalStateException("UNRESOLVED_COST_CONTEXT: occurrence "+occurrence.id()
+				+" frame="+context.evaluation().callFrame()+" phases="+context.evaluation().iterationPhases()
+				+" cardinalities="+context.evaluation().cardinalities()+" guards="+context.evaluation().guards());
 		}
-		visitNativeShapeGuards(guards,index+1,withGuard(context,guard,false),visitor);
-		visitNativeShapeGuards(guards,index+1,withGuard(context,guard,true),visitor);
+		GuardDecision guard=search.guard();
+		if(guard==null) { visitor.visit(context); return; }
+		statistics.relevantGuardDecisions++;
+		visitNativeCostContexts(occurrence,withGuard(context,guard,false),statistics,visitor);
+		visitNativeCostContexts(occurrence,withGuard(context,guard,true),statistics,visitor);
+	}
+	private void visitBindingCostContexts(int binding,Context context,NativeContextVisitor visitor) {
+		MemoShapes.CostGuardSearch search=shapes.firstUnfixedCostGuardForBinding(binding,context.evaluation());
+		if(search.unresolved())
+			throw new IllegalStateException("UNRESOLVED_COST_CONTEXT: binding "+binding);
+		GuardDecision guard=search.guard();
+		if(guard==null) { visitor.visit(context); return; }
+		visitBindingCostContexts(binding,withGuard(context,guard,false),visitor);
+		visitBindingCostContexts(binding,withGuard(context,guard,true),visitor);
 	}
 	private Context withGuard(Context context,GuardDecision guard,boolean value) {
 		EvaluationContext e=context.evaluation();
