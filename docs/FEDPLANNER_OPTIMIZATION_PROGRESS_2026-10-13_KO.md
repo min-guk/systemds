@@ -1,13 +1,30 @@
 # FedPlanner 최적화 진행 현황 보고서
 
-## V61 explicit retained support의 압축 publication — 검증 통과, 실측 대기
+## V61 explicit retained support의 압축 publication — 실측 완료, 20초 미달
 
 - **근본 경계**: 이전 explicit support 하나 때문에 새 native Cartesian product를 다시 전부 펼치던 경로를 수정했다. 기존 clause가 새 ordinary single-header product의 exact member인 경우에만 원본 객체를 singleton first-donor로 보존한다. 최종 pair/K-group merge와 `containsExact`의 숨은 member 순회까지 함께 막았다.
 - **안전성**: FULL seed, proof/source owner identity, witness/layout, canonical 순서·first donor를 보존한다. 기존64 donor/1M retention-unit 한도 유지. Conditional/multi-header/extra member/혼합 retained/staging/충돌/예산 초과는 기존 exact fallback이다. 후보·privacy·runtime·DP 비용/timeout 변경 없음.
 - **검증**: 유효 RED(public pair, cardinality, 실제 standalone/split binder) → frozen focused299PASS/1ignored + 추가 mixed-exactness7PASS. 실제 binder에서 exact member 보존 시 scalar proof 소비4→0, 생성된 relation의 member handle0을 전체 enumeration 전에 검증했다. 다른 FULL seed는 실제 fallback2/전체3clauses 및 원본 donor 보존을 확인했다.
 - **최종 선택 gate**: 211 classes / **1,658 tests / failures0 / errors0 / skipped3**, fresh package BUILD SUCCESS10:10:09+02. 전체 repo suite는 아니다. Independent production/경계 및 추가 old-expectation 수정 검토 CLEAR.
 - 근거 `R/evidence/v61-production-review.txt`, `v61-boundary-focused.log`, `v61-mixed-exactness-focused.log`, `candidate-v61-package.log`. 첫 전체 gate의 구식 “exact explicit도 반드시 scalar” 기대치 실패는 별도 보존했고 생산코드는 바꾸지 않았다.
-- 성능 효과는 아직 미측정이다. V60까지 모든 own fixed Docker 실행에서 fullInitial receipt가 없으므로 **20초 목표 및 전체 ML 연산 압축 완료는 여전히 미완료**다.
+- `dea5570a98` origin/main 게시·SHA 검증, 봉인 JAR `533e0c067cc4bcdebf191497f6e05d32935225dc73cf218d9943840ddd97dfde`. Fixed Docker 네 실행 모두 watchdog60/no fullInitial/own container 제거다. **20초 목표 및 전체 ML 연산 압축 완료는 여전히 미완료**다.
+
+### V61 실제 적용과 다음 구조적 제한
+
+| Detailed seq12 counter | LogReg | GLM |
+|---|---:|---:|
+| explicit bridge 요청 | 18,870 | 15,409 |
+| 성공 | 2,304 | 370 |
+| 성공 요청의 logical members | 7,299 | 9,306 |
+| donor/보관 cap 거절 | 10,004 | 5,374 |
+| authority/표현 불일치 거절 | 6,562 | 9,665 |
+| mixed-retained 거절 | 0 | 0 |
+
+- 각 요청의 terminal counter 합계가 일치한다. 성공 logical members는 scalar 절감 시간이나 유일한 clause 수가 아니다. Cap 거절은 현재 explicit64개 이상이면 **membership 검증 전에** 발생하므로, 모두 압축 가능한 합법 domain이라고 해석하지 않는다.
+- OFF LR2585samples/direct65.76%/peak5.400GB; GLM2774samples/direct22.57%/canonical8.76%/joint8.04%/peak3.438GB. Detailed LR1910samples/peak4.952GB, GLM2582/3.360GB. 전체 완료 시간이나 speedup 증거는 없다.
+- External build overlap은 양 phase 모두0/25, 기존 외부 planner2개25/25. 자체 heavy 검증/JFR 분석은 timed trial과 분리했다.
+- 다음 방향은 **cap을 늘리는 것이 아니라, 기존 explicit clauses가 정확한 rectangular domain 전체임을 증명할 때 단일 dense donor로 표현**하는 것이다. 원본 객체와 first authority는 그대로 보관하고 기존64 donor/1Munit 한도 안에서 구조적 중복을 제거한다. Sparse hole/다른 FULL seed/authority mismatch는 여전히 정확한 fallback이다. 현재 설계·RED 준비 단계이며 구현 완료 주장은 하지 않는다.
+- 근거 `R/evidence/v61-analysis-driver.log`, `v61-planner-breakdown.txt`, `candidate-v61-detailed-topology-outcomes.json`, `v61-contention-summary.json`.
 
 
 ## V60 기존 ordinary topology의 혼합 경로 공유 — 검증 통과

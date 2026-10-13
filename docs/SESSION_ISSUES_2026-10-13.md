@@ -552,3 +552,10 @@
 - V61 frozen focused **299PASS/1ignored**. 첫 전체 선택 gate1658tests/1failure는 기존 `NativeMixedExactnessPartitionTest`가 “exact explicit member도 반드시 scalar fallback”이라고 요구하던 기대치였다. 해당 fixture는 권한 충돌이 아니므로 lazy/0소비·원본 donor·전체 equality로 수정하고, FULL seed만 다른 실제 binder 반례를 추가해 기존 scalar2/전체3clauses/foreign donor 보존을 확인했다. 독립 추가검토 CLEAR, focused7PASS. 원래 실패로그 `v61-package-old-explicit-fallback-expectation.log` 보존. 생산코드는 변경 없이 전체 gate를 다시 실행한다.
 
 - V61 최종 fresh 선택 gate **211classes/1658tests/0fail/0error/3skip**, BUILD SUCCESS10:10:09+02. 추가 mixed-exactness7PASS 및 independent CLEAR. 변경은 exact 표현·작업 제거이며 실제 workload 효과는 동일Docker로 별도 검증한다.
+
+### V61 실측 결과 및 V62 원인 분리
+
+- `dea5570a98` sealed four fixedDocker 모두watchdog60/no fullInitial/own container 제거. Explicit bridge success LR2304/18870, GLM370/15409: 실제 적용은 확인했으나20초 미달이다.
+- Singleton-per-explicit donor count cap 거절 LR10004/GLM5374, authority/표현 거절6562/9665, mixed0. Cap은 검증 이전 count gate이므로 모두 새 dense 표현으로 해결된다고 단정하지 않는다. 두 terminal sum검증 PASS.
+- 다음 V62는 dense exact rectangular explicit prefix를 한 donor leaf로 보관하는 구조를 검토한다. 예산 확대는 하지 않는다. 입력목록의 canonical ordinal과 original clause handles 보존, quadratic axis membership scan 회피, sparsehole/foreign authority/cap fallback 및 bounded preflight가 핵심이다. Architect 설계/독립 RED 준비 중, 아직 생산 수정 없음.
+- OFFLRdirect65.76%,GLMcanonical8.76%/joint8.04%. Externalbuild0/25 양phase, oldplanners2개25/25. Partial samples/counts를 완료 속도 향상으로 해석하지 않는다.
