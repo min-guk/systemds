@@ -490,6 +490,15 @@ public class NativeMixedAxisSplitPublicationTest {
 
 	@Test
 	public void retainedNativeRectangleConsumesOnlyTheExactResidual() throws Exception {
+		assertRetainedRectanglePublication(false);
+	}
+
+	@Test
+	public void retainedExplicitMemberKeepsPartitionedPublicationLazy() throws Exception {
+		assertRetainedRectanglePublication(true);
+	}
+
+	private static void assertRetainedRectanglePublication(boolean explicit) throws Exception {
 		CompiledHopKey leftOwner = fixtureKey("residual-left");
 		CompiledHopKey rightOwner = fixtureKey("residual-right");
 		CompiledHopKey consumerOwner = fixtureKey("residual-consumer");
@@ -517,11 +526,15 @@ public class NativeMixedAxisSplitPublicationTest {
 		Assert.assertEquals(1, retainedRelation.size());
 		CandidateRealizationSupportClause retainedClause = retainedRelation.get(0);
 		CandidateEmissionRealization partialDurable = new CandidateEmissionRealization(
-			durable.key(), retainedRelation);
+			durable.key(), explicit ? List.of(retainedClause) : retainedRelation);
 		CandidateRuleFact retained = fact(staging.key(), List.of(partialDurable, nativePart));
 
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(0);
 		CandidateRuleFact rebound = bindBinary(closure(metrics), left, right, retained, consumerHop);
+		Assert.assertEquals(explicit ? 1L : 0L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.RETAINED_EXPLICIT_BRIDGE_SUCCESSES));
+		Assert.assertEquals(explicit ? 4L : 0L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.RETAINED_EXPLICIT_BRIDGE_ACCEPTED_MEMBERS));
 		Assert.assertEquals("the retained rectangle complement is not enumerated", 0L,
 			metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS));
 		CandidateEmissionRealization reboundDurable = rebound.allowedEmissionFacts().get(0)
@@ -562,6 +575,15 @@ public class NativeMixedAxisSplitPublicationTest {
 
 	@Test
 	public void standaloneRetainedUnionConsumesOnlyTheExactResidual() throws Exception {
+		assertStandaloneRetainedPublication(false);
+	}
+
+	@Test
+	public void retainedExplicitMemberKeepsStandalonePublicationLazy() throws Exception {
+		assertStandaloneRetainedPublication(true);
+	}
+
+	private static void assertStandaloneRetainedPublication(boolean explicit) throws Exception {
 		CompiledHopKey leftOwner = fixtureKey("standalone-residual-left");
 		CompiledHopKey rightOwner = fixtureKey("standalone-residual-right");
 		CompiledHopKey consumerOwner = fixtureKey("standalone-residual-consumer");
@@ -588,11 +610,15 @@ public class NativeMixedAxisSplitPublicationTest {
 			retainedBindings::contains).orElseThrow();
 		CandidateRealizationSupportClause retainedClause = retainedRelation.get(0);
 		CandidateEmissionRealization retainedRealization = new CandidateEmissionRealization(
-			complete.key(), retainedRelation);
+			complete.key(), explicit ? List.of(retainedClause) : retainedRelation);
 		CandidateRuleFact retained = fact(staging.key(), List.of(retainedRealization));
 
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(0);
 		CandidateRuleFact rebound = bindBinary(closure(metrics), left, right, retained, consumerHop);
+		Assert.assertEquals(explicit ? 1L : 0L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.RETAINED_EXPLICIT_BRIDGE_SUCCESSES));
+		Assert.assertEquals(explicit ? 4L : 0L, metrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.RETAINED_EXPLICIT_BRIDGE_ACCEPTED_MEMBERS));
 		Assert.assertEquals("the retained rectangle complement is not enumerated", 0L,
 			metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
 		CandidateEmissionRealization merged = rebound.allowedEmissionFacts().get(0)
@@ -618,13 +644,24 @@ public class NativeMixedAxisSplitPublicationTest {
 		}
 		SearchSpaceMetrics.NativePublicationCount retainedCount = metrics
 			.nativePublicationSnapshot().stream().filter(value -> value.outcome()
-				== SearchSpaceMetrics.NativePublicationOutcome.RETAINED_UNION)
+				== (explicit ? SearchSpaceMetrics.NativePublicationOutcome.PUBLISHED
+				: SearchSpaceMetrics.NativePublicationOutcome.RETAINED_UNION))
 			.findFirst().orElseThrow();
 		Assert.assertEquals(4, retainedCount.logicalProofs());
 		Assert.assertEquals("the retained rectangle and its complement restore the lazy base",
 			0, retainedCount.consumedProofs());
 		Assert.assertEquals(0L,
 			metrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+
+		CandidateRuleFact fullyExplicit = fact(staging.key(), List.of(
+			new CandidateEmissionRealization(complete.key(), List.copyOf(complete.supportClauses()))));
+		SearchSpaceMetrics coveredMetrics = new SearchSpaceMetrics();
+		CandidateRuleFact covered = bindBinary(closure(coveredMetrics), left, right,
+			fullyExplicit, consumerHop);
+		Assert.assertSame("exact full explicit coverage retains the original emission",
+			fullyExplicit.allowedEmissionFacts().get(0), covered.allowedEmissionFacts().get(0));
+		Assert.assertEquals(0L, coveredMetrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
 
 		CandidateEmissionRealization stagingRealization = staging.allowedEmissionFacts().get(0)
 			.realizations().get(0);
@@ -642,8 +679,8 @@ public class NativeMixedAxisSplitPublicationTest {
 		Assert.assertTrue("unrelated staging is excluded exactly as in the full scalar reconstruction",
 			unrelatedStagingRebound.allowedEmissionFacts().get(0).realizations().stream()
 				.noneMatch(value -> value.key().equals(stagingRealization.key())));
-		Assert.assertEquals("unrelated staging must not force the retained tuple through scalar consumption",
-			0L, unrelatedStagingMetrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
+		Assert.assertEquals("only native residuals may bypass unrelated staging",
+			explicit ? 4L : 0L, unrelatedStagingMetrics.directWorkCount(SearchSpaceMetrics.DirectWork.PROOFS_CONSUMED));
 
 		CandidateEmissionRealization sameKeyStaging = new CandidateEmissionRealization(
 			complete.key(), List.of(new CandidateRealizationSupportClause(List.of(), List.of())));
@@ -651,7 +688,7 @@ public class NativeMixedAxisSplitPublicationTest {
 			fact(staging.key(), List.of(retainedRealization, sameKeyStaging)), cold, 4);
 		assertStandaloneResidualFallback(left, right, consumerHop,
 			fact(staging.key(), List.of(new CandidateEmissionRealization(
-				complete.key(), List.of(retainedClause)))), cold, 4);
+				complete.key(), List.of(retainedClause)))), cold, 0);
 	}
 
 	private static void assertStandaloneResidualFallback(BinderAxis left, BinderAxis right,

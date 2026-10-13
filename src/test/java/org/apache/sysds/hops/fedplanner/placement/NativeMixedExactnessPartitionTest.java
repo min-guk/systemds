@@ -338,9 +338,15 @@ public class NativeMixedExactnessPartitionTest {
 			fallback.allowedEmissionFacts().get(0).realizations(), PlacementLayoutKind.DURABLE_MAP);
 		CandidateEmissionRealization nativeReplay = part(
 			fallback.allowedEmissionFacts().get(0).realizations(), PlacementLayoutKind.NATIVE_LINEAGE);
-		Assert.assertFalse("only the conflicting durable part must use scalar fallback",
+		Assert.assertTrue("an exact retained explicit member keeps the durable part lazy",
 			durableFallback.supportClauses() instanceof NativeContinuitySupportClauses);
+		Assert.assertEquals(0, ((NativeContinuitySupportClauses)
+			durableFallback.supportClauses()).materializedHandleCount());
 		Assert.assertEquals(2, durableFallback.supportClauses().size());
+		CandidateRealizationSupportClause retainedClause = partialDurable.supportClauses().get(0);
+		Assert.assertSame(retainedClause, durableFallback.supportClauses().get(
+			((NativeContinuitySupportClauses)durableFallback.supportClauses())
+				.ordinalOfExactAuthorityClause(retainedClause)));
 		Assert.assertSame("the independently covered native part must remain lazy",
 			nativePart, nativeReplay);
 		Assert.assertEquals(first.allowedEmissionFacts(), fallback.allowedEmissionFacts());
@@ -350,15 +356,45 @@ public class NativeMixedExactnessPartitionTest {
 			.findFirst().orElseThrow();
 		Assert.assertEquals(1, partitioned.queries());
 		Assert.assertEquals(4, partitioned.logicalProofs());
-		Assert.assertEquals("only the rejected two-member part may consume scalar proofs",
-			2, partitioned.consumedProofs());
-		Assert.assertEquals(2L, fallbackMetrics.directWorkCount(
+		Assert.assertEquals("the exact explicit bridge consumes no scalar proofs",
+			0, partitioned.consumedProofs());
+		Assert.assertEquals(0L, fallbackMetrics.directWorkCount(
 			SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS));
 		Assert.assertEquals(0L, fallbackMetrics.directWorkCount(
 			SearchSpaceMetrics.DirectWork.PARTITIONED_COLLISION_PROOFS));
 		Assert.assertEquals(0L, fallbackMetrics.directWorkCount(
 			SearchSpaceMetrics.DirectWork.PARTITIONED_SINGLETON_PROOFS));
 		assertDurablePairObservation(fallbackMetrics, 2);
+
+		// A genuinely different full seed still requires the exact scalar fallback;
+		// sharing output geometry does not authorize dropping its older proof.
+		var product = ((NativeContinuitySupportClauses)durable.supportClauses()).product();
+		var foreignProof = new NativePlacementContinuity.NativeContinuityProof(
+			pool("retained-foreign-full-seed"), product.outputWorkerPoolWitness(),
+			product.exactPartitionRanges(), retainedClause.inputBindings());
+		CandidateRealizationSupportClause foreign = new CandidateRealizationSupportClause(
+			List.of(foreignProof.continuityProofKey(first.key().parentOccurrence())),
+			retainedClause.inputBindings(), retainedClause.nativeWorkerPoolWitness(),
+			retainedClause.nativeWorkerPoolLayoutExact());
+		CandidateEmissionRealization foreignRealization = new CandidateEmissionRealization(
+			durable.key(), List.of(foreign));
+		SearchSpaceMetrics foreignMetrics = new SearchSpaceMetrics();
+		CandidateRuleFact foreignResult = bind(withConsumer(coldFixture,
+			fact(first.key(), List.of(foreignRealization, nativePart))),
+			new PlacementRelationClosure(null, null, foreignMetrics, false,
+				PrivacyEvidenceMode.NONE, false)).fact();
+		CandidateEmissionRealization foreignDurable = part(
+			foreignResult.allowedEmissionFacts().get(0).realizations(), PlacementLayoutKind.DURABLE_MAP);
+		Assert.assertFalse(foreignDurable.supportClauses() instanceof NativeContinuitySupportClauses);
+		Assert.assertEquals(3, foreignDurable.supportClauses().size());
+		Assert.assertTrue(foreignDurable.supportClauses().stream().anyMatch(clause -> clause == foreign));
+		Assert.assertEquals(new CandidateEmissionFact(ROW_EMISSION, FType.ROW, null,
+			List.of(durable, nativePart, foreignRealization)).realizations(),
+			foreignResult.allowedEmissionFacts().get(0).realizations());
+		Assert.assertEquals(2L, foreignMetrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.PARTITIONED_RETAINED_PROOFS));
+		Assert.assertEquals(1L, foreignMetrics.directWorkCount(
+			SearchSpaceMetrics.DirectWork.RETAINED_EXPLICIT_BRIDGE_REJECT_AUTHORITY));
 	}
 
 	private static void assertDurablePairObservation(SearchSpaceMetrics metrics, int logicalMembers) {

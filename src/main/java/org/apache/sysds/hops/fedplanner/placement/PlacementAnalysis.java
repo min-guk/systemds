@@ -2470,6 +2470,29 @@ public final class PlacementAnalysis {
 				}
 				List<CandidateRealizationSupportClause> leftClauses = left.supportClauses();
 				List<CandidateRealizationSupportClause> rightClauses = right.supportClauses();
+				if(!(leftClauses instanceof NativeContinuitySupportClauses)
+					&& !(leftClauses instanceof FactorizedSupportClauses)
+					&& !(leftClauses instanceof IndexedSupportClauses)
+					&& rightClauses instanceof NativeContinuitySupportClauses rightNative) {
+					var overlay = rightNative.withExplicitAuthority(leftClauses);
+					if(overlay.relation() != null) {
+						NativeContinuitySupportClauses union = overlay.relation();
+						boolean reused = union == rightNative;
+						if(metrics != null) {
+							metrics.recordRealizationMergeInput();
+							metrics.recordRealizationMergeInput();
+							metrics.recordRealizationMergeClauses(union.size(), leftClauses.size());
+							if(reused)
+								metrics.recordRealizationMergeReuse();
+							if(metrics.hasDuplicateMergeDiagnostics())
+								metrics.recordNativeRelationMergeDiagnostics(
+									"TWO_EXPLICIT_NATIVE_OVERLAY", 2,
+									(long)leftClauses.size() + rightClauses.size(), union.size(), reused);
+						}
+						return List.of(reused ? right
+							: new CandidateEmissionRealization(left.key(), union));
+					}
+				}
 				if(leftClauses instanceof NativeContinuitySupportClauses leftNative
 					&& rightClauses instanceof NativeContinuitySupportClauses rightNative) {
 					Optional<NativeContinuitySupportClauses> nativeUnion =
@@ -2761,6 +2784,10 @@ public final class PlacementAnalysis {
 
 		private static CandidateEmissionRealization mergeRealizationGroup(
 			List<CandidateEmissionRealization> group, SearchSpaceMetrics metrics) {
+			CandidateEmissionRealization explicitNative =
+				mergeExplicitNativeRealizationGroup(group, metrics);
+			if(explicitNative != null)
+				return explicitNative;
 			CandidateEmissionRealization nativeProduct =
 				mergeNativeRealizationGroup(group, metrics);
 			if(nativeProduct != null)
@@ -2834,6 +2861,68 @@ public final class PlacementAnalysis {
 			}
 			return CandidateEmissionRealization.fromAlreadyCanonicalSupportClauses(first.key(),
 				new SharedCanonicalList<>(List.copyOf(union), List.copyOf(unionKeys)));
+		}
+
+		private static CandidateEmissionRealization mergeExplicitNativeRealizationGroup(
+			List<CandidateEmissionRealization> group, SearchSpaceMetrics metrics) {
+			int firstNative = -1;
+			long inputClauses = 0;
+			int explicitClauses = 0;
+			for(int index = 0; index < group.size(); index++) {
+				List<CandidateRealizationSupportClause> clauses = group.get(index).supportClauses();
+				inputClauses = Math.addExact(inputClauses, clauses.size());
+				if(clauses instanceof NativeContinuitySupportClauses) {
+					if(firstNative < 0)
+						firstNative = index;
+				}
+				else {
+					if(firstNative >= 0 || clauses instanceof FactorizedSupportClauses
+						|| clauses instanceof IndexedSupportClauses)
+						return null;
+					explicitClauses = Math.addExact(explicitClauses, clauses.size());
+					if(!NativeContinuitySupportClauses
+						.explicitAuthorityPrefixWithinCountLimit(explicitClauses))
+						return null;
+				}
+			}
+			if(firstNative <= 0)
+				return null;
+			List<CandidateRealizationSupportClause> prefix = new ArrayList<>(explicitClauses);
+			for(int index = 0; index < firstNative; index++)
+				prefix.addAll(group.get(index).supportClauses());
+			NativeContinuitySupportClauses union =
+				(NativeContinuitySupportClauses)group.get(firstNative).supportClauses();
+			var overlay = union.withExplicitAuthority(prefix);
+			if(overlay.relation() == null)
+				return null;
+			union = overlay.relation();
+			for(int index = firstNative + 1; index < group.size(); index++) {
+				NativeContinuitySupportClauses next =
+					(NativeContinuitySupportClauses)group.get(index).supportClauses();
+				Optional<NativeContinuitySupportClauses> merged = union.oneAxisUnion(next);
+				if(merged.isEmpty())
+					merged = union.multiHeaderUnion(next);
+				if(merged.isEmpty())
+					merged = NativeContinuitySupportClauses.unionSameAxesHeaderGroup(
+						List.of(union, next));
+				if(merged.isEmpty())
+					return null;
+				union = merged.get();
+			}
+			if(metrics != null) {
+				metrics.recordRealizationMergeClauses(union.size(), inputClauses - union.size());
+				if(metrics.hasDuplicateMergeDiagnostics())
+					metrics.recordNativeRelationMergeDiagnostics("K_EXPLICIT_NATIVE_OVERLAY",
+						group.size(), inputClauses, union.size(),
+						union == group.get(firstNative).supportClauses());
+			}
+			for(int index = firstNative; index < group.size(); index++)
+				if(union == group.get(index).supportClauses()) {
+					if(metrics != null)
+						metrics.recordRealizationMergeReuse();
+					return group.get(index);
+				}
+			return new CandidateEmissionRealization(group.get(0).key(), union);
 		}
 
 		private static CandidateEmissionRealization mergeNativeRealizationGroup(

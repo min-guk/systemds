@@ -536,3 +536,19 @@
 
 - `eb1e8c47db` frozen4회 모두watchdog60/no fullInitial/own container 제거. LR267,389/GLM6,226 raw ordinary rows 재사용은 실제 적용 증거지만 전체 완료 시간은 없다. OFF direct63.48%/21.94%, GLM canonical7.91%/joint7.68%.
 - External build OFF/detailed 각15/25, own heavy 격리. 근거 R/evidence/v60-*.log/txt/json. 반복 row 생성 감소만으로 근본 product 재전개 문제를 해결하지 못했다. 다음 acceptance는 earlier explicit clause와 later native product의 first-donor 보존 압축 merge다.
+
+## V61 explicit retained authority의 native product 재전개 — 구현·회귀 검증 중
+
+- **증상/원인**: 기존 explicit clause가 하나라도 있으면 새 native product의 retained union이 실패해 전체 proof를 개별 소비한다. 최종 emission의 `containsExact` 및 3개 이상 input을 key로 나눈 mixed merge도 lazy relation을 다시 펼칠 수 있다.
+- **해결 방향**: 이미 존재하는 explicit clause가 새 product의 exact member임을 FULL seed·proof/source owner identity·layout·witness로 증명할 때만 원래 객체를 singleton leaf donor로 보존한다. 기존64 donor/1M retention-unit 예산을 유지하고 일반 native donors 앞에 둔다. 순수 explicit retained→ordinary native product의 좁은 publication 경로부터 적용한다.
+- **규칙 근거**: support 표현·publication만 수정한다. runtime/후보/합법성/privacy/DP 비용이나 timeout을 완화하지 않는다. Conditional/multi-header/extra member/충돌/staging/cap 초과는 기존 정확한 경로를 유지한다.
+- **변경 파일**: NativeContinuitySupportClauses.java, PlacementAnalysis.java, PlacementRelationClosure.java, SearchSpaceMetrics.java; NativeSingleAxisProductUnionTest.java, NativeMixedAxisSplitPublicationTest.java.
+- **RED 검증**: public pair15tests/1 intended representation failure; cardinality 추가16tests/2 intended failures(기존 native member1개를 불필요하게 생성); 실제 standalone/split binder12tests/3 intended failures(expected proof consumption0, actual4). 단위테스트는 host Java 검증이며 workload 성능 실험이 아니다.
+- **근거**: R/V61_EXPLICIT_RETAINED_BRIDGE_PLAN.md, R/evidence/v61-explicit-bridge-red.log, v61-cardinality-red.log, v61-publication-red.log.
+- **잔여/회귀 위험**: HashMap iteration을 donor 순서로 사용하지 않는다. 같은 explicit prefix를 재병합할 때 donor를 누적하면 cap을 소모하므로 idempotent 처리한다. 제한/철회/재추가, full-coverage emission reuse, seed/owner/cap 거절과 실제 binder의 최종 lazy 표현을 검증한다. 독립 검토·최종 선택 gate·동일Docker payoff는 아직 미완료다.
+
+- V61 독립 frozen production/경계테스트 검토 CLEAR. 초기 focused296PASS/1ignored. Re-add fixture 첫 버전은 두 축이 달라져 의도한 one-axis union이 불가능했으며, 생존 left축을 유지하고 withdrawn right option만 다시 추가하도록 수정했다. 실패 로그는 `v61-boundary-unrepresentable-readd-fixture.log`로 보존했고 생산코드는 변경하지 않았다. 수정 fixture를 포함한 최종 focused/통합 gate를 재검증한다.
+
+- V61 frozen focused **299PASS/1ignored**. 첫 전체 선택 gate1658tests/1failure는 기존 `NativeMixedExactnessPartitionTest`가 “exact explicit member도 반드시 scalar fallback”이라고 요구하던 기대치였다. 해당 fixture는 권한 충돌이 아니므로 lazy/0소비·원본 donor·전체 equality로 수정하고, FULL seed만 다른 실제 binder 반례를 추가해 기존 scalar2/전체3clauses/foreign donor 보존을 확인했다. 독립 추가검토 CLEAR, focused7PASS. 원래 실패로그 `v61-package-old-explicit-fallback-expectation.log` 보존. 생산코드는 변경 없이 전체 gate를 다시 실행한다.
+
+- V61 최종 fresh 선택 gate **211classes/1658tests/0fail/0error/3skip**, BUILD SUCCESS10:10:09+02. 추가 mixed-exactness7PASS 및 independent CLEAR. 변경은 exact 표현·작업 제거이며 실제 workload 효과는 동일Docker로 별도 검증한다.

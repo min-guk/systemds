@@ -1,5 +1,15 @@
 # FedPlanner 최적화 진행 현황 보고서
 
+## V61 explicit retained support의 압축 publication — 검증 통과, 실측 대기
+
+- **근본 경계**: 이전 explicit support 하나 때문에 새 native Cartesian product를 다시 전부 펼치던 경로를 수정했다. 기존 clause가 새 ordinary single-header product의 exact member인 경우에만 원본 객체를 singleton first-donor로 보존한다. 최종 pair/K-group merge와 `containsExact`의 숨은 member 순회까지 함께 막았다.
+- **안전성**: FULL seed, proof/source owner identity, witness/layout, canonical 순서·first donor를 보존한다. 기존64 donor/1M retention-unit 한도 유지. Conditional/multi-header/extra member/혼합 retained/staging/충돌/예산 초과는 기존 exact fallback이다. 후보·privacy·runtime·DP 비용/timeout 변경 없음.
+- **검증**: 유효 RED(public pair, cardinality, 실제 standalone/split binder) → frozen focused299PASS/1ignored + 추가 mixed-exactness7PASS. 실제 binder에서 exact member 보존 시 scalar proof 소비4→0, 생성된 relation의 member handle0을 전체 enumeration 전에 검증했다. 다른 FULL seed는 실제 fallback2/전체3clauses 및 원본 donor 보존을 확인했다.
+- **최종 선택 gate**: 211 classes / **1,658 tests / failures0 / errors0 / skipped3**, fresh package BUILD SUCCESS10:10:09+02. 전체 repo suite는 아니다. Independent production/경계 및 추가 old-expectation 수정 검토 CLEAR.
+- 근거 `R/evidence/v61-production-review.txt`, `v61-boundary-focused.log`, `v61-mixed-exactness-focused.log`, `candidate-v61-package.log`. 첫 전체 gate의 구식 “exact explicit도 반드시 scalar” 기대치 실패는 별도 보존했고 생산코드는 바꾸지 않았다.
+- 성능 효과는 아직 미측정이다. V60까지 모든 own fixed Docker 실행에서 fullInitial receipt가 없으므로 **20초 목표 및 전체 ML 연산 압축 완료는 여전히 미완료**다.
+
+
 ## V60 기존 ordinary topology의 혼합 경로 공유 — 검증 통과
 
 - Native/ordinary 혼합 query가 이미 저장된 ordinary row를 skeleton/dependency/edge로 다시 만들던 작업을 제거했다. **새 cache·budget·후보 축소 없이** positive resident row만 재사용한다. Missing bucket은 기존 경로로 처리하고, duplicate authority 검사·first donor·현재 fixed overlay는 유지한다. Derived/VALUE_MAP metadata 처리는 그대로다.

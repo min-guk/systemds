@@ -6728,10 +6728,59 @@ final class PlacementRelationClosure {
 				return null;
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> explicit =
 				prior.get(candidate.key());
-			if(explicit != null && !explicit.isEmpty())
-				return null;
 			List<NativeContinuitySupportClauses> retainedRelations =
 				nativeProducts.get(candidate.key());
+			if(explicit != null && !explicit.isEmpty()) {
+				if(metrics != null) {
+					metrics.recordDirectWork(DirectWork.RETAINED_EXPLICIT_BRIDGE_REQUESTS);
+					metrics.recordDirectWork(DirectWork.RETAINED_EXPLICIT_BRIDGE_LOGICAL_MEMBERS,
+						relation.size());
+				}
+				// Only pure explicit retained authority is restored here. Mixing old
+				// native domains requires a separate encounter-order union proof.
+				if(retainedRelations != null && !retainedRelations.isEmpty()) {
+					if(metrics != null)
+						metrics.recordDirectWork(DirectWork.RETAINED_EXPLICIT_BRIDGE_REJECT_MIXED);
+					return null;
+				}
+				List<CandidateRealizationSupportClause> ordered = null;
+				for(CandidateEmissionRealization previous : retained) {
+					if(!previous.key().equals(candidate.key()))
+						continue;
+					// CandidateEmissionFact canonicalizes each key to one realization.
+					// Keep the original clauses, never HashMap iteration as donor order.
+					if(ordered != null) {
+						if(metrics != null)
+							metrics.recordDirectWork(DirectWork.RETAINED_EXPLICIT_BRIDGE_REJECT_AUTHORITY);
+						return null;
+					}
+					ordered = previous.supportClauses();
+				}
+				if(ordered == null || ordered.size() != explicit.size()
+					|| ordered instanceof FactorizedSupportClauses
+					|| ordered instanceof IndexedSupportClauses) {
+					if(metrics != null)
+						metrics.recordDirectWork(DirectWork.RETAINED_EXPLICIT_BRIDGE_REJECT_AUTHORITY);
+					return null;
+				}
+				var overlay = relation.withExplicitAuthority(ordered);
+				if(overlay.relation() == null) {
+					if(metrics != null)
+						metrics.recordDirectWork(overlay.capRejected()
+							? DirectWork.RETAINED_EXPLICIT_BRIDGE_REJECT_CAP
+							: DirectWork.RETAINED_EXPLICIT_BRIDGE_REJECT_AUTHORITY);
+					return null;
+				}
+				if(metrics != null) {
+					metrics.recordDirectWork(DirectWork.RETAINED_EXPLICIT_BRIDGE_SUCCESSES);
+					metrics.recordDirectWork(DirectWork.RETAINED_EXPLICIT_BRIDGE_ACCEPTED_MEMBERS,
+						relation.size());
+				}
+				// Exact unique subset plus equal cardinality proves complete coverage.
+				return ordered.size() == relation.size() ? new NativeRetainedUnion(null, true)
+					: new NativeRetainedUnion(new CandidateEmissionRealization(
+						candidate.key(), overlay.relation()), false);
+			}
 			if(retainedRelations == null || retainedRelations.isEmpty())
 				return null;
 			NativeContinuitySupportClauses union = retainedRelations.get(0);
@@ -6865,10 +6914,11 @@ final class PlacementRelationClosure {
 					return false;
 				// Native retained products are indexed separately and deliberately do not
 				// populate an otherwise empty scalar clause map. Such a map cannot prove
-				// exact scalar reuse; fail before probing a lazy relation member. Preserve
-				// the existing comparison when same-key explicit clauses populated the map.
-				if(clauses.isEmpty()
-					&& realization.supportClauses() instanceof NativeContinuitySupportClauses)
+				// exact scalar reuse. More generally, a smaller explicit map cannot cover
+				// a wider native relation: reject before materializing any of its members.
+				// Equal/smaller relations retain the existing exact reuse comparison.
+				if(realization.supportClauses() instanceof NativeContinuitySupportClauses relation
+					&& relation.size() > clauses.size())
 					return false;
 				for(CandidateRealizationSupportClause candidate : realization.supportClauses()) {
 					CandidateRealizationSupportClause retainedClause = clauses.get(candidate);

@@ -71,6 +71,47 @@ public class NativeSingleAxisProductUnionTest {
 	}
 
 	@Test
+	public void sameKeyExplicitLastMemberCannotCertifyWiderUnreadNativeSuffix() throws Exception {
+		CompiledHopKey owner = key("explicit-native-cardinality-owner");
+		CompiledHopKey source = key("explicit-native-cardinality-source");
+		DurableAnchorKey seed = pool("explicit-native-cardinality-seed");
+		DurableAnchorKey output = pool("explicit-native-cardinality-output");
+		List<List<CandidateRealizationInputBinding>> axes = List.of(sorted(
+			direct(0, "a", source), direct(0, "medium-member", source),
+			direct(0, "last-member-with-the-longest-lineage", source)));
+		NativeContinuitySupportClauses wider = relation(owner, seed, output, axes);
+		List<CandidateRealizationInputBinding> lastBindings =
+			wider.product().bindingsAt(wider.size() - 1).stream().map(
+				NativeSingleAxisProductUnionTest::directLike).toList();
+		var lastProof = new NativePlacementContinuity.NativeContinuityProof(
+			seed, output, true, lastBindings).continuityProofKey(owner);
+		CandidateRealizationSupportClause retainedLast = new CandidateRealizationSupportClause(
+			List.of(lastProof), lastBindings, output, true);
+		PlacementRealizationKey outputKey =
+			PlacementRealizationKey.nativeLineage(emission(), "explicit-native-cardinality");
+		CandidateEmissionFact grounded = new CandidateEmissionFact(emission(), FType.ROW, null,
+			List.of(new CandidateEmissionRealization(outputKey, List.of(retainedLast))));
+
+		Method prepare = PlacementRelationClosure.class.getDeclaredMethod(
+			"prepareGroundedNativeSupport", CandidateEmissionFact.class);
+		prepare.setAccessible(true);
+		Object preparation = prepare.invoke(null, grounded);
+		Method retained = preparation.getClass().getDeclaredMethod("retained");
+		retained.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		List<CandidateEmissionRealization> scheduled = new ArrayList<>(
+			(List<CandidateEmissionRealization>)retained.invoke(preparation));
+		scheduled.add(new CandidateEmissionRealization(outputKey, wider));
+		Method containsExact = preparation.getClass().getDeclaredMethod("containsExact", List.class);
+		containsExact.setAccessible(true);
+
+		Assert.assertFalse("one retained member cannot certify a wider native suffix",
+			(boolean)containsExact.invoke(preparation, scheduled));
+		Assert.assertEquals("cardinality rejection must precede native member reads", 0,
+			wider.materializedHandleCount());
+	}
+
+	@Test
 	public void diagnosticsKeepTwoWayNativeUnionsLazyAndCountLogicalDuplicates() {
 		CompiledHopKey owner = key("diagnostic-consumer");
 		CompiledHopKey source = key("diagnostic-source");
@@ -425,6 +466,268 @@ public class NativeSingleAxisProductUnionTest {
 	}
 
 	@Test
+	public void candidateEmissionMergeRetainsEarlierExplicitMemberInsideUnreadNativeProduct() {
+		CompiledHopKey owner = key("explicit-native-bridge-consumer");
+		CompiledHopKey leftOwner = key("explicit-native-bridge-left");
+		CompiledHopKey rightOwner = key("explicit-native-bridge-right");
+		DurableAnchorKey seed = pool("explicit-native-bridge-seed");
+		DurableAnchorKey output = pool("explicit-native-bridge-output");
+		List<List<CandidateRealizationInputBinding>> axes = List.of(
+			sorted(direct(0, "a", leftOwner), direct(0, "left-long", leftOwner)),
+			sorted(direct(1, "a", rightOwner), direct(1, "right-medium", rightOwner),
+				direct(1, "right-much-longer", rightOwner)));
+		NativeContinuitySupportClauses laterNative = relation(owner, seed, output, axes);
+		Assert.assertEquals(6, laterNative.size());
+		Assert.assertEquals(0, laterNative.materializedHandleCount());
+
+		List<CandidateRealizationInputBinding> selected = List.of(
+			directLike(axes.get(0).get(1)), directLike(axes.get(1).get(2)));
+		var proof = new NativePlacementContinuity.NativeContinuityProof(
+			seed, output, true, selected).continuityProofKey(owner);
+		CandidateRealizationSupportClause earlierExplicit =
+			new CandidateRealizationSupportClause(List.of(proof), selected, output, true);
+		int authorityOrdinal = laterNative.product()
+			.ordinalOfExactAuthorityBindings(earlierExplicit.inputBindings());
+		Assert.assertTrue("fixture selects a nonzero native canonical ordinal", authorityOrdinal > 0);
+		List<CandidateRealizationSupportClause> explicitOracle = explicit(
+			owner, seed, output, axes);
+		PlacementRealizationKey realizationKey =
+			PlacementRealizationKey.nativeLineage(emission(), "explicit-native-bridge-output");
+
+		CandidateEmissionFact merged = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+			new CandidateEmissionRealization(realizationKey, List.of(earlierExplicit)),
+			new CandidateEmissionRealization(realizationKey, laterNative)));
+		Assert.assertEquals(1, merged.realizations().size());
+		Assert.assertTrue("an exact earlier member must remain represented by the native product",
+			merged.realizations().get(0).supportClauses() instanceof NativeContinuitySupportClauses);
+		NativeContinuitySupportClauses bridged = (NativeContinuitySupportClauses)
+			merged.realizations().get(0).supportClauses();
+		Assert.assertEquals(6, bridged.size());
+		Assert.assertEquals("merge must not enumerate the later native relation", 0,
+			laterNative.materializedHandleCount());
+		Assert.assertEquals("native list hash must match independent explicit enumeration",
+			explicitOracle.hashCode(), bridged.hashCode());
+		Assert.assertEquals("hashing must not enumerate the later native relation", 0,
+			laterNative.materializedHandleCount());
+		Assert.assertSame("the earlier exact clause remains the authority donor",
+			earlierExplicit, bridged.get(authorityOrdinal));
+		Assert.assertEquals("donor lookup must not enumerate the later native relation", 0,
+			laterNative.materializedHandleCount());
+		int donorCount = bridged.authorityDonorCount();
+		CandidateEmissionFact repeated = new CandidateEmissionFact(emission(), FType.ROW, null,
+			List.of(new CandidateEmissionRealization(realizationKey, List.of(earlierExplicit)),
+				merged.realizations().get(0)));
+		Assert.assertSame("a repeated earlier prefix reuses the existing overlay",
+			bridged, repeated.realizations().get(0).supportClauses());
+		Assert.assertEquals(donorCount, bridged.authorityDonorCount());
+		Assert.assertEquals("repeated-prefix recognition must not enumerate the later relation", 0,
+			laterNative.materializedHandleCount());
+		CandidateRealizationSupportClause replacement = new CandidateRealizationSupportClause(
+			earlierExplicit.proofDependencies(), earlierExplicit.inputBindings(),
+			earlierExplicit.nativeWorkerPoolWitness(),
+			earlierExplicit.nativeWorkerPoolLayoutExact());
+		CandidateEmissionFact replaced = new CandidateEmissionFact(emission(), FType.ROW, null,
+			List.of(new CandidateEmissionRealization(realizationKey, List.of(replacement)),
+				merged.realizations().get(0)));
+		NativeContinuitySupportClauses replacedBridge = (NativeContinuitySupportClauses)
+			replaced.realizations().get(0).supportClauses();
+		Assert.assertSame("an equal-distinct earlier clause becomes the new first donor",
+			replacement, replacedBridge.get(authorityOrdinal));
+		Assert.assertEquals(donorCount + 1, replacedBridge.authorityDonorCount());
+		NativeContinuitySupportClauses withdrawn = bridged.restrictBindings(binding ->
+			!binding.equals(selected.get(1))).orElseThrow();
+		Assert.assertEquals(-1, withdrawn.product().ordinalOfExactAuthorityBindings(selected));
+		NativeContinuitySupportClauses readded = relation(owner, seed, output, List.of(
+			axes.get(0), List.of(directLike(selected.get(1)))));
+		int readdedOrdinal = readded.product().ordinalOfExactAuthorityBindings(selected);
+		CandidateRealizationSupportClause current = readded.get(readdedOrdinal);
+		NativeContinuitySupportClauses restored = withdrawn.oneAxisUnion(readded).orElseThrow();
+		int restoredOrdinal = restored.product().ordinalOfExactAuthorityBindings(selected);
+		Assert.assertSame("withdrawal drops the old singleton donor before re-addition",
+			current, restored.get(restoredOrdinal));
+		Assert.assertNotSame(earlierExplicit, restored.get(restoredOrdinal));
+
+		Assert.assertEquals(explicitOracle.stream().map(
+			CandidateRealizationSupportClause::normalizedSignature).toList(), bridged.stream().map(
+				CandidateRealizationSupportClause::normalizedSignature).toList());
+		Assert.assertEquals(explicitOracle, bridged);
+	}
+
+	@Test
+	public void candidateEmissionMergeDoesNotBridgeExplicitMemberFromDifferentFullSeed() {
+		CompiledHopKey owner = key("explicit-native-seed-guard-consumer");
+		CompiledHopKey sourceOwner = key("explicit-native-seed-guard-source");
+		DurableAnchorKey nativeSeed = pool("explicit-native-seed-guard-native");
+		DurableAnchorKey explicitSeed = pool("explicit-native-seed-guard-explicit");
+		DurableAnchorKey output = pool("explicit-native-seed-guard-output");
+		List<List<CandidateRealizationInputBinding>> axes = List.of(sorted(
+			direct(0, "a", sourceOwner), direct(0, "b", sourceOwner)));
+		NativeContinuitySupportClauses laterNative = relation(
+			owner, nativeSeed, output, axes);
+		CandidateRealizationSupportClause foreignSeed = explicit(
+			owner, explicitSeed, output, List.of(List.of(directLike(axes.get(0).get(1))))).get(0);
+		Assert.assertEquals(-1, laterNative.ordinalOfExactAuthorityClause(foreignSeed));
+		Assert.assertEquals(0, laterNative.materializedHandleCount());
+		PlacementRealizationKey realizationKey =
+			PlacementRealizationKey.nativeLineage(emission(), "explicit-native-seed-guard-output");
+
+		CandidateEmissionFact merged = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+			new CandidateEmissionRealization(realizationKey, List.of(foreignSeed)),
+			new CandidateEmissionRealization(realizationKey, laterNative)));
+		List<CandidateRealizationSupportClause> clauses = merged.realizations().get(0).supportClauses();
+		Assert.assertEquals("a different full external seed remains an independent alternative",
+			3, clauses.size());
+		Assert.assertTrue("fallback preserves the earlier explicit authority object",
+			clauses.stream().anyMatch(clause -> clause == foreignSeed));
+	}
+
+	@Test
+	public void candidateEmissionGroupBridgesExplicitPrefixBeforeNativeGrowth() {
+		CompiledHopKey owner = key("explicit-native-group-owner");
+		CompiledHopKey leftOwner = key("explicit-native-group-left");
+		CompiledHopKey rightOwner = key("explicit-native-group-right");
+		DurableAnchorKey seed = pool("explicit-native-group-seed");
+		DurableAnchorKey output = pool("explicit-native-group-output");
+		var leftA = direct(0, "a", leftOwner);
+		var leftB = direct(0, "b", leftOwner);
+		var rightA = direct(1, "a", rightOwner);
+		var rightB = direct(1, "b", rightOwner);
+		var rightC = direct(1, "c", rightOwner);
+		List<List<CandidateRealizationInputBinding>> baseAxes = List.of(
+			sorted(leftA, leftB), sorted(rightA, rightB));
+		List<List<CandidateRealizationInputBinding>> grownAxes = List.of(
+			sorted(directLike(leftA), directLike(leftB)),
+			sorted(directLike(rightA), directLike(rightB), rightC));
+		NativeContinuitySupportClauses base = relation(owner, seed, output, baseAxes);
+		NativeContinuitySupportClauses grown = relation(owner, seed, output, grownAxes);
+		List<CandidateRealizationInputBinding> selected = List.of(
+			directLike(leftB), directLike(rightB));
+		var proof = new NativePlacementContinuity.NativeContinuityProof(
+			seed, output, true, selected).continuityProofKey(owner);
+		CandidateRealizationSupportClause earlierExplicit = new CandidateRealizationSupportClause(
+			List.of(proof), selected, output, true);
+		PlacementRealizationKey realizationKey =
+			PlacementRealizationKey.nativeLineage(emission(), "explicit-native-group-output");
+
+		CandidateEmissionFact merged = new CandidateEmissionFact(emission(), FType.ROW, null, List.of(
+			new CandidateEmissionRealization(realizationKey, List.of(earlierExplicit)),
+			new CandidateEmissionRealization(realizationKey, base),
+			new CandidateEmissionRealization(realizationKey, grown)));
+		Assert.assertEquals(1, merged.realizations().size());
+		Assert.assertTrue(merged.realizations().get(0).supportClauses()
+			instanceof NativeContinuitySupportClauses);
+		NativeContinuitySupportClauses union = (NativeContinuitySupportClauses)
+			merged.realizations().get(0).supportClauses();
+		Assert.assertEquals(6, union.size());
+		Assert.assertEquals(0, base.materializedHandleCount());
+		Assert.assertEquals(0, grown.materializedHandleCount());
+		List<CandidateRealizationSupportClause> oracle = explicit(owner, seed, output, grownAxes);
+		Assert.assertEquals(oracle.hashCode(), union.hashCode());
+		Assert.assertEquals(0, base.materializedHandleCount());
+		Assert.assertEquals(0, grown.materializedHandleCount());
+		int ordinal = union.product().ordinalOfExactAuthorityBindings(selected);
+		Assert.assertSame(earlierExplicit, union.get(ordinal));
+		Assert.assertEquals(0, base.materializedHandleCount());
+		Assert.assertEquals(0, grown.materializedHandleCount());
+		Assert.assertEquals(oracle, union);
+	}
+
+	@Test
+	public void explicitAuthorityBridgeRejectsEveryInexactAuthorityBoundaryWithoutReads() {
+		CompiledHopKey owner = key("explicit-bridge-boundary-owner");
+		CompiledHopKey sourceOwner = key("explicit-bridge-boundary-source");
+		DurableAnchorKey seed = pool("explicit-bridge-boundary-seed");
+		DurableAnchorKey output = pool("explicit-bridge-boundary-output");
+		var a = direct(0, "a", sourceOwner);
+		var b = direct(0, "b", sourceOwner);
+		List<List<CandidateRealizationInputBinding>> axes = List.of(sorted(a, b));
+		NativeContinuitySupportClauses relation = relation(owner, seed, output, axes);
+		CandidateRealizationSupportClause exact = explicit(
+			owner, seed, output, List.of(List.of(directLike(b)))).get(0);
+		Assert.assertNotNull(relation.withExplicitAuthority(List.of(exact)).relation());
+
+		assertExplicitOverlayRejected(relation, explicit(
+			cloneKey(owner), seed, output, List.of(List.of(directLike(b)))).get(0));
+		assertExplicitOverlayRejected(relation, explicit(
+			owner, seed, output, List.of(List.of(direct(0, "b", cloneKey(sourceOwner))))).get(0));
+		var foreignOutputProof = new NativePlacementContinuity.NativeContinuityProof(
+			seed, pool("explicit-bridge-boundary-foreign-output"), true,
+			exact.inputBindings()).continuityProofKey(owner);
+		assertExplicitOverlayRejected(relation, new CandidateRealizationSupportClause(
+			List.of(foreignOutputProof), exact.inputBindings(), output, true));
+		var dynamicRangesProof = new NativePlacementContinuity.NativeContinuityProof(
+			seed, output, false, exact.inputBindings()).continuityProofKey(owner);
+		assertExplicitOverlayRejected(relation, new CandidateRealizationSupportClause(
+			List.of(dynamicRangesProof), exact.inputBindings(), output, true));
+		assertExplicitOverlayRejected(relation, new CandidateRealizationSupportClause(
+			exact.proofDependencies(), exact.inputBindings(),
+			pool("explicit-bridge-boundary-foreign-witness"), true));
+		assertExplicitOverlayRejected(relation, new CandidateRealizationSupportClause(
+			exact.proofDependencies(), exact.inputBindings(), output, false));
+		assertExplicitOverlayRejected(relation, new CandidateRealizationSupportClause(
+			List.of(exact.proofDependencies().get(0), foreignOutputProof),
+			exact.inputBindings(), output, true));
+		assertExplicitOverlayRejected(relation, explicit(owner, seed, output,
+			List.of(List.of(direct(0, "not-a-member", sourceOwner)))).get(0));
+
+		NativePlacementContinuity.NativeSupportProduct base =
+			NativePlacementContinuity.NativeSupportProduct.tryCreate(seed, output, true, axes);
+		NativeContinuitySupportClauses conditional = NativeContinuitySupportClauses.exactComplement(
+			owner, base, List.of(List.of(a)), output, true);
+		Assert.assertNotNull(conditional);
+		CandidateRealizationSupportClause conditionalMember = explicit(
+			owner, seed, output, List.of(List.of(directLike(b)))).get(0);
+		assertExplicitOverlayRejected(conditional, conditionalMember);
+		NativeContinuitySupportClauses multiHeader = relation(owner, seed, output, axes)
+			.multiHeaderUnion(relation(owner, pool("explicit-bridge-boundary-second-seed"),
+				output, List.of(sorted(directLike(a), directLike(b))))).orElseThrow();
+		assertExplicitOverlayRejected(multiHeader, exact);
+	}
+
+	@Test
+	public void explicitAuthorityBridgeHonorsDonorAndRetentionCapsWithoutMemberReads() {
+		CompiledHopKey owner = key("explicit-bridge-cap-owner");
+		CompiledHopKey sourceOwner = key("explicit-bridge-cap-source");
+		DurableAnchorKey seed = pool("explicit-bridge-cap-seed");
+		DurableAnchorKey output = pool("explicit-bridge-cap-output");
+		List<CandidateRealizationInputBinding> options = new ArrayList<>();
+		for(int index = 0; index < 65; index++)
+			options.add(direct(0, String.format("member-%02d", index), sourceOwner));
+		options.sort(PlacementAnalysis.canonicalComparator());
+		NativeContinuitySupportClauses relation = relation(
+			owner, seed, output, List.of(List.copyOf(options)));
+		List<CandidateRealizationSupportClause> explicit = explicit(
+			owner, seed, output, List.of(List.copyOf(options)));
+		var boundary = relation.withExplicitAuthority(explicit.subList(0, 63));
+		Assert.assertNotNull(boundary.relation());
+		Assert.assertFalse(boundary.capRejected());
+		Assert.assertEquals(64, boundary.relation().authorityDonorCount());
+		var capped = relation.withExplicitAuthority(explicit.subList(0, 64));
+		Assert.assertNull(capped.relation());
+		Assert.assertTrue(capped.capRejected());
+		Assert.assertEquals(0, relation.materializedHandleCount());
+
+		List<CandidateRealizationInputBinding> left = new ArrayList<>();
+		List<CandidateRealizationInputBinding> right = new ArrayList<>();
+		CompiledHopKey leftOwner = key("retention-left");
+		CompiledHopKey rightOwner = key("retention-right");
+		for(int index = 0; index < 1001; index++) {
+			left.add(direct(0, String.format("left-%04d", index), leftOwner));
+			right.add(direct(1, String.format("right-%04d", index), rightOwner));
+		}
+		left.sort(PlacementAnalysis.canonicalComparator());
+		right.sort(PlacementAnalysis.canonicalComparator());
+		NativeContinuitySupportClauses wide = relation(owner, seed, output,
+			List.of(List.copyOf(left), List.copyOf(right)));
+		CandidateRealizationSupportClause oneMember = explicit(owner, seed, output,
+			List.of(List.of(directLike(left.get(0))), List.of(directLike(right.get(0))))).get(0);
+		var retentionRejected = wide.withExplicitAuthority(List.of(oneMember));
+		Assert.assertNull(retentionRejected.relation());
+		Assert.assertTrue(retentionRejected.capRejected());
+		Assert.assertEquals(0, wide.materializedHandleCount());
+	}
+
+	@Test
 	public void fixedPointWithdrawalRestrictsEqualDistinctDonorsAgainstUnionAuthority() {
 		CompiledHopKey consumerOwner = key("fixed-point-consumer");
 		CompiledHopKey fixedOwner = key("fixed-source");
@@ -724,6 +1027,15 @@ public class NativeSingleAxisProductUnionTest {
 		var product = NativePlacementContinuity.NativeSupportProduct.tryCreate(seed, output, true, axes);
 		Assert.assertNotNull(product);
 		return new NativeContinuitySupportClauses(owner, product, output, true);
+	}
+
+	private static void assertExplicitOverlayRejected(NativeContinuitySupportClauses relation,
+		CandidateRealizationSupportClause clause) {
+		int handles = relation.materializedHandleCount();
+		var rejected = relation.withExplicitAuthority(List.of(clause));
+		Assert.assertNull(rejected.relation());
+		Assert.assertFalse(rejected.capRejected());
+		Assert.assertEquals(handles, relation.materializedHandleCount());
 	}
 
 	private static List<CandidateRealizationInputBinding> sorted(

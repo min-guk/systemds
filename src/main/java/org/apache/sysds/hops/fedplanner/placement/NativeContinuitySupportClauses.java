@@ -139,6 +139,78 @@ final class NativeContinuitySupportClauses
 			bindings, clauseWitness, clauseLayoutExact);
 	}
 
+	/**
+	 * Retains bounded earlier explicit members as singleton first-authority donors
+	 * without reading any member of this native relation. Every clause must be one
+	 * exact member of this relation; otherwise the caller keeps the ordinary merge.
+	 */
+	ExplicitAuthorityOverlay withExplicitAuthority(
+		java.util.Collection<CandidateRealizationSupportClause> explicitClauses) {
+		if(explicitClauses == null || explicitClauses.isEmpty())
+			return new ExplicitAuthorityOverlay(this, false);
+		if(products.size() != 1 || conditionalComplement())
+			return new ExplicitAuthorityOverlay(null, false);
+		if(!explicitAuthorityPrefixWithinCountLimit(explicitClauses.size()))
+			return new ExplicitAuthorityOverlay(null, true);
+		List<AuthorityDonor> prefix = new java.util.ArrayList<>(explicitClauses.size());
+		java.util.Set<Integer> ordinals = new java.util.HashSet<>();
+		for(CandidateRealizationSupportClause clause : explicitClauses) {
+			int ordinal = ordinalOfExactAuthorityClause(clause);
+			if(ordinal < 0)
+				return new ExplicitAuthorityOverlay(null, false);
+			if(!ordinals.add(ordinal))
+				continue;
+			NativeMember member = canonicalIndex == null
+				? new NativeMember(products.get(0), products.get(0).bindingsAt(ordinal))
+				: canonicalIndex.memberAt(ordinal);
+			if(firstAuthorityClause(member) == clause)
+				continue;
+			NativePlacementContinuity.NativeSupportProduct singleton = member.product().withAxes(
+				member.bindings().stream().map(List::of).toList());
+			if(singleton == null || singleton.size() != 1)
+				return new ExplicitAuthorityOverlay(null, false);
+			NativeContinuitySupportClauses leaf = new NativeContinuitySupportClauses(
+				owner, List.of(singleton), clauseWitness, clauseLayoutExact, List.of());
+			if(leaf.ordinalOfExactAuthorityClause(clause) != 0)
+				return new ExplicitAuthorityOverlay(null, false);
+			leaf.handles.put(0, clause);
+			prefix.add(new AuthorityDonor(leaf, singleton));
+		}
+		if(prefix.isEmpty())
+			return new ExplicitAuthorityOverlay(this, false);
+		List<AuthorityDonor> donors = new java.util.ArrayList<>(
+			prefix.size() + authoritySources().size());
+		donors.addAll(prefix);
+		donors.addAll(authoritySources());
+		long indexUnits = canonicalIndex == null ? 0 : canonicalIndex.retainedMetadataUnits();
+		if(!withinAuthorityRetentionBudget(products, indexUnits, donors))
+			return new ExplicitAuthorityOverlay(null, true);
+		return new ExplicitAuthorityOverlay(new NativeContinuitySupportClauses(owner, products,
+			clauseWitness, clauseLayoutExact, donors), false);
+	}
+
+	record ExplicitAuthorityOverlay(NativeContinuitySupportClauses relation,
+		boolean capRejected) { }
+	static boolean explicitAuthorityPrefixWithinCountLimit(int count) {
+		return count > 0 && count < MAX_AUTHORITY_DONORS;
+	}
+
+	private CandidateRealizationSupportClause firstAuthorityClause(NativeMember member) {
+		if(authorityDonors.isEmpty()) {
+			int ordinal = ordinalOfExactAuthorityMember(member.product(), member.bindings());
+			return ordinal < 0 ? null : handles.get(ordinal);
+		}
+		for(AuthorityDonor donor : authorityDonors) {
+			if(!donor.scope().sameHeaderAuthority(member.product())
+				|| donor.scope().ordinalOfExactAuthorityBindings(member.bindings()) < 0)
+				continue;
+			int donorOrdinal = donor.relation().ordinalOfExactAuthorityMember(
+				member.product(), member.bindings());
+			return donorOrdinal < 0 ? null : donor.relation().handles.get(donorOrdinal);
+		}
+		return null;
+	}
+
 	NativePlacementContinuity.NativeSupportProduct product() {
 		return singleProduct().orElseThrow(() ->
 			new IllegalStateException("Native relation has multiple proof headers"));
