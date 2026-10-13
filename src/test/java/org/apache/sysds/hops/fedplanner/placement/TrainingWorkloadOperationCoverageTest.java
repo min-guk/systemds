@@ -167,6 +167,32 @@ public class TrainingWorkloadOperationCoverageTest {
 			actual.values().stream().anyMatch(routes -> routes.contains("CP_ONLY")));
 	}
 
+	@Test
+	public void metadataDimensionFamiliesHaveTheFrozenMl10Footprint() {
+		Map<String,Long> counts = new TreeMap<>();
+		Map<String,Long> phases = new TreeMap<>();
+		for(Map.Entry<String,CompiledFixture> entry : compiled.entrySet()) {
+			for(PlacementGraphFingerprint.HopOccurrence occurrence : entry.getValue().before())
+				countMetadataDimension(occurrence, counts, phases, "constructed");
+			for(PlacementGraphFingerprint.HopOccurrence occurrence : entry.getValue().after())
+				countMetadataDimension(occurrence, counts, phases, "rewritten");
+		}
+		Assert.assertEquals(Map.of("UnaryOp/ncol", 110L, "UnaryOp/nrow", 108L), counts);
+		Assert.assertEquals(Map.of("constructed", 202L, "rewritten", 16L), phases);
+		Assert.assertEquals("the bounded rule addition covers exactly two of the 87 frozen families",
+			2, counts.size());
+	}
+
+	private static void countMetadataDimension(PlacementGraphFingerprint.HopOccurrence occurrence,
+		Map<String,Long> counts, Map<String,Long> phases, String phase) {
+		if(!(occurrence.hop() instanceof UnaryOp unary)
+			|| unary.getOp() != org.apache.sysds.common.Types.OpOp1.NROW
+				&& unary.getOp() != org.apache.sysds.common.Types.OpOp1.NCOL)
+			return;
+		counts.merge(family(unary), 1L, Long::sum);
+		phases.merge(phase, 1L, Long::sum);
+	}
+
 	/** Emits reviewable evidence without invoking Maven or writing shared target/. */
 	public static void main(String[] args) throws Exception {
 		if(args.length != 1)

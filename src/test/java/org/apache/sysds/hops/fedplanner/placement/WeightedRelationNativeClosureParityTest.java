@@ -148,8 +148,8 @@ public class WeightedRelationNativeClosureParityTest {
 		Assert.assertTrue("unsupported weighted shape must not publish a relation",
 			compact.candidateRuleFacts().candidateRelations().stream().noneMatch(relation ->
 				compact.hop(relation.parent()).orElse(null) instanceof QuaternaryOp));
-		Assert.assertEquals(signatures(explicit.candidateRuleFacts().orderedFacts()),
-			signatures(compact.candidateRuleFacts().orderedFacts()));
+		Assert.assertEquals(signatures(completeCandidateInventory(explicit)),
+			signatures(completeCandidateInventory(compact)));
 		Assert.assertEquals(explicit.graph().relocationActions().stream()
 				.map(action -> action.normalizedSignature()).sorted().toList(),
 			compact.graph().relocationActions().stream()
@@ -271,6 +271,16 @@ public class WeightedRelationNativeClosureParityTest {
 			expandRelation(relation, region, position + 1, inputs, output);
 			inputs.remove(inputs.size() - 1);
 		}
+	}
+
+	private static List<CandidateRuleFact> completeCandidateInventory(PlacementAnalysis analysis) {
+		List<CandidateRuleFact> facts = new ArrayList<>(analysis.candidateRuleFacts().orderedFacts());
+		for(CpRuleFamily family : analysis.candidateRuleFacts().cpFamilies())
+			expandFamily(family, 0, new ArrayList<>(), facts);
+		for(CandidateRuleRelation relation : analysis.candidateRuleFacts().candidateRelations())
+			for(CandidateRuleRelation.ConditionalRegion region : relation.regions())
+				expandRelation(relation, region, 0, new ArrayList<>(), facts);
+		return facts;
 	}
 
 	public static PlacementAnalysis analysisForTest(Privacy privacy, boolean enableFedRelations)

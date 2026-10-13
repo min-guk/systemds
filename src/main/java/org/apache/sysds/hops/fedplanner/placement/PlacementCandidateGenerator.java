@@ -24,6 +24,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.hops.AggBinaryOp;
@@ -33,6 +34,7 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.QuaternaryOp;
+import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
@@ -105,6 +107,12 @@ final class PlacementCandidateGenerator {
 	List<CpRuleFamily> cpRuleFamilies() {
 		return cpRuleFamiliesByParent.values().stream().flatMap(List::stream)
 			.sorted(java.util.Comparator.comparing(CpRuleFamily::normalizedSignature)).toList();
+	}
+
+	List<CpRuleFamily> cpRuleFamiliesForParent(CompiledHopKey parent) {
+		// Rebuilding replaces this owner's entry. The closure must retain the old
+		// inventory independently of the mutable generator map for its proof.
+		return List.copyOf(cpRuleFamiliesByParent.getOrDefault(parent, List.of()));
 	}
 
 	List<CandidateRuleRelation> candidateRuleRelations() {
@@ -577,8 +585,13 @@ final class PlacementCandidateGenerator {
 	}
 
 	private static boolean supportsCpRuleFamily(Hop hop, GenerationPrivacy privacy) {
-		if(!(hop instanceof QuaternaryOp quaternary) || !hop.getDataType().isScalar()
-			|| quaternary.getOp() != OpOp4.WSLOSS && quaternary.getOp() != OpOp4.WCEMM)
+		boolean weightedScalar = hop instanceof QuaternaryOp quaternary
+			&& hop.getDataType().isScalar()
+			&& (quaternary.getOp() == OpOp4.WSLOSS || quaternary.getOp() == OpOp4.WCEMM);
+		boolean metadataDimension = hop instanceof UnaryOp unary
+			&& hop.getDataType().isScalar() && hop.getInput().size() == 1
+			&& (unary.getOp() == OpOp1.NROW || unary.getOp() == OpOp1.NCOL);
+		if(!weightedScalar && !metadataDimension)
 			return false;
 		return privacy != null && privacy.outputPrivacy() == Privacy.PUBLIC
 			&& privacy.protectedPayloadPositions().isEmpty();

@@ -9138,12 +9138,16 @@ final class PlacementRelationClosure {
 						inputShapes, inputAnchors);
 				List<DurableAnchorKey> outputAnchors = outputAnchor == null ? List.of() : List.of(outputAnchor);
 				List<List<FType>> generatedInputDomains = privacyMaskedInputDomains(hop, current, exactInputDomains);
+				List<CpRuleFamily> priorFamilies = candidateGenerator.cpRuleFamiliesForParent(current.key());
 				Node replacement = candidateGenerator.buildNode(hop, current.key(), current.valueVersion(), outputAnchors,
 					inputAnchors, Collections.unmodifiableList(inputAnchorOwners),
 					outputShape, abstractFactsByHop.get(hop), singlePartitions,
 					List.copyOf(exactCandidateSinglePartitions),
 					List.copyOf(inputShapes),
 					generatedInputDomains, replacementKeys, replacementFacts, generationPrivacy(current.key()));
+				List<CpRuleFamily> replacementFamilies = candidateGenerator.cpRuleFamiliesForParent(current.key());
+				boolean familiesChanged = !CandidateFamilyRefinement.sameFamilyInventory(
+					priorFamilies, replacementFamilies);
 				if(compiledInputEdges != null && sourceCompiledFactsByHop != null
 					&& isPotentialLatentWdivmmOwner(hop)) {
 					List<Node> proofNodes = new ArrayList<>(nodes);
@@ -9178,7 +9182,7 @@ final class PlacementRelationClosure {
 				List<CandidateRuleFact> priorFacts = factsByOrdinal.get(consumerOrdinal);
 				CandidateBase previousGenerationBase = generationBasesByOccurrence.get(current.key());
 				if(retainCompleteDerivedBase(current, priorKeys, priorFacts,
-					replacement, replacementKeys, replacementFacts)) {
+					replacement, replacementKeys, replacementFacts) && !familiesChanged) {
 					replacement = current;
 					replacementKeys = new ArrayList<>(priorKeys);
 					// The derived output generator has no independent native-root replay.
@@ -9206,12 +9210,13 @@ final class PlacementRelationClosure {
 				// realizations whose input support is being regenerated. The enclosing
 				// closure reapplies the same privacy authority before publication.
 				boolean changed = !replacement.equals(current) || !replacementKeys.equals(priorKeys)
-					|| !replacementFacts.equals(priorFacts);
+					|| !replacementFacts.equals(priorFacts) || familiesChanged;
 				if(!changed)
 					continue;
-				boolean retainsExecutablePrior = priorFacts.stream()
+				boolean retainsExecutablePrior = !priorFamilies.isEmpty() || priorFacts.stream()
 					.anyMatch(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE);
-				if(retainsExecutablePrior && (!replacement.legalAlternatives().containsAll(current.legalAlternatives())
+				if(retainsExecutablePrior && (familiesChanged
+					|| !replacement.legalAlternatives().containsAll(current.legalAlternatives())
 					|| !replacementKeys.containsAll(priorKeys))) {
 					// A multi-input consumer can require more than one exact refinement in the
 					// same closure pass: each predecessor is processed independently by the
@@ -9220,10 +9225,25 @@ final class PlacementRelationClosure {
 					// narrowed. Every shrink must still be proven by an exact refined
 					// predecessor; no candidate is removed merely because the consumer was
 					// refined before.
+					Set<Integer> refinedInputPositions = refinedPredecessorInputPositions(occurrence,
+						blockOrdinals, CandidateDomainRefinement.refinedInputPositions(
+							priorKeys.stream().map(CandidateRuleKey::orderedInputs).toList(),
+							priorFamilies, exactInputDomains), refinedOrdinals, shapeFactsByHop);
+					boolean exactFamilyRefinement = true;
+					for(CpRuleFamily priorFamily : priorFamilies) {
+						if(!CandidateFamilyRefinement.covers(priorFamily, replacementFamilies,
+							replacementFacts, exactInputDomains, refinedInputPositions)
+							|| !replacement.legalAlternatives().contains(priorFamily.emission()
+								.emissionState().placementState())
+								&& !CandidateFamilyRefinement.covers(priorFamily, List.of(), List.of(),
+									exactInputDomains, refinedInputPositions)) {
+							exactFamilyRefinement = false;
+							break;
+						}
+					}
 					boolean exactRefinement = isExactAffectedDescendantRefinement(
-						consumerOrdinal, current, replacement, priorKeys,
-							priorFacts, replacementKeys, replacementFacts, occurrences, ordinalsByBlock, exactInputDomains,
-							refinedOrdinals, shapeFactsByHop);
+						current, replacement, priorKeys, priorFacts, replacementKeys, replacementFacts,
+						replacementFamilies, exactInputDomains, refinedInputPositions, hop.getInput().size());
 					if(!exactRefinement && compiledInputEdges != null && sourceCompiledFactsByHop != null
 						&& isPotentialLatentWdivmmOwner(hop)) {
 						// The exact runtime rewrite may become known only after an upstream
@@ -9232,14 +9252,14 @@ final class PlacementRelationClosure {
 						ClosureUpdate normalizedPrior = closeLatentWdivmmRuntimeOutputContracts(
 							new ClosureUpdate(nodes, priorKeys, priorFacts, replay.logicalInputs(), List.of()),
 							compiledInputEdges, origins, shapeFactsByHop, sourceCompiledFactsByHop);
-						exactRefinement = isExactAffectedDescendantRefinement(consumerOrdinal,
+						exactRefinement = isExactAffectedDescendantRefinement(
 							normalizedPrior.nodes().get(consumerOrdinal), replacement, priorKeys,
-							normalizedPrior.facts(), replacementKeys, replacementFacts, occurrences,
-							ordinalsByBlock, exactInputDomains, refinedOrdinals, shapeFactsByHop);
+							normalizedPrior.facts(), replacementKeys, replacementFacts, replacementFamilies,
+							exactInputDomains, refinedInputPositions, hop.getInput().size());
 					}
 					boolean exactCardinalityRetraction = exactSinglePartitionProofRetracted(
 						priorFacts, replacementFacts, exactCandidateSinglePartitions);
-					if(!exactRefinement && !exactCardinalityRetraction) {
+					if(!exactFamilyRefinement || !exactRefinement && !exactCardinalityRetraction) {
 						Set<PlacementState> replacementStates = new HashSet<>(replacement.legalAlternatives());
 						Set<CandidateRuleKey> replacementKeySet = new HashSet<>(replacementKeys);
 						throw new IllegalStateException("Post-CFG physical candidate closure is not monotone"
@@ -9252,7 +9272,10 @@ final class PlacementRelationClosure {
 							+ "|removedKeys=" + priorKeys.stream()
 								.filter(key -> !replacementKeySet.contains(key)).toList()
 							+ "|priorFacts=" + priorFacts
-							+ "|replacementFacts=" + replacementFacts);
+							+ "|replacementFacts=" + replacementFacts
+							+ "|priorFamilies=" + priorFamilies.stream().map(CpRuleFamily::normalizedSignature).toList()
+							+ "|replacementFamilies=" + replacementFamilies.stream()
+								.map(CpRuleFamily::normalizedSignature).toList());
 					}
 				}
 				physicalState.commit(consumerOrdinal, hop, replacement,
@@ -9946,12 +9969,11 @@ final class PlacementRelationClosure {
 	}
 
 
-	private static boolean isExactAffectedDescendantRefinement(int consumerOrdinal, Node current, Node replacement,
+	private static boolean isExactAffectedDescendantRefinement(Node current, Node replacement,
 		List<CandidateRuleKey> priorKeys, List<CandidateRuleFact> priorFacts,
 		List<CandidateRuleKey> replacementKeys, List<CandidateRuleFact> replacementFacts,
-		List<PlacementGraphFingerprint.HopOccurrence> occurrences,
-		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock, List<List<FType>> exactInputDomains,
-		Set<Integer> refinedOrdinals, Map<Hop,NodeShapeFact> shapeFactsByHop) {
+		List<CpRuleFamily> replacementFamilies, List<List<FType>> exactInputDomains,
+		Set<Integer> refinedInputPositions, int inputArity) {
 		Map<CandidateRuleKey,CandidateRuleFact> priorByKey = factsByKey(priorKeys, priorFacts);
 		Map<CandidateRuleKey,CandidateRuleFact> replacementByKey = factsByKey(replacementKeys, replacementFacts);
 		List<CandidateRuleKey> removedKeys = priorKeys.stream()
@@ -9961,12 +9983,6 @@ final class PlacementRelationClosure {
 		if(removedKeys.isEmpty() && removedLegal.isEmpty())
 			return replacement.legalAlternatives().containsAll(current.legalAlternatives())
 				&& replacementKeys.containsAll(priorKeys);
-		PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(consumerOrdinal);
-		Map<Hop,Integer> blockOrdinals = ordinalsByBlock.get(occurrence.block());
-		if(blockOrdinals == null)
-			return false;
-		Set<Integer> exactRefinedInputPositions = CandidateDomainRefinement.refinedInputPositions(
-			priorKeys.stream().map(CandidateRuleKey::orderedInputs).toList(), exactInputDomains);
 		List<CandidateEmissionFact> removedMaterializations = new ArrayList<>();
 		for(CandidateRuleKey key : priorKeys) {
 			CandidateRuleFact priorFact = priorByKey.get(key);
@@ -9978,8 +9994,15 @@ final class PlacementRelationClosure {
 				// candidate space.
 				if(priorFact.status() != CandidateEvaluationStatus.AVAILABLE)
 					continue;
-				if(!hasRefinedPredecessorInvalidation(key, occurrence, blockOrdinals, exactInputDomains,
-					exactRefinedInputPositions, refinedOrdinals, shapeFactsByHop)) {
+				if(CandidateFamilyRefinement.retainsExactFact(priorFact, replacementFamilies)) {
+					if(!replacement.legalAlternatives().contains(priorFact.allowedEmissionFacts()
+						.get(0).emissionState().placementState()))
+						return false;
+					continue;
+				}
+				if(key.orderedInputs().size() != inputArity
+					|| !CandidateDomainRefinement.removedByRefinedInputDomain(
+					key.orderedInputs(), exactInputDomains, refinedInputPositions)) {
 					return false;
 				}
 			}
@@ -10065,12 +10088,12 @@ final class PlacementRelationClosure {
 		return indexed;
 	}
 
-	private static boolean hasRefinedPredecessorInvalidation(CandidateRuleKey key,
+	private static Set<Integer> refinedPredecessorInputPositions(
 		PlacementGraphFingerprint.HopOccurrence occurrence, Map<Hop,Integer> blockOrdinals,
-		List<List<FType>> exactInputDomains, Set<Integer> exactRefinedInputPositions,
+		Set<Integer> exactRefinedInputPositions,
 		Set<Integer> refinedOrdinals, Map<Hop,NodeShapeFact> shapeFactsByHop) {
-		if(key.orderedInputs().size() != occurrence.hop().getInput().size())
-			return false;
+		if(blockOrdinals == null)
+			return Set.of();
 		Set<Integer> refinedInputPositions = new HashSet<>(exactRefinedInputPositions);
 		for(int inputPosition = 0; inputPosition < occurrence.hop().getInput().size(); inputPosition++) {
 			Hop input = occurrence.hop().getInput(inputPosition);
@@ -10080,10 +10103,7 @@ final class PlacementRelationClosure {
 			if(predecessorOrdinal != null && refinedOrdinals.contains(predecessorOrdinal))
 				refinedInputPositions.add(inputPosition);
 		}
-		// This is the domain passed to buildNode in this exact rebuild, not a
-		// second projection of predecessor states. Only refined inputs can prove removal.
-		return CandidateDomainRefinement.removedByRefinedInputDomain(
-			key.orderedInputs(), exactInputDomains, refinedInputPositions);
+		return Set.copyOf(refinedInputPositions);
 	}
 
 	private static boolean exactFactPublishesState(CandidateRuleFact fact, PlacementState state) {

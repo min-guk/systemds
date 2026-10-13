@@ -3346,10 +3346,20 @@ final class NativePlacementContinuity {
 
 	private AcyclicComponentSummary reusableAcyclicComponent(CandidateProofState state,
 		CompiledHopKey fixedOccurrence) {
+		if(metrics != null)
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_LOOKUP_REQUESTS);
 		AcyclicComponentSummary summary = acyclicComponentMemo.get(state);
-		if(summary == null)
+		if(summary == null) {
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_LOOKUP_ABSENT);
 			return null;
-		return summary.occurrences.contains(fixedOccurrence) ? null : summary;
+		}
+		if(summary.occurrences.contains(fixedOccurrence)) {
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_LOOKUP_FIXED_OWNER_REJECT);
+			return null;
+		}
+		return summary;
 	}
 
 	private Map<CandidateProofState,AcyclicComponentFootprint> acyclicRootChildFootprints(
@@ -3410,8 +3420,11 @@ final class NativePlacementContinuity {
 			// hidden graph rows. Its summary already owns the complete immutable identity
 			// footprint; sharing it avoids copying every transitive owner again.
 			long retainedStates = Math.max(boundary.retainedStates, boundary.occurrences.size());
-			if(retainedStates > acyclicComponentMaxStates)
+			if(retainedStates > acyclicComponentMaxStates) {
+				if(metrics != null)
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_STATE_BYPASS);
 				return null;
+			}
 			if(metrics != null) {
 				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_REUSED_BOUNDARIES);
 				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_REUSED_OWNERS,
@@ -3432,15 +3445,21 @@ final class NativePlacementContinuity {
 			if(reused != null) {
 				occurrences.addAll(reused.occurrences);
 				retainedStates += reused.retainedStates;
-				if(retainedStates > acyclicComponentMaxStates)
+				if(retainedStates > acyclicComponentMaxStates) {
+					if(metrics != null)
+						metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_STATE_BYPASS);
 					return null;
+				}
 				continue;
 			}
 			occurrences.add(state.key());
 			occurrences.addAll(traversal.hiddenOwnerReadsByState.getOrDefault(state, Set.of()));
 			retainedStates++;
-			if(retainedStates > acyclicComponentMaxStates)
+			if(retainedStates > acyclicComponentMaxStates) {
+				if(metrics != null)
+					metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_STATE_BYPASS);
 				return null;
+			}
 			List<SelectedCandidateProof> alternatives = graph.getOrDefault(state, List.of());
 			if(alternatives instanceof DefaultAlternativeList defaults) {
 				// Graph construction already prepared this exact immutable schedule.
@@ -3463,8 +3482,12 @@ final class NativePlacementContinuity {
 						pending.addLast(dependency.state());
 		}
 		retainedStates = Math.max(retainedStates, occurrences.size());
-		return retainedStates > acyclicComponentMaxStates ? null
-			: new AcyclicComponentFootprint(Collections.unmodifiableSet(occurrences), retainedStates);
+		if(retainedStates > acyclicComponentMaxStates) {
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_FOOTPRINT_STATE_BYPASS);
+			return null;
+		}
+		return new AcyclicComponentFootprint(Collections.unmodifiableSet(occurrences), retainedStates);
 	}
 
 	private void cacheAcyclicRootChildren(
@@ -3473,8 +3496,11 @@ final class NativePlacementContinuity {
 		Set<CandidateProofState> supported, CompiledHopKey generatedRoot,
 		CandidateProofTraversal traversal) {
 		if(acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
-			|| acyclicComponentMaxAlternatives == 0)
+			|| acyclicComponentMaxAlternatives == 0) {
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_CACHE_DISABLED);
 			return;
+		}
 		for(var entry : childFootprints.entrySet())
 			if(generatedRoot == null || !entry.getValue().occurrences.contains(generatedRoot)) {
 				CandidateProofState child = entry.getKey();
@@ -3491,14 +3517,19 @@ final class NativePlacementContinuity {
 				else
 					cacheAcyclicComponent(child, footprint, viable, supported);
 			}
+			else if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_ROOT_DEPENDENCE_REJECT);
 	}
 
 	private void cacheAcyclicComponent(CandidateProofState child, AcyclicComponentFootprint footprint,
 		Map<CandidateProofState,List<SelectedCandidateProof>> viable,
 		Set<CandidateProofState> supported) {
 		long retainedStates = footprint.retainedStates;
-		if(retainedStates > acyclicComponentMaxStates)
+		if(retainedStates > acyclicComponentMaxStates) {
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_CACHE_STATE_BYPASS);
 			return;
+		}
 		List<SelectedCandidateProof> supportedAlternatives = new ArrayList<>();
 		Set<AcyclicSummaryRowKey> distinctRows = new java.util.HashSet<>();
 		if(supported.contains(child))
@@ -3531,10 +3562,21 @@ final class NativePlacementContinuity {
 
 	private void cacheAcyclicSummary(CandidateProofState child, AcyclicComponentSummary summary) {
 		if(acyclicComponentMaxEntries == 0 || acyclicComponentMaxStates == 0
-			|| acyclicComponentMaxAlternatives == 0
-			|| summary.retainedStates > acyclicComponentMaxStates
-			|| summary.supportedAlternatives.size() > acyclicComponentMaxAlternatives)
+			|| acyclicComponentMaxAlternatives == 0) {
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_CACHE_DISABLED);
 			return;
+		}
+		if(summary.retainedStates > acyclicComponentMaxStates) {
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_CACHE_STATE_BYPASS);
+			return;
+		}
+		if(summary.supportedAlternatives.size() > acyclicComponentMaxAlternatives) {
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_CACHE_ROW_BYPASS);
+			return;
+		}
 		long retainedStates = summary.retainedStates;
 		List<SelectedCandidateProof> supportedAlternatives = summary.supportedAlternatives;
 		AcyclicComponentSummary prior = acyclicComponentMemo.remove(child);
@@ -3551,14 +3593,18 @@ final class NativePlacementContinuity {
 			acyclicComponentRetainedStates -= oldest.getValue().retainedStates;
 			acyclicComponentRetainedAlternatives -= oldest.getValue().supportedAlternatives.size();
 			acyclicComponentMemo.remove(oldest.getKey());
+			if(metrics != null)
+				metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_CACHE_EVICTIONS);
 		}
 		acyclicComponentMemo.put(child, summary);
 		acyclicComponentRetainedStates += retainedStates;
 		acyclicComponentRetainedAlternatives += supportedAlternatives.size();
-		if(metrics != null)
+		if(metrics != null) {
+			metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_CACHE_ADMISSIONS);
 			metrics.recordDirectWork(
 				SearchSpaceMetrics.DirectWork.COMPONENT_SUMMARY_ADMITTED_ROWS,
 				supportedAlternatives.size());
+		}
 	}
 
 	private List<SelectedCandidateProof> candidateProofAlternatives(CompiledHopKey key,

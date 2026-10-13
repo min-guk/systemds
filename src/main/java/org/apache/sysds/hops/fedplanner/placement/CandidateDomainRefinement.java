@@ -55,16 +55,27 @@ final class CandidateDomainRefinement {
 	 */
 	static Set<Integer> refinedInputPositions(List<List<CandidateInputState>> priorRows,
 		List<List<FType>> exactInputDomains) {
-		if(priorRows == null || priorRows.isEmpty() || exactInputDomains == null)
+		return refinedInputPositions(priorRows, List.of(), exactInputDomains);
+	}
+
+	static Set<Integer> refinedInputPositions(List<List<CandidateInputState>> priorRows,
+		List<CpRuleFamily> priorFamilies, List<List<FType>> exactInputDomains) {
+		if(priorRows == null || priorFamilies == null || exactInputDomains == null
+			|| priorRows.isEmpty() && priorFamilies.isEmpty())
 			return Set.of();
 		int width = exactInputDomains.size();
-		if(priorRows.stream().anyMatch(row -> row == null || row.size() != width))
+		if(priorRows.stream().anyMatch(row -> row == null || row.size() != width)
+			|| priorFamilies.stream().anyMatch(family -> family == null || family.axes().size() != width))
 			return Set.of();
 		Set<Integer> refined = new java.util.LinkedHashSet<>();
 		for(int position = 0; position < width; position++) {
 			Set<CandidateInputState> prior = new java.util.LinkedHashSet<>();
 			for(List<CandidateInputState> row : priorRows)
 				prior.add(row.get(position));
+			// The projection of a nonempty rectangle is exactly its axis. Do not
+			// expand family members to recover the prior input domain.
+			for(CpRuleFamily family : priorFamilies)
+				prior.addAll(family.axes().get(position));
 			Set<CandidateInputState> exact = new java.util.LinkedHashSet<>();
 			for(FType type : exactInputDomains.get(position))
 				exact.add(type == null ? CandidateInputState.absentLocal()

@@ -51,6 +51,29 @@ public class CoordinatorMetadataInputAccessTest {
 	}
 
 	@Test
+	public void ncolUsesFederationMapMetadataWithoutPayloadMaterialization() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compile(
+			fed() + "n=ncol(A);print(n);"));
+		CompiledInputEdgeFact edge = metadataEdge(analysis, OpOp1.NCOL);
+
+		Assert.assertTrue("ncol of a matrix/frame is an exact federation-map metadata read",
+			analysis.isCoordinatorMetadataOnlyInput(edge));
+		var normalized = PlacementPlannerAdapter.normalize(analysis,
+			new FedAllPlacementAdapter().select(analysis));
+		PlacementState producer = normalized.selectedStates().get(edge.producer());
+		Assert.assertEquals(ExecType.FED, producer.execType());
+		Assert.assertEquals(FederatedOutput.FOUT, producer.output());
+		@SuppressWarnings("unchecked")
+		var localMaterializations = (java.util.List<LocalMaterializationActionKey>)
+			normalized.selectedLocalMaterializations();
+		Assert.assertTrue("a coordinator ncol must not create a FOUT payload prefetch",
+			localMaterializations.stream().noneMatch(action ->
+				action.obligations().stream().anyMatch(obligation ->
+					obligation.consumerOccurrence() == edge.consumer()
+						&& obligation.inputPosition() == edge.inputPosition())));
+	}
+
+	@Test
 	public void payloadUnaryIsNotMisclassifiedAsMetadataAccess() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compile(
 			fed() + "B=abs(A);write(B,\"/tmp/g014-metadata-access\",format=\"binary\");"));
