@@ -2584,25 +2584,13 @@ public final class PlacementAnalysis {
 				while(leftIndex < leftClauses.size() && rightIndex < rightClauses.size()) {
 					CandidateRealizationSupportClause leftClause = leftClauses.get(leftIndex);
 					CandidateRealizationSupportClause rightClause = rightClauses.get(rightIndex);
-					comparisons++;
-					int order = comparison.compare(leftOrderingKeys.get(leftIndex),
-						rightOrderingKeys.get(rightIndex));
-					if(order < 0) {
-						union.add(leftClause);
-						unionOrderingKeys.add(leftOrderingKeys.get(leftIndex));
-						leftIndex++;
-						uniqueClauses++;
-					}
-					else if(order > 0) {
-						union.add(rightClause);
-						unionOrderingKeys.add(rightOrderingKeys.get(rightIndex));
-						rightIndex++;
-						rightAdded = true;
-						uniqueClauses++;
-					}
-					else if(leftClause.equals(rightClause)) {
-						// Equality, never a hash or comparator collision alone, removes an
-						// exact duplicate. Preserve the first authority object's identity.
+					// Cached structural hashes cheaply reject the common unequal case. Full
+					// equality remains the only duplicate proof, including hash collisions.
+					boolean exactDuplicate = leftClause.hashCode() == rightClause.hashCode()
+						&& leftClause.equals(rightClause);
+					if(exactDuplicate) {
+						// Preserve the first authority and its supplied descriptor without
+						// comparing identical canonical text.
 						union.add(leftClause);
 						unionOrderingKeys.add(leftOrderingKeys.get(leftIndex));
 						leftIndex++;
@@ -2619,6 +2607,23 @@ public final class PlacementAnalysis {
 									duplicateProvenance);
 							}
 						}
+						continue;
+					}
+					comparisons++;
+					int order = comparison.compare(leftOrderingKeys.get(leftIndex),
+						rightOrderingKeys.get(rightIndex));
+					if(order < 0) {
+						union.add(leftClause);
+						unionOrderingKeys.add(leftOrderingKeys.get(leftIndex));
+						leftIndex++;
+						uniqueClauses++;
+					}
+					else if(order > 0) {
+						union.add(rightClause);
+						unionOrderingKeys.add(rightOrderingKeys.get(rightIndex));
+						rightIndex++;
+						rightAdded = true;
+						uniqueClauses++;
 					}
 					else {
 						// A comparator tie is not semantic identity. Advancing both cursors
@@ -2803,19 +2808,14 @@ public final class PlacementAnalysis {
 
 			List<List<CandidateRealizationSupportClause>> clausesByGroup = new ArrayList<>(group.size());
 			List<List<CanonicalText>> keysByGroup = new ArrayList<>(group.size());
-			CanonicalTextContext missingContext = null;
 			int totalClauses = 0;
 			for(CandidateEmissionRealization realization : group) {
 				List<CandidateRealizationSupportClause> clauses = realization.supportClauses();
 				clausesByGroup.add(clauses);
 				totalClauses = Math.addExact(totalClauses, clauses.size());
-				List<CanonicalText> keys = retainedCanonicalOrderingKeys(clauses);
-				if(keys == null) {
-					if(missingContext == null)
-						missingContext = new CanonicalTextContext();
-					keys = canonicalOrderingKeys(clauses, missingContext);
-				}
-				keysByGroup.add(keys);
+				// Missing descriptors are constructed only after exact first-donor
+				// deduplication. Existing sidecars remain the authoritative keys.
+				keysByGroup.add(retainedCanonicalOrderingKeys(clauses));
 			}
 
 			MergedClauseRuns mergedRuns = mergeCanonicalClauseRuns(
@@ -2932,6 +2932,7 @@ public final class PlacementAnalysis {
 				? new long[SearchSpaceMetrics.DuplicateClauseProvenance.values().length] : null;
 			Map<CandidateRealizationSupportClause,CandidateRealizationSupportClause> firstAuthorities =
 				diagnoseDuplicates ? new java.util.HashMap<>() : null;
+			CanonicalTextContext missingContext = null;
 			boolean alreadyOrdered = true;
 			for(int group = 0; group < clausesByGroup.size(); group++) {
 				int runStart = ordered.size();
@@ -2957,8 +2958,20 @@ public final class PlacementAnalysis {
 							recordDuplicateProvenance(metrics, retained, clause, provenance);
 						}
 					}
-					if(unique)
-						ordered.add(new ClauseRunEntry(clause, keysByGroup.get(group).get(position)));
+					if(unique) {
+						List<CanonicalText> keys = keysByGroup.get(group);
+						CanonicalText key;
+						if(keys != null)
+							key = keys.get(position);
+						else {
+							if(missingContext == null)
+								missingContext = new CanonicalTextContext();
+							key = clausesByGroup.get(group) instanceof IndexedSupportClauses indexed
+								? canonicalIndexedClauseOrderingText(indexed, position, missingContext)
+								: canonicalOrderingKey(clause, missingContext);
+						}
+						ordered.add(new ClauseRunEntry(clause, key));
+					}
 				}
 				// Removing duplicates preserves each canonical run's order. Only the
 				// boundary to its predecessor can invalidate the concatenation order.

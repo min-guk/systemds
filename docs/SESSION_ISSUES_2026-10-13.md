@@ -432,3 +432,43 @@
 
 - Merge `84ed273792`: selected FedPlanner **1,543 PASS / 208.946초**. Class/resource 7,919개, 실행 중 변경 0, source mismatch 0이다. Native query-gate identity/cap/release 및 v47 growth/권한 회귀를 함께 통과했다.
 - 근거 `evidence/query-interning-incoming-full-gate-v47-main/validation.json`. 실제 v47은 기존 frozen engine으로 계속 실행하고, 병합 엔진은 v48로 따로 고정한다.
+
+### V57 실측 판정 및 다음 구조 개선 — 진행 중
+
+- **증상/조건**: published3b5040b7b1/sealed SHA f26af6abe4f0f6115a77f9e17eb6f3db8cf279074fe7aa5f83c0ea20e977c1e1, 동일 Docker 4CPU/16GiB/10GiB, 네 trial 모두 watchdog60/fullInitial 없음.
+- **원인 근거**: query-local gate hit LR28,456/1,755,131(1.62%), GLM0/141,184. 같은 query 내 중복은 실재하지만 실제 workload의 주병목은 아니다. Global optional gate sweep work는 두 workload 모두0으로 제거됐다. OFF LR direct binding62.95%, skeleton/graph/materialization 작업이 잔존한다.
+- **결정**: query-local index 범위·budget 확대 대신 중간 dependency 표현 복사와 반복 circuit 구성의 구조적 제거를 검토한다. Proof/viability를 owner/witness만으로 합치는 변경은 금지한다.
+- **수정 파일/검증**: 이번 항목은 실측 보고만 추가. 최종 V57 gate211classes1634/0/0/3. 상세 counters/stack은 R/evidence/v57-*.json/txt 및 candidate-v57-detailed-topology-outcomes.json.
+- **잔여/위험**:20초/전체ML coverage 미달성. OFF15/25,detailed25/25 external build overlap; 자체 heavy commands 겹침 없음. 복합 merge의 효과를 단일 query-index 변경에 귀속하지 않는다. 다음 변경은 exact proof·identity·cycle·budget 회귀 및 fresh 동일Docker로 검증한다.
+
+## V58 native dependency 중간 표현 제거 — focused 검증 완료
+
+- **문제/원인**: native gate의 각 source option마다 option-specific skeleton list/records를 새로 만들고 곧바로 overlay가 proof dependency로 복사했다. Axis owner는 앞에서 fixed-owner 제외가 증명되므로 이 중간 표현은 불필요하다. V57 LR gate alternatives 누적 12,998,420개였다.
+- **해결/원칙**: `nativeAxisDependencies`가 기존 affected skeleton의 key/witness/position을 보존하며 선택 source를 최종 dependency에 직접 바인딩한다. Source handle은 row당 한 번 계산한다. Fixed-owner guard, invariant overlay, candidate/grounding/cycle/pruning 규칙은 변경하지 않는다. 새 cache 없음.
+- **수정 파일**: `NativePlacementContinuity.java`, `NativeSkeletonMaterializationMemoTest.java`.
+- **검증**: 새 helper 없음 RED 13 tests/2 failures 후 native focused **205 PASS**. 실제 legacy two-step와 direct 3slot 결과/상태/owner·source·witness identity/order/duplicate slot parity, handle lookups 3→1, empty0을 검증한다. Independent source/test review CLEAR.
+- **범위/잔여 위험**: helper private boundary test 자체는 실제 workload 3slot 빈도나 시간 개선을 증명하지 않는다. 기존 public native/conditional/query cycle suite를 함께 검증했다. 최종 selected gate 및 동일 Docker 실측 대기. 더 큰 반복 native raw circuit 구성은 V59 구조 설계로 분리한다.
+- **근거**: `R/evidence/v58-native-fusion-red.log`, `v58-native-focused.log`, `R/V59_NATIVE_CIRCUIT_DESIGN.md`.20초 목표 미완료.
+
+## V58 clause 병합의 duplicate-first 처리 — focused 검증 완료
+
+- **문제/근거**: GLM OFF canonical compare225/2782 inclusive samples 중 support-clause 병합 경로가 크다. Two-list merge는 정확히 같은 head도 rope 비교부터 하고, K-group은 나중에 제거할 중복 clause의 missing key를 먼저 만들었다.
+- **해결**: two-list는 기존 cached hash로 빠르게 불일치를 확인하고 full equality로 중복을 판정한 뒤 같은 경우 comparator를 생략한다. Hash만으로 dedup하지 않는다. K-group은 exact first-donor dedup 이후 살아남은 clause만 missing descriptor를 생성한다. Indexed clause의 specialized ordering path, 공급된 key identity, unequal canonical tie fallback, opt-in duplicate diagnostics는 유지한다.
+- **수정 파일**: `PlacementAnalysis.java`, `CandidateRealizationCanonicalizationTest.java`, `DuplicateMergeDiagnosticsTest.java`.
+- **검증**: 유효 RED62tests/2의도실패 → focused64PASS. Two-head duplicate의 canonical comparisons1→0 및 left donor/diagnostics 유지. K-way discarded duplicate identity는 scoped canonical cache에 생성되지 않고 unique missing-key clause는 생성된다. 초기 singleton sidecar 없음, 계측되지 않는 counter0 fixture 오류는 별도 archive 후 수정했다.
+- **의사결정/위험**: 후보·합법성·privacy 규칙 변경 없이 중간 canonical 작업만 제거한다. 모든 unequal 비교에서 비싼 equals를 추가하지 않도록 cached hash guard를 쓴다. 실제 전체 속도 개선은 미측정; selected 통합 gate 진행 중이다.
+- **근거**: `R/evidence/v58-merge-red.log`, `v58-merge-focused.log`, `R/V58_INTERMEDIATE_WORK_PLAN.md`.
+
+### V58 최종 선택 통합 gate 통과
+
+- Fresh211classes /1,638tests /failures0 /errors0 /skipped3, package BUILD SUCCESS08:33:38+02. 전체 repo suite가 아닌 selected FedPlanner gate다.
+- 근거 `R/evidence/candidate-v58-package.log`. Native205/merge64 focused와 최종 통합 검증에서 의미 회귀 없음. Main fetch 추가 incoming 없음. 독립 최종 검토 이후 게시/봉인/동일Docker로 진행한다.
+- 이 통합 테스트 통과는 전체 planning 시간이나20초 달성의 증거가 아니다.
+
+
+### v47 실제 LogReg 분기 결과: explicit retained authority가 주된 병합 거절
+
+- Analysis 종료 counter: `PARTITIONED_RETAINED_PROOFS=2,555,577`, ordinary full=2,542,629 / ordinary residual=0 / conditional full=12,948 / conditional residual=0. 네 합계 일치. 기존 v46의 proof 소비 6,121,451회가 그대로다.
+- Residual requests=60,677 중 explicit 거절=60,461, 표현 불가=216, staging/conflict=0, relation count=0, successes=0. 합계 일치. 요청의 약99.64%가 explicit 경계에서 멈춘다. 이 거절 counter는 standalone 요청도 포함하므로 retained 순회 개수와 직접 같은 단위로 취급하지 않는다.
+- 따라서 conditional base-growth 단위 개선이 실제 주요 경로를 줄였다고 보고하지 않는다. 다음 수정은 원래 explicit clause가 새 native domain 안의 exact 동일 member임을 증명할 수 있을 때만 기존 객체를 donor로 보존하며 relation을 발행하는 것이다. 임의 sparse extra/non-native/foreign authority는 기존 exact fallback이다.
+- Query-local interning 포함 v48은 별도 frozen 엔진으로 준비했다. 이후 incoming `5483ecbc6f`의 intermediate dependency 및 canonical 중복 작업 제거는 다시 별도 통합한다. Frozen v47/v48으로 해당 incoming 성능까지 검증했다고 주장하지 않는다.

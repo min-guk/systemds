@@ -4571,13 +4571,8 @@ final class NativePlacementContinuity {
 				List<SelectedCandidateProof> gateAlternatives = new ArrayList<>(options.size());
 				for(CandidateRealizationInputBinding option : options) {
 					CandidateRealizationReference source = option.source();
-					List<CandidateDependencySkeleton> optionSkeletons =
-						new ArrayList<>(affected.get(axis).size());
-					for(CandidateDependencySkeleton skeleton : affected.get(axis))
-						optionSkeletons.add(new CandidateDependencySkeleton(skeleton.key(), source,
-							candidateHandle(source), skeleton.witness(), skeleton.inputPosition()));
 					gateAlternatives.add(new SelectedCandidateProof(source,
-						overlayDependencies(optionSkeletons, fixed), false, witness));
+						nativeAxisDependencies(affected.get(axis), source), false, witness));
 				}
 				gate = new CandidateAxisGate(gateKey, owner,
 					options.get(0).inputPosition(), witness, gateAlternatives);
@@ -4595,6 +4590,23 @@ final class NativePlacementContinuity {
 					List.copyOf(consumerDependencies), directGround, witness));
 		}
 		return roots.isEmpty() ? null : new NativeFactoredProofAlternatives(List.copyOf(roots));
+	}
+
+	/**
+	 * The validated axis has one owner, already excluded from the fixed boundary.
+	 * Bind directly to proof dependencies instead of allocating option skeletons
+	 * only to copy them again in the overlay. Invariant slots still use the overlay.
+	 */
+	private List<CandidateProofDependency> nativeAxisDependencies(
+		List<CandidateDependencySkeleton> skeletons, CandidateRealizationReference source) {
+		if(skeletons.isEmpty())
+			return List.of();
+		int handle = candidateHandle(source);
+		List<CandidateProofDependency> dependencies = new ArrayList<>(skeletons.size());
+		for(CandidateDependencySkeleton skeleton : skeletons)
+			dependencies.add(new CandidateProofDependency(skeleton.key(), source, handle,
+				skeleton.witness(), skeleton.inputPosition(), false));
+		return dependencies;
 	}
 
 	/**

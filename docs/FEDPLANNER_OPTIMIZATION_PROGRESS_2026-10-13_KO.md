@@ -1,12 +1,31 @@
 # FedPlanner 최적화 진행 현황 보고서
 
+## V58 중간 작업 제거 — 선택 통합 검증 통과
+
+- **211 classes / 1,638 tests / failures 0 / errors 0 / skipped 3**, package BUILD SUCCESS 2026-10-13 08:33:38+02.
+- Native gate option skeleton을 만든 뒤 dependency로 다시 복사하던 경로를 직접 바인딩으로 교체했다. Source·owner·witness·순서·query 고정 경계를 보존하며 fixture의 source handle 조회는 3→1이다. Native focused205 PASS, 독립 review CLEAR.
+- Two-list merge는 exact duplicate의 canonical 비교를 생략한다. K-way merge는 exact dedup 후 살아남은 clause의 missing key만 만든다. First donor와 indexed ordering/tie fallback/diagnostics 유지, focused64 PASS.
+- 새 cache나 예산 확대 없이 중간 객체·문자열 작업만 제거했다. 동일 Docker 실측은 다음 단계이며 **20초 달성은 아직 아니다**.
+- 다음 구조 설계는 동일 snapshot의 native 원본 회로를 query마다 다시 만들지 않는 것이다. Raw 회로 공유와 query별 viability 증명을 구분하며, 아직 구현 완료로 보고하지 않는다.
+
+## V57 실측 완료 — 작은 cache 확대만으로 해결되지 않음
+
+- 게시 commit **`3b5040b7b1`**, 봉인 JAR SHA-256 `f26af6abe4f0f6115a77f9e17eb6f3db8cf279074fe7aa5f83c0ea20e977c1e1`.
+- 동일 Docker 네 trial 모두 watchdog60, fullInitial receipt 없음. 모든 own container 제거 확인. **20초 목표 미달성**.
+- Query-local gate reuse는 LogReg **28,456 / 1,755,131 lookups (1.62%)**, GLM **0 / 141,184**다. 이 index를 더 확장하는 것은 우선순위에서 제외한다.
+- Global optional gate sweep 제거는 실제로 적용됐다: gate admission work/footprint/admission counter 모두 0. OFF LogReg footprint samples는 90/2,340이며 전부 root-boundary 작업이다.
+- 남은 LogReg OFF direct binding은 1,473/2,340 samples(62.95%). `candidateDependencySkeletons`, graph 구축, materialization 및 실제 dead-row pruning이 여전히 크다. GLM OFF canonical 8.09%, joint 6.90%다.
+- 다음 방향은 캐시 용량 확대가 아니라 **변하지 않는 dependency/circuit의 반복 구성과 중간 표현 복사를 없애는 것**이다. 실제 authority·owner·witness 및 query overlay 경계는 유지한다.
+- 외부 build 중첩 OFF 15/25, detailed 25/25. 자체 heavy commands는 timed trials 이후 실행했다. 부분 counters/sample 비율은 완료 planning 시간 개선의 증거가 아니다.
+- 근거: `R/evidence/v57-planner-breakdown.txt`, `candidate-v57-detailed-topology-outcomes.json`, `v57-footprint-callers.json`, `v57-contention-summary.json`, `v57-monitor-driver.log`.
+
 ## V57 최신 main 병합 검증 완료
 
 - **211 actual classes / 1,634 tests / failures 0 / errors 0 / skipped 3**, BUILD SUCCESS 2026-10-13 08:12:29+02. 근거 `R/evidence/candidate-v57-package.log`.
 - 동일 query에서 pinned/unpinned native 입력이 같은 gate를 중복 생성하는 문제를 수정했다. Public diamond fixture에서 **gate build 4→2**, ordered proof·identity footprint와 zero-budget 결과가 동일하다. Local positive fixture와 cycle/예산 경계는 각각 199/8 focused PASS다.
 - 최신 main의 global gate-suffix sweep 비활성화, native complement 보존, 불필요 support materialization 제거, DP incumbent projection 재사용을 함께 검증했다. Global sweep은 optional cache 수집이므로 끄더라도 합법 후보/proof graph를 제거하지 않는다. Query-local gate identity 공유는 계속 적용한다.
 - **V56 실측은 네 번 모두 watchdog60**이었다. LR extra-gate work는 95.2M→114.1M으로 늘어 처리 순서 수정만으로 충분하지 않았다. OFF LR footprint sample 270/2311 중 추가 sweep 193개였다. 이 결과를 근거로 global sweep 중단을 보존했다.
-- V57 동일 자원 실측은 다음 단계다. **20초 목표와 전체 ML 연산 압축 coverage는 아직 미완료**다.
+- V57 동일 자원 네 실측도 모두 watchdog60이며 fullInitial 완료 receipt는 없다. **20초 목표와 전체 ML 연산 압축 coverage는 아직 미완료**다.
 
 
 ## V56 검증 및 실측 기록 — 목표 미달성

@@ -576,6 +576,57 @@ public class CandidateRealizationCanonicalizationTest {
 	}
 
 	@Test
+	public void kWayUnionBuildsMissingKeysOnlyForFirstDonorUniqueClauses() throws Exception {
+		CandidateEmissionRealization template = fixture().get(0);
+		CandidateRealizationSupportClause retained = new CandidateRealizationSupportClause(
+			List.of(proof("deferred-key-a")), List.of());
+		CandidateRealizationSupportClause firstUnique = new CandidateRealizationSupportClause(
+			List.of(proof("deferred-key-b")), List.of());
+		CandidateRealizationSupportClause secondUnique = new CandidateRealizationSupportClause(
+			List.of(proof("deferred-key-c")), List.of());
+		CandidateRealizationSupportClause thirdUnique = new CandidateRealizationSupportClause(
+			List.of(proof("deferred-key-d")), List.of());
+		CandidateEmissionRealization first = new CandidateEmissionRealization(
+			template.key(), List.of(retained, firstUnique));
+		Object retainedKey = descriptorSidecar(first.supportClauses()).get(0);
+		CandidateRealizationSupportClause secondDuplicate = copy(retained);
+		CandidateRealizationSupportClause thirdDuplicate = copy(retained);
+		CandidateEmissionRealization second = CandidateEmissionRealization
+			.fromAlreadyCanonicalSupportClauses(template.key(),
+				List.of(secondDuplicate, secondUnique).stream().sorted().toList());
+		CandidateEmissionRealization third = CandidateEmissionRealization
+			.fromAlreadyCanonicalSupportClauses(template.key(),
+				List.of(thirdDuplicate, thirdUnique).stream().sorted().toList());
+		Assert.assertNull(descriptorSidecarOrNull(second.supportClauses()));
+		Assert.assertNull(descriptorSidecarOrNull(third.supportClauses()));
+
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		PlacementIdentity.setActiveMetrics(metrics);
+		try(PlacementAnalysis.CanonicalTextScope textScope =
+			PlacementAnalysis.beginCanonicalTextScope()) {
+			CandidateEmissionRealization union = new CandidateEmissionFact(
+				EMISSION, FType.ROW, null, List.of(first, second, third)).realizations().get(0);
+			Assert.assertEquals(List.of(retained, firstUnique, secondUnique, thirdUnique),
+				union.supportClauses());
+			Assert.assertSame("the first exact authority remains the donor",
+				retained, union.supportClauses().get(0));
+			Assert.assertSame("the supplied first-donor key must be conserved",
+				retainedKey, descriptorSidecar(union.supportClauses()).get(0));
+			Assert.assertTrue("the scoped cache oracle must observe retained missing-key work",
+				scopeContainsCanonicalIdentity(textScope, secondUnique));
+			Assert.assertTrue(scopeContainsCanonicalIdentity(textScope, thirdUnique));
+			Assert.assertFalse("discarded equal authorities need no canonical descriptor",
+				scopeContainsCanonicalIdentity(textScope, secondDuplicate));
+			Assert.assertFalse(scopeContainsCanonicalIdentity(textScope, thirdDuplicate));
+			Assert.assertEquals(4, metrics.snapshot().realizationMergeUniqueClauses());
+			Assert.assertEquals(2, metrics.snapshot().realizationMergeDuplicateClauses());
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
+	}
+
+	@Test
 	public void overlappingRunsDeduplicateExactAuthoritiesBeforeCanonicalSort() {
 		CandidateEmissionRealization template = fixture().get(0);
 		int groupCount = 64, sharedCount = 80;
@@ -1913,6 +1964,16 @@ public class CandidateRealizationCanonicalizationTest {
 		}
 		field.setAccessible(true);
 		return (List<?>) field.get(values);
+	}
+
+	private static boolean scopeContainsCanonicalIdentity(
+		PlacementAnalysis.CanonicalTextScope scope, Object value) throws Exception {
+		Field cacheField = PlacementAnalysis.CanonicalTextScope.class.getDeclaredField("cache");
+		cacheField.setAccessible(true);
+		Object cache = cacheField.get(scope);
+		Field valuesField = cache.getClass().getDeclaredField("values");
+		valuesField.setAccessible(true);
+		return ((Map<?,?>) valuesField.get(cache)).containsKey(value);
 	}
 
 	private static List<?> backingValues(List<?> values) throws Exception {

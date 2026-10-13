@@ -114,6 +114,33 @@ public class DuplicateMergeDiagnosticsTest {
 	}
 
 	@Test
+	public void twoWayExactHeadDuplicateSkipsOrderingComparisonAndKeepsDiagnostics() {
+		CandidateRealizationSupportClause retained = clause("duplicate-first-a");
+		CandidateRealizationSupportClause added = clause("duplicate-first-z");
+		CandidateEmissionRealization left = realization(List.of(retained));
+		CandidateEmissionRealization right = realization(List.of(copy(retained), added));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(4);
+		PlacementIdentity.setActiveMetrics(metrics);
+		try {
+			CandidateEmissionRealization union = new CandidateEmissionFact(
+				EMISSION, FType.ROW, null, List.of(left, right)).realizations().get(0);
+			Assert.assertEquals(List.of(retained, added), union.supportClauses());
+			Assert.assertSame("the left exact authority remains the donor",
+				retained, union.supportClauses().get(0));
+			Assert.assertEquals("exact head equality must precede canonical text comparison",
+				0, metrics.snapshot().canonicalComparisons());
+			SearchSpaceMetrics.DuplicateMergeDiagnosticsSnapshot diagnostics =
+				metrics.duplicateMergeDiagnosticsSnapshot();
+			Assert.assertEquals(1, diagnostics.observedDuplicateClauses());
+			Assert.assertEquals(1, diagnostics.equalDistinctClauseClauses());
+			Assert.assertEquals("TWO_SORTED_UNION", diagnostics.traces().get(0).mergeShape());
+		}
+		finally {
+			PlacementIdentity.setActiveMetrics(null);
+		}
+	}
+
+	@Test
 	public void explicitOriginsSeparateGenerationRoutesAndRevisionReplay() {
 		SearchSpaceMetrics metrics = new SearchSpaceMetrics().enableDuplicateMergeDiagnostics(8);
 		PlacementIdentity.setActiveMetrics(metrics);
