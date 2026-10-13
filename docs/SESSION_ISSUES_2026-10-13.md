@@ -340,3 +340,9 @@
 - Incoming은 pruning의 원본 row journal과 `cacheNativeGateComponents` 호출을 새로 도입했다. 이전 helper 이름의 호출만 제거하면 journal 작업은 남으므로, 두 경로를 함께 제외했다.
 - 현재 production은 gate admission budget을 만들지 않고 기존 2인자 DAG pruning과 real-child cache만 실행한다. Incoming helper·metrics·전용 회귀는 보존하되 production에서 실행하지 않는다. 위 V55/V56 기록은 다른 엔진의 이력이며 이번 통합 엔진의 활성 경로가 아니다.
 - 별도 독립 검토에서 root-child cache 추출은 의미가 같고, gate journal/budget/새 counters는 비활성 경로 안에 있음을 확인했다. 통합 소스의 새 gate로 재검증한다. Frozen v46 a59c23069b/JAR8b941b3396은 변경하지 않는다.
+
+### 1b77 병합 후 회귀 gate 통과
+
+- 병합 커밋 `942b752441`: selected FedPlanner **1,529 PASS / 179.156초**, class/resource 7,917개, 실행 중 변경 0, source mismatch 0. Frozen v46과 별도 `engine-v46-main-merged-gate`에서 검사했다.
+- `evidence/gate-disabled-incoming-full-gate-v46-main/validation.json`에 보존한다. Independent merge review CLEAR: gate budget/journal/global cache 호출은 비활성, 2인자 DAG pruning과 real-child cache는 유지한다.
+- v46 actual은 여전히 커밋 `a59c23069b50fe75238f040413817510dfd91f31`, JAR SHA-256 `8b941b339605fa68c0f952b26d075f02edda53f5623122b9dce1332904e18002`, manifest `de8774f94ce826db7b079dafe8cc0466545392f6099aace5afc2022c51dc20ee`이다. 이후 checkout으로 실측 엔진을 교체하지 않는다.
