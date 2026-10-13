@@ -426,3 +426,9 @@
 - Incoming `3b5040b7b1`의 query-local gate interning을 통합한다. Fact·realization·relation 객체 identity와 witness·pivot·axis가 같을 때만 같은 query 안에서 gate를 재사용하며, 갱신된 relation은 identity가 달라 재사용하지 않는다. Global suffix 탐색은 계속 비활성이다.
 - Independent review CLEAR. v47 conditional-growth production과 변경 영역이 분리돼 자동 병합됐다. 세션 기록 충돌은 양쪽 증거를 모두 보존해 해결했다. 병합 소스로 별도 selected gate를 수행한다.
 - 현재 실제 Docker v47은 고정된 `6713d749c9`/JAR `7641b78263699b074cd73f1d73d6a6d78b09ff5daf9d8e9f95b4b31753402feb`를 실행한다. 이 후속 병합의 성능 측정으로 혼동하지 않는다.
+
+
+### Query-local interning 병합 gate 통과
+
+- Merge `84ed273792`: selected FedPlanner **1,543 PASS / 208.946초**. Class/resource 7,919개, 실행 중 변경 0, source mismatch 0이다. Native query-gate identity/cap/release 및 v47 growth/권한 회귀를 함께 통과했다.
+- 근거 `evidence/query-interning-incoming-full-gate-v47-main/validation.json`. 실제 v47은 기존 frozen engine으로 계속 실행하고, 병합 엔진은 v48로 따로 고정한다.
