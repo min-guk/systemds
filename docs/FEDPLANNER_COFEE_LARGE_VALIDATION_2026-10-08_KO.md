@@ -2,7 +2,7 @@
 
 ## 상태
 
-최신 완료 실측은 **v38 (`d41ddedf38`)**다. 같은 입력·seed·privacy·cost profile·JVM·CPU/메모리 조건의 COFEE 50K×128 W1 결과이며 각 버전별 1회 관측이다. **20초 목표는 미달이다.**
+최신 완료 실측은 **v41 (`46c2d282d6`)**다. 같은 입력·seed·privacy·cost profile·JVM·CPU/메모리 조건의 COFEE 50K×128 W1 결과이며 각 버전별 1회 관측이다. **20초 목표는 미달이다.**
 
 | 엔진 | LogReg 전체 초기 planning | GLM 전체 초기 planning |
 |---|---:|---:|
@@ -13,6 +13,24 @@
 | v34 | 391.357초 | 127.030초 |
 | v35 | 365.797초 | 116.640초 |
 | v38 | 368.659초 | 123.666초 |
+| v41 | 367.466초 | 124.110초 |
+
+v41은 v38 대비 LogReg −1.193초, GLM +0.444초로 전체 성능의 일관된 개선을 확인하지 못했다. 두 workload 모두 numeric·audit0·objective raw bits·selected assignment/receipt sections 및 CostSurface fingerprint가 같다. 각1회 관측이며20초 미달이다.
+
+| v41 단계 / 메모리 | LogReg | GLM |
+|---|---:|---:|
+| PlacementAnalysis | 277.728초 | 81.282초 |
+| Physical Model | 8.138초 | 5.151초 |
+| Cost Surface | 6.212초 | 8.136초 |
+| Optimizer | 71.785초 | 25.579초 |
+| Coordinator peak | 8,857,501,696B | 4,867,911,680B |
+| Worker peak | 733,298,688B | 762,126,336B |
+
+LogReg ordinary cache는21,202회 생성·6,574,634회 재사용됐고 native logical-member 조회12,421,044회를 생략했다. 이는 서로 다른 합법 조합12,421,044개를 제거했다는 뜻이 아니다. Explicit Clause 생성은19,402개 줄었지만 proof 소비6,121,451회와 rule fact 생성217,777개는 그대로다. Topology46.963초로7.351초 줄었으나 graph/overlay76.425초·dependency pruning26.699초·proof 소비28.596초로 다른 비용이 늘어 상쇄됐다. Coordinator peak는455,241,728B 줄었다. GLM Clause는6,419개 줄었지만 전체 시간·peak는 증가했다. 비교 SHA `5514270bb45204def7880f91345badeba552584905a91749375c1a0c3acf0508`. 캐시의 객체/조회 감소와 end-to-end 개선을 구분한다.
+
+다음 v42는 일반 root의 동일 의존 관계를 기존 proof memo로 재사용하고, 아직 선언되지 않은 임시 source 조회가 무관한 native product를 펼치는 경로를 줄인다. 합법성·template fallback·source/action/proof 계약과 메모리 한도를 유지하는 반례 검증 후 실측한다.
+
+이하 v38 및 이전 관측이다.
 
 v38은 v35 대비 LogReg가 2.862초, GLM이 7.026초 늘었다. 두 workload 모두 numeric comparator·runtime audit(mismatch0)·선택 계획 지문이 같지만 성능 개선은 확인하지 못했다. 각1회 관측이며 새 통합본도20초 미달이다. v39는 일반 pinned 조회에서 native sibling의 전체 전개를 줄였지만, query-local 재생성 때문에 selected 회귀 검사 시간이 176.755→389.843초로 늘어 게시·실측하지 않았다. v40은 handle별 캐시와 key별 staging residual로1,397개 회귀를 통과했다. 이후 origin/main의 owner+witness별 ordinary coverage 및 입력 인덱스를 통합한 v41은1,416개/probe9개와 독립 검토를 통과했다. 중복 캐시는 제거하고 key별 staging residual을 유지했으며, v41 actual 측정을 진행한다. 회귀 검사 시간은 실제 workload planning 시간과 구분한다.
 

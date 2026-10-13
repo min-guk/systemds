@@ -654,6 +654,58 @@ public class NativeHybridUnpinnedTopologyTest {
 	}
 
 	@Test
+	public void rejectedOrdinarySliceNeverCreatesNativeOwnerAcyclicRootMemo()
+		throws Exception {
+		synchronized(NativeHybridUnpinnedTopologyTest.class) {
+			String entriesKey = "sysds.fedplanner.continuityTopology.maxEntries";
+			String rowsKey = "sysds.fedplanner.continuityTopology.maxRows";
+			String oldEntries = System.getProperty(entriesKey);
+			String oldRows = System.getProperty(rowsKey);
+			try {
+				Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+				scenario.install(false);
+				System.setProperty(entriesKey, "8");
+				System.setProperty(rowsKey, "1");
+				SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+				NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+					scenario.fixture(), "resolver", metrics, 128, 2048L);
+
+				Assert.assertFalse(scenario.queryInstalled("a-choice", resolver).proofs().isEmpty());
+				long buildsAfterFirst = metrics.snapshot().topologyExpansionBuilds();
+				Assert.assertEquals("an over-budget ordinary slice cannot authorize root reuse",
+					0, acyclicRootMemoSize(resolver));
+				Assert.assertFalse(scenario.queryInstalled("z-choice", resolver).proofs().isEmpty());
+				Assert.assertTrue("a different pin must retain the complete exact fallback",
+					metrics.snapshot().topologyExpansionBuilds() > buildsAfterFirst);
+				Assert.assertEquals(0, acyclicRootMemoSize(resolver));
+				Assert.assertNull(residentTopology(resolver, scenario.childKey(), scenario.pool()));
+			}
+			finally {
+				restoreProperty(entriesKey, oldEntries);
+				restoreProperty(rowsKey, oldRows);
+			}
+		}
+	}
+
+	@Test
+	public void missingOrdinarySourceNeverBorrowsNativeOwnerAcyclicRootMemo()
+		throws Exception {
+		Scenario scenario = scenario("m-choice", List.of("a-choice", "z-choice"));
+		scenario.install(false);
+		CandidateRealizationReference nativePin = scenario.installedReference("m-choice");
+		CandidateRealizationReference missing = new CandidateRealizationReference(
+			nativePin.rule(), PlacementRealizationKey.nativeLineage(
+				nativePin.realization().emissionState(), "missing-ordinary-root"));
+		SearchSpaceMetrics metrics = new SearchSpaceMetrics();
+		NativePlacementContinuity resolver = (NativePlacementContinuity)invoke(
+			scenario.fixture(), "resolver", metrics, 128, 2048L);
+
+		resolver.proveCandidateSupport(missing, scenario.pool());
+		Assert.assertEquals("missing source authority is never shared by root relation",
+			0, acyclicRootMemoSize(resolver));
+	}
+
+	@Test
 	public void rejectedOrdinarySliceCountsItsRowsBeforeCompleteFallback() throws Exception {
 		synchronized(NativeHybridUnpinnedTopologyTest.class) {
 			String entriesKey = "sysds.fedplanner.continuityTopology.maxEntries";
@@ -759,6 +811,8 @@ public class NativeHybridUnpinnedTopologyTest {
 				.anyMatch(binding -> binding.source().rule().parentOccurrence() == hiddenOwner));
 		Assert.assertEquals("the ordinary pin must not expand the native product",
 			1, lazy.materializedHandleCount());
+		Assert.assertTrue("the root-independent ordinary pin admits bounded root reuse",
+			acyclicRootMemoSize(resolver) > 0);
 
 		List<CandidateRuleFact> withdrawnFacts = activeFacts.stream()
 			.filter(fact -> fact.key().parentOccurrence() != hiddenOwner).toList();
@@ -766,6 +820,8 @@ public class NativeHybridUnpinnedTopologyTest {
 		long beforeWithdrawal = metrics.snapshot().proofGraphsBuilt();
 		NativePlacementContinuity withdrawn = resolver.nextRevisionWithCompleteCandidateDelta(
 			withdrawnFacts, Set.of(hiddenOwner));
+		Assert.assertEquals("hidden metadata withdrawal invalidates shared-root authority",
+			0, acyclicRootMemoSize(withdrawn));
 		NativePlacementContinuity.CandidateSupportResult withdrawnActual =
 			scenario.queryInstalled("a-choice", withdrawn);
 		NativePlacementContinuity.CandidateSupportResult withdrawnCold =
@@ -783,6 +839,8 @@ public class NativeHybridUnpinnedTopologyTest {
 		long beforeRestoration = metrics.snapshot().proofGraphsBuilt();
 		NativePlacementContinuity restored = withdrawn.nextRevisionWithCompleteCandidateDelta(
 			activeFacts, Set.of(hiddenOwner));
+		Assert.assertEquals("hidden metadata restoration also starts without stale root reuse",
+			0, acyclicRootMemoSize(restored));
 		NativePlacementContinuity.CandidateSupportResult restoredActual =
 			scenario.queryInstalled("a-choice", restored);
 		NativePlacementContinuity.CandidateSupportResult restoredCold =
@@ -1429,6 +1487,13 @@ public class NativeHybridUnpinnedTopologyTest {
 				return entry.getValue();
 		}
 		return null;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static int acyclicRootMemoSize(NativePlacementContinuity resolver) throws Exception {
+		Field field = NativePlacementContinuity.class.getDeclaredField("acyclicRootSupportMemo");
+		field.setAccessible(true);
+		return ((Map<Object,Object>)field.get(resolver)).size();
 	}
 
 	private static boolean ordinaryOnly(Object topology) throws Exception {
