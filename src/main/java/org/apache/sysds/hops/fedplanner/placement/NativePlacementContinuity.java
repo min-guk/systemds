@@ -3416,10 +3416,10 @@ final class NativePlacementContinuity {
 		CandidateProofState root, Map<CandidateProofState,List<SelectedCandidateProof>> graph,
 		CandidateProofTraversal traversal) {
 		Map<CandidateProofState,AcyclicComponentFootprint> footprints = new java.util.LinkedHashMap<>();
-		for(SelectedCandidateProof alternative : graph.getOrDefault(root, List.of()))
-			for(CandidateProofDependency dependency : alternative.dependencies)
-				if(dependency.state().axisGate() == null && !dependency.state().equals(root))
-					rememberAcyclicComponentFootprint(dependency.state(), graph, traversal, footprints);
+		forEachRootComponentBoundary(root, graph, child -> {
+			if(!child.equals(root))
+				rememberAcyclicComponentFootprint(child, graph, traversal, footprints);
+		});
 		footprints.values().removeIf(Objects::isNull);
 		return footprints;
 	}
@@ -3434,14 +3434,56 @@ final class NativePlacementContinuity {
 		PlacementDependencyComponents components = occurrenceComponents.components();
 		var rootComponent = components.componentOf(root.key());
 		Map<CandidateProofState,AcyclicComponentFootprint> footprints = new java.util.LinkedHashMap<>();
+		forEachRootComponentBoundary(root, graph, child -> {
+			if(components.componentOf(child.key()) != rootComponent)
+				rememberAcyclicComponentFootprint(child, graph, traversal, footprints);
+		});
+		footprints.values().removeIf(Objects::isNull);
+		return footprints;
+	}
+
+	/**
+	 * Axis gates factor native input choices; they are not reusable proof owners.
+	 * Cross only this synthetic frontier and stop at each real child, preserving
+	 * dependency encounter order and the existing footprint/admission checks.
+	 */
+	private void forEachRootComponentBoundary(CandidateProofState root,
+		Map<CandidateProofState,List<SelectedCandidateProof>> graph,
+		java.util.function.Consumer<CandidateProofState> consumer) {
+		Set<CandidateProofState> visitedGates = null;
+		ArrayDeque<CandidateProofState> pending = null;
 		for(SelectedCandidateProof alternative : graph.getOrDefault(root, List.of()))
 			for(CandidateProofDependency dependency : alternative.dependencies) {
 				CandidateProofState child = dependency.state();
-				if(child.axisGate() == null && components.componentOf(child.key()) != rootComponent)
-					rememberAcyclicComponentFootprint(child, graph, traversal, footprints);
+				if(child.axisGate() == null) {
+					consumer.accept(child);
+					continue;
+				}
+				if(visitedGates == null) {
+					visitedGates = new HashSet<>();
+					pending = new ArrayDeque<>();
+				}
+				pending.push(child);
+				while(!pending.isEmpty()) {
+					CandidateProofState state = pending.pop();
+					if(state.axisGate() == null) {
+						if(metrics != null)
+							metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_ROOT_GATE_BOUNDARY_DEPENDENCIES);
+						consumer.accept(state);
+						continue;
+					}
+					if(!visitedGates.add(state))
+						continue;
+					if(metrics != null)
+						metrics.recordDirectWork(SearchSpaceMetrics.DirectWork.COMPONENT_ROOT_GATES_TRAVERSED);
+					List<SelectedCandidateProof> choices = graph.getOrDefault(state, List.of());
+					for(int choice = choices.size() - 1; choice >= 0; choice--) {
+						List<CandidateProofDependency> dependencies = choices.get(choice).dependencies;
+						for(int input = dependencies.size() - 1; input >= 0; input--)
+							pending.push(dependencies.get(input).state());
+					}
+				}
 			}
-		footprints.values().removeIf(Objects::isNull);
-		return footprints;
 	}
 
 	private void rememberAcyclicComponentFootprint(CandidateProofState child,

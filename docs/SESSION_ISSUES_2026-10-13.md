@@ -34,3 +34,30 @@
 - Fresh **204 actual classes / 1,585 tests / failures 0 / errors 0 / skipped 2**, package BUILD SUCCESS (06:25:42+02). Incoming missing-pin/ordinary-root 회귀도 포함한다.
 - 근거 `evidence/candidate-v53-package.log`; 독립 계약 검토와 source hash `evidence/v53-family-contract-review.txt`.
 - OMX state checkpoint는 session scope unusable 오류로 실패했다. 권한을 우회하지 않았고 외부 `PROGRESS.json`과 정상 동작하는 working notepad에 상태를 보존한다.
+
+## V54: synthetic native gate가 숨긴 실제 재사용 경계 (진행 중)
+
+- **문제/원인**: native input product는 axis gate로 압축하지만 root-child footprint 수집은 gate를 제외했다. 그 뒤의 실제 하위 proof를 여러 native query가 공유해도 component summary admission 대상에서 빠졌다.
+- **선행 증거**: 같은 lazy relation을 공유하는 두 native root의 공개 API 테스트와 cyclic SCC/negative/hidden-owner 테스트를 먼저 추가했다. 기존 소스는 25 tests 중 2개에서 예상 RED (admission 0, 빈 경계)를 냈다. Fixture setup 오류는 없었다.
+- **해결**: synthetic gate만 통과하고 첫 실제 child에서 멈추는 encounter-order 보존 frontier를 추가했다. 실제 child에는 기존 footprint·SCC·root-dependence·negative·예산·revision 검사를 그대로 적용한다. Gate 자체를 캐시하거나 product를 펼치지 않는다. Gate 방문 집합과 stack은 gate를 만날 때만 만든다.
+- **수정 파일**: `NativePlacementContinuity.java`, `SearchSpaceMetrics.java`, `NativeHybridUnpinnedTopologyTest.java`, `NativeAxisGateComponentReuseTest.java`.
+- **검증**: fresh overlay focused 43 PASS (0.708초); eager/cold/metrics ON proof 순서·owner identity·FULL seed·footprint parity와 두 번째 query의 graph state/edge 감소를 검증했다. Independent actual-diff review CLEAR. 전체 gate 및 동일 Docker 실측은 별도다.
+- **계측 의미**: `COMPONENT_ROOT_GATES_TRAVERSED`는 한 frontier 내 unique gate 방문, `COMPONENT_ROOT_GATE_BOUNDARY_DEPENDENCIES`는 뒤에서 발견한 dependency encounter 수다. 중복 및 후속 거부가 포함될 수 있어 admission이나 시간 절감량이 아니다.
+- **잔여/회귀 위험**: 발견 경계가 늘면 footprint 비용과 기존 bounded cache churn이 늘 수 있다. 예산을 늘리지 않고 실제 workload에서 확인한다. Hidden owner revision·negative·SCC 및 기존 native parity 테스트로 안전성을 감지한다.
+- **의사결정 근거**: oracle/runtime/privacy가 아니라 압축 그래프의 재사용 경계 발견 누락을 수정했다.
+
+### V53 동일 Docker 결과와 다음 경로 선택
+
+- OFF/detailed × LogReg/GLM 모두 watchdog60, fullInitial 완료 기록 없음, 네 container 제거. 20초 목표는 여전히 FAIL.
+- OFF LogReg 2,146 samples/direct binding 63.14%/peak 4.870GB, GLM 2,673/canonical 7.56%/joint 8.08%/peak 3.329GB. 불완전한 실행이므로 완료 시간 개선을 주장하지 않는다.
+- Summary lookup은 LogReg 3,657,068 중 absent 3,509,381 / reuse 144,014 / fixed-owner reject 3,673. GLM 343,028 중 absent 322,601 / reuse 20,319 / reject 108. Terminal 합계 일치. State/row budget bypass는 0이며, LogReg eviction 20,089건은 별도로 관측했다. Absent가 곧 재사용 가능한 반복이라는 뜻은 아니다.
+- Canonical GLM size>=2 요청 746,684 중 tracked repeat 570, overflow 643,336. 이 bounded identity 관측으로 전체 반복률을 단정할 수 없으며 새 sequence cache의 실제 이득을 입증하지 못했다. 우선 gate 뒤 실제 재사용 경계 누락의 재현 증거가 있는 V54를 진행한다.
+- 외부 build 중첩은 OFF 21/25 samples, detailed 2/25; 외부 planner 두 개는 전 구간 존재했다. 자체 build/JFR parsing은 timed Docker와 겹치지 않았다.
+- 근거: `evidence/v53-{monitor-driver.log,contention-summary.json,planner-breakdown.txt}`, `evidence/candidate-v53-detailed-topology-outcomes.json`, `candidate-v53-{off-jfr,detailed}/summary.json`.
+
+### V54 통합 gate 및 봉인
+
+- **205 actual classes / 1,587 tests / failures 0 / errors 0 / skipped 2**, Maven package BUILD SUCCESS (2026-10-13 06:38:35+02). 전체 저장소 테스트가 아니라 명시된 FedPlanner 회귀 gate다.
+- 공개 API 회귀의 두 번째 query는 proof states **10→9**, dependency edges **12→7**, component reuse 5건이었다. 이는 작은 fixture의 작업량 검증이며 LogReg/GLM 속도 개선을 뜻하지 않는다.
+- 봉인 JAR SHA-256: `5e2af1624eb56094aaf180396a62958d2944991b4f6134b40eca1268c9e47bf1`; 근거 `evidence/candidate-v54-package.log`, `candidate-v54/seal.json`, `evidence/v54-gate-frontier-review.txt`.
+- 후속 source review: 실제 direct binding의 generated root는 native gate보다 먼저 ordinary dependency로 분기한다. V54는 root gate 경계만 복구하므로, 더 깊은 gate 뒤 반복 proof admission 문제까지 해결했다고 주장하지 않는다. 그 경계를 늘릴 때에는 기존 footprint walker의 중복 transitive traversal/owner 복사 비용도 총량 제한해야 한다.
