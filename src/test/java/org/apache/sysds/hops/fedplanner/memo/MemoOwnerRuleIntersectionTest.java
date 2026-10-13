@@ -71,6 +71,8 @@ public class MemoOwnerRuleIntersectionTest {
 		Assert.assertFalse(intersection.isEmpty());
 		Assert.assertTrue(union.size() > intersection.size());
 		Assert.assertEquals(intersection, new LinkedHashSet<>(result.memo().rules(owner)));
+		Assert.assertEquals("rule ordinals must retain the first context's order",
+			new ArrayList<>(intersection), result.memo().rules(owner));
 		Assert.assertTrue(result.memo().complete(owner));
 	}
 
@@ -95,6 +97,26 @@ public class MemoOwnerRuleIntersectionTest {
 		Assert.assertEquals(first.memo().rules(two.facts().compiledOwnerId(two.kernel())),
 			second.memo().rules(repeated.facts().compiledOwnerId(repeated.kernel())));
 		Assert.assertEquals(4, repeated.facts().occurrenceIds(repeated.kernel()).size());
+	}
+
+	@Test
+	public void repeatedKnownContextsDoNotHideUnknownCoverageInEitherOrder() {
+		for(int[] columns : new int[][] {{3, 3, -1, 3}, {-1, 3, 3, 3}, {3, -1, -1, 3}}) {
+			Fixture fixture = fixture(true, columns);
+			MemoNativeRules oracle = new MemoNativeRules();
+			MemoRuleBuilder.Result result = MemoRuleBuilder.build(fixture.facts(), fixture.sources(), oracle);
+			int owner = fixture.facts().compiledOwnerId(fixture.kernel());
+			Assert.assertTrue("the fixture must exercise full-key Oracle cache reuse", oracle.cacheStats().hits() > 0);
+			Assert.assertFalse("repeated known contexts cannot clear UNKNOWN", result.memo().complete(owner));
+			Assert.assertTrue(result.memo().rules(owner).stream().anyMatch(rule -> rule.exec() == ExecType.CP));
+			for(int index = 0; index < columns.length; index++) {
+				if(columns[index] >= 0) continue;
+				int unknownOccurrence = fixture.facts().occurrenceIds(fixture.kernel()).get(index);
+				Assert.assertTrue("each unresolved occurrence must retain its diagnostic: " + result.diagnostics(),
+					result.diagnostics().stream().anyMatch(message -> message.startsWith(
+						"owner=" + owner + " occurrence=" + unknownOccurrence + " ")));
+			}
+		}
 	}
 
 	@Test

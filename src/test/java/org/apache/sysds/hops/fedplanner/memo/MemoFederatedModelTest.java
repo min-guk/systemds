@@ -206,6 +206,40 @@ public class MemoFederatedModelTest {
 			result.memo().rules(owner(facts,abs)).stream().anyMatch(rule -> rule.exec() == ExecType.CP));
 	}
 
+	@Test
+	public void sharedOwnerChecksGroundedPrivacyAfterAnUngroundedOccurrence() {
+		DataOp unknown = new DataOp("P", DataType.MATRIX, ValueType.FP64,
+			OpOpData.PERSISTENTREAD, "P", 8, 4, 32, 1000);
+		DataOp canonical = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.FEDERATED, "X", -1, -1, -1, 1000);
+		DataOp read = new DataOp("V", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "V", -1, -1, -1, 1000);
+		UnaryOp shared = new UnaryOp("shared_abs", DataType.MATRIX, ValueType.FP64, OpOp1.ABS, read);
+		List<StatementBlock> blocks = new ArrayList<>();
+		for(Hop value : List.of(unknown, canonical)) {
+			DataOp write = new DataOp("V", DataType.MATRIX, ValueType.FP64, value,
+				OpOpData.TRANSIENTWRITE, "V");
+			StatementBlock block = new StatementBlock();
+			block.setHops(new ArrayList<>(List.of(write, shared)));
+			blocks.add(block);
+		}
+		DMLProgram program = new DMLProgram();
+		program.setStatementBlocks(new ArrayList<>(blocks));
+		MemoProgramFacts facts = MemoProgramFacts.analyze(program);
+		MemoSources sources = MemoSources.acquire(facts, null,
+			ignored -> sourceMetadata(Privacy.PRIVATE_AGGREGATE));
+		Assert.assertNull("the first occurrence has unresolved source privacy", sources.privacy(owner(facts, unknown)));
+		Assert.assertEquals(Privacy.PRIVATE_AGGREGATE, sources.privacy(owner(facts, canonical)));
+		MemoRuleBuilder.Result result = MemoRuleBuilder.build(facts, sources, new MemoNativeRules());
+		List<Integer> occurrences = facts.occurrenceIds(shared);
+		Assert.assertEquals(2, occurrences.size());
+		Assert.assertFalse("the grounded second occurrence must reject CP for this shared owner",
+			result.memo().rules(owner(facts, shared)).stream().anyMatch(rule -> rule.exec() == ExecType.CP));
+		Assert.assertTrue("the protected occurrence must own the rejection: " + result.diagnostics(),
+			result.diagnostics().stream().anyMatch(message -> message.startsWith("privacy-pruned owner="
+				+ owner(facts, shared) + " occurrence=" + occurrences.get(1) + " ")));
+	}
+
 	private static FederatedSourceMetadata sourceMetadata(Privacy privacy) {
 		return sourceMetadata(privacy, 8, 4, "X");
 	}

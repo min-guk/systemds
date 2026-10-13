@@ -16,9 +16,14 @@ package org.apache.sysds.hops.fedplanner.memo;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Consumer;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
@@ -33,11 +38,19 @@ import org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.OccurrenceContext;
 /** Build immutable native domains once. Transparent value bindings have no native rule. */
 public final class MemoRuleBuilder {
 	private static final class RuleIntersection {
-		private List<RuleMemo.Rule> rules;
+		private LinkedHashSet<RuleMemo.Rule> rules;
 		private List<InputRole> roles;
-		private RuleIntersection(List<RuleMemo.Rule> rules,List<InputRole> roles) {
-			this.rules=rules;
-			this.roles=roles;
+		private final Set<MemoNativeRules.Result> intersected =
+			Collections.newSetFromMap(new IdentityHashMap<>());
+		private void intersect(MemoNativeRules.Result result) {
+			// Only reuse the exact immutable result returned by the full-key Oracle
+			// cache. Coverage, roles and occurrence diagnostics are still checked below.
+			if(!intersected.add(result)) return;
+			if(rules == null) rules = new LinkedHashSet<>(result.rules());
+			else {
+				Set<RuleMemo.Rule> allowed = new HashSet<>(result.rules());
+				rules.removeIf(rule -> !allowed.contains(rule));
+			}
 		}
 	}
 	/** Immutable rule domains plus request-confined semantic analyses; not shared across planning epochs. */
@@ -97,8 +110,7 @@ public final class MemoRuleBuilder {
 					List.of(MemoPartition.LOCAL),"cp/local")));
 				roles.add(inputRoles); continue;
 			}
-			List<RuleMemo.Rule> commonRules = null;
-			List<InputRole> commonRoles = null;
+			RuleIntersection intersection = new RuleIntersection();
 			for(MemoProgramFacts.Occurrence occurrence : occurrencesByOwner.get(owner)) {
 				List<OccurrenceContext> occurrenceContexts=facts.occurrenceContexts(occurrence.id());
 				if(occurrenceContexts.isEmpty()) {
@@ -110,15 +122,13 @@ public final class MemoRuleBuilder {
 				for(OccurrenceContext occurrenceContext : occurrenceContexts) {
 					EvaluationContext base=new EvaluationContext(Map.of(),Map.of(),
 						MemoBindingResolver.NO_SELECTION,4096,occurrenceContext.callFrame(),Map.of());
-					RuleIntersection intersection=new RuleIntersection(commonRules,commonRoles);
 					boolean[] unresolvedShape={false};
 					MemoBindingResolver.VisitResult activation=reachableContexts.visit(occurrence,base,active -> {
 						if(!visitShapeContexts(shapes,occurrence.id(),active,context -> {
 							Hop occurrenceHop=shapes.viewAt(occurrence.id(),context);
 							MemoNativeRules.Result nativeRules=oracle.rules(occurrenceHop,Math.max(1,sources.workers()),
 								shapes.hintAt(occurrence.id(),context));
-							if(intersection.rules==null) intersection.rules=new ArrayList<>(nativeRules.rules());
-							else intersection.rules.retainAll(nativeRules.rules());
+							intersection.intersect(nativeRules);
 							if(intersection.roles==null) intersection.roles=nativeRules.inputRoles();
 							else if(!intersection.roles.equals(nativeRules.inputRoles())) {
 								complete[currentOwner]=false;
@@ -137,23 +147,24 @@ public final class MemoRuleBuilder {
 						diagnostics.add("owner="+owner+" occurrence="+occurrence.id()
 							+" unresolved reachable shape context: "+activation.detail());
 					}
-					commonRules=intersection.rules;
-					commonRoles=intersection.roles;
 				}
 			}
-			if(commonRules == null) {
+			if(intersection.rules == null) {
 				MemoNativeRules.Result nativeRules = oracle.rules(hop,Math.max(1,sources.workers()),shapes.hint(owner));
-				commonRules = new ArrayList<>(nativeRules.rules());
-				commonRoles = nativeRules.inputRoles();
+				intersection.intersect(nativeRules);
+				intersection.roles = nativeRules.inputRoles();
 				complete[owner] &= nativeRules.complete();
 			}
-			List<InputRole> selectedRoles = commonRoles == null ? inputRoles : commonRoles;
-			List<RuleMemo.Rule> privacyFiltered = new ArrayList<>(commonRules.size());
-			for(RuleMemo.Rule rule : commonRules) {
+			List<InputRole> selectedRoles = intersection.roles == null ? inputRoles : intersection.roles;
+			// Grounding depends on the occurrence's exact bindings and final roles,
+			// not on a candidate rule. Legality remains rule-specific below.
+			List<MemoProgramFacts.Occurrence> groundedOccurrences = occurrencesByOwner.get(owner).stream()
+				.filter(occurrence -> sourceGroundedPrivacy(occurrence,selectedRoles,facts,sources)).toList();
+			List<RuleMemo.Rule> privacyFiltered = new ArrayList<>(intersection.rules.size());
+			for(RuleMemo.Rule rule : intersection.rules) {
 				MemoPrivacy.RuleCheck rejection = null;
 				int rejectedOccurrence = -1;
-				for(MemoProgramFacts.Occurrence occurrence : occurrencesByOwner.get(owner)) {
-					if(!sourceGroundedPrivacy(occurrence,selectedRoles,facts,sources)) continue;
+				for(MemoProgramFacts.Occurrence occurrence : groundedOccurrences) {
 					MemoPrivacy.RuleCheck check = privacy.unconditionalRuleLegalityAt(
 						occurrence.id(),rule,selectedRoles,MemoPrivacy.Context.empty());
 					if(check.legality() == MemoPrivacy.Legality.ILLEGAL) {
