@@ -101,6 +101,26 @@ public class MemoProgramFactsIndexTest {
 		}
 	}
 
+	@Test
+	public void inputBindingsPreserveFrozenEdgesAndAbsentQueries() throws Exception {
+		MemoProgramFacts facts=analyze("f=function(matrix[double] X) return(matrix[double] Y){Y=X+1;}"
+			+ "A=matrix(1,2,3);for(i in 1:3){A=f(A);}print(sum(A));");
+		facts.requireComplete();
+		Map<Long,Integer> expected=new LinkedHashMap<>();
+		for(MemoProgramFacts.InputBinding edge:facts.inputBindings())
+			expected.put(pairKey(edge.occurrenceId(),edge.inputPosition()),edge.bindingId());
+		Assert.assertFalse(expected.isEmpty());
+		for(MemoProgramFacts.Occurrence occurrence:facts.occurrences())
+			for(int position=-1;position<=occurrence.hop().getInput().size();position++)
+				Assert.assertEquals(expected.getOrDefault(pairKey(occurrence.id(),position),-1).intValue(),
+					facts.inputBinding(occurrence.id(),position));
+		for(int invalid: new int[] {-1,Integer.MIN_VALUE,Integer.MAX_VALUE}) {
+			Assert.assertEquals(-1,facts.inputBinding(invalid,0));
+			Assert.assertEquals(-1,facts.inputBinding(0,invalid));
+		}
+		Assert.assertEquals(-1,facts.inputBinding(facts.occurrences().size(),0));
+	}
+
 	private static long pairKey(int left,int right) {
 		return ((long)left << 32) | (right & 0xffffffffL);
 	}

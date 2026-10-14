@@ -50,7 +50,7 @@ public class MemoOptimizerDomainCacheTest {
 		assertSameSolve(uncached,cached);
 		Assert.assertArrayEquals(new int[] {0,0,0},cached.selectedRules());
 		Assert.assertTrue("restored check-local domains must reuse exact support",
-			cached.statistics().supportCacheHits()>0);
+			cached.statistics().supportCacheHits()+cached.statistics().supportWitnessHits()>0);
 		Assert.assertTrue("restored cost domains must reuse the exact lower bound",
 			cached.statistics().conditionalBoundCacheHits()>0);
 		Assert.assertEquals("exact cache hits must not add wide relaxations",

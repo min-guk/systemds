@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.DoubleFunction;
 import java.util.function.Function;
 import java.util.function.ToDoubleFunction;
 
@@ -45,10 +46,18 @@ public final class MemoOptimizer {
 		private final int site;
 		private final int[] owners;
 		private final Predicate predicate;
+		private final int[][] truthClasses;
 		public Check(int site, int[] owners, Predicate predicate) {
+			this(site,owners,predicate,null);
+		}
+		/** Caller-supplied proof: ordinals in one class have identical complete-tuple
+		 * Truth, including UNKNOWN, for every combination of all other owner classes.
+		 * Partial tuples continue to call the original predicate with actual ordinals. */
+		public Check(int site,int[] owners,Predicate predicate,int[][] truthClasses) {
 			this.site = site;
 			this.owners = uniqueScope(owners);
 			this.predicate = Objects.requireNonNull(predicate);
+			this.truthClasses=validateClasses(this.owners,truthClasses,"Truth");
 		}
 		public int site() { return site; }
 		public int[] owners() { return owners.clone(); }
@@ -60,10 +69,19 @@ public final class MemoOptimizer {
 		private final int[] owners;
 		private final ToDoubleFunction<int[]> evaluator;
 		private final BigDecimal certifiedMinimum;
+		private final int[][] costClasses;
 		public CostTerm(int[] owners, ToDoubleFunction<int[]> evaluator, double certifiedMinimum) {
+			this(owners,evaluator,certifiedMinimum,null);
+		}
+		/** Optional immutable classes certify identical complete-tuple term values for
+		 * each owner's ordinals in the same class, for every combination of other owners.
+		 * They do not identify rules for feasibility, native cost or solution selection. */
+		public CostTerm(int[] owners,ToDoubleFunction<int[]> evaluator,double certifiedMinimum,
+			int[][] costClasses) {
 			this.owners = uniqueScope(owners);
 			this.evaluator = Objects.requireNonNull(evaluator);
 			this.certifiedMinimum = exact(certifiedMinimum);
+			this.costClasses=validateCostClasses(this.owners,costClasses);
 		}
 		public int[] owners() { return owners.clone(); }
 		BigDecimal evaluateExact(int[] scopedRules) {
@@ -74,13 +92,16 @@ public final class MemoOptimizer {
 		private final int[] owners;
 		private final Function<int[],BigDecimal> evaluator;
 		private final BigDecimal certifiedMinimum;
-		private CostFactor(int[] owners,Function<int[],BigDecimal> evaluator,BigDecimal certifiedMinimum) {
+		private final int[][] costClasses;
+		private CostFactor(int[] owners,Function<int[],BigDecimal> evaluator,BigDecimal certifiedMinimum,
+			int[][] costClasses) {
 			this.owners=uniqueScope(owners); this.evaluator=Objects.requireNonNull(evaluator);
 			this.certifiedMinimum=Objects.requireNonNull(certifiedMinimum);
+			this.costClasses=copyCostClasses(costClasses);
 		}
-		private static CostFactor from(CostTerm term) {
-			return new CostFactor(term.owners,term::evaluateExact,
-				term.certifiedMinimum);
+		private static CostFactor from(CostTerm term,DoubleFunction<BigDecimal> converter) {
+			return new CostFactor(term.owners,values -> converter.apply(
+				term.evaluator.applyAsDouble(values.clone())),term.certifiedMinimum,term.costClasses);
 		}
 	}
 	public record Limits(long searchNodes, int supportEvaluations, int cacheEntries) {
@@ -91,10 +112,13 @@ public final class MemoOptimizer {
 		public static Limits exactDefaults() { return new Limits(Long.MAX_VALUE, 256, 4096); }
 	}
 	public record Statistics(long nodes, long checkEvaluations, long checkCacheHits,
-		long supportQueries, long supportCacheHits, long worklistVisits, long removedRules, long costEvaluations,
+		long supportQueries, long supportCacheHits, long supportWitnessHits, long binarySupportHits,
+		long binarySupportRows, long worklistVisits,
+		long removedRules, long costEvaluations,
 		long costCacheHits, long boundPrunes, long conditionalBoundQueries, long conditionalBoundCacheHits,
 		long wideBoundRelaxations,long forestTailAttempts,long forestTailApplicable,long forestTailCompletions,
-		long forestTailCells) {}
+		long forestTailCells,long annotatedChecks,long invariantCheckAxes,long binaryChecksReduced,
+		long branchEdgesRemovedDuringNormalization) {}
 	public record Result(Status status, BigDecimal cost, int[] selectedRules, Statistics statistics) {
 		public Result { selectedRules = selectedRules == null ? null : selectedRules.clone(); }
 		@Override public int[] selectedRules() { return selectedRules == null ? null : selectedRules.clone(); }
@@ -107,6 +131,8 @@ public final class MemoOptimizer {
 	private List<CostFactor> terms;
 	private final BigDecimal[][] nativeCosts;
 	private final Limits limits;
+	private final Map<Long,BigDecimal> exactValues;
+	private final int exactValueCacheLimit;
 	private int[][] incident;
 	private int[][] costIncident;
 	private int[][] branchAdjacent;
@@ -123,8 +149,12 @@ public final class MemoOptimizer {
 	private final Map<TupleKey,BigDecimal> costCache;
 	private final Map<ScopedDomainKey,BigDecimal> boundCache;
 	private final Map<ScopedDomainKey,Truth> supportCache;
+	private final Map<SupportWitnessKey,int[]> supportWitnesses;
+	private long[][][] binarySupports;
+	private int binarySupportRows;
 	private final TupleProbe lookupProbe = new TupleProbe();
 	private final ScopedDomainProbe domainProbe = new ScopedDomainProbe();
+	private final SupportWitnessProbe witnessProbe = new SupportWitnessProbe();
 	private final BigDecimal[] ownerBounds;
 	private BigDecimal[] termBounds;
 	private final BitSet dirtyOwnerBounds = new BitSet();
@@ -136,12 +166,15 @@ public final class MemoOptimizer {
 	private BigDecimal incumbent;
 	private int[] selected;
 	private BigDecimal unresolvedLowerBound;
+	private int[] foundSupportWitness;
 	private boolean exhausted;
 	private boolean optimized;
-	private long nodes, checkEvaluations, checkCacheHits, supportQueries, supportCacheHits, worklistVisits,
+	private long nodes, checkEvaluations, checkCacheHits, supportQueries, supportCacheHits,
+		supportWitnessHits, binarySupportHits, worklistVisits,
 		removedRules, costEvaluations, costCacheHits, boundPrunes, conditionalBoundQueries,
 		conditionalBoundCacheHits, wideBoundRelaxations,forestTailAttempts,forestTailApplicable,
-		forestTailCompletions,forestTailCells;
+		forestTailCompletions,forestTailCells,annotatedChecks,invariantCheckAxes,binaryChecksReduced,
+		branchEdgesRemovedDuringNormalization;
 
 	public MemoOptimizer(RuleMemo memo, double[][] nativeCosts, List<Check> checks,
 		List<CostTerm> terms, Limits limits) {
@@ -157,25 +190,35 @@ public final class MemoOptimizer {
 		this.coverage = coverage.clone();
 		if(coverage.length != domainSizes.length) throw new IllegalArgumentException("Coverage/domain mismatch");
 		this.checks = checks.stream().map(check -> {
+			if(check.truthClasses!=null) for(int position=0;position<check.owners.length;position++)
+				if(check.truthClasses[position].length!=domainSizes[check.owners[position]])
+					throw new IllegalArgumentException("Truth classes must match immutable rule domain");
 			int[] reduced = nonConstantScope(check.owners,domainSizes);
 			return reduced.length == check.owners.length ? check : new Check(check.site,reduced,
-				values -> check.predicate.test(expandConstantScope(check.owners,domainSizes,values)));
+				values -> check.predicate.test(expandConstantScope(check.owners,domainSizes,values)),
+				projectClasses(check.owners,reduced,check.truthClasses));
 		}).toList();
+		annotatedChecks=this.checks.stream().filter(check -> check.truthClasses!=null).count();
 		this.terms = terms.stream().map(term -> {
-			CostFactor factor=CostFactor.from(term);
+			if(term.costClasses!=null) for(int position=0;position<term.owners.length;position++)
+				if(term.costClasses[position].length!=domainSizes[term.owners[position]])
+					throw new IllegalArgumentException("Cost classes must match immutable rule domain");
+			CostFactor factor=CostFactor.from(term,this::cachedExact);
 			int[] reduced = nonConstantScope(term.owners,domainSizes);
 			return reduced.length == term.owners.length ? factor : new CostFactor(reduced,
 				values -> factor.evaluator.apply(expandConstantScope(term.owners,domainSizes,values)),
-				factor.certifiedMinimum);
+				factor.certifiedMinimum,projectCostClasses(term.owners,reduced,factor.costClasses));
 		}).toList();
 		this.limits = Objects.requireNonNull(limits);
+		exactValueCacheLimit=Math.min(4096,limits.cacheEntries());
+		exactValues=new HashMap<>(Math.max(1,exactValueCacheLimit));
 		if(nativeCosts.length != domainSizes.length)
 			throw new IllegalArgumentException("Native costs must match owner count");
 		this.nativeCosts = new BigDecimal[nativeCosts.length][];
 		for(int owner = 0; owner < nativeCosts.length; owner++) {
 			if(nativeCosts[owner].length != domainSizes[owner])
 				throw new IllegalArgumentException("Native costs must match immutable rule domain");
-			this.nativeCosts[owner] = Arrays.stream(nativeCosts[owner]).mapToObj(MemoOptimizer::exact)
+			this.nativeCosts[owner] = Arrays.stream(nativeCosts[owner]).mapToObj(this::cachedExact)
 				.toArray(BigDecimal[]::new);
 		}
 		domains = new BitSet[domainSizes.length];
@@ -217,6 +260,8 @@ public final class MemoOptimizer {
 		costCache = boundedCache(limits.cacheEntries());
 		boundCache = boundedCache(limits.cacheEntries());
 		supportCache = boundedCache(limits.cacheEntries());
+		supportWitnesses = boundedCache(limits.cacheEntries());
+		binarySupports = new long[this.checks.size()][][];
 	}
 
 	private static int[] nonConstantScope(int[] owners,int[] domainSizes) {
@@ -262,41 +307,113 @@ public final class MemoOptimizer {
 
 	/** Fold ordinals proven singleton by the initial feasibility fixed point exactly once. */
 	private void normalizeAfterPropagation() {
+		long branchEdgesBefore=branchEdgeCount();
 		List<Check> reducedChecks=new ArrayList<>(checks.size());
-		boolean projected=false;
-		for(Check check : checks) {
-			int[] reduced=nonSingletonScope(check.owners);
+		boolean projected=false,removedTautology=false;
+		for(int id=0;id<checks.size();id++) {
+			Check check=checks.get(id);
+			int[] fixed=checkFixedOrdinals(check);
+			int[] reduced=unfixedScope(check.owners,fixed);
+			if(check.owners.length==2 && reduced.length==1) binaryChecksReduced++;
+			if(reduced.length<=1 && unaryTautology(id,check.owners,fixed,reduced)) {
+				removedTautology=true;
+				continue;
+			}
 			if(reduced.length==check.owners.length) reducedChecks.add(check);
 			else {
 				projected=true;
-				int[] fixed=fixedOrdinals(check.owners);
 				reducedChecks.add(new Check(check.site,reduced,values -> check.predicate.test(
-					expandFixedScope(check.owners,fixed,values))));
+					expandFixedScope(check.owners,fixed,values)),
+					projectClasses(check.owners,reduced,check.truthClasses)));
 			}
 		}
 		List<CostFactor> reducedTerms=new ArrayList<>(terms.size());
 		for(CostFactor term : terms) {
-			int[] reduced=nonSingletonScope(term.owners);
+			int[] fixed=costFixedOrdinals(term);
+			int[] reduced=unfixedScope(term.owners,fixed);
 			if(reduced.length==term.owners.length) reducedTerms.add(term);
 			else {
 				projected=true;
-				int[] fixed=fixedOrdinals(term.owners);
 				reducedTerms.add(new CostFactor(reduced,values -> term.evaluator.apply(
-					expandFixedScope(term.owners,fixed,values)),term.certifiedMinimum));
+					expandFixedScope(term.owners,fixed,values)),term.certifiedMinimum,
+					projectCostClasses(term.owners,reduced,term.costClasses)));
 			}
 		}
 		List<Check> groupedChecks=groupChecks(reducedChecks);
 		boolean costNormalization=reducedTerms.stream().anyMatch(term -> term.owners.length<=1)
 			|| uniqueScopeCount(reducedTerms.stream().map(term -> term.owners).toList())<reducedTerms.size();
-		if(!projected && groupedChecks.size()==checks.size() && !costNormalization) return;
+		if(!projected && !removedTautology && groupedChecks.size()==checks.size() && !costNormalization) return;
 		checks=groupedChecks;
 		terms=foldAndGroupCosts(reducedTerms);
 		rebuildDependencyIndexes();
+		branchEdgesRemovedDuringNormalization=Math.max(0,branchEdgesBefore-branchEdgeCount());
 		truthCache.clear(); costCache.clear(); boundCache.clear(); supportCache.clear();
+		supportWitnesses.clear();
+		binarySupports=new long[checks.size()][][]; binarySupportRows=0;
 		Arrays.fill(ownerBounds,null); termBounds=new BigDecimal[terms.size()];
 		dirtyOwnerBounds.clear(); dirtyOwnerBounds.set(0,domains.length);
 		dirtyTermBounds.clear(); dirtyTermBounds.set(0,terms.size());
 		cachedLowerBound=BigDecimal.ZERO; lowerBoundInitialized=false;
+	}
+	private long branchEdgeCount() {
+		long edges=0;
+		for(int owner=0;owner<branchAdjacent.length;owner++)
+			for(int adjacent:branchAdjacent[owner]) if(adjacent>owner) edges++;
+		return edges;
+	}
+	private int[] checkFixedOrdinals(Check check) {
+		int[] fixed=fixedOrdinals(check.owners);
+		if(check.truthClasses==null) return fixed;
+		for(int position=0;position<check.owners.length;position++) {
+			if(fixed[position]>=0) continue;
+			int owner=check.owners[position],representative=domains[owner].nextSetBit(0);
+			if(representative<0) continue;
+			int truthClass=check.truthClasses[position][representative];
+			boolean invariant=true;
+			for(int ordinal=domains[owner].nextSetBit(representative+1);ordinal>=0;
+				ordinal=domains[owner].nextSetBit(ordinal+1))
+				if(check.truthClasses[position][ordinal]!=truthClass) { invariant=false; break; }
+			if(invariant) { fixed[position]=representative; invariantCheckAxes++; }
+		}
+		return fixed;
+	}
+	/** A factor-local class-invariant owner cannot affect this term on any later domain subset. */
+	private int[] costFixedOrdinals(CostFactor term) {
+		int[] fixed=fixedOrdinals(term.owners);
+		if(term.costClasses==null) return fixed;
+		for(int position=0;position<term.owners.length;position++) {
+			if(fixed[position]>=0) continue;
+			int owner=term.owners[position];
+			int representative=domains[owner].nextSetBit(0);
+			if(representative<0) continue;
+			int costClass=term.costClasses[position][representative];
+			boolean invariant=true;
+			for(int ordinal=domains[owner].nextSetBit(representative+1);ordinal>=0;
+				ordinal=domains[owner].nextSetBit(ordinal+1))
+				if(term.costClasses[position][ordinal]!=costClass) { invariant=false; break; }
+			if(invariant) fixed[position]=representative;
+		}
+		return fixed;
+	}
+	private static int[] unfixedScope(int[] owners,int[] fixed) {
+		int count=0;
+		for(int ordinal:fixed) if(ordinal<0) count++;
+		int[] result=new int[count];
+		for(int source=0,target=0;source<owners.length;source++)
+			if(fixed[source]<0) result[target++]=owners[source];
+		return result;
+	}
+	/** Initial propagation's removed values are below every subsequent undo mark.
+	 * Only an all-YES proof over that permanent domain can erase an obligation. */
+	private boolean unaryTautology(int id,int[] owners,int[] fixed,int[] reduced) {
+		if(reduced.length==0) return evaluate(id,expandFixedScope(owners,fixed,new int[0]))==Truth.YES;
+		int owner=reduced[0];
+		int[] value=new int[1];
+		for(int ordinal=domains[owner].nextSetBit(0);ordinal>=0;ordinal=domains[owner].nextSetBit(ordinal+1)) {
+			value[0]=ordinal;
+			if(evaluate(id,expandFixedScope(owners,fixed,value))!=Truth.YES) return false;
+		}
+		return !domains[owner].isEmpty();
 	}
 	private static int uniqueScopeCount(List<int[]> scopes) {
 		Set<ScopeKey> unique=new LinkedHashSet<>();
@@ -317,9 +434,14 @@ public final class MemoOptimizer {
 					unknown|=truth==Truth.UNKNOWN;
 				}
 				return unknown ? Truth.UNKNOWN : Truth.YES;
-			}));
+			},refinedTruthClasses(group)));
 		}
 		return List.copyOf(result);
+	}
+	private static int[][] refinedTruthClasses(List<Check> group) {
+		if(group.stream().anyMatch(check -> check.truthClasses==null)) return null;
+		return refinedClasses(group.get(0).owners.length,position ->
+			group.stream().map(check -> check.truthClasses[position]).toList());
 	}
 	private List<CostFactor> foldAndGroupCosts(List<CostFactor> input) {
 		Map<ScopeKey,List<CostFactor>> groups=new LinkedHashMap<>();
@@ -334,7 +456,7 @@ public final class MemoOptimizer {
 				BigDecimal sum=BigDecimal.ZERO;
 				for(CostFactor factor : group) sum=sum.add(factor.evaluator.apply(values.clone()));
 				return sum;
-			},certified);
+			},certified,refinedCostClasses(group));
 			if(combined.owners.length==0) fixedCost=fixedCost.add(evaluateFactor(combined,new int[0]));
 			else if(combined.owners.length==1) {
 				int owner=combined.owners[0];
@@ -344,6 +466,33 @@ public final class MemoOptimizer {
 			else result.add(combined);
 		}
 		return List.copyOf(result);
+	}
+	/** The exact class of a grouped factor is the intersection of every member partition. */
+	private static int[][] refinedCostClasses(List<CostFactor> group) {
+		if(group.stream().anyMatch(factor -> factor.costClasses==null)) return null;
+		return refinedClasses(group.get(0).owners.length,position ->
+			group.stream().map(factor -> factor.costClasses[position]).toList());
+	}
+	private static int[][] refinedClasses(int positions,Function<Integer,List<int[]>> mappings) {
+		int[][] result=new int[positions][];
+		for(int position=0;position<positions;position++) {
+			List<int[]> classes=mappings.apply(position);
+			int size=classes.get(0).length;
+			for(int[] mapping:classes) if(mapping.length!=size)
+				throw new IllegalStateException("Grouped classes disagree on owner domain");
+			result[position]=new int[size];
+			int nextClass=0;
+			for(int ordinal=0;ordinal<size;ordinal++) {
+				int equivalent=-1;
+				for(int prior=0;prior<ordinal && equivalent<0;prior++) {
+					boolean same=true;
+					for(int[] mapping:classes) same&=mapping[ordinal]==mapping[prior];
+					if(same) equivalent=prior;
+				}
+				result[position][ordinal]=equivalent<0 ? nextClass++ : result[position][equivalent];
+			}
+		}
+		return result;
 	}
 	private BigDecimal evaluateFactor(CostFactor factor,int[] values) {
 		costEvaluations++;
@@ -470,22 +619,72 @@ public final class MemoOptimizer {
 
 	private Truth support(int checkId, int fixedOwner, int fixedValue) {
 		Check check = checks.get(checkId);
+		int fixedPosition=-1;
+		for(int position=0;position<check.owners.length;position++)
+			if(check.owners[position]==fixedOwner) { fixedPosition=position; break; }
+		assert fixedPosition>=0;
+		if(limits.cacheEntries()>0) {
+			long[][] partners=binarySupports[checkId];
+			if(partners!=null && (compactDomains[fixedOwner]&(1L<<fixedValue))!=0
+				&& (partners[fixedPosition][fixedValue]&compactDomains[check.owners[1-fixedPosition]])!=0) {
+				supportWitnessHits++;
+				binarySupportHits++;
+				return Truth.YES;
+			}
+			int[] witness=partners==null ? cachedWitness(checkId,fixedPosition,fixedValue) : null;
+			if(witness!=null && supports(check,witness)) {
+				supportWitnessHits++;
+				return Truth.YES;
+			}
+		}
 		Truth cached = cachedDomains(supportCache,checkId,fixedOwner,fixedValue,check.owners);
 		if(cached != null) { supportCacheHits++; return cached; }
 		supportQueries++;
 		int[] choices = new int[check.owners.length]; Arrays.fill(choices, -1);
-		for(int i = 0; i < check.owners.length; i++)
-			if(check.owners[i] == fixedOwner) choices[i] = fixedValue;
+		choices[fixedPosition]=fixedValue;
+		foundSupportWitness=null;
 		Truth result = supportDfs(checkId, choices, new int[] {limits.supportEvaluations()});
 		supportCache.put(new ScopedDomainKey(checkId,fixedOwner,fixedValue,check.owners,domains,
 			compactDomains,wideDomains),result);
+		if(result==Truth.YES && foundSupportWitness!=null) {
+			if(!rememberBinarySupport(checkId,foundSupportWitness))
+				supportWitnesses.put(new SupportWitnessKey(checkId,fixedPosition,fixedValue),foundSupportWitness);
+		}
+		foundSupportWitness=null;
 		return result;
+	}
+	/** Retain only proved YES pairs; domain intersection preserves removal and undo exactly. */
+	private boolean rememberBinarySupport(int id,int[] tuple) {
+		Check check=checks.get(id);
+		if(limits.cacheEntries()==0 || check.owners.length!=2 || tuple[0]<0 || tuple[1]<0
+			|| wideDomains[check.owners[0]] || wideDomains[check.owners[1]]) return false;
+		long[][] partners=binarySupports[id];
+		if(partners==null) {
+			int first=domainSizes[check.owners[0]],second=domainSizes[check.owners[1]];
+			if((long)binarySupportRows+first+second>limits.cacheEntries()) return false;
+			partners=new long[][] {new long[first],new long[second]};
+			binarySupports[id]=partners; binarySupportRows+=first+second;
+		}
+		partners[0][tuple[0]]|=1L<<tuple[1];
+		partners[1][tuple[1]]|=1L<<tuple[0];
+		return true;
+	}
+
+	private boolean supports(Check check,int[] witness) {
+		if(witness.length!=check.owners.length) return false;
+		for(int position=0;position<witness.length;position++)
+			if(!domains[check.owners[position]].get(witness[position])) return false;
+		return true;
 	}
 
 	private Truth supportDfs(int id, int[] choices, int[] budget) {
 		if(budget[0]-- <= 0) return Truth.UNKNOWN;
 		Truth prefix = evaluate(id, choices);
-		if(prefix != Truth.UNKNOWN) return prefix;
+		if(prefix==Truth.YES) {
+			if(limits.cacheEntries()>0) foundSupportWitness=completeWitness(checks.get(id),choices);
+			return Truth.YES;
+		}
+		if(prefix==Truth.NO) return Truth.NO;
 		Check check = checks.get(id);
 		int pos = -1;
 		for(int i = 0; i < choices.length; i++)
@@ -504,14 +703,33 @@ public final class MemoOptimizer {
 		}
 		return unknown ? Truth.UNKNOWN : Truth.NO;
 	}
+	private int[] completeWitness(Check check,int[] choices) {
+		int[] witness=choices.clone();
+		for(int position=0;position<witness.length;position++) if(witness[position]<0) {
+			witness[position]=domains[check.owners[position]].nextSetBit(0);
+			if(witness[position]<0) return null;
+		}
+		return witness;
+	}
 
 	private Truth evaluate(int id, int[] values) {
-		Truth cached = cached(truthCache,id,values);
+		Check check=checks.get(id);
+		int[] keyValues=truthClassTuple(check,values);
+		Truth cached = cached(truthCache,id,keyValues);
 		if(cached != null) { checkCacheHits++; return cached; }
 		checkEvaluations++;
-		Truth value = Objects.requireNonNull(checks.get(id).predicate.test(values.clone()));
-		truthCache.put(new TupleKey(id,values), value);
+		Truth value = Objects.requireNonNull(check.predicate.test(values.clone()));
+		truthCache.put(new TupleKey(id,keyValues), value);
+		if(value==Truth.YES) rememberBinarySupport(id,values);
 		return value;
+	}
+	private static int[] truthClassTuple(Check check,int[] values) {
+		if(check.truthClasses==null) return values;
+		for(int value:values) if(value<0) return values;
+		int[] result=new int[values.length];
+		for(int position=0;position<values.length;position++)
+			result[position]=check.truthClasses[position][values[position]];
+		return result;
 	}
 
 
@@ -643,15 +861,23 @@ public final class MemoOptimizer {
 		return lexicographic(left,right);
 	}
 	private BigDecimal evaluateCost(int id,int[] values) {
-		BigDecimal value = cached(costCache,id,values);
+		CostFactor term = terms.get(id);
+		int[] key=costClassTuple(term,values);
+		BigDecimal value = cached(costCache,id,key);
 		if(value != null) { costCacheHits++; return value; }
 		costEvaluations++;
-		CostFactor term = terms.get(id);
 		value = Objects.requireNonNull(term.evaluator.apply(values.clone()));
 		if(value.compareTo(term.certifiedMinimum) < 0)
 			throw new IllegalStateException("Cost below certified bound at term " + id);
-		costCache.put(new TupleKey(id,values),value);
+		costCache.put(new TupleKey(id,key),value);
 		return value;
+	}
+	private static int[] costClassTuple(CostFactor term,int[] values) {
+		if(term.costClasses==null) return values;
+		int[] result=new int[values.length];
+		for(int position=0;position<values.length;position++)
+			result[position]=term.costClasses[position][values[position]];
+		return result;
 	}
 
 	/** Exact leaf-tree elimination around a cyclic residual core. */
@@ -869,6 +1095,44 @@ public final class MemoOptimizer {
 		private final List<List<BoundaryTree>> boundaryTrees;
 		private int[] coreOwnerIds=new int[0];
 		private BigDecimal cachedCoreBound;
+		private int cycleBranch=-1;
+		private final class TailFactor {
+			private final int id;
+			private final int[] values;
+			private final int firstOwner,firstPosition,secondOwner,secondPosition;
+			private final int arity;
+			private TailFactor(int id,int[] scope) {
+				this.id=id; values=new int[scope.length];
+				int owner1=-1,position1=-1,owner2=-1,position2=-1,count=0;
+				for(int position=0;position<scope.length;position++) {
+					int owner=scope[position];
+					if(domainCardinalities[owner]>1) {
+						if(count==0) { owner1=owner; position1=position; }
+						else if(count==1) { owner2=owner; position2=position; }
+						count++;
+					}
+					else values[position]=assignment[owner];
+				}
+				firstOwner=owner1; firstPosition=position1; secondOwner=owner2; secondPosition=position2;
+				arity=count;
+			}
+			private int arity() { return arity; }
+			private int[] tuple(int firstRule,int secondRule) {
+				if(firstPosition>=0) values[firstPosition]=firstRule;
+				if(secondPosition>=0) values[secondPosition]=secondRule;
+				return values;
+			}
+		}
+		private final class TailEdge {
+			private final int child;
+			private final List<TailFactor> checks,terms;
+			private TailEdge(int child,List<TailFactor> checks,List<TailFactor> terms) {
+				this.child=child; this.checks=checks; this.terms=terms;
+			}
+			private int child() { return child; }
+			private List<TailFactor> checks() { return checks; }
+			private List<TailFactor> terms() { return terms; }
+		}
 		private ReducedSearch(boolean[] removed,TreeCell[][] cells,List<BoundaryTree> boundaries,
 			BigDecimal base,int[] assignment) {
 			this.removed=removed; this.cells=cells; this.boundaries=boundaries; this.base=base;
@@ -943,8 +1207,8 @@ public final class MemoOptimizer {
 				&& reducedLexicographicFloor(bestAssignment)>=0)) { boundPrunes++; return; }
 			ForestTailStatus tail=tryForestTail();
 			if(tail!=ForestTailStatus.NOT_APPLICABLE) return;
-			int owner = -1, connectivity = -1;
-			for(int i:coreOwnerIds) if(assignment[i]<0) {
+			int owner = cycleBranch, connectivity = -1;
+			for(int i:coreOwnerIds) if(cycleBranch<0 && assignment[i]<0) {
 				// Eliminated tree neighbors remain exact boundary messages for this owner;
 				// count them when prioritizing decisions that expose those message costs.
 				int candidateConnectivity=branchConnectivity(i);
@@ -968,7 +1232,42 @@ public final class MemoOptimizer {
 				if(unknown || exhausted) return;
 			}
 		}
+		/** Fix a cycle owner only when every residual component is a tree or unicycle.
+		 * Peeling leaves finds the cycle exactly; all original values are still searched. */
+		private void choosePseudoforestBranch(boolean[] active) {
+			boolean[] seen=new boolean[domains.length];
+			boolean cycle=false;
+			for(int root:coreOwnerIds) if(active[root] && !seen[root]) {
+				int vertices=0,twiceEdges=0;
+				ArrayDeque<Integer> queue=new ArrayDeque<>(); queue.add(root); seen[root]=true;
+				while(!queue.isEmpty()) {
+					int owner=queue.removeFirst(); vertices++;
+					for(int next:branchAdjacent[owner]) if(active[next]) {
+						twiceEdges++;
+						if(!seen[next]) { seen[next]=true; queue.add(next); }
+					}
+				}
+				int excess=twiceEdges/2-vertices+1;
+				if(excess>1) return;
+				cycle|=excess==1;
+			}
+			if(cycle) {
+				int[] degree=new int[domains.length];
+				ArrayDeque<Integer> peel=new ArrayDeque<>();
+				for(int owner:coreOwnerIds) if(active[owner]) {
+					for(int next:branchAdjacent[owner]) if(active[next]) degree[owner]++;
+					if(degree[owner]<=1) peel.add(owner);
+				}
+				while(!peel.isEmpty()) {
+					int owner=peel.removeFirst(); degree[owner]=0;
+					for(int next:branchAdjacent[owner]) if(degree[next]>0 && --degree[next]==1) peel.add(next);
+				}
+				for(int owner:coreOwnerIds) if(degree[owner]>1 && (cycleBranch<0
+					|| domainCardinalities[owner]<domainCardinalities[cycleBranch])) cycleBranch=owner;
+			}
+		}
 		private ForestTailStatus tryForestTail() {
+			cycleBranch=-1;
 			forestTailAttempts++;
 			boolean[] active=new boolean[domains.length];
 			int unfixed=0;
@@ -985,7 +1284,10 @@ public final class MemoOptimizer {
 					for(int next:branchAdjacent[owner]) {
 						if(!active[next]) continue;
 						if(next==parent[owner]) continue;
-						if(parent[next]!=-2) return ForestTailStatus.NOT_APPLICABLE;
+						if(parent[next]!=-2) {
+							choosePseudoforestBranch(active);
+							return ForestTailStatus.NOT_APPLICABLE;
+						}
 						parent[next]=owner; pending.add(next);
 					}
 				}
@@ -996,22 +1298,39 @@ public final class MemoOptimizer {
 				if(cellsNeeded>remaining) return ForestTailStatus.NOT_APPLICABLE;
 			}
 			forestTailApplicable++;
-			List<List<Integer>> unaryChecks=lists(domains.length),unaryTerms=lists(domains.length);
-			List<Integer> constantChecks=new ArrayList<>(),constantTerms=new ArrayList<>();
-			Map<Long,List<Integer>> edgeChecks=new HashMap<>(),edgeTerms=new HashMap<>();
+			List<List<TailFactor>> unaryChecks=lists(domains.length),unaryTerms=lists(domains.length);
+			List<TailFactor> constantChecks=new ArrayList<>(),constantTerms=new ArrayList<>();
+			Map<Long,List<TailFactor>> edgeChecks=new HashMap<>(),edgeTerms=new HashMap<>();
 			for(int id=coreChecks.nextSetBit(0);id>=0;id=coreChecks.nextSetBit(id+1))
-				if(!classifyTail(id,unfixedScope(checks.get(id).owners),constantChecks,unaryChecks,edgeChecks))
+				if(!classifyTail(new TailFactor(id,checks.get(id).owners),constantChecks,unaryChecks,edgeChecks))
 					return ForestTailStatus.NOT_APPLICABLE;
 			for(int id:coreTerms)
-				if(!classifyTail(id,unfixedScope(terms.get(id).owners),constantTerms,unaryTerms,edgeTerms))
+				if(!classifyTail(new TailFactor(id,terms.get(id).owners),constantTerms,unaryTerms,edgeTerms))
 					return ForestTailStatus.NOT_APPLICABLE;
+			TailEdge[][] childEdges=new TailEdge[domains.length][];
+			int[][] tailChildren=new int[domains.length][];
+			for(int owner:order) {
+				int[] dynamicChildren=Arrays.stream(branchAdjacent[owner]).filter(next -> parent[next]==owner).toArray();
+				childEdges[owner]=new TailEdge[dynamicChildren.length];
+				for(int position=0;position<dynamicChildren.length;position++) {
+					int child=dynamicChildren[position]; long edge=edgeKey(owner,child);
+					childEdges[owner][position]=new TailEdge(child,
+						edgeChecks.getOrDefault(edge,List.of()),edgeTerms.getOrDefault(edge,List.of()));
+				}
+				List<BoundaryTree> attached=boundaryTrees.get(owner);
+				int[] children=Arrays.copyOf(dynamicChildren,dynamicChildren.length+attached.size());
+				for(int position=0;position<attached.size();position++)
+					children[dynamicChildren.length+position]=attached.get(position).root;
+				tailChildren[owner]=children;
+			}
 			BigDecimal total=base;
-			for(int id:constantChecks) {
-				Truth truth=evaluate(id,project(checks.get(id).owners,assignment));
+			for(TailFactor factor:constantChecks) {
+				Truth truth=evaluate(factor.id,factor.tuple(-1,-1));
 				if(truth==Truth.UNKNOWN) return ForestTailStatus.NOT_APPLICABLE;
 				if(truth==Truth.NO) { forestTailCompletions++; return ForestTailStatus.COMPLETE; }
 			}
-			for(int id:constantTerms) total=total.add(evaluateCost(id,project(terms.get(id).owners,assignment)));
+			for(TailFactor factor:constantTerms)
+				total=total.add(evaluateCost(factor.id,factor.tuple(-1,-1)));
 			int[] candidate=assignment.clone();
 			for(int owner:coreOwnerIds) if(domainCardinalities[owner]==1) {
 				int rule=assignment[owner]; BigDecimal cost=ownerMessageCosts[owner][rule];
@@ -1025,51 +1344,54 @@ public final class MemoOptimizer {
 			for(int position=order.size()-1;position>=0;position--) {
 				int owner=order.get(position);
 				tailCells[owner]=new TreeCell[domainSizes[owner]];
-				int[] dynamicChildren=Arrays.stream(branchAdjacent[owner]).filter(next -> parent[next]==owner).toArray();
+				TailEdge[] dynamicChildren=childEdges[owner];
 				List<BoundaryTree> attached=boundaryTrees.get(owner);
 				for(int rule=domains[owner].nextSetBit(0);rule>=0;rule=domains[owner].nextSetBit(rule+1)) {
 					if(nodes>=limits.searchNodes()) { exhausted=true; return ForestTailStatus.EXHAUSTED; }
 					nodes++; forestTailCells++;
 					boolean legal=true;
-					for(int id:unaryChecks.get(owner)) {
-						Truth truth=evaluate(id,tailValues(checks.get(id).owners,owner,rule,-1,-1));
+					for(TailFactor factor:unaryChecks.get(owner)) {
+						Truth truth=evaluate(factor.id,factor.tuple(rule,-1));
 						if(truth==Truth.UNKNOWN) { unknown[0]=true; legal=false; break; }
 						if(truth==Truth.NO) { legal=false; break; }
 					}
 					BigDecimal cost=ownerMessageCosts[owner][rule];
 					if(!legal || cost==null) continue;
-					for(int id:unaryTerms.get(owner))
-						cost=cost.add(evaluateCost(id,tailValues(terms.get(id).owners,owner,rule,-1,-1)));
-					int[] children=new int[dynamicChildren.length+attached.size()];
+					for(TailFactor factor:unaryTerms.get(owner))
+						cost=cost.add(evaluateCost(factor.id,factor.tuple(rule,-1)));
+					int[] children=tailChildren[owner];
 					int[] childRules=new int[children.length];
 					for(int childPosition=0;childPosition<dynamicChildren.length;childPosition++) {
-						int child=dynamicChildren[childPosition],bestRule=-1;
-						BigDecimal best=null; long edge=edgeKey(owner,child);
+						TailEdge edge=dynamicChildren[childPosition];
+						int child=edge.child(),bestRule=-1;
+						BigDecimal best=null;
 						for(int childRule=0;childRule<tailCells[child].length;childRule++) {
 							TreeCell childCell=tailCells[child][childRule]; if(childCell==null) continue;
 							boolean compatible=true;
-							for(int id:edgeChecks.getOrDefault(edge,List.of())) {
-								Truth truth=evaluate(id,tailValues(checks.get(id).owners,owner,rule,child,childRule));
+							for(TailFactor factor:edge.checks()) {
+								Truth truth=evaluate(factor.id,factor.tuple(
+									factor.firstOwner==owner ? rule : childRule,
+									factor.secondOwner==child ? childRule : rule));
 								if(truth==Truth.UNKNOWN) { unknown[0]=true; compatible=false; break; }
 								if(truth==Truth.NO) { compatible=false; break; }
 							}
 							if(!compatible) continue;
 							BigDecimal value=childCell.cost;
-							for(int id:edgeTerms.getOrDefault(edge,List.of()))
-								value=value.add(evaluateCost(id,tailValues(terms.get(id).owners,
-									owner,rule,child,childRule)));
+							for(TailFactor factor:edge.terms())
+								value=value.add(evaluateCost(factor.id,factor.tuple(
+									factor.firstOwner==owner ? rule : childRule,
+									factor.secondOwner==child ? childRule : rule)));
 							if(best==null || value.compareTo(best)<0 || value.compareTo(best)==0
 								&& compareTreeChoice(tailCells,child,childRule,bestRule)<0) {
 								best=value; bestRule=childRule;
 							}
 						}
 						if(best==null) { legal=false; break; }
-						cost=cost.add(best); children[childPosition]=child; childRules[childPosition]=bestRule;
+						cost=cost.add(best); childRules[childPosition]=bestRule;
 					}
 					if(!legal) continue;
 					for(int attachedPosition=0;attachedPosition<attached.size();attachedPosition++) {
 						BoundaryTree tree=attached.get(attachedPosition);
-						children[dynamicChildren.length+attachedPosition]=tree.root;
 						childRules[dynamicChildren.length+attachedPosition]=tree.rules[rule];
 					}
 					tailCells[owner][rule]=new TreeCell(cost,children,childRules);
@@ -1091,27 +1413,16 @@ public final class MemoOptimizer {
 			forestTailCompletions++;
 			return ForestTailStatus.COMPLETE;
 		}
-		private int[] unfixedScope(int[] scope) {
-			return Arrays.stream(scope).filter(owner -> domainCardinalities[owner]>1).toArray();
-		}
-		private boolean classifyTail(int id,int[] residual,List<Integer> constants,
-			List<List<Integer>> unary,Map<Long,List<Integer>> edges) {
-			if(residual.length>2) return false;
-			if(residual.length==0) constants.add(id);
-			else if(residual.length==1) unary.get(residual[0]).add(id);
+		private boolean classifyTail(TailFactor factor,List<TailFactor> constants,
+			List<List<TailFactor>> unary,Map<Long,List<TailFactor>> edges) {
+			if(factor.arity()>2) return false;
+			if(factor.arity()==0) constants.add(factor);
+			else if(factor.arity()==1) unary.get(factor.firstOwner).add(factor);
 			else {
-				long edge=edgeKey(residual[0],residual[1]);
-				edges.computeIfAbsent(edge,ignored -> new ArrayList<>()).add(id);
+				long edge=edgeKey(factor.firstOwner,factor.secondOwner);
+				edges.computeIfAbsent(edge,ignored -> new ArrayList<>()).add(factor);
 			}
 			return true;
-		}
-		private int[] tailValues(int[] scope,int first,int firstRule,int second,int secondRule) {
-			int[] values=new int[scope.length];
-			for(int position=0;position<scope.length;position++) {
-				int owner=scope[position];
-				values[position]=owner==first ? firstRule : owner==second ? secondRule : assignment[owner];
-			}
-			return values;
 		}
 		private BigDecimal coreLowerBound() {
 			for(int owner=dirtyCoreOwners.nextSetBit(0); owner>=0; owner=dirtyCoreOwners.nextSetBit(owner+1)) {
@@ -1238,24 +1549,35 @@ public final class MemoOptimizer {
 		BigDecimal cached=cachedDomains(boundCache,id,-1,-1,term.owners);
 		if(cached!=null) { conditionalBoundCacheHits++; return cached; }
 		long combinations=1;
-		for(int owner : term.owners) {
-			int size=domainCardinalities[owner];
+		int[][] representatives=new int[term.owners.length][];
+		for(int position=0;position<term.owners.length;position++) {
+			representatives[position]=liveCostRepresentatives(term,position);
+			int size=representatives[position].length;
 			if(size==0) throw new IllegalStateException("Empty domain reached a cost bound");
 			if(combinations>limits.supportEvaluations()/size) { wideBoundRelaxations++; return term.certifiedMinimum; }
 			combinations*=size;
 		}
-		BigDecimal minimum=minimumTerm(id,0,new int[term.owners.length]);
+		BigDecimal minimum=minimumTerm(id,0,new int[term.owners.length],representatives);
 		boundCache.put(new ScopedDomainKey(id,-1,-1,term.owners,domains,compactDomains,wideDomains),minimum);
 		return minimum;
 	}
-	private BigDecimal minimumTerm(int id,int position,int[] values) {
+	private int[] liveCostRepresentatives(CostFactor term,int position) {
+		int owner=term.owners[position];
+		if(term.costClasses==null) return domains[owner].stream().toArray();
+		int[] classes=term.costClasses[position];
+		int max=Arrays.stream(classes).max().orElseThrow();
+		int[] byClass=new int[max+1]; Arrays.fill(byClass,-1);
+		for(int value=domains[owner].nextSetBit(0);value>=0;value=domains[owner].nextSetBit(value+1))
+			if(byClass[classes[value]]<0) byClass[classes[value]]=value;
+		return Arrays.stream(byClass).filter(value -> value>=0).toArray();
+	}
+	private BigDecimal minimumTerm(int id,int position,int[] values,int[][] representatives) {
 		CostFactor term=terms.get(id);
 		if(position==values.length) return evaluateCost(id,values);
 		BigDecimal min=null;
-		int owner=term.owners[position];
-		for(int value=domains[owner].nextSetBit(0); value>=0; value=domains[owner].nextSetBit(value+1)) {
+		for(int value:representatives[position]) {
 			values[position]=value;
-			min=minimum(min,minimumTerm(id,position+1,values));
+			min=minimum(min,minimumTerm(id,position+1,values,representatives));
 			if(min.compareTo(term.certifiedMinimum)==0) break;
 		}
 		return Objects.requireNonNull(min);
@@ -1363,25 +1685,91 @@ public final class MemoOptimizer {
 		if(owner < 0 || owner >= domainSizes.length) throw new IllegalArgumentException("Unknown owner " + owner);
 	}
 	private Statistics statistics() {
-		return new Statistics(nodes,checkEvaluations,checkCacheHits,supportQueries,supportCacheHits,worklistVisits,
+		return new Statistics(nodes,checkEvaluations,checkCacheHits,supportQueries,supportCacheHits,
+			supportWitnessHits,binarySupportHits,binarySupportRows,worklistVisits,
 			removedRules,costEvaluations,costCacheHits,boundPrunes,conditionalBoundQueries,
 			conditionalBoundCacheHits,wideBoundRelaxations,forestTailAttempts,forestTailApplicable,
-			forestTailCompletions,forestTailCells);
+			forestTailCompletions,forestTailCells,annotatedChecks,invariantCheckAxes,binaryChecksReduced,
+			branchEdgesRemovedDuringNormalization);
 	}
 	private static int[] uniqueScope(int[] owners) {
-		int[] copy = owners.clone();
-		if(Arrays.stream(copy).distinct().count() != copy.length)
-			throw new IllegalArgumentException("A shared owner appears once in a condition scope");
+		int[] copy=owners.clone();
+		if(copy.length<=1) return copy;
+		if(copy.length==2) {
+			if(copy[0]==copy[1])
+				throw new IllegalArgumentException("A shared owner appears once in a condition scope");
+			return copy;
+		}
+		// Sort a validation copy so the returned scope retains caller order.
+		int[] sorted=copy.clone();
+		Arrays.sort(sorted);
+		for(int position=1;position<sorted.length;position++)
+			if(sorted[position-1]==sorted[position])
+				throw new IllegalArgumentException("A shared owner appears once in a condition scope");
 		return copy;
+	}
+	private static int[][] validateCostClasses(int[] owners,int[][] costClasses) {
+		return validateClasses(owners,costClasses,"Cost");
+	}
+	private static int[][] validateClasses(int[] owners,int[][] classes,String name) {
+		if(classes==null) return null;
+		if(classes.length!=owners.length)
+			throw new IllegalArgumentException(name+" classes must align with factor scope");
+		int[][] copy=copyCostClasses(classes);
+		for(int[] mapping:copy) {
+			if(mapping.length==0) throw new IllegalArgumentException(name+" classes cannot be empty");
+			int max=-1;
+			for(int value:mapping) {
+				if(value<0) throw new IllegalArgumentException(name+" class IDs must be nonnegative");
+				max=Math.max(max,value);
+			}
+			boolean[] seen=new boolean[max+1];
+			for(int value:mapping) seen[value]=true;
+			for(boolean present:seen) if(!present)
+				throw new IllegalArgumentException(name+" class IDs must be dense");
+		}
+		return copy;
+	}
+	private static int[][] copyCostClasses(int[][] costClasses) {
+		if(costClasses==null) return null;
+		int[][] copy=new int[costClasses.length][];
+		for(int position=0;position<copy.length;position++)
+			copy[position]=Objects.requireNonNull(costClasses[position]).clone();
+		return copy;
+	}
+	private static int[][] projectCostClasses(int[] original,int[] reduced,int[][] costClasses) {
+		return projectClasses(original,reduced,costClasses);
+	}
+	private static int[][] projectClasses(int[] original,int[] reduced,int[][] costClasses) {
+		if(costClasses==null) return null;
+		int[][] result=new int[reduced.length][];
+		for(int position=0;position<reduced.length;position++) {
+			int source=0;
+			while(original[source]!=reduced[position]) source++;
+			result[position]=costClasses[source].clone();
+		}
+		return result;
 	}
 	private static int[] project(int[] scope, int[] assignment) {
 		int[] result = new int[scope.length];
 		for(int i = 0; i < scope.length; i++) result[i] = assignment[scope[i]];
 		return result;
 	}
+	private BigDecimal cachedExact(double value) {
+		if(!Double.isFinite(value)) throw new IllegalArgumentException("Costs must be finite: " + value);
+		if(exactValueCacheLimit>0) {
+			long bits=Double.doubleToRawLongBits(value);
+			BigDecimal retained=exactValues.get(bits);
+			if(retained!=null) return retained;
+			BigDecimal built=new BigDecimal(value);
+			if(exactValues.size()<exactValueCacheLimit) exactValues.put(bits,built);
+			return built;
+		}
+		return new BigDecimal(value); // preserve the exact dyadic value of each binary64 term
+	}
 	private static BigDecimal exact(double value) {
 		if(!Double.isFinite(value)) throw new IllegalArgumentException("Costs must be finite: " + value);
-		return new BigDecimal(value); // preserve the exact dyadic value of each binary64 term
+		return new BigDecimal(value); // CostTerm construction has no optimizer-owned cache
 	}
 	private static BigDecimal minimum(BigDecimal a, BigDecimal b) {
 		return a == null || a.compareTo(b) > 0 ? b : a;
@@ -1417,6 +1805,19 @@ public final class MemoOptimizer {
 		finally { lookupProbe.id=0; lookupProbe.values=null; lookupProbe.hash=0; }
 	}
 	private static int tupleHash(int id,int[] values) { return 31*id+Arrays.hashCode(values); }
+	/** Witness lookup borrows one reusable key only during Map.get. */
+	private int[] cachedWitness(int id,int fixedPosition,int fixedValue) {
+		witnessProbe.id=id; witnessProbe.fixedPosition=fixedPosition; witnessProbe.fixedValue=fixedValue;
+		witnessProbe.hash=supportWitnessHash(id,fixedPosition,fixedValue);
+		try { return supportWitnesses.get(witnessProbe); }
+		finally {
+			witnessProbe.id=0; witnessProbe.fixedPosition=0; witnessProbe.fixedValue=0;
+			witnessProbe.hash=0;
+		}
+	}
+	private static int supportWitnessHash(int id,int fixedPosition,int fixedValue) {
+		return 31*(31*id+fixedPosition)+fixedValue;
+	}
 	/** Domain lookup borrows mutable solver state only during Map.get. */
 	private <V> V cachedDomains(Map<ScopedDomainKey,V> cache,int id,int fixedOwner,int fixedValue,int[] scope) {
 		domainProbe.id=id; domainProbe.fixedOwner=fixedOwner; domainProbe.fixedValue=fixedValue;
@@ -1517,6 +1918,42 @@ public final class MemoOptimizer {
 		@Override public BitSet wideDomain(int position) { return wideDomains[position]; }
 		@Override public int hashCode() { return hash; }
 		@Override public boolean equals(Object other) { return sameDomains(other); }
+	}
+	private interface SupportWitnessIdentity {
+		int id();
+		int fixedPosition();
+		int fixedValue();
+		default boolean sameWitness(Object other) {
+			return other instanceof SupportWitnessIdentity value && id()==value.id()
+				&& fixedPosition()==value.fixedPosition() && fixedValue()==value.fixedValue();
+		}
+	}
+	/** Never inserted; one optimizer invocation owns this synchronous lookup scratch. */
+	private static final class SupportWitnessProbe implements SupportWitnessIdentity {
+		private int id;
+		private int fixedPosition;
+		private int fixedValue;
+		private int hash;
+		@Override public int id() { return id; }
+		@Override public int fixedPosition() { return fixedPosition; }
+		@Override public int fixedValue() { return fixedValue; }
+		@Override public int hashCode() { return hash; }
+		@Override public boolean equals(Object other) { return sameWitness(other); }
+	}
+	private static final class SupportWitnessKey implements SupportWitnessIdentity {
+		private final int id;
+		private final int fixedPosition;
+		private final int fixedValue;
+		private final int hash;
+		private SupportWitnessKey(int id,int fixedPosition,int fixedValue) {
+			this.id=id; this.fixedPosition=fixedPosition; this.fixedValue=fixedValue;
+			hash=supportWitnessHash(id,fixedPosition,fixedValue);
+		}
+		@Override public int id() { return id; }
+		@Override public int fixedPosition() { return fixedPosition; }
+		@Override public int fixedValue() { return fixedValue; }
+		@Override public int hashCode() { return hash; }
+		@Override public boolean equals(Object other) { return sameWitness(other); }
 	}
 	private interface TupleIdentity {
 		int id();

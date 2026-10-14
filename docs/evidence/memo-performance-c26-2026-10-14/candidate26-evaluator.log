@@ -1,0 +1,34 @@
+{
+  "passed": false,
+  "gates": {
+    "bothRunsPassed": true,
+    "logregPlanningAtMost3Seconds": false,
+    "glmPlanningAtMost3Seconds": false,
+    "bothOptimizersOptimal": true,
+    "bothExactCostsPresent": true,
+    "logregExactCostEqualReference": true,
+    "logregCsvByteEqualReference": true,
+    "logregRuntimeAuditEqualReference": true,
+    "logregMemoConstructionEqualReference": false,
+    "glmMemoConstructionEqualReference": false,
+    "logregNativeUniverseEqualReference": true,
+    "glmNativeUniverseEqualReference": true,
+    "logregActionDiagnosticsEqualReference": true,
+    "glmExactCostReferencePolicySatisfied": true,
+    "glmCsvReferencePolicySatisfied": true,
+    "candidateFrozenInputsVerified": true,
+    "bothJfrProfilesLossFree": true,
+    "logregCpAndFedReturnZero": true,
+    "logregCpOutputMatched": true,
+    "logregPrivacyAndRuntimeAuditClean": true,
+    "glmCpAndFedReturnZero": true,
+    "glmCpOutputMatched": true,
+    "glmPrivacyAndRuntimeAuditClean": true
+  },
+  "planningSeconds": {
+    "logreg": 3.028378372,
+    "glm": 5.072434165
+  },
+  "glmBaselineCertifiedOptimal": true,
+  "glmBaselineCertifiedOutput": false
+}

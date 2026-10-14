@@ -1,0 +1,252 @@
+{
+  "schema": "memo-under3-candidate26-verification-v1",
+  "officialRunCount": {
+    "logreg": 1,
+    "glm": 1
+  },
+  "runsFinished": true,
+  "ownedContainersPresentAfterRun": [],
+  "frozenInputs": {
+    "logreg": {
+      "schema": "logreg-under10-frozen-verification-v1",
+      "manifest": {
+        "expectedFiles": 12707,
+        "actualFiles": 12707,
+        "missing": [],
+        "extra": [],
+        "hashMismatches": [],
+        "passed": true
+      },
+      "runInputs": {
+        "mainClasses": {
+          "leftFiles": 4974,
+          "rightFiles": 4974,
+          "missing": [],
+          "extra": [],
+          "hashMismatches": [],
+          "passed": true
+        },
+        "testClasses": {
+          "leftFiles": 3462,
+          "rightFiles": 3462,
+          "missing": [],
+          "extra": [],
+          "hashMismatches": [],
+          "passed": true
+        },
+        "mainSources": {
+          "leftFiles": 1692,
+          "rightFiles": 1692,
+          "missing": [],
+          "extra": [],
+          "hashMismatches": [],
+          "passed": true
+        },
+        "testSources": {
+          "leftFiles": 2263,
+          "rightFiles": 2263,
+          "missing": [],
+          "extra": [],
+          "hashMismatches": [],
+          "passed": true
+        }
+      },
+      "passed": true
+    },
+    "glm": {
+      "schema": "logreg-under10-frozen-verification-v1",
+      "manifest": {
+        "expectedFiles": 12707,
+        "actualFiles": 12707,
+        "missing": [],
+        "extra": [],
+        "hashMismatches": [],
+        "passed": true
+      },
+      "runInputs": {
+        "mainClasses": {
+          "leftFiles": 4974,
+          "rightFiles": 4974,
+          "missing": [],
+          "extra": [],
+          "hashMismatches": [],
+          "passed": true
+        },
+        "testClasses": {
+          "leftFiles": 3462,
+          "rightFiles": 3462,
+          "missing": [],
+          "extra": [],
+          "hashMismatches": [],
+          "passed": true
+        },
+        "mainSources": {
+          "leftFiles": 1692,
+          "rightFiles": 1692,
+          "missing": [],
+          "extra": [],
+          "hashMismatches": [],
+          "passed": true
+        },
+        "testSources": {
+          "leftFiles": 2263,
+          "rightFiles": 2263,
+          "missing": [],
+          "extra": [],
+          "hashMismatches": [],
+          "passed": true
+        }
+      },
+      "passed": true
+    }
+  },
+  "engineManifest": {
+    "files": 12707,
+    "manifestSha256": "40f4b2f1044b38851df23c176e7bc75e204d431082ab65566b8927c295dd84fa",
+    "passed": true
+  },
+  "jfr": {
+    "logreg": {
+      "dataLoss": [],
+      "sha256": "578a6feae8302126bff501efa5b44fc054849d65c0e944cc44e40b84167996e7"
+    },
+    "glm": {
+      "dataLoss": [],
+      "sha256": "3a9c2f6c2b00b3e708596562ad0d8ce4d205693e91a7373070f8efe29cff105b"
+    }
+  },
+  "processMonitor": {
+    "logreg": {
+      "sampleCount": 6,
+      "firstEpochMs": 1791982330089,
+      "lastEpochMs": 1791982339297,
+      "observedSeconds": 9.208,
+      "hostPid": 43791,
+      "singlePid": true,
+      "clockTicksPerSecond": 100,
+      "cpuTicksDelta": 2184,
+      "cpuSeconds": 21.84,
+      "cpuScope": "whole coordinator JVM during monitored interval, not optimizer-only",
+      "maxVmRssKiB": 430420,
+      "maxVmHwmKiB": 506128,
+      "lastVmHwmKiB": 506128
+    },
+    "glm": {
+      "sampleCount": 6,
+      "firstEpochMs": 1791982393458,
+      "lastEpochMs": 1791982402346,
+      "observedSeconds": 8.888,
+      "hostPid": 50645,
+      "singlePid": true,
+      "clockTicksPerSecond": 100,
+      "cpuTicksDelta": 2395,
+      "cpuSeconds": 23.95,
+      "cpuScope": "whole coordinator JVM during monitored interval, not optimizer-only",
+      "maxVmRssKiB": 665672,
+      "maxVmHwmKiB": 694264,
+      "lastVmHwmKiB": 694264
+    }
+  },
+  "cgroupMonitor": {
+    "logreg": {
+      "schema": "memo-under3-cgroup-cpu-v1",
+      "sampleCount": 11,
+      "firstEpochMs": 1791982320877,
+      "lastEpochMs": 1791982339297,
+      "observedSeconds": 18.42,
+      "containers": [
+        "systemds-joint-boundary-61714d8e0ce24cce"
+      ],
+      "cgroups": [
+        "/system.slice/docker-f0e1c8cf02da9bd73439e18911cbb4a801fe88e7a9b708a7b68370404b8a4795.scope"
+      ],
+      "quotaUsec": 400000,
+      "periodUsec": 100000,
+      "usageUsecDelta": 53246930,
+      "userUsecDelta": 50703053,
+      "systemUsecDelta": 2543877,
+      "periodsDelta": 176,
+      "throttledPeriodsDelta": 59,
+      "throttledUsecDelta": 21294848,
+      "throttledPeriodPercent": 33.52272727272727
+    },
+    "glm": {
+      "schema": "memo-under3-cgroup-cpu-v1",
+      "sampleCount": 13,
+      "firstEpochMs": 1791982383057,
+      "lastEpochMs": 1791982404252,
+      "observedSeconds": 21.195,
+      "containers": [
+        "systemds-joint-boundary-e599e404404c43d1"
+      ],
+      "cgroups": [
+        "/system.slice/docker-5dc224e84213cea5a390685ae4c534ff44543b0645c4bfdac493f9803bfab222.scope"
+      ],
+      "quotaUsec": 400000,
+      "periodUsec": 100000,
+      "usageUsecDelta": 58035562,
+      "userUsecDelta": 55436409,
+      "systemUsecDelta": 2599152,
+      "periodsDelta": 202,
+      "throttledPeriodsDelta": 45,
+      "throttledUsecDelta": 16039002,
+      "throttledPeriodPercent": 22.277227722772277
+    }
+  },
+  "rawEvaluationPassed": false,
+  "rawPassedGateCount": 19,
+  "telemetryAwarePassedGateCount": 21,
+  "gateCount": 23,
+  "rawFailedGates": [
+    "logregPlanningAtMost3Seconds",
+    "glmPlanningAtMost3Seconds",
+    "logregMemoConstructionEqualReference",
+    "glmMemoConstructionEqualReference"
+  ],
+  "semanticFailedGates": [
+    "glmPlanningAtMost3Seconds",
+    "logregPlanningAtMost3Seconds"
+  ],
+  "runtimeArtifacts": [
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-logreg/result.json",
+      "size": 13247,
+      "sha256": "a4faa0bd8bcdf0b8725f679f87a8571bb0aa3592e85152915a430d18f671ab0c"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-logreg/cases/ml_logreg/fed.jfr",
+      "size": 1380481,
+      "sha256": "578a6feae8302126bff501efa5b44fc054849d65c0e944cc44e40b84167996e7"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-logreg/cases/ml_logreg/fed.log",
+      "size": 43981,
+      "sha256": "f4459891825280c2553963df0a4e709fcc8ec090b024ca9dd0f496cc80812671"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-logreg/cases/ml_logreg/fed-model.csv",
+      "size": 332,
+      "sha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-glm/result.json",
+      "size": 13249,
+      "sha256": "60f4130d75ea45aaa3284c5f444b39c4183ad31ae0fdb39b689cea2af6f4c04f"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-glm/cases/ml_glm/fed.jfr",
+      "size": 2619518,
+      "sha256": "3a9c2f6c2b00b3e708596562ad0d8ce4d205693e91a7373070f8efe29cff105b"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-glm/cases/ml_glm/fed.log",
+      "size": 200023,
+      "sha256": "c461eae1f054c05b27878e880a933a829ec2711b1e2c3949c48978b097c1bff8"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-glm/cases/ml_glm/fed-model.csv",
+      "size": 171,
+      "sha256": "249fa99b51cc216d790236c67cbd47e0bb9b9642a0a0d46fbdf62b3424175478"
+    }
+  ]
+}

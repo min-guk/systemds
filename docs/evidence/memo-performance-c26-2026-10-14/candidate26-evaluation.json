@@ -1,0 +1,52 @@
+{
+  "schema": "memo-under3-candidate-evaluation-v1",
+  "passed": false,
+  "gates": {
+    "bothRunsPassed": true,
+    "logregPlanningAtMost3Seconds": false,
+    "glmPlanningAtMost3Seconds": false,
+    "bothOptimizersOptimal": true,
+    "bothExactCostsPresent": true,
+    "logregExactCostEqualReference": true,
+    "logregCsvByteEqualReference": true,
+    "logregRuntimeAuditEqualReference": true,
+    "logregMemoConstructionEqualReference": false,
+    "glmMemoConstructionEqualReference": false,
+    "logregNativeUniverseEqualReference": true,
+    "glmNativeUniverseEqualReference": true,
+    "logregActionDiagnosticsEqualReference": true,
+    "glmExactCostReferencePolicySatisfied": true,
+    "glmCsvReferencePolicySatisfied": true,
+    "candidateFrozenInputsVerified": true,
+    "bothJfrProfilesLossFree": true,
+    "logregCpAndFedReturnZero": true,
+    "logregCpOutputMatched": true,
+    "logregPrivacyAndRuntimeAuditClean": true,
+    "glmCpAndFedReturnZero": true,
+    "glmCpOutputMatched": true,
+    "glmPrivacyAndRuntimeAuditClean": true
+  },
+  "thresholdSecondsInclusive": 3.0,
+  "glmBaselineCertifiedOptimal": true,
+  "glmBaselineCertifiedOutput": false,
+  "glmObjectiveReferencePolicy": "equality required",
+  "planningSeconds": {
+    "logreg": 3.028378372,
+    "glm": 5.072434165
+  },
+  "optimizationSeconds": {
+    "logreg": 0.972974974,
+    "glm": 1.37537044
+  },
+  "exactCosts": {
+    "logregReference": "1301.1526531142989790221751587629165844428591469750244868919253349304199218750",
+    "logregCandidate": "1301.1526531142989790221751587629165844428591469750244868919253349304199218750",
+    "glmBaseline": "163.445631891948489909499669515659725158029935698777990182861685752868652343750000",
+    "glmCandidate": "163.445631891948489909499669515659725158029935698777990182861685752868652343750000"
+  },
+  "glmOutputReferencePolicy": "baseline produced no certified FED output; candidate CP/FED output match is mandatory",
+  "limitations": [
+    "one official JFR run per workload and candidate",
+    "no performance retries"
+  ]
+}

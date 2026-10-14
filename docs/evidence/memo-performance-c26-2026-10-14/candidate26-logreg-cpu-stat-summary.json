@@ -1,0 +1,22 @@
+{
+  "schema": "memo-under3-cgroup-cpu-v1",
+  "sampleCount": 11,
+  "firstEpochMs": 1791982320877,
+  "lastEpochMs": 1791982339297,
+  "observedSeconds": 18.42,
+  "containers": [
+    "systemds-joint-boundary-61714d8e0ce24cce"
+  ],
+  "cgroups": [
+    "/system.slice/docker-f0e1c8cf02da9bd73439e18911cbb4a801fe88e7a9b708a7b68370404b8a4795.scope"
+  ],
+  "quotaUsec": 400000,
+  "periodUsec": 100000,
+  "usageUsecDelta": 53246930,
+  "userUsecDelta": 50703053,
+  "systemUsecDelta": 2543877,
+  "periodsDelta": 176,
+  "throttledPeriodsDelta": 59,
+  "throttledUsecDelta": 21294848,
+  "throttledPeriodPercent": 33.52272727272727
+}

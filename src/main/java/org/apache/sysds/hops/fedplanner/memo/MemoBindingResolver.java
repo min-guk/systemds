@@ -19,6 +19,7 @@ package org.apache.sysds.hops.fedplanner.memo;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -66,7 +67,10 @@ public final class MemoBindingResolver {
 				&& guardId==that.guardId && callFrame.equals(that.callFrame);
 		}
 		@Override public int hashCode() {
-			return valueBindingId>=0 ? Objects.hash(valueBindingId,valueFrame) : Objects.hash(guardId,callFrame);
+			int id=valueBindingId>=0 ? valueBindingId : guardId;
+			List<Integer> frame=valueBindingId>=0 ? valueFrame : callFrame;
+			// Exactly Arrays.hashCode(new Object[] {id,frame}) without the varargs array.
+			return 31*(31+id)+frame.hashCode();
 		}
 	}
 
@@ -192,11 +196,27 @@ public final class MemoBindingResolver {
 			Objects.requireNonNull(detail);
 		}
 	}
+	record DirectRootStatistics(long requests,long eligibleCalls,long fastPathCalls,long rootsResolved) { }
+	record MapSnapshotStatistics(long requests,long hits,int entries,long clears) { }
+	private record DirectDefinition(int occurrence,int owner,int slot) { }
+	private static final Set<DirectLoopHead> EMPTY_DIRECT_LOOP_HEADS=
+		Collections.unmodifiableSet(new LinkedHashSet<>());
 
 	private final MemoProgramFacts facts;
 	private final Map<Integer,List<Integer>> callReturnsByConcreteBinding;
+	private final DirectDefinition[] directDefinitions;
 	private final Map<NodeFrame,Boolean> totalAvailability = new LinkedHashMap<>();
-	public MemoBindingResolver(MemoProgramFacts facts) {
+	private final IdentityHashMap<Map<?,?>,Map<?,?>> mapSnapshots=new IdentityHashMap<>();
+	private final int mapSnapshotCapacity;
+	private long mapSnapshotRequests,mapSnapshotHits,mapSnapshotClears;
+	private long directRootRequests;
+	private long directRootEligibleCalls;
+	private long directRootFastPathCalls;
+	private long directRootsResolved;
+	public MemoBindingResolver(MemoProgramFacts facts) { this(facts,4096); }
+	MemoBindingResolver(MemoProgramFacts facts,int mapSnapshotCapacity) {
+		if(mapSnapshotCapacity<0) throw new IllegalArgumentException("map snapshot capacity must be nonnegative");
+		this.mapSnapshotCapacity=mapSnapshotCapacity;
 		this.facts = Objects.requireNonNull(facts);
 		Map<Integer,List<Integer>> concreteReturns = new LinkedHashMap<>();
 		for(MemoProgramFacts.CallBinding call : facts.calls())
@@ -207,6 +227,38 @@ public final class MemoBindingResolver {
 			}
 		concreteReturns.replaceAll((binding,returns) -> List.copyOf(returns));
 		callReturnsByConcreteBinding = Map.copyOf(concreteReturns);
+		directDefinitions=new DirectDefinition[facts.bindings().size()];
+		for(MemoProgramFacts.BindingNode binding : facts.bindings()) {
+			int occurrence=binding.referenceId();
+			if(binding.kind()==BindingKind.DEFINITION && binding.children().isEmpty()
+				&& !binding.label().endsWith("#for-iterator") && occurrence>=0
+				&& occurrence<facts.occurrences().size() && !callReturnsByConcreteBinding.containsKey(binding.id())) {
+				int owner=facts.occurrence(occurrence).compiledOwnerId();
+				directDefinitions[binding.id()]=new DirectDefinition(occurrence,owner,binding.position());
+			}
+		}
+	}
+
+	DirectRootStatistics directRootStatistics() {
+		return new DirectRootStatistics(directRootRequests,directRootEligibleCalls,
+			directRootFastPathCalls,directRootsResolved);
+	}
+	MapSnapshotStatistics mapSnapshotStatistics() {
+		return new MapSnapshotStatistics(mapSnapshotRequests,mapSnapshotHits,mapSnapshots.size(),mapSnapshotClears);
+	}
+
+	@SuppressWarnings("unchecked")
+	private <K,V> Map<K,V> immutableSnapshot(Map<K,V> values) {
+		if(values.isEmpty()) return values;
+		mapSnapshotRequests++;
+		Map<K,V> cached=(Map<K,V>)mapSnapshots.get(values);
+		if(cached!=null) { mapSnapshotHits++; return cached; }
+		Map<K,V> result=Map.copyOf(Collections.unmodifiableMap(values));
+		if(mapSnapshotCapacity>0) {
+			if(mapSnapshots.size()>=mapSnapshotCapacity) { mapSnapshots.clear(); mapSnapshotClears++; }
+			mapSnapshots.put(values,result);
+		}
+		return result;
 	}
 
 	private Integer uniqueSymbolicReturn(int concreteBinding) {
@@ -375,6 +427,11 @@ public final class MemoBindingResolver {
 		return loopHeadIdentities(bindingIds,context.callFrame(),false,context);
 	}
 	public Set<DirectLoopHead> directLoopHeadIdentities(int bindingId,EvaluationContext context) {
+		Objects.requireNonNull(context,"context");
+		requireBinding(bindingId);
+		// A precomputed direct definition is a childless native leaf with no symbolic-return
+		// redirection; the direct (traverseKernels=false) walk cannot reach a loop head.
+		if(directDefinitions[bindingId]!=null) return EMPTY_DIRECT_LOOP_HEADS;
 		return directLoopHeadIdentities(List.of(bindingId),context);
 	}
 	public Set<MemoPrivacy.LoopSlot> directLoopHeads(int bindingId,EvaluationContext context) {
@@ -405,20 +462,18 @@ public final class MemoBindingResolver {
 		Objects.requireNonNull(visitor);
 		for(int binding : bindingIds) requireBinding(binding);
 		for(Map.Entry<LoopCardinalityDecision,LoopCardinality> decision : context.cardinalities().entrySet()) {
-			boolean reachable=facts.loopExecutionCases(decision.getKey().loopId()).stream()
-				.anyMatch(value -> value.cardinality()==decision.getValue());
+			boolean reachable=facts.loopCardinalityReachable(decision.getKey().loopId(),decision.getValue());
 			if(!reachable) return new VisitResult(VisitStatus.COMPLETE,0,
 				"loop cardinality contradicts proven iteration count");
 			IterationPhase phase=context.iterationPhases().get(
 				new LoopDecision(decision.getKey().loopId(),decision.getKey().callFrame()));
-			if(phase!=null && facts.loopExecutionCases(decision.getKey().loopId()).stream()
-				.filter(value -> value.cardinality()==decision.getValue())
-				.noneMatch(value -> value.bodyPhases().contains(phase)))
+			if(phase!=null && !facts.loopPhaseReachable(
+				decision.getKey().loopId(),decision.getValue(),phase))
 				return new VisitResult(VisitStatus.COMPLETE,0,"loop phase is unreachable for cardinality");
 		}
 		for(Map.Entry<GuardDecision,Boolean> decision : context.guards().entrySet()) {
 			int guard=decision.getKey().guardId();
-			int loop=facts.enclosingLoop(facts.guard(guard).parentRegionId());
+			int loop=facts.guardEnclosingLoop(guard);
 			IterationPhase phase=loop<0 ? null : context.iterationPhases().get(
 				new LoopDecision(loop,decision.getKey().callFrame()));
 			Boolean proven=phase==null ? null : facts.guardValue(loop,guard,phase);
@@ -428,8 +483,35 @@ public final class MemoBindingResolver {
 			if(proven!=null && !proven.equals(branchValue))
 				return new VisitResult(VisitStatus.COMPLETE,0,"explicit guard contradicts proven loop phase");
 		}
+		List<Integer> roots=List.copyOf(bindingIds);
+		directRootRequests++;
+		VisitResult direct=visitDirectDefinitions(roots,context,visitor);
+		if(direct!=null) return direct;
 		MutableEvaluation state = new MutableEvaluation(context);
-		return enumerate(List.copyOf(bindingIds), state, visitor);
+		return enumerate(roots, state, visitor);
+	}
+
+	private VisitResult visitDirectDefinitions(List<Integer> roots,EvaluationContext context,
+		EnvironmentVisitor visitor) {
+		if(roots.isEmpty()) return null;
+		for(int root : roots)
+			if(directDefinitions[root]==null) return null;
+		directRootEligibleCalls++;
+		List<ResolvedOrigin> origins=new ArrayList<>(roots.size());
+		for(int root : roots) {
+			DirectDefinition definition=directDefinitions[root];
+			int selectedRule=context.selections().selectedRule(definition.owner());
+			MemoPartition selectedLayout=context.selections().selectedLayout(definition.owner());
+			origins.add(new ResolvedOrigin(OriginKind.COMPILED_OWNER,definition.occurrence(),definition.owner(),
+				definition.slot(),BoundaryPhase.ORDINARY,context.callFrame(),selectedRule,selectedLayout));
+		}
+		directRootsResolved+=origins.size();
+		directRootFastPathCalls++;
+		ResolvedEnvironment environment=new ResolvedEnvironment(origins,immutableSnapshot(context.guards()),
+			immutableSnapshot(context.loops()),immutableSnapshot(context.iterationPhases()),
+			immutableSnapshot(context.cardinalities()));
+		boolean keepGoing=visitor.visit(environment);
+		return new VisitResult(keepGoing ? VisitStatus.COMPLETE : VisitStatus.STOPPED,1,"complete");
 	}
 
 	/**
@@ -507,12 +589,12 @@ public final class MemoBindingResolver {
 					LoopDecision loop=new LoopDecision(binding.referenceId(),frame);
 					IterationPhase selected=cardinality==LoopCardinality.ONE
 						? IterationPhase.FIRST : cardinality==LoopCardinality.MANY ? IterationPhase.LAST : null;
-					IterationPhase prior=selected==null ? state.iterationPhases.remove(loop)
-						: state.iterationPhases.put(loop,selected);
+					Map<LoopDecision,IterationPhase> phases=state.mutableIterationPhases();
+					IterationPhase prior=selected==null ? phases.remove(loop) : phases.put(loop,selected);
 					try { yield traceVisibility(binding.children().get(cardinality==LoopCardinality.ZERO ? 0 : 1),
 						frame,state,path,depth+1,true); }
 					finally {
-						if(prior==null) state.iterationPhases.remove(loop); else state.iterationPhases.put(loop,prior);
+						if(prior==null) phases.remove(loop); else phases.put(loop,prior);
 					}
 				}
 				case CALL_ARG -> traceVisibility(binding.children().get(0),frame,state,path,depth+1,true);
@@ -570,8 +652,8 @@ public final class MemoBindingResolver {
 			origins.add(resolution.origin);
 		}
 		state.environments++;
-		boolean keepGoing = visitor.visit(new ResolvedEnvironment(origins,state.guards,state.loops,
-			state.iterationPhases,state.cardinalities));
+		boolean keepGoing = visitor.visit(new ResolvedEnvironment(origins,state.environmentGuards(),
+			state.environmentLoops(),state.environmentIterationPhases(),state.environmentCardinalities()));
 		return new VisitResult(!keepGoing ? VisitStatus.STOPPED
 			: state.unresolved ? VisitStatus.UNRESOLVED : VisitStatus.COMPLETE,
 			state.environments, state.unresolved ? "one or more bindings were unresolved" : "complete");
@@ -581,21 +663,21 @@ public final class MemoBindingResolver {
 		EnvironmentVisitor visitor) {
 		VisitResult first;
 		if(decision.guard != null) {
-			state.guards.put(decision.guard, false);
+			state.mutableGuards().put(decision.guard, false);
 			first = enumerate(roots, state, visitor);
 			if(first.status() == VisitStatus.STOPPED) return first;
-			state.guards.put(decision.guard, true);
+			state.mutableGuards().put(decision.guard, true);
 		}
 		else if(decision.loop != null) {
-			state.loops.put(decision.loop, LoopPhase.ENTRY);
+			state.mutableLoops().put(decision.loop, LoopPhase.ENTRY);
 			first = enumerate(roots, state, visitor);
 			if(first.status() == VisitStatus.STOPPED) return first;
-			state.loops.put(decision.loop, LoopPhase.BACKEDGE);
+			state.mutableLoops().put(decision.loop, LoopPhase.BACKEDGE);
 		}
 		else return branchCardinalities(roots,decision.cardinality,state,visitor);
 		VisitResult second = enumerate(roots, state, visitor);
-		if(decision.guard != null) state.guards.remove(decision.guard);
-		else state.loops.remove(decision.loop);
+		if(decision.guard != null) state.mutableGuards().remove(decision.guard);
+		else state.mutableLoops().remove(decision.loop);
 		VisitStatus status = first.status() == VisitStatus.UNRESOLVED || second.status() == VisitStatus.UNRESOLVED
 			? VisitStatus.UNRESOLVED : second.status();
 		return new VisitResult(status, state.environments,
@@ -606,13 +688,13 @@ public final class MemoBindingResolver {
 		MutableEvaluation state,EnvironmentVisitor visitor) {
 		VisitStatus status=VisitStatus.COMPLETE;
 		for(MemoProgramFacts.LoopExecutionCase executionCase : facts.loopExecutionCases(decision.loopId())) {
-			state.cardinalities.put(decision,executionCase.cardinality());
+			state.mutableCardinalities().put(decision,executionCase.cardinality());
 			VisitResult result=enumerate(roots,state,visitor);
 			if(result.status()==VisitStatus.STOPPED) return result;
 			if(result.status()==VisitStatus.UNRESOLVED) status=VisitStatus.UNRESOLVED;
-			state.iterationPhases.remove(new LoopDecision(decision.loopId(),decision.callFrame()));
+			state.mutableIterationPhases().remove(new LoopDecision(decision.loopId(),decision.callFrame()));
 		}
-		state.cardinalities.remove(decision);
+		state.mutableCardinalities().remove(decision);
 		return new VisitResult(status,state.environments,
 			status==VisitStatus.UNRESOLVED ? "one or more bindings were unresolved" : "complete");
 	}
@@ -669,7 +751,8 @@ public final class MemoBindingResolver {
 		LoopDecision key=new LoopDecision(binding.referenceId(),frame);
 		IterationPhase selected=cardinality==LoopCardinality.ONE ? IterationPhase.FIRST
 			: cardinality==LoopCardinality.MANY ? IterationPhase.LAST : null;
-		if(selected==null) state.iterationPhases.remove(key); else state.iterationPhases.put(key,selected);
+		if(selected==null) state.mutableIterationPhases().remove(key);
+		else state.mutableIterationPhases().put(key,selected);
 		return resolve(binding.children().get(cardinality==LoopCardinality.ZERO ? 0 : 1),
 			frame,BoundaryPhase.LAST,path,state,depth+1);
 	}
@@ -1035,24 +1118,76 @@ public final class MemoBindingResolver {
 			this.context=context;
 		}
 	}
-	private static final class MutableEvaluation {
-		private final Map<GuardDecision,Boolean> guards;
-		private final Map<LoopDecision,LoopPhase> loops;
-		private final Map<LoopDecision,IterationPhase> iterationPhases;
-		private final Map<LoopCardinalityDecision,LoopCardinality> cardinalities;
+	private final class MutableEvaluation {
+		private Map<GuardDecision,Boolean> guards;
+		private Map<LoopDecision,LoopPhase> loops;
+		private Map<LoopDecision,IterationPhase> iterationPhases;
+		private Map<LoopCardinalityDecision,LoopCardinality> cardinalities;
+		private boolean ownsGuards;
+		private boolean ownsLoops;
+		private boolean ownsIterationPhases;
+		private boolean ownsCardinalities;
+		private Map<GuardDecision,Boolean> environmentGuards;
+		private Map<LoopDecision,LoopPhase> environmentLoops;
+		private Map<LoopDecision,IterationPhase> environmentIterationPhases;
+		private Map<LoopCardinalityDecision,LoopCardinality> environmentCardinalities;
 		private final SelectionLookup selections;
 		private final int maxDepth;
 		private final List<Integer> initialFrame;
 		private int environments;
 		private boolean unresolved;
 		private MutableEvaluation(EvaluationContext context) {
-			guards = new LinkedHashMap<>(context.guards());
-			loops = new LinkedHashMap<>(context.loops());
-			iterationPhases=new LinkedHashMap<>(context.iterationPhases());
-			cardinalities=new LinkedHashMap<>(context.cardinalities());
+			guards = context.guards();
+			loops = context.loops();
+			iterationPhases=context.iterationPhases();
+			cardinalities=context.cardinalities();
 			selections = context.selections();
 			maxDepth = context.maxDepth();
 			initialFrame = context.callFrame();
+		}
+		private Map<GuardDecision,Boolean> mutableGuards() {
+			if(!ownsGuards) { guards=new LinkedHashMap<>(guards); ownsGuards=true; }
+			return guards;
+		}
+		private Map<LoopDecision,LoopPhase> mutableLoops() {
+			if(!ownsLoops) { loops=new LinkedHashMap<>(loops); ownsLoops=true; }
+			return loops;
+		}
+		private Map<LoopDecision,IterationPhase> mutableIterationPhases() {
+			if(!ownsIterationPhases) {
+				iterationPhases=new LinkedHashMap<>(iterationPhases); ownsIterationPhases=true;
+			}
+			return iterationPhases;
+		}
+		private Map<LoopCardinalityDecision,LoopCardinality> mutableCardinalities() {
+			if(!ownsCardinalities) { cardinalities=new LinkedHashMap<>(cardinalities); ownsCardinalities=true; }
+			return cardinalities;
+		}
+		// Map.copyOf(MapN) would retain the original table, whereas the former eager
+		// LinkedHashMap copy was reinserted into a new MapN at every emission. Force
+		// that same reinsertion for unowned maps: colliding-key iteration order
+		// feeds exact binary64 probability arithmetic. The wrapper avoids node copies.
+		private Map<GuardDecision,Boolean> environmentGuards() {
+			if(ownsGuards) return guards;
+			if(environmentGuards==null) environmentGuards=immutableSnapshot(guards);
+			return environmentGuards;
+		}
+		private Map<LoopDecision,LoopPhase> environmentLoops() {
+			if(ownsLoops) return loops;
+			if(environmentLoops==null) environmentLoops=immutableSnapshot(loops);
+			return environmentLoops;
+		}
+		private Map<LoopDecision,IterationPhase> environmentIterationPhases() {
+			if(ownsIterationPhases) return iterationPhases;
+			if(environmentIterationPhases==null)
+				environmentIterationPhases=immutableSnapshot(iterationPhases);
+			return environmentIterationPhases;
+		}
+		private Map<LoopCardinalityDecision,LoopCardinality> environmentCardinalities() {
+			if(ownsCardinalities) return cardinalities;
+			if(environmentCardinalities==null)
+				environmentCardinalities=immutableSnapshot(cardinalities);
+			return environmentCardinalities;
 		}
 	}
 	private static final class NeededDecision {

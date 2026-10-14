@@ -1,0 +1,660 @@
+{
+  "method": "JFR sampling; counts are samples, allocation weights are JFR estimates, inclusive methods overlap",
+  "optimizerExecutionSamples": 30,
+  "optimizerAllocationWeightBytes": 666251824,
+  "trackedInclusiveMethods": {
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.support": {
+      "inclusiveSamples": 3,
+      "percentOfOptimizerSamples": 10.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.supportDfs": {
+      "inclusiveSamples": 1,
+      "percentOfOptimizerSamples": 3.3333333333333335
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.propagate": {
+      "inclusiveSamples": 7,
+      "percentOfOptimizerSamples": 23.333333333333332
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.computeConditionalCostBound": {
+      "inclusiveSamples": 15,
+      "percentOfOptimizerSamples": 50.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.currentTermBound": {
+      "inclusiveSamples": 15,
+      "percentOfOptimizerSamples": 50.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.refreshTermBound": {
+      "inclusiveSamples": 15,
+      "percentOfOptimizerSamples": 50.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.coreLowerBound": {
+      "inclusiveSamples": 15,
+      "percentOfOptimizerSamples": 50.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cached": {
+      "inclusiveSamples": 0,
+      "percentOfOptimizerSamples": 0.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cachedDomains": {
+      "inclusiveSamples": 1,
+      "percentOfOptimizerSamples": 3.3333333333333335
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.tupleHash": {
+      "inclusiveSamples": 0,
+      "percentOfOptimizerSamples": 0.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.scopedDomainHash": {
+      "inclusiveSamples": 0,
+      "percentOfOptimizerSamples": 0.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ScopedDomainIdentity.sameDomains": {
+      "inclusiveSamples": 0,
+      "percentOfOptimizerSamples": 0.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.stamp": {
+      "inclusiveSamples": 1,
+      "percentOfOptimizerSamples": 3.3333333333333335
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementGroupCost": {
+      "inclusiveSamples": 21,
+      "percentOfOptimizerSamples": 70.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.visitBindingCostContexts": {
+      "inclusiveSamples": 8,
+      "percentOfOptimizerSamples": 26.666666666666668
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.visitJoint": {
+      "inclusiveSamples": 6,
+      "percentOfOptimizerSamples": 20.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.enumerate": {
+      "inclusiveSamples": 4,
+      "percentOfOptimizerSamples": 13.333333333333334
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoShapes.resolvedBindingShape": {
+      "inclusiveSamples": 4,
+      "percentOfOptimizerSamples": 13.333333333333334
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoShapes.cloneView": {
+      "inclusiveSamples": 0,
+      "percentOfOptimizerSamples": 0.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectGuards": {
+      "inclusiveSamples": 0,
+      "percentOfOptimizerSamples": 0.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectLoops": {
+      "inclusiveSamples": 0,
+      "percentOfOptimizerSamples": 0.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectCardinalities": {
+      "inclusiveSamples": 0,
+      "percentOfOptimizerSamples": 0.0
+    },
+    "org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.canonicalGuard": {
+      "inclusiveSamples": 1,
+      "percentOfOptimizerSamples": 3.3333333333333335
+    }
+  },
+  "exclusiveNearestMemoBuckets": {
+    "optimizer-other": {
+      "samples": 13,
+      "percent": 43.333333333333336
+    },
+    "shape-key-guard-cost": {
+      "samples": 6,
+      "percent": 20.0
+    },
+    "model-cost-other": {
+      "samples": 4,
+      "percent": 13.333333333333334
+    },
+    "binding-context-resolution": {
+      "samples": 2,
+      "percent": 6.666666666666667
+    },
+    "search-cache-key-domain": {
+      "samples": 2,
+      "percent": 6.666666666666667
+    },
+    "solver-other": {
+      "samples": 1,
+      "percent": 3.3333333333333335
+    },
+    "movement-cost-context": {
+      "samples": 1,
+      "percent": 3.3333333333333335
+    },
+    "solver-support": {
+      "samples": 1,
+      "percent": 3.3333333333333335
+    }
+  },
+  "allocationNearestMemoBuckets": {
+    "model-cost-other": {
+      "estimatedBytes": 188630112,
+      "percent": 28.31213442201398
+    },
+    "shape-key-guard-cost": {
+      "estimatedBytes": 162210232,
+      "percent": 24.346684865511154
+    },
+    "optimizer-other": {
+      "estimatedBytes": 113149816,
+      "percent": 16.983040334610777
+    },
+    "solver-other": {
+      "estimatedBytes": 64975200,
+      "percent": 9.752348535409038
+    },
+    "binding-context-resolution": {
+      "estimatedBytes": 63927384,
+      "percent": 9.595078271785715
+    },
+    "conditional-cost-bound": {
+      "estimatedBytes": 55543248,
+      "percent": 8.336674812615598
+    },
+    "solver-support": {
+      "estimatedBytes": 10479872,
+      "percent": 1.5729595961301264
+    },
+    "search-cache-key-domain": {
+      "estimatedBytes": 5239976,
+      "percent": 0.7864858018009718
+    },
+    "movement-cost-context": {
+      "estimatedBytes": 2095984,
+      "percent": 0.3145933601226434
+    }
+  },
+  "topNearestMemoMethods": [
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.sortedUnique",
+      "value": 2
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver$LoopDecision.equals",
+      "value": 2
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$$Lambda$388+0x00007c75f4326be8.96440505.test",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.canonicalGuard",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoPrivacy.selectedGuardValue",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.ambiguousSymbolicReturn",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.stamp",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.resolve",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cachedDomains",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.refinedClasses",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoShapes.applyShape",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoShapes$MovementViewRecipe.equals",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoShapes$RepeatProofKey.equals",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoShapes.buildIndexedAtoms",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver$EvaluationContext.<init>",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoCostModel.movementCost",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel$MovementActivation.equals",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementGroupCost",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver$OriginIdentity.equals",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.occurrence",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel$UnitKey.equals",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.accumulateMovement",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel$MovementEdge.equals",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.accumulateMovementPrimitive",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.support",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoCostModel.knownOutputBytes",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoShapes.relevantGuardDecisions",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel$FairUnionState.equals",
+      "value": 1
+    }
+  ],
+  "topLeafFrames": [
+    {
+      "name": "java.util.ImmutableCollections$MapN.probe",
+      "value": 2
+    },
+    {
+      "name": "java.lang.invoke.MethodHandleImpl.profileBoolean",
+      "value": 2
+    },
+    {
+      "name": "java.lang.invoke.LambdaForm$MH+0x00007c75f42c8c00.713464342.guard",
+      "value": 2
+    },
+    {
+      "name": "java.util.ImmutableCollections$AbstractImmutableList.equals",
+      "value": 2
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$$Lambda$388+0x00007c75f4326be8.96440505.test",
+      "value": 1
+    },
+    {
+      "name": "java.util.Objects.checkIndex",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoPrivacy.selectedGuardValue",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.stamp",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.resolve",
+      "value": 1
+    },
+    {
+      "name": "java.util.HashMap.getNode",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.refinedClasses",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.runtime.matrix.data.MatrixBlock.estimateSizeSparseInMemory",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoShapes$RepeatProofKey.equals",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoShapes.buildIndexedAtoms",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoCostModel.movementCost",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementGroupCost",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.occurrence",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.accumulateMovement",
+      "value": 1
+    },
+    {
+      "name": "java.lang.invoke.LambdaForm$MH+0x00007c75f42c9c00.1947397483.invoke",
+      "value": 1
+    },
+    {
+      "name": "java.util.HashMap$TreeNode.find",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.support",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel.getDirectFederatedTransientReadFallbackMemEstimate",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.sortedUnique",
+      "value": 1
+    },
+    {
+      "name": "java.util.IdentityHashMap.get",
+      "value": 1
+    },
+    {
+      "name": "java.util.DualPivotQuicksort.insertionSort",
+      "value": 1
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel$FairUnionState.equals",
+      "value": 1
+    }
+  ],
+  "topLeafToNearestMemo": [
+    {
+      "leaf": "java.util.ImmutableCollections$AbstractImmutableList.equals",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver$LoopDecision.equals",
+      "samples": 2
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$$Lambda$388+0x00007c75f4326be8.96440505.test",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$$Lambda$388+0x00007c75f4326be8.96440505.test",
+      "samples": 1
+    },
+    {
+      "leaf": "java.util.Objects.checkIndex",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.canonicalGuard",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.memo.MemoPrivacy.selectedGuardValue",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoPrivacy.selectedGuardValue",
+      "samples": 1
+    },
+    {
+      "leaf": "java.util.ImmutableCollections$MapN.probe",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.ambiguousSymbolicReturn",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.stamp",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.stamp",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.resolve",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.resolve",
+      "samples": 1
+    },
+    {
+      "leaf": "java.util.HashMap.getNode",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cachedDomains",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.refinedClasses",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.refinedClasses",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.runtime.matrix.data.MatrixBlock.estimateSizeSparseInMemory",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoShapes.applyShape",
+      "samples": 1
+    },
+    {
+      "leaf": "java.lang.invoke.MethodHandleImpl.profileBoolean",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoShapes$MovementViewRecipe.equals",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.memo.MemoShapes$RepeatProofKey.equals",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoShapes$RepeatProofKey.equals",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.memo.MemoShapes.buildIndexedAtoms",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoShapes.buildIndexedAtoms",
+      "samples": 1
+    },
+    {
+      "leaf": "java.util.ImmutableCollections$MapN.probe",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver$EvaluationContext.<init>",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.memo.MemoCostModel.movementCost",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoCostModel.movementCost",
+      "samples": 1
+    },
+    {
+      "leaf": "java.lang.invoke.LambdaForm$MH+0x00007c75f42c8c00.713464342.guard",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel$MovementActivation.equals",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementGroupCost",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementGroupCost",
+      "samples": 1
+    },
+    {
+      "leaf": "java.lang.invoke.MethodHandleImpl.profileBoolean",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver$OriginIdentity.equals",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.occurrence",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.occurrence",
+      "samples": 1
+    },
+    {
+      "leaf": "java.lang.invoke.LambdaForm$MH+0x00007c75f42c8c00.713464342.guard",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel$UnitKey.equals",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.accumulateMovement",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.accumulateMovement",
+      "samples": 1
+    },
+    {
+      "leaf": "java.lang.invoke.LambdaForm$MH+0x00007c75f42c9c00.1947397483.invoke",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel$MovementEdge.equals",
+      "samples": 1
+    },
+    {
+      "leaf": "java.util.HashMap$TreeNode.find",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.accumulateMovementPrimitive",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.support",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.support",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel.getDirectFederatedTransientReadFallbackMemEstimate",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoCostModel.knownOutputBytes",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.sortedUnique",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.sortedUnique",
+      "samples": 1
+    },
+    {
+      "leaf": "java.util.IdentityHashMap.get",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoShapes.relevantGuardDecisions",
+      "samples": 1
+    },
+    {
+      "leaf": "java.util.DualPivotQuicksort.insertionSort",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.sortedUnique",
+      "samples": 1
+    },
+    {
+      "leaf": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel$FairUnionState.equals",
+      "nearestMemo": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel$FairUnionState.equals",
+      "samples": 1
+    }
+  ],
+  "topAllocatedClasses": [
+    {
+      "name": "[I",
+      "value": 84884408
+    },
+    {
+      "name": "java.util.KeyValueHolder",
+      "value": 82789200
+    },
+    {
+      "name": "java.util.ImmutableCollections$ListItr",
+      "value": 72311048
+    },
+    {
+      "name": "java.util.ImmutableCollections$MapN$1",
+      "value": 56589248
+    },
+    {
+      "name": "java.util.LinkedHashMap$Entry",
+      "value": 56581592
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoShapes$$Lambda$325+0x00007c75f42f6ee8.1204822967",
+      "value": 34356032
+    },
+    {
+      "name": "[Ljava.lang.Object;",
+      "value": 31416216
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$TupleKey",
+      "value": 27247792
+    },
+    {
+      "name": "[Ljava.util.HashMap$Node;",
+      "value": 24102912
+    },
+    {
+      "name": "java.util.ImmutableCollections$MapN$MapNIterator",
+      "value": 20959816
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver$EvaluationContext",
+      "value": 11527824
+    },
+    {
+      "name": "java.util.LinkedHashMap",
+      "value": 11527752
+    },
+    {
+      "name": "java.util.HashMap$Node",
+      "value": 10479888
+    },
+    {
+      "name": "java.util.HashMap",
+      "value": 7335880
+    },
+    {
+      "name": "java.util.ImmutableCollections$SubList",
+      "value": 6287960
+    },
+    {
+      "name": "[J",
+      "value": 6287928
+    },
+    {
+      "name": "java.lang.Integer",
+      "value": 5239968
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel$UnitKey",
+      "value": 5239960
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoShapes$IndexedContextKey",
+      "value": 5239928
+    },
+    {
+      "name": "java.math.BigInteger",
+      "value": 5239920
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel$MovementActivation",
+      "value": 4191992
+    },
+    {
+      "name": "java.util.ArrayList",
+      "value": 4191944
+    },
+    {
+      "name": "java.util.ImmutableCollections$MapN",
+      "value": 4191944
+    },
+    {
+      "name": "java.util.stream.ReferencePipeline$Head",
+      "value": 4191912
+    },
+    {
+      "name": "java.util.ArrayList$SubList",
+      "value": 3143968
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoPrivacy$Context",
+      "value": 3143968
+    },
+    {
+      "name": "java.util.LinkedHashMap$LinkedEntryIterator",
+      "value": 3143960
+    },
+    {
+      "name": "org.apache.sysds.hops.BinaryOp",
+      "value": 3143856
+    },
+    {
+      "name": "java.util.BitSet",
+      "value": 2095992
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver$LoopDecision",
+      "value": 2095992
+    }
+  ]
+}

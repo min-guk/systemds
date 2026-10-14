@@ -33,7 +33,9 @@ import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.OpOpN;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
@@ -41,7 +43,9 @@ import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -160,6 +164,7 @@ public final class MemoNativeRules {
 			this.hop=hop; this.workers=workers; this.shape=shape; this.key=key;
 		}
 		RequestKey key() { return key; }
+		Request withHop(Hop value) { return new Request(Objects.requireNonNull(value),workers,shape,key); }
 	}
 	record PreparationStats(long preparedRequests,long canonicalStringsCreated,
 		long canonicalStringsReused,long uncacheableRequests) { }
@@ -168,15 +173,30 @@ public final class MemoNativeRules {
 		private final Map<CharSequence,String> operators = new TreeMap<>(CharSequence::compare);
 		private final StringBuilder buffer = new StringBuilder(128);
 		private long prepared,created,reused,uncacheable;
+		boolean descriptorCapable(Hop hop) { return cacheable(hop); }
 		Request prepare(Hop hop,int workers,ShapeHint hint) {
 			Request request=prepareRequest(hop,workers,hint,this);
 			prepared++;
 			if(request.key()==null) uncacheable++;
 			return request;
 		}
+		Request prepare(Hop template,int workers,MemoShapes.NativeShapeDescriptor descriptor) {
+			Objects.requireNonNull(descriptor,"native shape descriptor");
+			if(workers<1) throw new IllegalArgumentException("A worker pool must be nonempty");
+			ShapeHint.DiagnosticSnapshot shape=descriptor.hint().diagnosticSnapshot();
+			RequestKey key=cacheable(template)
+				? new RequestKey(operator(template,descriptor),workers,shape) : null;
+			Request request=new Request(null,workers,shape,key);
+			prepared++;
+			if(key==null) uncacheable++;
+			return request;
+		}
 		private String operator(Hop hop) {
+			return operator(hop,null);
+		}
+		private String operator(Hop hop,MemoShapes.NativeShapeDescriptor descriptor) {
 			buffer.setLength(0);
-			appendOperatorKey(hop,buffer);
+			appendOperatorKey(hop,descriptor,buffer);
 			String cached=operators.get(buffer);
 			if(cached!=null) { reused++; return cached; }
 			String key=buffer.toString();
@@ -754,13 +774,18 @@ public final class MemoNativeRules {
 	}
 
 	private static String operatorKey(Hop hop) {
-		return appendOperatorKey(hop,new StringBuilder(128)).toString();
+		return appendOperatorKey(hop,null,new StringBuilder(128)).toString();
 	}
-	private static StringBuilder appendOperatorKey(Hop hop,StringBuilder key) {
+	private static StringBuilder appendOperatorKey(Hop hop,MemoShapes.NativeShapeDescriptor descriptor,
+		StringBuilder key) {
+		MemoShapes.Shape output=descriptor==null ? null : descriptor.output();
+		long outputRows=descriptor!=null && isMatrixLike(hop) ? output.rows() : hop.getDim1();
+		long outputColumns=descriptor!=null && isMatrixLike(hop) ? output.columns() : hop.getDim2();
 		key.append(hop.getClass().getName()).append('|')
 			.append(hop.getOpString()).append('|').append(hop.getDataType()).append('|')
-			.append(hop.getValueType()).append('|').append(hop.getDim1()).append('x')
-			.append(hop.getDim2()).append('|').append(hop.getBlocksize());
+			.append(hop.getValueType()).append('|').append(outputRows).append('x')
+			.append(outputColumns).append('|')
+			.append(descriptor==null ? hop.getBlocksize() : descriptor.blocksize());
 		if(hop instanceof IndexingOp indexing)
 			key.append("|index:").append(indexing.isRowLowerEqualsUpper()).append(':')
 				.append(indexing.isColLowerEqualsUpper()).append(':').append(indexing.isAllRowsAndCols());
@@ -768,18 +793,40 @@ public final class MemoNativeRules {
 			key.append("|aggBinary:").append(aggregate.getOuterOp()).append(':')
 				.append(aggregate.getInnerOp()).append(':').append(aggregate.checkMapMultChain()).append(':')
 				.append(aggregate.checkTransposeSelf()).append(':').append(aggregate.hasFederatedOutput());
-		for(Hop input : hop.getInput())
+		for(int position=0;position<hop.getInput().size();position++) {
+			Hop input=hop.getInput(position);
+			MemoShapes.Shape shape=descriptor==null ? null : descriptor.inputs().get(position);
+			long rows=descriptor!=null && isMatrixLike(input) ? shape.rows() : input.getDim1();
+			long columns=descriptor!=null && isMatrixLike(input) ? shape.columns() : input.getDim2();
 			key.append("|in:").append(input.getDataType()).append(':').append(input.getValueType())
-				.append(':').append(input.getDim1()).append('x').append(input.getDim2());
+				.append(':').append(rows).append('x').append(columns);
+		}
 		return key;
+	}
+	private static boolean isMatrixLike(Hop hop) {
+		return hop.getDataType()==org.apache.sysds.common.Types.DataType.MATRIX
+			|| hop.getDataType()==org.apache.sysds.common.Types.DataType.FRAME;
 	}
 
 	private static boolean cacheable(Hop hop) {
 		// These families encode their rule-relevant operator selectors in
 		// getOpString; shape and ordered input kinds are included separately.
-		// Less regular HOPs remain source-free, but are conservatively evaluated
-		// per occurrence until OracleFacade exposes its canonical OpSig publicly.
+		// The admitted irregular families have fixed Oracle signatures and their
+		// memo-side effects use only captured shapes, workers and input placements.
+		// Other irregular families remain conservatively evaluated per occurrence.
 		return hop instanceof UnaryOp || hop instanceof org.apache.sysds.hops.BinaryOp
-			|| hop instanceof org.apache.sysds.hops.AggUnaryOp || hop instanceof AggBinaryOp;
+			|| hop instanceof org.apache.sysds.hops.AggUnaryOp || hop instanceof AggBinaryOp
+			|| exactAdditionalFamily(hop);
+	}
+
+	private static boolean exactAdditionalFamily(Hop hop) {
+		if(hop instanceof ReorgOp reorg)
+			return reorg.getOp()==org.apache.sysds.common.Types.ReOrgOp.TRANS;
+		if(hop instanceof NaryOp nary)
+			return nary.getOp()==OpOpN.PLUS || nary.getOp()==OpOpN.MULT;
+		if(hop instanceof TernaryOp ternary)
+			return ternary.getOp()==OpOp3.IFELSE || ternary.getOp()==OpOp3.PLUS_MULT
+				|| ternary.getOp()==OpOp3.MINUS_MULT;
+		return false;
 	}
 }

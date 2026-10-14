@@ -92,6 +92,11 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 		traceForestTail(solution.optimization().statistics());
 		traceShapeReuse(universe.shapes().reuseStatistics());
 		traceMovementReuse(model.movementReuseStatistics());
+		traceNativeCostReuse(model.nativeCostReuseStatistics());
+		traceContextAnalysisReuse(model.contextAnalysisReuseStatistics());
+		traceDirectRoots("shapes",universe.shapes().directRootStatistics());
+		traceDirectRoots("modelPrivacy",model.directRootStatistics());
+		traceCheckProjection(solution.optimization().statistics());
 		if(solution.optimization().status() != MemoOptimizer.Status.OPTIMAL)
 			throw new IllegalStateException("Memo planner did not prove an optimum: "
 				+ solution.optimization().status() + " " + solution.diagnostics());
@@ -165,6 +170,9 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 				+ " nodes=" + stats.nodes() + " checks=" + stats.checkEvaluations()
 				+ " cacheHits=" + stats.checkCacheHits() + " pruned=" + stats.removedRules()
 				+ " supportQueries=" + stats.supportQueries() + " supportCacheHits=" + stats.supportCacheHits()
+				+ " supportWitnessHits=" + stats.supportWitnessHits()
+				+ " binarySupportHits=" + stats.binarySupportHits()
+				+ " binarySupportRows=" + stats.binarySupportRows()
 				+ " worklistVisits=" + stats.worklistVisits()
 				+ " costEvaluations=" + stats.costEvaluations() + " costCacheHits=" + stats.costCacheHits()
 				+ " boundPrunes=" + stats.boundPrunes()
@@ -187,7 +195,8 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 				+ " oracleRequests=" + statistics.oracleRequests()
 				+ " canonicalStringsCreated=" + statistics.canonicalStringsCreated()
 				+ " canonicalStringsReused=" + statistics.canonicalStringsReused()
-				+ " uncacheableRequests=" + statistics.uncacheableRequests());
+				+ " uncacheableRequests=" + statistics.uncacheableRequests()
+				+ " contextualViewBuilds=" + statistics.contextualViewBuilds());
 	}
 	private static void traceNativeGeneration(MemoNativeRules.GenerationStats statistics) {
 		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
@@ -211,6 +220,9 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 			+ " checkCacheHits=" + statistics.checkCacheHits()
 			+ " supportQueries=" + statistics.supportQueries()
 			+ " supportCacheHits=" + statistics.supportCacheHits()
+			+ " supportWitnessHits=" + statistics.supportWitnessHits()
+			+ " binarySupportHits=" + statistics.binarySupportHits()
+			+ " binarySupportRows=" + statistics.binarySupportRows()
 			+ " worklistVisits=" + statistics.worklistVisits()
 			+ " removedRules=" + statistics.removedRules()
 			+ " costEvaluations=" + statistics.costEvaluations()
@@ -232,7 +244,44 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 			System.err.println("[MemoShapeReuse] bindingGuardRequests=" + statistics.bindingGuardRequests()
 				+ " bindingGuardCacheHits=" + statistics.bindingGuardCacheHits()
 				+ " repeatProofRequests=" + statistics.repeatProofRequests()
-				+ " repeatProofCacheHits=" + statistics.repeatProofCacheHits());
+				+ " repeatProofCacheHits=" + statistics.repeatProofCacheHits()
+				+ " phaseShapeRequests=" + statistics.phaseShapeRequests()
+				+ " phaseShapeCacheHits=" + statistics.phaseShapeCacheHits()
+				+ " phaseShapeCacheEntries=" + statistics.phaseShapeCacheEntries()
+				+ " guardRelevanceRequests=" + statistics.guardRelevanceRequests()
+				+ " guardRelevanceCacheHits=" + statistics.guardRelevanceCacheHits()
+				+ " guardRelevanceIndexEntries=" + statistics.guardRelevanceIndexEntries()
+				+ " occurrenceTransferRequests=" + statistics.occurrenceTransferRequests()
+				+ " occurrenceTransferCacheHits=" + statistics.occurrenceTransferCacheHits()
+				+ " occurrenceTransferBuilds=" + statistics.occurrenceTransferBuilds()
+				+ " occurrenceTransferEntries=" + statistics.occurrenceTransferEntries()
+				+ " guardAtomRequests=" + statistics.guardAtomRequests()
+				+ " guardAtomHits=" + statistics.guardAtomHits()
+				+ " guardAtomIdentities=" + statistics.guardAtomIdentities());
+	}
+	private static void traceCheckProjection(MemoOptimizer.Statistics statistics) {
+		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+			System.err.println("[MemoCheckProjection] annotatedChecks=" + statistics.annotatedChecks()
+				+ " invariantCheckAxes=" + statistics.invariantCheckAxes()
+				+ " binaryChecksReduced=" + statistics.binaryChecksReduced()
+				+ " branchEdgesRemovedDuringNormalization=" + statistics.branchEdgesRemovedDuringNormalization());
+	}
+	private static void traceNativeCostReuse(MemoProgramModel.NativeCostReuseStatistics statistics) {
+		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+			System.err.println("[MemoNativeCostReuse] requests=" + statistics.requests()
+				+ " cacheHits=" + statistics.cacheHits() + " vectorBuilds=" + statistics.vectorBuilds()
+				+ " entries=" + statistics.entries());
+	}
+	private static void traceContextAnalysisReuse(MemoProgramModel.ContextAnalysisReuseStatistics statistics) {
+		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+			System.err.println("[MemoContextAnalysisReuse] requests=" + statistics.requests()
+				+ " hits=" + statistics.hits() + " entries=" + statistics.entries());
+	}
+	private static void traceDirectRoots(String resolver,MemoBindingResolver.DirectRootStatistics statistics) {
+		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+			System.err.println("[MemoDirectRoots] resolver=" + resolver + " requests=" + statistics.requests()
+				+ " eligibleCalls=" + statistics.eligibleCalls() + " fastPathCalls=" + statistics.fastPathCalls()
+				+ " rootsResolved=" + statistics.rootsResolved());
 	}
 	private static void traceMovementReuse(MemoProgramModel.MovementReuseStatistics statistics) {
 		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
@@ -242,7 +291,11 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 				+ " postGateBuilds=" + statistics.postGateBuilds()
 				+ " postGateHits=" + statistics.postGateHits()
 				+ " primitiveContexts=" + statistics.primitiveContexts()
-				+ " contextualViewBuilds=" + statistics.contextualViewBuilds());
+				+ " contextualViewBuilds=" + statistics.contextualViewBuilds()
+				+ " unionRequests=" + statistics.unionRequests()
+				+ " unionCacheHits=" + statistics.unionCacheHits()
+				+ " measurementRequests=" + statistics.measurementRequests()
+				+ " measurementHits=" + statistics.measurementHits());
 	}
 	private static void traceCostProjection(MemoProgramModel.CostProjectionStatistics statistics) {
 		// Emit construction evidence even when the later exact search cannot prove an optimum.

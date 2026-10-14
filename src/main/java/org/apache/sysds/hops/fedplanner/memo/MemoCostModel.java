@@ -46,6 +46,9 @@ import org.apache.wink.json4j.JSONObject;
  * shared movement once, independently of its consumer count.</p>
  */
 public final class MemoCostModel {
+	record MovementMeasurement(long bytesBits,boolean uploadEstimate) {
+		double bytes() { return Double.longBitsToDouble(bytesBits); }
+	}
 	public enum DiagnosticCode {
 		INVALID_WORKER_COUNT,
 		INVALID_FREQUENCY,
@@ -201,22 +204,56 @@ public final class MemoCostModel {
 		MemoPartition targetNormalized = target.normalize(workers);
 		if(frequency == 0.0 || nativeNormalized == targetNormalized)
 			return 0.0;
+		MovementMeasurement measurement=movementMeasurement(source,nativeOutput,target,workers);
+		return movementCost(measurement,nativeOutput,target,workers,frequency);
+	}
+
+	static MovementMeasurement movementMeasurement(Hop source,MemoPartition nativeOutput,
+		MemoPartition target,int workers) {
+		Objects.requireNonNull(source,"source");
+		Objects.requireNonNull(nativeOutput,"native output");
+		Objects.requireNonNull(target,"target");
+		validateWorkersAndFrequency(workers,1);
+		MemoPartition nativeNormalized=nativeOutput.normalize(workers);
 		if(source.getDataType() != DataType.MATRIX && source.getDataType() != DataType.FRAME)
 			throw failure(DiagnosticCode.ILLEGAL_MOVEMENT,
 				"persistent placement movement requires matrix/frame payload: " + source.getDataType());
-		double bytes = knownOutputBytes(source, nativeNormalized == MemoPartition.LOCAL);
+		boolean upload=nativeNormalized==MemoPartition.LOCAL;
+		double bytes=knownOutputBytes(source,upload);
+		return new MovementMeasurement(Double.doubleToRawLongBits(bytes),upload);
+	}
+
+	static double movementCost(MovementMeasurement measurement,MemoPartition nativeOutput,
+		MemoPartition target,int workers,double frequency) {
+		Objects.requireNonNull(measurement,"movement measurement");
+		Objects.requireNonNull(nativeOutput,"native output");
+		Objects.requireNonNull(target,"target");
+		validateWorkersAndFrequency(workers,frequency);
+		MemoPartition nativeNormalized=nativeOutput.normalize(workers);
+		MemoPartition targetNormalized=target.normalize(workers);
+		if(frequency==0.0 || nativeNormalized==targetNormalized) return 0.0;
+		double bytes=measurement.bytes();
 		double unit;
-		if(nativeNormalized == MemoPartition.LOCAL && targetNormalized.federated())
+		if(nativeNormalized == MemoPartition.LOCAL && targetNormalized.federated()) {
+			if(!measurement.uploadEstimate()) throw measurementCategoryFailure(nativeNormalized,targetNormalized);
 			unit = FederatedCostModel.computeUploadNetworkCost(
 				bytes, targetNormalized.runtimeType(workers), workers);
-		else if(nativeNormalized.federated() && targetNormalized == MemoPartition.LOCAL)
+		}
+		else if(nativeNormalized.federated() && targetNormalized == MemoPartition.LOCAL) {
+			if(measurement.uploadEstimate()) throw measurementCategoryFailure(nativeNormalized,targetNormalized);
 			unit = FederatedCostModel.computeReusableMaterializationDownloadCost(
 				bytes, nativeNormalized.runtimeType(workers), workers);
+		}
 		else
 			throw failure(DiagnosticCode.ILLEGAL_MOVEMENT,
 				"direct FED layout conversion is outside the no-RESHARD contract: "
 					+ nativeNormalized + " -> " + targetNormalized);
 		return scale(requireFiniteCost(unit, "movement cost"), frequency, "movement frequency");
+	}
+
+	private static CostException measurementCategoryFailure(MemoPartition nativeOutput,MemoPartition target) {
+		return failure(DiagnosticCode.ILLEGAL_MOVEMENT,
+			"movement payload category does not match " + nativeOutput + " -> " + target);
 	}
 
 	private static double implicitLocalInputBroadcastCost(Hop hop, RuleMemo.Rule rule,

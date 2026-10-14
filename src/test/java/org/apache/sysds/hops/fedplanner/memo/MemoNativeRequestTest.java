@@ -18,6 +18,7 @@
  */
 package org.apache.sysds.hops.fedplanner.memo;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.apache.sysds.common.Types.AggOp;
@@ -30,6 +31,7 @@ import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.memo.MemoNativeRules.PreparationStats;
@@ -119,11 +121,11 @@ public class MemoNativeRequestTest {
 	}
 
 	@Test
-	public void noncacheableReorgRequestsHaveNullKeysAndAreBothEvaluated() {
+	public void noncacheableReshapeRequestsHaveNullKeysAndAreBothEvaluated() {
 		RequestFactory factory = new RequestFactory();
-		Request first = factory.prepare(transpose("t1", matrix("X", 8, 4)), 2,
+		Request first = factory.prepare(reshape("r1", matrix("X", 8, 4)), 2,
 			shape(4, 8, 8, 4, -1, -1));
-		Request second = factory.prepare(transpose("t2", matrix("Y", 8, 4)), 2,
+		Request second = factory.prepare(reshape("r2", matrix("Y", 8, 4)), 2,
 			shape(4, 8, 8, 4, -1, -1));
 
 		Assert.assertNull(first.key());
@@ -188,6 +190,14 @@ public class MemoNativeRequestTest {
 		transpose.setDim1(input.getDim2());
 		transpose.setDim2(input.getDim1());
 		return transpose;
+	}
+
+	private static ReorgOp reshape(String name, Hop input) {
+		ReorgOp reshape = new ReorgOp(name, DataType.MATRIX, ValueType.FP64, ReOrgOp.RESHAPE,
+			List.of(input, new LiteralOp(4L), new LiteralOp(8L), new LiteralOp(-1L), new LiteralOp(true)));
+		reshape.setDim1(4);
+		reshape.setDim2(8);
+		return reshape;
 	}
 
 	private static AggBinaryOp mm(String name, Hop left, Hop right, long rows, long cols) {

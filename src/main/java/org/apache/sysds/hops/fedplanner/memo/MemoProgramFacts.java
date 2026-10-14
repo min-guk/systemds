@@ -239,12 +239,14 @@ public final class MemoProgramFacts {
 	private final List<Diagnostic> diagnostics;
 	private final Map<Hop, List<Integer>> occurrenceIdsByHop;
 	private final Map<Hop, Integer> compiledOwnerByHop;
-	private final Map<Long, Integer> inputBindingByKey;
+	private final int[][] inputBindingByOccurrence;
 	private final Map<Integer, Integer> valueBindingByOccurrence;
 	private final Map<Long, StatementBlock> statementBlocks;
 	private final List<Hop> compiledOwnerHops;
 	private final Map<Integer,List<List<Integer>>> callFramesByRegion;
 	private final List<Map<List<Integer>,CanonicalGuard>> canonicalGuards;
+	private final byte[][] loopExecutionMasks;
+	private final int[] enclosingLoopByGuard;
 	private final Map<Integer,List<OccurrenceContext>> occurrenceContextsByOccurrence = new ConcurrentHashMap<>();
 
 	private MemoProgramFacts(Builder b) {
@@ -258,6 +260,17 @@ public final class MemoProgramFacts {
 		semanticUses = List.copyOf(b.semanticUses);
 		guards = List.copyOf(b.guards);
 		loops = b.loops.stream().sorted(Comparator.comparingInt(LoopRecord::id)).toList();
+		loopExecutionMasks=new byte[loops.size()][LoopCardinality.values().length];
+		for(LoopRecord loop:loops)
+			for(LoopExecutionCase executionCase:loop.executionCases()) {
+				int cardinality=executionCase.cardinality().ordinal();
+				loopExecutionMasks[loop.id()][cardinality]|=1;
+				for(IterationPhase phase:executionCase.bodyPhases())
+					loopExecutionMasks[loop.id()][cardinality]|=(byte)(1<<(phase.ordinal()+1));
+			}
+		enclosingLoopByGuard=new int[guards.size()];
+		for(Guard guard:guards)
+			enclosingLoopByGuard[guard.id()]=enclosingLoop(guard.parentRegionId());
 		guardPhases = List.copyOf(b.guardPhases);
 		List<List<GuardPhase>> phasesByLoop=new ArrayList<>(loops.size());
 		for(int loop=0;loop<loops.size();loop++) phasesByLoop.add(new ArrayList<>());
@@ -285,10 +298,18 @@ public final class MemoProgramFacts {
 			occurrenceIndex.computeIfAbsent(occurrence.hop(), ignored -> new ArrayList<>()).add(occurrence.id());
 		occurrenceIndex.replaceAll((hop, ids) -> List.copyOf(ids));
 		occurrenceIdsByHop = Collections.unmodifiableMap(occurrenceIndex);
-		Map<Long,Integer> edgeIndex = new LinkedHashMap<>();
-		for(InputBinding edge : inputBindings)
-			edgeIndex.put(edgeKey(edge.occurrenceId(), edge.inputPosition()), edge.bindingId());
-		inputBindingByKey = Collections.unmodifiableMap(edgeIndex);
+		// Occurrences and their input positions are dense, immutable fact identities.
+		// Freeze the registered edges once instead of boxing a pair key on every lookup.
+		int[] inputCounts=new int[occurrences.size()];
+		for(InputBinding edge:inputBindings)
+			inputCounts[edge.occurrenceId()]=Math.max(inputCounts[edge.occurrenceId()],edge.inputPosition()+1);
+		inputBindingByOccurrence=new int[occurrences.size()][];
+		for(int occurrence=0;occurrence<inputCounts.length;occurrence++) {
+			inputBindingByOccurrence[occurrence]=new int[inputCounts[occurrence]];
+			Arrays.fill(inputBindingByOccurrence[occurrence],-1);
+		}
+		for(InputBinding edge:inputBindings)
+			inputBindingByOccurrence[edge.occurrenceId()][edge.inputPosition()]=edge.bindingId();
 		valueBindingByOccurrence = Collections.unmodifiableMap(new LinkedHashMap<>(b.occurrenceValues));
 		statementBlocks = Collections.unmodifiableMap(new LinkedHashMap<>(b.statementBlocks));
 		List<Hop> owners = new ArrayList<>(Collections.nCopies(b.ownerIds.size(), null));
@@ -450,6 +471,22 @@ public final class MemoProgramFacts {
 	}
 	public LoopRecord loop(int id) { return loops.get(id); }
 	public List<LoopExecutionCase> loopExecutionCases(int loopId) { return loop(loopId).executionCases(); }
+	boolean loopCardinalityReachable(int loopId,LoopCardinality cardinality) {
+		if(loopId<0 || loopId>=loopExecutionMasks.length || cardinality==null)
+			return loopExecutionCases(loopId).stream().anyMatch(value -> value.cardinality()==cardinality);
+		return (loopExecutionMasks[loopId][cardinality.ordinal()]&1)!=0;
+	}
+	boolean loopPhaseReachable(int loopId,LoopCardinality cardinality,IterationPhase phase) {
+		if(loopId<0 || loopId>=loopExecutionMasks.length || cardinality==null || phase==null)
+			return loopExecutionCases(loopId).stream().filter(value -> value.cardinality()==cardinality)
+				.anyMatch(value -> value.bodyPhases().contains(phase));
+		return (loopExecutionMasks[loopId][cardinality.ordinal()]&(1<<(phase.ordinal()+1)))!=0;
+	}
+	int guardEnclosingLoop(int guardId) {
+		if(guardId<0 || guardId>=enclosingLoopByGuard.length)
+			return enclosingLoop(guard(guardId).parentRegionId());
+		return enclosingLoopByGuard[guardId];
+	}
 	public FunctionSummary functionSummary(int id) { return functions.get(id); }
 	/** Exact compiled function boundary used by runtime invocation scopes; -1 denotes a fully inlined summary. */
 	public long functionStatementBlockId(int functionSummaryId) {
@@ -526,7 +563,9 @@ public final class MemoProgramFacts {
 	}
 	public int compiledOwnerId(Hop hop) { return compiledOwnerByHop.getOrDefault(hop, -1); }
 	public int inputBinding(int occurrenceId, int inputPosition) {
-		return inputBindingByKey.getOrDefault(edgeKey(occurrenceId, inputPosition), -1);
+		if(occurrenceId<0 || occurrenceId>=inputBindingByOccurrence.length || inputPosition<0) return -1;
+		int[] inputs=inputBindingByOccurrence[occurrenceId];
+		return inputPosition<inputs.length ? inputs[inputPosition] : -1;
 	}
 	public int valueBinding(int occurrenceId) { return valueBindingByOccurrence.getOrDefault(occurrenceId, -1); }
 	public ShapeFact shapeFact(int occurrenceId) { return shapeFacts.get(occurrenceId); }

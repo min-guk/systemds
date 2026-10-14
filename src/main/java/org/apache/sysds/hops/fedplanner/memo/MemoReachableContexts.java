@@ -16,10 +16,13 @@
  */
 package org.apache.sysds.hops.fedplanner.memo;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.EvaluationContext;
 import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.LoopCardinalityDecision;
@@ -44,6 +47,15 @@ final class MemoReachableContexts {
 		VisitResult visit(EvaluationContext context);
 	}
 
+	private record RulePrefix(int region,List<Integer> frame,List<PhaseLoop> loops,int activation) { }
+	private record CompletedRulePrefix(List<EvaluationContext> contexts,VisitResult result) { }
+	private static final int MAX_RULE_PREFIX_ENTRIES=4096;
+	private static final int MAX_RULE_PREFIX_CONTEXTS=4096;
+	private static final long MAX_RULE_PREFIX_COMPONENTS=65536;
+	private final Map<RulePrefix,CompletedRulePrefix> rulePrefixes=new HashMap<>();
+	private int rulePrefixContextCount;
+	private long rulePrefixComponentCount;
+
 	private final MemoProgramFacts facts;
 	private final MemoBindingResolver resolver;
 
@@ -55,6 +67,81 @@ final class MemoReachableContexts {
 	VisitResult visit(Occurrence occurrence, EvaluationContext base, Visitor visitor) {
 		return visitResolved(occurrence, base, context -> resolver.visitJoint(List.of(), context,
 			environment -> visitor.visit(withEnvironment(context, environment))));
+	}
+
+	VisitResult visitRuleContext(Occurrence occurrence,OccurrenceContext occurrenceContext,
+		Consumer<EvaluationContext> visitor) {
+		EvaluationContext base=new EvaluationContext(Map.of(),Map.of(),MemoBindingResolver.NO_SELECTION,
+			4096,occurrenceContext.callFrame(),Map.of());
+		RulePrefix key=new RulePrefix(occurrence.regionId(),occurrenceContext.callFrame(),
+			occurrenceContext.phaseLoops(),
+			occurrence.activationBindingId());
+		CompletedRulePrefix cached=rulePrefixes.get(key);
+		if(cached!=null) {
+			for(EvaluationContext context:cached.contexts()) visitor.accept(context);
+			return cached.result();
+		}
+		List<EvaluationContext> contexts=new ArrayList<>();
+		long keyComponents=retainedComponents(occurrenceContext);
+		boolean keyOverflow=keyComponents>MAX_RULE_PREFIX_COMPONENTS-rulePrefixComponentCount;
+		long[] components={keyOverflow ? 0 : keyComponents};
+		boolean[] overflow={keyOverflow};
+		VisitResult result=visit(occurrence,base,context -> {
+				visitor.accept(context);
+				long added=retainedComponents(context);
+				if(!overflow[0]
+					&& (long)rulePrefixContextCount+contexts.size()+1<=MAX_RULE_PREFIX_CONTEXTS
+					&& added<=MAX_RULE_PREFIX_COMPONENTS-rulePrefixComponentCount-components[0]) {
+					contexts.add(context); components[0]+=added;
+				}
+				else { overflow[0]=true; contexts.clear(); components[0]=0; }
+				return true;
+			});
+		if(!overflow[0] && !rulePrefixes.containsKey(key)
+			&& rulePrefixes.size()<MAX_RULE_PREFIX_ENTRIES
+			&& (long)rulePrefixContextCount+contexts.size()<=MAX_RULE_PREFIX_CONTEXTS
+			&& components[0]<=MAX_RULE_PREFIX_COMPONENTS-rulePrefixComponentCount
+			&& result.status()==VisitStatus.COMPLETE) {
+			rulePrefixes.put(key,new CompletedRulePrefix(List.copyOf(contexts),result));
+			rulePrefixContextCount+=contexts.size();
+			rulePrefixComponentCount+=components[0];
+		}
+		return result;
+	}
+
+	private static long retainedComponents(EvaluationContext context) {
+		long count=context.callFrame().size();
+		count=saturatedAdd(count,2L*context.guards().size());
+		count=saturatedAdd(count,2L*context.loops().size());
+		count=saturatedAdd(count,2L*context.iterationPhases().size());
+		count=saturatedAdd(count,2L*context.cardinalities().size());
+		for(var decision:context.guards().keySet()) {
+			count=saturatedAdd(count,decision.callFrame().size());
+			count=saturatedAdd(count,decision.valueFrame().size());
+		}
+		for(var decision:context.loops().keySet())
+			count=saturatedAdd(count,decision.callFrame().size());
+		for(var decision:context.iterationPhases().keySet())
+			count=saturatedAdd(count,decision.callFrame().size());
+		for(var decision:context.cardinalities().keySet())
+			count=saturatedAdd(count,decision.callFrame().size());
+		return count;
+	}
+
+	private static long retainedComponents(OccurrenceContext context) {
+		long count=(long)context.callFrame().size()+context.phaseLoops().size();
+		for(PhaseLoop loop:context.phaseLoops()) {
+			count=saturatedAdd(count,loop.callFrame().size());
+			count=saturatedAdd(count,loop.reachablePhases().size());
+			count=saturatedAdd(count,loop.executionCases().size());
+			for(LoopExecutionCase executionCase:loop.executionCases())
+				count=saturatedAdd(count,executionCase.bodyPhases().size());
+		}
+		return count;
+	}
+
+	private static long saturatedAdd(long left,long right) {
+		return left>Long.MAX_VALUE-right ? Long.MAX_VALUE : left+right;
 	}
 
 	VisitResult visitBindings(Occurrence occurrence, EvaluationContext base, List<Integer> bindings,

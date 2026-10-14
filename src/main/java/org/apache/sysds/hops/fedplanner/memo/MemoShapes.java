@@ -9,6 +9,7 @@ package org.apache.sysds.hops.fedplanner.memo;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.BitSet;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -28,6 +29,9 @@ import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.DataGenOp;
+import org.apache.sysds.hops.AggBinaryOp;
+import org.apache.sysds.hops.AggUnaryOp;
+import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.LiteralOp;
@@ -61,6 +65,9 @@ import org.apache.wink.json4j.JSONObject;
 public final class MemoShapes {
 	private static final int COST_VIEW_DESCENT_DEPTH = 6;
 	private static final int DEFAULT_PROOF_CACHE_ENTRIES = 4096;
+	private static final int DEFAULT_TRANSFER_CACHE_ENTRIES = 4096;
+	private static final int MAX_GUARD_RELEVANCE_INDEX_ENTRIES = 65536;
+	private static final int MOVEMENT_PREFIX_NODE_LIMIT=4096;
 	public enum Knowledge { EXACT, UNKNOWN }
 	public enum DiagnosticKind { MISMATCH, UNRESOLVED, REFRESH_FAILURE }
 
@@ -73,6 +80,12 @@ public final class MemoShapes {
 		}
 
 		public boolean exact() { return knowledge == Knowledge.EXACT; }
+	}
+	record NativeShapeDescriptor(Shape output,List<Shape> inputs,int blocksize,ShapeHint hint) {
+		NativeShapeDescriptor {
+			inputs=List.copyOf(inputs);
+			Objects.requireNonNull(hint,"shape hint");
+		}
 	}
 
 	public record Diagnostic(DiagnosticKind kind, String code, int owner, int binding,
@@ -105,8 +118,18 @@ public final class MemoShapes {
 	private final Set<String> diagnosticKeys = new LinkedHashSet<>();
 	private final Map<String,Optional<Shape>> localMetadataShapes = new HashMap<>();
 	private final Map<PhaseNodeKey,Shape> phaseShapeCache = new HashMap<>();
+	private final Map<OccurrenceTransferKey,Shape> occurrenceTransferCache;
+	private final boolean occurrenceTransferEnabled;
+	private final Map<Set<Integer>,Map<List<Integer>,Set<MemoBindingResolver.GuardDecision>>>
+		guardRelevanceIndex = new IdentityHashMap<>();
+	private int guardRelevanceIndexEntries;
+	// GuardDecision.equals canonicalizes aliases; shape keys retain the full syntactic identity.
+	private final Map<MemoBindingResolver.GuardDecision,ExactGuardAssignment[]> guardAssignments=new IdentityHashMap<>();
+	private long guardAtomRequests,guardAtomHits;
 	private final List<List<Integer>> ownerConsumers;
 	private final List<List<Integer>> ownerBindingConsumers;
+	private final List<int[]> costDependenciesByBinding;
+	private final List<int[]> costInputsByOccurrence;
 	private final List<List<Integer>> bindingConsumers;
 	private final List<List<Integer>> bindingOwnerConsumers;
 	private final List<List<Integer>> formalArguments;
@@ -122,18 +145,109 @@ public final class MemoShapes {
 	private final List<Set<Integer>> phaseSensitiveByOccurrence;
 	private final List<Set<Integer>> guardSensitiveByOccurrence;
 	private final List<LoopSlotIdentity> selectionSensitiveHeads;
+	private final Map<LoopSlotIdentity,int[]> headOrdinals;
+	private final List<List<Set<Integer>>> phaseGuardDependencies;
+	private final Map<ShapeDependencies,int[]> shapeHeadIndices=new IdentityHashMap<>();
+	private final List<ShapeDependencies> shapeDependenciesByBinding;
+	private final List<ShapeDependencies> shapeDependenciesByOccurrence;
+	private record CanonicalDependencyKey(ShapeDependencies value,List<Integer> guardOrder) {
+		private CanonicalDependencyKey(ShapeDependencies value) { this(value,List.copyOf(value.guards())); }
+	}
+	private static final class ProjectionAtomKey {
+		private final ShapeDependencies dependencies;
+		private final Map<?,?> guards,loops,phases,cardinalities;
+		private final List<Integer> frame;
+		private final int kind,hash;
+		private ProjectionAtomKey(EvaluationContext context,ShapeDependencies dependencies,int kind) {
+			this.dependencies=dependencies; guards=context.guards(); loops=context.loops();
+			phases=context.iterationPhases(); cardinalities=context.cardinalities();
+			frame=List.copyOf(context.callFrame()); this.kind=kind;
+			int value=kind; value=31*value+System.identityHashCode(dependencies);
+			value=31*value+System.identityHashCode(guards); value=31*value+System.identityHashCode(loops);
+			value=31*value+System.identityHashCode(phases); value=31*value+System.identityHashCode(cardinalities);
+			hash=31*value+frame.hashCode();
+		}
+		@Override public int hashCode() { return hash; }
+		@Override public boolean equals(Object other) {
+			return this==other || other instanceof ProjectionAtomKey that && kind==that.kind
+				&& dependencies==that.dependencies && guards==that.guards && loops==that.loops
+				&& phases==that.phases && cardinalities==that.cardinalities && frame.equals(that.frame);
+		}
+	}
+	record ProjectionAtomStatistics(long requests,long hits,long clears,int entries) { }
+	private static final int PROJECTION_ATOM_CACHE_ENTRIES=4096;
+	private final Map<ProjectionAtomKey,BitSet> projectionAtoms=new HashMap<>();
+	private long projectionAtomRequests,projectionAtomHits,projectionAtomClears;
+	ProjectionAtomStatistics projectionAtomStatistics() {
+		return new ProjectionAtomStatistics(projectionAtomRequests,projectionAtomHits,
+			projectionAtomClears,projectionAtoms.size());
+	}
+	private static final BitSet EMPTY_HEAD_BINDINGS=new BitSet();
+	private static final Object ACTIVE_COST_GUARD_VISIT=new Object();
 	private final Map<BindingGuardKey,CostGuardOutcome> bindingGuardCache;
 	private final Map<RepeatProofKey,Boolean> repeatProofCache;
 	private long bindingGuardRequests;
 	private long bindingGuardCacheHits;
 	private long repeatProofRequests;
 	private long repeatProofCacheHits;
+	private long phaseShapeRequests;
+	private long phaseShapeCacheHits;
+	private long guardRelevanceRequests;
+	private long guardRelevanceCacheHits;
+	private long occurrenceTransferRequests;
+	private long occurrenceTransferCacheHits;
+	private long occurrenceTransferBuilds;
+	private static final int DEFAULT_INDEXED_ATOM_LIMIT=65536;
+	private static final int LOOP_PHASE_COUNT=LoopPhase.values().length;
+	private static final int ITERATION_PHASE_COUNT=IterationPhase.values().length;
+	private static final int LOOP_CARDINALITY_COUNT=LoopCardinality.values().length;
+	private final boolean indexedContexts;
+	private final int indexedAtomLimit;
+	private final int[] resolvedShapeAliasRepresentatives;
+	private final Map<ExactGuardAssignment,Integer> indexedGuardAtoms=new HashMap<>();
+	private final Map<LoopDecision,int[]> indexedLoopAtoms=new HashMap<>();
+	private final Map<LoopDecision,int[]> indexedIterationAtoms=new HashMap<>();
+	private final Map<LoopCardinalityDecision,int[]> indexedCardinalityAtoms=new HashMap<>();
+	private int indexedAtomCount;
+	private static final class MovementPrefixNode {
+		private final Map<Shape,MovementPrefixNode> next=new LinkedHashMap<>();
+		private boolean complete;
+	}
+	private final MovementPrefixNode[] movementPrefixes;
+	private int movementPrefixNodes;
+	private long movementPrefixRequests,movementPrefixCompleteHits,movementPrefixBuilds;
 
 	private MemoShapes(MemoProgramFacts facts, MemoSources sources,int bindingGuardCacheEntries,
-		int repeatProofCacheEntries) {
+		int repeatProofCacheEntries,int transferCacheEntries,boolean indexedContexts,int indexedAtomLimit) {
 		this.facts = Objects.requireNonNull(facts, "program facts");
+		phaseGuardDependencies=computePhaseGuardDependencies();
 		this.sources = Objects.requireNonNull(sources, "sources");
+		resolvedShapeAliasRepresentatives=shapeAliasRepresentatives(facts.bindings());
+		movementPrefixes=new MovementPrefixNode[facts.occurrences().size()];
+		this.indexedContexts=indexedContexts;
+		this.indexedAtomLimit=indexedAtomLimit;
 		resolver = new MemoBindingResolver(facts);
+		List<int[]> occurrenceCostInputs=new ArrayList<>(facts.occurrences().size());
+		for(MemoProgramFacts.Occurrence occurrence:facts.occurrences()) {
+			List<Integer> inputs=new ArrayList<>();
+			for(int position=0;position<occurrence.hop().getInput().size();position++)
+				if(costRelevantInput(occurrence.hop(),position))
+					inputs.add(facts.inputBinding(occurrence.id(),position));
+			occurrenceCostInputs.add(inputs.stream().mapToInt(Integer::intValue).toArray());
+		}
+		costInputsByOccurrence=List.copyOf(occurrenceCostInputs);
+		List<int[]> bindingCostInputs=new ArrayList<>(facts.bindings().size());
+		for(MemoProgramFacts.BindingNode node:facts.bindings()) {
+			int[] inputs;
+			if(node.kind()==BindingKind.CALL_ARG || !node.children().isEmpty())
+				inputs=node.children().stream().mapToInt(Integer::intValue).toArray();
+			else if(node.kind()==BindingKind.DEFINITION && node.referenceId()>=0
+				&& node.referenceId()<facts.occurrences().size())
+				inputs=costInputsByOccurrence.get(node.referenceId());
+			else inputs=new int[0];
+			bindingCostInputs.add(inputs);
+		}
+		costDependenciesByBinding=List.copyOf(bindingCostInputs);
 		views = cloneViews(facts);
 		for(int owner = 0; owner < views.length; owner++) viewOwners.put(views[owner], owner);
 		initialShapes = new Shape[views.length];
@@ -185,12 +299,31 @@ public final class MemoShapes {
 			for(MemoProgramFacts.CarriedValue carried:loop.carriedValues())
 				heads.add(new LoopSlotIdentity(loop.id(),carried.slot()));
 		selectionSensitiveHeads=List.copyOf(heads);
+		headOrdinals=indexHeadOrdinals(selectionSensitiveHeads);
+		Map<CanonicalDependencyKey,ShapeDependencies> canonicalDependencies=new LinkedHashMap<>();
+		shapeDependenciesByBinding=canonicalShapeDependencies(computeShapeDependencies(),canonicalDependencies);
+		List<ShapeDependencies> occurrenceDependencies=new ArrayList<>(facts.occurrences().size());
+		for(MemoProgramFacts.Occurrence occurrence:facts.occurrences()) {
+			ShapeDependencies occurrenceShapeDependencies=ShapeDependencies.empty();
+			for(int position=0;position<occurrence.hop().getInput().size();position++)
+				occurrenceShapeDependencies=occurrenceShapeDependencies.union(
+					shapeDependencies(facts.inputBinding(occurrence.id(),position)));
+			occurrenceShapeDependencies=occurrenceShapeDependencies.union(
+				shapeDependencies(occurrence.activationBindingId()));
+			occurrenceDependencies.add(occurrenceShapeDependencies);
+		}
+		shapeDependenciesByOccurrence=canonicalShapeDependencies(occurrenceDependencies,canonicalDependencies);
+		for(ShapeDependencies dependency:shapeDependenciesByBinding) indexShapeHeads(dependency);
+		for(ShapeDependencies dependency:shapeDependenciesByOccurrence) indexShapeHeads(dependency);
 		bindingGuardCache=boundedCache(bindingGuardCacheEntries);
 		repeatProofCache=boundedCache(repeatProofCacheEntries);
+		occurrenceTransferCache=boundedCache(transferCacheEntries);
+		occurrenceTransferEnabled=transferCacheEntries>0;
 	}
 
 	public static MemoShapes analyze(MemoProgramFacts facts, MemoSources sources) {
-		return new MemoShapes(facts,sources,DEFAULT_PROOF_CACHE_ENTRIES,DEFAULT_PROOF_CACHE_ENTRIES);
+		return new MemoShapes(facts,sources,DEFAULT_PROOF_CACHE_ENTRIES,DEFAULT_PROOF_CACHE_ENTRIES,
+			DEFAULT_TRANSFER_CACHE_ENTRIES,true,DEFAULT_INDEXED_ATOM_LIMIT);
 	}
 
 	void requireRequest(MemoProgramFacts facts,MemoSources sources) {
@@ -200,18 +333,59 @@ public final class MemoShapes {
 
 	static MemoShapes analyze(MemoProgramFacts facts,MemoSources sources,int bindingGuardCacheEntries,
 		int repeatProofCacheEntries) {
-		if(bindingGuardCacheEntries<0 || repeatProofCacheEntries<0)
+		return analyze(facts,sources,bindingGuardCacheEntries,repeatProofCacheEntries,
+			DEFAULT_TRANSFER_CACHE_ENTRIES);
+	}
+
+	static MemoShapes analyze(MemoProgramFacts facts,MemoSources sources,int bindingGuardCacheEntries,
+		int repeatProofCacheEntries,int transferCacheEntries) {
+		if(bindingGuardCacheEntries<0 || repeatProofCacheEntries<0 || transferCacheEntries<0)
 			throw new IllegalArgumentException("proof cache sizes must be nonnegative");
-		return new MemoShapes(facts,sources,bindingGuardCacheEntries,repeatProofCacheEntries);
+		return new MemoShapes(facts,sources,bindingGuardCacheEntries,repeatProofCacheEntries,
+			transferCacheEntries,true,DEFAULT_INDEXED_ATOM_LIMIT);
+	}
+
+	static MemoShapes analyze(MemoProgramFacts facts,MemoSources sources,boolean indexedContexts,
+		int indexedAtomLimit) {
+		if(indexedAtomLimit<0) throw new IllegalArgumentException("indexed atom limit must be nonnegative");
+		return new MemoShapes(facts,sources,DEFAULT_PROOF_CACHE_ENTRIES,DEFAULT_PROOF_CACHE_ENTRIES,
+			DEFAULT_TRANSFER_CACHE_ENTRIES,indexedContexts,indexedAtomLimit);
+	}
+
+	private static int[] shapeAliasRepresentatives(List<MemoProgramFacts.BindingNode> nodes) {
+		int[] representatives=new int[nodes.size()];
+		for(int start=0;start<nodes.size();start++) {
+			representatives[start]=start;
+			int current=start;
+			for(int remaining=nodes.size();remaining>0;remaining--) {
+				if(current<0 || current>=nodes.size()) break;
+				MemoProgramFacts.BindingNode node=nodes.get(current);
+				boolean alias=node.kind()==BindingKind.CALL_ARG
+					|| node.kind()==BindingKind.DEFINITION && !node.children().isEmpty();
+				if(!alias) { representatives[start]=current; break; }
+				if(node.children().isEmpty()) break;
+				current=node.children().get(0);
+			}
+		}
+		return representatives;
 	}
 
 	ReuseStatistics reuseStatistics() {
 		return new ReuseStatistics(bindingGuardRequests,bindingGuardCacheHits,
-			repeatProofRequests,repeatProofCacheHits);
+			repeatProofRequests,repeatProofCacheHits,phaseShapeRequests,phaseShapeCacheHits,
+			phaseShapeCache.size(),guardRelevanceRequests,guardRelevanceCacheHits,guardRelevanceIndexEntries,
+			occurrenceTransferRequests,occurrenceTransferCacheHits,occurrenceTransferBuilds,
+			occurrenceTransferCache.size(),guardAtomRequests,guardAtomHits,guardAssignments.size());
 	}
 
 	record ReuseStatistics(long bindingGuardRequests,long bindingGuardCacheHits,
-		long repeatProofRequests,long repeatProofCacheHits) { }
+		long repeatProofRequests,long repeatProofCacheHits,long phaseShapeRequests,
+		long phaseShapeCacheHits,long phaseShapeCacheEntries,long guardRelevanceRequests,
+		long guardRelevanceCacheHits,long guardRelevanceIndexEntries,long occurrenceTransferRequests,
+		long occurrenceTransferCacheHits,long occurrenceTransferBuilds,long occurrenceTransferEntries,
+		long guardAtomRequests,long guardAtomHits,int guardAtomIdentities) { }
+
+	MemoBindingResolver.DirectRootStatistics directRootStatistics() { return resolver.directRootStatistics(); }
 
 	public Hop view(int owner) {
 		return views[owner];
@@ -289,14 +463,10 @@ public final class MemoShapes {
 	CostGuardSearch firstUnfixedCostGuard(int occurrence,EvaluationContext context) {
 		EvaluationContext normalized=normalizeLoopPhases(context);
 		CostGuardAccumulator counters=new CostGuardAccumulator();
-		Map<PhaseVisit,CostGuardSearch> memo=new HashMap<>();
-		Set<PhaseVisit> active=new LinkedHashSet<>();
-		Hop hop=facts.occurrence(occurrence).hop();
+		Map<List<Integer>,Map<Integer,Object>> state=new HashMap<>();
 		boolean unknown=false;
-		for(int position=0;position<hop.getInput().size();position++) {
-			if(!costRelevantInput(hop,position)) continue;
-			CostGuardSearch search=firstUnfixedCostGuard(facts.inputBinding(occurrence,position),normalized,
-				memo,active,counters);
+		for(int binding:costInputsByOccurrence.get(occurrence)) {
+			CostGuardSearch search=firstUnfixedCostGuard(binding,normalized,state,null,counters,null);
 			if(search.guard()!=null) return counters.result(search.guard(),unknown || search.unresolved());
 			unknown |= search.unresolved();
 		}
@@ -306,15 +476,14 @@ public final class MemoShapes {
 	CostGuardSearch firstUnfixedCostGuardForBinding(int binding,EvaluationContext context) {
 		EvaluationContext normalized=normalizeLoopPhases(context);
 		bindingGuardRequests++;
-		BindingGuardKey key=new BindingGuardKey(binding,new SemanticContext(normalized,selectionSensitiveHeads));
+		BindingGuardKey key=new BindingGuardKey(binding,semanticContext(normalized));
 		CostGuardOutcome cached=bindingGuardCache.get(key);
 		if(cached!=null) {
 			bindingGuardCacheHits++;
 			return new CostGuardSearch(cached.guard(),cached.unresolved(),0,0,0,0);
 		}
 		CostGuardAccumulator counters=new CostGuardAccumulator();
-		CostGuardSearch search=firstUnfixedCostGuard(binding,normalized,new HashMap<>(),
-			new LinkedHashSet<>(),counters);
+		CostGuardSearch search=firstUnfixedCostGuard(binding,normalized,new HashMap<>(),null,counters,null);
 		CostGuardSearch result=counters.result(search.guard(),search.unresolved());
 		bindingGuardCache.put(key,new CostGuardOutcome(result.guard(),result.unresolved()));
 		return result;
@@ -322,6 +491,10 @@ public final class MemoShapes {
 
 	record CostGuardSearch(MemoBindingResolver.GuardDecision guard,boolean unresolved,long bindingVisits,
 		long cacheHits,long invariantProjectionStops,long noRegionsSkipped) { }
+	private static final CostGuardSearch KNOWN_COST_GUARD_RESULT=
+		new CostGuardSearch(null,false,0,0,0,0);
+	private static final CostGuardSearch UNKNOWN_COST_GUARD_RESULT=
+		new CostGuardSearch(null,true,0,0,0,0);
 	private record CostGuardOutcome(MemoBindingResolver.GuardDecision guard,boolean unresolved) { }
 
 	private static final class CostGuardAccumulator {
@@ -335,37 +508,44 @@ public final class MemoShapes {
 	}
 
 	private CostGuardSearch firstUnfixedCostGuard(int binding,EvaluationContext context,
-		Map<PhaseVisit,CostGuardSearch> memo,Set<PhaseVisit> active,CostGuardAccumulator counters) {
+		Map<List<Integer>,Map<Integer,Object>> state,Map<Integer,Object> currentBucket,
+		CostGuardAccumulator counters,
+		PhaseVisit nearestHead) {
 		if(binding<0 || binding>=facts.bindings().size())
-			return new CostGuardSearch(null,true,0,0,0,0);
+			return UNKNOWN_COST_GUARD_RESULT;
 		MemoProgramFacts.BindingNode node=facts.binding(binding);
 		if(node.kind()==BindingKind.UNBOUND || node.kind()==BindingKind.MISSING)
-			return new CostGuardSearch(null,true,0,0,0,0);
+			return UNKNOWN_COST_GUARD_RESULT;
 		if(guardSensitiveByBinding.get(binding).isEmpty()) {
 			counters.invariantProjectionStops++;
-			return new CostGuardSearch(null,false,0,0,0,0);
+			return KNOWN_COST_GUARD_RESULT;
 		}
-		PhaseVisit key=new PhaseVisit(false,binding,context.callFrame());
-		CostGuardSearch cached=memo.get(key);
-		if(cached!=null) { counters.cacheHits++; return cached; }
-		if(!active.add(key)) {
+		Map<Integer,Object> bucket=currentBucket;
+		if(bucket==null) bucket=state.computeIfAbsent(context.callFrame(),ignored -> new HashMap<>());
+		Integer key=binding;
+		Object known=bucket.get(key);
+		if(known instanceof CostGuardSearch cached) { counters.cacheHits++; return cached; }
+		if(known==ACTIVE_COST_GUARD_VISIT) {
 			// Reaching definitions may close the recurrence before the LOOP_HEAD is
 			// encountered a second time (definition -> head -> backedge -> definition).
 			// The path to this point has already exposed every SELECT on the chosen
 			// backedge. Discharge only against an active repeat head whose complete
 			// first-to-middle cost statistics form an entry-grounded fixed point.
-			if(provesActiveRepeatHeadCostStats(active,context))
-				return new CostGuardSearch(null,false,0,0,0,0);
-			return new CostGuardSearch(null,true,0,0,0,0);
+			if(provesActiveRepeatHeadCostStats(nearestHead,context))
+				return KNOWN_COST_GUARD_RESULT;
+			return UNKNOWN_COST_GUARD_RESULT;
 		}
+		bucket.put(key,ACTIVE_COST_GUARD_VISIT);
 		counters.bindingVisits++;
+		if(node.kind()==BindingKind.LOOP_HEAD)
+			nearestHead=new PhaseVisit(false,binding,context.callFrame());
 		try {
 			if(node.kind()==BindingKind.SELECT) {
 				MemoBindingResolver.GuardDecision decision=facts.guardDecision(node.referenceId(),context.callFrame());
 				Boolean selected=context.guards().get(decision);
 				if(selected!=null)
 					selected=facts.branchGuardValue(node.referenceId(),context.callFrame(),selected);
-				int loop=facts.enclosingLoop(facts.guard(node.referenceId()).parentRegionId());
+				int loop=facts.guardEnclosingLoop(node.referenceId());
 				if(selected==null && loop>=0) {
 					IterationPhase phase=context.iterationPhases().get(new LoopDecision(loop,context.callFrame()));
 					if(phase!=null) selected=facts.guardValue(loop,node.referenceId(),phase);
@@ -376,24 +556,26 @@ public final class MemoShapes {
 				if(node.children().size()>inactiveIndex
 					&& !guardSensitiveByBinding.get(node.children().get(inactiveIndex)).isEmpty())
 					counters.noRegionsSkipped++;
-				return remember(key,firstUnfixedCostGuard(node.children().get(selectedIndex),context,memo,active,counters),memo);
+				return remember(key,firstUnfixedCostGuard(node.children().get(selectedIndex),context,
+					state,bucket,counters,nearestHead),bucket);
 			}
 			if(node.kind()==BindingKind.LOOP_HEAD) {
 				IterationPhase phase=context.iterationPhases().get(new LoopDecision(node.referenceId(),context.callFrame()));
-				if(phase==null) return new CostGuardSearch(null,true,0,0,0,0);
+				if(phase==null) return UNKNOWN_COST_GUARD_RESULT;
 				// Follow the selected phase's value DAG. A retained-value backedge may
 				// encounter this head again; only that cycle edge is discharged by the
 				// entry-grounded full cost-statistics proof above.
 				int child=phase==IterationPhase.FIRST ? 0 : 1;
 				return node.children().size()>child
-					? remember(key,firstUnfixedCostGuard(node.children().get(child),context,memo,active,counters),memo)
-					: new CostGuardSearch(null,true,0,0,0,0);
+					? remember(key,firstUnfixedCostGuard(node.children().get(child),context,
+						state,bucket,counters,nearestHead),bucket)
+					: UNKNOWN_COST_GUARD_RESULT;
 			}
 			if(node.kind()==BindingKind.LAST) {
 				LoopDecision loop=new LoopDecision(node.referenceId(),context.callFrame());
 				LoopCardinality cardinality=context.cardinalities().get(
 					new LoopCardinalityDecision(node.referenceId(),context.callFrame()));
-				if(cardinality==null) return new CostGuardSearch(null,true,0,0,0,0);
+				if(cardinality==null) return UNKNOWN_COST_GUARD_RESULT;
 				int child=cardinality==LoopCardinality.ZERO ? 0 : 1;
 				EvaluationContext selected=context;
 				if(cardinality!=LoopCardinality.ZERO) {
@@ -402,8 +584,9 @@ public final class MemoShapes {
 					selected=withPhase(context,loop,phase,LoopPhase.BACKEDGE);
 				}
 				return child<node.children().size()
-					? remember(key,firstUnfixedCostGuard(node.children().get(child),selected,memo,active,counters),memo)
-					: new CostGuardSearch(null,true,0,0,0,0);
+					? remember(key,firstUnfixedCostGuard(node.children().get(child),selected,
+						state,bucket,counters,nearestHead),bucket)
+					: UNKNOWN_COST_GUARD_RESULT;
 			}
 			if(node.kind()==BindingKind.FORMAL) {
 				for(int index=context.callFrame().size()-1;index>=0;index--) {
@@ -411,65 +594,52 @@ public final class MemoShapes {
 					if(call.functionSummaryId()==node.referenceId() && node.position()>=0
 						&& node.position()<call.actualBindingIds().size())
 						return remember(key,firstUnfixedCostGuard(call.actualBindingIds().get(node.position()),
-							context.withCallFrame(context.callFrame().subList(0,index)),memo,active,counters),memo);
+							context.withCallFrame(context.callFrame().subList(0,index)),state,null,
+							counters,nearestHead),bucket);
 				}
-				return new CostGuardSearch(null,true,0,0,0,0);
+				return UNKNOWN_COST_GUARD_RESULT;
 			}
 			if(node.kind()==BindingKind.CALL_RETURN) {
 				// Cost callers must establish the call's NORMAL_CONTINUATION activation
 				// before following its payload. MemoProgramModel.visitActive owns that
 				// prerequisite; this traversal only projects the surviving return value.
-				if(node.children().isEmpty()) return new CostGuardSearch(null,true,0,0,0,0);
+				if(node.children().isEmpty()) return UNKNOWN_COST_GUARD_RESULT;
 				if(node.children().size()>1)
-					return remember(key,firstUnfixedCostGuard(node.children().get(1),context,memo,active,counters),memo);
+					return remember(key,firstUnfixedCostGuard(node.children().get(1),context,
+						state,bucket,counters,nearestHead),bucket);
 				List<Integer> frame=new ArrayList<>(context.callFrame()); frame.add(node.referenceId());
 				return remember(key,firstUnfixedCostGuard(node.children().get(0),context.withCallFrame(frame),
-					memo,active,counters),memo);
+					state,null,counters,nearestHead),bucket);
 			}
-			List<Integer> dependencies=new ArrayList<>();
-			if(node.kind()==BindingKind.CALL_ARG || !node.children().isEmpty()) dependencies.addAll(node.children());
-			else if(node.kind()==BindingKind.DEFINITION && node.referenceId()>=0
-				&& node.referenceId()<facts.occurrences().size()) {
-				MemoProgramFacts.Occurrence definition=facts.occurrence(node.referenceId());
-				for(int position=0;position<definition.hop().getInput().size();position++)
-					if(costRelevantInput(definition.hop(),position))
-						dependencies.add(facts.inputBinding(definition.id(),position));
-			}
+			int[] dependencies=costDependenciesByBinding.get(binding);
 			boolean unknown=false;
 			for(int dependency:dependencies) {
-				CostGuardSearch search=firstUnfixedCostGuard(dependency,context,memo,active,counters);
-				if(search.guard()!=null) return remember(key,search,memo);
+				CostGuardSearch search=firstUnfixedCostGuard(dependency,context,state,bucket,counters,nearestHead);
+				if(search.guard()!=null) return remember(key,search,bucket);
 				unknown |= search.unresolved();
 			}
-			CostGuardSearch result=new CostGuardSearch(null,unknown,0,0,0,0);
-			memo.put(key,result);
+			CostGuardSearch result=unknown ? UNKNOWN_COST_GUARD_RESULT : KNOWN_COST_GUARD_RESULT;
+			bucket.put(key,result);
 			return result;
 		}
-		finally { active.remove(key); }
+		finally { bucket.remove(key,ACTIVE_COST_GUARD_VISIT); }
 	}
 
-	private boolean provesActiveRepeatHeadCostStats(Set<PhaseVisit> active,EvaluationContext context) {
-		List<PhaseVisit> path=new ArrayList<>(active);
-		for(int index=path.size()-1;index>=0;index--) {
-			PhaseVisit visit=path.get(index);
-			if(visit.occurrence()) continue;
-			MemoProgramFacts.BindingNode candidate=facts.binding(visit.id());
-			if(candidate.kind()!=BindingKind.LOOP_HEAD) continue;
-			// The closest active head owns this recurrence edge. An invariant outer
-			// head cannot discharge a changing or unresolved nested-loop cycle.
-			LoopDecision loop=new LoopDecision(candidate.referenceId(),visit.callFrame());
-			IterationPhase phase=context.iterationPhases().get(loop);
-			return phase!=null && phase!=IterationPhase.FIRST
-				&& provesRepeatHeadCostStats(candidate,loop,context.withCallFrame(visit.callFrame()));
-		}
-		return false;
+	private boolean provesActiveRepeatHeadCostStats(PhaseVisit nearestHead,EvaluationContext context) {
+		if(nearestHead==null) return false;
+		MemoProgramFacts.BindingNode candidate=facts.binding(nearestHead.id());
+		// Only the closest active head owns this recurrence edge. An outer head
+		// cannot discharge a changing or unresolved nested-loop cycle.
+		LoopDecision loop=new LoopDecision(candidate.referenceId(),nearestHead.callFrame());
+		IterationPhase phase=context.iterationPhases().get(loop);
+		return phase!=null && phase!=IterationPhase.FIRST
+			&& provesRepeatHeadCostStats(candidate,loop,context.withCallFrame(nearestHead.callFrame()));
 	}
 
 	private boolean provesRepeatHeadCostStats(MemoProgramFacts.BindingNode node,LoopDecision loop,
 		EvaluationContext context) {
 		repeatProofRequests++;
-		RepeatProofKey key=new RepeatProofKey(node.id(),loop,
-			new SemanticContext(context,selectionSensitiveHeads));
+		RepeatProofKey key=new RepeatProofKey(node.id(),loop,semanticContext(context));
 		Boolean cached=repeatProofCache.get(key);
 		if(cached!=null) {
 			repeatProofCacheHits++;
@@ -482,13 +652,18 @@ public final class MemoShapes {
 		return result;
 	}
 
+	private MemoProgramFacts.CarriedValue carriedValue(int loopId,int slot) {
+		List<MemoProgramFacts.CarriedValue> values=facts.loop(loopId).carriedValues();
+		for(int i=0;i<values.size();i++) if(values.get(i).slot()==slot) return values.get(i);
+		return null;
+	}
+
 	private boolean computeRepeatHeadCostStats(MemoProgramFacts.BindingNode node,LoopDecision loop,
 		EvaluationContext context) {
 		// The frozen estimator assigns one symbolic outcome to an unproved canonical
 		// GuardDecision in this call frame. withPhase replaces that value only when
 		// ProgramFacts proves a phase-specific iterator outcome.
-		MemoProgramFacts.CarriedValue carried=facts.loop(loop.loopId()).carriedValues().stream()
-			.filter(value -> value.slot()==node.position()).findFirst().orElse(null);
+		MemoProgramFacts.CarriedValue carried=carriedValue(loop.loopId(),node.position());
 		if(carried==null) return false;
 		PhaseEvaluation evaluation=new PhaseEvaluation();
 		EvaluationContext first=withPhase(context,loop,IterationPhase.FIRST,LoopPhase.ENTRY);
@@ -519,9 +694,9 @@ public final class MemoShapes {
 		return knownCostStats(left) && knownCostStats(right) && left.equals(right);
 	}
 
-	private static CostGuardSearch remember(PhaseVisit key,CostGuardSearch result,
-		Map<PhaseVisit,CostGuardSearch> memo) {
-		memo.put(key,result);
+	private static CostGuardSearch remember(Integer key,CostGuardSearch result,
+		Map<Integer,Object> state) {
+		state.put(key,result);
 		return result;
 	}
 
@@ -632,7 +807,7 @@ public final class MemoShapes {
 				|| node.kind()==BindingKind.LAST) continue;
 			if(node.kind()==BindingKind.SELECT) {
 				guards.get(binding).add(node.referenceId());
-				int loop=facts.enclosingLoop(facts.guard(node.referenceId()).parentRegionId());
+				int loop=facts.guardEnclosingLoop(node.referenceId());
 				if(loop>=0 && !facts.guardPhases(loop).isEmpty()) loops.get(binding).add(loop);
 			}
 			if(node.kind()==BindingKind.LOOP_HEAD) loops.get(binding).add(node.referenceId());
@@ -671,6 +846,135 @@ public final class MemoShapes {
 			guards.stream().map(Set::copyOf).toList());
 	}
 
+	/** Shape cache dependencies include hidden availability paths that do not affect payload cost projection. */
+	private record ShapeDependencies(Set<Integer> loops,Set<Integer> guards,Set<LoopSlotIdentity> heads) {
+		private ShapeDependencies {
+			loops=Set.copyOf(loops); guards=Set.copyOf(guards); heads=Set.copyOf(heads);
+		}
+		private static ShapeDependencies empty() { return new ShapeDependencies(Set.of(),Set.of(),Set.of()); }
+		private ShapeDependencies union(ShapeDependencies other) {
+			if(other==null || other.loops.isEmpty() && other.guards.isEmpty() && other.heads.isEmpty()) return this;
+			Set<Integer> joinedLoops=new LinkedHashSet<>(loops); joinedLoops.addAll(other.loops);
+			Set<Integer> joinedGuards=new LinkedHashSet<>(guards); joinedGuards.addAll(other.guards);
+			Set<LoopSlotIdentity> joinedHeads=new LinkedHashSet<>(heads); joinedHeads.addAll(other.heads);
+			return new ShapeDependencies(joinedLoops,joinedGuards,joinedHeads);
+		}
+	}
+
+	private static List<ShapeDependencies> canonicalShapeDependencies(List<ShapeDependencies> values,
+		Map<CanonicalDependencyKey,ShapeDependencies> canonical) {
+		List<ShapeDependencies> result=new ArrayList<>(values.size());
+		for(ShapeDependencies value:values) {
+			CanonicalDependencyKey key=new CanonicalDependencyKey(value);
+			result.add(canonical.computeIfAbsent(key,ignored -> value));
+		}
+		return List.copyOf(result);
+	}
+
+	private ShapeDependencies shapeDependencies(int binding) {
+		return binding<0 || binding>=shapeDependenciesByBinding.size()
+			? ShapeDependencies.empty() : shapeDependenciesByBinding.get(binding);
+	}
+
+	private List<ShapeDependencies> computeShapeDependencies() {
+		int count=facts.bindings().size();
+		List<Set<Integer>> loops=new ArrayList<>(count),guards=new ArrayList<>(count);
+		List<Set<LoopSlotIdentity>> heads=new ArrayList<>(count);
+		List<List<Integer>> dependencies=lists(count),consumers=lists(count);
+		Map<Integer,List<Integer>> symbolicReturnsByConcrete=new LinkedHashMap<>();
+		for(MemoProgramFacts.CallBinding call:facts.calls())
+			for(int returned:call.returnBindingIds()) if(returned>=0 && returned<count) {
+				MemoProgramFacts.BindingNode node=facts.binding(returned);
+				if(node.kind()==BindingKind.CALL_RETURN && node.children().size()>1)
+					symbolicReturnsByConcrete.computeIfAbsent(node.children().get(1),ignored -> new ArrayList<>())
+						.add(returned);
+			}
+		for(int binding=0;binding<count;binding++) {
+			loops.add(new LinkedHashSet<>()); guards.add(new LinkedHashSet<>()); heads.add(new LinkedHashSet<>());
+		}
+		for(int binding=0;binding<count;binding++) {
+			MemoProgramFacts.BindingNode node=facts.binding(binding);
+			List<Integer> symbolicReturns=symbolicReturnsByConcrete.get(binding);
+			if(symbolicReturns!=null && symbolicReturns.size()==1)
+				dependencies.get(binding).add(symbolicReturns.get(0));
+			if(node.kind()==BindingKind.SELECT) {
+				guards.get(binding).add(node.referenceId());
+				int loop=facts.guardEnclosingLoop(node.referenceId());
+				if(loop>=0 && !facts.guardPhases(loop).isEmpty()) loops.get(binding).add(loop);
+			}
+			if(node.kind()==BindingKind.LOOP_HEAD) {
+				loops.get(binding).add(node.referenceId());
+				heads.get(binding).add(new LoopSlotIdentity(node.referenceId(),node.position()));
+			}
+			if(node.kind()==BindingKind.LAST) loops.get(binding).add(node.referenceId());
+			switch(node.kind()) {
+				case CALL_RETURN -> addCallReturnDependencies(node,dependencies.get(binding));
+				case CALL_COMPLETION -> addCallCompletionDependencies(node,dependencies.get(binding));
+				case FORMAL -> {
+					for(MemoProgramFacts.CallBinding call:facts.callsForFunction(node.referenceId()))
+						if(node.position()>=0 && node.position()<call.actualBindingIds().size())
+							dependencies.get(binding).add(call.actualBindingIds().get(node.position()));
+				}
+				case DEFINITION -> {
+					if(!node.children().isEmpty()) dependencies.get(binding).addAll(node.children());
+					else if(node.referenceId()>=0 && node.referenceId()<facts.occurrences().size()) {
+						MemoProgramFacts.Occurrence producer=facts.occurrence(node.referenceId());
+						for(int position=0;position<producer.hop().getInput().size();position++)
+							dependencies.get(binding).add(facts.inputBinding(producer.id(),position));
+						if(producer.activationBindingId()>=0)
+							dependencies.get(binding).add(producer.activationBindingId());
+					}
+				}
+				case UNBOUND, MISSING -> { }
+				default -> dependencies.get(binding).addAll(node.children());
+			}
+			for(int dependency:dependencies.get(binding))
+				if(dependency>=0 && dependency<count) consumers.get(dependency).add(binding);
+		}
+		ArrayDeque<Integer> work=new ArrayDeque<>(); boolean[] queued=new boolean[count];
+		for(int binding=0;binding<count;binding++) { work.add(binding); queued[binding]=true; }
+		while(!work.isEmpty()) {
+			int binding=work.removeFirst(); queued[binding]=false; boolean changed=false;
+			for(int dependency:dependencies.get(binding)) if(dependency>=0 && dependency<count) {
+				changed|=loops.get(binding).addAll(loops.get(dependency));
+				changed|=guards.get(binding).addAll(guards.get(dependency));
+				changed|=heads.get(binding).addAll(heads.get(dependency));
+			}
+			if(changed) for(int consumer:consumers.get(binding)) if(!queued[consumer]) {
+				queued[consumer]=true; work.addLast(consumer);
+			}
+		}
+		List<ShapeDependencies> result=new ArrayList<>(count);
+		for(int binding=0;binding<count;binding++)
+			result.add(new ShapeDependencies(loops.get(binding),guards.get(binding),heads.get(binding)));
+		return List.copyOf(result);
+	}
+
+	private void addCallReturnDependencies(MemoProgramFacts.BindingNode node,List<Integer> dependencies) {
+		if(node.referenceId()>=0 && node.referenceId()<facts.calls().size()) {
+			int completion=facts.call(node.referenceId()).completionBindingId();
+			if(completion>=0) dependencies.add(completion);
+		}
+		if(node.children().size()>1) dependencies.add(node.children().get(1));
+		else if(!node.children().isEmpty()) dependencies.add(node.children().get(0));
+	}
+
+	private void addCallCompletionDependencies(MemoProgramFacts.BindingNode node,List<Integer> dependencies) {
+		dependencies.addAll(node.children());
+		if(node.referenceId()<0 || node.referenceId()>=facts.calls().size()) return;
+		MemoProgramFacts.CallBinding call=facts.call(node.referenceId());
+		if(call.functionSummaryId()>=0 && call.functionSummaryId()<facts.functions().size()) {
+			int completion=facts.functionSummary(call.functionSummaryId()).completionBindingId();
+			if(completion>=0) dependencies.add(completion);
+		}
+		for(int returned:call.returnBindingIds()) {
+			if(returned<0 || returned>=facts.bindings().size()) continue;
+			MemoProgramFacts.BindingNode value=facts.binding(returned);
+			if(value.children().size()>1) dependencies.add(value.children().get(1));
+			else if(!value.children().isEmpty()) dependencies.add(value.children().get(0));
+		}
+	}
+
 	public Hop viewAt(int occurrence, EvaluationContext context) {
 		EvaluationContext normalized=normalizeLoopPhases(context);
 		PhaseEvaluation phaseEvaluation=new PhaseEvaluation();
@@ -682,6 +986,144 @@ public final class MemoShapes {
 				normalized,phaseEvaluation,active));
 		applyMultiReturnOutputShapes(view);
 		return view;
+	}
+
+	record MovementViewRecipe(int occurrence,Shape output,List<Shape> inputs) {
+		MovementViewRecipe { inputs=Collections.unmodifiableList(new ArrayList<>(inputs)); }
+	}
+	record PreparedMovementView(MovementViewRecipe recipe,Hop view) { }
+	record MovementPrefixStatistics(long requests,long completeHits,long builds,int nodes) { }
+	MovementPrefixStatistics movementPrefixStatistics() {
+		return new MovementPrefixStatistics(movementPrefixRequests,movementPrefixCompleteHits,
+			movementPrefixBuilds,movementPrefixNodes);
+	}
+
+	boolean supportsPreparedMovementView(int occurrence) {
+		Hop template=views[facts.occurrence(occurrence).compiledOwnerId()];
+		return template.getInput().size()<=2 && (template instanceof UnaryOp || template instanceof BinaryOp
+			|| template instanceof AggUnaryOp || template instanceof AggBinaryOp);
+	}
+
+	PreparedMovementView prepareMovementView(int occurrence,EvaluationContext context) {
+		if(!supportsPreparedMovementView(occurrence))
+			throw new IllegalArgumentException("Unsupported prepared movement occurrence "+occurrence);
+		movementPrefixRequests++;
+		EvaluationContext normalized=normalizeLoopPhases(context);
+		PhaseEvaluation phaseEvaluation=new PhaseEvaluation();
+		Set<PhaseVisit> active=new LinkedHashSet<>();
+		MovementPrefixNode node=movementPrefixes[occurrence];
+		Hop view=null;
+		boolean publish=true;
+		if(node==null) {
+			view=cloneView(views[facts.occurrence(occurrence).compiledOwnerId()]);
+			movementPrefixBuilds++;
+			if(movementPrefixNodes<MOVEMENT_PREFIX_NODE_LIMIT) {
+				node=new MovementPrefixNode();
+				movementPrefixes[occurrence]=node;
+				movementPrefixNodes++;
+			}
+			else publish=false;
+		}
+		List<Shape> resolved=new ArrayList<>(3);
+		Shape output=occurrenceShape(occurrence,normalized,phaseEvaluation,active);
+		view=applyMovementPrefix(view,node,publish,resolved,output,-1,occurrence);
+		if(node!=null) node=node.next.get(output);
+		if(node==null) publish=false;
+		resolved.add(output);
+		Hop template=views[facts.occurrence(occurrence).compiledOwnerId()];
+		for(int position=0;position<template.getInput().size();position++) {
+			Shape input=resolvedBindingShape(facts.inputBinding(occurrence,position),normalized,phaseEvaluation,active);
+			view=applyMovementPrefix(view,node,publish,resolved,input,position,occurrence);
+			if(node!=null) node=node.next.get(input);
+			if(node==null) publish=false;
+			resolved.add(input);
+		}
+		MovementViewRecipe recipe=new MovementViewRecipe(occurrence,output,
+			resolved.subList(1,resolved.size()));
+		if(view==null && node!=null && node.complete) {
+			movementPrefixCompleteHits++;
+			return new PreparedMovementView(recipe,null);
+		}
+		if(view==null) { view=materializeMovementView(recipe); movementPrefixBuilds++; }
+		else applyMultiReturnOutputShapes(view);
+		if(node!=null) node.complete=true;
+		return new PreparedMovementView(recipe,view);
+	}
+
+	private Hop applyMovementPrefix(Hop view,MovementPrefixNode node,boolean publish,List<Shape> prior,
+		Shape current,int position,int occurrence) {
+		MovementPrefixNode known=node==null ? null : node.next.get(current);
+		if(view==null && known!=null) return null;
+		if(view==null) { view=cloneView(views[facts.occurrence(occurrence).compiledOwnerId()]);
+			movementPrefixBuilds++; replayMovementPrefix(view,prior); }
+		applyShape(position<0 ? view : view.getInput(position),current);
+		if(known==null && publish && movementPrefixNodes<MOVEMENT_PREFIX_NODE_LIMIT) {
+			known=new MovementPrefixNode(); node.next.put(current,known); movementPrefixNodes++;
+		}
+		return view;
+	}
+
+	Hop materializeMovementView(MovementViewRecipe recipe) {
+		Hop view=cloneView(views[facts.occurrence(recipe.occurrence()).compiledOwnerId()]);
+		applyShape(view,recipe.output());
+		for(int position=0;position<recipe.inputs().size();position++)
+			applyShape(view.getInput(position),recipe.inputs().get(position));
+		applyMultiReturnOutputShapes(view);
+		return view;
+	}
+
+	private void replayMovementPrefix(Hop view,List<Shape> prior) {
+		if(prior.isEmpty()) return;
+		applyShape(view,prior.get(0));
+		for(int position=1;position<prior.size();position++)
+			applyShape(view.getInput(position-1),prior.get(position));
+	}
+
+	/** Immutable geometry used to form the exact native request before a private HOP is cloned. */
+	NativeShapeDescriptor nativeDescriptorAt(int occurrence,EvaluationContext context) {
+		EvaluationContext normalized=normalizeLoopPhases(context);
+		PhaseEvaluation phaseEvaluation=new PhaseEvaluation();
+		Set<PhaseVisit> active=new LinkedHashSet<>();
+		Hop template=views[facts.occurrence(occurrence).compiledOwnerId()];
+		Shape resolvedOutput=occurrenceShape(occurrence,normalized,phaseEvaluation,active);
+		Shape output=isMatrixLike(template) && resolvedOutput!=null ? resolvedOutput : fromView(template);
+		List<Shape> resolvedInputs=new ArrayList<>(template.getInput().size());
+		for(int position=0;position<template.getInput().size();position++) {
+			Shape input=resolvedBindingShape(facts.inputBinding(occurrence,position),normalized,phaseEvaluation,active);
+			resolvedInputs.add(input);
+		}
+		List<Shape> inputs=effectiveInputShapes(template,resolvedInputs);
+		List<Shape> payloads=new ArrayList<>(2);
+		for(int position=0;position<template.getInput().size();position++) {
+			Hop templateInput=template.getInput(position);
+			Shape input=inputs.get(position);
+			if(payloads.size()<2 && isMatrixLike(templateInput)) payloads.add(input);
+		}
+		Shape first=payloads.size()>0 ? payloads.get(0) : null;
+		Shape second=payloads.size()>1 ? payloads.get(1) : null;
+		ShapeHint hint=new ShapeHint(dimension(output,true),dimension(output,false),template.getBlocksize(),
+			Optional.empty(),dimension(first,true),dimension(first,false),
+			dimension(second,true),dimension(second,false));
+		return new NativeShapeDescriptor(output,inputs,template.getBlocksize(),hint);
+	}
+
+	static List<Shape> effectiveInputShapes(Hop template,List<Shape> resolvedInputs) {
+		if(template.getInput().size()!=resolvedInputs.size())
+			throw new IllegalArgumentException("input shape arity mismatch");
+		Map<Hop,Shape> finalShapeByInput=new IdentityHashMap<>();
+		for(int position=0;position<template.getInput().size();position++)
+			// cloneView preserves shared-DAG input identity. viewAt applies positions in
+			// order, so the last non-null matrix shape assigned to one shared input wins.
+			// applyShape ignores null and therefore retains an earlier assignment.
+			if(isMatrixLike(template.getInput(position)) && resolvedInputs.get(position)!=null)
+				finalShapeByInput.put(template.getInput(position),resolvedInputs.get(position));
+		List<Shape> result=new ArrayList<>(resolvedInputs.size());
+		for(int position=0;position<template.getInput().size();position++) {
+			Hop input=template.getInput(position);
+			Shape resolved=isMatrixLike(input) ? finalShapeByInput.get(input) : null;
+			result.add(resolved==null ? fromView(input) : resolved);
+		}
+		return List.copyOf(result);
 	}
 
 	/** Private contextual physical output view; never exposes a live compiler HOP. */
@@ -750,49 +1192,90 @@ public final class MemoShapes {
 
 	private record LoopSlotKey(LoopDecision loop,int slot) { }
 	private record LoopSlotIdentity(int loopId,int slot) { }
-	private record HeadBinding(int loopId,int slot,boolean bound) { }
-	private record ExactGuardAssignment(int guardId,List<Integer> callFrame,int valueBindingId,
-		List<Integer> valueFrame,boolean value) {
-		private ExactGuardAssignment {
-			callFrame=List.copyOf(callFrame);
-			valueFrame=List.copyOf(valueFrame);
+	private static final class ExactGuardAssignment {
+		private final int guardId,valueBindingId;
+		private final List<Integer> callFrame,valueFrame;
+		private final boolean value;
+		private final int hash;
+		private ExactGuardAssignment(int guardId,List<Integer> callFrame,int valueBindingId,
+			List<Integer> valueFrame,boolean value) {
+			this.guardId=guardId; this.valueBindingId=valueBindingId;
+			this.callFrame=List.copyOf(callFrame); this.valueFrame=List.copyOf(valueFrame);
+			this.value=value; this.hash=computeHash();
+		}
+		@Override public int hashCode() { return hash; }
+		@Override public boolean equals(Object other) {
+			if(this==other) return true;
+			return other instanceof ExactGuardAssignment that && hash==that.hash
+				&& guardId==that.guardId && valueBindingId==that.valueBindingId && value==that.value
+				&& callFrame.equals(that.callFrame) && valueFrame.equals(that.valueFrame);
+		}
+		private int computeHash() {
+			int hash=guardId;
+			hash=31*hash+callFrame.hashCode();
+			hash=31*hash+valueBindingId;
+			hash=31*hash+valueFrame.hashCode();
+			// Set.hashCode adds element hashes. A final linear Boolean term would
+			// therefore collapse every assignment vector with the same true count.
+			hash^=value ? 0x9e3779b9 : 0x85ebca6b;
+			hash^=hash>>>16;
+			hash*=0x7feb352d;
+			hash^=hash>>>15;
+			hash*=0x846ca68b;
+			return hash^(hash>>>16);
 		}
 	}
-	private record SemanticContext(Set<ExactGuardAssignment> guards,
-		Map<LoopDecision,LoopPhase> loops,Map<LoopDecision,IterationPhase> iterations,
+	private interface ContextKey { }
+	private record LegacySemanticContext(Set<ExactGuardAssignment> guards,Map<LoopDecision,LoopPhase> loops,
+		Map<LoopDecision,IterationPhase> iterations,
 		Map<LoopCardinalityDecision,LoopCardinality> cardinalities,List<Integer> callFrame,
-		int maxDepth,List<HeadBinding> headBindings) {
-		private SemanticContext(EvaluationContext context,List<LoopSlotIdentity> heads) {
-			this(exactGuards(context.guards()),Map.copyOf(context.loops()),
+		int maxDepth,BitSet headBindings) implements ContextKey {
+		private LegacySemanticContext(EvaluationContext context,Set<ExactGuardAssignment> exactGuards,BitSet heads) {
+			this(exactGuards,Map.copyOf(context.loops()),
 				Map.copyOf(context.iterationPhases()),Map.copyOf(context.cardinalities()),
-				List.copyOf(context.callFrame()),context.maxDepth(),headBindings(context.selections(),heads));
-		}
-
-		private static Set<ExactGuardAssignment> exactGuards(
-			Map<MemoBindingResolver.GuardDecision,Boolean> guards) {
-			Set<ExactGuardAssignment> result=new LinkedHashSet<>();
-			for(var entry:guards.entrySet()) {
-				MemoBindingResolver.GuardDecision decision=entry.getKey();
-				result.add(new ExactGuardAssignment(decision.guardId(),decision.callFrame(),
-					decision.valueBindingId(),decision.valueFrame(),entry.getValue()));
-			}
-			return Set.copyOf(result);
-		}
-
-		private static List<HeadBinding> headBindings(MemoBindingResolver.SelectionLookup selections,
-			List<LoopSlotIdentity> heads) {
-			// Resolver rule/layout selections are carried only in ResolvedOrigin metadata;
-			// this class derives shapes from the owner and ignores those payload fields.
-			// headIsBound is different: it changes loop-head traversal and must be keyed.
-			List<HeadBinding> result=new ArrayList<>(heads.size());
-			for(LoopSlotIdentity head:heads)
-				result.add(new HeadBinding(head.loopId(),head.slot(),
-					selections.headIsBound(head.loopId(),head.slot())));
-			return List.copyOf(result);
+				List.copyOf(context.callFrame()),context.maxDepth(),(BitSet)heads.clone());
 		}
 	}
-	private record BindingGuardKey(int binding,SemanticContext context) { }
-	private record RepeatProofKey(int binding,LoopDecision loop,SemanticContext context) { }
+	private ExactGuardAssignment guardAssignment(MemoBindingResolver.GuardDecision decision,boolean value) {
+		guardAtomRequests++;
+		ExactGuardAssignment[] atoms=guardAssignments.get(decision);
+		int slot=value ? 1 : 0;
+		if(atoms!=null && atoms[slot]!=null) { guardAtomHits++; return atoms[slot]; }
+		ExactGuardAssignment result=new ExactGuardAssignment(decision.guardId(),decision.callFrame(),
+			decision.valueBindingId(),decision.valueFrame(),value);
+		if(atoms==null && guardAssignments.size()<DEFAULT_PROOF_CACHE_ENTRIES) {
+			atoms=new ExactGuardAssignment[2]; guardAssignments.put(decision,atoms);
+		}
+		if(atoms!=null) atoms[slot]=result;
+		return result;
+	}
+	private Set<ExactGuardAssignment> exactGuards(Map<MemoBindingResolver.GuardDecision,Boolean> guards) {
+		if(guards.isEmpty()) return Set.of();
+		List<ExactGuardAssignment> result=new ArrayList<>(guards.size());
+		for(var entry:guards.entrySet()) result.add(guardAssignment(entry.getKey(),entry.getValue()));
+		return Set.of(result.toArray(ExactGuardAssignment[]::new));
+	}
+
+	private record BindingGuardKey(int binding,ContextKey context) { }
+	private static final class RepeatProofKey {
+		private final int binding;
+		private final LoopDecision loop;
+		private final ContextKey context;
+		private final int hash;
+		private RepeatProofKey(int binding,LoopDecision loop,ContextKey context) {
+			this.binding=binding; this.loop=loop; this.context=context;
+			int value=31*(31*binding+loop.hashCode())+context.hashCode();
+			value^=value>>>16; value*=0x7feb352d;
+			value^=value>>>15; value*=0x846ca68b;
+			hash=value^(value>>>16);
+		}
+		@Override public int hashCode() { return hash; }
+		@Override public boolean equals(Object other) {
+			if(this==other) return true;
+			return other instanceof RepeatProofKey that && binding==that.binding
+				&& loop.equals(that.loop) && context.equals(that.context);
+		}
+	}
 	private record PhaseVisit(boolean occurrence,int id,List<Integer> callFrame) {
 		private PhaseVisit { callFrame=List.copyOf(callFrame); }
 	}
@@ -807,29 +1290,397 @@ public final class MemoShapes {
 		}
 		return false;
 	}
+	/** Frames are immutable, nonnull integer lists; compare without allocating a list iterator. */
+	private static boolean framesEqual(List<Integer> left,List<Integer> right) {
+		if(left==right) return true;
+		if(left.size()!=right.size()) return false;
+		for(int i=0;i<left.size();i++) if(left.get(i).intValue()!=right.get(i).intValue()) return false;
+		return true;
+	}
+
+	private boolean hasRelevantGuard(EvaluationContext context,Set<Integer> dependencies) {
+		if(context.guards().isEmpty()) return false;
+		Set<MemoBindingResolver.GuardDecision> relevant=relevantGuardDecisions(dependencies,context.callFrame());
+		for(MemoBindingResolver.GuardDecision guard:context.guards().keySet())
+			if(relevant.contains(guard) || !framesEqual(context.callFrame(),guard.callFrame())
+				&& relevantGuardDecisions(dependencies,guard.callFrame()).contains(guard)) return true;
+		return false;
+	}
+	private boolean guardRelevant(MemoBindingResolver.GuardDecision decision,Set<Integer> dependencies,
+		List<Integer> frame) {
+		if(relevantGuardDecisions(dependencies,frame).contains(decision)) return true;
+		return !framesEqual(frame,decision.callFrame())
+			&& relevantGuardDecisions(dependencies,decision.callFrame()).contains(decision);
+	}
+
+	private Set<MemoBindingResolver.GuardDecision> relevantGuardDecisions(Set<Integer> dependencies,
+		List<Integer> frame) {
+		guardRelevanceRequests++;
+		Map<List<Integer>,Set<MemoBindingResolver.GuardDecision>> byFrame=guardRelevanceIndex.get(dependencies);
+		Set<MemoBindingResolver.GuardDecision> cached=byFrame==null ? null : byFrame.get(frame);
+		if(cached!=null) { guardRelevanceCacheHits++; return cached; }
+		Set<MemoBindingResolver.GuardDecision> result=new LinkedHashSet<>();
+		for(int guard:dependencies)
+			for(int length=frame.size();length>=0;length--)
+				result.add(facts.guardDecision(guard,frame.subList(0,length)));
+		result=Collections.unmodifiableSet(result);
+		if(guardRelevanceIndexEntries<MAX_GUARD_RELEVANCE_INDEX_ENTRIES) {
+			if(byFrame==null) {
+				byFrame=new HashMap<>();
+				guardRelevanceIndex.put(dependencies,byFrame);
+			}
+			if(byFrame.putIfAbsent(List.copyOf(frame),result)==null) guardRelevanceIndexEntries++;
+		}
+		return result;
+	}
+
+	boolean indexedGuardRelevantForTesting(MemoBindingResolver.GuardDecision decision,
+		Set<Integer> dependencies,List<Integer> frame) {
+		return guardRelevant(decision,dependencies,frame);
+	}
+
+	boolean referenceGuardRelevantForTesting(MemoBindingResolver.GuardDecision decision,
+		Set<Integer> dependencies,List<Integer> frame) {
+		return guardRelevant(facts,decision,dependencies,frame);
+	}
 	// Completion-only guards (including other bound returns) are not captured
 	// by the payload shape relevance projection. Retain the full semantic
 	// context instead of mixing normal and terminating caller environments.
-	private record PhaseNodeKey(boolean occurrence,int id,ShapeContextKey context) { }
-	private record ShapeContextKey(Map<MemoBindingResolver.GuardDecision,Boolean> guards,
-		Map<LoopDecision,LoopPhase> loops,Map<LoopDecision,IterationPhase> iterations,
-		Map<LoopCardinalityDecision,LoopCardinality> cardinalities,List<Integer> callFrame,
-		int maxDepth,BitSet boundHeads) { }
+	private record PhaseNodeKey(boolean occurrence,int id,ContextKey context) { }
+	private static final class LegacyShapeContextKey implements ContextKey {
+		private final Set<ExactGuardAssignment> guards;
+		private final Map<LoopDecision,LoopPhase> loops;
+		private final Map<LoopDecision,IterationPhase> iterations;
+		private final Map<LoopCardinalityDecision,LoopCardinality> cardinalities;
+		private final List<Integer> callFrame;
+		private final int maxDepth;
+		private final BitSet boundHeads;
+		private final int hash;
 
-	private ShapeContextKey shapeContextKey(EvaluationContext context) {
+		private LegacyShapeContextKey(Set<ExactGuardAssignment> guards,Map<LoopDecision,LoopPhase> loops,
+			Map<LoopDecision,IterationPhase> iterations,
+			Map<LoopCardinalityDecision,LoopCardinality> cardinalities,List<Integer> callFrame,
+			int maxDepth,BitSet boundHeads) {
+			this.guards=Set.copyOf(guards);
+			this.loops=Map.copyOf(loops);
+			this.iterations=Map.copyOf(iterations);
+			this.cardinalities=Map.copyOf(cardinalities);
+			this.callFrame=List.copyOf(callFrame);
+			this.maxDepth=maxDepth;
+			this.boundHeads=(BitSet)boundHeads.clone();
+			hash=Objects.hash(this.guards,this.loops,this.iterations,this.cardinalities,
+				this.callFrame,this.maxDepth,this.boundHeads);
+		}
+
+		@Override public int hashCode() { return hash; }
+		@Override public boolean equals(Object other) {
+			if(this==other) return true;
+			if(!(other instanceof LegacyShapeContextKey key) || hash!=key.hash) return false;
+			return maxDepth==key.maxDepth && guards.equals(key.guards) && loops.equals(key.loops)
+				&& iterations.equals(key.iterations) && cardinalities.equals(key.cardinalities)
+				&& callFrame.equals(key.callFrame) && boundHeads.equals(key.boundHeads);
+		}
+	}
+
+	private static final class IndexedContextKey implements ContextKey {
+		private final int kind,maxDepth,hash;
+		private final BitSet atoms,boundHeads;
+		private final List<Integer> callFrame;
+		private final ContextKey fallback;
+		private IndexedContextKey(int kind,BitSet atoms,List<Integer> callFrame,int maxDepth,
+			BitSet boundHeads,ContextKey fallback) {
+			// Both bitsets are private builder results or shared read-only empty snapshots.
+			this.kind=kind; this.atoms=atoms; this.callFrame=List.copyOf(callFrame);
+			this.maxDepth=maxDepth; this.boundHeads=boundHeads; this.fallback=fallback;
+			int result=kind;
+			result=31*result+this.atoms.hashCode();
+			result=31*result+this.callFrame.hashCode();
+			result=31*result+maxDepth;
+			result=31*result+this.boundHeads.hashCode();
+			hash=31*result+(fallback==null ? 0 : fallback.hashCode());
+		}
+		@Override public int hashCode() { return hash; }
+		@Override public boolean equals(Object other) {
+			if(this==other) return true;
+			if(!(other instanceof IndexedContextKey key) || hash!=key.hash) return false;
+			return kind==key.kind && maxDepth==key.maxDepth && atoms.equals(key.atoms)
+				&& callFrame.equals(key.callFrame) && boundHeads.equals(key.boundHeads)
+				&& Objects.equals(fallback,key.fallback);
+		}
+	}
+
+	private ContextKey semanticContext(EvaluationContext context) {
+		BitSet heads=headBindings(context,null);
+		return indexedContexts ? indexedContextKey(context,null,heads,0)
+			: legacySemanticContext(context,heads);
+	}
+
+	private LegacySemanticContext legacySemanticContext(EvaluationContext context,BitSet heads) {
+		return new LegacySemanticContext(context,exactGuards(context.guards()),heads);
+	}
+
+	private ContextKey shapeContextKey(EvaluationContext context) {
+		return shapeContextKey(context,null);
+	}
+
+	private ContextKey shapeContextKey(EvaluationContext context,ShapeDependencies dependencies) {
 		// Layout/rule choices do not affect logical shape. Only headIsBound is
 		// read by source resolution. Snapshot it, never retain a mutable lookup.
-		// Include all existing heads: completion can depend on another return
-		// whose head is absent from the requested payload's dependency projection.
-		BitSet heads=new BitSet(); int index=0;
-		if(context.selections()!=MemoBindingResolver.NO_SELECTION)
-			for(MemoProgramFacts.LoopRecord loop:facts.loops())
-				for(MemoProgramFacts.CarriedValue value:loop.carriedValues()) {
-					if(context.selections().headIsBound(loop.id(),value.slot())) heads.set(index);
-					index++;
+		// Completion dependencies include other bound returns before this projection.
+		BitSet heads=headBindings(context,dependencies);
+		return indexedContexts ? indexedContextKey(context,dependencies,heads,1)
+			: legacyShapeContextKey(context,dependencies,heads);
+	}
+
+	private LegacyShapeContextKey legacyShapeContextKey(EvaluationContext context,
+		ShapeDependencies dependencies,BitSet heads) {
+		return new LegacyShapeContextKey(projectShapeGuards(context,dependencies),
+			projectLoops(context.loops(),dependencies),projectLoops(context.iterationPhases(),dependencies),
+			projectCardinalities(context.cardinalities(),dependencies),context.callFrame(),context.maxDepth(),heads);
+	}
+
+	private IndexedContextKey indexedContextKey(EvaluationContext context,ShapeDependencies dependencies,
+		BitSet heads,int kind) {
+		int maximumComponents=context.guards().size()+context.loops().size()
+			+context.iterationPhases().size()+context.cardinalities().size();
+		// The conservative bound makes the common path transactional without a
+		// counting pass: even if every component is new, the complete key fits.
+		if(indexedAtomCount+maximumComponents<=indexedAtomLimit)
+			return cachedIndexedContextKey(context,dependencies,heads,kind);
+		int missing=0;
+		Set<MemoBindingResolver.GuardDecision> relevant=indexedRelevantGuards(context,dependencies);
+		for(var entry:context.guards().entrySet()) if(includeGuard(context,dependencies,relevant,entry.getKey())) {
+			ExactGuardAssignment atom=guardAssignment(entry.getKey(),entry.getValue());
+			if(!indexedGuardAtoms.containsKey(atom)) missing++;
+		}
+		for(var entry:context.loops().entrySet()) if(includeLoop(dependencies,entry.getKey())) {
+			if(indexedId(indexedLoopAtoms,entry.getKey(),entry.getValue().ordinal())<0) missing++;
+		}
+		for(var entry:context.iterationPhases().entrySet()) if(includeLoop(dependencies,entry.getKey())) {
+			if(indexedId(indexedIterationAtoms,entry.getKey(),entry.getValue().ordinal())<0) missing++;
+		}
+		for(var entry:context.cardinalities().entrySet()) if(includeLoop(dependencies,entry.getKey())) {
+			if(indexedId(indexedCardinalityAtoms,entry.getKey(),entry.getValue().ordinal())<0) missing++;
+		}
+		if(indexedAtomCount+missing>indexedAtomLimit) {
+			ContextKey legacy=kind==0 ? legacySemanticContext(context,heads)
+				: legacyShapeContextKey(context,dependencies,heads);
+			return new IndexedContextKey(kind,new BitSet(),context.callFrame(),context.maxDepth(),heads,legacy);
+		}
+		return cachedIndexedContextKey(context,dependencies,heads,kind);
+	}
+
+	private IndexedContextKey cachedIndexedContextKey(EvaluationContext context,
+		ShapeDependencies dependencies,BitSet heads,int kind) {
+		ProjectionAtomKey key=new ProjectionAtomKey(context,dependencies,kind);
+		projectionAtomRequests++;
+		BitSet bits=projectionAtoms.get(key);
+		if(bits!=null) projectionAtomHits++;
+		if(bits==null) {
+			bits=buildIndexedAtoms(context,dependencies);
+			if(projectionAtoms.size()>=PROJECTION_ATOM_CACHE_ENTRIES) {
+				projectionAtoms.clear(); projectionAtomClears++;
+			}
+			projectionAtoms.put(key,bits);
+		}
+		return new IndexedContextKey(kind,bits,context.callFrame(),context.maxDepth(),heads,null);
+	}
+
+	private BitSet buildIndexedAtoms(EvaluationContext context,ShapeDependencies dependencies) {
+		BitSet bits=new BitSet();
+		Set<MemoBindingResolver.GuardDecision> relevant=indexedRelevantGuards(context,dependencies);
+		for(var entry:context.guards().entrySet()) if(includeGuard(context,dependencies,relevant,entry.getKey()))
+			bits.set(indexedGuardId(guardAssignment(entry.getKey(),entry.getValue())));
+		for(var entry:context.loops().entrySet()) if(includeLoop(dependencies,entry.getKey())) {
+			bits.set(indexedId(indexedLoopAtoms,entry.getKey(),entry.getValue().ordinal(),LOOP_PHASE_COUNT));
+		}
+		for(var entry:context.iterationPhases().entrySet()) if(includeLoop(dependencies,entry.getKey())) {
+			bits.set(indexedId(indexedIterationAtoms,entry.getKey(),entry.getValue().ordinal(),
+				ITERATION_PHASE_COUNT));
+		}
+		for(var entry:context.cardinalities().entrySet()) if(includeLoop(dependencies,entry.getKey())) {
+			bits.set(indexedId(indexedCardinalityAtoms,entry.getKey(),entry.getValue().ordinal(),
+				LOOP_CARDINALITY_COUNT));
+		}
+		return bits;
+	}
+
+	private Set<MemoBindingResolver.GuardDecision> indexedRelevantGuards(EvaluationContext context,
+		ShapeDependencies dependencies) {
+		return dependencies==null || dependencies.guards().isEmpty() ? null
+			: relevantGuardDecisions(dependencies.guards(),context.callFrame());
+	}
+
+	private boolean includeGuard(EvaluationContext context,ShapeDependencies dependencies,
+		Set<MemoBindingResolver.GuardDecision> relevant,MemoBindingResolver.GuardDecision decision) {
+		if(dependencies==null) return true;
+		if(dependencies.guards().isEmpty()) return false;
+		return relevant.contains(decision) || !framesEqual(context.callFrame(),decision.callFrame())
+			&& relevantGuardDecisions(dependencies.guards(),decision.callFrame()).contains(decision);
+	}
+
+	private static boolean includeLoop(ShapeDependencies dependencies,LoopDecision decision) {
+		return dependencies==null || dependencies.loops().contains(decision.loopId());
+	}
+
+	private static boolean includeLoop(ShapeDependencies dependencies,LoopCardinalityDecision decision) {
+		return dependencies==null || dependencies.loops().contains(decision.loopId());
+	}
+
+	private int indexedGuardId(ExactGuardAssignment atom) {
+		Integer id=indexedGuardAtoms.get(atom);
+		if(id==null) { id=indexedAtomCount++; indexedGuardAtoms.put(atom,id); }
+		return id;
+	}
+
+	private static <K> int indexedId(Map<K,int[]> atoms,K key,int ordinal) {
+		int[] ids=atoms.get(key);
+		return ids==null ? -1 : ids[ordinal];
+	}
+
+	private <K> int indexedId(Map<K,int[]> atoms,K key,int ordinal,int values) {
+		int[] ids=atoms.get(key);
+		if(ids==null) {
+			ids=new int[values];
+			for(int index=0;index<ids.length;index++) ids[index]=-1;
+			atoms.put(key,ids);
+		}
+		if(ids[ordinal]<0) ids[ordinal]=indexedAtomCount++;
+		return ids[ordinal];
+	}
+
+	private void indexShapeHeads(ShapeDependencies dependencies) {
+		if(shapeHeadIndices.containsKey(dependencies)) return;
+		int[] indices=new int[selectionSensitiveHeads.size()];
+		int count=0;
+		for(int index=0;index<selectionSensitiveHeads.size();index++)
+			if(dependencies.heads().contains(selectionSensitiveHeads.get(index))) indices[count++]=index;
+		shapeHeadIndices.put(dependencies,java.util.Arrays.copyOf(indices,count));
+	}
+
+	private static Map<LoopSlotIdentity,int[]> indexHeadOrdinals(List<LoopSlotIdentity> heads) {
+		Map<LoopSlotIdentity,List<Integer>> grouped=new HashMap<>();
+		for(int index=0;index<heads.size();index++)
+			grouped.computeIfAbsent(heads.get(index),ignored -> new ArrayList<>()).add(index);
+		Map<LoopSlotIdentity,int[]> result=new HashMap<>();
+		grouped.forEach((head,indices) -> result.put(head,indices.stream().mapToInt(Integer::intValue).toArray()));
+		return Map.copyOf(result);
+	}
+
+	private BitSet headBindings(EvaluationContext context,ShapeDependencies dependencies) {
+		if(!(context.selections() instanceof PhaseEvaluation.HeadSelection))
+			return legacyHeadBindings(context,dependencies);
+		MemoBindingResolver.SelectionLookup lookup=context.selections();
+		BitSet heads=EMPTY_HEAD_BINDINGS;
+		// Private maps are confined to the suspended evaluation. A terminal callback
+		// cannot mutate them; its live answers and per-ordinal call order remain intact.
+		while(lookup instanceof PhaseEvaluation.HeadSelection bound) {
+			if(dependencies==null || !dependencies.heads().isEmpty())
+				for(LoopSlotKey key:bound.evaluation.heads.keySet()) {
+					LoopSlotIdentity identity=new LoopSlotIdentity(key.loop().loopId(),key.slot());
+					if(dependencies!=null && !dependencies.heads().contains(identity)) continue;
+					int[] indices=headOrdinals.get(identity);
+					if(indices==null) continue;
+					if(heads==EMPTY_HEAD_BINDINGS) heads=new BitSet();
+					for(int index:indices) heads.set(index);
 				}
-		return new ShapeContextKey(context.guards(),context.loops(),context.iterationPhases(),
-			context.cardinalities(),context.callFrame(),context.maxDepth(),heads);
+			lookup=bound.delegate;
+		}
+		if(lookup==MemoBindingResolver.NO_SELECTION) return heads;
+		int[] indices=shapeHeadIndices.get(dependencies);
+		if(indices!=null) {
+			for(int headIndex:indices) {
+				LoopSlotIdentity head=selectionSensitiveHeads.get(headIndex);
+				if(heads.get(headIndex) || lookup.headIsBound(head.loopId(),head.slot())) {
+					if(heads==EMPTY_HEAD_BINDINGS) heads=new BitSet();
+					heads.set(headIndex);
+				}
+			}
+		}
+		else for(int index=0;index<selectionSensitiveHeads.size();index++) {
+			LoopSlotIdentity head=selectionSensitiveHeads.get(index);
+			if(dependencies!=null && !dependencies.heads().contains(head)) continue;
+			if(heads.get(index) || lookup.headIsBound(head.loopId(),head.slot())) {
+				if(heads==EMPTY_HEAD_BINDINGS) heads=new BitSet();
+				heads.set(index);
+			}
+		}
+		return heads;
+	}
+
+	private BitSet legacyHeadBindings(EvaluationContext context,ShapeDependencies dependencies) {
+		BitSet heads=EMPTY_HEAD_BINDINGS; int index=0;
+		if(context.selections()==MemoBindingResolver.NO_SELECTION) return heads;
+		int[] indices=shapeHeadIndices.get(dependencies);
+		if(indices!=null) {
+			for(int headIndex:indices) {
+				LoopSlotIdentity head=selectionSensitiveHeads.get(headIndex);
+				if(context.selections().headIsBound(head.loopId(),head.slot())) {
+					if(heads==EMPTY_HEAD_BINDINGS) heads=new BitSet();
+					heads.set(headIndex);
+				}
+			}
+			return heads;
+		}
+		if(context.selections()!=MemoBindingResolver.NO_SELECTION)
+			for(LoopSlotIdentity head:selectionSensitiveHeads) {
+				if((dependencies==null || dependencies.heads().contains(head))
+					&& context.selections().headIsBound(head.loopId(),head.slot())) {
+					if(heads==EMPTY_HEAD_BINDINGS) heads=new BitSet();
+					heads.set(index);
+				}
+				index++;
+			}
+		return heads;
+	}
+
+	private Set<ExactGuardAssignment> projectShapeGuards(EvaluationContext context,
+		ShapeDependencies dependencies) {
+		if(dependencies==null) return exactGuards(context.guards());
+		if(dependencies.guards().isEmpty()) return Set.of();
+		List<ExactGuardAssignment> result=new ArrayList<>();
+		Set<MemoBindingResolver.GuardDecision> relevant=relevantGuardDecisions(dependencies.guards(),context.callFrame());
+		for(var entry:context.guards().entrySet()) {
+			MemoBindingResolver.GuardDecision decision=entry.getKey();
+			if(relevant.contains(decision) || !framesEqual(context.callFrame(),decision.callFrame())
+				&& relevantGuardDecisions(dependencies.guards(),decision.callFrame()).contains(decision))
+				result.add(guardAssignment(decision,entry.getValue()));
+		}
+		return Set.of(result.toArray(ExactGuardAssignment[]::new));
+	}
+
+	private static <V> Map<LoopDecision,V> projectLoops(Map<LoopDecision,V> values,
+		ShapeDependencies dependencies) {
+		if(dependencies==null || values.isEmpty()) return values;
+		if(dependencies.loops().isEmpty()) return Map.of();
+		boolean all=true;
+		for(LoopDecision key:values.keySet()) if(!dependencies.loops().contains(key.loopId())) { all=false; break; }
+		if(all) return values;
+		Map<LoopDecision,V> result=new LinkedHashMap<>();
+		for(var entry:values.entrySet()) if(dependencies.loops().contains(entry.getKey().loopId()))
+			result.put(entry.getKey(),entry.getValue());
+		return result;
+	}
+
+	private static Map<LoopCardinalityDecision,LoopCardinality> projectCardinalities(
+		Map<LoopCardinalityDecision,LoopCardinality> values,ShapeDependencies dependencies) {
+		if(dependencies==null || values.isEmpty()) return values;
+		if(dependencies.loops().isEmpty()) return Map.of();
+		boolean all=true;
+		for(LoopCardinalityDecision key:values.keySet()) if(!dependencies.loops().contains(key.loopId())) { all=false; break; }
+		if(all) return values;
+		Map<LoopCardinalityDecision,LoopCardinality> result=new LinkedHashMap<>();
+		for(var entry:values.entrySet()) if(dependencies.loops().contains(entry.getKey().loopId()))
+			result.put(entry.getKey(),entry.getValue());
+		return result;
+	}
+
+	Object projectedShapeKeyForBinding(int binding,EvaluationContext context) {
+		return shapeContextKey(normalizeLoopPhases(context),shapeDependencies(binding));
+	}
+
+	Object projectedShapeKeyForOccurrence(int occurrence,EvaluationContext context) {
+		return shapeContextKey(normalizeLoopPhases(context),shapeDependenciesByOccurrence.get(occurrence));
 	}
 
 	private EvaluationContext normalizeLoopPhases(EvaluationContext context) {
@@ -848,6 +1699,25 @@ public final class MemoShapes {
 	private final class PhaseEvaluation {
 		private final Map<LoopSlotKey,Shape> heads = new HashMap<>();
 		private final Set<LoopSlotKey> evaluating = new LinkedHashSet<>();
+		private final class HeadSelection implements MemoBindingResolver.SelectionLookup {
+			private final PhaseEvaluation evaluation=PhaseEvaluation.this;
+			private final MemoBindingResolver.SelectionLookup delegate;
+
+			private HeadSelection(MemoBindingResolver.SelectionLookup delegate) {
+				this.delegate=delegate;
+			}
+
+			@Override public int selectedRule(int owner) { return delegate.selectedRule(owner); }
+			@Override public MemoPartition selectedLayout(int owner) { return delegate.selectedLayout(owner); }
+			@Override public MemoPartition selectedHeadLayout(int loop,int slot) {
+				return delegate.selectedHeadLayout(loop,slot);
+			}
+			@Override public boolean headIsBound(int loop,int slot) {
+				for(LoopSlotKey key:heads.keySet())
+					if(key.loop().loopId()==loop && key.slot()==slot) return true;
+				return delegate.headIsBound(loop,slot);
+			}
+		}
 
 		private Shape head(ResolvedOrigin origin,EvaluationContext context,Set<PhaseVisit> active) {
 			LoopDecision loop=new LoopDecision(origin.referenceId(),origin.callFrame());
@@ -862,8 +1732,7 @@ public final class MemoShapes {
 			if(known!=null) return known;
 			if(!evaluating.add(key)) return unknown((Hop)null);
 			try {
-				MemoProgramFacts.CarriedValue carried=facts.loop(loop.loopId()).carriedValues().stream()
-					.filter(value -> value.slot()==slot).findFirst().orElse(null);
+				MemoProgramFacts.CarriedValue carried=carriedValue(loop.loopId(),slot);
 				if(carried==null) return unknown((Hop)null);
 				EvaluationContext first=withPhase(context,loop,IterationPhase.FIRST,LoopPhase.ENTRY);
 				Shape seed=resolvedBindingShape(carried.backedgeBindingId(),first,this,new LinkedHashSet<>());
@@ -887,18 +1756,10 @@ public final class MemoShapes {
 			for(MemoBindingResolver.DirectLoopHead slot :
 				resolver.directLoopHeadIdentities(binding,context))
 				head(new LoopDecision(slot.loopId(),slot.callFrame()),slot.slot(),context);
+			if(context.selections() instanceof PhaseEvaluation.HeadSelection bound
+				&& bound.evaluation==this) return context;
 			MemoBindingResolver.SelectionLookup prior=context.selections();
-			MemoBindingResolver.SelectionLookup bound=new MemoBindingResolver.SelectionLookup() {
-				@Override public int selectedRule(int owner) { return prior.selectedRule(owner); }
-				@Override public MemoPartition selectedLayout(int owner) { return prior.selectedLayout(owner); }
-				@Override public MemoPartition selectedHeadLayout(int loop,int slot) {
-					return prior.selectedHeadLayout(loop,slot);
-				}
-				@Override public boolean headIsBound(int loop,int slot) {
-					return heads.keySet().stream().anyMatch(key -> key.loop().loopId()==loop && key.slot()==slot)
-						|| prior.headIsBound(loop,slot);
-				}
-			};
+			MemoBindingResolver.SelectionLookup bound=new HeadSelection(prior);
 			return new EvaluationContext(context.guards(),context.loops(),bound,context.maxDepth(),
 				context.callFrame(),context.iterationPhases(),context.cardinalities());
 		}
@@ -919,7 +1780,36 @@ public final class MemoShapes {
 			context.callFrame(),iterations,context.cardinalities());
 	}
 
+	private List<List<Set<Integer>>> computePhaseGuardDependencies() {
+		List<List<Set<Integer>>> loops=new ArrayList<>(facts.loops().size());
+		for(MemoProgramFacts.LoopRecord loop:facts.loops()) {
+			List<Set<Integer>> phases=new ArrayList<>(ITERATION_PHASE_COUNT);
+			for(IterationPhase phase:IterationPhase.values()) {
+				Set<Integer> known=new LinkedHashSet<>();
+				for(MemoProgramFacts.GuardPhase guard:facts.guardPhases(loop.id()))
+					if(facts.guardValue(loop.id(),guard.guardId(),phase)!=null) known.add(guard.guardId());
+				phases.add(Set.copyOf(known));
+			}
+			loops.add(List.copyOf(phases));
+		}
+		return List.copyOf(loops);
+	}
+
 	private boolean phaseProvesGuard(LoopDecision loop,IterationPhase iteration,
+		MemoBindingResolver.GuardDecision decision) {
+		if(iteration==null || !validCallFrame(loop.callFrame()) || !validCallFrame(decision.callFrame()))
+			return phaseProvesGuardReference(loop,iteration,decision);
+		if(loop.loopId()<0 || loop.loopId()>=phaseGuardDependencies.size()) return false;
+		Set<Integer> dependencies=phaseGuardDependencies.get(loop.loopId()).get(iteration.ordinal());
+		return !dependencies.isEmpty() && guardRelevant(decision,dependencies,loop.callFrame());
+	}
+
+	private boolean validCallFrame(List<Integer> frame) {
+		for(int call:frame) if(call<0 || call>=facts.calls().size()) return false;
+		return true;
+	}
+
+	private boolean phaseProvesGuardReference(LoopDecision loop,IterationPhase iteration,
 		MemoBindingResolver.GuardDecision decision) {
 		for(MemoProgramFacts.GuardPhase phase:facts.guardPhases(loop.loopId())) {
 			int guard=phase.guardId();
@@ -943,13 +1833,14 @@ public final class MemoShapes {
 	private Shape resolvedBindingShape(int binding,EvaluationContext context,
 		PhaseEvaluation phaseEvaluation,Set<PhaseVisit> active) {
 		if(binding < 0 || binding >= bindingShapes.length) return unknown((Hop)null);
+		binding=resolvedShapeAliasRepresentatives[binding];
 		MemoProgramFacts.BindingNode node=facts.binding(binding);
 		if(node.kind()==BindingKind.SELECT) {
 			MemoBindingResolver.GuardDecision guard=
 				facts.guardDecision(node.referenceId(),context.callFrame());
 			Boolean selected=context.guards().get(guard);
 			if(selected!=null) selected=facts.branchGuardValue(node.referenceId(),context.callFrame(),selected);
-			int loop=facts.enclosingLoop(facts.guard(node.referenceId()).parentRegionId());
+			int loop=facts.guardEnclosingLoop(node.referenceId());
 			if(selected==null && loop>=0) {
 				IterationPhase phase=context.iterationPhases().get(new LoopDecision(loop,context.callFrame()));
 				if(phase!=null) selected=facts.guardValue(loop,node.referenceId(),phase);
@@ -1006,27 +1897,29 @@ public final class MemoShapes {
 			return resolvedBindingShape(node.children().get(0),context,phaseEvaluation,active);
 		Set<Integer> loopDependencies=phaseSensitiveByBinding.get(binding);
 		Set<Integer> guardDependencies=guardSensitiveByBinding.get(binding);
-		boolean phaseRelevant=context.iterationPhases().keySet().stream()
-			.anyMatch(loop -> loopDependencies.contains(loop.loopId()));
-		boolean guardRelevant=context.guards().keySet().stream()
-			.anyMatch(guard -> guardRelevant(facts,guard,guardDependencies,context.callFrame()));
-		if(!phaseRelevant && !guardRelevant) return bindingShapes[binding];
-		PhaseNodeKey cacheKey=new PhaseNodeKey(false,binding,shapeContextKey(context));
+		boolean phaseRelevant=false;
+		for(LoopDecision loop:context.iterationPhases().keySet())
+			if(loopDependencies.contains(loop.loopId())) { phaseRelevant=true; break; }
+		if(!phaseRelevant && !hasRelevantGuard(context,guardDependencies)) return bindingShapes[binding];
+		PhaseNodeKey cacheKey=new PhaseNodeKey(false,binding,
+			shapeContextKey(context,shapeDependenciesByBinding.get(binding)));
+		phaseShapeRequests++;
 		Shape cached=phaseShapeCache.get(cacheKey);
-		if(cached!=null) return cached;
+		if(cached!=null) { phaseShapeCacheHits++; return cached; }
 		PhaseVisit key=new PhaseVisit(false,binding,context.callFrame());
 		if(!active.add(key)) return unknown((Hop)null);
 		try {
 			EvaluationContext grounded=phaseEvaluation.bindDirectHeads(binding,context);
 			Shape[] joined={null};
-			resolver.visitJoint(List.of(binding),grounded,environment -> {
+			MemoBindingResolver.VisitResult visit=resolver.visitJoint(List.of(binding),grounded,environment -> {
 				EvaluationContext resolved=withEnvironment(grounded,environment);
 				Shape current=originShape(environment.origins().get(0),resolved,phaseEvaluation,active);
 				joined[0]=joined[0]==null ? current : commonShape(joined[0],current);
 				return true;
 			});
-			Shape result=joined[0]==null ? bindingShapes[binding] : joined[0];
-			phaseShapeCache.put(cacheKey,result);
+			Shape result=visit.status()==MemoBindingResolver.VisitStatus.COMPLETE
+				? joined[0]==null ? bindingShapes[binding] : joined[0] : unknown((Hop)null);
+			if(visit.status()==MemoBindingResolver.VisitStatus.COMPLETE) phaseShapeCache.put(cacheKey,result);
 			return result;
 		}
 		finally { active.remove(key); }
@@ -1156,42 +2049,98 @@ public final class MemoShapes {
 	private Shape occurrenceShape(int occurrence,EvaluationContext context,Set<PhaseVisit> active) {
 		return occurrenceShape(occurrence,context,new PhaseEvaluation(),active);
 	}
+	private enum ScalarReplacementKind { NONE, INT64, FP64 }
+	private record ScalarReplacement(ScalarReplacementKind kind,long longValue,double doubleValue) {
+		private static final ScalarReplacement NONE=new ScalarReplacement(ScalarReplacementKind.NONE,0,0);
+		private static ScalarReplacement of(Long value) {
+			return value==null ? NONE : new ScalarReplacement(ScalarReplacementKind.INT64,value,0);
+		}
+		private static ScalarReplacement of(Double value) {
+			return value==null ? NONE : new ScalarReplacement(ScalarReplacementKind.FP64,0,value);
+		}
+	}
+	private static final class OccurrenceTransferKey {
+		private final int occurrence;
+		private final List<Shape> inputs;
+		private final List<ScalarReplacement> scalarReplacements;
+		private final int hash;
+
+		private OccurrenceTransferKey(int occurrence,List<Shape> inputs,
+			List<ScalarReplacement> scalarReplacements) {
+			// Both lists are fresh request-local builders and are never mutated after
+			// this key takes ownership.
+			this.occurrence=occurrence;
+			this.inputs=inputs;
+			this.scalarReplacements=scalarReplacements;
+			hash=31*(31*Integer.hashCode(occurrence)+inputs.hashCode())
+				+scalarReplacements.hashCode();
+		}
+
+		@Override public int hashCode() { return hash; }
+		@Override public boolean equals(Object value) {
+			if(this==value) return true;
+			if(!(value instanceof OccurrenceTransferKey other)) return false;
+			return occurrence==other.occurrence && inputs.equals(other.inputs)
+				&& scalarReplacements.equals(other.scalarReplacements);
+		}
+	}
 
 	private Shape occurrenceShape(int occurrence,EvaluationContext context,
 		PhaseEvaluation phaseEvaluation,Set<PhaseVisit> active) {
-		PhaseNodeKey cacheKey=new PhaseNodeKey(true,occurrence,shapeContextKey(context));
-		Shape cached=phaseShapeCache.get(cacheKey);
-		if(cached!=null) return cached;
+		// Binding results already retain full context. Reuse the pure transfer below
+		// only after inputs, continuation and scalar replacements have been resolved.
 		PhaseVisit key=new PhaseVisit(true,occurrence,context.callFrame());
 		if(!active.add(key)) return unknown(facts.occurrence(occurrence).hop());
 		try {
-			Hop view=cloneView(views[facts.occurrence(occurrence).compiledOwnerId()]);
-			for(int position=0; position<view.getInput().size(); position++) {
+			Hop template=views[facts.occurrence(occurrence).compiledOwnerId()];
+			List<Shape> inputs=new ArrayList<>(template.getInput().size());
+			boolean transferable=true;
+			for(int position=0;position<template.getInput().size();position++) {
 				Shape input=resolvedBindingShape(facts.inputBinding(occurrence,position),context,phaseEvaluation,active);
 				// A terminated/missing value has no contextual type. Do not revive
 				// its consumer using a frozen shape from a different normal path.
 				if(input==null || input.dataType()==DataType.UNKNOWN) {
 					int activation=facts.occurrence(occurrence).activationBindingId();
 					if(activation>=0 && !hasNormalContinuation(activation,context)) {
-						Shape result=unknown(view);
-						phaseShapeCache.put(cacheKey,result);
+						Shape result=unknown(template);
 						return result;
 					}
+					transferable=false;
 				}
-				applyShape(view.getInput(position),input);
+				inputs.add(input);
 			}
-			for(int position=0;position<view.getInput().size();position++) {
-				Hop input=view.getInput(position);
+			List<ScalarReplacement> replacements=new ArrayList<>(template.getInput().size());
+			for(int position=0;position<template.getInput().size();position++) {
+				Hop input=template.getInput(position);
 				if(input.getDataType().isScalar() && !(input instanceof LiteralOp)) {
 					if(input.getValueType()==ValueType.INT64) {
 						Long value=scalarLong(facts.inputBinding(occurrence,position),context,new LinkedHashSet<>());
-						if(value!=null) view.getInput().set(position,new LiteralOp(value));
+						replacements.add(ScalarReplacement.of(value));
 					}
-					else if(costRelevantNumericScalar(view,position)) {
+					else if(costRelevantNumericScalar(template,position)) {
 						Double value=scalarDouble(facts.inputBinding(occurrence,position),context,new LinkedHashSet<>());
-						if(value!=null) view.getInput().set(position,new LiteralOp(value));
+						replacements.add(ScalarReplacement.of(value));
 					}
+					else replacements.add(ScalarReplacement.NONE);
 				}
+				else replacements.add(ScalarReplacement.NONE);
+			}
+			OccurrenceTransferKey transferKey=transferable && occurrenceTransferEnabled
+				? new OccurrenceTransferKey(occurrence,inputs,replacements) : null;
+			occurrenceTransferRequests++;
+			Shape result=transferKey==null ? null : occurrenceTransferCache.get(transferKey);
+			if(result!=null) {
+				occurrenceTransferCacheHits++;
+				return result;
+			}
+			Hop view=cloneView(template);
+			for(int position=0;position<inputs.size();position++) applyShape(view.getInput(position),inputs.get(position));
+			for(int position=0;position<replacements.size();position++) {
+				ScalarReplacement replacement=replacements.get(position);
+				if(replacement.kind()==ScalarReplacementKind.INT64)
+					view.getInput().set(position,new LiteralOp(replacement.longValue()));
+				else if(replacement.kind()==ScalarReplacementKind.FP64)
+					view.getInput().set(position,new LiteralOp(replacement.doubleValue()));
 			}
 			applyMultiReturnOutputShapes(view);
 			if(isMatrixLike(view) && !view.getInput().isEmpty()) {
@@ -1199,14 +2148,13 @@ public final class MemoShapes {
 			}
 			view.refreshSizeInformation();
 			Shape derived=fromView(view);
-			Shape result=derived.exact() ? derived : occurrenceOutputShape(facts.occurrence(occurrence));
-			phaseShapeCache.put(cacheKey,result);
+			result=derived.exact() ? derived : occurrenceOutputShape(facts.occurrence(occurrence));
+			occurrenceTransferBuilds++;
+			if(transferKey!=null && derived.exact()) occurrenceTransferCache.put(transferKey,result);
 			return result;
 		}
 		catch(RuntimeException ignored) {
-			Shape result=occurrenceOutputShape(facts.occurrence(occurrence));
-			phaseShapeCache.put(cacheKey,result);
-			return result;
+			return occurrenceOutputShape(facts.occurrence(occurrence));
 		}
 		finally { active.remove(key); }
 	}

@@ -33,6 +33,21 @@ import org.junit.Test;
 
 public class MemoOptimizerForestTailTest {
 	@Test
+	public void projectedTailPreservesOriginalFactorTupleOrder() {
+		Check orderedCheck=new Check(4,new int[] {2,0,1},r -> partial(r) ? Truth.UNKNOWN
+			: r[0]+2*r[1]+4*r[2]>=0 ? Truth.YES : Truth.NO);
+		CostTerm orderedCost=new CostTerm(new int[] {2,0,1},
+			r -> 100*r[0]+10*r[1]+r[2],0);
+		List<Check> checks=List.of(yes(0,0,1),yes(1,1,2),yes(2,2,0),yes(3,0,3),orderedCheck);
+		double[][] nativeCosts=new double[4][2]; nativeCosts[2][1]=-150;
+		Result result=solve(nativeCosts,checks,List.of(orderedCost),Long.MAX_VALUE,4096);
+		Assert.assertEquals(Status.OPTIMAL,result.status());
+		Assert.assertArrayEquals(new int[] {0,0,1,0},result.selectedRules());
+		Assert.assertEquals(0,BigDecimal.valueOf(-50).compareTo(result.cost()));
+		Assert.assertTrue(result.statistics().forestTailCompletions()>0);
+	}
+
+	@Test
 	public void conditionalForestAvoidsTheFrozenCartesianResidualSearch() {
 		int core=8,owners=core+1;
 		double[][] nativeCosts=new double[owners][2];

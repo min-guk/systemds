@@ -1,0 +1,10 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+.......................................................MOVEMENT_COST_STATES annotated=4 collapsedOwners=1
+.MOVEMENT_COST_STATES annotated=6 collapsedOwners=0
+.MOVEMENT_COST_STATES annotated=5 collapsedOwners=2
+
+Time: 11.306
+
+OK (57 tests)
+

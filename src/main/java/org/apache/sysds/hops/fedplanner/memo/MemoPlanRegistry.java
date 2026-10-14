@@ -26,19 +26,24 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongFunction;
+import java.util.function.Predicate;
 
 import org.apache.commons.collections4.map.AbstractReferenceMap.ReferenceStrength;
 import org.apache.commons.collections4.map.ReferenceIdentityMap;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.DataGenOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.LopsException;
 import org.apache.sysds.lops.compile.MemoSupplyRegistry;
 import org.apache.sysds.lops.compile.MemoSupplyRegistry.Supply;
+import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -448,6 +453,11 @@ public final class MemoPlanRegistry {
 			// have no independent Lop/instruction to validate.
 			if(lop == null && hop instanceof LiteralOp)
 				continue;
+			// DataGen replaces a known rows/cols metadata operand with a literal Lop. Retain the
+			// selected logical metadata Hop as authority, but require exact provenance for every
+			// consumer so a shared executable use can never be omitted accidentally.
+			if(lop == null && isEmbeddedDataGenDimension(hop,selected,plan,lopSet))
+				continue;
 			if(lop == null || !lopSet.contains(lop))
 				throw new LopsException("Memo-selected Hop has no exact Lop in lowering: hop=" + hop.getHopID()
 					+ " origin=" + selected.hopId() + " hopType=" + hop.getClass().getSimpleName()
@@ -474,6 +484,39 @@ public final class MemoPlanRegistry {
 				throw new LopsException("Memo-selected Lop output drift for hop=" + hop.getHopID()
 					+ ": expected=" + expected + " actual=" + lop.getFederatedOutput());
 		}
+	}
+
+	private static boolean isEmbeddedDataGenDimension(Hop hop,Selection selected,Plan plan,Set<Lop> lopSet) {
+		return isEmbeddedDataGenDimension(hop,selected.exec(),selected.output(),lopSet,
+			parent -> plan.selections().containsKey(parent.getPlannerOriginHopID())
+				|| plan.selections().containsKey(parent.getHopID()));
+	}
+
+	static boolean isEmbeddedDataGenDimension(Hop hop,ExecType selectedExec,MemoPartition selectedOutput,
+		Set<Lop> lopSet,Predicate<Hop> selectedParent) {
+		if(!(hop instanceof UnaryOp unary) || selectedExec!=ExecType.CP
+			|| selectedOutput!=MemoPartition.LOCAL || hop.getDataType()!=DataType.SCALAR
+			|| hop.getValueType()!=ValueType.INT64 || hop.getParent().isEmpty())
+			return false;
+		String parameter;
+		if(unary.getOp()==OpOp1.NROW)
+			parameter=DataExpression.RAND_ROWS;
+		else if(unary.getOp()==OpOp1.NCOL)
+			parameter=DataExpression.RAND_COLS;
+		else
+			return false;
+		for(Hop parent:hop.getParent()) {
+			if(!(parent instanceof DataGenOp dataGen))
+				return false;
+			Integer position=dataGen.getParamIndexMap().get(parameter);
+			boolean dimensionKnown=parameter.equals(DataExpression.RAND_ROWS)
+				? dataGen.rowsKnown() : dataGen.colsKnown();
+			if(position==null || position<0 || position>=dataGen.getInput().size()
+				|| dataGen.getInput().get(position)!=hop || !dimensionKnown || !selectedParent.test(parent)
+				|| dataGen.getLops()==null || !lopSet.contains(dataGen.getLops()))
+				return false;
+		}
+		return true;
 	}
 
 	/** Opens a fail-closed recompile transaction for the exact owner and statement block. */

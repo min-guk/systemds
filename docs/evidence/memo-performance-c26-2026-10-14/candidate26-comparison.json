@@ -1,0 +1,792 @@
+{
+  "schema": "memo-under3-candidate26-comparison-v1",
+  "singleRunPerCondition": true,
+  "primaryReference": "candidate24",
+  "secondaryReferences": [
+    "candidate25",
+    "candidate23"
+  ],
+  "referenceStatus": {
+    "candidate24": "accepted baseline",
+    "candidate25": "rejected for performance",
+    "candidate23": "secondary context"
+  },
+  "publishedBaselineSeconds": {
+    "logreg": 7.770025473,
+    "glm": 152.372563001
+  },
+  "logreg": {
+    "planning": {
+      "candidate23": 3.658750194,
+      "candidate24": 3.115664233,
+      "candidate25": 3.52503081,
+      "candidate26": 3.028378372,
+      "deltaVsCandidate24Seconds": -0.0872858609999998,
+      "deltaVsCandidate24Percent": -2.8015169309805343,
+      "deltaVsCandidate25Seconds": -0.4966524379999999,
+      "deltaVsCandidate25Percent": -14.089307718703314,
+      "deltaVsCandidate23Seconds": -0.6303718219999999,
+      "deltaVsCandidate23Percent": -17.229157186892653,
+      "thresholdPass": false,
+      "publishedBaseline": 7.770025473,
+      "reductionFromPublishedPercent": 61.02485915235043
+    },
+    "phases": {
+      "facts": {
+        "candidate23": 0.057088185,
+        "candidate24": 0.059985631,
+        "candidate25": 0.053825554,
+        "candidate26": 0.043807693,
+        "deltaVsCandidate24Seconds": -0.016177937999999996,
+        "deltaVsCandidate24Percent": -26.96968879097062,
+        "deltaVsCandidate25Seconds": -0.010017860999999996,
+        "deltaVsCandidate25Percent": -18.611719258848684,
+        "deltaVsCandidate23Seconds": -0.013280491999999998,
+        "deltaVsCandidate23Percent": -23.2631182792026
+      },
+      "rules": {
+        "candidate23": 1.609796857,
+        "candidate24": 1.372660212,
+        "candidate25": 1.206282522,
+        "candidate26": 1.170639383,
+        "deltaVsCandidate24Seconds": -0.20202082900000007,
+        "deltaVsCandidate24Percent": -14.717468112931657,
+        "deltaVsCandidate25Seconds": -0.035643139000000046,
+        "deltaVsCandidate25Percent": -2.954791962077359,
+        "deltaVsCandidate23Seconds": -0.43915747400000016,
+        "deltaVsCandidate23Percent": -27.28030385264941
+      },
+      "model": {
+        "candidate23": 0.805290586,
+        "candidate24": 0.653317637,
+        "candidate25": 0.799707994,
+        "candidate26": 0.761008536,
+        "deltaVsCandidate24Seconds": 0.10769089899999995,
+        "deltaVsCandidate24Percent": 16.48369688816467,
+        "deltaVsCandidate25Seconds": -0.038699458000000075,
+        "deltaVsCandidate25Percent": -4.839198593780728,
+        "deltaVsCandidate23Seconds": -0.04428205000000007,
+        "deltaVsCandidate23Percent": -5.498890806603825
+      },
+      "optimization": {
+        "candidate23": 1.119164097,
+        "candidate24": 0.955147095,
+        "candidate25": 1.351841506,
+        "candidate26": 0.972974974,
+        "deltaVsCandidate24Seconds": 0.017827879000000046,
+        "deltaVsCandidate24Percent": 1.866506121761282,
+        "deltaVsCandidate25Seconds": -0.378866532,
+        "deltaVsCandidate25Percent": -28.0259579483573,
+        "deltaVsCandidate23Seconds": -0.1461891230000001,
+        "deltaVsCandidate23Percent": -13.06234924725253
+      },
+      "projection": {
+        "candidate23": 0.067410469,
+        "candidate24": 0.074553658,
+        "candidate25": 0.113373234,
+        "candidate26": 0.079947786,
+        "deltaVsCandidate24Seconds": 0.005394128000000012,
+        "deltaVsCandidate24Percent": 7.235229155355478,
+        "deltaVsCandidate25Seconds": -0.033425447999999996,
+        "deltaVsCandidate25Percent": -29.482662548022574,
+        "deltaVsCandidate23Seconds": 0.012537317000000006,
+        "deltaVsCandidate23Percent": 18.598471700293327
+      }
+    },
+    "semantic": {
+      "status": "OPTIMAL",
+      "exactCostEqualCandidate24": true,
+      "exactCostEqualCandidate25": true,
+      "nodes": 5431,
+      "nativeRules": 920,
+      "fedOwners": 20,
+      "supplies": 1
+    },
+    "searchCounters": {
+      "candidate23": {
+        "nodes": 5431,
+        "checks": 67477,
+        "cacheHits": 72494,
+        "pruned": 3265,
+        "supportQueries": 57239,
+        "supportCacheHits": 485,
+        "supportWitnessHits": 29076,
+        "binarySupportHits": 29076,
+        "binarySupportRows": 1987,
+        "worklistVisits": 8991,
+        "costEvaluations": 1647,
+        "costCacheHits": 31549,
+        "boundPrunes": 142,
+        "conditionalBoundQueries": 2319,
+        "conditionalBoundCacheHits": 1506,
+        "wideBoundRelaxations": 0
+      },
+      "candidate24": {
+        "nodes": 5431,
+        "checks": 67477,
+        "cacheHits": 72494,
+        "pruned": 3265,
+        "supportQueries": 57239,
+        "supportCacheHits": 485,
+        "supportWitnessHits": 29076,
+        "binarySupportHits": 29076,
+        "binarySupportRows": 1987,
+        "worklistVisits": 8991,
+        "costEvaluations": 1647,
+        "costCacheHits": 31549,
+        "boundPrunes": 142,
+        "conditionalBoundQueries": 2319,
+        "conditionalBoundCacheHits": 1506,
+        "wideBoundRelaxations": 0
+      },
+      "candidate25": {
+        "nodes": 5431,
+        "checks": 67477,
+        "cacheHits": 72494,
+        "pruned": 3265,
+        "supportQueries": 57239,
+        "supportCacheHits": 485,
+        "supportWitnessHits": 29076,
+        "binarySupportHits": 29076,
+        "binarySupportRows": 1987,
+        "worklistVisits": 8991,
+        "costEvaluations": 1647,
+        "costCacheHits": 31549,
+        "boundPrunes": 142,
+        "conditionalBoundQueries": 2319,
+        "conditionalBoundCacheHits": 1506,
+        "wideBoundRelaxations": 0
+      },
+      "candidate26": {
+        "nodes": 5431,
+        "checks": 67477,
+        "cacheHits": 72494,
+        "pruned": 3265,
+        "supportQueries": 57239,
+        "supportCacheHits": 485,
+        "supportWitnessHits": 29076,
+        "binarySupportHits": 29076,
+        "binarySupportRows": 1987,
+        "worklistVisits": 8991,
+        "costEvaluations": 1647,
+        "costCacheHits": 31549,
+        "boundPrunes": 142,
+        "conditionalBoundQueries": 2319,
+        "conditionalBoundCacheHits": 1506,
+        "wideBoundRelaxations": 0
+      },
+      "changedVsCandidate24": {},
+      "changedVsCandidate25": {},
+      "changedVsCandidate23": {}
+    },
+    "outputs": {
+      "candidate23CsvSha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848",
+      "candidate24CsvSha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848",
+      "candidate25CsvSha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848",
+      "candidate26CsvSha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848",
+      "csvEqualCandidate24": true,
+      "matched": true,
+      "shapeMatched": true,
+      "maxAbsDifference": 1.6653345369377348e-16,
+      "auditErrors": [],
+      "runtimeAuditViolations": []
+    },
+    "construction": {
+      "costProjectionEqualCandidate24": true,
+      "nativeRequestsEqualCandidate24": true,
+      "nativeGenerationEqualCandidate24": true,
+      "nativeRequests": {
+        "candidate23": {
+          "canonicalStringsCreated": 84,
+          "canonicalStringsReused": 8681,
+          "contextualViewBuilds": 199,
+          "oracleRequests": 199,
+          "preparedRequests": 8880,
+          "reusedResults": 8681,
+          "uncacheableRequests": 115
+        },
+        "candidate24": {
+          "canonicalStringsCreated": 84,
+          "canonicalStringsReused": 8681,
+          "contextualViewBuilds": 199,
+          "oracleRequests": 199,
+          "preparedRequests": 8880,
+          "reusedResults": 8681,
+          "uncacheableRequests": 115
+        },
+        "candidate25": {
+          "canonicalStringsCreated": 84,
+          "canonicalStringsReused": 8681,
+          "contextualViewBuilds": 199,
+          "oracleRequests": 199,
+          "preparedRequests": 8880,
+          "reusedResults": 8681,
+          "uncacheableRequests": 115
+        },
+        "candidate26": {
+          "canonicalStringsCreated": 84,
+          "canonicalStringsReused": 8681,
+          "contextualViewBuilds": 199,
+          "oracleRequests": 199,
+          "preparedRequests": 8880,
+          "reusedResults": 8681,
+          "uncacheableRequests": 115
+        }
+      },
+      "nativeGeneration": {
+        "candidate23": {
+          "coverageObligations": 38,
+          "cpPatterns": 199,
+          "determinantRegions": 811,
+          "evidenceReuses": 0,
+          "oracleEvaluations": 811,
+          "prefixRequests": 0,
+          "prunedPrefixes": 360,
+          "publishedRules": 772,
+          "unknownPrefixes": 0,
+          "visitedNativePatterns": 451
+        },
+        "candidate24": {
+          "coverageObligations": 38,
+          "cpPatterns": 199,
+          "determinantRegions": 811,
+          "evidenceReuses": 0,
+          "oracleEvaluations": 811,
+          "prefixRequests": 0,
+          "prunedPrefixes": 360,
+          "publishedRules": 772,
+          "unknownPrefixes": 0,
+          "visitedNativePatterns": 451
+        },
+        "candidate25": {
+          "coverageObligations": 38,
+          "cpPatterns": 199,
+          "determinantRegions": 811,
+          "evidenceReuses": 0,
+          "oracleEvaluations": 811,
+          "prefixRequests": 0,
+          "prunedPrefixes": 360,
+          "publishedRules": 772,
+          "unknownPrefixes": 0,
+          "visitedNativePatterns": 451
+        },
+        "candidate26": {
+          "coverageObligations": 38,
+          "cpPatterns": 199,
+          "determinantRegions": 811,
+          "evidenceReuses": 0,
+          "oracleEvaluations": 811,
+          "prefixRequests": 0,
+          "prunedPrefixes": 360,
+          "publishedRules": 772,
+          "unknownPrefixes": 0,
+          "visitedNativePatterns": 451
+        }
+      },
+      "nativeCostReuse": {
+        "candidate23": {
+          "requests": 5950,
+          "cacheHits": 4756,
+          "vectorBuilds": 1666,
+          "entries": 1194
+        },
+        "candidate24": {
+          "requests": 5950,
+          "cacheHits": 4756,
+          "vectorBuilds": 1666,
+          "entries": 1194
+        },
+        "candidate25": {
+          "requests": 5950,
+          "cacheHits": 4756,
+          "vectorBuilds": 1666,
+          "entries": 1194
+        },
+        "candidate26": {
+          "requests": 5950,
+          "cacheHits": 4756,
+          "vectorBuilds": 1666,
+          "entries": 1194
+        }
+      },
+      "actualOracleCache": {
+        "hits": 0,
+        "misses": 199
+      }
+    },
+    "resources": {
+      "allocationBytes": {
+        "candidate23": 1226926760,
+        "candidate24": 1164949064,
+        "candidate25": 1147122584,
+        "candidate26": 1155177248
+      },
+      "allocationDeltaVsCandidate24Percent": -0.8388191640282737,
+      "stwPauseSeconds": {
+        "candidate23": 0.193826095,
+        "candidate24": 0.182423099,
+        "candidate25": 0.18632152300000002,
+        "candidate26": 0.179046864
+      },
+      "cpuSeconds": {
+        "candidate23": 23.42,
+        "candidate24": 23.24,
+        "candidate25": 26.33,
+        "candidate26": 21.84
+      },
+      "maxVmHwmKiB": {
+        "candidate23": 429976,
+        "candidate24": 471268,
+        "candidate25": 427152,
+        "candidate26": 506128
+      },
+      "candidate26Cgroup": {
+        "schema": "memo-under3-cgroup-cpu-v1",
+        "sampleCount": 11,
+        "firstEpochMs": 1791982320877,
+        "lastEpochMs": 1791982339297,
+        "observedSeconds": 18.42,
+        "containers": [
+          "systemds-joint-boundary-61714d8e0ce24cce"
+        ],
+        "cgroups": [
+          "/system.slice/docker-f0e1c8cf02da9bd73439e18911cbb4a801fe88e7a9b708a7b68370404b8a4795.scope"
+        ],
+        "quotaUsec": 400000,
+        "periodUsec": 100000,
+        "usageUsecDelta": 53246930,
+        "userUsecDelta": 50703053,
+        "systemUsecDelta": 2543877,
+        "periodsDelta": 176,
+        "throttledPeriodsDelta": 59,
+        "throttledUsecDelta": 21294848,
+        "throttledPeriodPercent": 33.52272727272727
+      },
+      "jfrDataLoss": []
+    }
+  },
+  "glm": {
+    "planning": {
+      "candidate23": 4.931508331,
+      "candidate24": 5.225493361,
+      "candidate25": 6.133669572,
+      "candidate26": 5.072434165,
+      "deltaVsCandidate24Seconds": -0.15305919600000006,
+      "deltaVsCandidate24Percent": -2.929086029318181,
+      "deltaVsCandidate25Seconds": -1.0612354069999999,
+      "deltaVsCandidate25Percent": -17.30180268993466,
+      "deltaVsCandidate23Seconds": 0.14092583399999992,
+      "deltaVsCandidate23Percent": 2.8576618864075467,
+      "thresholdPass": false,
+      "publishedBaseline": 152.372563001,
+      "reductionFromPublishedPercent": 96.67103180185615
+    },
+    "phases": {
+      "facts": {
+        "candidate23": 0.066413033,
+        "candidate24": 0.056401101,
+        "candidate25": 0.09131054,
+        "candidate26": 0.067610869,
+        "deltaVsCandidate24Seconds": 0.011209768000000002,
+        "deltaVsCandidate24Percent": 19.875087190230563,
+        "deltaVsCandidate25Seconds": -0.02369967099999999,
+        "deltaVsCandidate25Percent": -25.95502227891763,
+        "deltaVsCandidate23Seconds": 0.0011978360000000077,
+        "deltaVsCandidate23Percent": 1.8036158655786851
+      },
+      "rules": {
+        "candidate23": 2.197767515,
+        "candidate24": 2.045053885,
+        "candidate25": 2.454767612,
+        "candidate26": 2.279118496,
+        "deltaVsCandidate24Seconds": 0.23406461099999998,
+        "deltaVsCandidate24Percent": 11.445400667278747,
+        "deltaVsCandidate25Seconds": -0.17564911599999977,
+        "deltaVsCandidate25Percent": -7.155427468626703,
+        "deltaVsCandidate23Seconds": 0.08135098100000038,
+        "deltaVsCandidate23Percent": 3.701528048111148
+      },
+      "model": {
+        "candidate23": 1.115436361,
+        "candidate24": 1.036191,
+        "candidate25": 1.736173891,
+        "candidate26": 1.242508682,
+        "deltaVsCandidate24Seconds": 0.2063176819999999,
+        "deltaVsCandidate24Percent": 19.911163289393546,
+        "deltaVsCandidate25Seconds": -0.493665209,
+        "deltaVsCandidate25Percent": -28.434087827208316,
+        "deltaVsCandidate23Seconds": 0.127072321,
+        "deltaVsCandidate23Percent": 11.392162336009772
+      },
+      "optimization": {
+        "candidate23": 1.444314228,
+        "candidate24": 1.94133032,
+        "candidate25": 1.686853966,
+        "candidate26": 1.37537044,
+        "deltaVsCandidate24Seconds": -0.5659598800000001,
+        "deltaVsCandidate24Percent": -29.153198410871163,
+        "deltaVsCandidate25Seconds": -0.31148352599999996,
+        "deltaVsCandidate25Percent": -18.465352204649584,
+        "deltaVsCandidate23Seconds": -0.06894378800000012,
+        "deltaVsCandidate23Percent": -4.773461803770316
+      },
+      "projection": {
+        "candidate23": 0.107577194,
+        "candidate24": 0.146517055,
+        "candidate25": 0.164563563,
+        "candidate26": 0.107825678,
+        "deltaVsCandidate24Seconds": -0.03869137700000001,
+        "deltaVsCandidate24Percent": -26.407421989201197,
+        "deltaVsCandidate25Seconds": -0.056737885,
+        "deltaVsCandidate25Percent": -34.47779324029342,
+        "deltaVsCandidate23Seconds": 0.00024848399999999327,
+        "deltaVsCandidate23Percent": 0.23098204253216836
+      }
+    },
+    "semantic": {
+      "status": "OPTIMAL",
+      "exactCostEqualCandidate24": true,
+      "exactCostEqualCandidate25": true,
+      "nodes": 1954,
+      "nativeRules": 2059,
+      "fedOwners": 17,
+      "supplies": 1
+    },
+    "searchCounters": {
+      "candidate23": {
+        "nodes": 1954,
+        "checks": 97479,
+        "cacheHits": 77037,
+        "pruned": 8009,
+        "supportQueries": 85676,
+        "supportCacheHits": 155,
+        "supportWitnessHits": 49979,
+        "binarySupportHits": 37945,
+        "binarySupportRows": 4093,
+        "worklistVisits": 14370,
+        "costEvaluations": 5139,
+        "costCacheHits": 11876,
+        "boundPrunes": 451,
+        "conditionalBoundQueries": 3485,
+        "conditionalBoundCacheHits": 1307,
+        "wideBoundRelaxations": 26
+      },
+      "candidate24": {
+        "nodes": 1954,
+        "checks": 97344,
+        "cacheHits": 76999,
+        "pruned": 8009,
+        "supportQueries": 85590,
+        "supportCacheHits": 155,
+        "supportWitnessHits": 49805,
+        "binarySupportHits": 37771,
+        "binarySupportRows": 4093,
+        "worklistVisits": 14353,
+        "costEvaluations": 5139,
+        "costCacheHits": 11876,
+        "boundPrunes": 451,
+        "conditionalBoundQueries": 3485,
+        "conditionalBoundCacheHits": 1307,
+        "wideBoundRelaxations": 26
+      },
+      "candidate25": {
+        "nodes": 1954,
+        "checks": 97344,
+        "cacheHits": 76999,
+        "pruned": 8009,
+        "supportQueries": 85590,
+        "supportCacheHits": 155,
+        "supportWitnessHits": 49805,
+        "binarySupportHits": 37771,
+        "binarySupportRows": 4093,
+        "worklistVisits": 14353,
+        "costEvaluations": 5139,
+        "costCacheHits": 11876,
+        "boundPrunes": 451,
+        "conditionalBoundQueries": 3485,
+        "conditionalBoundCacheHits": 1307,
+        "wideBoundRelaxations": 26
+      },
+      "candidate26": {
+        "nodes": 1954,
+        "checks": 97479,
+        "cacheHits": 77037,
+        "pruned": 8009,
+        "supportQueries": 85676,
+        "supportCacheHits": 155,
+        "supportWitnessHits": 49979,
+        "binarySupportHits": 37945,
+        "binarySupportRows": 4093,
+        "worklistVisits": 14370,
+        "costEvaluations": 5139,
+        "costCacheHits": 11876,
+        "boundPrunes": 451,
+        "conditionalBoundQueries": 3485,
+        "conditionalBoundCacheHits": 1307,
+        "wideBoundRelaxations": 26
+      },
+      "changedVsCandidate24": {
+        "checks": {
+          "candidate24": 97344,
+          "candidate26": 97479
+        },
+        "cacheHits": {
+          "candidate24": 76999,
+          "candidate26": 77037
+        },
+        "supportQueries": {
+          "candidate24": 85590,
+          "candidate26": 85676
+        },
+        "supportWitnessHits": {
+          "candidate24": 49805,
+          "candidate26": 49979
+        },
+        "binarySupportHits": {
+          "candidate24": 37771,
+          "candidate26": 37945
+        },
+        "worklistVisits": {
+          "candidate24": 14353,
+          "candidate26": 14370
+        }
+      },
+      "changedVsCandidate25": {
+        "checks": {
+          "candidate25": 97344,
+          "candidate26": 97479
+        },
+        "cacheHits": {
+          "candidate25": 76999,
+          "candidate26": 77037
+        },
+        "supportQueries": {
+          "candidate25": 85590,
+          "candidate26": 85676
+        },
+        "supportWitnessHits": {
+          "candidate25": 49805,
+          "candidate26": 49979
+        },
+        "binarySupportHits": {
+          "candidate25": 37771,
+          "candidate26": 37945
+        },
+        "worklistVisits": {
+          "candidate25": 14353,
+          "candidate26": 14370
+        }
+      },
+      "changedVsCandidate23": {}
+    },
+    "outputs": {
+      "candidate23CsvSha256": "249fa99b51cc216d790236c67cbd47e0bb9b9642a0a0d46fbdf62b3424175478",
+      "candidate24CsvSha256": "249fa99b51cc216d790236c67cbd47e0bb9b9642a0a0d46fbdf62b3424175478",
+      "candidate25CsvSha256": "249fa99b51cc216d790236c67cbd47e0bb9b9642a0a0d46fbdf62b3424175478",
+      "candidate26CsvSha256": "249fa99b51cc216d790236c67cbd47e0bb9b9642a0a0d46fbdf62b3424175478",
+      "csvEqualCandidate24": true,
+      "matched": true,
+      "shapeMatched": true,
+      "maxAbsDifference": 9.020562075079397e-17,
+      "auditErrors": [],
+      "runtimeAuditViolations": []
+    },
+    "construction": {
+      "costProjectionEqualCandidate24": true,
+      "nativeRequestsEqualCandidate24": true,
+      "nativeGenerationEqualCandidate24": true,
+      "nativeRequests": {
+        "candidate23": {
+          "canonicalStringsCreated": 121,
+          "canonicalStringsReused": 11249,
+          "contextualViewBuilds": 450,
+          "oracleRequests": 450,
+          "preparedRequests": 11699,
+          "reusedResults": 11249,
+          "uncacheableRequests": 329
+        },
+        "candidate24": {
+          "canonicalStringsCreated": 121,
+          "canonicalStringsReused": 11249,
+          "contextualViewBuilds": 450,
+          "oracleRequests": 450,
+          "preparedRequests": 11699,
+          "reusedResults": 11249,
+          "uncacheableRequests": 329
+        },
+        "candidate25": {
+          "canonicalStringsCreated": 121,
+          "canonicalStringsReused": 11249,
+          "contextualViewBuilds": 450,
+          "oracleRequests": 450,
+          "preparedRequests": 11699,
+          "reusedResults": 11249,
+          "uncacheableRequests": 329
+        },
+        "candidate26": {
+          "canonicalStringsCreated": 121,
+          "canonicalStringsReused": 11249,
+          "contextualViewBuilds": 450,
+          "oracleRequests": 450,
+          "preparedRequests": 11699,
+          "reusedResults": 11249,
+          "uncacheableRequests": 329
+        }
+      },
+      "nativeGeneration": {
+        "candidate23": {
+          "coverageObligations": 51,
+          "cpPatterns": 453,
+          "determinantRegions": 3018,
+          "evidenceReuses": 0,
+          "oracleEvaluations": 3094,
+          "prefixRequests": 153,
+          "prunedPrefixes": 2166,
+          "publishedRules": 1282,
+          "unknownPrefixes": 36,
+          "visitedNativePatterns": 969
+        },
+        "candidate24": {
+          "coverageObligations": 51,
+          "cpPatterns": 453,
+          "determinantRegions": 3018,
+          "evidenceReuses": 0,
+          "oracleEvaluations": 3094,
+          "prefixRequests": 153,
+          "prunedPrefixes": 2166,
+          "publishedRules": 1282,
+          "unknownPrefixes": 36,
+          "visitedNativePatterns": 969
+        },
+        "candidate25": {
+          "coverageObligations": 51,
+          "cpPatterns": 453,
+          "determinantRegions": 3018,
+          "evidenceReuses": 0,
+          "oracleEvaluations": 3094,
+          "prefixRequests": 153,
+          "prunedPrefixes": 2166,
+          "publishedRules": 1282,
+          "unknownPrefixes": 36,
+          "visitedNativePatterns": 969
+        },
+        "candidate26": {
+          "coverageObligations": 51,
+          "cpPatterns": 453,
+          "determinantRegions": 3018,
+          "evidenceReuses": 0,
+          "oracleEvaluations": 3094,
+          "prefixRequests": 153,
+          "prunedPrefixes": 2166,
+          "publishedRules": 1282,
+          "unknownPrefixes": 36,
+          "visitedNativePatterns": 969
+        }
+      },
+      "nativeCostReuse": {
+        "candidate23": {
+          "requests": 7861,
+          "cacheHits": 6033,
+          "vectorBuilds": 3484,
+          "entries": 1828
+        },
+        "candidate24": {
+          "requests": 7861,
+          "cacheHits": 6033,
+          "vectorBuilds": 3484,
+          "entries": 1828
+        },
+        "candidate25": {
+          "requests": 7861,
+          "cacheHits": 6033,
+          "vectorBuilds": 3484,
+          "entries": 1828
+        },
+        "candidate26": {
+          "requests": 7861,
+          "cacheHits": 6033,
+          "vectorBuilds": 3484,
+          "entries": 1828
+        }
+      },
+      "actualOracleCache": {
+        "hits": 0,
+        "misses": 450
+      }
+    },
+    "resources": {
+      "allocationBytes": {
+        "candidate23": 2647937808,
+        "candidate24": 2424958720,
+        "candidate25": 2237853648,
+        "candidate26": 2411462616
+      },
+      "allocationDeltaVsCandidate24Percent": -0.5565498451041674,
+      "stwPauseSeconds": {
+        "candidate23": 0.286660769,
+        "candidate24": 0.271049705,
+        "candidate25": 0.257943853,
+        "candidate26": 0.253926433
+      },
+      "cpuSeconds": {
+        "candidate23": 25.55,
+        "candidate24": 30.11,
+        "candidate25": 30.06,
+        "candidate26": 23.95
+      },
+      "maxVmHwmKiB": {
+        "candidate23": 803780,
+        "candidate24": 832284,
+        "candidate25": 604428,
+        "candidate26": 694264
+      },
+      "candidate26Cgroup": {
+        "schema": "memo-under3-cgroup-cpu-v1",
+        "sampleCount": 13,
+        "firstEpochMs": 1791982383057,
+        "lastEpochMs": 1791982404252,
+        "observedSeconds": 21.195,
+        "containers": [
+          "systemds-joint-boundary-e599e404404c43d1"
+        ],
+        "cgroups": [
+          "/system.slice/docker-5dc224e84213cea5a390685ae4c534ff44543b0645c4bfdac493f9803bfab222.scope"
+        ],
+        "quotaUsec": 400000,
+        "periodUsec": 100000,
+        "usageUsecDelta": 58035562,
+        "userUsecDelta": 55436409,
+        "systemUsecDelta": 2599152,
+        "periodsDelta": 202,
+        "throttledPeriodsDelta": 45,
+        "throttledUsecDelta": 16039002,
+        "throttledPeriodPercent": 22.277227722772277
+      },
+      "jfrDataLoss": []
+    }
+  },
+  "rawEvaluator": {
+    "passedGateCount": 19,
+    "gateCount": 23,
+    "failedGates": [
+      "logregPlanningAtMost3Seconds",
+      "glmPlanningAtMost3Seconds",
+      "logregMemoConstructionEqualReference",
+      "glmMemoConstructionEqualReference"
+    ],
+    "telemetryOnlyExpectedFailures": [
+      "glmMemoConstructionEqualReference",
+      "logregMemoConstructionEqualReference"
+    ]
+  },
+  "telemetryAwareAssessment": {
+    "constructionEqualCandidate24": true,
+    "semanticGateCount": 21,
+    "gateCount": 23,
+    "failedSemanticGates": [
+      "glmPlanningAtMost3Seconds",
+      "logregPlanningAtMost3Seconds"
+    ],
+    "note": "The evaluator is unchanged. The two construction failures remain the inherited C21 telemetry differences from original references; C26 equals C24 on construction telemetry. C26 GLM traversal counters equal C23 and differ from C24/C25 while exact outputs and objectives remain stable; all observations are reported."
+  }
+}

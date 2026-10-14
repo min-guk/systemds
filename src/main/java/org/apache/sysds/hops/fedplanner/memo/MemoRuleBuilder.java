@@ -40,13 +40,14 @@ import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 /** Build immutable native domains once. Transparent value bindings have no native rule. */
 public final class MemoRuleBuilder {
 	public record RequestStatistics(long preparedRequests,long reusedResults,long oracleRequests,
-		long canonicalStringsCreated,long canonicalStringsReused,long uncacheableRequests) { }
+		long canonicalStringsCreated,long canonicalStringsReused,long uncacheableRequests,
+		long contextualViewBuilds) { }
 	/** Results have the same full identity as the catalog cache, scoped to this build. */
 	private static final class NativeRequests {
 		private final MemoNativeRules oracle;
 		private final MemoNativeRules.RequestFactory factory = new MemoNativeRules.RequestFactory();
 		private final Map<MemoNativeRules.RequestKey,MemoNativeRules.Result> results = new HashMap<>();
-		private long reused,requested;
+		private long reused,requested,contextualViewBuilds;
 		private NativeRequests(MemoNativeRules oracle) { this.oracle=oracle; }
 		private MemoNativeRules.Result rules(Hop hop,int workers,ShapeHint hint) {
 			MemoNativeRules.Request request=factory.prepare(hop,workers,hint);
@@ -57,10 +58,27 @@ public final class MemoRuleBuilder {
 			if(request.key()!=null) results.put(request.key(),result);
 			return result;
 		}
+		private MemoNativeRules.Result rules(Hop template,MemoShapes shapes,int occurrence,
+			EvaluationContext context,int workers) {
+			if(!factory.descriptorCapable(template)) {
+				Hop view=shapes.viewAt(occurrence,context); contextualViewBuilds++;
+				return rules(view,workers,MemoShapes.hintForView(view));
+			}
+			MemoShapes.NativeShapeDescriptor descriptor=shapes.nativeDescriptorAt(occurrence,context);
+			MemoNativeRules.Request request=factory.prepare(template,workers,descriptor);
+			MemoNativeRules.Result cached=request.key()==null ? null : results.get(request.key());
+			if(cached!=null) { reused++; return cached; }
+			requested++;
+			Hop view=shapes.viewAt(occurrence,context); contextualViewBuilds++;
+			MemoNativeRules.Result result=oracle.rules(request.withHop(view));
+			if(request.key()!=null) results.put(request.key(),result);
+			return result;
+		}
 		private RequestStatistics statistics() {
 			MemoNativeRules.PreparationStats preparation=factory.statistics();
 			return new RequestStatistics(preparation.preparedRequests(),reused,requested,
-				preparation.canonicalStringsCreated(),preparation.canonicalStringsReused(),preparation.uncacheableRequests());
+				preparation.canonicalStringsCreated(),preparation.canonicalStringsReused(),preparation.uncacheableRequests(),
+				contextualViewBuilds);
 		}
 	}
 	private static final class RuleIntersection {
@@ -148,14 +166,11 @@ public final class MemoRuleBuilder {
 					continue;
 				}
 				for(OccurrenceContext occurrenceContext : occurrenceContexts) {
-					EvaluationContext base=new EvaluationContext(Map.of(),Map.of(),
-						MemoBindingResolver.NO_SELECTION,4096,occurrenceContext.callFrame(),Map.of());
 					boolean[] unresolvedShape={false};
-					MemoBindingResolver.VisitResult activation=reachableContexts.visit(occurrence,base,active -> {
+					MemoBindingResolver.VisitResult activation=reachableContexts.visitRuleContext(occurrence,occurrenceContext,active -> {
 						if(!visitShapeContexts(shapes,occurrence.id(),active,context -> {
-							Hop occurrenceHop=shapes.viewAt(occurrence.id(),context);
-							MemoNativeRules.Result nativeRules=nativeRequests.rules(occurrenceHop,
-								Math.max(1,sources.workers()),MemoShapes.hintForView(occurrenceHop));
+							MemoNativeRules.Result nativeRules=nativeRequests.rules(hop,shapes,occurrence.id(),context,
+								Math.max(1,sources.workers()));
 							intersection.intersect(nativeRules);
 							if(intersection.roles==null) intersection.roles=nativeRules.inputRoles();
 							else if(!intersection.roles.equals(nativeRules.inputRoles())) {
@@ -164,11 +179,11 @@ public final class MemoRuleBuilder {
 									+" inconsistent input roles across shape contexts");
 							}
 							complete[currentOwner] &= nativeRules.complete();
-							for(var diagnostic : nativeRules.coverageGaps()) diagnostics.add("owner="+currentOwner
+							for(var diagnostic : nativeRules.diagnostics())
+								if(diagnostic.kind()==MemoNativeRules.DiagnosticKind.COVERAGE_GAP) diagnostics.add("owner="+currentOwner
 								+" occurrence="+occurrence.id()+" hop="+hop.getHopID()+" op="
 								+hop.getOpString()+" "+diagnostic);
 						})) unresolvedShape[0]=true;
-						return true;
 					});
 					if(activation.status()==MemoBindingResolver.VisitStatus.UNRESOLVED || unresolvedShape[0]) {
 						complete[owner]=false;

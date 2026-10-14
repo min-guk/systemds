@@ -261,14 +261,15 @@ public class MemoNativeRulesTest {
 	}
 
 	@Test
-	public void irregularReorgIsEvaluatedPerOccurrenceUntilCanonicalOpSigIsPublic() {
+	public void excludedReshapeIsEvaluatedPerOccurrenceUntilCanonicalOpSigIsPublic() {
 		MemoNativeRules catalog = new MemoNativeRules();
 		for(int i = 0; i < 2; i++) {
-			ReorgOp transpose = new ReorgOp("t" + i, DataType.MATRIX, ValueType.FP64,
-				ReOrgOp.TRANS, matrix("X" + i, 8, 4));
-			transpose.setDim1(4);
-			transpose.setDim2(8);
-			catalog.rules(transpose, 2, shape(4, 8, 8, 4, -1, -1));
+			ReorgOp reshape = new ReorgOp("reshape" + i, DataType.MATRIX, ValueType.FP64,
+				ReOrgOp.RESHAPE, List.of(matrix("X" + i, 8, 4), lit(4), lit(8), lit(-1),
+					new LiteralOp(true)));
+			reshape.setDim1(4);
+			reshape.setDim2(8);
+			catalog.rules(reshape, 2, shape(4, 8, 8, 4, -1, -1));
 		}
 		Assert.assertEquals(new MemoNativeRules.CacheStats(0, 2, 0), catalog.cacheStats());
 	}

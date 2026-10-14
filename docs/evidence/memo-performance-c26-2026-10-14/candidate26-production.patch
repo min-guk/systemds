@@ -1,0 +1,192 @@
+--- src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.java
++++ src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.java
+@@ -1111,8 +1111,8 @@
+ 		Activation(Map<GuardDecision,Boolean> guards,double weight) { this(guards,Map.of(),weight); }
+ 		Activation { guards = Map.copyOf(guards); phases=Map.copyOf(phases); }
+ 	}
+-	private record MovementActivation(MemoBindingResolver.OriginIdentity identity,MemoPartition target,
+-		long unitCostBits) {
++	// Each movementGroupCost event map contains only its group's already-validated origin identity.
++	private record MovementActivation(MemoPartition target,long unitCostBits) {
+ 		double unitCost() { return Double.longBitsToDouble(unitCostBits); }
+ 	}
+ 	/** Exact union under {@link Profile}'s correlated-per-GuardDecision estimator, not runtime reachability. */
+@@ -1318,7 +1318,7 @@
+ 							unretainedCost[0] += unit*weight;
+ 							return;
+ 						}
+-						MovementActivation key=new MovementActivation(identity,target,Double.doubleToLongBits(unit));
++						MovementActivation key=new MovementActivation(target,Double.doubleToLongBits(unit));
+ 						events.computeIfAbsent(key,ignored -> new ArrayList<>()).add(new Activation(
+ 							activeGuards(refined),definitionPhases(identity,refined),weight));
+ 					});
+@@ -1363,7 +1363,7 @@
+ 		if(row.costRows!=null) {
+ 			movementPostGateHits++;
+ 			for(MovementPrimitive primitive:row.costRows)
+-				applyMovementPrimitive(group,identity,use,position,context,primitive,from,target,events,unretainedCost);
++				applyMovementPrimitive(group,use,position,context,primitive,from,target,events,unretainedCost);
+ 			return;
+ 		}
+ 		List<MovementPrimitive> built=new ArrayList<>();
+@@ -1385,7 +1385,7 @@
+ 				completed.units.put(new UnitKey(from,target),Double.doubleToLongBits(unit));
+ 				primitive=completed;
+ 			}
+-			accumulateMovementPrimitive(group,identity,primitive,target,unit,events,unretainedCost);
++			accumulateMovementPrimitive(group,primitive,target,unit,events,unretainedCost);
+ 			built.add(primitive);
+ 		});
+ 		movementPostGateBuilds++;
+@@ -1395,18 +1395,16 @@
+ 			cachedMovementPrimitives+=built.size();
+ 		}
+ 	}
+-	private void applyMovementPrimitive(MovementGroup group,MemoBindingResolver.OriginIdentity identity,
+-		Use use,int position,Context context,MovementPrimitive primitive,MemoPartition from,MemoPartition target,
++	private void applyMovementPrimitive(MovementGroup group,Use use,int position,Context context,MovementPrimitive primitive,MemoPartition from,MemoPartition target,
+ 		Map<MovementActivation,List<Activation>> events,double[] unretainedCost) {
+ 		double unit=movementUnit(use,position,context,primitive,from,target);
+-		accumulateMovementPrimitive(group,identity,primitive,target,unit,events,unretainedCost);
+-	}
+-	private void accumulateMovementPrimitive(MovementGroup group,MemoBindingResolver.OriginIdentity identity,
+-		MovementPrimitive primitive,MemoPartition target,double unit,
++		accumulateMovementPrimitive(group,primitive,target,unit,events,unretainedCost);
++	}
++	private void accumulateMovementPrimitive(MovementGroup group,MovementPrimitive primitive,MemoPartition target,double unit,
+ 		Map<MovementActivation,List<Activation>> events,double[] unretainedCost) {
+ 		if(group.identity()==null) unretainedCost[0]+=unit*primitive.weight;
+ 		else {
+-			MovementActivation key=new MovementActivation(identity,target,Double.doubleToLongBits(unit));
++			MovementActivation key=new MovementActivation(target,Double.doubleToLongBits(unit));
+ 			events.computeIfAbsent(key,ignored -> new ArrayList<>()).add(primitive.activation);
+ 		}
+ 	}
+--- src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java
++++ src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java
+@@ -1693,9 +1693,19 @@
+ 			branchEdgesRemovedDuringNormalization);
+ 	}
+ 	private static int[] uniqueScope(int[] owners) {
+-		int[] copy = owners.clone();
+-		if(Arrays.stream(copy).distinct().count() != copy.length)
+-			throw new IllegalArgumentException("A shared owner appears once in a condition scope");
++		int[] copy=owners.clone();
++		if(copy.length<=1) return copy;
++		if(copy.length==2) {
++			if(copy[0]==copy[1])
++				throw new IllegalArgumentException("A shared owner appears once in a condition scope");
++			return copy;
++		}
++		// Sort a validation copy so the returned scope retains caller order.
++		int[] sorted=copy.clone();
++		Arrays.sort(sorted);
++		for(int position=1;position<sorted.length;position++)
++			if(sorted[position-1]==sorted[position])
++				throw new IllegalArgumentException("A shared owner appears once in a condition scope");
+ 		return copy;
+ 	}
+ 	private static int[][] validateCostClasses(int[] owners,int[][] costClasses) {
+--- /dev/null
++++ src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerScopeValidationTest.java
+@@ -0,0 +1,100 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *   http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.sysds.hops.fedplanner.memo;
++
++import java.util.Arrays;
++
++import org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.Check;
++import org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.CostTerm;
++import org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.Truth;
++import org.junit.Assert;
++import org.junit.Test;
++
++public class MemoOptimizerScopeValidationTest {
++	private static final String DUPLICATE="A shared owner appears once in a condition scope";
++
++	@Test public void preservesAllIntegerValuesOrderAndDefensiveCopies() {
++		int[] input={Integer.MAX_VALUE,-1,0,Integer.MIN_VALUE,7};
++		Check check=new Check(3,input,values -> Truth.YES);
++		input[0]=42;
++		Assert.assertArrayEquals(new int[] {Integer.MAX_VALUE,-1,0,Integer.MIN_VALUE,7},check.owners());
++		int[] exported=check.owners();
++		exported[1]=42;
++		Assert.assertArrayEquals(new int[] {Integer.MAX_VALUE,-1,0,Integer.MIN_VALUE,7},check.owners());
++
++		int[] costInput={7,Integer.MIN_VALUE,0,-1,Integer.MAX_VALUE};
++		CostTerm term=new CostTerm(costInput,values -> 0,0);
++		costInput[0]=42;
++		Assert.assertArrayEquals(new int[] {7,Integer.MIN_VALUE,0,-1,Integer.MAX_VALUE},term.owners());
++	}
++
++	@Test public void preservesNullAndDuplicateValidationPrecedence() {
++		Assert.assertThrows(NullPointerException.class,() -> new Check(0,null,null));
++		Assert.assertThrows(NullPointerException.class,() -> new CostTerm(null,null,0));
++		assertDuplicate(() -> new Check(0,new int[] {4,1,4},null));
++		assertDuplicate(() -> new Check(0,new int[] {4,1,4},values -> Truth.YES,new int[0][]));
++		assertDuplicate(() -> new CostTerm(new int[] {4,1,4},null,Double.NaN));
++		assertDuplicate(() -> new CostTerm(new int[] {4,1,4},values -> 0,0,new int[0][]));
++	}
++
++	@Test public void literalLegacyAndPrimitiveValidationAgreeAcrossRepresentativeWidths() {
++		int[][] inputs={
++			null, {}, {9}, {9,-1}, {2,0,1}, {Integer.MIN_VALUE,0,Integer.MAX_VALUE,-1},
++			sequence(32), sequence(128), {1,1}, {3,1,3}, {0,1,2,0},
++			{Integer.MIN_VALUE,0,Integer.MIN_VALUE}, {Integer.MAX_VALUE,-1,Integer.MAX_VALUE}
++		};
++		for(int[] input:inputs) {
++			Outcome legacy=legacy(input);
++			Outcome primitive=primitive(input);
++			Assert.assertEquals(Arrays.toString(input),legacy.error(),primitive.error());
++			if(legacy.error()==null) Assert.assertArrayEquals(Arrays.toString(input),legacy.scope(),primitive.scope());
++		}
++	}
++
++	private static Outcome legacy(int[] owners) {
++		try {
++			int[] copy=owners.clone();
++			if(Arrays.stream(copy).distinct().count()!=copy.length)
++				throw new IllegalArgumentException(DUPLICATE);
++			return new Outcome(copy,null);
++		}
++		catch(RuntimeException exception) { return new Outcome(null,signature(exception)); }
++	}
++
++	private static Outcome primitive(int[] owners) {
++		try { return new Outcome(new Check(0,owners,values -> Truth.YES).owners(),null); }
++		catch(RuntimeException exception) { return new Outcome(null,signature(exception)); }
++	}
++
++	private static int[] sequence(int length) {
++		int[] result=new int[length];
++		for(int index=0;index<length;index++) result[index]=length-index;
++		return result;
++	}
++
++	private static String signature(RuntimeException exception) {
++		return exception.getClass().getName()+":"+exception.getMessage();
++	}
++
++	private static void assertDuplicate(Runnable action) {
++		IllegalArgumentException exception=Assert.assertThrows(IllegalArgumentException.class,action::run);
++		Assert.assertEquals(DUPLICATE,exception.getMessage());
++	}
++
++	private record Outcome(int[] scope,String error) { }
++}

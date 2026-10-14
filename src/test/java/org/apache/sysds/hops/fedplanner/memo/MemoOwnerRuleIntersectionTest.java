@@ -128,6 +128,13 @@ public class MemoOwnerRuleIntersectionTest {
 		MemoRuleBuilder.RequestStatistics requests = result.requests();
 		Assert.assertTrue(requests.reusedResults() > 0);
 		Assert.assertEquals(requests.preparedRequests(), requests.reusedResults() + requests.oracleRequests());
+		Assert.assertEquals("a contextual view is built only for a build-local result miss",
+			requests.oracleRequests(),requests.contextualViewBuilds());
+		Assert.assertTrue("the repeated contexts must avoid contextual view materialization",
+			requests.contextualViewBuilds()<requests.preparedRequests());
+		System.out.println("[NativeDescriptorProbe] prepared="+requests.preparedRequests()
+			+" reused="+requests.reusedResults()+" oracle="+requests.oracleRequests()
+			+" contextualViews="+requests.contextualViewBuilds());
 		Assert.assertEquals(requests.oracleRequests(), oracle.cacheStats().misses());
 		Assert.assertEquals(0, oracle.cacheStats().hits());
 		Assert.assertTrue("canonical strings are reused too", requests.canonicalStringsReused() > 0);
