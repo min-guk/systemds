@@ -19,6 +19,7 @@
 package org.apache.sysds.hops.fedplanner.memo;
 
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -81,6 +82,35 @@ public class MemoControlFlowParityTest {
 			allSupplies(solution).stream().anyMatch(supply -> supply.recipes().stream()
 				.anyMatch(recipe -> recipe.sourcePartition() == MemoPartition.LOCAL
 					&& recipe.movement() == MemoSupplyRegistry.Movement.UPLOAD)));
+	}
+
+	@Test
+	public void sharedPhysicalInputUnionsAllOccurrenceRecipes() throws Exception {
+		Hop localOne=matrix("local-one",8,4);
+		Hop localTwo=matrix("local-two",8,4);
+		DataOp federated=new DataOp("fed",DataType.MATRIX,ValueType.FP64,
+			OpOpData.FEDERATED,"fed",-1,-1,-1,1000);
+		DataOp read=new DataOp("V",DataType.MATRIX,ValueType.FP64,
+			OpOpData.TRANSIENTREAD,"V",-1,-1,-1,1000);
+		UnaryOp shared=new UnaryOp("shared",DataType.MATRIX,ValueType.FP64,OpOp1.ABS,read);
+		StatementBlock block=new StatementBlock();
+		block.setHops(new ArrayList<>(List.of(write("V",localOne),write("out-one",shared),
+			write("V",localTwo),write("out-two",shared),write("V",federated),write("out-fed",shared))));
+		DMLProgram program=new DMLProgram(); program.setStatementBlocks(new ArrayList<>(List.of(block)));
+		MemoProgramFacts facts=MemoProgramFacts.analyze(program);
+		MemoSources sources=MemoSources.acquire(facts,null,
+			data -> sourceMetadata(Privacy.PRIVATE_AGGREGATE,data.getName(),8,4));
+		MemoRuleBuilder.Result rules=MemoRuleBuilder.build(facts,sources,new MemoNativeRules());
+		MemoProgramModel model=new MemoProgramModel(facts,sources,rules,MemoProgramModel.Profile.defaults());
+		MemoProgramModel.Solution solution=optimize(model);
+
+		List<MemoSupplyRegistry.Supply> guarded=allSupplies(solution).stream()
+			.filter(supply -> supply.consumerHopId()==shared.getHopID() && supply.inputPosition()==0).toList();
+		Assert.assertEquals("one shared physical input must have one supply",1,guarded.size());
+		Assert.assertEquals("the supply must retain both direct and moved occurrence layouts",
+			Set.of(MemoPartition.LOCAL,MemoPartition.ROW),guarded.get(0).recipes().stream()
+				.map(MemoSupplyRegistry.Recipe::sourcePartition).collect(java.util.stream.Collectors.toSet()));
+		model.supplySchedule(23,solution);
 	}
 
 	@Test
@@ -206,6 +236,16 @@ public class MemoControlFlowParityTest {
 			}
 		}
 		throw new AssertionError("Missing parsed definition for federated fixture " + variable);
+	}
+
+	private static DataOp write(String name,Hop input) {
+		return new DataOp(name,DataType.MATRIX,ValueType.FP64,input,OpOpData.TRANSIENTWRITE,name);
+	}
+
+	private static Hop matrix(String name,int rows,int columns) {
+		DataOp dimensions=new DataOp(name,DataType.MATRIX,ValueType.FP64,
+			OpOpData.PERSISTENTREAD,"unused-"+name,rows,columns,(long) rows*columns,1000);
+		return HopRewriteUtils.createDataGenOp(dimensions,-1);
 	}
 
 	private static FederatedSourceMetadata sourceMetadata(Privacy privacy,String variable,long rows,long columns) {

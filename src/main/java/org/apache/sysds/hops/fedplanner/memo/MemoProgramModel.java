@@ -1591,7 +1591,8 @@ public final class MemoProgramModel {
 	}
 
 	private Map<Long,List<MemoSupplyRegistry.Supply>> reconstructSupplies(int[] selected) {
-		Map<Long,List<MemoSupplyRegistry.Supply>> byBlock = new LinkedHashMap<>();
+		Map<SupplyEdge,MemoPartition> targets = new LinkedHashMap<>();
+		Map<SupplyEdge,Map<MemoPartition,MemoSupplyRegistry.Recipe>> recipesByEdge = new LinkedHashMap<>();
 		for(int useIndex=0;useIndex<uses.size();useIndex++) {
 			Use use=uses.get(useIndex);
 			if(compatible(use,useIndex,selected) != Truth.YES) throw new IllegalStateException("Selected use lost legality");
@@ -1609,14 +1610,38 @@ public final class MemoProgramModel {
 				}
 				MemoPartition target = rule.inputs().get(position);
 				if(layouts.isEmpty()) continue; // the consumer follows an always-throwing function call
-				if(layouts.size() == 1 && layouts.contains(target)) continue;
-				List<MemoSupplyRegistry.Recipe> recipes = new ArrayList<>();
-				for(MemoPartition source : layouts) recipes.add(new MemoSupplyRegistry.Recipe(source,
-					MemoSupplyRegistry.Movement.valueOf(MemoMovement.kind(source,target,false).name()),
-					source.federated() || target.federated() ? sources.pool().encode() : null));
-				byBlock.computeIfAbsent(use.consumer().statementBlockId(),ignored -> new ArrayList<>()).add(
-					new MemoSupplyRegistry.Supply(input.getHopID(),use.consumer().hop().getHopID(),position,target,recipes));
+				SupplyEdge edge=new SupplyEdge(use.consumer().statementBlockId(),input.getHopID(),
+					use.consumer().hop().getHopID(),position);
+				MemoPartition priorTarget=targets.putIfAbsent(edge,target);
+				if(priorTarget!=null && priorTarget!=target)
+					throw new IllegalStateException("Selected physical supply has conflicting targets at "+edge
+						+": "+priorTarget+" and "+target);
+				Map<MemoPartition,MemoSupplyRegistry.Recipe> recipes=recipesByEdge.computeIfAbsent(edge,
+					ignored -> new LinkedHashMap<>());
+				for(MemoPartition source : layouts) {
+					MemoMovement.Kind movement=MemoMovement.kind(source,target,false);
+					if(movement==MemoMovement.Kind.IMPOSSIBLE)
+						throw new IllegalStateException("Selected physical supply became impossible at "+edge
+							+": "+source+" -> "+target);
+					MemoSupplyRegistry.Recipe recipe=new MemoSupplyRegistry.Recipe(source,
+						MemoSupplyRegistry.Movement.valueOf(movement.name()),
+						source.federated() || target.federated() ? sources.pool().encode() : null);
+					MemoSupplyRegistry.Recipe prior=recipes.putIfAbsent(source,recipe);
+					if(prior!=null && !prior.equals(recipe))
+						throw new IllegalStateException("Selected physical supply has conflicting recipes at "+edge
+							+" for "+source+": "+prior+" and "+recipe);
+				}
 			}
+		}
+		Map<Long,List<MemoSupplyRegistry.Supply>> byBlock = new LinkedHashMap<>();
+		for(var entry : recipesByEdge.entrySet()) {
+			SupplyEdge edge=entry.getKey(); MemoPartition target=targets.get(edge);
+			Map<MemoPartition,MemoSupplyRegistry.Recipe> recipes=entry.getValue();
+			// Omit a DIRECT-only edge only after every occurrence has contributed its exact source layout.
+			if(recipes.size()==1 && recipes.containsKey(target)) continue;
+			byBlock.computeIfAbsent(edge.statementBlockId(),ignored -> new ArrayList<>()).add(
+				new MemoSupplyRegistry.Supply(edge.producerHopId(),edge.consumerHopId(),edge.inputPosition(),
+					target,List.copyOf(recipes.values())));
 		}
 		byBlock.replaceAll((block,supplies) -> List.copyOf(supplies));
 		return byBlock;
