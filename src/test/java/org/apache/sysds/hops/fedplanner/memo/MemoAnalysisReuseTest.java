@@ -83,7 +83,7 @@ public class MemoAnalysisReuseTest {
 		MemoSources otherSources=MemoSources.acquire(fixture.facts(),null);
 		var original=fixture.universe();
 		var mixed=new MemoRuleBuilder.Result(original.memo(),original.inputRoles(),original.diagnostics(),
-			MemoShapes.analyze(fixture.facts(),otherSources),original.privacy());
+			MemoShapes.analyze(fixture.facts(),otherSources),original.privacy(),original.requests());
 		Assert.assertThrows(IllegalArgumentException.class,() -> new MemoProgramModel(fixture.facts(),
 			fixture.sources(),mixed,MemoProgramModel.Profile.defaults()));
 	}

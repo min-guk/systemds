@@ -1,0 +1,1 @@
+bash docs/evidence/logreg-main-publication-2026-10-14/monitor-java-coordinator.sh logreg-main-publication-01 docs/evidence/logreg-main-publication-2026-10-14/proc.tsv > docs/evidence/logreg-main-publication-2026-10-14/proc-monitor.log 2>&1 &

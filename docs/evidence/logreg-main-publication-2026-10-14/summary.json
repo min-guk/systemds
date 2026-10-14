@@ -1,0 +1,296 @@
+{
+  "schema": "logreg-under10-candidate-summary-v1",
+  "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-main-publication-20261014/logreg-main-publication-01",
+  "status": "PASSED",
+  "phaseSeconds": {
+    "facts": 0.050420651,
+    "model": 1.034926104,
+    "optimization": 3.604053576,
+    "projection": 0.052388668,
+    "rules": 3.028236474
+  },
+  "planningSeconds": 7.770025473,
+  "compilationSeconds": 9.103289,
+  "executionSeconds": 2.73,
+  "solution": {
+    "status": "OPTIMAL",
+    "objective": "1301.1526531142989790221751587629165844428591469750244868919253349304199218750",
+    "nodes": 625916,
+    "nativeRules": 920,
+    "supplies": 1,
+    "workers": 3,
+    "fedFingerprint": {
+      "COLS": 2.0,
+      "NORM2": 0.182219652643822,
+      "ROWS": 8.0,
+      "SUM": -0.8322576710419771
+    },
+    "maxAbsDifference": 1.6653345369377348e-16
+  },
+  "oracle": {
+    "hits": 0,
+    "misses": 1057
+  },
+  "search": {
+    "boundPrunes": 46033,
+    "checkCacheHits": 2337239,
+    "checkEvaluations": 60167,
+    "conditionalBoundCacheHits": 205703,
+    "conditionalBoundQueries": 207924,
+    "costCacheHits": 2278731,
+    "costEvaluations": 5103,
+    "nodes": 625916,
+    "removedRules": 632691,
+    "status": "OPTIMAL",
+    "supportCacheHits": 1924092,
+    "supportQueries": 68648,
+    "wideBoundRelaxations": 844,
+    "worklistVisits": 409814
+  },
+  "construction": {
+    "costProjection": [
+      {
+        "activationEnvironments": 2770,
+        "bindingDagVisits": 339816,
+        "invariantProjectionStops": 149854,
+        "noRegionsSkipped": 19892,
+        "primitiveValueBytes": 529056,
+        "primitiveValues": 66132,
+        "primitiveVectors": 6422,
+        "projectedContexts": 6422,
+        "projectionCacheHits": 39748,
+        "relevantGuardDecisions": 6598,
+        "supportPrefixChecks": 15966,
+        "unknownObligations": 0
+      }
+    ],
+    "nativeGeneration": [
+      {
+        "coverageObligations": 38,
+        "cpPatterns": 1057,
+        "determinantRegions": 12457,
+        "evidenceReuses": 0,
+        "oracleEvaluations": 12457,
+        "prefixRequests": 0,
+        "prunedPrefixes": 4663,
+        "publishedRules": 5981,
+        "unknownPrefixes": 0,
+        "visitedNativePatterns": 7794
+      }
+    ],
+    "nativeRequests": [
+      {
+        "canonicalStringsCreated": 77,
+        "canonicalStringsReused": 7823,
+        "oracleRequests": 1057,
+        "preparedRequests": 8880,
+        "reusedResults": 7823,
+        "uncacheableRequests": 980
+      }
+    ]
+  },
+  "movementReuse": {
+    "activationRows": 2960,
+    "activationReplays": 150427,
+    "postGateRequests": 193705,
+    "postGateBuilds": 2589,
+    "postGateHits": 191116,
+    "primitiveContexts": 10709,
+    "contextualViewBuilds": 35725
+  },
+  "shapeReuse": {
+    "bindingGuardRequests": 19399,
+    "bindingGuardCacheHits": 5346,
+    "repeatProofRequests": 54842,
+    "repeatProofCacheHits": 53634
+  },
+  "actionDiagnostics": [
+    "Federated prefetch count:\t0.",
+    "plannerSyntheticActionKey=\"memo-definition|sb=16|producer=1150|origin=32\"",
+    "plannerSyntheticActionKey=\"memo-supply|sb=152|producer=202|target=LOCAL|recipes=ROW@COLLECT@POOLv1:bG9jYWxob3N0.13000,bG9jYWxob3N0.13001,bG9jYWxob3N0.13002|origins=0:32\"",
+    "plannerSyntheticActionKey=memo-definition|sb=16|producer=1150|origin=32",
+    "plannerSyntheticActionKey=memo-supply|sb=152|producer=202|target=LOCAL|recipes=ROW@COLLECT@POOLv1:bG9jYWxob3N0.13000,bG9jYWxob3N0.13001,bG9jYWxob3N0.13002|origins=0:32"
+  ],
+  "runtimeAudit": {
+    "rows": 33,
+    "schemas": [
+      "fed-runtime-capability-v1",
+      "fed-runtime-conversion-frontier-v1"
+    ],
+    "violations": []
+  },
+  "jfr": {
+    "artifact": {
+      "exists": true,
+      "parserError": null,
+      "parserPassed": true,
+      "parserReturncode": 0,
+      "path": "cases/ml_logreg/fed.jfr",
+      "sha256": "a3fc5378c53109d88fd0fef53f6b339eabb4a4e132ed21fa6f52f45de53637be",
+      "size": 3676933
+    },
+    "dataLossEvents": 0,
+    "optimizerExecutionSamples": 155,
+    "optimizerAllocationWeightBytes": 4646890064,
+    "gc": {
+      "collectionCount": 37,
+      "totalCollectionDurationSeconds": 0.390414629,
+      "stopTheWorldPauseSeconds": 0.328309613,
+      "maxPauseSeconds": 0.017695862,
+      "maxSampledHeapBytes": 537746944,
+      "maxAfterGcHeapBytes": 94199296,
+      "causes": {
+        "G1 Evacuation Pause": 34,
+        "Metadata GC Threshold": 2,
+        "G1 Preventive Collection": 1
+      }
+    },
+    "exclusiveNearestMemoBuckets": {
+      "shape-key-guard-cost": {
+        "samples": 43,
+        "percent": 27.741935483870968
+      },
+      "optimizer-other": {
+        "samples": 32,
+        "percent": 20.64516129032258
+      },
+      "model-cost-other": {
+        "samples": 24,
+        "percent": 15.483870967741936
+      },
+      "reduced-search-control": {
+        "samples": 19,
+        "percent": 12.258064516129032
+      },
+      "search-cache-key-domain": {
+        "samples": 16,
+        "percent": 10.32258064516129
+      },
+      "solver-other": {
+        "samples": 13,
+        "percent": 8.387096774193548
+      },
+      "solver-propagate": {
+        "samples": 6,
+        "percent": 3.870967741935484
+      },
+      "solver-support": {
+        "samples": 1,
+        "percent": 0.6451612903225806
+      },
+      "binding-context-resolution": {
+        "samples": 1,
+        "percent": 0.6451612903225806
+      }
+    },
+    "trackedInclusiveMethods": {
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.support": {
+        "inclusiveSamples": 34,
+        "percentOfOptimizerSamples": 21.93548387096774
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.supportDfs": {
+        "inclusiveSamples": 26,
+        "percentOfOptimizerSamples": 16.774193548387096
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.propagate": {
+        "inclusiveSamples": 40,
+        "percentOfOptimizerSamples": 25.806451612903224
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.computeConditionalCostBound": {
+        "inclusiveSamples": 45,
+        "percentOfOptimizerSamples": 29.032258064516128
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.currentTermBound": {
+        "inclusiveSamples": 45,
+        "percentOfOptimizerSamples": 29.032258064516128
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.refreshTermBound": {
+        "inclusiveSamples": 45,
+        "percentOfOptimizerSamples": 29.032258064516128
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.coreLowerBound": {
+        "inclusiveSamples": 45,
+        "percentOfOptimizerSamples": 29.032258064516128
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cached": {
+        "inclusiveSamples": 8,
+        "percentOfOptimizerSamples": 5.161290322580645
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cachedDomains": {
+        "inclusiveSamples": 8,
+        "percentOfOptimizerSamples": 5.161290322580645
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.tupleHash": {
+        "inclusiveSamples": 1,
+        "percentOfOptimizerSamples": 0.6451612903225806
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.scopedDomainHash": {
+        "inclusiveSamples": 4,
+        "percentOfOptimizerSamples": 2.5806451612903225
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ScopedDomainIdentity.sameDomains": {
+        "inclusiveSamples": 1,
+        "percentOfOptimizerSamples": 0.6451612903225806
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.stamp": {
+        "inclusiveSamples": 0,
+        "percentOfOptimizerSamples": 0.0
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementGroupCost": {
+        "inclusiveSamples": 71,
+        "percentOfOptimizerSamples": 45.806451612903224
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.visitBindingCostContexts": {
+        "inclusiveSamples": 27,
+        "percentOfOptimizerSamples": 17.419354838709676
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.visitJoint": {
+        "inclusiveSamples": 13,
+        "percentOfOptimizerSamples": 8.387096774193548
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.enumerate": {
+        "inclusiveSamples": 13,
+        "percentOfOptimizerSamples": 8.387096774193548
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes.resolvedBindingShape": {
+        "inclusiveSamples": 32,
+        "percentOfOptimizerSamples": 20.64516129032258
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes.cloneView": {
+        "inclusiveSamples": 4,
+        "percentOfOptimizerSamples": 2.5806451612903225
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectGuards": {
+        "inclusiveSamples": 0,
+        "percentOfOptimizerSamples": 0.0
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectLoops": {
+        "inclusiveSamples": 0,
+        "percentOfOptimizerSamples": 0.0
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectCardinalities": {
+        "inclusiveSamples": 0,
+        "percentOfOptimizerSamples": 0.0
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.canonicalGuard": {
+        "inclusiveSamples": 5,
+        "percentOfOptimizerSamples": 3.225806451612903
+      }
+    }
+  },
+  "processMonitor": {
+    "sampleCount": 10,
+    "firstEpochMs": 1791946621754,
+    "lastEpochMs": 1791946635558,
+    "observedSeconds": 13.804,
+    "hostPid": 3140269,
+    "singlePid": true,
+    "clockTicksPerSecond": 100,
+    "cpuTicksDelta": 3307,
+    "cpuSeconds": 33.07,
+    "cpuScope": "whole coordinator JVM during monitored interval, not optimizer-only",
+    "maxVmRssKiB": 1115208,
+    "maxVmHwmKiB": 1115208,
+    "lastVmHwmKiB": 1115208
+  }
+}

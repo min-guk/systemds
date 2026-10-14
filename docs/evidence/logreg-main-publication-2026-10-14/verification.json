@@ -1,0 +1,30 @@
+{
+  "schema": "logreg-main-publication-verification-v1",
+  "passed": true,
+  "workloadRuns": 1,
+  "integration": {
+    "baseMain": "f9faf7b97ae1a3dcc39a6178258b373f4fd272d2",
+    "buildSeconds": 25.059,
+    "regressionClasses": 55,
+    "regressionTests": 474,
+    "regressionSeconds": 120.506,
+    "harnessTests": 45,
+    "independentReview": "independent-review.md",
+    "sourcesMatchFrozen": true
+  },
+  "measurement": {
+    "allPublicationGatesPassed": true,
+    "planningSeconds": 7.770025473,
+    "planningUnder10Seconds": true,
+    "optimizerStatus": "OPTIMAL",
+    "forestTailPassed": true,
+    "jfrDataLossEvents": 0,
+    "frozenEngineFiles": 12527,
+    "frozenEngineAndRunInputsVerified": true,
+    "containersTerminatedAndRemoved": true
+  },
+  "limitations": [
+    "one final integrated JFR run",
+    "performance and resource values are single-run observations"
+  ]
+}

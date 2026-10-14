@@ -1,0 +1,15 @@
+{
+  "sampleCount": 10,
+  "firstEpochMs": 1791946621754,
+  "lastEpochMs": 1791946635558,
+  "observedSeconds": 13.804,
+  "hostPid": 3140269,
+  "singlePid": true,
+  "clockTicksPerSecond": 100,
+  "cpuTicksDelta": 3307,
+  "cpuSeconds": 33.07,
+  "cpuScope": "whole coordinator JVM during monitored interval, not optimizer-only",
+  "maxVmRssKiB": 1115208,
+  "maxVmHwmKiB": 1115208,
+  "lastVmHwmKiB": 1115208
+}

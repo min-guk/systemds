@@ -1,5 +1,13 @@
 # LogReg planning 10초 목표: 구현 및 검증 완료
 
+## origin/main 통합 검증
+
+게시 대상인 최신 main 통합본도 동일 Docker/JFR 단일1회에서 **전체 planning7.770025473초, optimizer3.604053576초**로10초 목표를 충족했다. Compilation9.103289초는 planning을 포함하며, 별도 training execution은2.730초다. 아래 Candidate01~03 표는 독립 개발 workspace의 측정 이력이다. 통합본은 main의 후속 privacy 및 conditional-return shape 수정을 추가로 보존하므로 Candidate03과 구분한다.
+
+통합 후55개 클래스/474개 테스트와 Python harness45개가 통과했다. Exact objective·CSV bytes·fingerprint·action diagnostics·runtime audit·Oracle/native universe는 초기 기준과Candidate03 양쪽 모두 동일하며18개 gate를 통과했다. Nodes625,916과 forest3,310completions/570,702cells도 동일하다. 근거는 [통합 평가](evidence/logreg-main-publication-2026-10-14/evaluation.json), [실행 명령](evidence/logreg-main-publication-2026-10-14/run-command.txt), [회귀·통합 기록](evidence/logreg-main-publication-2026-10-14/integration-verification.json)이다.
+
+통합본의 Rules3.028236474초/Model1.034926104초는Candidate03의1.593825668초/0.728995549초보다 길고, optimizer는4.237294143→3.604053576초다. Coordinator CPU33.07초/HWM1,115,208KiB로Candidate03의30.50초/721,656KiB보다 증가했다. 이1회 관측으로 증가의 인과를 확정하지 않는다. Main의 full return/guard context key와 공유 privacy를 유지했으며 정확성을 위해 해당 변경을 되돌리지 않았다.
+
 ## 결과
 
 **동일한 ML training runtime Docker workload의 전체 Memo planning을26.819446540초에서6.672535049초로 줄였다(75.12% 감소, 약4.02배). 10초 미만 목표를 달성했다.** Optimizer는23.714206977→4.237294143초(82.13% 감소)이며, 최종 측정은 후보별1회 중 Candidate03의 단일 JFR 관측이다. 학습 실행 시간 자체를6.67초로 보고한 것이 아니다.

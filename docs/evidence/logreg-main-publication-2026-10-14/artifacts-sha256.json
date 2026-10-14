@@ -1,0 +1,151 @@
+{
+  "schema": "logreg-main-publication-artifacts-v1",
+  "workloadRuns": 1,
+  "artifacts": [
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-main-publication-20261014/logreg-main-publication-01/result.json",
+      "size": 13049,
+      "sha256": "fd9987309b936255a30641f5c01135e4d895dcd515c684bca3988441857a1c7f"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-main-publication-20261014/logreg-main-publication-01/cases/ml_logreg/fed.log",
+      "size": 42932,
+      "sha256": "11fff9eb512f50d6a523baaa7c32026095223a319b17e3221729b8ea717adddc"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-main-publication-20261014/logreg-main-publication-01/cases/ml_logreg/fed-model.csv",
+      "size": 332,
+      "sha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-main-publication-20261014/logreg-main-publication-01/cases/ml_logreg/fed.jfr",
+      "size": 3676933,
+      "sha256": "a3fc5378c53109d88fd0fef53f6b339eabb4a4e132ed21fa6f52f45de53637be"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-main-publication-20261014/logreg-main-publication-01/audit/ml_logreg-fed/runtime-capability-204.jsonl",
+      "size": 25212,
+      "sha256": "5e3e1bd1b92aa77197ec41b96ddc668856946e066573cd6619dd845cb91e1584"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-main-publication-20261014/logreg-main-publication-01/audit/ml_logreg-fed/runtime-conversion-frontier-204.jsonl",
+      "size": 52477,
+      "sha256": "74e2106702df0966f856f3e2b3020f9ae74f495408ccba92a323efe8d9525fc0"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/run-command.txt",
+      "size": 939,
+      "sha256": "1bbe54de39fa0ab80645b4e5920bcf4602ea7b6d37e0a861be00d751bcf477cf"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/monitor-command.txt",
+      "size": 242,
+      "sha256": "895bc9e1d780ec23877ab8e0586dad99f82e52c25a3b389a39a0f7fa936a64c1"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/console.log",
+      "size": 190,
+      "sha256": "52e7c86296e0e5055b29cf1abe25777f169a1f8b12104c6067d31b3c0f0bd1ce"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/proc.tsv",
+      "size": 1340,
+      "sha256": "d8646629ad6b6bf0365e145580f4f4b220d13de51925f165ebe256386bb6ec6a"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/proc-summary.json",
+      "size": 403,
+      "sha256": "067d69ef8eb1b47f52a6942db8e925948780468d131a9f83aa4263273177ffed"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/events.jsonl",
+      "size": 20238079,
+      "sha256": "d82702880d870c642e9a22ae9387d47c2318b36e111ee1cd89bc1fba98fb0086"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/profile.json",
+      "size": 253219,
+      "sha256": "d1ae52cf86f116ddadd070985f1cf4c16c008f710f9d493a0a0789f60345bfb3"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/hotspots.json",
+      "size": 32118,
+      "sha256": "87fdaac00f65883a17ddd8bd226a7ac0a71d441223084ef84c5c9c2505a42728"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/summary.json",
+      "size": 9908,
+      "sha256": "830943b136d82b5ed11d72d479b0e341b14ece956e31307569151d494fdc85ac"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/freeze-verification.json",
+      "size": 923,
+      "sha256": "257bfe81443aa5ab371df3db0a2568ff40cdc4620bf551eb1033b2c3dab00676"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/forest-tail.json",
+      "size": 360,
+      "sha256": "edfa84fc8c264a9f1fdfb3aeaf76e62acbada6649869b5c18b24a54b6c7314f0"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/evaluation.json",
+      "size": 10428,
+      "sha256": "11d392def92edb89939c9acb5795d335254573d77184f6c33a9e740a120ce001"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/container-termination.json",
+      "size": 177,
+      "sha256": "ca8f54a29bac9229af348c046d02bc526315da6c7eb638a692b2d454227f65e4"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/report.md",
+      "size": 3915,
+      "sha256": "0b1fdbc57317e7b96d106806791281cc5b43c9de31e6a1e524d43bf2c00dc4b5"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/verification.json",
+      "size": 879,
+      "sha256": "7c33a2736beed87a2f5438211fa66d6c76ce6e26c46f5b51c1c4336249657a9c"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/measurement-contract.md",
+      "size": 1601,
+      "sha256": "5b13a1bea4dc8307dae2f5a1c0c85e190f30459cd52de654eb4dc462b7029b5c"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/preparation.json",
+      "size": 3604,
+      "sha256": "c8fc35bdcd67d5518b30481a1c8ec52a99bf9d47060005ff2b83c11c75f65692"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/integration-verification.json",
+      "size": 1650,
+      "sha256": "227a885dcb27af9ecd273a7c3cd116bef7991b13ffc464f3081aa673f5e9bb0c"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/compile.log",
+      "size": 10697,
+      "sha256": "5f4f43322a54ab1d1a9a7a9dfb28dc3fda8e5660fe5181acc74eeb5a0b3da949"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/unit.log",
+      "size": 13184,
+      "sha256": "3729003231823f75f0eb1baccafadb7a656c1d22a7de6a7e1b7b523aa31bfa14"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/harness.log",
+      "size": 144,
+      "sha256": "07e00491f3000ee98de3bc369d51e48b20242d23341c24c77e824d621845721e"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/independent-review.md",
+      "size": 3828,
+      "sha256": "40aa1666863f2d0c3007fb71531ad992e0b3d5d4cf7cc167ed8cd2acb27de388"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-main-publication-20261014/engine-sha256.json",
+      "size": 1970275,
+      "sha256": "b9a47232c4443082460c8d042599e5e11da3aa8b0f3f8fd782a3e14ab303328a"
+    }
+  ]
+}

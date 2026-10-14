@@ -1,0 +1,89 @@
+{
+  "schema": "logreg-main-publication-preparation-v1",
+  "workloadRunsStarted": 0,
+  "readyToExecute": false,
+  "awaiting": "explicit READY with integrated build/regression results, frozen engine and manifest",
+  "runId": "logreg-main-publication-01",
+  "engine": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-main-publication-20261014/engine",
+  "manifest": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-main-publication-20261014/engine-sha256.json",
+  "checks": {
+    "pythonCompilePassed": true,
+    "candidate03AsPublicationSelfCheckPassed": true,
+    "primarySemanticGatesPreserved": true,
+    "planningUnder10Gate": true,
+    "privacyAndShapeCountersEqualityGated": false,
+    "workloadContract": "LogReg only, one run, no retry"
+  },
+  "artifacts": [
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/run-command.txt",
+      "size": 939,
+      "sha256": "1bbe54de39fa0ab80645b4e5920bcf4602ea7b6d37e0a861be00d751bcf477cf"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/monitor-command.txt",
+      "size": 242,
+      "sha256": "895bc9e1d780ec23877ab8e0586dad99f82e52c25a3b389a39a0f7fa936a64c1"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/postprocess-command.txt",
+      "size": 4307,
+      "sha256": "7b4acf7262aebbd9e97daad37bf0f1f5cc512e2ad94a933159c5c0f08a59e2b6"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/measurement-contract.md",
+      "size": 1601,
+      "sha256": "5b13a1bea4dc8307dae2f5a1c0c85e190f30459cd52de654eb4dc462b7029b5c"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/evaluate_publication.py",
+      "size": 5950,
+      "sha256": "738627273e930b59db504174ce6db531feb601b220ce5cfd47d95f1f1efa8c9d"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/extract_forest_tail.py",
+      "size": 1533,
+      "sha256": "971589c76252420819833957475957b691b1485f81c495f2ad86421c4751595f"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/verify_frozen_engine.py",
+      "size": 2213,
+      "sha256": "dabab7911131633c39f1abbec94f747a37cbec543f5f7948ab377edee7db323d"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/collect_publication.py",
+      "size": 3820,
+      "sha256": "0c247320635883f37b5f9160224a5d4d256c70e9b32c403c072844fd1bdfe333"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/analyze_jfr.py",
+      "size": 5174,
+      "sha256": "374826d9300ecba2e40e5bd93aac29a9518591cc5ed925d799453b5efbcff82e"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/analyze_bottleneck.py",
+      "size": 6189,
+      "sha256": "6071a2ba86271701e1225be62183d6d5a5ed5ea52f6d8b151e1cc68ce79c156a"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/summarize_proc.py",
+      "size": 1523,
+      "sha256": "0ca8e90cd75cb6fed57ad3155239d7d435263862926ea7fda60cdf939b1e8167"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/monitor-java-coordinator.sh",
+      "size": 1491,
+      "sha256": "1f9fe1cbb5761b91bb36c6921a4bb26e891e8f595174cfd80d37ddffad9631cd"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/JfrExtract.java",
+      "size": 2835,
+      "sha256": "c814f46cba6642fc1c5dd6bee284b654f6d3afd50fe1d9ccde89507e2165fa30"
+    },
+    {
+      "path": "docs/evidence/logreg-main-publication-2026-10-14/JfrExtract.class",
+      "size": 5805,
+      "sha256": "bbda795af252a41f3688c07b62954aa3f27ad7cfa9b00856756e45ba4f6c63f4"
+    }
+  ]
+}

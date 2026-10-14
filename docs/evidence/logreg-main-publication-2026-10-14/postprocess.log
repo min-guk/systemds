@@ -1,0 +1,183 @@
+{
+  "sampleCount": 10,
+  "firstEpochMs": 1791946621754,
+  "lastEpochMs": 1791946635558,
+  "observedSeconds": 13.804,
+  "hostPid": 3140269,
+  "singlePid": true,
+  "clockTicksPerSecond": 100,
+  "cpuTicksDelta": 3307,
+  "cpuSeconds": 33.07,
+  "cpuScope": "whole coordinator JVM during monitored interval, not optimizer-only",
+  "maxVmRssKiB": 1115208,
+  "maxVmHwmKiB": 1115208,
+  "lastVmHwmKiB": 1115208
+}
+{
+  "status": "PASSED",
+  "planningSeconds": 7.770025473,
+  "phaseSeconds": {
+    "facts": 0.050420651,
+    "model": 1.034926104,
+    "optimization": 3.604053576,
+    "projection": 0.052388668,
+    "rules": 3.028236474
+  },
+  "oracle": {
+    "hits": 0,
+    "misses": 1057
+  },
+  "movementReuse": {
+    "activationRows": 2960,
+    "activationReplays": 150427,
+    "postGateRequests": 193705,
+    "postGateBuilds": 2589,
+    "postGateHits": 191116,
+    "primitiveContexts": 10709,
+    "contextualViewBuilds": 35725
+  },
+  "processMonitor": {
+    "sampleCount": 10,
+    "firstEpochMs": 1791946621754,
+    "lastEpochMs": 1791946635558,
+    "observedSeconds": 13.804,
+    "hostPid": 3140269,
+    "singlePid": true,
+    "clockTicksPerSecond": 100,
+    "cpuTicksDelta": 3307,
+    "cpuSeconds": 33.07,
+    "cpuScope": "whole coordinator JVM during monitored interval, not optimizer-only",
+    "maxVmRssKiB": 1115208,
+    "maxVmHwmKiB": 1115208,
+    "lastVmHwmKiB": 1115208
+  }
+}
+{
+  "schema": "logreg-under10-frozen-verification-v1",
+  "manifest": {
+    "expectedFiles": 12527,
+    "actualFiles": 12527,
+    "missing": [],
+    "extra": [],
+    "hashMismatches": [],
+    "passed": true
+  },
+  "runInputs": {
+    "mainClasses": {
+      "leftFiles": 4934,
+      "rightFiles": 4934,
+      "missing": [],
+      "extra": [],
+      "hashMismatches": [],
+      "passed": true
+    },
+    "testClasses": {
+      "leftFiles": 3371,
+      "rightFiles": 3371,
+      "missing": [],
+      "extra": [],
+      "hashMismatches": [],
+      "passed": true
+    },
+    "mainSources": {
+      "leftFiles": 1692,
+      "rightFiles": 1692,
+      "missing": [],
+      "extra": [],
+      "hashMismatches": [],
+      "passed": true
+    },
+    "testSources": {
+      "leftFiles": 2214,
+      "rightFiles": 2214,
+      "missing": [],
+      "extra": [],
+      "hashMismatches": [],
+      "passed": true
+    }
+  },
+  "passed": true
+}
+{
+  "schema": "memo-forest-tail-trace-v1",
+  "passed": true,
+  "gates": {
+    "exactlyOneTrace": true,
+    "exactFieldFormat": true,
+    "nonnegativeCounters": true,
+    "orderedCounts": true,
+    "featureExercised": true
+  },
+  "values": {
+    "attempts": 8716,
+    "applicable": 3310,
+    "completions": 3310,
+    "cells": 570702
+  },
+  "matchingLines": 1
+}
+{
+  "passed": true,
+  "gates": {
+    "runPassed": true,
+    "planningUnder10Seconds": true,
+    "optimizerOptimal": true,
+    "exactObjectiveEqualBothReferences": true,
+    "csvByteEqualBothReferences": true,
+    "fedFingerprintEqualBothReferences": true,
+    "actionDiagnosticsEqualBothReferences": true,
+    "runtimeAuditNormalizedEqualBothReferences": true,
+    "runtimeAuditClean": true,
+    "oracleTraceEqualBothReferences": true,
+    "nativeUniverseEqualBothReferences": true,
+    "nativeRequestsEqualBothReferences": true,
+    "workerCountEqual": true,
+    "nativeRulesEqual": true,
+    "supplyCountEqual": true,
+    "jfrParsedWithoutLoss": true,
+    "frozenEngineAndRunInputsVerified": true,
+    "forestTailTraceValidAndExercised": true
+  },
+  "planning": {
+    "primaryToPublication": {
+      "before": 26.81944654,
+      "after": 7.770025473,
+      "delta": -19.049421067,
+      "percent": -71.02838993559635
+    },
+    "candidate03ToPublication": {
+      "before": 6.672535049,
+      "after": 7.770025473,
+      "delta": 1.0974904239999992,
+      "percent": 16.447877994503422
+    }
+  },
+  "optimization": {
+    "primaryToPublication": {
+      "before": 23.714206977,
+      "after": 3.604053576,
+      "delta": -20.110153400999998,
+      "percent": -84.80213325499136
+    },
+    "candidate03ToPublication": {
+      "before": 4.237294143,
+      "after": 3.604053576,
+      "delta": -0.6332405669999996,
+      "percent": -14.944456193727119
+    }
+  },
+  "nodes": {
+    "primaryToPublication": {
+      "before": 2933891,
+      "after": 625916,
+      "delta": -2307975,
+      "percent": -78.66601042779027
+    },
+    "candidate03ToPublication": {
+      "before": 625916,
+      "after": 625916,
+      "delta": 0,
+      "percent": 0.0
+    }
+  }
+}

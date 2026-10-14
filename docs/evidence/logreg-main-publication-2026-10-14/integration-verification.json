@@ -1,0 +1,29 @@
+{
+  "baseMain": "f9faf7b97ae1a3dcc39a6178258b373f4fd272d2",
+  "implementationCommits": [
+    "ee9afe5337900b93a4d7bf24c8ca6aa257b12619 Record LogReg profiling, exact optimization, and single-run validation",
+    "23d6b877e72be996d194d805cc593a5f1ec9d015 Reduce exact Memo LogReg planning below ten seconds",
+    "c3cc9c754ab91c1fb8a619fe3fe9e76138c42f43 Deduplicate canonical native requests before Oracle entry",
+    "cbd627a12d518fce9e3c917714c932d5a531963b Simplify repeated owner rule checks without weakening context coverage",
+    "b39819dd409da6f7df051b658ad00e74bec2920e Implement oracle-guided cost projection with single-run validation"
+  ],
+  "buildPassed": true,
+  "buildSeconds": 25.059,
+  "regressionClasses": 55,
+  "regressionTests": 474,
+  "regressionSeconds": 120.506,
+  "harnessTests": 45,
+  "harnessPassed": true,
+  "independentReview": "independent-review.md",
+  "testIntegrationFix": "MemoAnalysisReuseTest retains original.requests() with shared privacy in Result constructor",
+  "sourcesMatchFrozen": true,
+  "javaSourceCounts": {
+    "src/main/java": 1683,
+    "src/test/java": 2212
+  },
+  "frozenEngineFiles": 12527,
+  "frozenManifestPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/logreg-main-publication-20261014/engine-sha256.json",
+  "frozenManifestSha256": "b9a47232c4443082460c8d042599e5e11da3aa8b0f3f8fd782a3e14ab303328a",
+  "sourceValidationScope": "new isolated publication worktree; no original working files changed",
+  "testRuntimeNote": "474 tests completed in120.506s; preserved main full return/guard context key. One thread sample indicates guard/frame comparisons but does not establish timing attribution."
+}

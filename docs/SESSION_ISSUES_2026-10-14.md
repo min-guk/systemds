@@ -172,3 +172,13 @@
 - **자원/병목 근거:** coordinatorCPU51.61→30.50초,HWM785,668→721,656KiB,optimizer할당weight30.120→4.857GB다. Conditionalbound11,135,047→207,924,worklist13,616,123→409,814로반복전파/하한작업이감소했다. Costeval4,828→5,103과costcachehit3,407→2,278,731은DPedge평가로증가했으며모든counter감소로과장하지않는다.
 - **검증/수정 파일:** production MemoOptimizer/MemoProgramModel/MemoShapes/FederatedPlanMemo, 테스트BoundaryBound/MovementReuse/DomainCache/ForestTail. Maven38.931초PASS,50classes440tests44.190초PASS(-ea-Xss8m),기존미변경harness45PASS,독립reviewAPPROVE,동결12,512files/Docker입력hash일치,JFRdataloss0. [최종보고서](FEDPLANNER_LOGREG_UNDER10_RESULT_2026-10-14_KO.md), `experiments/logreg-under10-20261014/candidate03-evaluation.json`과`candidate03-differential.json`에근거를남겼다.
 - **잔여 이슈/회귀 위험:** 각후보1회관측으로일반입력10초보장을주장하지않는다. GLM과stalegolden5개는미해결이다. Movementfailureinjection/IMPOSSIBLE-only/capacity전용fixture공백및기존deepstack민감성은보고서에명시했다. Factor scope/domainmutation변경시forest구조및reversiblecount를재검증하고,UNKNOWN/finitebudget/globallex/exactcost를기존회귀로검출한다. 의사결정은플래너내정확한계산재사용과조건부트리DP이며Oracle/privacy/runtimefallback규칙은변경하지않았다.
+
+
+## LogReg 최적화의 origin/main 통합 게시 (게시용 검증 완료)
+
+- **문제/범위:** 사용자가 검증한 변경의 commit/push를 요청했다. 독립 구현 workspace의 origin은 로컬 원본을 가리키므로, 원본 origin인 `git@github.com:min-guk/systemds.git`의 실제 main `f9faf7b97a`를 확인하고 별도 publication worktree에서 통합한다. 원본의 미커밋 GLM 작업은 변경하지 않는다.
+- **원인/통합:** 독립 snapshot과 main이 같은 Memo migration을 각각 추가한 이력이므로 snapshot 전체 merge 대신 기능 커밋만 cherry-pick했다. Main의 공유 privacy/resolver, request 소유권 검증, function-call index, conditional-return 전체 ShapeContextKey를 유지하면서 source projection·Oracle request dedup·exact optimizer를 결합한다.
+- **수정/검증:** Model/RuleBuilder/Shapes 충돌을 양쪽 의미를 보존해 해결했고 Facts index는 자동병합을 검토했다. Main 전용 MemoAnalysisReuseTest의 Result 생성자에 original.requests() 인자를 추가해 기존 assertion을 유지했다. 최초 compile 실패를 보존하고 최종 Maven25.059초PASS,55classes474tests120.506초PASS,Python harness45PASS,독립review 승인 및 source12527파일 frozen엔진 검증을 완료했다.
+- **위험/잔여:** full shape-context identity는 정확성을 위해 유지하며 unit suite 시간이 이전44초보다 길다. 단일 stack의 guard/frame lookup 관측만으로 원인을 확정하지 않는다. 통합본 Docker LogReg1회 검증은 아래 결과대로 완료했다. 게시에는 정상 fast-forward push를 사용한다. 근거는 `docs/evidence/logreg-main-publication-2026-10-14/`다.
+
+- **통합본 단일 Docker 검증:** LogReg1회 planning7.770025473초/optimizer3.604053576초로10초목표PASS다. Compilation9.103289초/별도training2.730초,625,916nodes,정확objective·CSVbytes·fingerprint·actions·runtimeaudit·Oracle/nativeuniverse가기준및Candidate03과동일하다. 18개gate및JFR/frozeninput검증PASS,엔진12,527files다. CoordinatorCPU33.07초/HWM1,115,208KiB로Candidate03보다증가한값을그대로기록한다. Rules3.028초/Model1.035초 증가의원인을단일관측만으로확정하지않는다. 강제push없이원격main의기존f9faf7b97a에서정상fast-forward로게시한다.
