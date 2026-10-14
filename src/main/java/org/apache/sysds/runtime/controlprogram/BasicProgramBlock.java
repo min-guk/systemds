@@ -81,6 +81,15 @@ public class BasicProgramBlock extends ProgramBlock
 	@Override
 	public void execute(ExecutionContext ec)
 	{
+		try(org.apache.sysds.runtime.controlprogram.federated.PlannedSupplyRuntime.Region ignored =
+			org.apache.sysds.runtime.controlprogram.federated.PlannedSupplyRuntime.enter(ec,
+				org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry.ScopeKind.SAME_SB,
+				_sb == null ? -1 : _sb.getSBID())) {
+			executeInScope(ec);
+		}
+	}
+
+	private void executeInScope(ExecutionContext ec) {
 		ArrayList<Instruction> tmp = _inst;
 
 		//dynamically recompile instructions if enabled and required

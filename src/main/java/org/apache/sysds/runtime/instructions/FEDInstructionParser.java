@@ -34,10 +34,12 @@ import org.apache.sysds.runtime.instructions.fed.CovarianceFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDFoutInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction;
+import org.apache.sysds.runtime.instructions.fed.FEDSupplyInstruction;
 import org.apache.sysds.runtime.instructions.fed.IndexingFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.MultiReturnParameterizedBuiltinFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.MMChainFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.MemoDefinitionFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.ParameterizedBuiltinFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.QuantilePickFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.QuantileSortFEDInstruction;
@@ -120,6 +122,10 @@ public class FEDInstructionParser extends InstructionParser
 				return FEDRefedInstruction.parseInstruction(str);
 			case Fout:
 				return FEDFoutInstruction.parseInstruction(str);
+			case Supply:
+				return "memo_def".equalsIgnoreCase(InstructionUtils.getOpCode(str))
+					? MemoDefinitionFEDInstruction.parseInstruction(str)
+					: FEDSupplyInstruction.parseInstruction(str);
 			case MultiReturnParameterizedBuiltin:
 				return MultiReturnParameterizedBuiltinFEDInstruction.parseInstruction(str);
 			case ParameterizedBuiltin:

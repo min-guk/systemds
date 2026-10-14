@@ -838,7 +838,7 @@ public class FederatedData {
 					mtd = new MetaDataAll(br);
 					if(!mtd.mtdExists())
 						throw new FederatedWorkerHandlerException("Could not parse metadata file for " + filename);
-					privacyConstraints = mtd.getPrivacyConstraints();
+					privacyConstraints = mtd.getPrivacyConstraintsFailClosed();
 
 					// An existing, valid metadata file without a privacy field denotes
 					// unrestricted data. Return that fact explicitly: a successful response
@@ -849,6 +849,9 @@ public class FederatedData {
 				}
 				
 				return new FederatedResponse(FederatedResponse.ResponseType.SUCCESS, privacyConstraints);
+			}
+			catch(MetaDataAll.UnsupportedFineGrainedPrivacyException ex) {
+				throw ex;
 			}
 			catch(IOException ex) {
 				String msg = "IO Exception when reading metadata file for " + filename;

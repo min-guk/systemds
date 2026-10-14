@@ -48,6 +48,25 @@ import org.apache.wink.json4j.JSONException;
 import org.apache.wink.json4j.JSONObject;
 
 public class MetaDataAll extends DataIdentifier {
+	public static final String UNSUPPORTED_FINE_GRAINED_PRIVACY = "UNSUPPORTED_FINE_GRAINED_PRIVACY";
+
+	/**
+	 * Fine-grained privacy cannot be enforced by the current compiler/runtime.
+	 * Keep this failure typed so callers cannot accidentally turn it into the
+	 * ordinary no-constraint/public case.
+	 */
+	public static final class UnsupportedFineGrainedPrivacyException extends DMLRuntimeException {
+		private static final long serialVersionUID = 1L;
+
+		public UnsupportedFineGrainedPrivacyException(String message) {
+			super(UNSUPPORTED_FINE_GRAINED_PRIVACY + ": " + message);
+		}
+
+		public String code() {
+			return UNSUPPORTED_FINE_GRAINED_PRIVACY;
+		}
+	}
+
 	// private static final Log LOG = LogFactory.getLog(MetaDataAll.class.getName());
 
 	private JSONObject _metaObj;
@@ -170,6 +189,7 @@ public class MetaDataAll extends DataIdentifier {
 			case DataExpression.DELIM_DELIMITER: setDelim(val.toString()); break;
 			case DataExpression.SCHEMAPARAM: setSchema(val.toString()); break;
 			case DataExpression.PRIVACY: setPrivacyConstraints((String) val); break;
+			case DataExpression.FINE_GRAINED_PRIVACY: setFineGrainedPrivacy(val.toString()); break;
 			case DataExpression.DELIM_HAS_HEADER_ROW:
 				if(val instanceof Boolean){
 					boolean valB = (Boolean) val;
@@ -213,6 +233,76 @@ public class MetaDataAll extends DataIdentifier {
 
 	public String getPrivacyConstraints() {
 		return _privacyConstraints;
+	}
+
+	/**
+	 * Return the supported coarse privacy label after validating that the
+	 * metadata does not contain an effective fine-grained constraint. Empty
+	 * fine-grained objects/arrays are equivalent to no constraint. Non-empty
+	 * constraints are rejected because silently projecting them to PUBLIC (or
+	 * to one coarse label) would claim semantics the current runtime cannot
+	 * preserve.
+	 *
+	 * @return the unchanged coarse privacy label, possibly {@code null}
+	 */
+	public String getPrivacyConstraintsFailClosed() {
+		if(_metaObj == null || !_metaObj.containsKey(DataExpression.FINE_GRAINED_PRIVACY))
+			return _privacyConstraints;
+		final Object fine;
+		try {
+			fine = _metaObj.get(DataExpression.FINE_GRAINED_PRIVACY);
+		}
+		catch(JSONException ex) {
+			throw malformedFineGrainedPrivacy("cannot read the fine-grained privacy object", ex);
+		}
+		if(!(fine instanceof JSONObject))
+			throw malformedFineGrainedPrivacy("expected an object keyed by privacy level");
+		JSONObject levels = (JSONObject) fine;
+		for(Object entryObject : levels.entrySet()) {
+			@SuppressWarnings("unchecked")
+			Map.Entry<Object,Object> entry = (Map.Entry<Object,Object>) entryObject;
+			String level = String.valueOf(entry.getKey());
+			if(!level.equalsIgnoreCase("Private") && !level.equalsIgnoreCase("PrivateAggregation"))
+				throw malformedFineGrainedPrivacy("unknown privacy level '" + level + "'");
+			if(!(entry.getValue() instanceof JSONArray))
+				throw malformedFineGrainedPrivacy("privacy level '" + level + "' must contain an array of ranges");
+			JSONArray ranges = (JSONArray) entry.getValue();
+			for(Object range : ranges.toArray()) {
+				validateFineGrainedRange(level, range);
+				throw new UnsupportedFineGrainedPrivacyException(
+					"non-empty " + level + " ranges require unavailable fine-grained runtime enforcement");
+			}
+		}
+		return _privacyConstraints;
+	}
+
+	private static void validateFineGrainedRange(String level, Object range) {
+		try {
+			if(!(range instanceof JSONArray) || ((JSONArray) range).length() != 2)
+				throw malformedFineGrainedPrivacy("range for '" + level + "' must contain begin and end arrays");
+			JSONArray pair = (JSONArray) range;
+			JSONArray begin = pair.getJSONArray(0);
+			JSONArray end = pair.getJSONArray(1);
+			if(begin.length() == 0 || begin.length() != end.length())
+				throw malformedFineGrainedPrivacy("range for '" + level + "' has inconsistent dimensions");
+			for(int i = 0; i < begin.length(); i++) {
+				long first = begin.getLong(i);
+				long last = end.getLong(i);
+				if(first < 0 || last < first)
+					throw malformedFineGrainedPrivacy("range for '" + level + "' has invalid bounds");
+			}
+		}
+		catch(JSONException ex) {
+			throw malformedFineGrainedPrivacy("range for '" + level + "' is not an integer coordinate range", ex);
+		}
+	}
+
+	private static DMLRuntimeException malformedFineGrainedPrivacy(String detail) {
+		return new DMLRuntimeException("Malformed fine_grained_privacy metadata: " + detail);
+	}
+
+	private static DMLRuntimeException malformedFineGrainedPrivacy(String detail, Exception cause) {
+		return new DMLRuntimeException("Malformed fine_grained_privacy metadata: " + detail, cause);
 	}
 
 	public void setSparseDelim(boolean sparseDelim) {

@@ -21,6 +21,9 @@ package org.apache.sysds.lops;
 
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.hops.Hop;
@@ -32,7 +35,8 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ValueType;
 
 public class FunctionCallCP extends Lop
-{	
+{
+	public static final String MEMO_RETURNS_PREFIX = "memo_returns=";
 	private String _fnamespace;
 	private String _fname;
 	private String[] _inputNames;
@@ -40,6 +44,9 @@ public class FunctionCallCP extends Lop
 	private ArrayList<Lop> _outputLops = null;
 	private final boolean _opt;
 	private final int _numThreads;
+	private long _memoReturnSnapshot = -1;
+	private Map<Integer, List<Long>> _memoReturnDefinitionCandidates = Map.of();
+	private Map<Integer, Long> _memoReturnTargets = Map.of();
 
 	public FunctionCallCP(ArrayList<Lop> inputs, String fnamespace, String fname, String[] inputNames,
 		String[] outputNames, ArrayList<Hop> outputHops, boolean opt, ExecType et) {
@@ -106,6 +113,47 @@ public class FunctionCallCP extends Lop
 
 	public boolean requiresOutputCreateVar() {
 		return !_fname.equalsIgnoreCase(Builtins.REMOVE.getName());
+	}
+
+	public void setMemoReturnDefinitions(long snapshot, Map<Integer, Long> definitions) {
+		setMemoReturnDefinitions(snapshot, definitions, definitions);
+	}
+
+	public void setMemoReturnDefinitions(long snapshot, Map<Integer, Long> definitions,
+		Map<Integer, Long> targets) {
+		Map<Integer, List<Long>> candidates = new LinkedHashMap<>();
+		if(definitions != null)
+			definitions.forEach((position, origin) -> candidates.put(position, List.of(origin)));
+		setMemoReturnDefinitionCandidates(snapshot, candidates, targets);
+	}
+
+	public void setMemoReturnDefinitionCandidates(long snapshot, Map<Integer, List<Long>> definitions,
+		Map<Integer, Long> targets) {
+		validateMemoReturnDefinitionCandidates(snapshot, definitions, targets);
+		Map<Integer, List<Long>> checked = new LinkedHashMap<>();
+		Map<Integer, Long> checkedTargets = new LinkedHashMap<>();
+		for(Map.Entry<Integer, List<Long>> entry : definitions.entrySet()) {
+			checked.put(entry.getKey(), entry.getValue().stream().distinct().toList());
+			checkedTargets.put(entry.getKey(), targets.get(entry.getKey()));
+		}
+		_memoReturnSnapshot = snapshot;
+		_memoReturnDefinitionCandidates = Map.copyOf(checked);
+		_memoReturnTargets = Map.copyOf(checkedTargets);
+	}
+
+	/** Non-mutating validation shared by whole-plan lowering and the publishing setter. */
+	public void validateMemoReturnDefinitionCandidates(long snapshot,
+		Map<Integer, List<Long>> definitions, Map<Integer, Long> targets) {
+		if(snapshot < 0 || definitions == null || definitions.isEmpty() || targets == null
+			|| !definitions.keySet().equals(targets.keySet()))
+			throw new LopsException("Memo function returns require a snapshot and at least one output definition.");
+		for(Map.Entry<Integer, List<Long>> entry : definitions.entrySet()) {
+			List<Long> candidates = entry.getValue() == null ? List.of() : entry.getValue().stream().distinct().toList();
+			if(entry.getKey() == null || entry.getKey() < 0 || entry.getKey() >= _outputNames.length || candidates.isEmpty()
+				|| candidates.stream().anyMatch(origin -> origin == null || origin < 0)
+				|| targets.get(entry.getKey()) == null || targets.get(entry.getKey()) < 0)
+				throw new LopsException("Invalid Memo function return definition " + entry + '.');
+		}
 	}
 	
 	@Override
@@ -179,6 +227,21 @@ public class FunctionCallCP extends Lop
 		for( String out : _outputNames ) {
 			inst.append(Lop.OPERAND_DELIMITOR);
 			inst.append(out);
+		}
+		if(!_memoReturnDefinitionCandidates.isEmpty()) {
+			inst.append(Lop.OPERAND_DELIMITOR);
+			inst.append(MEMO_RETURNS_PREFIX).append(_memoReturnSnapshot).append(':');
+			boolean first = true;
+			for(Map.Entry<Integer, List<Long>> entry :
+				new java.util.TreeMap<>(_memoReturnDefinitionCandidates).entrySet()) {
+				if(!first) inst.append(',');
+				long target = _memoReturnTargets.get(entry.getKey());
+				inst.append(entry.getKey()).append('=').append(entry.getValue().stream()
+					.map(String::valueOf).collect(java.util.stream.Collectors.joining("|")));
+				if(entry.getValue().size() != 1 || target != entry.getValue().get(0))
+					inst.append('>').append(target);
+				first = false;
+			}
 		}
 
 		return inst.toString();

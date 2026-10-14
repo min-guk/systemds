@@ -28,6 +28,7 @@ import org.apache.sysds.parser.FunctionDictionary;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.DMLScriptException;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysds.runtime.controlprogram.federated.PlannedSupplyRuntime;
 
 public class Program 
 {
@@ -152,7 +153,7 @@ public class Program
 	}
 
 	public void execute(ExecutionContext ec) {
-		try{
+		try(PlannedSupplyRuntime.Execution ignored = PlannedSupplyRuntime.open(_prog, ec)) {
 			for (int i=0; i<_programBlocks.size(); i++)
 				_programBlocks.get(i).execute(ec);
 		}

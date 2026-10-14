@@ -32,6 +32,7 @@ import org.apache.sysds.common.Types.OpOpDnn;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.Append;
 import org.apache.sysds.lops.AppendG;
@@ -493,7 +494,8 @@ public class BinaryOp extends MultiThreadedHop {
 				
 				boolean isLeftXGt0 = isLeftXGt && HopRewriteUtils.isLiteralOfValue(potentialZero, 0);
 				
-				if(et != ExecType.FED && op == OpOp2.MULT && isLeftXGt0 &&
+				if(et != ExecType.FED && op == OpOp2.MULT && isLeftXGt0
+					&& !MemoPlanRegistry.preservesNativeKernel(getInput(0)) &&
 					!getInput().get(0).isVector() && !getInput().get(1).isVector()
 					&& getInput().get(0).dimsKnown() && getInput().get(1).dimsKnown()) {
 					binary = new DnnTransform(getInput().get(0).getInput().get(0).constructLops(), 

@@ -65,7 +65,9 @@ public abstract class Lop
 		Sql,                                                //CP sql read
 		Federated,                                          //FED federated read
 		FederatedRefed,                                     //FED refederate
-		FederatedFoutMaterialize                            //FED materialize FOUT
+		FederatedFoutMaterialize,                           //FED materialize FOUT
+		FederatedSupply,                                    //FED guarded supply dispatch
+		MemoDefinition                                      //FED selected native-definition marker
 	}
 	
 

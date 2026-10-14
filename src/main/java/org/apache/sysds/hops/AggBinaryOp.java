@@ -29,6 +29,7 @@ import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.MMCJ;
@@ -698,7 +699,7 @@ public class AggBinaryOp extends MultiThreadedHop {
 	 * priced by the selector.
 	 */
 	private boolean hasPlannerFusionBoundary(Hop input) {
-		if(hasPlannerMaterializationBoundary(input))
+		if(MemoPlanRegistry.preservesNativeKernel(input) || hasPlannerMaterializationBoundary(input))
 			return true;
 		return isPlannerPlacementSelected() && input.isPlannerPlacementSelected()
 			&& (getExecType() != input.getExecType()

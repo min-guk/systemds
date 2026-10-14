@@ -77,6 +77,8 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry;
+import org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry.RecompileScope;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.rewrite.ProgramRewriter;
 import org.apache.sysds.lops.Lop;
@@ -270,15 +272,23 @@ public class Recompiler {
 			FEDERATED_RECOMPILE_REGISTRY_LOCK.lock();
 			try {
 				clearFederatedRecompileRegistries();
-				if(owner == null)
-					result = recompileInternal(sb, hops, ec, status, inplace, replaceLit,
-						updateStats, forceEt, pred, et, tid);
-				else {
-					try(FederatedPlannerUtils.PlannerRecompileOwnerScope ignored =
-						FederatedPlannerUtils.activatePlannerRecompileOwner(owner)) {
+				RecompileScope memoScope = isMemoPlanningActive() && owner != null
+					? MemoPlanRegistry.openRecompile(owner, sb, hops) : null;
+				try {
+					if(owner == null)
 						result = recompileInternal(sb, hops, ec, status, inplace, replaceLit,
-							updateStats, forceEt, pred, et, tid);
+							updateStats, forceEt, pred, et, tid, memoScope);
+					else {
+						try(FederatedPlannerUtils.PlannerRecompileOwnerScope ignored =
+							FederatedPlannerUtils.activatePlannerRecompileOwner(owner)) {
+							result = recompileInternal(sb, hops, ec, status, inplace, replaceLit,
+								updateStats, forceEt, pred, et, tid, memoScope);
+						}
 					}
+				}
+				finally {
+					if(memoScope != null)
+						memoScope.close();
 				}
 			}
 			finally {
@@ -417,12 +427,16 @@ public class Recompiler {
 			sb, hops, ec, status, inplace, replaceLit, updateStats, forceEt, pred, et, tid);
 	}
 
-	private static ArrayList<Instruction> recompileInternal(StatementBlock sb, ArrayList<Hop> hops, ExecutionContext ec, RecompileStatus status,
-		boolean inplace, boolean replaceLit, boolean updateStats, boolean forceEt, boolean pred, ExecType et, long tid ) 
+	private static ArrayList<Instruction> recompileInternal(StatementBlock sb, ArrayList<Hop> hops, ExecutionContext ec,
+		RecompileStatus status, boolean inplace, boolean replaceLit, boolean updateStats, boolean forceEt,
+		boolean pred, ExecType et, long tid, RecompileScope memoScope)
 	{
 		boolean codegen = ConfigurationManager.isCodegenEnabled()
 			&& !(forceEt && et == null ) //not on reset
 			&& SpoofCompiler.RECOMPILE_CODEGEN;
+		if(memoScope != null && codegen)
+			throw new MemoPlanRegistry.StaleMemoPlanException(
+				"Runtime code generation is outside the committed memo planning epoch");
 		boolean rewrittenHops = false;
 		Map<Long, HopState> baseHopStates = null;
 		Map<Long, Hop> deepCopyMemo = null;
@@ -448,7 +462,7 @@ public class Recompiler {
 		int maxK = rGetMaxParallelism(hops);
 		
 		// replace scalar reads with literals 
-		if( !inplace && replaceLit ) {
+		if( memoScope == null && !inplace && replaceLit ) {
 			Hop.resetVisitStatus(hops);
 			for( Hop hopRoot : hops )
 				rReplaceLiterals( hopRoot, ec, false );
@@ -470,7 +484,7 @@ public class Recompiler {
 				rUpdateStatistics( hopRoot, ec.getVariables() );
 			
 			// dynamic hop rewrites
-			if( !inplace ) {
+			if( memoScope == null && !inplace ) {
 				_rewriter.get().rewriteHopDAG( hops, null );
 				
 				//update stats after rewrites
@@ -509,10 +523,15 @@ public class Recompiler {
 		Hop.resetVisitStatus(hops);
 		rSetMaxParallelism(hops, maxK);
 
-		if (baseHopStates != null && !baseHopStates.isEmpty())
+		if (memoScope == null && baseHopStates != null && !baseHopStates.isEmpty())
 			restoreHopStates(hops, baseHopStates, deepCopyMemo);
 		if (LOG_RECOMPILE_NEW_HOPS)
 			logRecompileNewHops(hops, baseHopStates, sb, pred, tid);
+		if(memoScope != null) {
+			clearFederatedRecompileRegistries();
+			memoScope.activate(hops, deepCopyMemo);
+		}
+		else {
 			Map<String, FType> runtimeTypes = new HashMap<>();
 			Map<String, String> runtimeSignatures = buildRuntimeFedSignatures(ec, runtimeTypes);
 			filterUnknownFederatedPlacementObservations(runtimeSignatures, runtimeTypes, status);
@@ -539,6 +558,7 @@ public class Recompiler {
 			FederatedRefedRegistry.clear();
 			FederatedFoutMaterializeRegistry.clear();
 			FederatedLocalMaterializeRegistry.clear();
+		}
 		}
 		if (LOG_RECOMPILE_NEW_HOPS)
 			logPlannerRecompileStates("RecompilePostRefedPlannerState", hops, sb, pred, tid);
@@ -576,6 +596,11 @@ public class Recompiler {
 	private static boolean isCompiledFederatedPlanningActive() {
 		String planner = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
 		return OptimizerUtils.FEDERATED_COMPILATION || FederatedPlanner.isCompiled(planner);
+	}
+
+	private static boolean isMemoPlanningActive() {
+		String planner = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
+		return planner != null && FederatedPlanner.COMPILE_MEMO.name().equalsIgnoreCase(planner);
 	}
 
 	private static ArrayList<Instruction> recompile(StatementBlock sb, ArrayList<Hop> hops, LocalVariableMap vars, RecompileStatus status,

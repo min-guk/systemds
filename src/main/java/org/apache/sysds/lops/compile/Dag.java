@@ -44,6 +44,7 @@ import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry;
 import org.apache.sysds.lops.Data;
 import org.apache.sysds.lops.Federated;
 import org.apache.sysds.lops.FederatedFoutMaterialize;
@@ -227,10 +228,20 @@ public class Dag<N extends Lop>
 
 		IDagLinearizer dl = IDagLinearizerFactory.createDagLinearizer();
 		List<Lop> node_v = dl.linearize(nodes);
-		boolean modified = insertLocalMaterializeLops(node_v, plannerScope, logicalHopRoots);
-		modified |= prefetchFederated(node_v);
-		modified |= insertRefedLops(node_v, plannerScope, logicalHopRoots);
-		modified |= insertFoutMaterializeLops(node_v, plannerScope, logicalHopRoots);
+		boolean memoPlan = plannerScope != null && MemoPlanRegistry.hasPlan(plannerScope.getDMLProg());
+		if(memoPlan)
+			MemoPlanRegistry.verifyLowering(plannerScope, logicalHopRoots, node_v);
+		List<Lop> memoMaterializers = memoPlan ? MemoSupplyLowering.apply(node_v, plannerScope, logicalHopRoots,
+			MemoPlanRegistry.supplies(plannerScope.getDMLProg(), plannerScope.getSBID())) : List.of();
+		for(Lop materializer : memoMaterializers)
+			addNode(materializer);
+		boolean modified = !memoMaterializers.isEmpty();
+		if(!memoPlan) {
+			modified |= insertLocalMaterializeLops(node_v, plannerScope, logicalHopRoots);
+			modified |= prefetchFederated(node_v);
+			modified |= insertRefedLops(node_v, plannerScope, logicalHopRoots);
+			modified |= insertFoutMaterializeLops(node_v, plannerScope, logicalHopRoots);
+		}
 
 		// The default linearizer for CP/Spark relies on lop IDs (creation order) to satisfy dependencies.
 		// Lops inserted in these post-processing passes are created after their consumers, so we must
@@ -244,6 +255,15 @@ public class Dag<N extends Lop>
 		// cleanup instruction (e.g., create packed rmvar instructions), then prove that
 		// the exact selected physical placement survived lowering before runtime sees it.
 		ArrayList<Instruction> cleaned = cleanupInstructions(inst);
+		if(memoPlan) {
+			MemoPlanRegistry.verifyLowering(plannerScope, logicalHopRoots, node_v);
+			if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+				System.err.println("[MemoLowering] status=MATCH sb=" + plannerScope.getSBID()
+					+ " hops=" + MemoPlanRegistry.selectedHopCount(plannerScope.getDMLProg(), logicalHopRoots)
+					+ " supplies="
+					+ MemoPlanRegistry.supplies(plannerScope.getDMLProg(), plannerScope.getSBID()).size());
+			return cleaned;
+		}
 		return PlannerRuntimePlacementAudit.verifyLowering(logicalHopRoots, node_v, cleaned);
 	}
 

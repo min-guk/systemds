@@ -47,6 +47,7 @@ public final class FederatedPrivacyConstraintResolver {
 		NULL_RESPONSE,
 		NULL_PAYLOAD,
 		ERROR_RESPONSE,
+		UNSUPPORTED_FINE_GRAINED_PRIVACY,
 		REQUEST_EXCEPTION
 	}
 
@@ -78,7 +79,8 @@ public final class FederatedPrivacyConstraintResolver {
 			if(response == null)
 				failure = Failure.NULL_RESPONSE;
 			else if(!response.isSuccessful())
-				failure = Failure.ERROR_RESPONSE;
+				failure = response.getErrorMessage().contains(MetaDataAll.UNSUPPORTED_FINE_GRAINED_PRIVACY)
+					? Failure.UNSUPPORTED_FINE_GRAINED_PRIVACY : Failure.ERROR_RESPONSE;
 			else {
 				Object[] payload = response.getData();
 				if(payload == null || payload.length == 0 || payload[0] == null)
@@ -124,7 +126,10 @@ public final class FederatedPrivacyConstraintResolver {
 				try(BufferedReader reader = java.nio.file.Files.newBufferedReader(local)) {
 					MetaDataAll metadata = new MetaDataAll(reader);
 					if(metadata.mtdExists())
-						return metadata.getPrivacyConstraints();
+						return metadata.getPrivacyConstraintsFailClosed();
+				}
+				catch(MetaDataAll.UnsupportedFineGrainedPrivacyException ex) {
+					throw ex;
 				}
 				catch(Exception ex) {
 					// A present but unreadable or malformed sidecar must not be silently
@@ -141,8 +146,14 @@ public final class FederatedPrivacyConstraintResolver {
 				return null;
 			try(BufferedReader reader = new BufferedReader(new InputStreamReader(fs.open(path)))) {
 				MetaDataAll metadata = new MetaDataAll(reader);
-				return metadata.mtdExists() ? metadata.getPrivacyConstraints() : null;
+				return metadata.mtdExists() ? metadata.getPrivacyConstraintsFailClosed() : null;
 			}
+		}
+		catch(MetaDataAll.UnsupportedFineGrainedPrivacyException ex) {
+			throw ex;
+		}
+		catch(org.apache.sysds.runtime.DMLRuntimeException ex) {
+			throw ex;
 		}
 		catch(Exception ex) {
 			return null;

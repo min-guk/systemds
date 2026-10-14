@@ -26,6 +26,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.FileFormat;
 import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.runtime.DMLRuntimeException;
@@ -33,6 +34,7 @@ import org.apache.sysds.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
+import org.apache.sysds.runtime.controlprogram.federated.FederationReplicaReader;
 import org.apache.sysds.runtime.controlprogram.parfor.LocalTaskQueue;
 import org.apache.sysds.runtime.frame.data.FrameBlock;
 import org.apache.sysds.runtime.frame.data.lib.FrameLibApplySchema;
@@ -262,6 +264,11 @@ public class FrameObject extends CacheableData<FrameBlock>
 	{
 		List<Pair<FederatedRange, Future<FederatedResponse>>> readResponses = fedMap.requestFederatedData();
 		try {
+			if(fedMap.getType() == FType.BROADCAST) {
+				FrameBlock ret = FederationReplicaReader.readFrame(readResponses, dims);
+				_schema = ret.getSchema().clone();
+				return ret;
+			}
 			List<Pair<FederatedRange, FrameBlock>> partitions = new ArrayList<>(readResponses.size());
 			int numColumns = (int) dims[1];
 			ValueType[] mergedSchema = new ValueType[numColumns];

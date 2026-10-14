@@ -56,6 +56,7 @@ import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostSemantics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.AbstractShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DimensionKnowledge;
@@ -162,17 +163,22 @@ public final class PlacementCostSemantics {
 
 
 	/** Cost-only operand layout. Exact ranges are never placement-legality evidence. */
-	public record InputLayout(FType fType, List<AnchorPartition> ranges, boolean exactRanges) {
+	public record InputLayout(FType fType, List<AnchorPartition> ranges, boolean exactRanges)
+		implements FederatedCostSemantics.InputLayoutView {
 		public InputLayout {
 			ranges = ranges == null ? List.of() : List.copyOf(ranges);
 			if(exactRanges && ranges.isEmpty())
 				throw new IllegalArgumentException("Exact input layout requires ranges");
 		}
+		@Override public List<FederatedCostSemantics.CostRange> costRanges() {
+			return ranges.stream().map(range -> new FederatedCostSemantics.CostRange(
+				range.workerId(),range.begin(),range.end())).toList();
+		}
 	}
 
 	/** Immutable execution layout supplied by the selected realization. */
 	public record FederatedExecutionLayout(FType executionType, int workers,
-		List<InputLayout> inputs) {
+		List<InputLayout> inputs) implements FederatedCostSemantics.ExecutionLayoutView {
 		public FederatedExecutionLayout {
 			if(workers <= 0)
 				throw new IllegalArgumentException("Federated execution requires workers");
@@ -185,46 +191,26 @@ public final class PlacementCostSemantics {
 	/** Mirrors QuaternaryWDivMMFEDInstruction / FederationMap.isAligned, not FType similarity. */
 	public static boolean reusesWdivmmFactor(InputLayout weights, InputLayout factor,
 			int position, boolean generatedTranspose) {
-		if(generatedTranspose || weights == null || factor == null || factor.fType() == null
-			|| !weights.exactRanges() || !factor.exactRanges())
-			return false;
-		if(position == 1 && (weights.fType() == FType.ROW || weights.fType() == FType.FULL))
-			return factor.fType().isType(FType.ROW) && alignedAxis(weights, factor, 0, 0);
-		if(position == 2 && weights.fType() == FType.COL)
-			return alignedAxis(weights, factor, 1, 1) || alignedAxis(weights, factor, 1, 0);
-		if(position == 3 && (weights.fType() == FType.ROW || weights.fType() == FType.COL || weights.fType() == FType.FULL))
-			return alignedFull(weights, factor);
-		return false;
+		return FederatedCostSemantics.reusesWdivmmFactor(weights,factor,position,generatedTranspose);
 	}
 
 	/** Matches QuaternaryOp.checkWDivMMType: only base LEFT/RIGHT plus a matrix fourth input is MX. */
 	public static boolean isWdivmmMatrixOperand(Hop hop, int position) {
-		if(!(hop instanceof QuaternaryOp q) || q.getOp() != OpOp4.WDIVMM
-			|| position <= 0 || position >= hop.getInput().size()
-			|| !hop.getInput(position).getDataType().isMatrix()) return false;
-		return position <= 2 || position == 3 && (q.getBaseType() == 1 || q.getBaseType() == 2);
+		return FederatedCostSemantics.isWdivmmMatrixOperand(hop,position);
 	}
 
 	public static boolean hasWdivmmEpsilon(Hop hop) {
-		return hop instanceof QuaternaryOp q && q.getOp() == OpOp4.WDIVMM
-			&& (q.getBaseType() == 3 || q.getBaseType() == 4) && hop.getInput().size() > 3;
+		return FederatedCostSemantics.hasWdivmmEpsilon(hop);
 	}
 
 	/** Runtime coordinator read, distinct from the producer's placement or a relocation pre-stage. */
 	public static boolean wdivmmInputNeedsCollection(Hop hop, FederatedExecutionLayout layout, int position) {
-		if(position == 3 && hasWdivmmEpsilon(hop))
-			return hop.getInput(position).getDataType().isMatrix();
-		if(!isWdivmmMatrixOperand(hop, position)) return false;
-		InputLayout weights = layout == null || layout.inputs().isEmpty() ? null : layout.inputs().get(0);
-		InputLayout factor = layout == null || position >= layout.inputs().size() ? null : layout.inputs().get(position);
-		return !reusesWdivmmFactor(weights, factor, position, false);
+		return FederatedCostSemantics.wdivmmInputNeedsCollection(hop,layout,position);
 	}
 
 	/** Ordinary CTABLE operands; ctableexpand's sequence is a compiler marker, not a matrix read. */
 	public static boolean isCtableMatrixInput(Hop hop, int position) {
-		return hop instanceof TernaryOp ternary && ternary.getOp() == OpOp3.CTABLE
-			&& !ternary.isSequenceRewriteApplicable(true) && position >= 0 && position < 3
-			&& position < hop.getInput().size() && hop.getInput(position).getDataType().isMatrix();
+		return FederatedCostSemantics.isCtableMatrixInput(hop,position);
 	}
 
 	/**
@@ -233,50 +219,12 @@ public final class PlacementCostSemantics {
 	 * This is a runtime read demand, not permission to change the input authority.
 	 */
 	public static boolean ctableInputNeedsCollection(Hop hop, FederatedExecutionLayout layout, int position) {
-		if(!isCtableMatrixInput(hop, position) || layout == null || layout.inputs().size() < 2)
-			return false;
-		int primary = layout.inputs().get(0).fType() != null ? 0
-			: layout.inputs().get(1).fType() != null ? 1 : -1;
-		if(primary < 0)
-			return false;
-		if(position < 2)
-			return position != primary;
-		InputLayout anchor = layout.inputs().get(primary);
-		InputLayout weights = layout.inputs().size() > 2 ? layout.inputs().get(2) : null;
-		return weights == null || weights.fType() == null || anchor.fType() == FType.BROADCAST
-			|| !anchor.exactRanges() || !weights.exactRanges() || !alignedFull(anchor, weights);
-	}
-
-	private static boolean alignedFull(InputLayout anchor, InputLayout input) {
-		return anchor.ranges().stream().allMatch(a -> {
-			var matches = input.ranges().stream().filter(i ->
-				a.begin().equals(i.begin()) && a.end().equals(i.end())).toList();
-			return !matches.isEmpty() && matches.stream().allMatch(i -> a.workerId().equals(i.workerId()));
-		});
-	}
-
-	private static boolean alignedAxis(InputLayout weights, InputLayout factor, int axis, int factorAxis) {
-		for(AnchorPartition w : weights.ranges()) {
-			boolean found = false;
-			for(AnchorPartition f : factor.ranges()) {
-				if(w.begin().size() <= axis || w.end().size() <= axis
-					|| f.begin().size() <= factorAxis || f.end().size() <= factorAxis)
-					return false;
-				if(w.begin().get(axis).equals(f.begin().get(factorAxis))
-					&& w.end().get(axis).equals(f.end().get(factorAxis))) {
-					found = true;
-					// Runtime requires EVERY axis-matching range to be at the same address.
-					if(!w.workerId().equals(f.workerId()))
-						return false;
-				}
-			}
-			if(!found) return false;
-		}
-		return true;
+		return FederatedCostSemantics.ctableInputNeedsCollection(hop,layout,position);
 	}
 
 	/** Returned worker payloads, separate from the full execution pool. */
-	public record WorkerResponseSummary(double totalBytes, double largestBytes, int responses) { }
+	public record WorkerResponseSummary(double totalBytes, double largestBytes, int responses)
+		implements FederatedCostSemantics.WorkerResponseView { }
 
 	/** Prepared once per occurrence; alternative pricing only projects worker quantities. */
 	public static final class PreparedExecutionCost {
@@ -915,38 +863,12 @@ public final class PlacementCostSemantics {
 	public static double forwardingWeight(double networkWeight,
 		List<Pair<Long,Double>> parentLoopContext, List<Pair<Long,Double>> childLoopContext,
 		double consumerMultiplicity) {
-		double base = networkWeight != 0.0 ? networkWeight : 1.0;
-		if(parentLoopContext == null || parentLoopContext.isEmpty())
-			return base * Math.max(consumerMultiplicity, 0.0);
-
-		Map<Long,Double> childLoops = new HashMap<>();
-		if(childLoopContext != null)
-			for(Pair<Long,Double> loop : childLoopContext)
-				childLoops.put(loop.getLeft(), loop.getRight());
-
-		double weight = base;
-		for(Pair<Long,Double> loop : parentLoopContext)
-			if(!childLoops.containsKey(loop.getLeft()) && loop.getRight() > 0.0)
-				weight /= loop.getRight();
-		return weight * Math.max(consumerMultiplicity, 0.0);
+		return FederatedCostSemantics.forwardingWeight(networkWeight,parentLoopContext,
+			childLoopContext,consumerMultiplicity);
 	}
 
 	public static boolean isMultiReturnFunctionOutput(Hop hop) {
-		if(!(hop instanceof DataOp) || ((DataOp)hop).getOp() != OpOpData.FUNCTIONOUTPUT)
-			return false;
-		List<Hop> inputs = hop.getInput();
-		if(inputs == null || inputs.isEmpty() || inputs.get(0) == null)
-			return false;
-		List<Hop> parents = inputs.get(0).getParent();
-		if(parents == null || parents.isEmpty())
-			return false;
-		for(Hop parent : parents)
-			if(parent instanceof FunctionOp
-				&& ((FunctionOp)parent).getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN
-				&& ((FunctionOp)parent).getOutputs() != null
-				&& ((FunctionOp)parent).getOutputs().contains(hop))
-				return true;
-		return false;
+		return FederatedCostSemantics.isMultiReturnFunctionOutput(hop);
 	}
 
 	/**

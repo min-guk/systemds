@@ -69,6 +69,25 @@ public final class OracleFacade {
   private static final long MAX_EAGER_EXECUTION_RELATION_REGIONS = 4_096L;
 	public record NodeShape(DataType dataType, long rows, long cols) { }
 
+	/** Native FED kernels with an explicit runtime forced-local result path. */
+	public static boolean supportsForcedLocalFederatedOutput(Hop hop) {
+		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return false;
+		if (hop instanceof QuaternaryOp && ((QuaternaryOp) hop).getOp() == org.apache.sysds.common.Types.OpOp4.WDIVMM)
+			return true;
+		if (hop instanceof TernaryOp && ((TernaryOp) hop).getOp() == OpOp3.CTABLE
+			&& !((TernaryOp) hop).isSequenceRewriteApplicable(true))
+			return true;
+		if (hop instanceof IndexingOp)
+			return true;
+		if (hop instanceof ReorgOp) {
+			ReOrgOp op = ((ReorgOp) hop).getOp();
+			if(op == ReOrgOp.TRANS || op == ReOrgOp.DIAG)
+				return true;
+		}
+		return hop instanceof BinaryOp || hop instanceof AggBinaryOp;
+	}
+
 	/** Canonical rules-boundary capture of immutable compiled-Hop shape metadata. */
 	public static NodeShape nodeShape(Hop hop) {
 		Objects.requireNonNull(hop, "hop");

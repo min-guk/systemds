@@ -49,7 +49,7 @@ import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
-import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostSemantics;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.parser.DMLProgram;
@@ -297,7 +297,7 @@ public class FederatedPlannerUtils {
 	public static double computeForwardingWeightOfChild(double networkWeight,
 			List<Pair<Long, Double>> parentLoopContext, List<Pair<Long, Double>> childLoopContext,
 			double consumerMultiplicity) {
-		return PlacementCostSemantics.forwardingWeight(networkWeight, parentLoopContext,
+		return FederatedCostSemantics.forwardingWeight(networkWeight, parentLoopContext,
 			childLoopContext, consumerMultiplicity);
 	}
 
@@ -515,6 +515,8 @@ public class FederatedPlannerUtils {
 			if (localObjectFilePath != null && !localObjectFilePath.isEmpty()) {
 				try {
 					derived = parsePrivacyConstraint(readPrivacyConstraintsFromLocalMTD(localObjectFilePath));
+				} catch (MetaDataAll.UnsupportedFineGrainedPrivacyException ex) {
+					throw ex;
 				} catch (Exception ex) {
 					derived = null;
 				}
@@ -529,6 +531,10 @@ public class FederatedPlannerUtils {
 				break;
 			FederatedPrivacyConstraintResolver.Resolution resolution =
 				FederatedPrivacyConstraintResolver.resolve(wctx.data);
+			if(resolution.failure() == FederatedPrivacyConstraintResolver.Failure.UNSUPPORTED_FINE_GRAINED_PRIVACY)
+				throw new MetaDataAll.UnsupportedFineGrainedPrivacyException(
+					"worker metadata for " + wctx.host + ':' + wctx.port
+						+ " contains non-empty fine-grained privacy constraints");
 			if (resolution.privacyConstraint() != null)
 				privacyConstraint = mergePrivacyConstraint(privacyConstraint, resolution.privacyConstraint());
 
@@ -656,8 +662,8 @@ public class FederatedPlannerUtils {
 		// fallback is disabled for synthetic anchors.
 		if (hop.getBeginLine() <= 0)
 			return null;
-		Hop branchOrigin = org.apache.sysds.hops.fedplanner.placement.BranchPlacementNormalization
-			.isPlacementAlias(hop) && hop.getInput().size() == 1 ? hop.getInput(0) : hop;
+		Hop branchOrigin = FederatedCostSemantics.isPlacementAlias(hop) && hop.getInput().size() == 1
+			? hop.getInput(0) : hop;
 		String branchKey = branchOrigin instanceof DataOp data && data.isPlannerBranchNormalization()
 			? "|branch-exit=" + data.getPlannerBranchNormalizationKey() : "";
 		return hop.getClass().getName() + "|" + op + "|" + hop.getBeginLine() + ":"
@@ -1205,7 +1211,7 @@ public class FederatedPlannerUtils {
 	}
 
 	public static boolean isMultiReturnFunctionOutputHop(Hop hop) {
-		return PlacementCostSemantics.isMultiReturnFunctionOutput(hop);
+		return FederatedCostSemantics.isMultiReturnFunctionOutput(hop);
 	}
 
 	public static FunctionOp getMultiReturnFunctionOutputParent(Hop hop) {
@@ -1637,8 +1643,12 @@ public class FederatedPlannerUtils {
 				MetaDataAll mtd = new MetaDataAll(br);
 				if (!mtd.mtdExists())
 					return null;
-				return mtd.getPrivacyConstraints();
+				return mtd.getPrivacyConstraintsFailClosed();
 			}
+		} catch (MetaDataAll.UnsupportedFineGrainedPrivacyException ex) {
+			throw ex;
+		} catch (DMLRuntimeException ex) {
+			throw ex;
 		} catch (Exception ex) {
 			return null;
 		} finally {

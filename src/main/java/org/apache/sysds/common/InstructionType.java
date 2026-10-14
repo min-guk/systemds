@@ -91,4 +91,5 @@ public enum InstructionType {
 	Init,
 	Refed,
 	Fout,
+	Supply,
 }

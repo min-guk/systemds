@@ -33,6 +33,7 @@ import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.DMLScriptException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysds.runtime.controlprogram.federated.MemoLoopRuntime;
 import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.runtime.instructions.cp.BooleanObject;
 import org.apache.sysds.runtime.lineage.LineageDedupUtils;
@@ -98,7 +99,10 @@ public class WhileProgramBlock extends ProgramBlock
 	public void execute(ExecutionContext ec)
 	{
 		//execute while loop
-		try 
+		try(org.apache.sysds.runtime.controlprogram.federated.PlannedSupplyRuntime.Region plannedLoop =
+				org.apache.sysds.runtime.controlprogram.federated.PlannedSupplyRuntime.enter(ec,
+					org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry.ScopeKind.LOOP_INVOCATION,
+					_sb == null ? -1 : _sb.getSBID()))
 		{
 			// prepare update in-place variables
 			UpdateType[] flags = prepareUpdateInPlaceVariables(ec, _tid);
@@ -114,8 +118,15 @@ public class WhileProgramBlock extends ProgramBlock
 			if (DMLScript.LINEAGE_DEDUP)
 				ec.getLineage().initializeDedupBlock(this, ec);
 			
-			//run loop body until predicate becomes false
-			while( executePredicate(ec).getBooleanValue() ) {
+			// Run the predicate as an ordinary consumer. Next -> Head is validated only
+			// after this predicate proves that another body iteration will execute.
+			boolean continueLoop = executePredicate(ec).getBooleanValue();
+			if( continueLoop ) try(MemoLoopRuntime.Scope loopContract = MemoLoopRuntime.enter(_sb, ec, _tid)) {
+			while( continueLoop ) {
+				try(org.apache.sysds.runtime.controlprogram.federated.PlannedSupplyRuntime.Region plannedIteration =
+					org.apache.sysds.runtime.controlprogram.federated.PlannedSupplyRuntime.enter(ec,
+						org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry.ScopeKind.LOOP_ITERATION,
+						_sb == null ? -1 : _sb.getSBID())) {
 				if (DMLScript.LINEAGE_DEDUP)
 					ec.getLineage().resetDedupPath();
 
@@ -127,12 +138,17 @@ public class WhileProgramBlock extends ProgramBlock
 				for (int i=0 ; i < _childBlocks.size() ; i++) {
 					_childBlocks.get(i).execute(ec);
 				}
+				}
 				
 				if (DMLScript.LINEAGE_DEDUP) {
 					LineageDedupUtils.replaceLineage(ec);
 					// hook the dedup map to the main lineage trace
 					ec.getLineage().traceCurrentDedupPath(this, ec);
 				}
+				continueLoop = executePredicate(ec).getBooleanValue();
+				loopContract.iterationCompleted(continueLoop);
+			}
+			loopContract.complete();
 			}
 			
 			// clear current LineageDedupBlock

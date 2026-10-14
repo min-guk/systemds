@@ -34,6 +34,7 @@ import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutS
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanExact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedExact.FederatedPlanLocalCost;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass;
+import org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo;
 import org.junit.Test;
 
 public class FederatedPlannerFactoryContractTest {
@@ -68,8 +69,9 @@ public class FederatedPlannerFactoryContractTest {
 		expected.put(FederatedPlanner.COMPILE_FED_HEURISTIC_SINGLE_PASS,
 			FederatedPlannerFedHeuristicSinglePass.class);
 		expected.put(FederatedPlanner.COMPILE_COST_BASED, FederatedPlanLocalCost.class);
+		expected.put(FederatedPlanner.COMPILE_MEMO, FederatedPlanMemo.class);
 		expected.put(FederatedPlanner.COMPILE_EXACT, FederatedPlanExact.class);
-		assertEquals("Only four compiled planners plus two non-compiled sentinels",
+		assertEquals("Only five compiled planners plus two non-compiled sentinels",
 			expected.size() + 2, FederatedPlanner.values().length);
 		for(Map.Entry<FederatedPlanner, Class<? extends AFederatedPlanner>> entry : expected.entrySet())
 			assertEquals(entry.getKey().name(), entry.getValue(), create.invoke(null, entry.getKey()).getClass());

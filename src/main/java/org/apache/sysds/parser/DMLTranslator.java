@@ -85,6 +85,7 @@ import org.apache.sysds.hops.fedplanner.placement.CandidateFormationTiming;
 import org.apache.sysds.hops.fedplanner.placement.PlannerPipelineTiming;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristicSinglePass.HeuristicInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
@@ -351,6 +352,11 @@ public class DMLTranslator
 		Consumer<? super AFederatedPlanner.PlannerInvocationReceipt> receiptConsumer) {
 		String planner = ConfigurationManager.getDMLConfig()
 			.getTextValue(DMLConfig.FEDERATED_PLANNER);
+		boolean memoPlanner=org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner)
+			&& org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.valueOf(planner.toUpperCase())
+				==org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_MEMO;
+		if(!memoPlanner)
+			org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry.remove(dmlp);
 		if( !(OptimizerUtils.FEDERATED_COMPILATION
 			|| org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner)) ) {
 			// A JVM may compile a planner-controlled program followed by an ordinary
@@ -363,6 +369,14 @@ public class DMLTranslator
 			org.apache.sysds.lops.compile.FederatedRefedRegistry.clear();
 			org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry.clear();
 			org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.clear();
+			return;
+		}
+		org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner configuredPlanner =
+			org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner) ?
+				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.valueOf(planner.toUpperCase()) :
+				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC_SINGLE_PASS;
+		if(configuredPlanner == org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_MEMO) {
+			runMemoPlannerAtFinalHopBoundary(dmlp, configuredPlanner, receiptConsumer);
 			return;
 		}
 			synchronized(dmlp) {
@@ -386,8 +400,7 @@ public class DMLTranslator
 				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner) ?
 					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.valueOf(planner.toUpperCase()) :
 					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC_SINGLE_PASS;
-			AFederatedPlanner implementation = Objects.requireNonNull(
-				FederatedPlannerFactory.create(fedPlanner), "compiled federated planner implementation");
+			AFederatedPlanner implementation = createFederatedPlanner(fedPlanner);
 			if(collectCandidateTiming)
 				CandidateFormationTiming.plannerSetupComplete();
 			long commonPreparationNanos = collectCandidateTiming ?
@@ -475,6 +488,53 @@ public class DMLTranslator
 					CandidateFormationTiming.clear(candidateTimingScope);
 			}
 		}
+	}
+
+	private static void runMemoPlannerAtFinalHopBoundary(DMLProgram program,
+		org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner planner,
+		Consumer<? super AFederatedPlanner.PlannerInvocationReceipt> receiptConsumer) {
+		synchronized(program) {
+			AFederatedPlanner implementation = createFederatedPlanner(planner);
+			if(!(implementation instanceof FederatedPlanMemo))
+				throw new IllegalStateException("COMPILE_MEMO requires FederatedPlanMemo but received "
+					+ implementation.getClass().getName());
+			// Memo owns its exact plan/supply registry. No legacy graph, action, or lowering authority
+			// may leak into this final-Hop compilation boundary.
+			org.apache.sysds.hops.fedplanner.placement.PlannerRuntimePlacementAudit
+				.clearForUnplannedCompilation();
+			org.apache.sysds.hops.fedplanner.placement.PlannerRuntimeActionRegistry.clear();
+			org.apache.sysds.lops.compile.FederatedRefedRegistry.clear();
+			org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry.clear();
+			org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.clear();
+			FederatedPlannerTrace.beginInvocation();
+			FederatedPlannerTrace.logGlobal("Planner-Invoke", "planner=" + planner
+				+ " impl=" + implementation.getClass().getName()
+				+ " boundary=final-hop analysis=none");
+			long started = System.nanoTime();
+			AFederatedPlanner.PlannerInvocationReceipt receipt;
+			try {
+				receipt = ((FederatedPlanMemo) implementation).plan(program);
+			}
+			finally {
+				FederatedPlannerTrace.completeInvocation();
+			}
+			FederatedPlannerTrace.logGlobal("Planner-Complete", "planner=" + planner
+				+ " impl=" + implementation.getClass().getName()
+				+ " receipt=" + receipt.getClass().getName()
+				+ " boundary=final-hop analysis=none");
+			if(DMLScript.STATISTICS)
+				Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - started);
+			registerFedInitVarsFromProgram(program);
+			FederatedPlannerUtils.clearFedRmvarProtectedVars();
+			registerFedRmvarProtectedVarsFromProgram(program);
+			receiptConsumer.accept(receipt);
+		}
+	}
+
+	private static AFederatedPlanner createFederatedPlanner(
+		org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner planner) {
+		return Objects.requireNonNull(FederatedPlannerFactory.create(planner),
+			"compiled federated planner implementation");
 	}
 
 	/**

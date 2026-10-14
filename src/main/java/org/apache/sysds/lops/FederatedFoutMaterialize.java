@@ -22,14 +22,16 @@ package org.apache.sysds.lops;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.ValueType;
-import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.lops.LopsException;
+import org.apache.sysds.runtime.controlprogram.federated.CanonicalWorkerPool;
+import org.apache.sysds.runtime.instructions.InstructionUtils;
 
 public class FederatedFoutMaterialize extends Lop {
 	private final Lop _input;
 	private final Lop _anchor;
 	private final String _fTypeHint;
 	private final String _anchorKey;
+	private final boolean _workerPool;
 
 	public FederatedFoutMaterialize(Lop input, Lop anchor, String fTypeHint) {
 		this(input, anchor, input.getDataType(), input.getValueType(), fTypeHint);
@@ -40,6 +42,7 @@ public class FederatedFoutMaterialize extends Lop {
 		_input = input;
 		_anchor = anchor;
 		_anchorKey = null;
+		_workerPool = false;
 		_fTypeHint = fTypeHint;
 		addInput(input);
 		input.addOutput(this);
@@ -59,11 +62,43 @@ public class FederatedFoutMaterialize extends Lop {
 		_input = input;
 		_anchor = null;
 		_anchorKey = anchorKey;
+		_workerPool = false;
 		_fTypeHint = fTypeHint;
 		addInput(input);
 		input.addOutput(this);
 		setLevel();
 		lps.setProperties(inputs, ExecType.FED);
+	}
+
+	private FederatedFoutMaterialize(Lop input, String poolDescriptor, DataType dataType,
+		ValueType valueType, String fTypeHint, boolean workerPool) {
+		super(Type.FederatedFoutMaterialize, dataType, valueType);
+		if(!workerPool || !CanonicalWorkerPool.isDescriptor(poolDescriptor))
+			throw new LopsException("Invalid canonical worker pool descriptor.");
+		_input = input;
+		_anchor = null;
+		_anchorKey = poolDescriptor;
+		_workerPool = true;
+		_fTypeHint = fTypeHint;
+		addInput(input);
+		input.addOutput(this);
+		setLevel();
+		lps.setProperties(inputs, ExecType.FED);
+	}
+
+	public static FederatedFoutMaterialize forWorkerPool(
+		Lop input, String poolDescriptor, String fTypeHint) {
+		return forWorkerPool(input, poolDescriptor, input.getDataType(), input.getValueType(), fTypeHint);
+	}
+
+	public static FederatedFoutMaterialize forWorkerPool(Lop input, String poolDescriptor,
+		DataType dataType, ValueType valueType, String fTypeHint) {
+		return new FederatedFoutMaterialize(
+			input, poolDescriptor, dataType, valueType, fTypeHint, true);
+	}
+
+	public boolean usesCanonicalWorkerPool() {
+		return _workerPool;
 	}
 
 	@Override

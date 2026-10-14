@@ -26,7 +26,10 @@ import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.runtime.DMLRuntimeException;
+import org.apache.sysds.runtime.controlprogram.caching.CacheableData;
+import org.apache.sysds.runtime.controlprogram.caching.FrameObject;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
+import org.apache.sysds.runtime.controlprogram.federated.CanonicalWorkerPool;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedLocalData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
@@ -245,6 +248,49 @@ final class FEDLocalMaterializeUtil {
 		}
 
 		return new FederationMap(outId, outMap, effectiveMapType);
+	}
+
+	static FederationMap materializeLocalToPool(long tid, CacheableData<?> in,
+		CanonicalWorkerPool pool, FType targetType, long rlen, long clen) {
+		if(in == null || pool == null)
+			throw new DMLRuntimeException("Canonical upload requires input data and a worker pool.");
+		if(in.getDataType() != org.apache.sysds.common.Types.DataType.MATRIX
+			&& in.getDataType() != org.apache.sysds.common.Types.DataType.FRAME)
+			throw new DMLRuntimeException("Canonical upload supports matrix and frame values only.");
+
+		FType runtimeType = pool.runtimeType(targetType);
+		FederatedRange[] ranges = pool.canonicalRanges(targetType, rlen, clen);
+		FederationMap transportMap = pool.newTransportMap(in.getDataType(), -1, targetType, rlen, clen);
+		long outId;
+		if(runtimeType == FType.FULL || runtimeType == FType.BROADCAST) {
+			FederatedRequest request = transportMap.broadcast(in);
+			transportMap.execute(tid, true, request);
+			outId = request.getID();
+		}
+		else {
+			int[][] indexes = new int[ranges.length][4];
+			for(int i = 0; i < ranges.length; i++) {
+				long[] begin = ranges[i].getBeginDims();
+				long[] end = ranges[i].getEndDims();
+				indexes[i][0] = (int) begin[0];
+				indexes[i][1] = (int) end[0] - 1;
+				indexes[i][2] = (int) begin[1];
+				indexes[i][3] = (int) end[1] - 1;
+			}
+			FederatedRequest[] requests = transportMap.broadcastSliced(
+				in, in instanceof FrameObject, indexes);
+			if(requests.length != pool.size())
+				throw new DMLRuntimeException("Canonical upload request count does not match worker pool.");
+			transportMap.execute(tid, true, requests, new FederatedRequest[0]);
+			outId = requests[0].getID();
+		}
+
+		List<Pair<FederatedRange, FederatedData>> published = new ArrayList<>(pool.size());
+		for(int i = 0; i < pool.size(); i++)
+			published.add(Pair.of(ranges[i], transportMap.getMap().get(i).getValue().copyWithNewID(outId)));
+		FederationMap result = new FederationMap(outId, published, runtimeType);
+		pool.validateIngress(result, in.getDataType(), targetType, rlen, clen);
+		return result;
 	}
 
 }

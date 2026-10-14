@@ -17,9 +17,11 @@ import java.util.concurrent.CompletableFuture;
 
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse.ResponseType;
+import org.apache.sysds.runtime.meta.MetaDataAll;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Rule;
@@ -123,10 +125,12 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 	}
 
 	@Test
-	public void placementAnalysisOwnsPrivacyBeforeEveryPlannerSelector() throws Exception {
+	public void placementAnalysisOwnsPrivacyBeforeLegacyPlannerSelectors() throws Exception {
 		String builderSource = Files.readString(PLACEMENT_BUILDER);
 		String closure = JavaSourceBoundaryScanner.methodBody(builderSource,
 			"closePrivacyDomainsMeasured", "List<Node> nodes");
+		String inference = JavaSourceBoundaryScanner.methodBody(builderSource,
+			"inferPrivacyFacts", "List<Node> nodes");
 		String translatorSource = Files.readString(DML_TRANSLATOR);
 		String translator = JavaSourceBoundaryScanner.methodBody(translatorSource,
 			"runFederatedPlannerAtFinalHopBoundary", "DMLProgram dmlp");
@@ -134,16 +138,21 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 			"prepareCommonSearchSpace", "DMLProgram dmlp");
 		List<String> failures = new ArrayList<>();
 
-		if(countSequence(JavaSourceTokenScanner.tokens(closure),
+		if(!closure.contains("inferPrivacyFacts") || countSequence(JavaSourceTokenScanner.tokens(inference),
 			"FederatedPlannerUtils", ".", "resolveFederatedSourceMetadata", "(") != 1)
 			failures.add("commonAnalysisMustOwnOneSourceAcquisitionCall");
-		if(!closure.contains("derivePrivacyConstraint") || !closure.contains("PRIVACY_EXCLUDED")
+		if(!inference.contains("derivePrivacyConstraint") || !closure.contains("PRIVACY_EXCLUDED")
 			|| !builderSource.contains("ReasonCode.PRIVACY"))
 			failures.add("commonAnalysisPrivacyPropagationOrExclusionMissing");
 		int prepare = translator.indexOf("prepareCommonSearchSpace");
-		int create = translator.indexOf("FederatedPlannerFactory.create");
+		// Memo has its own source acquisition/privacy pipeline before this legacy
+		// branch. The historical placement authority applies to the legacy factory.
+		int create = translator.indexOf("createFederatedPlanner");
+		String factory = JavaSourceBoundaryScanner.methodBody(translatorSource,
+			"createFederatedPlanner", "org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner planner");
 		if(prepare < 0 || create <= prepare
-			|| !preparation.contains("bindPlacementAnalysisAtFinalHopBoundary"))
+			|| !preparation.contains("bindPlacementAnalysisAtFinalHopBoundary")
+			|| !factory.contains("FederatedPlannerFactory.create"))
 			failures.add("placementAnalysisMustPrecedePlannerFactory");
 
 		for(Path sourcePath : SELECTOR_SIDE_SOURCES) {
@@ -225,6 +234,73 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 
 		Assert.assertTrue(response.isSuccessful());
 		Assert.assertArrayEquals(new Object[] {"public"}, response.getData());
+	}
+
+	@Test
+	public void emptyFineGrainedPrivacyRetainsOrdinaryPublicDefault() throws Exception {
+		Path dataPath = workerDataPath("worker-empty-fine-privacy");
+		Files.writeString(Path.of(dataPath + ".mtd"), "{\"data_type\":\"matrix\","
+			+ "\"value_type\":\"double\",\"rows\":1,\"cols\":1,\"nnz\":1,\"format\":\"csv\","
+			+ "\"fine_grained_privacy\":{\"Private\":[],\"PrivateAggregation\":[]}}");
+
+		FederatedResponse response = new FederatedData.GetPrivacyConstraints(dataPath.toString()).execute(null);
+
+		Assert.assertTrue(response.isSuccessful());
+		Assert.assertArrayEquals(new Object[] {"public"}, response.getData());
+	}
+
+	@Test
+	public void nonemptyFineGrainedPrivacyFailsWithTypedUnsupportedState() throws Exception {
+		Path dataPath = workerDataPath("worker-nonempty-fine-privacy");
+		Files.writeString(Path.of(dataPath + ".mtd"), "{\"data_type\":\"matrix\","
+			+ "\"value_type\":\"double\",\"rows\":2,\"cols\":2,\"nnz\":4,\"format\":\"csv\","
+			+ "\"fine_grained_privacy\":{\"Private\":[[[0,0],[0,1]]]}}");
+
+		try {
+			new FederatedData.GetPrivacyConstraints(dataPath.toString()).execute(null);
+			Assert.fail("Fine-grained privacy must not be reported as public");
+		}
+		catch(MetaDataAll.UnsupportedFineGrainedPrivacyException expected) {
+			Assert.assertEquals(MetaDataAll.UNSUPPORTED_FINE_GRAINED_PRIVACY, expected.code());
+		}
+
+		FederatedData mounted = workerData(dataPath);
+		try {
+			resolve(mounted);
+			Assert.fail("Coordinator-local acquisition must preserve the typed unsupported state");
+		}
+		catch(MetaDataAll.UnsupportedFineGrainedPrivacyException expected) {
+			verify(mounted, never()).requestPrivacyConstraints();
+		}
+	}
+
+	@Test
+	public void malformedFineGrainedPrivacyFailsClosed() throws Exception {
+		Path dataPath = workerDataPath("worker-malformed-fine-privacy");
+		Files.writeString(Path.of(dataPath + ".mtd"),
+			"{\"fine_grained_privacy\":{\"Private\":\"not-a-range-array\"}}");
+
+		try {
+			new FederatedData.GetPrivacyConstraints(dataPath.toString()).execute(null);
+			Assert.fail("Malformed fine-grained privacy must not default to public");
+		}
+		catch(RuntimeException expected) {
+			Throwable cause = expected;
+			while(cause.getCause() != null) cause = cause.getCause();
+			Assert.assertTrue(cause instanceof DMLRuntimeException);
+			Assert.assertTrue(cause.getMessage().contains("Malformed fine_grained_privacy"));
+		}
+	}
+
+	@Test
+	public void remoteUnsupportedFineGrainedResponseRetainsTypedFailure() throws Exception {
+		FederatedData data = workerData(workerDataPath("remote-fine-privacy"));
+		FederatedResponse response = new FederatedResponse(ResponseType.ERROR,
+			MetaDataAll.UNSUPPORTED_FINE_GRAINED_PRIVACY + ": worker metadata contains private ranges");
+		when(data.requestPrivacyConstraints()).thenReturn(CompletableFuture.completedFuture(response));
+
+		assertResolution(resolve(data), null, "UNRESOLVED", "UNSUPPORTED_FINE_GRAINED_PRIVACY",
+			response, null);
 	}
 
 	@Test

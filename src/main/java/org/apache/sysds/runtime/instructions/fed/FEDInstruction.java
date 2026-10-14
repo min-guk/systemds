@@ -60,6 +60,7 @@ public abstract class FEDInstruction extends Instruction {
 		QPick,
 		Refed,
 		Fout,
+		Supply,
 		Reblock,
 		Reorg,
 		Reshape,

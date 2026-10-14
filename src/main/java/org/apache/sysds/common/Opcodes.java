@@ -396,7 +396,9 @@ public enum Opcodes {
 	//FED Opcodes
 	FEDINIT("fedinit", InstructionType.Init),
 	FEDREFED("fed_refed", InstructionType.Refed),
-	FEDFOUT("fed_fout", InstructionType.Fout);
+	FEDFOUT("fed_fout", InstructionType.Fout),
+	FEDSUPPLY("fed_supply", InstructionType.Supply),
+	MEMODEF("memo_def", InstructionType.Supply);
 
 	// Constructors
 	Opcodes(String name, InstructionType type) {

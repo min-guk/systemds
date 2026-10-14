@@ -362,21 +362,8 @@ public final class ExecPlacementPolicy {
 	}
 
 	public static boolean supportsForcedLocalFederatedOutput(Hop hop) {
-		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
-			return false;
-		if (hop instanceof QuaternaryOp && ((QuaternaryOp) hop).getOp() == Types.OpOp4.WDIVMM)
-			return true;
-		if (hop instanceof TernaryOp && ((TernaryOp) hop).getOp() == Types.OpOp3.CTABLE
-			&& !((TernaryOp) hop).isSequenceRewriteApplicable(true))
-			return true;
-		if (hop instanceof IndexingOp)
-			return true;
-		if (hop instanceof ReorgOp) {
-			Types.ReOrgOp op = ((ReorgOp) hop).getOp();
-			if(op == Types.ReOrgOp.TRANS || op == Types.ReOrgOp.DIAG)
-				return true;
-		}
-		return hop instanceof BinaryOp || hop instanceof AggBinaryOp;
+		return org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade
+			.supportsForcedLocalFederatedOutput(hop);
 	}
 
 	private static boolean isMultiReturnBuiltinHop(Hop hop) {

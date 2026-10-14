@@ -103,6 +103,10 @@ public class FunctionProgramBlock extends ProgramBlock implements FunctionBlock
 	@Override
 	public void execute(ExecutionContext ec) 
 	{
+		try(org.apache.sysds.runtime.controlprogram.federated.PlannedSupplyRuntime.Region plannedFunction =
+			org.apache.sysds.runtime.controlprogram.federated.PlannedSupplyRuntime.enter(ec,
+				org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry.ScopeKind.FUNCTION_INVOCATION,
+				_sb == null ? -1 : _sb.getSBID())) {
 		//dynamically recompile entire function body (according to function inputs)
 		boolean codegen = ConfigurationManager.isCodegenEnabled();
 		boolean singlenode = DMLScript.getGlobalExecMode() == ExecMode.SINGLE_NODE;
@@ -125,6 +129,7 @@ public class FunctionProgramBlock extends ProgramBlock implements FunctionBlock
 		
 		// check return values
 		checkOutputParameters(ec.getVariables());
+		}
 	}
 	
 	protected void checkOutputParameters( LocalVariableMap vars )

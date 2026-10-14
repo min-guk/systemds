@@ -51,9 +51,11 @@ import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.codegen.SpoofFusedOp;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
-import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
-import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.FederatedExecutionLayout;
-import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics.InputLayout;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostSemantics.CostExecutionLayout;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostSemantics.CostInputLayout;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostSemantics.ExecutionLayoutView;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostSemantics.InputLayoutView;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostSemantics.WorkerResponseView;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
@@ -620,7 +622,7 @@ public final class FederatedCostModel {
 
 	public static MixedFedLocalCost computeMixedFedLocalCost(Hop hop, List<Hop> inputHops,
 			List<Double> inputMemEstimates, List<FType> inputFTypes, FType logicalFType,
-			double baseSelfCost, double outputMemEstimate, int numWorkers, FederatedExecutionLayout layout) {
+			double baseSelfCost, double outputMemEstimate, int numWorkers, ExecutionLayoutView layout) {
 		double auxiliaryCost = computeAuxiliaryStageCost(hop, inputHops, inputMemEstimates,
 			inputFTypes, logicalFType, outputMemEstimate, numWorkers, layout);
 		if (requiresFederatedAggUnaryLocalAggregation(hop)) {
@@ -665,7 +667,7 @@ public final class FederatedCostModel {
 	 */
 	private static double computeAuxiliaryStageCost(Hop hop, List<Hop> inputs,
 			List<Double> inputBytes, List<FType> types, FType executionType, double outputBytes,
-			int numWorkers, FederatedExecutionLayout layout) {
+			int numWorkers, ExecutionLayoutView layout) {
 		int workers = executionType == FType.FULL ? 1 : Math.max(1, numWorkers);
 		double latency = computeRequestResponseLatency();
 		if(hop instanceof ReorgOp reorg && reorg.getOp() == ReOrgOp.RESHAPE)
@@ -725,22 +727,22 @@ public final class FederatedCostModel {
 					continue;
 				}
 				int responses = layout != null && i < layout.inputs().size() && layout.inputs().get(i).exactRanges()
-					? layout.inputs().get(i).ranges().size() : typeAt(types, i) == FType.FULL ? 1 : workers;
+					? layout.inputs().get(i).costRanges().size() : typeAt(types, i) == FType.FULL ? 1 : workers;
 				double share = auxiliaryWorkerShare(types, i, responses, layout);
 				cost += latency + computeReplicatedWorkerResultDownloadCost(8, responses)
 					+ computeExecutionCost(null, estimateLogicalCellCount(inputHopAt(inputs, i), bytes) * share,
 						bytes * share, 8)
 					+ computeExecutionCost(null, responses, 8.0 * responses, 8);
 			}
-			FederatedExecutionLayout actualLayout = layout != null ? layout
-				: new FederatedExecutionLayout(executionType, workers, java.util.stream.IntStream.range(0, inputs.size())
-					.mapToObj(position -> new InputLayout(typeAt(types, position), List.of(), false)).toList());
+			ExecutionLayoutView actualLayout = layout != null ? layout
+				: new CostExecutionLayout(executionType, workers, java.util.stream.IntStream.range(0, inputs.size())
+					.mapToObj(position -> new CostInputLayout(typeAt(types, position), List.of(), false)).toList());
 			for(int position = 0; position < Math.min(3, inputs.size()); position++) {
-				if(!PlacementCostSemantics.ctableInputNeedsCollection(hop, actualLayout, position))
+				if(!FederatedCostSemantics.ctableInputNeedsCollection(hop, actualLayout, position))
 					continue;
 				double bytes = auxiliaryInputBytes(inputs, inputBytes, position);
-				InputLayout primary = actualLayout.inputs().get(actualLayout.inputs().get(0).fType() != null ? 0 : 1);
-				int partitions = primary.exactRanges() ? primary.ranges().size() : workers;
+				InputLayoutView primary = actualLayout.inputs().get(actualLayout.inputs().get(0).fType() != null ? 0 : 1);
+				int partitions = primary.exactRanges() ? primary.costRanges().size() : workers;
 				// GET/cache activation is owned by the materialization collector. Slicing
 				// and PUT occur on every CTABLE call, including warm/local inputs. A
 				// full, replicated or singleton map broadcasts without copying slices.
@@ -774,8 +776,8 @@ public final class FederatedCostModel {
 		if(hop instanceof QuaternaryOp q && q.getOp() == OpOp4.WDIVMM)
 			return (typeAt(types, 0) == FType.ROW || typeAt(types, 0) == FType.COL
 				|| typeAt(types, 0) == FType.FULL)
-				&& (PlacementCostSemantics.isWdivmmMatrixOperand(hop, position)
-					|| position == 3 && PlacementCostSemantics.hasWdivmmEpsilon(hop));
+					&& (FederatedCostSemantics.isWdivmmMatrixOperand(hop, position)
+						|| position == 3 && FederatedCostSemantics.hasWdivmmEpsilon(hop));
 		if(!(hop instanceof AggBinaryOp multiply) || !multiply.isMatrixMultiply())
 			return false;
 		if(requiresFederatedAggBinaryRowLeftInputPreparation(hop, types))
@@ -787,7 +789,7 @@ public final class FederatedCostModel {
 	}
 
 	private static double computeRowCumulativeAuxiliaryCost(UnaryOp hop, List<Hop> inputs,
-			List<Double> inputBytes, List<FType> types, int workers, FederatedExecutionLayout layout) {
+			List<Double> inputBytes, List<FType> types, int workers, ExecutionLayoutView layout) {
 		Hop input = inputHopAt(inputs, 0);
 		double bytes = auxiliaryInputBytes(inputs, inputBytes, 0);
 		double cells = estimateLogicalCellCount(input, bytes);
@@ -796,9 +798,9 @@ public final class FederatedCostModel {
 		double rows = input.getDim1(), cols = input.getDim2();
 		if(layout != null && !layout.inputs().isEmpty() && layout.inputs().get(0).exactRanges()) {
 			if(rows <= 0)
-				rows = layout.inputs().get(0).ranges().stream().mapToLong(range -> range.end().get(0)).max().orElse(0);
+				rows = layout.inputs().get(0).costRanges().stream().mapToLong(range -> range.end().get(0)).max().orElse(0);
 			if(cols <= 0)
-				cols = layout.inputs().get(0).ranges().stream().mapToLong(range -> range.end().get(1)).max().orElse(0);
+				cols = layout.inputs().get(0).costRanges().stream().mapToLong(range -> range.end().get(1)).max().orElse(0);
 		}
 		if(cols <= 0)
 			cols = sumProduct ? 2 : 1;
@@ -844,13 +846,13 @@ public final class FederatedCostModel {
 	}
 
 	private static double auxiliaryWorkerShare(List<FType> types, int index, int workers,
-			FederatedExecutionLayout layout) {
+			ExecutionLayoutView layout) {
 		FType type = typeAt(types, index);
 		if(type == FType.FULL || type == FType.BROADCAST)
 			return 1;
 		if(layout != null && index < layout.inputs().size() && layout.inputs().get(index).exactRanges()) {
 			double total = 0, largest = 0;
-			for(var range : layout.inputs().get(index).ranges()) {
+			for(var range : layout.inputs().get(index).costRanges()) {
 				double cells = (range.end().get(0) - range.begin().get(0))
 					* (double) (range.end().get(1) - range.begin().get(1));
 				total += cells;
@@ -1046,21 +1048,21 @@ public final class FederatedCostModel {
 	}
 
 	public static double computeWdivmmInputPreparationCost(Hop hop, List<Hop> inputHops,
-			List<FType> inputFTypes, int numWorkers, FederatedExecutionLayout layout) {
+			List<FType> inputFTypes, int numWorkers, ExecutionLayoutView layout) {
 		return computeWdivmmInputPreparationCost(hop, inputHops, null, inputFTypes, numWorkers, layout);
 	}
 
 	private static double computeWdivmmInputPreparationCost(Hop hop, List<Hop> inputHops,
 			List<Double> inputMemEstimates, List<FType> inputFTypes, int numWorkers,
-			FederatedExecutionLayout layout) {
+			ExecutionLayoutView layout) {
 		if(!(hop instanceof QuaternaryOp q) || q.getOp() != OpOp4.WDIVMM) return 0.0;
 		FType weights = typeAt(inputFTypes, 0);
 		if(layout != null && !layout.inputs().isEmpty()) weights = layout.inputs().get(0).fType();
 		if(weights != FType.ROW && weights != FType.FULL && weights != FType.COL) return 0.0;
 		double cost = 0.0;
 		for(int position = 1; position < hop.getInput().size(); position++) {
-			if(!PlacementCostSemantics.isWdivmmMatrixOperand(hop, position)
-				|| !PlacementCostSemantics.wdivmmInputNeedsCollection(hop, layout, position)) continue;
+			if(!FederatedCostSemantics.isWdivmmMatrixOperand(hop, position)
+				|| !FederatedCostSemantics.wdivmmInputNeedsCollection(hop, layout, position)) continue;
 			boolean sliced = position == 1 && (weights == FType.ROW || weights == FType.FULL)
 				|| position == 2 && weights == FType.COL || position == 3;
 			cost += sliced ? computeSlicedBroadcastInputCost(inputHopAt(inputHops, position),
@@ -1069,7 +1071,7 @@ public final class FederatedCostModel {
 					inputMemEstimateAt(inputMemEstimates, position), numWorkers);
 		}
 		// Matrix-valued EPS is read at (0,0) on the coordinator; runtime sends one scalar.
-		if(PlacementCostSemantics.hasWdivmmEpsilon(hop))
+		if(FederatedCostSemantics.hasWdivmmEpsilon(hop))
 			cost += computeInBandUploadPayloadCost(8.0, FType.BROADCAST, numWorkers);
 		return cost;
 	}
@@ -1621,7 +1623,8 @@ public final class FederatedCostModel {
 	}
 
 	private static boolean isNormalizedRowArgMinAssignment(Hop hop) {
-		if (!(hop instanceof BinaryOp) || ((BinaryOp) hop).getOp() != OpOp2.DIV)
+		if (!(hop instanceof BinaryOp) || ((BinaryOp) hop).getOp() != OpOp2.DIV
+			|| hop.getInput() == null || hop.getInput().size() < 2)
 			return false;
 		Hop numerator = hop.getInput(0);
 		Hop denominator = hop.getInput(1);
@@ -1629,7 +1632,7 @@ public final class FederatedCostModel {
 	}
 
 	private static boolean isRowArgMinIndicator(Hop hop) {
-		if (!(hop instanceof BinaryOp))
+		if (!(hop instanceof BinaryOp) || hop.getInput() == null || hop.getInput().size() < 2)
 			return false;
 		BinaryOp binaryOp = (BinaryOp) hop;
 		if (binaryOp.getOp() == OpOp2.LESSEQUAL)
@@ -1649,7 +1652,7 @@ public final class FederatedCostModel {
 			return getRowArgMinSourceMatrix(hop.getInput(0));
 		if (isNormalizedRowArgMinAssignment(hop))
 			return getRowArgMinSourceMatrix(hop.getInput(0));
-		if (!(hop instanceof BinaryOp))
+		if (!(hop instanceof BinaryOp) || hop.getInput() == null || hop.getInput().size() < 2)
 			return null;
 		BinaryOp binaryOp = (BinaryOp) hop;
 		if (binaryOp.getOp() == OpOp2.LESSEQUAL && isRowMinOf(binaryOp.getInput(1), binaryOp.getInput(0)))
@@ -1666,7 +1669,8 @@ public final class FederatedCostModel {
 	}
 
 	private static boolean isRowMinOf(Hop aggregateHop, Hop sourceHop) {
-		if (!(aggregateHop instanceof AggUnaryOp) || sourceHop == null)
+		if (!(aggregateHop instanceof AggUnaryOp) || sourceHop == null
+			|| aggregateHop.getInput() == null || aggregateHop.getInput().isEmpty())
 			return false;
 		AggUnaryOp aggregate = (AggUnaryOp) aggregateHop;
 		return aggregate.getOp() == AggOp.MIN
@@ -1675,7 +1679,8 @@ public final class FederatedCostModel {
 	}
 
 	private static boolean isRowSumOf(Hop aggregateHop, Hop sourceHop) {
-		if (!(aggregateHop instanceof AggUnaryOp) || sourceHop == null)
+		if (!(aggregateHop instanceof AggUnaryOp) || sourceHop == null
+			|| aggregateHop.getInput() == null || aggregateHop.getInput().isEmpty())
 			return false;
 		AggUnaryOp aggregate = (AggUnaryOp) aggregateHop;
 		return aggregate.getOp() == AggOp.SUM
@@ -1693,7 +1698,7 @@ public final class FederatedCostModel {
 		if (!(transientReadHop instanceof DataOp)
 				|| ((DataOp) transientReadHop).getOp() != OpOpData.TRANSIENTREAD
 				|| sourceHop == null
-				|| !PlacementCostSemantics.isMultiReturnFunctionOutput(sourceHop)) {
+					|| !FederatedCostSemantics.isMultiReturnFunctionOutput(sourceHop)) {
 			return readerMemEstimate;
 		}
 		// Prefer the transient-read's own estimate once it is concrete/reliable. The explicit
@@ -2112,12 +2117,12 @@ public final class FederatedCostModel {
 	}
 
 	public static double computeNativeFederatedLoutResultCost(Hop hop,
-			PlacementCostSemantics.WorkerResponseSummary responses) {
+			WorkerResponseView responses) {
 		return computeNativeFederatedLoutResultCost(hop, null, responses);
 	}
 
 	public static double computeNativeFederatedLoutResultCost(Hop hop, List<FType> inputFTypes,
-			PlacementCostSemantics.WorkerResponseSummary responses) {
+			WorkerResponseView responses) {
 		if(isAlignedCovariance(hop, inputFTypes))
 			return computeReplicatedWorkerResultDownloadCost(8, responses.responses());
 		double payload = computeGetResponsePayloadCost(responses.totalBytes(), responses.largestBytes(),

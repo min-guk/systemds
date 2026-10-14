@@ -34,6 +34,7 @@ import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.DMLScriptException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysds.runtime.controlprogram.federated.MemoLoopRuntime;
 import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.cp.IntObject;
@@ -113,11 +114,19 @@ public class ForProgramBlock extends ProgramBlock
 		
 		long numIterations = UtilFunctions.getSeqLength(
 			from.getDoubleValue(), to.getDoubleValue(), incr.getDoubleValue(), false);
-		if( numIterations <= 0 )
+		if( numIterations <= 0 ) {
+			// Zero iterations never enter or transfer the selected loop head. The initial
+			// value remains live and ordinary exit supplies execute below this boundary.
+			executeExitInstructions("for", ec);
 			return;
+		}
 		
 		// execute for loop
-		try
+		try(MemoLoopRuntime.Scope loopContract = MemoLoopRuntime.enter(_sb, ec, _tid);
+			org.apache.sysds.runtime.controlprogram.federated.PlannedSupplyRuntime.Region plannedLoop =
+				org.apache.sysds.runtime.controlprogram.federated.PlannedSupplyRuntime.enter(ec,
+					org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry.ScopeKind.LOOP_INVOCATION,
+					_sb == null ? -1 : _sb.getSBID()))
 		{
 			// prepare update in-place variables
 			UpdateType[] flags = prepareUpdateInPlaceVariables(ec, _tid);
@@ -135,7 +144,12 @@ public class ForProgramBlock extends ProgramBlock
 			
 			// run for loop body for each instance of predicate sequence 
 			SequenceIterator seqIter = new SequenceIterator(from, to, incr);
+			long completedIterations = 0;
 			for (IntObject iterVar : seqIter) {
+				try(org.apache.sysds.runtime.controlprogram.federated.PlannedSupplyRuntime.Region plannedIteration =
+					org.apache.sysds.runtime.controlprogram.federated.PlannedSupplyRuntime.enter(ec,
+						org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry.ScopeKind.LOOP_ITERATION,
+						_sb == null ? -1 : _sb.getSBID())) {
 				if (DMLScript.LINEAGE_DEDUP)
 					ec.getLineage().resetDedupPath();
 				
@@ -152,13 +166,17 @@ public class ForProgramBlock extends ProgramBlock
 				//execute all child blocks
 				for (int i = 0; i < _childBlocks.size(); i++)
 					_childBlocks.get(i).execute(ec);
+				}
 				
 				if (DMLScript.LINEAGE_DEDUP) {
 					LineageDedupUtils.replaceLineage(ec);
 					// hook the dedup map to the main lineage trace
 					ec.getLineage().traceCurrentDedupPath(this, ec);
 				}
+				completedIterations++;
+				loopContract.iterationCompleted(completedIterations < numIterations);
 			}
+			loopContract.complete();
 			
 			// clear the current LineageDedupBlock
 			if (DMLScript.LINEAGE_DEDUP)

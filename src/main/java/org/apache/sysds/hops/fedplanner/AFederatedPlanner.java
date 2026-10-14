@@ -44,7 +44,10 @@ import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 
 public abstract class AFederatedPlanner {
 	public interface PlannerInvocationReceipt {
-		PlacementAnalysis analysis();
+		default PlacementAnalysis analysis() {
+			throw new UnsupportedOperationException(
+				"This planner invocation does not use legacy placement analysis");
+		}
 	}
 
 	public record SuppliedAnalysisReceipt(PlacementAnalysis analysis) implements PlannerInvocationReceipt {

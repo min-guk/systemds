@@ -22,8 +22,10 @@ package org.apache.sysds.runtime.instructions.fed;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.runtime.DMLRuntimeException;
+import org.apache.sysds.runtime.controlprogram.caching.CacheableData;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysds.runtime.controlprogram.federated.CanonicalWorkerPool;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
@@ -85,9 +87,11 @@ public class FEDFoutInstruction extends FEDInstruction {
 			case "FULL":
 				return FType.FULL;
 			case "BROADCAST":
+			case "REP":
 				return FType.BROADCAST;
 			default:
-				throw new DMLRuntimeException("fed_fout expects ftype literal ROW|COL|FULL|BROADCAST but found " + fTypeLiteral);
+				throw new DMLRuntimeException("fed_fout expects ftype literal ROW|COL|FULL|BROADCAST|REP but found "
+					+ fTypeLiteral);
 		}
 	}
 
@@ -95,6 +99,10 @@ public class FEDFoutInstruction extends FEDInstruction {
 	public void processInstruction(ExecutionContext ec) {
 		if(getPlannerSyntheticActionKey() != null && !_plannedSupply)
 			throw new DMLRuntimeException("Planner FOUT instruction lost its supply lifetime");
+		if(CanonicalWorkerPool.isDescriptor(_anchor.getName())) {
+			processCanonicalPool(ec, CanonicalWorkerPool.parse(_anchor.getName()));
+			return;
+		}
 		MatrixObject in = ec.getMatrixObject(_input);
 		FederationMap anchorMap = null;
 		boolean anchorLiteral = !_anchor.isMatrix() || !ec.containsVariable(_anchor.getName());
@@ -307,6 +315,42 @@ public class FEDFoutInstruction extends FEDInstruction {
 				+ " reuseFed=false"
 				+ " inst=" + instString);
 		}
+	}
+
+	private void processCanonicalPool(ExecutionContext ec, CanonicalWorkerPool pool) {
+		if(!_input.isMatrix() && !_input.isFrame())
+			throw new DMLRuntimeException("Canonical fed_fout supports matrix and frame inputs only.");
+		if(_output.getDataType() != _input.getDataType())
+			throw new DMLRuntimeException("Canonical fed_fout input/output data types must match.");
+		CacheableData<?> in = ec.getCacheableData(_input);
+		CacheableData<?> out = ec.getCacheableData(_output);
+		long rows = in.getNumRows();
+		long cols = in.getNumColumns();
+		if(rows <= 0 || cols <= 0) {
+			org.apache.sysds.runtime.controlprogram.caching.CacheBlock<?> block = in.acquireRead();
+			try {
+				rows = block.getNumRows();
+				cols = block.getNumColumns();
+			}
+			finally {
+				in.release();
+			}
+		}
+		FType targetType = _fTypeHint != null ? _fTypeHint : FType.BROADCAST;
+		FederationMap outMap;
+		if(in.isFederated()) {
+			pool.validateIngress(in.getFedMapping(), in.getDataType(), targetType, rows, cols);
+			outMap = in.getFedMapping();
+		}
+		else {
+			outMap = FEDLocalMaterializeUtil.materializeLocalToPool(
+				getTID(), in, pool, targetType, rows, cols);
+		}
+		out.setFedMapping(outMap);
+		if(in instanceof MatrixObject)
+			out.getDataCharacteristics().set(rows, cols, in.getBlocksize(), ((MatrixObject) in).getNnz());
+		else
+			out.getDataCharacteristics().set(rows, cols, in.getBlocksize());
 	}
 
 	static String materializedLayoutSignature(FederationMap anchorMap, FType materializeType,

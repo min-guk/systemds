@@ -28,6 +28,7 @@ import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
+import org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementShadowCoordinator;
@@ -82,14 +83,19 @@ public class IPAPassRewriteFederatedPlan extends IPAPass {
 
 	private void generatePlan(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes, String splanner,
 		Consumer<? super AFederatedPlanner.PlannerInvocationReceipt> receiptConsumer) {
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().requireAuthoritativeAnalysis(prog);
-		FederatedRefedRegistry.clear();
-		PlacementShadowCoordinator.Session shadow = PlacementShadowCoordinator.begin(prog, analysis);
 		FederatedPlanner planner = FederatedPlanner.isCompiled(splanner) ?
 			FederatedPlanner.valueOf(splanner.toUpperCase()) :
 			FederatedPlanner.COMPILE_FED_HEURISTIC_SINGLE_PASS;
 		AFederatedPlanner implementation = Objects.requireNonNull(
 			FederatedPlannerFactory.create(planner), "compiled federated planner implementation");
+		FederatedRefedRegistry.clear();
+		if(planner == FederatedPlanner.COMPILE_MEMO) {
+			generateMemoPlan(prog, planner, implementation, receiptConsumer);
+			return;
+		}
+
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().requireAuthoritativeAnalysis(prog);
+		PlacementShadowCoordinator.Session shadow = PlacementShadowCoordinator.begin(prog, analysis);
 		FederatedPlannerTrace.beginInvocation();
 		FederatedPlannerTrace.logGlobal("Planner-Invoke", "planner=" + planner
 			+ " impl=" + implementation.getClass().getName()
@@ -110,6 +116,31 @@ public class IPAPassRewriteFederatedPlan extends IPAPass {
 			+ " receipt=" + receipt.getClass().getName()
 			+ " analysis=" + analysis.analysisFingerprint());
 		PlacementShadowCoordinator.record(shadow.observe(prog));
+		Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - tFedPlanner);
+		receiptConsumer.accept(receipt);
+	}
+
+	private void generateMemoPlan(DMLProgram prog, FederatedPlanner planner, AFederatedPlanner implementation,
+		Consumer<? super AFederatedPlanner.PlannerInvocationReceipt> receiptConsumer) {
+		if(!(implementation instanceof FederatedPlanMemo))
+			throw new IllegalStateException("COMPILE_MEMO requires FederatedPlanMemo but received "
+				+ implementation.getClass().getName());
+		FederatedPlannerTrace.beginInvocation();
+		FederatedPlannerTrace.logGlobal("Planner-Invoke", "planner=" + planner
+			+ " impl=" + implementation.getClass().getName()
+			+ " analysis=none");
+		long tFedPlanner = System.nanoTime();
+		AFederatedPlanner.PlannerInvocationReceipt receipt;
+		try {
+			receipt = ((FederatedPlanMemo) implementation).plan(prog);
+		}
+		finally {
+			FederatedPlannerTrace.completeInvocation();
+		}
+		FederatedPlannerTrace.logGlobal("Planner-Complete", "planner=" + planner
+			+ " impl=" + implementation.getClass().getName()
+			+ " receipt=" + receipt.getClass().getName()
+			+ " analysis=none");
 		Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - tFedPlanner);
 		receiptConsumer.accept(receipt);
 	}

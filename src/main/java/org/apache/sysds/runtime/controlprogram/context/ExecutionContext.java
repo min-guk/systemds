@@ -38,6 +38,7 @@ import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysds.runtime.controlprogram.caching.TensorObject;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
+import org.apache.sysds.runtime.controlprogram.federated.PlannedSupplyRuntime;
 import org.apache.sysds.runtime.controlprogram.federated.RefedReuseAudit;
 import org.apache.sysds.runtime.controlprogram.federated.MatrixLineagePair;
 import org.apache.sysds.runtime.controlprogram.paramserv.homomorphicEncryption.SEALClient;
@@ -97,6 +98,10 @@ public class ExecutionContext {
 	protected long _tid = -1;
 	protected boolean _autoCreateVars;
 	private Instruction _currentInstruction;
+	private PlannedSupplyRuntime.Session _plannedSupplySession;
+
+	public PlannedSupplyRuntime.Session getPlannedSupplySession() { return _plannedSupplySession; }
+	public void setPlannedSupplySession(PlannedSupplyRuntime.Session session) { _plannedSupplySession = session; }
 
 	//lineage map, cache, prepared dedup blocks
 	protected Lineage _lineage;

@@ -41,6 +41,7 @@ import org.apache.sysds.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
+import org.apache.sysds.runtime.controlprogram.federated.FederationReplicaReader;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.controlprogram.parfor.LocalTaskQueue;
 import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
@@ -556,6 +557,8 @@ public class MatrixObject extends CacheableData<MatrixBlock> {
 		try {
 			if(fedMap.getType() == FType.PART)
 				return FederationUtils.aggregateResponses(readResponses);
+			else if(fedMap.getType() == FType.BROADCAST)
+				return FederationReplicaReader.readMatrix(readResponses, dims);
 			else {
 				// Robustness: federated outputs may occasionally carry stale/unknown dimensions in their
 				// local metadata. Since the federation map ranges are authoritative for the distributed

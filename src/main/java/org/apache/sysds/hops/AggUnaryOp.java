@@ -27,6 +27,7 @@ import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry;
 import org.apache.sysds.hops.AggBinaryOp.SparkAggType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
@@ -546,6 +547,7 @@ public class AggUnaryOp extends MultiThreadedHop
 	}
 
 	private static boolean hasPlannerMaterializationBoundary(Hop hop) {
+		if(MemoPlanRegistry.preservesNativeKernel(hop)) return true;
 		long hopId = hop.getHopID();
 		// A selected relocation/materialization producer or consumer input is an
 		// executable plan boundary. Ternary fusion must not erase either endpoint of
@@ -637,7 +639,8 @@ public class AggUnaryOp extends MultiThreadedHop
 	private boolean isUnaryAggregateOuterCPRewriteApplicable() {
 		boolean ret = false;
 		Hop input = getInput().get(0);
-		if(( input instanceof BinaryOp && ((BinaryOp)input).isOuter() )
+		if(!MemoPlanRegistry.preservesNativeKernel(input)
+			&& ( input instanceof BinaryOp && ((BinaryOp)input).isOuter() )
 			&& (_op == AggOp.MAXINDEX || _op == AggOp.MININDEX || _op == AggOp.SUM)
 			&& (isCompareOperator(((BinaryOp)input).getOp())))
 			ret = true;
