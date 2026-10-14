@@ -1,0 +1,338 @@
+{
+  "schema": "logreg-under10-candidate-evaluation-v1",
+  "passed": true,
+  "gates": {
+    "runPassed": true,
+    "planningUnder10Seconds": true,
+    "optimizerOptimal": true,
+    "exactObjectiveEqual": true,
+    "csvByteEqual": true,
+    "fedFingerprintEqual": true,
+    "actionDiagnosticsEqual": true,
+    "runtimeAuditNormalizedEqual": true,
+    "runtimeAuditClean": true,
+    "oracleTraceEqual": true,
+    "nativeUniverseEqual": true,
+    "nativeRequestsEqual": true,
+    "workerCountEqual": true,
+    "nativeRulesEqual": true,
+    "supplyCountEqual": true,
+    "jfrParsedWithoutLoss": true,
+    "frozenEngineAndRunInputsVerified": true
+  },
+  "note": "Search-node equality is intentionally not a gate; stronger exact bounds should change it.",
+  "planning": {
+    "before": 26.81944654,
+    "after": 6.672535049,
+    "delta": -20.146911491,
+    "percent": -75.12053412792015
+  },
+  "optimization": {
+    "before": 23.714206977,
+    "after": 4.237294143,
+    "delta": -19.476912834,
+    "percent": -82.13183284134409
+  },
+  "search": {
+    "baseline": {
+      "boundPrunes": 2466239,
+      "checkCacheHits": 286080,
+      "checkEvaluations": 60227,
+      "conditionalBoundCacheHits": 11132120,
+      "conditionalBoundQueries": 11135047,
+      "costCacheHits": 3407,
+      "costEvaluations": 4828,
+      "nodes": 2933891,
+      "removedRules": 21182609,
+      "status": "OPTIMAL",
+      "supportCacheHits": 38226419,
+      "supportQueries": 171750,
+      "wideBoundRelaxations": 844,
+      "worklistVisits": 13616123
+    },
+    "candidate": {
+      "boundPrunes": 46033,
+      "checkCacheHits": 2337227,
+      "checkEvaluations": 60167,
+      "conditionalBoundCacheHits": 205703,
+      "conditionalBoundQueries": 207924,
+      "costCacheHits": 2278731,
+      "costEvaluations": 5103,
+      "nodes": 625916,
+      "removedRules": 632691,
+      "status": "OPTIMAL",
+      "supportCacheHits": 1924098,
+      "supportQueries": 68642,
+      "wideBoundRelaxations": 844,
+      "worklistVisits": 409814
+    },
+    "nodes": {
+      "before": 2933891,
+      "after": 625916,
+      "delta": -2307975,
+      "percent": -78.66601042779027
+    }
+  },
+  "solution": {
+    "baselineObjective": "1301.1526531142989790221751587629165844428591469750244868919253349304199218750",
+    "candidateObjective": "1301.1526531142989790221751587629165844428591469750244868919253349304199218750",
+    "baselineFingerprint": {
+      "COLS": 2.0,
+      "NORM2": 0.182219652643822,
+      "ROWS": 8.0,
+      "SUM": -0.8322576710419771
+    },
+    "candidateFingerprint": {
+      "COLS": 2.0,
+      "NORM2": 0.182219652643822,
+      "ROWS": 8.0,
+      "SUM": -0.8322576710419771
+    },
+    "baselineCsv": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-after-01/cases/ml_logreg/fed-model.csv",
+      "size": 332,
+      "sha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848"
+    },
+    "candidateCsv": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate03/cases/ml_logreg/fed-model.csv",
+      "size": 332,
+      "sha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848"
+    }
+  },
+  "oracle": {
+    "baseline": {
+      "hits": 0,
+      "misses": 1057
+    },
+    "candidate": {
+      "hits": 0,
+      "misses": 1057
+    }
+  },
+  "runtimeAudit": {
+    "baselineArtifacts": [
+      {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-after-01/audit/ml_logreg-fed/runtime-capability-205.jsonl",
+        "size": 25212,
+        "sha256": "62dd17d4a655ba6eae2a647232e0c454d853ee1015d337cef1b17088d58775b3"
+      },
+      {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-after-01/audit/ml_logreg-fed/runtime-conversion-frontier-205.jsonl",
+        "size": 52477,
+        "sha256": "d192e0add29d1485729eec2e1b6db76e5e1ed61a206fdbcb65fb41c25e933295"
+      }
+    ],
+    "candidateArtifacts": [
+      {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate03/audit/ml_logreg-fed/runtime-capability-204.jsonl",
+        "size": 25212,
+        "sha256": "5e3e1bd1b92aa77197ec41b96ddc668856946e066573cd6619dd845cb91e1584"
+      },
+      {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate03/audit/ml_logreg-fed/runtime-conversion-frontier-204.jsonl",
+        "size": 52477,
+        "sha256": "74e2106702df0966f856f3e2b3020f9ae74f495408ccba92a323efe8d9525fc0"
+      }
+    ],
+    "baselineRows": 33,
+    "candidateRows": 33
+  },
+  "jfr": {
+    "optimizerExecutionSamples": {
+      "before": 1696,
+      "after": 198,
+      "delta": -1498,
+      "percent": -88.3254716981132
+    },
+    "optimizerAllocationWeightBytes": {
+      "before": 30119849536,
+      "after": 4856618320,
+      "delta": -25263231216,
+      "percent": -83.8756886411559
+    },
+    "gcPauseSeconds": {
+      "before": 0.368887469,
+      "after": 0.225019509,
+      "delta": -0.14386796000000002,
+      "percent": -39.00050071909599
+    },
+    "candidateExclusiveBuckets": {
+      "shape-key-guard-cost": {
+        "samples": 69,
+        "percent": 34.84848484848485
+      },
+      "optimizer-other": {
+        "samples": 29,
+        "percent": 14.646464646464647
+      },
+      "reduced-search-control": {
+        "samples": 29,
+        "percent": 14.646464646464647
+      },
+      "model-cost-other": {
+        "samples": 28,
+        "percent": 14.141414141414142
+      },
+      "search-cache-key-domain": {
+        "samples": 24,
+        "percent": 12.121212121212121
+      },
+      "solver-other": {
+        "samples": 13,
+        "percent": 6.565656565656566
+      },
+      "conditional-cost-bound": {
+        "samples": 4,
+        "percent": 2.0202020202020203
+      },
+      "solver-propagate": {
+        "samples": 2,
+        "percent": 1.0101010101010102
+      }
+    },
+    "candidateTrackedInclusiveMethods": {
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.support": {
+        "inclusiveSamples": 63,
+        "percentOfOptimizerSamples": 31.818181818181817
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.supportDfs": {
+        "inclusiveSamples": 45,
+        "percentOfOptimizerSamples": 22.727272727272727
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.propagate": {
+        "inclusiveSamples": 68,
+        "percentOfOptimizerSamples": 34.343434343434346
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.computeConditionalCostBound": {
+        "inclusiveSamples": 55,
+        "percentOfOptimizerSamples": 27.77777777777778
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.currentTermBound": {
+        "inclusiveSamples": 55,
+        "percentOfOptimizerSamples": 27.77777777777778
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.refreshTermBound": {
+        "inclusiveSamples": 55,
+        "percentOfOptimizerSamples": 27.77777777777778
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.coreLowerBound": {
+        "inclusiveSamples": 59,
+        "percentOfOptimizerSamples": 29.7979797979798
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cached": {
+        "inclusiveSamples": 4,
+        "percentOfOptimizerSamples": 2.0202020202020203
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cachedDomains": {
+        "inclusiveSamples": 18,
+        "percentOfOptimizerSamples": 9.090909090909092
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.tupleHash": {
+        "inclusiveSamples": 1,
+        "percentOfOptimizerSamples": 0.5050505050505051
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.scopedDomainHash": {
+        "inclusiveSamples": 6,
+        "percentOfOptimizerSamples": 3.0303030303030303
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ScopedDomainIdentity.sameDomains": {
+        "inclusiveSamples": 7,
+        "percentOfOptimizerSamples": 3.5353535353535355
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.stamp": {
+        "inclusiveSamples": 2,
+        "percentOfOptimizerSamples": 1.0101010101010102
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementGroupCost": {
+        "inclusiveSamples": 79,
+        "percentOfOptimizerSamples": 39.898989898989896
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.visitBindingCostContexts": {
+        "inclusiveSamples": 25,
+        "percentOfOptimizerSamples": 12.626262626262626
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.visitJoint": {
+        "inclusiveSamples": 2,
+        "percentOfOptimizerSamples": 1.0101010101010102
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.enumerate": {
+        "inclusiveSamples": 2,
+        "percentOfOptimizerSamples": 1.0101010101010102
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes.resolvedBindingShape": {
+        "inclusiveSamples": 43,
+        "percentOfOptimizerSamples": 21.717171717171716
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes.cloneView": {
+        "inclusiveSamples": 0,
+        "percentOfOptimizerSamples": 0.0
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectGuards": {
+        "inclusiveSamples": 13,
+        "percentOfOptimizerSamples": 6.565656565656566
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectLoops": {
+        "inclusiveSamples": 10,
+        "percentOfOptimizerSamples": 5.05050505050505
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectCardinalities": {
+        "inclusiveSamples": 5,
+        "percentOfOptimizerSamples": 2.525252525252525
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.canonicalGuard": {
+        "inclusiveSamples": 5,
+        "percentOfOptimizerSamples": 2.525252525252525
+      }
+    }
+  },
+  "freezeVerification": {
+    "schema": "logreg-under10-frozen-verification-v1",
+    "manifest": {
+      "expectedFiles": 12512,
+      "actualFiles": 12512,
+      "missing": [],
+      "extra": [],
+      "hashMismatches": [],
+      "passed": true
+    },
+    "runInputs": {
+      "mainClasses": {
+        "leftFiles": 4933,
+        "rightFiles": 4933,
+        "missing": [],
+        "extra": [],
+        "hashMismatches": [],
+        "passed": true
+      },
+      "testClasses": {
+        "leftFiles": 3362,
+        "rightFiles": 3362,
+        "missing": [],
+        "extra": [],
+        "hashMismatches": [],
+        "passed": true
+      },
+      "mainSources": {
+        "leftFiles": 1692,
+        "rightFiles": 1692,
+        "missing": [],
+        "extra": [],
+        "hashMismatches": [],
+        "passed": true
+      },
+      "testSources": {
+        "leftFiles": 2209,
+        "rightFiles": 2209,
+        "missing": [],
+        "extra": [],
+        "hashMismatches": [],
+        "passed": true
+      }
+    },
+    "passed": true
+  },
+  "limitations": [
+    "one JFR run per candidate",
+    "JFR samples and allocation weights are statistical"
+  ]
+}

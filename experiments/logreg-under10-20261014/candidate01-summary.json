@@ -1,0 +1,300 @@
+{
+  "schema": "logreg-under10-candidate-summary-v1",
+  "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate01",
+  "status": "PASSED",
+  "phaseSeconds": {
+    "facts": 0.053722228,
+    "model": 0.902680564,
+    "optimization": 13.563777113,
+    "projection": 0.089200106,
+    "rules": 1.493638574
+  },
+  "planningSeconds": 16.103018585,
+  "compilationSeconds": 17.307357,
+  "executionSeconds": 2.69,
+  "solution": {
+    "status": "OPTIMAL",
+    "objective": "1301.1526531142989790221751587629165844428591469750244868919253349304199218750",
+    "nodes": 2933891,
+    "nativeRules": 920,
+    "supplies": 1,
+    "workers": 3,
+    "fedFingerprint": {
+      "COLS": 2.0,
+      "NORM2": 0.182219652643822,
+      "ROWS": 8.0,
+      "SUM": -0.8322576710419771
+    },
+    "maxAbsDifference": 1.6653345369377348e-16
+  },
+  "oracle": {
+    "hits": 0,
+    "misses": 1057
+  },
+  "search": {
+    "boundPrunes": 2466239,
+    "checkCacheHits": 286092,
+    "checkEvaluations": 60227,
+    "conditionalBoundCacheHits": 11132124,
+    "conditionalBoundQueries": 11135051,
+    "costCacheHits": 3407,
+    "costEvaluations": 4828,
+    "nodes": 2933891,
+    "removedRules": 21182609,
+    "status": "OPTIMAL",
+    "supportCacheHits": 38226419,
+    "supportQueries": 171756,
+    "wideBoundRelaxations": 844,
+    "worklistVisits": 13616125
+  },
+  "construction": {
+    "costProjection": [
+      {
+        "activationEnvironments": 2770,
+        "bindingDagVisits": 339816,
+        "invariantProjectionStops": 149854,
+        "noRegionsSkipped": 19892,
+        "primitiveValueBytes": 529056,
+        "primitiveValues": 66132,
+        "primitiveVectors": 6422,
+        "projectedContexts": 6422,
+        "projectionCacheHits": 39748,
+        "relevantGuardDecisions": 6598,
+        "supportPrefixChecks": 15966,
+        "unknownObligations": 0
+      }
+    ],
+    "nativeGeneration": [
+      {
+        "coverageObligations": 38,
+        "cpPatterns": 1057,
+        "determinantRegions": 12457,
+        "evidenceReuses": 0,
+        "oracleEvaluations": 12457,
+        "prefixRequests": 0,
+        "prunedPrefixes": 4663,
+        "publishedRules": 5981,
+        "unknownPrefixes": 0,
+        "visitedNativePatterns": 7794
+      }
+    ],
+    "nativeRequests": [
+      {
+        "canonicalStringsCreated": 77,
+        "canonicalStringsReused": 7823,
+        "oracleRequests": 1057,
+        "preparedRequests": 8880,
+        "reusedResults": 7823,
+        "uncacheableRequests": 980
+      }
+    ]
+  },
+  "movementReuse": {
+    "activationRows": 2960,
+    "activationReplays": 148482,
+    "postGateRequests": 192331,
+    "postGateBuilds": 2589,
+    "postGateHits": 189742,
+    "primitiveContexts": 10709,
+    "contextualViewBuilds": 35725
+  },
+  "shapeReuse": {
+    "bindingGuardRequests": 19399,
+    "bindingGuardCacheHits": 5266,
+    "repeatProofRequests": 54886,
+    "repeatProofCacheHits": 53678
+  },
+  "actionDiagnostics": [
+    "Federated prefetch count:\t0.",
+    "plannerSyntheticActionKey=\"memo-definition|sb=16|producer=1150|origin=32\"",
+    "plannerSyntheticActionKey=\"memo-supply|sb=152|producer=202|target=LOCAL|recipes=ROW@COLLECT@POOLv1:bG9jYWxob3N0.13000,bG9jYWxob3N0.13001,bG9jYWxob3N0.13002|origins=0:32\"",
+    "plannerSyntheticActionKey=memo-definition|sb=16|producer=1150|origin=32",
+    "plannerSyntheticActionKey=memo-supply|sb=152|producer=202|target=LOCAL|recipes=ROW@COLLECT@POOLv1:bG9jYWxob3N0.13000,bG9jYWxob3N0.13001,bG9jYWxob3N0.13002|origins=0:32"
+  ],
+  "runtimeAudit": {
+    "rows": 33,
+    "schemas": [
+      "fed-runtime-capability-v1",
+      "fed-runtime-conversion-frontier-v1"
+    ],
+    "violations": []
+  },
+  "jfr": {
+    "artifact": {
+      "exists": true,
+      "parserError": null,
+      "parserPassed": true,
+      "parserReturncode": 0,
+      "path": "cases/ml_logreg/fed.jfr",
+      "sha256": "906721e280ad4bf0073d528e6d290313311efd389e7f3f54498c84578bcf8a28",
+      "size": 3360628
+    },
+    "dataLossEvents": 0,
+    "optimizerExecutionSamples": 1110,
+    "optimizerAllocationWeightBytes": 10103625680,
+    "gc": {
+      "collectionCount": 69,
+      "totalCollectionDurationSeconds": 0.338746795,
+      "stopTheWorldPauseSeconds": 0.289754328,
+      "maxPauseSeconds": 0.00918674,
+      "maxSampledHeapBytes": 293119488,
+      "maxAfterGcHeapBytes": 67242832,
+      "causes": {
+        "G1 Evacuation Pause": 64,
+        "Metadata GC Threshold": 4,
+        "G1 Preventive Collection": 1
+      }
+    },
+    "exclusiveNearestMemoBuckets": {
+      "search-cache-key-domain": {
+        "samples": 369,
+        "percent": 33.24324324324324
+      },
+      "reduced-search-control": {
+        "samples": 222,
+        "percent": 20.0
+      },
+      "solver-other": {
+        "samples": 212,
+        "percent": 19.0990990990991
+      },
+      "conditional-cost-bound": {
+        "samples": 143,
+        "percent": 12.882882882882884
+      },
+      "shape-key-guard-cost": {
+        "samples": 71,
+        "percent": 6.396396396396397
+      },
+      "optimizer-other": {
+        "samples": 38,
+        "percent": 3.4234234234234235
+      },
+      "model-cost-other": {
+        "samples": 30,
+        "percent": 2.7027027027027026
+      },
+      "solver-propagate": {
+        "samples": 22,
+        "percent": 1.981981981981982
+      },
+      "binding-context-resolution": {
+        "samples": 2,
+        "percent": 0.18018018018018017
+      },
+      "solver-support": {
+        "samples": 1,
+        "percent": 0.09009009009009009
+      }
+    },
+    "trackedInclusiveMethods": {
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.support": {
+        "inclusiveSamples": 318,
+        "percentOfOptimizerSamples": 28.64864864864865
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.supportDfs": {
+        "inclusiveSamples": 53,
+        "percentOfOptimizerSamples": 4.774774774774775
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.propagate": {
+        "inclusiveSamples": 374,
+        "percentOfOptimizerSamples": 33.693693693693696
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.computeConditionalCostBound": {
+        "inclusiveSamples": 150,
+        "percentOfOptimizerSamples": 13.513513513513514
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.currentTermBound": {
+        "inclusiveSamples": 158,
+        "percentOfOptimizerSamples": 14.234234234234235
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.refreshTermBound": {
+        "inclusiveSamples": 151,
+        "percentOfOptimizerSamples": 13.603603603603604
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.coreLowerBound": {
+        "inclusiveSamples": 291,
+        "percentOfOptimizerSamples": 26.216216216216218
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cached": {
+        "inclusiveSamples": 5,
+        "percentOfOptimizerSamples": 0.45045045045045046
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cachedDomains": {
+        "inclusiveSamples": 333,
+        "percentOfOptimizerSamples": 30.0
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.tupleHash": {
+        "inclusiveSamples": 1,
+        "percentOfOptimizerSamples": 0.09009009009009009
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.scopedDomainHash": {
+        "inclusiveSamples": 140,
+        "percentOfOptimizerSamples": 12.612612612612613
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ScopedDomainIdentity.sameDomains": {
+        "inclusiveSamples": 89,
+        "percentOfOptimizerSamples": 8.018018018018019
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.stamp": {
+        "inclusiveSamples": 31,
+        "percentOfOptimizerSamples": 2.7927927927927927
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementGroupCost": {
+        "inclusiveSamples": 84,
+        "percentOfOptimizerSamples": 7.5675675675675675
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.visitBindingCostContexts": {
+        "inclusiveSamples": 28,
+        "percentOfOptimizerSamples": 2.5225225225225225
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.visitJoint": {
+        "inclusiveSamples": 6,
+        "percentOfOptimizerSamples": 0.5405405405405406
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.enumerate": {
+        "inclusiveSamples": 5,
+        "percentOfOptimizerSamples": 0.45045045045045046
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes.resolvedBindingShape": {
+        "inclusiveSamples": 52,
+        "percentOfOptimizerSamples": 4.684684684684685
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes.cloneView": {
+        "inclusiveSamples": 6,
+        "percentOfOptimizerSamples": 0.5405405405405406
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectGuards": {
+        "inclusiveSamples": 13,
+        "percentOfOptimizerSamples": 1.1711711711711712
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectLoops": {
+        "inclusiveSamples": 11,
+        "percentOfOptimizerSamples": 0.990990990990991
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectCardinalities": {
+        "inclusiveSamples": 2,
+        "percentOfOptimizerSamples": 0.18018018018018017
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.canonicalGuard": {
+        "inclusiveSamples": 7,
+        "percentOfOptimizerSamples": 0.6306306306306306
+      }
+    }
+  },
+  "processMonitor": {
+    "sampleCount": 15,
+    "firstEpochMs": 1791941549023,
+    "lastEpochMs": 1791941570244,
+    "observedSeconds": 21.221,
+    "hostPid": 2993481,
+    "singlePid": true,
+    "clockTicksPerSecond": 100,
+    "cpuTicksDelta": 3961,
+    "cpuSeconds": 39.61,
+    "cpuScope": "whole coordinator JVM during monitored interval, not optimizer-only",
+    "maxVmRssKiB": 574300,
+    "maxVmHwmKiB": 667616,
+    "lastVmHwmKiB": 667616
+  }
+}

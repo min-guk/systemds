@@ -1,0 +1,2 @@
+javac -cp <after-engine/test-classes>:<after-engine/classes>:<after-engine/lib/*> -d facts-before-test-classes src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoProgramFactsIndexTest.java
+java --add-modules jdk.incubator.vector -Xmx3g -cp facts-before-test-classes:<after-engine/test-classes>:<after-engine/classes>:<after-engine/lib/*> org.junit.runner.JUnitCore org.apache.sysds.hops.fedplanner.memo.MemoProgramFactsIndexTest

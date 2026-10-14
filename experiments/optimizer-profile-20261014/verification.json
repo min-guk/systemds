@@ -1,0 +1,40 @@
+{
+  "productionFileCount": 9061,
+  "productionFilesChanged": [],
+  "trackedProductionDiffEmpty": true,
+  "profileAccounting": {
+    "baseline-logreg": {
+      "phaseSamplesSum": true,
+      "categorySamplesSum": true,
+      "phaseAllocationSum": true,
+      "categoryAllocationSum": true,
+      "noDataLoss": true
+    },
+    "current-logreg": {
+      "phaseSamplesSum": true,
+      "categorySamplesSum": true,
+      "phaseAllocationSum": true,
+      "categoryAllocationSum": true,
+      "noDataLoss": true
+    },
+    "current-glm": {
+      "phaseSamplesSum": true,
+      "categorySamplesSum": true,
+      "phaseAllocationSum": true,
+      "categoryAllocationSum": true,
+      "noDataLoss": true
+    }
+  },
+  "reportLocalLinksChecked": 12,
+  "missingReportLocalLinks": [],
+  "workloadRuns": "baseline LogReg1,current LogReg1,current GLM1",
+  "productionOrTestEdits": false,
+  "independentReview": "approved; numeric evidence and correctness boundaries checked",
+  "freshDockerModelProofTests": {
+    "baseline": 7,
+    "current": 7
+  },
+  "freshFullRegressionSuiteRun": false,
+  "reasonNoFullSuite": "no production/test modifications",
+  "reportSha256": "f32de737aadb380477abbad45ce18b7a6bcfe91f8db4b8b9234e82bd2f33a67b"
+}

@@ -1,0 +1,291 @@
+{
+  "schema": "memo-optimizer-reuse-comparison-v1",
+  "samplePolicy": {
+    "beforeLogRegRuns": 1,
+    "afterLogRegRuns": 1,
+    "beforeGlmRuns": 1,
+    "afterGlmRuns": 1,
+    "aggregation": "none",
+    "jfr": false,
+    "performanceClaim": "single before/after pair"
+  },
+  "environment": {
+    "beforeImage": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "afterImage": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "sameImage": true,
+    "workers": 3,
+    "cpus": 4,
+    "memory": "8g",
+    "network": "none",
+    "caseTimeoutSeconds": 300
+  },
+  "logReg": {
+    "status": {
+      "beforePassed": true,
+      "afterPassed": true
+    },
+    "timingSeconds": {
+      "phases": {
+        "facts": {
+          "before": 0.056115449,
+          "after": 0.058541804,
+          "delta": 0.002426355000000005,
+          "percent": 4.323862756582425
+        },
+        "rules": {
+          "before": 1.937784423,
+          "after": 1.507092549,
+          "delta": -0.4306918740000001,
+          "percent": -22.225995259742064
+        },
+        "model": {
+          "before": 0.754423339,
+          "after": 0.613457449,
+          "delta": -0.14096589000000004,
+          "percent": -18.685250404216355
+        },
+        "optimization": {
+          "before": 36.851172142,
+          "after": 29.823222436,
+          "delta": -7.027949706000005,
+          "percent": -19.07117005374739
+        },
+        "projection": {
+          "before": 0.045925907,
+          "after": 0.074656098,
+          "delta": 0.028730191000000002,
+          "percent": 62.557699731439165
+        }
+      },
+      "planning": {
+        "before": 39.64542126,
+        "after": 32.076970336,
+        "delta": -7.568450923999997,
+        "percent": -19.09035314409974
+      },
+      "compilation": {
+        "before": 40.732312,
+        "after": 33.22313,
+        "delta": -7.509182000000003,
+        "percent": -18.435442603896394
+      },
+      "execution": {
+        "before": 2.603,
+        "after": 2.577,
+        "delta": -0.026000000000000245,
+        "percent": -0.9988474836726947
+      }
+    },
+    "javaProc": {
+      "cpuSeconds": {
+        "before": 62.87,
+        "after": 52.95,
+        "delta": -9.919999999999995,
+        "percent": -15.7785907428026
+      },
+      "maxVmRssKiB": {
+        "before": 693584,
+        "after": 725480,
+        "delta": 31896,
+        "percent": 4.598722000507509
+      },
+      "maxVmHwmKiB": {
+        "before": 710988,
+        "after": 725480,
+        "delta": 14492,
+        "percent": 2.038290379021868
+      },
+      "beforeSamples": 31,
+      "afterSamples": 26
+    },
+    "shapeReuseAfter": {
+      "present": true,
+      "bindingGuardRequests": 767951,
+      "bindingGuardCacheHits": 744987,
+      "bindingGuardComputations": 22964,
+      "bindingGuardHitRate": 0.9700970504628551,
+      "repeatProofRequests": 66164,
+      "repeatProofCacheHits": 64956,
+      "repeatProofComputations": 1208,
+      "repeatProofHitRate": 0.9817423372226588
+    },
+    "oracleCounters": {
+      "before": {
+        "hits": 0,
+        "misses": 1057,
+        "nativeRequests": [
+          {
+            "canonicalStringsCreated": 77,
+            "canonicalStringsReused": 7823,
+            "oracleRequests": 1057,
+            "preparedRequests": 8880,
+            "reusedResults": 7823,
+            "uncacheableRequests": 980
+          }
+        ]
+      },
+      "after": {
+        "hits": 0,
+        "misses": 1057,
+        "nativeRequests": [
+          {
+            "canonicalStringsCreated": 77,
+            "canonicalStringsReused": 7823,
+            "oracleRequests": 1057,
+            "preparedRequests": 8880,
+            "reusedResults": 7823,
+            "uncacheableRequests": 980
+          }
+        ]
+      },
+      "exact": true
+    },
+    "semanticEquivalence": {
+      "objectiveExact": true,
+      "objective": "1301.1526531142989790221751587629165844428591469750244868919253349304199218750",
+      "nativeRulesExact": true,
+      "nativeRules": 920,
+      "nodesExact": true,
+      "nodes": 2933891,
+      "suppliesExact": true,
+      "supplies": 1,
+      "searchStructuralCountersExact": true,
+      "costProjectionExact": true,
+      "nativeGenerationExact": true,
+      "modelComparisonExact": true,
+      "numericMatchedBoth": true,
+      "maxAbsDifferenceBefore": 1.6653345369377348e-16,
+      "maxAbsDifferenceAfter": 1.6653345369377348e-16,
+      "fedModelCsvByteExact": true,
+      "fedModelCsvSha256Before": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848",
+      "fedModelCsvSha256After": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848",
+      "supplyActionDiagnosticsExact": true,
+      "runtimeAuditViolationsExact": true,
+      "runtimeCapabilityAudit": {
+        "before": {
+          "file": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/optimizer-reuse-before-01/audit/ml_logreg-fed/runtime-capability-205.jsonl",
+          "rows": 13,
+          "normalizedSha256": "35dd9c26100634a441b6b04dc294e9db1891402426bf5c45d86ce063b6612419"
+        },
+        "after": {
+          "file": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/optimizer-reuse-after-01/audit/ml_logreg-fed/runtime-capability-204.jsonl",
+          "rows": 13,
+          "normalizedSha256": "35dd9c26100634a441b6b04dc294e9db1891402426bf5c45d86ce063b6612419"
+        },
+        "normalizedExact": true
+      },
+      "runtimeConversionFrontierAudit": {
+        "before": {
+          "file": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/optimizer-reuse-before-01/audit/ml_logreg-fed/runtime-conversion-frontier-205.jsonl",
+          "rows": 20,
+          "normalizedSha256": "5efffe68a0e8d87b190ccd414e2223626b39aeeb3709008f64a56313b070c310"
+        },
+        "after": {
+          "file": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/optimizer-reuse-after-01/audit/ml_logreg-fed/runtime-conversion-frontier-204.jsonl",
+          "rows": 20,
+          "normalizedSha256": "5efffe68a0e8d87b190ccd414e2223626b39aeeb3709008f64a56313b070c310"
+        },
+        "normalizedExact": true
+      },
+      "memoEvidenceExact": true,
+      "actionDiagnosticsBefore": [
+        "Federated prefetch count:\t0.",
+        "plannerSyntheticActionKey=\"memo-definition|sb=16|producer=1150|origin=32\"",
+        "plannerSyntheticActionKey=\"memo-supply|sb=152|producer=202|target=LOCAL|recipes=ROW@COLLECT@POOLv1:bG9jYWxob3N0.13000,bG9jYWxob3N0.13001,bG9jYWxob3N0.13002|origins=0:32\"",
+        "plannerSyntheticActionKey=memo-definition|sb=16|producer=1150|origin=32",
+        "plannerSyntheticActionKey=memo-supply|sb=152|producer=202|target=LOCAL|recipes=ROW@COLLECT@POOLv1:bG9jYWxob3N0.13000,bG9jYWxob3N0.13001,bG9jYWxob3N0.13002|origins=0:32"
+      ],
+      "actionDiagnosticsAfter": [
+        "Federated prefetch count:\t0.",
+        "plannerSyntheticActionKey=\"memo-definition|sb=16|producer=1150|origin=32\"",
+        "plannerSyntheticActionKey=\"memo-supply|sb=152|producer=202|target=LOCAL|recipes=ROW@COLLECT@POOLv1:bG9jYWxob3N0.13000,bG9jYWxob3N0.13001,bG9jYWxob3N0.13002|origins=0:32\"",
+        "plannerSyntheticActionKey=memo-definition|sb=16|producer=1150|origin=32",
+        "plannerSyntheticActionKey=memo-supply|sb=152|producer=202|target=LOCAL|recipes=ROW@COLLECT@POOLv1:bG9jYWxob3N0.13000,bG9jYWxob3N0.13001,bG9jYWxob3N0.13002|origins=0:32"
+      ],
+      "generatedHopAndSupplyActionDiagnosticsExact": true
+    },
+    "nonSemanticCounterDifferences": {
+      "cacheHits": {
+        "before": 82050731,
+        "after": 82050743,
+        "delta": 12
+      },
+      "supportQueries": {
+        "before": 38286830,
+        "after": 38286836,
+        "delta": 6
+      }
+    }
+  },
+  "glm": {
+    "status": {
+      "beforePassed": false,
+      "afterPassed": false,
+      "beforeFedReturncode": 124,
+      "afterFedReturncode": 124
+    },
+    "constructionExact": true,
+    "oracleCountersExact": true,
+    "beforeNativeRequests": [
+      {
+        "canonicalStringsCreated": 111,
+        "canonicalStringsReused": 9449,
+        "oracleRequests": 2250,
+        "preparedRequests": 11699,
+        "reusedResults": 9449,
+        "uncacheableRequests": 2139
+      }
+    ],
+    "afterNativeRequests": [
+      {
+        "canonicalStringsCreated": 111,
+        "canonicalStringsReused": 9449,
+        "oracleRequests": 2250,
+        "preparedRequests": 11699,
+        "reusedResults": 9449,
+        "uncacheableRequests": 2139
+      }
+    ],
+    "shapeReuseAfter": {
+      "present": false,
+      "interpretation": "optimizer did not complete; absence is unavailable, not zero"
+    },
+    "memoPlanningAvailableBefore": false,
+    "memoPlanningAvailableAfter": false,
+    "javaProc": {
+      "cpuSeconds": {
+        "before": 325.84,
+        "after": 323.65,
+        "delta": -2.1899999999999977,
+        "percent": -0.6721090105573281
+      },
+      "maxVmRssKiB": {
+        "before": 715416,
+        "after": 782976,
+        "delta": 67560,
+        "percent": 9.443456674158812
+      },
+      "maxVmHwmKiB": {
+        "before": 715800,
+        "after": 783360,
+        "delta": 67560,
+        "percent": 9.438390611902767
+      },
+      "beforeSamples": 200,
+      "afterSamples": 199
+    },
+    "interpretation": "both timed out before optimizer completion; no objective/output/shape-reuse trace, so absence is unavailable and no completion-speed claim is supported"
+  },
+  "provenance": {
+    "beforeSummary": "experiments/optimizer-reuse-20261014/optimizer-reuse-before-summary.json",
+    "afterSummary": "experiments/optimizer-reuse-20261014/optimizer-reuse-after-summary.json",
+    "beforeResult": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/optimizer-reuse-before-01/result.json",
+    "afterResult": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/optimizer-reuse-after-01/result.json",
+    "beforeResultSha256": "db877299edbd30acd959131d2b44a08b811e7dbe268e068a0699a23869152713",
+    "afterResultSha256": "4b649a279cb7086cb7841033a19fd3dc73bc0770400f8d2e8748743788e6a522",
+    "afterFrozenInputsMatchEngine": true,
+    "containersStopped": true,
+    "afterEngineManifest": "experiments/optimizer-reuse-20261014/after-engine-sha256.json",
+    "afterEngineManifestSha256": "bd817fbd43d25fd8b3279045118c6f2bf12fc28b097e28c942ad0f28bf352d54"
+  }
+}

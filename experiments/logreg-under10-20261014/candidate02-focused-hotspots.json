@@ -1,0 +1,102 @@
+{
+  "schema": "candidate02-focused-hotspots-v1",
+  "method": "JFR execution samples; inclusive overlaps",
+  "candidate01": {
+    "optimizerSamples": 1106,
+    "methods": {
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cachedDomains": {
+        "inclusive": 333,
+        "leaf": 9
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.scopedDomainHash": {
+        "inclusive": 140,
+        "leaf": 42
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ScopedDomainIdentity.sameDomains": {
+        "inclusive": 89,
+        "leaf": 16
+      },
+      "java.util.HashMap$TreeNode.getTreeNode": {
+        "inclusive": 94,
+        "leaf": 94
+      },
+      "java.util.BitSet.hashCode": {
+        "inclusive": 98,
+        "leaf": 98
+      },
+      "java.util.BitSet.equals": {
+        "inclusive": 73,
+        "leaf": 73
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.coreLowerBound": {
+        "inclusive": 291,
+        "leaf": 10
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore": {
+        "inclusive": 1088,
+        "leaf": 155
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.branchConnectivity": {
+        "inclusive": 54,
+        "leaf": 54
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementGroupCost": {
+        "inclusive": 84,
+        "leaf": 0
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.visitBindingCostContexts": {
+        "inclusive": 28,
+        "leaf": 0
+      }
+    }
+  },
+  "candidate02": {
+    "optimizerSamples": 1065,
+    "methods": {
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cachedDomains": {
+        "inclusive": 299,
+        "leaf": 40
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.scopedDomainHash": {
+        "inclusive": 110,
+        "leaf": 110
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ScopedDomainIdentity.sameDomains": {
+        "inclusive": 56,
+        "leaf": 54
+      },
+      "java.util.HashMap$TreeNode.getTreeNode": {
+        "inclusive": 0,
+        "leaf": 0
+      },
+      "java.util.BitSet.hashCode": {
+        "inclusive": 0,
+        "leaf": 0
+      },
+      "java.util.BitSet.equals": {
+        "inclusive": 0,
+        "leaf": 0
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.coreLowerBound": {
+        "inclusive": 314,
+        "leaf": 12
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore": {
+        "inclusive": 1052,
+        "leaf": 71
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.branchConnectivity": {
+        "inclusive": 0,
+        "leaf": 0
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementGroupCost": {
+        "inclusive": 97,
+        "leaf": 1
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.visitBindingCostContexts": {
+        "inclusive": 29,
+        "leaf": 0
+      }
+    }
+  }
+}

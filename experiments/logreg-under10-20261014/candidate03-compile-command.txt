@@ -1,0 +1,5 @@
+mvn
+-o
+-DskipTests
+-Djacoco.skip=true
+test-compile

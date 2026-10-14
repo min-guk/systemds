@@ -1,0 +1,10 @@
+{
+  "manifest": "experiments/logreg-bottleneck-20261014/after-engine-sha256.json",
+  "expectedFiles": 12498,
+  "actualFiles": 12498,
+  "missing": [],
+  "extra": [],
+  "hashMismatches": [],
+  "passed": true,
+  "elapsedSeconds": 0.9445066452026367
+}

@@ -1,0 +1,1 @@
+bash experiments/logreg-under10-20261014/monitor-java-coordinator.sh logreg-under10-candidate02 experiments/logreg-under10-20261014/candidate02-proc.tsv > experiments/logreg-under10-20261014/candidate02-proc-monitor.log 2>&1 &

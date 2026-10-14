@@ -1,0 +1,28 @@
+{
+  "schema": "logreg-under10-candidate03-verification-v1",
+  "passed": true,
+  "workloadRuns": 1,
+  "build": {
+    "mavenTestCompilePassed": true,
+    "seconds": 38.931,
+    "log": "candidate03-compile.log"
+  },
+  "tests": {
+    "passed": true,
+    "classes": 50,
+    "tests": 440,
+    "seconds": 44.19,
+    "assertions": true,
+    "hostStack": "8m",
+    "log": "candidate03-unit.log"
+  },
+  "measurement": {
+    "primaryEvaluationPassed": true,
+    "differentialEvaluationPassed": true,
+    "forestTailPassed": true,
+    "jfrDataLossEvents": 0,
+    "frozenEngineAndRunInputsVerified": true,
+    "containersTerminatedAndRemoved": true
+  },
+  "planningUnder10Seconds": true
+}

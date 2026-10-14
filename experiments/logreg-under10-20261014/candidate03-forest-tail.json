@@ -1,0 +1,18 @@
+{
+  "schema": "memo-forest-tail-trace-v1",
+  "passed": true,
+  "gates": {
+    "exactlyOneTrace": true,
+    "exactFieldFormat": true,
+    "nonnegativeCounters": true,
+    "orderedCounts": true,
+    "featureExercised": true
+  },
+  "values": {
+    "attempts": 8716,
+    "applicable": 3310,
+    "completions": 3310,
+    "cells": 570702
+  },
+  "matchingLines": 1
+}

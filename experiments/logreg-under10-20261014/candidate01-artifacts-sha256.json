@@ -1,0 +1,101 @@
+{
+  "schema": "logreg-under10-candidate01-artifacts-v1",
+  "workloadRuns": 1,
+  "artifacts": [
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate01/result.json",
+      "size": 13083,
+      "sha256": "054ba8c30e1ef562c25767b6a4b623e6417dae53d171e447b8000fc4cb1de2d8"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate01/cases/ml_logreg/fed.log",
+      "size": 42877,
+      "sha256": "7881e68d9ab4bbf8e9352df5195143313623b77c5cafaae89e2cf369bf6041f0"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate01/cases/ml_logreg/fed-model.csv",
+      "size": 332,
+      "sha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate01/cases/ml_logreg/fed.jfr",
+      "size": 3360628,
+      "sha256": "906721e280ad4bf0073d528e6d290313311efd389e7f3f54498c84578bcf8a28"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate01/audit/ml_logreg-fed/runtime-capability-206.jsonl",
+      "size": 25212,
+      "sha256": "3fb752031d262bba1e5f4618746b1b9427dae85fd3bcbdd1d7ff2e2307276038"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate01/audit/ml_logreg-fed/runtime-conversion-frontier-206.jsonl",
+      "size": 52477,
+      "sha256": "bcde7044edd205a2ce596ac622929bb608997af0377b87a4e8246e70df4a57ea"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate01-command.txt",
+      "size": 1045,
+      "sha256": "883a73a97ebd434c1a661a38a4ed5ae5758f33acbf6b22ec4e2db6f7d25d4ee7"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate01.console.log",
+      "size": 196,
+      "sha256": "50a94952b4edbb125262db7e0b80ef6eaec3140657a07e3a1f48271f83a89d6f"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate01-proc.tsv",
+      "size": 1939,
+      "sha256": "811fef9e29c4c5f068a1fac32ff3ecf7889246fa1b8d2ca531cc735bfbc7b3bc"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate01-proc-summary.json",
+      "size": 400,
+      "sha256": "26399fa249f12badbaf8af1dd6b30b20f25ce6c3d2e4f8e00cedb51d2293b7c9"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate01-events.jsonl",
+      "size": 26784641,
+      "sha256": "46c819c3e3fb467e0488875acd1e34d3d26e849b30d9f23967cf8f49f583a6a4"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate01-profile.json",
+      "size": 265742,
+      "sha256": "c98a078ac87b9f7b2ce5e0be881a405a530762580c1050bc0ad2e7470e7b96f0"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate01-hotspots.json",
+      "size": 32404,
+      "sha256": "56efcb1f586fe7213fbd5d45e0bcd9ebec35ac17c93cc91ecccbbaf8afb4957a"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate01-summary.json",
+      "size": 10085,
+      "sha256": "12fd06341ad1fdc33d96ed16d035c9a7be903781796121cdca6b5bed2098a02f"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate01-freeze-verification.json",
+      "size": 923,
+      "sha256": "8ee157f5b1c5b8921082f7ab51d29eba58ef8bec728a8a464c230616e1eccb10"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate01-evaluation.json",
+      "size": 11511,
+      "sha256": "6d23bbbbb57153b1b4125d37082f429791f65c1fbd78ab4a0c9f0e5dade108e5"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate01-container-termination.json",
+      "size": 183,
+      "sha256": "ed6aea10f06870efb6b4df60ccc83cbf1beb4a32467dd662234b9282862bf315"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate01-report.md",
+      "size": 4488,
+      "sha256": "99cd7c0ba0e0a94761caf2b0d8e2b07ea5af955ca7fc9b1bc824acd1871b0cf8"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate01-engine-sha256.json",
+      "size": 1967451,
+      "sha256": "0d233d73059a5011579d1c29b6e7d058d4607e64ae67f7b4d010bbeed59c3186"
+    }
+  ]
+}

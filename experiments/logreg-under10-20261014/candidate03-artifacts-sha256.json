@@ -1,0 +1,146 @@
+{
+  "schema": "logreg-under10-candidate03-artifacts-v1",
+  "workloadRuns": 1,
+  "artifacts": [
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate03/result.json",
+      "size": 13061,
+      "sha256": "5139e302dcfa7255bca245443b13cec0be371d37a80ddc6b5de364bde57d415b"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate03/cases/ml_logreg/fed.log",
+      "size": 42930,
+      "sha256": "8c0f030206b1562c52277c87af330faa22377de959a5e4fff0108a37504cdd6f"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate03/cases/ml_logreg/fed-model.csv",
+      "size": 332,
+      "sha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate03/cases/ml_logreg/fed.jfr",
+      "size": 2223208,
+      "sha256": "e5ee77f204c3a44446296a7911116d18cf4ebbaa8b1828fa29e5ad6c6b8e84bc"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate03/audit/ml_logreg-fed/runtime-capability-204.jsonl",
+      "size": 25212,
+      "sha256": "5e3e1bd1b92aa77197ec41b96ddc668856946e066573cd6619dd845cb91e1584"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate03/audit/ml_logreg-fed/runtime-conversion-frontier-204.jsonl",
+      "size": 52477,
+      "sha256": "74e2106702df0966f856f3e2b3020f9ae74f495408ccba92a323efe8d9525fc0"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-command.txt",
+      "size": 1045,
+      "sha256": "10d5fb29d86556a3eecb96213fd59bfe38ea6d6a3329b1370a7b28df3da51f95"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-monitor-command.txt",
+      "size": 227,
+      "sha256": "4355c6c9f53c898ed35627f8e490bf30f9bcf2b0aa18697e8fd2cc41ce002939"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03.console.log",
+      "size": 196,
+      "sha256": "b017b4811b49b1f9c55d73c660872d84b891f53c83c32ba4ea817d7f2e3d8cfa"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-proc.tsv",
+      "size": 1329,
+      "sha256": "877ac9492db3a8bef06df005bd4536b75930007f2896b3c5a7dd11b2a31ce986"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-proc-summary.json",
+      "size": 399,
+      "sha256": "b3e122fed182e032c51e99ece7d50a7fed35f2fb0b41fd31a09e2f0dbba074a2"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-events.jsonl",
+      "size": 9731826,
+      "sha256": "65c5e6c04507a0e1fa0b9b76bfeb514947e71a37be703f56198e93ec9d8e08e4"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-profile.json",
+      "size": 231233,
+      "sha256": "6197f77c83aeb92c02ecd0c30f6b9185e61487b76af479220c300a629f8dc891"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-hotspots.json",
+      "size": 32132,
+      "sha256": "ccf878c48ed60830b4b8faae806787de36952d09d0cfe9ad9a1234512cce8460"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-focused-hotspots.json",
+      "size": 3316,
+      "sha256": "4e219b987c133f6bb5bca90fbadff493e9d356ac83baf2c272d2c847152285ff"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-summary.json",
+      "size": 9856,
+      "sha256": "c0eca4e3dcf7e281d603ad4b86bf7b1963e2eecef870157b8bfaf7cf35171098"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-freeze-verification.json",
+      "size": 923,
+      "sha256": "2eec0c2e7c82a41bdc1f5c892a251821964bcff3e294b06fa23efcee62a405f3"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-evaluation.json",
+      "size": 11300,
+      "sha256": "c672afac04310e8ac6d1b9772c503d19970a88a7ceb12b7ec390549105d92256"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-forest-tail.json",
+      "size": 360,
+      "sha256": "edfa84fc8c264a9f1fdfb3aeaf76e62acbada6649869b5c18b24a54b6c7314f0"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-differential.json",
+      "size": 8120,
+      "sha256": "e1263269b337b1c00ba0312b857b6024cfdfd201099d7fb50f1176ccaf18e463"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-container-termination.json",
+      "size": 183,
+      "sha256": "4bbba0bd2027461cf8605018e9bbf21f30bf60ad1ad94b8562fa8dca623ad541"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-report.md",
+      "size": 3326,
+      "sha256": "3adc3ecd0b1867a4a0a05a9e945fbc644adbe75242edcea2ab89d34fc16356a5"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-verification.json",
+      "size": 676,
+      "sha256": "af233e2b2f8ab94b2e3b7d865cc62df8c3d636a420667ca7b7278ad90eaa65fa"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-engine-sha256.json",
+      "size": 1967922,
+      "sha256": "977b570562e662127da450859a3c24be47e1630f1a8854ae44a624b8b41126a3"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-compile.log",
+      "size": 12069,
+      "sha256": "db481fc2b3744723ed60991dde0f9a95a407abc986d0f8a5824455fa919384f5"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-unit.log",
+      "size": 11298,
+      "sha256": "bddb6292165829ee2637f1b704d2658b64c9cbc9316bff456c3005b69225a7f1"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-independent-review.md",
+      "size": 8602,
+      "sha256": "b7649f5902d3af25ee0ffa56999c635dda8af7e52ac6b901d14aa346b647ab29"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate03-task-source-changes.json",
+      "size": 1835,
+      "sha256": "11614d5807b4d24a2aa2d15f5e372037272299cc31ac8c986e50b522894fd36e"
+    }
+  ]
+}

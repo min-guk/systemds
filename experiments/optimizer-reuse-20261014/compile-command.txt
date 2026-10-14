@@ -1,0 +1,3 @@
+mvn -o -B -DskipTests -Djacoco.skip=true clean test-compile
+# Initial clean compile exposed missing java.util.Arrays import; corrected before retry.
+mvn -o -B -DskipTests -Djacoco.skip=true test-compile

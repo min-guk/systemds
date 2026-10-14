@@ -1,0 +1,53 @@
+Only in experiments/logreg-under10-20261014/candidate03-engine/test-sources/org/apache/sysds/hops/fedplanner/memo: MemoMovementReuseTest.java
+Only in experiments/logreg-under10-20261014/candidate03-engine/test-sources/org/apache/sysds/hops/fedplanner/memo: MemoOptimizerBoundaryBoundTest.java
+diff -ru experiments/logreg-bottleneck-20261014/after-engine/test-sources/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerDomainCacheTest.java experiments/logreg-under10-20261014/candidate03-engine/test-sources/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerDomainCacheTest.java
+--- experiments/logreg-bottleneck-20261014/after-engine/test-sources/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerDomainCacheTest.java	2026-10-14 02:52:29.018914976 +0200
++++ experiments/logreg-under10-20261014/candidate03-engine/test-sources/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerDomainCacheTest.java	2026-10-14 03:40:39.368528612 +0200
+@@ -75,12 +75,44 @@
+ 		Check cycleB=new Check(1,new int[] {1,2},values -> partial(values) ? Truth.UNKNOWN : Truth.YES);
+ 		Check cycleC=new Check(2,new int[] {2,0},values -> partial(values) ? Truth.UNKNOWN : Truth.YES);
+ 		CostTerm distinguish=new CostTerm(new int[] {0,1},values -> values[0]==32 ? 0 : 100+values[0],0);
+-		Result uncached=solve(new int[] {33,2,2},List.of(cycleA,cycleB,cycleC),List.of(distinguish),64,0);
+-		Result cached=solve(new int[] {33,2,2},List.of(cycleA,cycleB,cycleC),List.of(distinguish),64,4096);
++		Result uncached=solve(new int[] {65,2,2},List.of(cycleA,cycleB,cycleC),List.of(distinguish),64,0);
++		Result cached=solve(new int[] {65,2,2},List.of(cycleA,cycleB,cycleC),List.of(distinguish),64,4096);
+ 		assertSameSolve(uncached,cached);
+ 		Assert.assertEquals(32,cached.selectedRules()[0]);
+ 	}
+ 
++	@Test
++	public void compactAndWideDomainsPreserveBoundaryOrdinals() {
++		for(int width:new int[] {63,64,65}) {
++			Check onlyHighest=new Check(0,new int[] {0},values -> partial(values) ? Truth.UNKNOWN
++				: values[0]==width-1 ? Truth.YES : Truth.NO);
++			Result uncached=solve(new int[] {width},List.of(onlyHighest),List.of(),128,0);
++			Result singleEntry=solve(new int[] {width},List.of(onlyHighest),List.of(),128,1);
++			Result cached=solve(new int[] {width},List.of(onlyHighest),List.of(),128,4096);
++			assertSameSolve(uncached,singleEntry);
++			assertSameSolve(uncached,cached);
++			Assert.assertEquals(width-1,cached.selectedRules()[0]);
++		}
++	}
++
++	@Test
++	public void compactAndWideDomainsRestoreHighestOrdinalAfterBacktracking() {
++		for(int width:new int[] {63,64,65}) {
++			Check cycleA=new Check(0,new int[] {0,1},values -> partial(values) ? Truth.UNKNOWN : Truth.YES);
++			Check cycleB=new Check(1,new int[] {1,2},values -> partial(values) ? Truth.UNKNOWN : Truth.YES);
++			Check cycleC=new Check(2,new int[] {2,0},values -> partial(values) ? Truth.UNKNOWN : Truth.YES);
++			CostTerm preferHighest=new CostTerm(new int[] {0,1},
++				values -> values[0]==width-1 ? 0 : 100+values[0],0);
++			List<Check> checks=List.of(cycleA,cycleB,cycleC);
++			Result uncached=solve(new int[] {width,2,2},checks,List.of(preferHighest),128,0);
++			Result singleEntry=solve(new int[] {width,2,2},checks,List.of(preferHighest),128,1);
++			Result cached=solve(new int[] {width,2,2},checks,List.of(preferHighest),128,4096);
++			assertSameSolve(uncached,singleEntry);
++			assertSameSolve(uncached,cached);
++			Assert.assertEquals(width-1,cached.selectedRules()[0]);
++		}
++	}
++
+ 	private static boolean partial(int[] values) {
+ 		return Arrays.stream(values).anyMatch(value -> value<0);
+ 	}
+Only in experiments/logreg-under10-20261014/candidate03-engine/test-sources/org/apache/sysds/hops/fedplanner/memo: MemoOptimizerForestTailTest.java

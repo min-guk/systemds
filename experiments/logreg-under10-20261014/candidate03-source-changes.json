@@ -1,0 +1,14 @@
+{
+  "main-sources/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.java": {
+    "before": "154ad5726d966f25ddda2359d191093a1cbc2556af44b7d4fce8060e9819b07f",
+    "after": "2570bc7f4ddc067b29d7b6a8520cffb76660321f847dedac2661e956560c0cce"
+  },
+  "main-sources/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java": {
+    "before": "e0cf3db74652f3d7b1402c3dd9001b4bac345afaacd671e66484369c918abca8",
+    "after": "533e7128b2ec9fcbb41671609bb50ca5e1a8a22cb877e1bccab0ba8fb99705ef"
+  },
+  "test-sources/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerForestTailTest.java": {
+    "before": null,
+    "after": "619b7ecb7d784b68b1ab1e362f0198ee17be87905ae5bcbc6cbe6c21dee9dfc9"
+  }
+}

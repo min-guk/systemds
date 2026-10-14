@@ -1,0 +1,34 @@
+{
+  "src/main/java/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.java": {
+    "before": "cad62c66430bce5cde01346da05abd10da78f37c0fdbbd931eed248bc885ed2b",
+    "after": "2570bc7f4ddc067b29d7b6a8520cffb76660321f847dedac2661e956560c0cce"
+  },
+  "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java": {
+    "before": "e3a7d54fede43e377d35eb6c05477bcef0c08a3351707b932d5e007b0ac5974c",
+    "after": "533e7128b2ec9fcbb41671609bb50ca5e1a8a22cb877e1bccab0ba8fb99705ef"
+  },
+  "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.java": {
+    "before": "ee49a1ca1b8b2773530904d4322adf3d3a6a1edf4652a29b9e9c4e6000816822",
+    "after": "3960ed8bff6d983a4e12b7c010a8779819ce243bdf9a119020c77627bd847178"
+  },
+  "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoShapes.java": {
+    "before": "49625a9ecac8e5c102ceedeca5ccaf9f21ee3ac0f0a2f672dbef25e10b699525",
+    "after": "02da917b6e8405ca10ad6ef5d6bd22db279e60fa352ea8b52bc00a27cacf309e"
+  },
+  "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoMovementReuseTest.java": {
+    "before": null,
+    "after": "009d9733377a4abd9995a42d8d0ae591145cade35076538fcb8e0b933105f4eb"
+  },
+  "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerBoundaryBoundTest.java": {
+    "before": null,
+    "after": "6bd9862c7c18e602889ec7a8faa7cddb5a1a59b1f20ac11df0cfa85a24a9eb06"
+  },
+  "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerDomainCacheTest.java": {
+    "before": "a3532d24f683d2735fea5de4bdc5f4596b8a28abeb4e0f9afc138cb7ba525f2c",
+    "after": "dae43bd2f06aab14ff8ab93b304ba663e7f995f3cd6a95e4b7e833b8a409a39f"
+  },
+  "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerForestTailTest.java": {
+    "before": null,
+    "after": "619b7ecb7d784b68b1ab1e362f0198ee17be87905ae5bcbc6cbe6c21dee9dfc9"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "main-sources/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.java": {
+    "before": "cad62c66430bce5cde01346da05abd10da78f37c0fdbbd931eed248bc885ed2b",
+    "after": "154ad5726d966f25ddda2359d191093a1cbc2556af44b7d4fce8060e9819b07f"
+  },
+  "main-sources/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java": {
+    "before": "e3a7d54fede43e377d35eb6c05477bcef0c08a3351707b932d5e007b0ac5974c",
+    "after": "361ada0ddb92b775062c5d54209b5ec847557397dfda7ade8e6fbf5316a03689"
+  },
+  "main-sources/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.java": {
+    "before": "ee49a1ca1b8b2773530904d4322adf3d3a6a1edf4652a29b9e9c4e6000816822",
+    "after": "3960ed8bff6d983a4e12b7c010a8779819ce243bdf9a119020c77627bd847178"
+  },
+  "main-sources/org/apache/sysds/hops/fedplanner/memo/MemoShapes.java": {
+    "before": "49625a9ecac8e5c102ceedeca5ccaf9f21ee3ac0f0a2f672dbef25e10b699525",
+    "after": "02da917b6e8405ca10ad6ef5d6bd22db279e60fa352ea8b52bc00a27cacf309e"
+  },
+  "test-sources/org/apache/sysds/hops/fedplanner/memo/MemoMovementReuseTest.java": {
+    "before": null,
+    "after": "009d9733377a4abd9995a42d8d0ae591145cade35076538fcb8e0b933105f4eb"
+  },
+  "test-sources/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerBoundaryBoundTest.java": {
+    "before": null,
+    "after": "6bd9862c7c18e602889ec7a8faa7cddb5a1a59b1f20ac11df0cfa85a24a9eb06"
+  }
+}

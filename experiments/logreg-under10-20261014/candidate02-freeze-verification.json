@@ -1,0 +1,46 @@
+{
+  "schema": "logreg-under10-frozen-verification-v1",
+  "manifest": {
+    "expectedFiles": 12509,
+    "actualFiles": 12509,
+    "missing": [],
+    "extra": [],
+    "hashMismatches": [],
+    "passed": true
+  },
+  "runInputs": {
+    "mainClasses": {
+      "leftFiles": 4932,
+      "rightFiles": 4932,
+      "missing": [],
+      "extra": [],
+      "hashMismatches": [],
+      "passed": true
+    },
+    "testClasses": {
+      "leftFiles": 3361,
+      "rightFiles": 3361,
+      "missing": [],
+      "extra": [],
+      "hashMismatches": [],
+      "passed": true
+    },
+    "mainSources": {
+      "leftFiles": 1692,
+      "rightFiles": 1692,
+      "missing": [],
+      "extra": [],
+      "hashMismatches": [],
+      "passed": true
+    },
+    "testSources": {
+      "leftFiles": 2208,
+      "rightFiles": 2208,
+      "missing": [],
+      "extra": [],
+      "hashMismatches": [],
+      "passed": true
+    }
+  },
+  "passed": true
+}

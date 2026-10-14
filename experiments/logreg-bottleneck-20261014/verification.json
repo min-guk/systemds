@@ -1,0 +1,191 @@
+{
+  "mavenTestCompile": {
+    "passed": true,
+    "seconds": 42.981,
+    "log": "final-compile.log",
+    "cleanInvoked": false
+  },
+  "finalAssertionCompile": {
+    "passed": true,
+    "log": "final-assertion-compile.log"
+  },
+  "junit": {
+    "passed": true,
+    "classes": 47,
+    "tests": 426,
+    "seconds": 47.326,
+    "assertionsEnabled": true,
+    "log": "final-unit.log"
+  },
+  "harness": {
+    "passed": true,
+    "tests": 45,
+    "log": "final-harness.log"
+  },
+  "independentReview": {
+    "verdict": "APPROVED",
+    "artifact": "independent-review.md"
+  },
+  "knownExcludedClass": "org.apache.sysds.hops.fedplanner.placement.TrainingWorkloadOperationCoverageTest",
+  "frozenInputFiles": 12498,
+  "sourceConsistency": {
+    "main-sources": {
+      "files": 1692,
+      "changesSinceFreeze": []
+    },
+    "test-sources": {
+      "files": 2206,
+      "changesSinceFreeze": []
+    }
+  },
+  "measurementStatus": "complete",
+  "measurement": {
+    "authorizedRuns": {
+      "before": {
+        "runId": "logreg-bottleneck-before-01",
+        "status": "PASSED",
+        "jfrSha256": "927add24ce5c3c4a8bfac374e530391f755a1c767b8b0adec852b25583eaa83f"
+      },
+      "after": {
+        "runId": "logreg-bottleneck-after-01",
+        "status": "PASSED",
+        "jfrSha256": "cc213bda455d79e441fbf88daaa7ade0cc2e9303dc3d9ae48d3d3c65b28571e5"
+      },
+      "oneRunPerCondition": true,
+      "additionalRuns": 0
+    },
+    "semanticParity": {
+      "objectiveEqual": true,
+      "nodesEqual": true,
+      "nativeRulesEqual": true,
+      "suppliesEqual": true,
+      "fedFingerprintEqual": true,
+      "runtimeAuditViolationsEqual": true,
+      "actionDiagnosticsEqual": true,
+      "constructionCountersEqual": true,
+      "shapeReuseCountersEqual": true,
+      "oraclePlannerTraceEqual": true,
+      "fedModelCsv": {
+        "before": {
+          "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-before-01/cases/ml_logreg/fed-model.csv",
+          "size": 332,
+          "sha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848"
+        },
+        "after": {
+          "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-after-01/cases/ml_logreg/fed-model.csv",
+          "size": 332,
+          "sha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848"
+        }
+      },
+      "fedModelCsvByteEqual": true
+    },
+    "oraclePlannerTrace": {
+      "before": {
+        "hits": 0,
+        "misses": 1057
+      },
+      "after": {
+        "hits": 0,
+        "misses": 1057
+      }
+    },
+    "supportCache": {
+      "counterDefinition": "supportQueries counts cache misses that execute support DFS in both runs",
+      "before": {
+        "misses": 38286830,
+        "hits": null,
+        "totalRequests": null,
+        "note": "supportCacheHits was not instrumented in BEFORE"
+      },
+      "after": {
+        "misses": 171750,
+        "hits": 38226419,
+        "totalRequests": 38398169,
+        "hitRate": 0.9955271304733306
+      },
+      "missDelta": {
+        "before": 38286830,
+        "after": 171750,
+        "delta": -38115080,
+        "percent": -99.55141232637959
+      }
+    },
+    "timing": {
+      "planning": {
+        "before": 37.329601749,
+        "after": 26.81944654,
+        "delta": -10.510155208999997,
+        "percent": -28.155015635229887
+      },
+      "optimization": {
+        "before": 34.797404037,
+        "after": 23.714206977,
+        "delta": -11.08319706,
+        "percent": -31.850643364704045
+      },
+      "compilation": {
+        "before": 38.704098,
+        "after": 28.121125,
+        "delta": -10.582973000000003,
+        "percent": -27.343288041488535
+      },
+      "execution": {
+        "before": 2.811,
+        "after": 3.034,
+        "delta": 0.22299999999999986,
+        "percent": 7.933119886161499
+      }
+    },
+    "afterEngineManifest": {
+      "manifest": "experiments/logreg-bottleneck-20261014/after-engine-sha256.json",
+      "expectedFiles": 12498,
+      "actualFiles": 12498,
+      "missing": [],
+      "extra": [],
+      "hashMismatches": [],
+      "passed": true,
+      "elapsedSeconds": 0.9445066452026367
+    },
+    "frozenRunInputDiffBytes": {
+      "mainClasses": 0,
+      "testClasses": 0,
+      "mainSources": 0,
+      "testSources": 0
+    },
+    "jfrDataLossEvents": {
+      "before": 0,
+      "after": 0
+    },
+    "runtimeAudit": {
+      "normalizedWithoutRunPidEqual": true,
+      "artifactComparisons": [
+        {
+          "before": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-before-01/audit/ml_logreg-fed/runtime-capability-206.jsonl",
+          "after": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-after-01/audit/ml_logreg-fed/runtime-capability-205.jsonl",
+          "beforeSha256": "3fb752031d262bba1e5f4618746b1b9427dae85fd3bcbdd1d7ff2e2307276038",
+          "afterSha256": "62dd17d4a655ba6eae2a647232e0c454d853ee1015d337cef1b17088d58775b3",
+          "byteEqual": false,
+          "sameSize": true,
+          "normalizedWithoutPidEqual": true,
+          "rows": 13
+        },
+        {
+          "before": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-before-01/audit/ml_logreg-fed/runtime-conversion-frontier-206.jsonl",
+          "after": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-after-01/audit/ml_logreg-fed/runtime-conversion-frontier-205.jsonl",
+          "beforeSha256": "bcde7044edd205a2ce596ac622929bb608997af0377b87a4e8246e70df4a57ea",
+          "afterSha256": "d192e0add29d1485729eec2e1b6db76e5e1ed61a206fdbcb65fb41c25e933295",
+          "byteEqual": false,
+          "sameSize": true,
+          "normalizedWithoutPidEqual": true,
+          "rows": 20
+        }
+      ]
+    },
+    "containerTermination": {
+      "runPath": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-after-01",
+      "matchingContainers": [],
+      "terminatedAndRemoved": true
+    },
+    "processMonitorScope": "whole coordinator JVM during monitored interval"
+  }
+}

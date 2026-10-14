@@ -1,0 +1,61 @@
+{
+  "schema": "logreg-under10-final-verification-v1",
+  "passed": true,
+  "workloadRuns": 1,
+  "build": {
+    "mavenTestCompilePassed": true,
+    "seconds": 38.931,
+    "log": "candidate03-compile.log"
+  },
+  "tests": {
+    "passed": true,
+    "classes": 50,
+    "tests": 440,
+    "seconds": 44.19,
+    "assertions": true,
+    "hostStack": "8m",
+    "log": "candidate03-unit.log"
+  },
+  "measurement": {
+    "primaryEvaluationPassed": true,
+    "differentialEvaluationPassed": true,
+    "forestTailPassed": true,
+    "jfrDataLossEvents": 0,
+    "frozenEngineAndRunInputsVerified": true,
+    "containersTerminatedAndRemoved": true
+  },
+  "planningUnder10Seconds": true,
+  "primaryGateCount": 17,
+  "measurementArtifactHashesVerified": 28,
+  "taskSourceFilesVerifiedAgainstFrozen": 8,
+  "gitDiffCheckPassed": true,
+  "target": {
+    "scope": "total Memo planning",
+    "strictlyLessThanSeconds": 10,
+    "observedSeconds": 6.672535049,
+    "baselineSeconds": 26.81944654,
+    "reductionPercent": 75.12053412792015
+  },
+  "candidateWorkloadRuns": {
+    "candidate01": 1,
+    "candidate02": 1,
+    "candidate03": 1
+  },
+  "baselineReused": true,
+  "limitations": [
+    "one JFR observation per candidate",
+    "known pre-existing TrainingWorkloadOperationCoverageTest excluded (5 stale goldens)",
+    "no GLM validation in this task",
+    "movement cache failure-injection/IMPOSSIBLE-only/capacity dedicated fixture gaps documented",
+    "host deep fixture needs -Xss8m; workload JVM flags unchanged"
+  ],
+  "reportReview": {
+    "passed": true,
+    "correction": "Candidate02 allocation 8.424GB is total, reduction vs Candidate01 about1.680GB",
+    "report": "docs/FEDPLANNER_LOGREG_UNDER10_RESULT_2026-10-14_KO.md"
+  },
+  "finalDocuments": {
+    "docs/FEDPLANNER_LOGREG_UNDER10_RESULT_2026-10-14_KO.md": "24ec131408b0440ffb36d6627c23c76c9d7eb7d8fc9748ad1cab4b0cc16a31b8",
+    "docs/SESSION_ISSUES_2026-10-14.md": "9bf8477b9ed16221bebb7ef6a9cdcf5e68aaafbb4bf18f27f8827f02d39a53ea"
+  }
+}

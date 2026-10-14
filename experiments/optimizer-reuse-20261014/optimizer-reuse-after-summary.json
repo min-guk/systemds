@@ -1,0 +1,282 @@
+{
+  "schema": "memo-optimizer-reuse-after-v1",
+  "samplePolicy": {
+    "logRegRuns": 1,
+    "glmRuns": 1,
+    "aggregation": "none",
+    "jfr": false
+  },
+  "engine": {
+    "manifest": "experiments/optimizer-reuse-20261014/after-engine-sha256.json",
+    "snapshot": "experiments/optimizer-reuse-20261014/after-engine",
+    "frozenInputsMatchEngine": {
+      "mainSources": true,
+      "testSources": true,
+      "mainClasses": true
+    }
+  },
+  "environment": {
+    "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "workers": 3,
+    "cpus": 4,
+    "memory": "8g",
+    "network": "none",
+    "caseTimeoutSeconds": 300,
+    "timeoutSeconds": 1800
+  },
+  "run": {
+    "id": "optimizer-reuse-after-01",
+    "status": "FAILED",
+    "result": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/optimizer-reuse-after-01/result.json",
+    "resultSha256": "4b649a279cb7086cb7841033a19fd3dc73bc0770400f8d2e8748743788e6a522",
+    "manifestSha256": "e4c92fcd71e2ac704cd3daa71a09a3330bacd80327d8165dd7ee3c9250e3f85c",
+    "containerStopped": true
+  },
+  "cases": {
+    "ml_logreg": {
+      "passed": true,
+      "fedReturncode": 0,
+      "fedStatistics": {
+        "compilationSeconds": 33.22313,
+        "executionSeconds": 2.577
+      },
+      "memoPlanning": [
+        {
+          "boundPrunes": 2466239,
+          "cacheHits": 82050743,
+          "checks": 60690,
+          "conditionalBoundCacheHits": 11132120,
+          "conditionalBoundQueries": 11135047,
+          "costCacheHits": 3407,
+          "costEvaluations": 4828,
+          "epoch": 1,
+          "estimatedCost": "1301.1526531142989790221751587629165844428591469750244868919253349304199218750",
+          "fedOwners": 20,
+          "nativeRules": 920,
+          "nodes": 2933891,
+          "oracleHits": 0,
+          "oracleMisses": 1057,
+          "phaseNanos": {
+            "facts": 58541804,
+            "model": 613457449,
+            "optimization": 29823222436,
+            "projection": 74656098,
+            "rules": 1507092549
+          },
+          "phaseSeconds": {
+            "facts": 0.058541804,
+            "model": 0.613457449,
+            "optimization": 29.823222436,
+            "projection": 0.074656098,
+            "rules": 1.507092549
+          },
+          "pruned": 21182609,
+          "status": "OPTIMAL",
+          "supplies": 1,
+          "supportQueries": 38286836,
+          "totalNanos": 32076970336,
+          "totalSeconds": 32.076970336,
+          "wideBoundRelaxations": 844,
+          "workers": 3,
+          "worklistVisits": 13616123
+        }
+      ],
+      "memoConstruction": {
+        "costProjection": [
+          {
+            "activationEnvironments": 2770,
+            "bindingDagVisits": 339816,
+            "invariantProjectionStops": 149854,
+            "noRegionsSkipped": 19892,
+            "primitiveValueBytes": 529056,
+            "primitiveValues": 66132,
+            "primitiveVectors": 6422,
+            "projectedContexts": 6422,
+            "projectionCacheHits": 39748,
+            "relevantGuardDecisions": 6598,
+            "supportPrefixChecks": 15966,
+            "unknownObligations": 0
+          }
+        ],
+        "nativeGeneration": [
+          {
+            "coverageObligations": 38,
+            "cpPatterns": 1057,
+            "determinantRegions": 12457,
+            "evidenceReuses": 0,
+            "oracleEvaluations": 12457,
+            "prefixRequests": 0,
+            "prunedPrefixes": 4663,
+            "publishedRules": 5981,
+            "unknownPrefixes": 0,
+            "visitedNativePatterns": 7794
+          }
+        ],
+        "nativeRequests": [
+          {
+            "canonicalStringsCreated": 77,
+            "canonicalStringsReused": 7823,
+            "oracleRequests": 1057,
+            "preparedRequests": 8880,
+            "reusedResults": 7823,
+            "uncacheableRequests": 980
+          }
+        ]
+      },
+      "shapeReuse": {
+        "present": true,
+        "bindingGuardRequests": 767951,
+        "bindingGuardCacheHits": 744987,
+        "bindingGuardComputations": 22964,
+        "bindingGuardHitRate": 0.9700970504628551,
+        "repeatProofRequests": 66164,
+        "repeatProofCacheHits": 64956,
+        "repeatProofComputations": 1208,
+        "repeatProofHitRate": 0.9817423372226588
+      },
+      "memoEvidence": {
+        "loweringVerified": true,
+        "nativeFedExecution": true,
+        "selectedOptimal": true
+      },
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 1.6653345369377348e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "actionDiagnostics": [
+        "Federated prefetch count:\t0.",
+        "plannerSyntheticActionKey=\"memo-definition|sb=16|producer=1150|origin=32\"",
+        "plannerSyntheticActionKey=\"memo-supply|sb=152|producer=202|target=LOCAL|recipes=ROW@COLLECT@POOLv1:bG9jYWxob3N0.13000,bG9jYWxob3N0.13001,bG9jYWxob3N0.13002|origins=0:32\"",
+        "plannerSyntheticActionKey=memo-definition|sb=16|producer=1150|origin=32",
+        "plannerSyntheticActionKey=memo-supply|sb=152|producer=202|target=LOCAL|recipes=ROW@COLLECT@POOLv1:bG9jYWxob3N0.13000,bG9jYWxob3N0.13001,bG9jYWxob3N0.13002|origins=0:32"
+      ],
+      "runtimeAuditViolations": []
+    },
+    "ml_glm": {
+      "passed": false,
+      "fedReturncode": 124,
+      "fedStatistics": {},
+      "memoPlanning": [],
+      "memoConstruction": {
+        "costProjection": [
+          {
+            "activationEnvironments": 7563,
+            "bindingDagVisits": 366990,
+            "invariantProjectionStops": 133751,
+            "noRegionsSkipped": 64516,
+            "primitiveValueBytes": 399136,
+            "primitiveValues": 49892,
+            "primitiveVectors": 9517,
+            "projectedContexts": 9517,
+            "projectionCacheHits": 42144,
+            "relevantGuardDecisions": 6152,
+            "supportPrefixChecks": 19867,
+            "unknownObligations": 0
+          }
+        ],
+        "nativeGeneration": [
+          {
+            "coverageObligations": 51,
+            "cpPatterns": 2253,
+            "determinantRegions": 14188,
+            "evidenceReuses": 0,
+            "oracleEvaluations": 14416,
+            "prefixRequests": 584,
+            "prunedPrefixes": 5284,
+            "publishedRules": 11166,
+            "unknownPrefixes": 108,
+            "visitedNativePatterns": 9380
+          }
+        ],
+        "nativeRequests": [
+          {
+            "canonicalStringsCreated": 111,
+            "canonicalStringsReused": 9449,
+            "oracleRequests": 2250,
+            "preparedRequests": 11699,
+            "reusedResults": 9449,
+            "uncacheableRequests": 2139
+          }
+        ]
+      },
+      "shapeReuse": {
+        "present": false,
+        "interpretation": "optimizer did not complete; absence is unavailable, not zero"
+      },
+      "memoEvidence": {
+        "loweringVerified": false,
+        "nativeFedExecution": false,
+        "selectedOptimal": false
+      },
+      "modelComparison": {
+        "actualEntries": 0,
+        "actualShape": [
+          0,
+          0
+        ],
+        "entries": 8,
+        "errors": [
+          "[Errno 2] No such file or directory: '/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/optimizer-reuse-after-01/cases/ml_glm/fed-model.csv'"
+        ],
+        "expectedShape": null,
+        "finite": false,
+        "matched": false,
+        "maxAbsDifference": null,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          1
+        ],
+        "shapeMatched": false
+      },
+      "actionDiagnostics": [],
+      "runtimeAuditViolations": []
+    }
+  },
+  "javaCoordinatorProc": {
+    "path": "experiments/optimizer-reuse-20261014/optimizer-reuse-after-01-proc.tsv",
+    "cases": {
+      "ml_glm": {
+        "samples": 199,
+        "firstEpochMs": 1791937721844,
+        "lastEpochMs": 1791938019923,
+        "observedSeconds": 298.079,
+        "cpuTicksDelta": 32365,
+        "clockTicksPerSecond": 100,
+        "cpuSecondsDelta": 323.65,
+        "maxVmRssKiB": 782976,
+        "maxVmHwmKiB": 783360
+      },
+      "ml_logreg": {
+        "samples": 26,
+        "firstEpochMs": 1791937679377,
+        "lastEpochMs": 1791937717313,
+        "observedSeconds": 37.936,
+        "cpuTicksDelta": 5295,
+        "clockTicksPerSecond": 100,
+        "cpuSecondsDelta": 52.95,
+        "maxVmRssKiB": 725480,
+        "maxVmHwmKiB": 725480
+      }
+    }
+  },
+  "evidence": {
+    "command": "experiments/optimizer-reuse-20261014/optimizer-reuse-after-command.txt",
+    "console": "experiments/optimizer-reuse-20261014/optimizer-reuse-after-01.console.log"
+  }
+}

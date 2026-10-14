@@ -1,0 +1,238 @@
+{
+  "schema": "logreg-under10-candidate02-differential-v1",
+  "passed": false,
+  "gates": {
+    "primaryEvaluationPassed": false,
+    "searchNodesEqualCandidate01": true
+  },
+  "nodeGateRationale": "Candidate02 changes solver hot paths while preserving candidate01 search semantics; a node-count change requires an explicit deliberate heuristic change.",
+  "primaryBaselinePlanningSeconds": 26.81944654,
+  "candidate01ToCandidate02": {
+    "planningSeconds": {
+      "before": 16.103018585,
+      "after": 15.926899887,
+      "delta": -0.17611869800000157,
+      "percent": -1.0936998989994118
+    },
+    "optimizationSeconds": {
+      "before": 13.563777113,
+      "after": 13.318014527,
+      "delta": -0.24576258599999967,
+      "percent": -1.811903748878707
+    },
+    "compilationSeconds": {
+      "before": 17.307357,
+      "after": 17.179331,
+      "delta": -0.12802599999999842,
+      "percent": -0.7397201086220107
+    },
+    "executionSeconds": {
+      "before": 2.69,
+      "after": 2.398,
+      "delta": -0.2919999999999998,
+      "percent": -10.855018587360588
+    },
+    "phaseSeconds": {
+      "facts": {
+        "before": 0.053722228,
+        "after": 0.043972544,
+        "delta": -0.009749683999999995,
+        "percent": -18.148324004730398
+      },
+      "model": {
+        "before": 0.902680564,
+        "after": 0.868671782,
+        "delta": -0.034008782000000015,
+        "percent": -3.767532320547451
+      },
+      "optimization": {
+        "before": 13.563777113,
+        "after": 13.318014527,
+        "delta": -0.24576258599999967,
+        "percent": -1.811903748878707
+      },
+      "projection": {
+        "before": 0.089200106,
+        "after": 0.081916301,
+        "delta": -0.007283805000000004,
+        "percent": -8.165690969021943
+      },
+      "rules": {
+        "before": 1.493638574,
+        "after": 1.614324733,
+        "delta": 0.1206861589999999,
+        "percent": 8.080010860780028
+      }
+    },
+    "nodes": {
+      "before": 2933891,
+      "after": 2933891,
+      "delta": 0,
+      "percent": 0.0
+    },
+    "optimizerExecutionSamples": {
+      "before": 1110,
+      "after": 1068,
+      "delta": -42,
+      "percent": -3.7837837837837784
+    },
+    "optimizerAllocationWeightBytes": {
+      "before": 10103625680,
+      "after": 8423739584,
+      "delta": -1679886096,
+      "percent": -16.62656702855999
+    },
+    "gcPauseSeconds": {
+      "before": 0.289754328,
+      "after": 0.354235846,
+      "delta": 0.06448151800000002,
+      "percent": 22.253858447974583
+    }
+  },
+  "candidate02Residual": {
+    "exclusiveNearestMemoBuckets": {
+      "search-cache-key-domain": {
+        "samples": 330,
+        "percent": 30.89887640449438
+      },
+      "solver-other": {
+        "samples": 208,
+        "percent": 19.475655430711612
+      },
+      "reduced-search-control": {
+        "samples": 171,
+        "percent": 16.01123595505618
+      },
+      "conditional-cost-bound": {
+        "samples": 125,
+        "percent": 11.704119850187267
+      },
+      "shape-key-guard-cost": {
+        "samples": 88,
+        "percent": 8.239700374531836
+      },
+      "solver-propagate": {
+        "samples": 49,
+        "percent": 4.588014981273409
+      },
+      "optimizer-other": {
+        "samples": 43,
+        "percent": 4.02621722846442
+      },
+      "model-cost-other": {
+        "samples": 41,
+        "percent": 3.838951310861423
+      },
+      "solver-support": {
+        "samples": 11,
+        "percent": 1.0299625468164795
+      },
+      "movement-cost-context": {
+        "samples": 1,
+        "percent": 0.09363295880149813
+      },
+      "binding-context-resolution": {
+        "samples": 1,
+        "percent": 0.09363295880149813
+      }
+    },
+    "trackedInclusiveMethods": {
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.support": {
+        "inclusiveSamples": 292,
+        "percentOfOptimizerSamples": 27.34082397003745
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.supportDfs": {
+        "inclusiveSamples": 75,
+        "percentOfOptimizerSamples": 7.022471910112359
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.propagate": {
+        "inclusiveSamples": 376,
+        "percentOfOptimizerSamples": 35.2059925093633
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.computeConditionalCostBound": {
+        "inclusiveSamples": 183,
+        "percentOfOptimizerSamples": 17.134831460674157
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.currentTermBound": {
+        "inclusiveSamples": 194,
+        "percentOfOptimizerSamples": 18.164794007490638
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.refreshTermBound": {
+        "inclusiveSamples": 194,
+        "percentOfOptimizerSamples": 18.164794007490638
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.coreLowerBound": {
+        "inclusiveSamples": 314,
+        "percentOfOptimizerSamples": 29.40074906367041
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cached": {
+        "inclusiveSamples": 5,
+        "percentOfOptimizerSamples": 0.4681647940074906
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cachedDomains": {
+        "inclusiveSamples": 299,
+        "percentOfOptimizerSamples": 27.99625468164794
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.tupleHash": {
+        "inclusiveSamples": 3,
+        "percentOfOptimizerSamples": 0.2808988764044944
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.scopedDomainHash": {
+        "inclusiveSamples": 110,
+        "percentOfOptimizerSamples": 10.299625468164795
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ScopedDomainIdentity.sameDomains": {
+        "inclusiveSamples": 56,
+        "percentOfOptimizerSamples": 5.2434456928838955
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.stamp": {
+        "inclusiveSamples": 28,
+        "percentOfOptimizerSamples": 2.6217228464419478
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementGroupCost": {
+        "inclusiveSamples": 97,
+        "percentOfOptimizerSamples": 9.082397003745319
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.visitBindingCostContexts": {
+        "inclusiveSamples": 29,
+        "percentOfOptimizerSamples": 2.715355805243446
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.visitJoint": {
+        "inclusiveSamples": 4,
+        "percentOfOptimizerSamples": 0.37453183520599254
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.enumerate": {
+        "inclusiveSamples": 4,
+        "percentOfOptimizerSamples": 0.37453183520599254
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes.resolvedBindingShape": {
+        "inclusiveSamples": 63,
+        "percentOfOptimizerSamples": 5.898876404494382
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes.cloneView": {
+        "inclusiveSamples": 5,
+        "percentOfOptimizerSamples": 0.4681647940074906
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectGuards": {
+        "inclusiveSamples": 10,
+        "percentOfOptimizerSamples": 0.9363295880149812
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectLoops": {
+        "inclusiveSamples": 21,
+        "percentOfOptimizerSamples": 1.9662921348314606
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectCardinalities": {
+        "inclusiveSamples": 11,
+        "percentOfOptimizerSamples": 1.0299625468164795
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.canonicalGuard": {
+        "inclusiveSamples": 8,
+        "percentOfOptimizerSamples": 0.7490636704119851
+      }
+    }
+  },
+  "limitations": [
+    "one JFR run per candidate; timing is descriptive, not a confidence interval",
+    "JFR samples and allocation weights are statistical"
+  ]
+}

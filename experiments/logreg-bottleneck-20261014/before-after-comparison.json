@@ -1,0 +1,453 @@
+{
+  "schema": "logreg-bottleneck-before-after-v1",
+  "singleRunPerCondition": true,
+  "statusEqual": true,
+  "semanticParity": {
+    "objectiveEqual": true,
+    "nodesEqual": true,
+    "nativeRulesEqual": true,
+    "suppliesEqual": true,
+    "fedFingerprintEqual": true,
+    "runtimeAuditViolationsEqual": true,
+    "actionDiagnosticsEqual": true,
+    "constructionCountersEqual": true,
+    "shapeReuseCountersEqual": true,
+    "oraclePlannerTraceEqual": true,
+    "fedModelCsv": {
+      "before": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-before-01/cases/ml_logreg/fed-model.csv",
+        "size": 332,
+        "sha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848"
+      },
+      "after": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-after-01/cases/ml_logreg/fed-model.csv",
+        "size": 332,
+        "sha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848"
+      }
+    },
+    "fedModelCsvByteEqual": true
+  },
+  "timing": {
+    "planning": {
+      "before": 37.329601749,
+      "after": 26.81944654,
+      "delta": -10.510155208999997,
+      "percent": -28.155015635229887
+    },
+    "optimization": {
+      "before": 34.797404037,
+      "after": 23.714206977,
+      "delta": -11.08319706,
+      "percent": -31.850643364704045
+    },
+    "compilation": {
+      "before": 38.704098,
+      "after": 28.121125,
+      "delta": -10.582973000000003,
+      "percent": -27.343288041488535
+    },
+    "execution": {
+      "before": 2.811,
+      "after": 3.034,
+      "delta": 0.22299999999999986,
+      "percent": 7.933119886161499
+    }
+  },
+  "searchCounters": {
+    "boundPrunes": {
+      "before": 2466239,
+      "after": 2466239,
+      "delta": 0,
+      "percent": 0.0
+    },
+    "checkCacheHits": {
+      "before": 82050731,
+      "after": 286080,
+      "delta": -81764651,
+      "percent": -99.65133765840551
+    },
+    "checkEvaluations": {
+      "before": 60690,
+      "after": 60227,
+      "delta": -463,
+      "percent": -0.7628933926511761
+    },
+    "conditionalBoundCacheHits": {
+      "before": 11132120,
+      "after": 11132120,
+      "delta": 0,
+      "percent": 0.0
+    },
+    "conditionalBoundQueries": {
+      "before": 11135047,
+      "after": 11135047,
+      "delta": 0,
+      "percent": 0.0
+    },
+    "costCacheHits": {
+      "before": 3407,
+      "after": 3407,
+      "delta": 0,
+      "percent": 0.0
+    },
+    "costEvaluations": {
+      "before": 4828,
+      "after": 4828,
+      "delta": 0,
+      "percent": 0.0
+    },
+    "nodes": {
+      "before": 2933891,
+      "after": 2933891,
+      "delta": 0,
+      "percent": 0.0
+    },
+    "removedRules": {
+      "before": 21182609,
+      "after": 21182609,
+      "delta": 0,
+      "percent": 0.0
+    },
+    "supportQueries": {
+      "before": 38286830,
+      "after": 171750,
+      "delta": -38115080,
+      "percent": -99.55141232637959
+    },
+    "wideBoundRelaxations": {
+      "before": 844,
+      "after": 844,
+      "delta": 0,
+      "percent": 0.0
+    },
+    "worklistVisits": {
+      "before": 13616123,
+      "after": 13616123,
+      "delta": 0,
+      "percent": 0.0
+    }
+  },
+  "supportCache": {
+    "counterDefinition": "supportQueries counts cache misses that execute support DFS in both runs",
+    "before": {
+      "misses": 38286830,
+      "hits": null,
+      "totalRequests": null,
+      "note": "supportCacheHits was not instrumented in BEFORE"
+    },
+    "after": {
+      "misses": 171750,
+      "hits": 38226419,
+      "totalRequests": 38398169,
+      "hitRate": 0.9955271304733306
+    },
+    "missDelta": {
+      "before": 38286830,
+      "after": 171750,
+      "delta": -38115080,
+      "percent": -99.55141232637959
+    }
+  },
+  "constructionCounters": {
+    "before": {
+      "costProjection": [
+        {
+          "activationEnvironments": 2770,
+          "bindingDagVisits": 339816,
+          "invariantProjectionStops": 149854,
+          "noRegionsSkipped": 19892,
+          "primitiveValueBytes": 529056,
+          "primitiveValues": 66132,
+          "primitiveVectors": 6422,
+          "projectedContexts": 6422,
+          "projectionCacheHits": 39748,
+          "relevantGuardDecisions": 6598,
+          "supportPrefixChecks": 15966,
+          "unknownObligations": 0
+        }
+      ],
+      "nativeGeneration": [
+        {
+          "coverageObligations": 38,
+          "cpPatterns": 1057,
+          "determinantRegions": 12457,
+          "evidenceReuses": 0,
+          "oracleEvaluations": 12457,
+          "prefixRequests": 0,
+          "prunedPrefixes": 4663,
+          "publishedRules": 5981,
+          "unknownPrefixes": 0,
+          "visitedNativePatterns": 7794
+        }
+      ],
+      "nativeRequests": [
+        {
+          "canonicalStringsCreated": 77,
+          "canonicalStringsReused": 7823,
+          "oracleRequests": 1057,
+          "preparedRequests": 8880,
+          "reusedResults": 7823,
+          "uncacheableRequests": 980
+        }
+      ]
+    },
+    "after": {
+      "costProjection": [
+        {
+          "activationEnvironments": 2770,
+          "bindingDagVisits": 339816,
+          "invariantProjectionStops": 149854,
+          "noRegionsSkipped": 19892,
+          "primitiveValueBytes": 529056,
+          "primitiveValues": 66132,
+          "primitiveVectors": 6422,
+          "projectedContexts": 6422,
+          "projectionCacheHits": 39748,
+          "relevantGuardDecisions": 6598,
+          "supportPrefixChecks": 15966,
+          "unknownObligations": 0
+        }
+      ],
+      "nativeGeneration": [
+        {
+          "coverageObligations": 38,
+          "cpPatterns": 1057,
+          "determinantRegions": 12457,
+          "evidenceReuses": 0,
+          "oracleEvaluations": 12457,
+          "prefixRequests": 0,
+          "prunedPrefixes": 4663,
+          "publishedRules": 5981,
+          "unknownPrefixes": 0,
+          "visitedNativePatterns": 7794
+        }
+      ],
+      "nativeRequests": [
+        {
+          "canonicalStringsCreated": 77,
+          "canonicalStringsReused": 7823,
+          "oracleRequests": 1057,
+          "preparedRequests": 8880,
+          "reusedResults": 7823,
+          "uncacheableRequests": 980
+        }
+      ]
+    }
+  },
+  "shapeReuseCounters": {
+    "before": {
+      "bindingGuardRequests": 767951,
+      "bindingGuardCacheHits": 744987,
+      "repeatProofRequests": 66164,
+      "repeatProofCacheHits": 64956
+    },
+    "after": {
+      "bindingGuardRequests": 767951,
+      "bindingGuardCacheHits": 744987,
+      "repeatProofRequests": 66164,
+      "repeatProofCacheHits": 64956
+    }
+  },
+  "oraclePlannerTrace": {
+    "before": {
+      "hits": 0,
+      "misses": 1057
+    },
+    "after": {
+      "hits": 0,
+      "misses": 1057
+    }
+  },
+  "jfr": {
+    "executionSamples": {
+      "before": 2651,
+      "after": 1696,
+      "delta": -955,
+      "percent": -36.02414183327046
+    },
+    "allocationWeightBytes": {
+      "before": 39030694544,
+      "after": 30119849536,
+      "delta": -8910845008,
+      "percent": -22.83035214234952
+    },
+    "gcPauseSeconds": {
+      "before": 0.406650629,
+      "after": 0.368887469,
+      "delta": -0.03776315999999996,
+      "percent": -9.286389177083986
+    },
+    "trackedInclusiveSamples": {
+      "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.enumerate": {
+        "before": 859,
+        "after": 714,
+        "delta": -145,
+        "percent": -16.880093131548314
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.visitJoint": {
+        "before": 912,
+        "after": 758,
+        "delta": -154,
+        "percent": -16.885964912280706
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.coreLowerBound": {
+        "before": 1042,
+        "after": 923,
+        "delta": -119,
+        "percent": -11.420345489443374
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ScopedDomainIdentity.sameDomains": {
+        "before": 0,
+        "after": 88,
+        "delta": 88,
+        "percent": null
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cached": {
+        "before": 438,
+        "after": 1,
+        "delta": -437,
+        "percent": -99.77168949771689
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cachedDomains": {
+        "before": 0,
+        "after": 229,
+        "delta": 229,
+        "percent": null
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.computeConditionalCostBound": {
+        "before": 888,
+        "after": 763,
+        "delta": -125,
+        "percent": -14.07657657657657
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.currentTermBound": {
+        "before": 895,
+        "after": 766,
+        "delta": -129,
+        "percent": -14.413407821229052
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.propagate": {
+        "before": 1030,
+        "after": 388,
+        "delta": -642,
+        "percent": -62.33009708737865
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.refreshTermBound": {
+        "before": 895,
+        "after": 766,
+        "delta": -129,
+        "percent": -14.413407821229052
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.scopedDomainHash": {
+        "before": 0,
+        "after": 56,
+        "delta": 56,
+        "percent": null
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.stamp": {
+        "before": 76,
+        "after": 17,
+        "delta": -59,
+        "percent": -77.63157894736842
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.support": {
+        "before": 934,
+        "after": 333,
+        "delta": -601,
+        "percent": -64.34689507494646
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.supportDfs": {
+        "before": 516,
+        "after": 153,
+        "delta": -363,
+        "percent": -70.34883720930232
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.tupleHash": {
+        "before": 111,
+        "after": 1,
+        "delta": -110,
+        "percent": -99.09909909909909
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.canonicalGuard": {
+        "before": 79,
+        "after": 66,
+        "delta": -13,
+        "percent": -16.455696202531644
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementGroupCost": {
+        "before": 826,
+        "after": 711,
+        "delta": -115,
+        "percent": -13.922518159806296
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.visitBindingCostContexts": {
+        "before": 616,
+        "after": 543,
+        "delta": -73,
+        "percent": -11.850649350649356
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectCardinalities": {
+        "before": 31,
+        "after": 28,
+        "delta": -3,
+        "percent": -9.677419354838712
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectGuards": {
+        "before": 89,
+        "after": 69,
+        "delta": -20,
+        "percent": -22.47191011235955
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes$PhaseContextKey.projectLoops": {
+        "before": 60,
+        "after": 53,
+        "delta": -7,
+        "percent": -11.66666666666667
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes.cloneView": {
+        "before": 37,
+        "after": 59,
+        "delta": 22,
+        "percent": 59.45945945945945
+      },
+      "org.apache.sysds.hops.fedplanner.memo.MemoShapes.resolvedBindingShape": {
+        "before": 237,
+        "after": 217,
+        "delta": -20,
+        "percent": -8.43881856540084
+      }
+    }
+  },
+  "processMonitor": {
+    "observedSeconds": {
+      "before": 42.685,
+      "after": 32.189,
+      "delta": -10.496000000000002,
+      "percent": -24.58943422748038
+    },
+    "cpuSeconds": {
+      "before": 63.98,
+      "after": 51.61,
+      "delta": -12.369999999999997,
+      "percent": -19.33416692716473
+    },
+    "maxVmRssKiB": {
+      "before": 652276,
+      "after": 758020,
+      "delta": 105744,
+      "percent": 16.211542353236965
+    },
+    "maxVmHwmKiB": {
+      "before": 673780,
+      "after": 785668,
+      "delta": 111888,
+      "percent": 16.606013832408205
+    }
+  },
+  "limitations": [
+    "one profiled run per condition; wall-clock deltas are observations, not distribution estimates",
+    "JFR sample and allocation-weight deltas are statistical",
+    "conditional-bound allocation bucket includes minimumTerm and nested cost work, not only cache-key allocation",
+    "process CPU covers the monitored coordinator interval, not only Memo optimization"
+  ]
+}

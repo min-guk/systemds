@@ -1,0 +1,116 @@
+{
+  "schema": "logreg-under10-candidate02-artifacts-v1",
+  "workloadRuns": 1,
+  "artifacts": [
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate02/result.json",
+      "size": 13084,
+      "sha256": "fe17b30d81da8f2cf0864b245802e68a9412eeb7e8a5639577de3502952b0e22"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate02/cases/ml_logreg/fed.log",
+      "size": 42876,
+      "sha256": "257aa9e306711fe1d78b94fd41b08bcde30bd697283d388d2e2df5bb9909cd99"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate02/cases/ml_logreg/fed-model.csv",
+      "size": 332,
+      "sha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate02/cases/ml_logreg/fed.jfr",
+      "size": 3199733,
+      "sha256": "86fec4ad3d9e7a662b69fa542e0d32338fe40abfa4468115fdd4cab68598a5aa"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate02/audit/ml_logreg-fed/runtime-capability-205.jsonl",
+      "size": 25212,
+      "sha256": "62dd17d4a655ba6eae2a647232e0c454d853ee1015d337cef1b17088d58775b3"
+    },
+    {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-under10-candidate02/audit/ml_logreg-fed/runtime-conversion-frontier-205.jsonl",
+      "size": 52477,
+      "sha256": "d192e0add29d1485729eec2e1b6db76e5e1ed61a206fdbcb65fb41c25e933295"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-command.txt",
+      "size": 1045,
+      "sha256": "e6cd18d3fa40d15ea9ade9bbe1266a402cd318ebc0fecea193401969290d4079"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-monitor-command.txt",
+      "size": 227,
+      "sha256": "e1394e09581e2bc057e515509b5f55426257e1ad2b645c2d436220d481b618f6"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02.console.log",
+      "size": 196,
+      "sha256": "c3eaf5dd095835eb98fb330d7524af373619a348b06405877e9c5aac2a083bf3"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-proc.tsv",
+      "size": 1944,
+      "sha256": "8a0d52d063ded0393db07c72989f38b69bb1439a4a8c206919536853dae30521"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-proc-summary.json",
+      "size": 400,
+      "sha256": "8f3596281a790c471df06e940de17619a09678852b0ea086daa1c76a40c7d34b"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-events.jsonl",
+      "size": 26126926,
+      "sha256": "580228d0a23b380853cbcd8509488c7ae6cb67fb553a1840dfd3bd270a70a3d0"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-profile.json",
+      "size": 242723,
+      "sha256": "c09375aec592519d3a0e9c6b40cdcb4cb445eff85fff8d2d753b7e01bf358a99"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-hotspots.json",
+      "size": 32557,
+      "sha256": "d487a8a101c6dfbf6a8521f20a520464ee32daa5d16aa147b36b8674267de6fc"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-focused-hotspots.json",
+      "size": 3054,
+      "sha256": "bb8e633486c8fe8b86b17ba68006e455d0fb8149619584cbe9e701b3dc21b2ec"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-summary.json",
+      "size": 10210,
+      "sha256": "b810ce93c41a26793eaddfb83be7f44573d23311a70451d188775ff2c5291796"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-freeze-verification.json",
+      "size": 923,
+      "sha256": "8ee157f5b1c5b8921082f7ab51d29eba58ef8bec728a8a464c230616e1eccb10"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-evaluation.json",
+      "size": 11641,
+      "sha256": "86958dfb5e1416f049f62a20e34e11638b8b10829042d78cac6298f570844505"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-differential.json",
+      "size": 8005,
+      "sha256": "5f12cbb4eae1633cf38c9697a5af574b3d4c03c4d8ef1fedc99df6af9a809963"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-container-termination.json",
+      "size": 183,
+      "sha256": "1e03495d354f4a009553f7d1341762c5cd753483f6e654f8e4cc18d55e1498a7"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-report.md",
+      "size": 3489,
+      "sha256": "7d58f016ecae796ed3d857206a2bebba5d3b0ebe554485c605acf1e7e071e6f2"
+    },
+    {
+      "path": "experiments/logreg-under10-20261014/candidate02-engine-sha256.json",
+      "size": 1967451,
+      "sha256": "a2a13b688a9376d7011e61fdbe7c554ad00400053c1419899c249110394f5c9a"
+    }
+  ]
+}

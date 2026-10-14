@@ -1,0 +1,1 @@
+OPTIMAL nodes=75 selected=[1, 1, 1, 1, 1, 1, 1, 1, 0] stats=Statistics[nodes=75, checkEvaluations=63, checkCacheHits=153, supportQueries=148, supportCacheHits=369, worklistVisits=200, removedRules=72, costEvaluations=32, costCacheHits=128, boundPrunes=29, conditionalBoundQueries=199, conditionalBoundCacheHits=143, wideBoundRelaxations=0]

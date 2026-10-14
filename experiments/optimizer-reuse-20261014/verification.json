@@ -1,0 +1,93 @@
+{
+  "status": "implementation-verified-measurements-complete-glm-timeout-unresolved",
+  "baselineCommit": "25662ee7b485af0880a11c9b219620e155cfbee7",
+  "tests": {
+    "mavenCompile": {
+      "passed": true,
+      "seconds": 37.678
+    },
+    "regression": {
+      "classes": 46,
+      "tests": 423,
+      "seconds": 48.832,
+      "passed": true
+    },
+    "harness": {
+      "tests": 45,
+      "passed": true
+    },
+    "excludedKnownStaleClass": "org.apache.sysds.hops.fedplanner.placement.TrainingWorkloadOperationCoverageTest"
+  },
+  "frozenEngineMatchesWorkspace": {
+    "src/main/java": {
+      "files": 1692,
+      "mismatches": []
+    },
+    "src/test/java": {
+      "files": 2205,
+      "mismatches": []
+    },
+    "target/classes": {
+      "files": 4923,
+      "mismatches": []
+    },
+    "target/test-classes": {
+      "files": 3357,
+      "mismatches": []
+    }
+  },
+  "samplePolicy": {
+    "before": {
+      "ml_logreg": 1,
+      "ml_glm": 1
+    },
+    "after": {
+      "ml_logreg": 1,
+      "ml_glm": 1
+    },
+    "jfr": false
+  },
+  "independentReview": {
+    "passed": true,
+    "path": "experiments/optimizer-reuse-20261014/independent-review.md"
+  },
+  "measurements": {
+    "comparison": "experiments/optimizer-reuse-20261014/optimizer-reuse-comparison.json",
+    "logRegPlanningBeforeSeconds": 39.64542126,
+    "logRegPlanningAfterSeconds": 32.076970336,
+    "logRegOptimizationBeforeSeconds": 36.851172142,
+    "logRegOptimizationAfterSeconds": 29.823222436,
+    "logRegObjectiveAndOutputEqual": true,
+    "glmBeforeAfterReturnCodes": [
+      124,
+      124
+    ],
+    "glmCompletionVerified": false,
+    "containersStopped": true
+  },
+  "artifactHashes": {
+    "after-engine-sha256.json": "bd817fbd43d25fd8b3279045118c6f2bf12fc28b097e28c942ad0f28bf352d54",
+    "independent-review.md": "9ed90e785ba6be5e179977a12fbc6c966ba6733370a9a77797eb38a0be7e86ff",
+    "final-compile.log": "5129e2000e39af842a7880ebf7fb8ef4a4a9d99eac6e626bb547d3f13302f4d9",
+    "final-unit.log": "30a660262312f1dc2142885cb58bc400b557a686bea115eb22569e2793fc9492",
+    "final-harness.log": "534e706d7c08f300cca732f921a2f7d3715e121467591b26392b99a5be37b407",
+    "optimizer-reuse-before-summary.json": "92908bc928257b8db6a535ba17c88177a3b9b0581e9bd80f39ad3ad248373cb1",
+    "optimizer-reuse-after-summary.json": "0dff39f7dc802f9efa368eb7aca9a3c0155fb1d4d93af8112d215a27a7350333",
+    "optimizer-reuse-comparison.json": "e5174310c9de24ca5a39257fbfde0ebd35ca434d7bd70d9fd489d2001dba6f81"
+  },
+  "dockerModelProofs": {
+    "before": {
+      "passed": true,
+      "returncode": 0,
+      "classPreflightPassed": true,
+      "overlayPreflightPassed": true
+    },
+    "after": {
+      "passed": true,
+      "returncode": 0,
+      "classPreflightPassed": true,
+      "overlayPreflightPassed": true
+    }
+  },
+  "postMeasurementWorkspaceMatchesFrozenEngine": true
+}

@@ -1,0 +1,727 @@
+{
+  "schema": "memo-optimizer-profile-v1",
+  "interpretation": {
+    "samples": "inclusive stack presence, not invocation counts or exact method CPU timers",
+    "spans": "first-to-last execution sample within one phase; lower observation spans, not exact entry-exit duration",
+    "allocation": "JFR weighted sampling estimate, not retained heap/RSS",
+    "cpu": "JFR CPULoad mean multiplied by observed host hwThreads=48; approximate cores, not container quota percent",
+    "policy": "one workload run per frozen variant/case; no production implementation changes"
+  },
+  "profiles": {
+    "baseline-logreg": {
+      "optimizeExecutionSamples": 1906,
+      "sampledOptimizeSpanSeconds": 24.551321268081665,
+      "inclusiveMethods": {
+        "MemoProgramModel.movementGroupCost": {
+          "samples": 301,
+          "samplePercent": 15.792235047219307,
+          "allocationWeightGiB": 8.558297961950302
+        },
+        "MemoProgramModel.visitBindingCostContexts": {
+          "samples": 0,
+          "samplePercent": 0.0,
+          "allocationWeightGiB": 0.0
+        },
+        "MemoShapes.firstUnfixedCostGuardForBinding": {
+          "samples": 0,
+          "samplePercent": 0.0,
+          "allocationWeightGiB": 0.0
+        },
+        "MemoShapes.firstUnfixedCostGuard": {
+          "samples": 0,
+          "samplePercent": 0.0,
+          "allocationWeightGiB": 0.0
+        },
+        "MemoShapes.provesRepeatHeadCostStats": {
+          "samples": 0,
+          "samplePercent": 0.0,
+          "allocationWeightGiB": 0.0
+        },
+        "MemoShapes.withPhase": {
+          "samples": 28,
+          "samplePercent": 1.4690451206715636,
+          "allocationWeightGiB": 0.6646557226777077
+        },
+        "MemoShapes.phaseProvesGuard": {
+          "samples": 19,
+          "samplePercent": 0.9968520461699895,
+          "allocationWeightGiB": 0.5182577446103096
+        },
+        "MemoProgramFacts.guardValue": {
+          "samples": 25,
+          "samplePercent": 1.3116474291710387,
+          "allocationWeightGiB": 0.6402589529752731
+        },
+        "MemoProgramFacts.guardValueProvenance": {
+          "samples": 32,
+          "samplePercent": 1.6789087093389297,
+          "allocationWeightGiB": 0.5504670217633247
+        },
+        "MemoProgramFacts.guardDecision": {
+          "samples": 35,
+          "samplePercent": 1.8363064008394543,
+          "allocationWeightGiB": 0.8422911763191223
+        },
+        "MemoShapes.viewAt": {
+          "samples": 121,
+          "samplePercent": 6.348373557187828,
+          "allocationWeightGiB": 3.448237121105194
+        },
+        "MemoShapes.resolvedBindingShape": {
+          "samples": 94,
+          "samplePercent": 4.931794333683106,
+          "allocationWeightGiB": 3.7380896508693695
+        },
+        "MemoShapes$PhaseContextKey.<init>": {
+          "samples": 50,
+          "samplePercent": 2.6232948583420774,
+          "allocationWeightGiB": 2.4146274626255035
+        },
+        "MemoProgramModel.entryCost": {
+          "samples": 2,
+          "samplePercent": 0.1049317943336831,
+          "allocationWeightGiB": 0.0048801228404045105
+        },
+        "MemoProgramModel.inputCompatible": {
+          "samples": 193,
+          "samplePercent": 10.12591815320042,
+          "allocationWeightGiB": 5.24756183475256
+        },
+        "MemoProgramModel.privacyCompatible": {
+          "samples": 0,
+          "samplePercent": 0.0,
+          "allocationWeightGiB": 0.0009760186076164246
+        },
+        "MemoProgramModel.visitActive": {
+          "samples": 492,
+          "samplePercent": 25.813221406086043,
+          "allocationWeightGiB": 14.098643951117992
+        },
+        "MemoOptimizer.propagate": {
+          "samples": 888,
+          "samplePercent": 46.5897166841553,
+          "allocationWeightGiB": 18.281759597361088
+        },
+        "MemoOptimizer.support": {
+          "samples": 808,
+          "samplePercent": 42.392444910807974,
+          "allocationWeightGiB": 17.732265785336494
+        },
+        "MemoOptimizer.evaluate": {
+          "samples": 429,
+          "samplePercent": 22.507869884575026,
+          "allocationWeightGiB": 9.8511977866292
+        },
+        "MemoOptimizer.computeConditionalCostBound": {
+          "samples": 401,
+          "samplePercent": 21.038824763903463,
+          "allocationWeightGiB": 9.742204077541828
+        },
+        "MemoOptimizer$TupleKey.<init>": {
+          "samples": 92,
+          "samplePercent": 4.826862539349423,
+          "allocationWeightGiB": 4.424103580415249
+        },
+        "MemoOptimizer.stamp": {
+          "samples": 61,
+          "samplePercent": 3.200419727177335,
+          "allocationWeightGiB": 1.8241646364331245
+        },
+        "MemoOptimizer$CostTerm.evaluateExact": {
+          "samples": 303,
+          "samplePercent": 15.897166841552991,
+          "allocationWeightGiB": 8.621736228466034
+        },
+        "MemoOptimizer.foldAndGroupCosts": {
+          "samples": 3,
+          "samplePercent": 0.15739769150052466,
+          "allocationWeightGiB": 0.16982265561819077
+        }
+      },
+      "disjointSampleCategories": {
+        "solver-and-other": 1410,
+        "input-legality": 193,
+        "movement": 301,
+        "entry": 2
+      },
+      "disjointAllocationGiB": {
+        "input-legality": 5.24756183475256,
+        "solver-and-other": 20.453758634626865,
+        "privacy": 0.0009760186076164246,
+        "movement": 8.558297961950302,
+        "entry": 0.0048801228404045105
+      },
+      "optimizeAllocationWeightGiB": 34.26547457277775,
+      "phases": {
+        "optimizer-construction": {
+          "samples": 1,
+          "samplePercentOfOptimize": 0.05246589716684155,
+          "firstSampleEpoch": 1791932859.9089634,
+          "lastSampleEpoch": 1791932859.9089634,
+          "observedSpanSeconds": 0.0,
+          "allocationWeightGiB": 0.01268814504146576,
+          "cpuLoadRawMean": null,
+          "estimatedProcessCores": null,
+          "gcHeapSampleMaxMiB": null
+        },
+        "initial-propagation": {
+          "samples": 13,
+          "samplePercentOfOptimize": 0.6820566631689402,
+          "firstSampleEpoch": 1791932860.1858332,
+          "lastSampleEpoch": 1791932860.7384527,
+          "observedSpanSeconds": 0.552619457244873,
+          "allocationWeightGiB": 0.6681378856301308,
+          "cpuLoadRawMean": 0.069612342,
+          "estimatedProcessCores": 3.3413924159999997,
+          "gcHeapSampleMaxMiB": 181.92236328125
+        },
+        "normalization": {
+          "samples": 3,
+          "samplePercentOfOptimize": 0.15739769150052466,
+          "firstSampleEpoch": 1791932860.8486855,
+          "lastSampleEpoch": 1791932860.9234188,
+          "observedSpanSeconds": 0.07473325729370117,
+          "allocationWeightGiB": 0.16982265561819077,
+          "cpuLoadRawMean": null,
+          "estimatedProcessCores": null,
+          "gcHeapSampleMaxMiB": 220.69927978515625
+        },
+        "optimizer-other": {
+          "samples": 1,
+          "samplePercentOfOptimize": 0.05246589716684155,
+          "firstSampleEpoch": 1791932860.9741027,
+          "lastSampleEpoch": 1791932860.9741027,
+          "observedSpanSeconds": 0.0,
+          "allocationWeightGiB": 0.0,
+          "cpuLoadRawMean": null,
+          "estimatedProcessCores": null,
+          "gcHeapSampleMaxMiB": null
+        },
+        "leaf-region": {
+          "samples": 8,
+          "samplePercentOfOptimize": 0.4197271773347324,
+          "firstSampleEpoch": 1791932861.0146704,
+          "lastSampleEpoch": 1791932861.1363068,
+          "observedSpanSeconds": 0.12163639068603516,
+          "allocationWeightGiB": 0.1766536384820938,
+          "cpuLoadRawMean": null,
+          "estimatedProcessCores": null,
+          "gcHeapSampleMaxMiB": 220.70372009277344
+        },
+        "reduced-core-search": {
+          "samples": 1876,
+          "samplePercentOfOptimize": 98.42602308499475,
+          "firstSampleEpoch": 1791932861.177036,
+          "lastSampleEpoch": 1791932884.390178,
+          "observedSpanSeconds": 23.213141918182373,
+          "allocationWeightGiB": 33.15716425329447,
+          "cpuLoadRawMean": 0.02587539608666667,
+          "estimatedProcessCores": 1.24201901216,
+          "gcHeapSampleMaxMiB": 269.11643981933594
+        },
+        "selected-cost-audit": {
+          "samples": 1,
+          "samplePercentOfOptimize": 0.05246589716684155,
+          "firstSampleEpoch": 1791932884.420612,
+          "lastSampleEpoch": 1791932884.420612,
+          "observedSpanSeconds": 0.0,
+          "allocationWeightGiB": 0.04391952604055405,
+          "cpuLoadRawMean": null,
+          "estimatedProcessCores": null,
+          "gcHeapSampleMaxMiB": null
+        },
+        "supply-reconstruction": {
+          "samples": 3,
+          "samplePercentOfOptimize": 0.15739769150052466,
+          "firstSampleEpoch": 1791932884.439915,
+          "lastSampleEpoch": 1791932884.4602847,
+          "observedSpanSeconds": 0.020369768142700195,
+          "allocationWeightGiB": 0.03708846867084503,
+          "cpuLoadRawMean": null,
+          "estimatedProcessCores": null,
+          "gcHeapSampleMaxMiB": null
+        }
+      },
+      "wholeRecordingGc": {
+        "collectionCount": 179,
+        "totalCollectionDurationSeconds": 0.428223972,
+        "stopTheWorldPauseSeconds": 0.367320004,
+        "maxPauseSeconds": 0.012036414,
+        "maxSampledHeapBytes": 282282200,
+        "maxAfterGcHeapBytes": 51823080,
+        "causes": {
+          "G1 Evacuation Pause": 174,
+          "Metadata GC Threshold": 4,
+          "G1 Preventive Collection": 1
+        }
+      },
+      "dataLossEvents": []
+    },
+    "current-logreg": {
+      "optimizeExecutionSamples": 3900,
+      "sampledOptimizeSpanSeconds": 51.56614685058594,
+      "inclusiveMethods": {
+        "MemoProgramModel.movementGroupCost": {
+          "samples": 2012,
+          "samplePercent": 51.58974358974359,
+          "allocationWeightGiB": 41.91029767692089
+        },
+        "MemoProgramModel.visitBindingCostContexts": {
+          "samples": 1778,
+          "samplePercent": 45.58974358974359,
+          "allocationWeightGiB": 38.187812589108944
+        },
+        "MemoShapes.firstUnfixedCostGuardForBinding": {
+          "samples": 1081,
+          "samplePercent": 27.71794871794872,
+          "allocationWeightGiB": 24.71810582280159
+        },
+        "MemoShapes.firstUnfixedCostGuard": {
+          "samples": 1056,
+          "samplePercent": 27.076923076923077,
+          "allocationWeightGiB": 24.303301863372326
+        },
+        "MemoShapes.provesRepeatHeadCostStats": {
+          "samples": 784,
+          "samplePercent": 20.102564102564102,
+          "allocationWeightGiB": 20.568263426423073
+        },
+        "MemoShapes.withPhase": {
+          "samples": 495,
+          "samplePercent": 12.692307692307692,
+          "allocationWeightGiB": 12.305478386580944
+        },
+        "MemoShapes.phaseProvesGuard": {
+          "samples": 366,
+          "samplePercent": 9.384615384615385,
+          "allocationWeightGiB": 9.784478031098843
+        },
+        "MemoProgramFacts.guardValue": {
+          "samples": 349,
+          "samplePercent": 8.948717948717949,
+          "allocationWeightGiB": 9.492642238736153
+        },
+        "MemoProgramFacts.guardValueProvenance": {
+          "samples": 240,
+          "samplePercent": 6.153846153846154,
+          "allocationWeightGiB": 3.6444136723876
+        },
+        "MemoProgramFacts.guardDecision": {
+          "samples": 301,
+          "samplePercent": 7.717948717948718,
+          "allocationWeightGiB": 7.268331594765186
+        },
+        "MemoShapes.viewAt": {
+          "samples": 460,
+          "samplePercent": 11.794871794871796,
+          "allocationWeightGiB": 9.005557872354984
+        },
+        "MemoShapes.resolvedBindingShape": {
+          "samples": 609,
+          "samplePercent": 15.615384615384615,
+          "allocationWeightGiB": 14.778514809906483
+        },
+        "MemoShapes$PhaseContextKey.<init>": {
+          "samples": 362,
+          "samplePercent": 9.282051282051283,
+          "allocationWeightGiB": 8.732236094772816
+        },
+        "MemoProgramModel.entryCost": {
+          "samples": 2,
+          "samplePercent": 0.05128205128205128,
+          "allocationWeightGiB": 0.014639981091022491
+        },
+        "MemoProgramModel.inputCompatible": {
+          "samples": 221,
+          "samplePercent": 5.666666666666667,
+          "allocationWeightGiB": 5.339085318148136
+        },
+        "MemoProgramModel.privacyCompatible": {
+          "samples": 2,
+          "samplePercent": 0.05128205128205128,
+          "allocationWeightGiB": 0.0039040371775627136
+        },
+        "MemoProgramModel.visitActive": {
+          "samples": 2181,
+          "samplePercent": 55.92307692307692,
+          "allocationWeightGiB": 46.624729953706264
+        },
+        "MemoOptimizer.propagate": {
+          "samples": 1069,
+          "samplePercent": 27.41025641025641,
+          "allocationWeightGiB": 18.81434239447117
+        },
+        "MemoOptimizer.support": {
+          "samples": 970,
+          "samplePercent": 24.871794871794872,
+          "allocationWeightGiB": 18.261918611824512
+        },
+        "MemoOptimizer.evaluate": {
+          "samples": 531,
+          "samplePercent": 13.615384615384615,
+          "allocationWeightGiB": 9.244818098843098
+        },
+        "MemoOptimizer.computeConditionalCostBound": {
+          "samples": 2042,
+          "samplePercent": 52.35897435897436,
+          "allocationWeightGiB": 41.33460085093975
+        },
+        "MemoOptimizer$TupleKey.<init>": {
+          "samples": 122,
+          "samplePercent": 3.128205128205128,
+          "allocationWeightGiB": 3.467753544449806
+        },
+        "MemoOptimizer.stamp": {
+          "samples": 52,
+          "samplePercent": 1.3333333333333333,
+          "allocationWeightGiB": 2.103308394551277
+        },
+        "MemoOptimizer$CostTerm.evaluateExact": {
+          "samples": 2016,
+          "samplePercent": 51.69230769230769,
+          "allocationWeightGiB": 42.14843612909317
+        },
+        "MemoOptimizer.foldAndGroupCosts": {
+          "samples": 3,
+          "samplePercent": 0.07692307692307693,
+          "allocationWeightGiB": 0.2410685494542122
+        }
+      },
+      "disjointSampleCategories": {
+        "solver-and-other": 1663,
+        "privacy": 2,
+        "input-legality": 221,
+        "movement": 2012,
+        "entry": 2
+      },
+      "disjointAllocationGiB": {
+        "solver-and-other": 20.643029294908047,
+        "privacy": 0.0039040371775627136,
+        "input-legality": 5.339085318148136,
+        "movement": 41.91029767692089,
+        "entry": 0.014639981091022491
+      },
+      "optimizeAllocationWeightGiB": 67.91095630824566,
+      "phases": {
+        "optimizer-construction": {
+          "samples": 1,
+          "samplePercentOfOptimize": 0.02564102564102564,
+          "firstSampleEpoch": 1791932940.7629023,
+          "lastSampleEpoch": 1791932940.7629023,
+          "observedSpanSeconds": 0.0,
+          "allocationWeightGiB": 0.114198237657547,
+          "cpuLoadRawMean": null,
+          "estimatedProcessCores": null,
+          "gcHeapSampleMaxMiB": null
+        },
+        "initial-propagation": {
+          "samples": 24,
+          "samplePercentOfOptimize": 0.6153846153846154,
+          "firstSampleEpoch": 1791932940.7730482,
+          "lastSampleEpoch": 1791932941.50817,
+          "observedSpanSeconds": 0.7351217269897461,
+          "allocationWeightGiB": 0.5101481825113297,
+          "cpuLoadRawMean": 0.0676156548,
+          "estimatedProcessCores": 3.2455514304,
+          "gcHeapSampleMaxMiB": 297.22265625
+        },
+        "normalization": {
+          "samples": 3,
+          "samplePercentOfOptimize": 0.07692307692307693,
+          "firstSampleEpoch": 1791932941.5586843,
+          "lastSampleEpoch": 1791932941.6748524,
+          "observedSpanSeconds": 0.11616802215576172,
+          "allocationWeightGiB": 0.2410685494542122,
+          "cpuLoadRawMean": null,
+          "estimatedProcessCores": null,
+          "gcHeapSampleMaxMiB": 297.59912109375
+        },
+        "leaf-region": {
+          "samples": 85,
+          "samplePercentOfOptimize": 2.1794871794871793,
+          "firstSampleEpoch": 1791932941.7256262,
+          "lastSampleEpoch": 1791932942.9452205,
+          "observedSpanSeconds": 1.2195942401885986,
+          "allocationWeightGiB": 1.902093581855297,
+          "cpuLoadRawMean": 0.0659570034,
+          "estimatedProcessCores": 3.1659361632000005,
+          "gcHeapSampleMaxMiB": 357.4845886230469
+        },
+        "reduced-core-search": {
+          "samples": 3785,
+          "samplePercentOfOptimize": 97.05128205128206,
+          "firstSampleEpoch": 1791932942.9655735,
+          "lastSampleEpoch": 1791932992.2677913,
+          "observedSpanSeconds": 49.30221772193909,
+          "allocationWeightGiB": 65.08098282665014,
+          "cpuLoadRawMean": 0.02357256354734694,
+          "estimatedProcessCores": 1.1314830502726532,
+          "gcHeapSampleMaxMiB": 369.82324981689453
+        },
+        "supply-reconstruction": {
+          "samples": 2,
+          "samplePercentOfOptimize": 0.05128205128205128,
+          "firstSampleEpoch": 1791932992.3087204,
+          "lastSampleEpoch": 1791932992.329049,
+          "observedSpanSeconds": 0.020328760147094727,
+          "allocationWeightGiB": 0.031232476234436035,
+          "cpuLoadRawMean": null,
+          "estimatedProcessCores": null,
+          "gcHeapSampleMaxMiB": null
+        },
+        "selected-cost-audit": {
+          "samples": 0,
+          "samplePercentOfOptimize": 0.0,
+          "firstSampleEpoch": null,
+          "lastSampleEpoch": null,
+          "observedSpanSeconds": null,
+          "allocationWeightGiB": 0.031232453882694244,
+          "cpuLoadRawMean": null,
+          "estimatedProcessCores": null,
+          "gcHeapSampleMaxMiB": null
+        }
+      },
+      "wholeRecordingGc": {
+        "collectionCount": 242,
+        "totalCollectionDurationSeconds": 0.482096664,
+        "stopTheWorldPauseSeconds": 0.447241706,
+        "maxPauseSeconds": 0.011497096,
+        "maxSampledHeapBytes": 387787784,
+        "maxAfterGcHeapBytes": 52248928,
+        "causes": {
+          "G1 Evacuation Pause": 237,
+          "Metadata GC Threshold": 4,
+          "G1 Preventive Collection": 1
+        }
+      },
+      "dataLossEvents": []
+    },
+    "current-glm": {
+      "optimizeExecutionSamples": 18231,
+      "sampledOptimizeSpanSeconds": 286.5732192993164,
+      "inclusiveMethods": {
+        "MemoProgramModel.movementGroupCost": {
+          "samples": 12538,
+          "samplePercent": 68.77296911853436,
+          "allocationWeightGiB": 304.9319773465395
+        },
+        "MemoProgramModel.visitBindingCostContexts": {
+          "samples": 11990,
+          "samplePercent": 65.76709999451484,
+          "allocationWeightGiB": 294.0939060822129
+        },
+        "MemoShapes.firstUnfixedCostGuardForBinding": {
+          "samples": 9384,
+          "samplePercent": 51.472766167516866,
+          "allocationWeightGiB": 226.30571334809065
+        },
+        "MemoShapes.firstUnfixedCostGuard": {
+          "samples": 9355,
+          "samplePercent": 51.31369645109977,
+          "allocationWeightGiB": 225.95434898138046
+        },
+        "MemoShapes.provesRepeatHeadCostStats": {
+          "samples": 8776,
+          "samplePercent": 48.13778728539301,
+          "allocationWeightGiB": 221.1045638397336
+        },
+        "MemoShapes.withPhase": {
+          "samples": 6860,
+          "samplePercent": 37.62821567659481,
+          "allocationWeightGiB": 168.74166052788496
+        },
+        "MemoShapes.phaseProvesGuard": {
+          "samples": 6440,
+          "samplePercent": 35.324447369864515,
+          "allocationWeightGiB": 162.95690808445215
+        },
+        "MemoProgramFacts.guardValue": {
+          "samples": 6305,
+          "samplePercent": 34.58395041412978,
+          "allocationWeightGiB": 167.33465749025345
+        },
+        "MemoProgramFacts.guardValueProvenance": {
+          "samples": 3492,
+          "samplePercent": 19.154187921671877,
+          "allocationWeightGiB": 79.3816554620862
+        },
+        "MemoProgramFacts.guardDecision": {
+          "samples": 4388,
+          "samplePercent": 24.068893642696505,
+          "allocationWeightGiB": 136.66574257612228
+        },
+        "MemoShapes.viewAt": {
+          "samples": 1914,
+          "samplePercent": 10.498601283528057,
+          "allocationWeightGiB": 54.79798212647438
+        },
+        "MemoShapes.resolvedBindingShape": {
+          "samples": 6214,
+          "samplePercent": 34.084800614338214,
+          "allocationWeightGiB": 175.1317117959261
+        },
+        "MemoShapes$PhaseContextKey.<init>": {
+          "samples": 4070,
+          "samplePercent": 22.324611924743568,
+          "allocationWeightGiB": 126.86663287132978
+        },
+        "MemoProgramModel.entryCost": {
+          "samples": 0,
+          "samplePercent": 0.0,
+          "allocationWeightGiB": 0.0029280707240104675
+        },
+        "MemoProgramModel.inputCompatible": {
+          "samples": 5240,
+          "samplePercent": 28.74225220777796,
+          "allocationWeightGiB": 135.92694131284952
+        },
+        "MemoProgramModel.privacyCompatible": {
+          "samples": 9,
+          "samplePercent": 0.04936646371564917,
+          "allocationWeightGiB": 0.07904966175556183
+        },
+        "MemoProgramModel.visitActive": {
+          "samples": 17412,
+          "samplePercent": 95.50765180187592,
+          "allocationWeightGiB": 434.07401499152184
+        },
+        "MemoOptimizer.propagate": {
+          "samples": 5577,
+          "samplePercent": 30.590752015797268,
+          "allocationWeightGiB": 145.44921147823334
+        },
+        "MemoOptimizer.support": {
+          "samples": 5552,
+          "samplePercent": 30.453622949920465,
+          "allocationWeightGiB": 145.2998991087079
+        },
+        "MemoOptimizer.evaluate": {
+          "samples": 5406,
+          "samplePercent": 29.652789205199934,
+          "allocationWeightGiB": 143.95611780881882
+        },
+        "MemoOptimizer.computeConditionalCostBound": {
+          "samples": 12480,
+          "samplePercent": 68.45482968570018,
+          "allocationWeightGiB": 303.50306421518326
+        },
+        "MemoOptimizer$TupleKey.<init>": {
+          "samples": 28,
+          "samplePercent": 0.15358455378201963,
+          "allocationWeightGiB": 0.7046185582876205
+        },
+        "MemoOptimizer.stamp": {
+          "samples": 16,
+          "samplePercent": 0.08776260216115407,
+          "allocationWeightGiB": 0.19028934091329575
+        },
+        "MemoOptimizer$CostTerm.evaluateExact": {
+          "samples": 12538,
+          "samplePercent": 68.77296911853436,
+          "allocationWeightGiB": 305.0568649470806
+        },
+        "MemoOptimizer.foldAndGroupCosts": {
+          "samples": 67,
+          "samplePercent": 0.3675058965498327,
+          "allocationWeightGiB": 1.482550397515297
+        }
+      },
+      "disjointSampleCategories": {
+        "solver-and-other": 444,
+        "input-legality": 5240,
+        "privacy": 9,
+        "movement": 12538
+      },
+      "disjointAllocationGiB": {
+        "input-legality": 135.92694131284952,
+        "privacy": 0.07904966175556183,
+        "solver-and-other": 10.282483622431755,
+        "movement": 304.9319773465395,
+        "entry": 0.0029280707240104675
+      },
+      "optimizeAllocationWeightGiB": 451.22338001430035,
+      "phases": {
+        "optimizer-construction": {
+          "samples": 1,
+          "samplePercentOfOptimize": 0.0054851626350721295,
+          "firstSampleEpoch": 1791933014.321861,
+          "lastSampleEpoch": 1791933014.321861,
+          "observedSpanSeconds": 0.0,
+          "allocationWeightGiB": 0.01464003324508667,
+          "cpuLoadRawMean": null,
+          "estimatedProcessCores": null,
+          "gcHeapSampleMaxMiB": null
+        },
+        "initial-propagation": {
+          "samples": 197,
+          "samplePercentOfOptimize": 1.0805770391092095,
+          "firstSampleEpoch": 1791933014.3420937,
+          "lastSampleEpoch": 1791933017.763419,
+          "observedSpanSeconds": 3.421325206756592,
+          "allocationWeightGiB": 4.803636536002159,
+          "cpuLoadRawMean": 0.056075754236666664,
+          "estimatedProcessCores": 2.69163620336,
+          "gcHeapSampleMaxMiB": 436.80393981933594
+        },
+        "normalization": {
+          "samples": 67,
+          "samplePercentOfOptimize": 0.3675058965498327,
+          "firstSampleEpoch": 1791933017.8728445,
+          "lastSampleEpoch": 1791933018.9832866,
+          "observedSpanSeconds": 1.1104421615600586,
+          "allocationWeightGiB": 1.482550397515297,
+          "cpuLoadRawMean": 0.034396284060000004,
+          "estimatedProcessCores": 1.6510216348800002,
+          "gcHeapSampleMaxMiB": 438.87181091308594
+        },
+        "optimizer-other": {
+          "samples": 3,
+          "samplePercentOfOptimize": 0.01645548790521639,
+          "firstSampleEpoch": 1791933019.0135946,
+          "lastSampleEpoch": 1791933019.0439785,
+          "observedSpanSeconds": 0.030383825302124023,
+          "allocationWeightGiB": 0.14639603346586227,
+          "cpuLoadRawMean": null,
+          "estimatedProcessCores": null,
+          "gcHeapSampleMaxMiB": null
+        },
+        "leaf-region": {
+          "samples": 6,
+          "samplePercentOfOptimize": 0.03291097581043278,
+          "firstSampleEpoch": 1791933019.0540917,
+          "lastSampleEpoch": 1791933019.1240623,
+          "observedSpanSeconds": 0.06997060775756836,
+          "allocationWeightGiB": 0.09272091835737228,
+          "cpuLoadRawMean": null,
+          "estimatedProcessCores": null,
+          "gcHeapSampleMaxMiB": 439.1515808105469
+        },
+        "reduced-core-search": {
+          "samples": 17957,
+          "samplePercentOfOptimize": 98.49706543799023,
+          "firstSampleEpoch": 1791933019.1442826,
+          "lastSampleEpoch": 1791933300.8950803,
+          "observedSpanSeconds": 281.7507977485657,
+          "allocationWeightGiB": 444.68343609571457,
+          "cpuLoadRawMean": 0.021625689557508897,
+          "estimatedProcessCores": 1.038033098760427,
+          "gcHeapSampleMaxMiB": 467.3509979248047
+        }
+      },
+      "wholeRecordingGc": {
+        "collectionCount": 1255,
+        "totalCollectionDurationSeconds": 1.744253093,
+        "stopTheWorldPauseSeconds": 1.679053578,
+        "maxPauseSeconds": 0.013108728,
+        "maxSampledHeapBytes": 490053040,
+        "maxAfterGcHeapBytes": 87399856,
+        "causes": {
+          "G1 Evacuation Pause": 1252,
+          "Metadata GC Threshold": 2,
+          "G1 Preventive Collection": 1
+        }
+      },
+      "dataLossEvents": []
+    }
+  }
+}

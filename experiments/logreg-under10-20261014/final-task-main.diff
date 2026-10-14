@@ -1,0 +1,1068 @@
+diff -ru experiments/logreg-bottleneck-20261014/after-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.java experiments/logreg-under10-20261014/candidate03-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.java
+--- experiments/logreg-bottleneck-20261014/after-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.java	2026-10-14 02:51:41.201215423 +0200
++++ experiments/logreg-under10-20261014/candidate03-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.java	2026-10-14 03:57:47.859241912 +0200
+@@ -89,7 +89,9 @@
+ 		long optimizationFinished = System.nanoTime();
+ 		tracePhase("optimization",optimizationFinished-modelFinished);
+ 		traceSearch(solution.optimization());
++		traceForestTail(solution.optimization().statistics());
+ 		traceShapeReuse(universe.shapes().reuseStatistics());
++		traceMovementReuse(model.movementReuseStatistics());
+ 		if(solution.optimization().status() != MemoOptimizer.Status.OPTIMAL)
+ 			throw new IllegalStateException("Memo planner did not prove an optimum: "
+ 				+ solution.optimization().status() + " " + solution.diagnostics());
+@@ -218,6 +220,13 @@
+ 			+ " conditionalBoundCacheHits=" + statistics.conditionalBoundCacheHits()
+ 			+ " wideBoundRelaxations=" + statistics.wideBoundRelaxations());
+ 	}
++	private static void traceForestTail(MemoOptimizer.Statistics statistics) {
++		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
++			System.err.println("[MemoForestTail] attempts=" + statistics.forestTailAttempts()
++				+ " applicable=" + statistics.forestTailApplicable()
++				+ " completions=" + statistics.forestTailCompletions()
++				+ " cells=" + statistics.forestTailCells());
++	}
+ 	private static void traceShapeReuse(MemoShapes.ReuseStatistics statistics) {
+ 		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+ 			System.err.println("[MemoShapeReuse] bindingGuardRequests=" + statistics.bindingGuardRequests()
+@@ -225,6 +234,16 @@
+ 				+ " repeatProofRequests=" + statistics.repeatProofRequests()
+ 				+ " repeatProofCacheHits=" + statistics.repeatProofCacheHits());
+ 	}
++	private static void traceMovementReuse(MemoProgramModel.MovementReuseStatistics statistics) {
++		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
++			System.err.println("[MemoMovementReuse] activationRows=" + statistics.activationRows()
++				+ " activationReplays=" + statistics.activationReplays()
++				+ " postGateRequests=" + statistics.postGateRequests()
++				+ " postGateBuilds=" + statistics.postGateBuilds()
++				+ " postGateHits=" + statistics.postGateHits()
++				+ " primitiveContexts=" + statistics.primitiveContexts()
++				+ " contextualViewBuilds=" + statistics.contextualViewBuilds());
++	}
+ 	private static void traceCostProjection(MemoProgramModel.CostProjectionStatistics statistics) {
+ 		// Emit construction evidence even when the later exact search cannot prove an optimum.
+ 		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+diff -ru experiments/logreg-bottleneck-20261014/after-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java experiments/logreg-under10-20261014/candidate03-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java
+--- experiments/logreg-bottleneck-20261014/after-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java	2026-10-14 02:54:01.954331046 +0200
++++ experiments/logreg-under10-20261014/candidate03-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java	2026-10-14 03:57:05.660500477 +0200
+@@ -93,7 +93,8 @@
+ 	public record Statistics(long nodes, long checkEvaluations, long checkCacheHits,
+ 		long supportQueries, long supportCacheHits, long worklistVisits, long removedRules, long costEvaluations,
+ 		long costCacheHits, long boundPrunes, long conditionalBoundQueries, long conditionalBoundCacheHits,
+-		long wideBoundRelaxations) {}
++		long wideBoundRelaxations,long forestTailAttempts,long forestTailApplicable,long forestTailCompletions,
++		long forestTailCells) {}
+ 	public record Result(Status status, BigDecimal cost, int[] selectedRules, Statistics statistics) {
+ 		public Result { selectedRules = selectedRules == null ? null : selectedRules.clone(); }
+ 		@Override public int[] selectedRules() { return selectedRules == null ? null : selectedRules.clone(); }
+@@ -109,7 +110,10 @@
+ 	private int[][] incident;
+ 	private int[][] costIncident;
+ 	private int[][] branchAdjacent;
++	private int[] activeBranchNeighbors;
+ 	private final BitSet[] domains;
++	private final long[] compactDomains;
++	private final boolean[] wideDomains;
+ 	private final long[] revisions;
+ 	private final ArrayList<int[]> trail = new ArrayList<>();
+ 	private final ArrayDeque<Integer> queue = new ArrayDeque<>();
+@@ -136,7 +140,8 @@
+ 	private boolean optimized;
+ 	private long nodes, checkEvaluations, checkCacheHits, supportQueries, supportCacheHits, worklistVisits,
+ 		removedRules, costEvaluations, costCacheHits, boundPrunes, conditionalBoundQueries,
+-		conditionalBoundCacheHits, wideBoundRelaxations;
++		conditionalBoundCacheHits, wideBoundRelaxations,forestTailAttempts,forestTailApplicable,
++		forestTailCompletions,forestTailCells;
+ 
+ 	public MemoOptimizer(RuleMemo memo, double[][] nativeCosts, List<Check> checks,
+ 		List<CostTerm> terms, Limits limits) {
+@@ -174,9 +179,14 @@
+ 				.toArray(BigDecimal[]::new);
+ 		}
+ 		domains = new BitSet[domainSizes.length];
++		compactDomains = new long[domainSizes.length];
++		wideDomains = new boolean[domainSizes.length];
+ 		for(int i = 0; i < domains.length; i++) {
+ 			if(domainSizes[i] < 0) throw new IllegalArgumentException("Negative domain size");
+ 			domains[i] = new BitSet(domainSizes[i]); domains[i].set(0,domainSizes[i]);
++			wideDomains[i]=domainSizes[i]>Long.SIZE;
++			if(!wideDomains[i]) compactDomains[i]=domainSizes[i]==Long.SIZE ? -1L
++				: domainSizes[i]==0 ? 0 : (1L<<domainSizes[i])-1;
+ 		}
+ 		revisions = new long[domainSizes.length];
+ 		checkedRevisions = new long[this.checks.size()][];
+@@ -375,6 +385,9 @@
+ 		for(Check check : checks) connectScope(adjacent,check.owners);
+ 		for(CostFactor term : terms) connectScope(adjacent,term.owners);
+ 		branchAdjacent=Arrays.stream(adjacent).map(bits -> bits.stream().toArray()).toArray(int[][]::new);
++		activeBranchNeighbors=new int[domains.length];
++		for(int owner=0;owner<domains.length;owner++)
++			activeBranchNeighbors[owner]=scanBranchConnectivity(owner);
+ 	}
+ 	private static void connectScope(BitSet[] adjacent,int[] owners) {
+ 		for(int left=0; left<owners.length; left++) for(int right=left+1; right<owners.length; right++) {
+@@ -464,7 +477,8 @@
+ 		for(int i = 0; i < check.owners.length; i++)
+ 			if(check.owners[i] == fixedOwner) choices[i] = fixedValue;
+ 		Truth result = supportDfs(checkId, choices, new int[] {limits.supportEvaluations()});
+-		supportCache.put(new ScopedDomainKey(checkId,fixedOwner,fixedValue,check.owners,domains),result);
++		supportCache.put(new ScopedDomainKey(checkId,fixedOwner,fixedValue,check.owners,domains,
++			compactDomains,wideDomains),result);
+ 		return result;
+ 	}
+ 
+@@ -831,6 +845,7 @@
+ 	}
+ 
+ 	private record BoundaryTree(int root,int boundary,BigDecimal[] costs,int[] rules,boolean unknown) { }
++	private enum ForestTailStatus { NOT_APPLICABLE, COMPLETE, EXHAUSTED }
+ 
+ 	private final class ReducedSearch {
+ 		private final boolean[] removed;
+@@ -847,31 +862,59 @@
+ 		private final BitSet coreTermSet = new BitSet();
+ 		private final BitSet dirtyCoreOwners = new BitSet();
+ 		private final BitSet dirtyCoreTerms = new BitSet();
+-		private final BitSet dirtyBoundaries = new BitSet();
+ 		private final BigDecimal[] coreOwnerBounds = new BigDecimal[domains.length];
+ 		private final BigDecimal[] coreTermBounds = new BigDecimal[terms.size()];
+-		private final BigDecimal[] boundaryBounds;
+-		private final int[][] boundaryIncident;
++		private final BigDecimal[][] ownerMessageCosts;
++		private final int[][] ownerMessageOrder;
++		private final List<List<BoundaryTree>> boundaryTrees;
++		private int[] coreOwnerIds=new int[0];
+ 		private BigDecimal cachedCoreBound;
+ 		private ReducedSearch(boolean[] removed,TreeCell[][] cells,List<BoundaryTree> boundaries,
+ 			BigDecimal base,int[] assignment) {
+ 			this.removed=removed; this.cells=cells; this.boundaries=boundaries; this.base=base;
+ 			this.assignment=assignment;
+-			boundaryBounds=new BigDecimal[boundaries.size()];
+ 			List<List<Integer>> uses=lists(domains.length);
+-			for(int id=0; id<boundaries.size(); id++) uses.get(boundaries.get(id).boundary).add(id);
+-			boundaryIncident=uses.stream().map(values -> values.stream().mapToInt(Integer::intValue).toArray())
++			boundaryTrees=new ArrayList<>(domains.length);
++			for(int owner=0;owner<domains.length;owner++) boundaryTrees.add(new ArrayList<>());
++			for(int id=0; id<boundaries.size(); id++) {
++				uses.get(boundaries.get(id).boundary).add(id);
++				boundaryTrees.get(boundaries.get(id).boundary).add(boundaries.get(id));
++			}
++			int[][] boundaryIncident=uses.stream().map(values -> values.stream().mapToInt(Integer::intValue).toArray())
+ 				.toArray(int[][]::new);
++			ownerMessageCosts=new BigDecimal[domains.length][];
++			ownerMessageOrder=new int[domains.length][];
++			for(int owner=0;owner<domains.length;owner++) if(!removed[owner]) {
++				ownerMessageCosts[owner]=new BigDecimal[domainSizes[owner]];
++				for(int rule=0;rule<domainSizes[owner];rule++) {
++					BigDecimal cost=nativeCosts[owner][rule];
++					for(int id:boundaryIncident[owner]) {
++						BigDecimal message=boundaries.get(id).costs[rule];
++						if(message==null) { cost=null; break; }
++						cost=cost.add(message);
++					}
++					ownerMessageCosts[owner][rule]=cost;
++				}
++				BigDecimal[] costs=ownerMessageCosts[owner];
++				Integer[] order=new Integer[(int)Arrays.stream(costs).filter(Objects::nonNull).count()];
++				for(int rule=0,position=0;rule<costs.length;rule++) if(costs[rule]!=null) order[position++]=rule;
++				Arrays.sort(order,(left,right) -> {
++					int comparison=costs[left].compareTo(costs[right]);
++					return comparison==0 ? Integer.compare(left,right) : comparison;
++				});
++				ownerMessageOrder[owner]=Arrays.stream(order).mapToInt(Integer::intValue).toArray();
++			}
+ 		}
+ 		private boolean run() {
+ 			for(int id = 0; id < checks.size(); id++)
+ 				if(Arrays.stream(checks.get(id).owners).noneMatch(owner -> removed[owner])) coreChecks.set(id);
+ 			for(int owner=0; owner<removed.length; owner++) if(!removed[owner]) coreOwners.set(owner);
++			coreOwnerIds=coreOwners.stream().toArray();
+ 			for(int id = 0; id < terms.size(); id++)
+ 				if(terms.get(id).owners.length > 0 && Arrays.stream(terms.get(id).owners)
+ 					.noneMatch(owner -> removed[owner])) { coreTerms.add(id); coreTermSet.set(id); }
+ 			dirtyCoreOwners.or(coreOwners); dirtyCoreTerms.or(coreTermSet);
+-			dirtyBoundaries.set(0,boundaries.size()); cachedCoreBound=base;
++			cachedCoreBound=base;
+ 			int mark = trail.size();
+ 			activeReducedSearch=this;
+ 			try {
+@@ -891,15 +934,17 @@
+ 			if(nodes >= limits.searchNodes()) { exhausted=true; return; }
+ 			nodes++;
+ 			if(!propagate(coreChecks)) return;
+-			for(int owner=0; owner<removed.length; owner++) if(!removed[owner]) {
++			for(int owner:coreOwnerIds) {
+ 				if(domains[owner].isEmpty()) return;
+ 				assignment[owner] = domainCardinalities[owner]==1 ? domains[owner].nextSetBit(0) : -1;
+ 			}
+ 			BigDecimal bound = coreLowerBound();
+ 			if(bestCost != null && (bound.compareTo(bestCost)>0 || bound.compareTo(bestCost)==0
+ 				&& reducedLexicographicFloor(bestAssignment)>=0)) { boundPrunes++; return; }
++			ForestTailStatus tail=tryForestTail();
++			if(tail!=ForestTailStatus.NOT_APPLICABLE) return;
+ 			int owner = -1, connectivity = -1;
+-			for(int i=0; i<removed.length; i++) if(!removed[i] && assignment[i]<0) {
++			for(int i:coreOwnerIds) if(assignment[i]<0) {
+ 				// Eliminated tree neighbors remain exact boundary messages for this owner;
+ 				// count them when prioritizing decisions that expose those message costs.
+ 				int candidateConnectivity=branchConnectivity(i);
+@@ -914,12 +959,8 @@
+ 				}
+ 			}
+ 			if(owner<0) { completeCore(); return; }
+-			final int chosen=owner;
+-			List<Integer> values=domains[owner].stream().boxed().sorted((left,right) -> {
+-				int comparison=nativeCosts[chosen][left].compareTo(nativeCosts[chosen][right]);
+-				return comparison==0 ? Integer.compare(left,right) : comparison;
+-			}).toList();
+-			for(int value : values) {
++			for(int value : ownerMessageOrder[owner]) {
++				if(!domains[owner].get(value)) continue;
+ 				int mark=trail.size();
+ 				for(int other=domains[owner].nextSetBit(0); other>=0;
+ 					other=domains[owner].nextSetBit(other+1)) if(other!=value) remove(owner,other);
+@@ -927,34 +968,179 @@
+ 				if(unknown || exhausted) return;
+ 			}
+ 		}
++		private ForestTailStatus tryForestTail() {
++			forestTailAttempts++;
++			boolean[] active=new boolean[domains.length];
++			int unfixed=0;
++			for(int owner:coreOwnerIds) if(domainCardinalities[owner]>1) { active[owner]=true; unfixed++; }
++			if(unfixed==0) return ForestTailStatus.NOT_APPLICABLE;
++			int[] parent=new int[domains.length]; Arrays.fill(parent,-2);
++			List<Integer> order=new ArrayList<>(),roots=new ArrayList<>();
++			for(int root:coreOwnerIds) {
++				if(domainCardinalities[root]==1 || parent[root]!=-2) continue;
++				parent[root]=-1; roots.add(root);
++				ArrayDeque<Integer> pending=new ArrayDeque<>(); pending.add(root);
++				while(!pending.isEmpty()) {
++					int owner=pending.removeFirst(); order.add(owner);
++					for(int next:branchAdjacent[owner]) {
++						if(!active[next]) continue;
++						if(next==parent[owner]) continue;
++						if(parent[next]!=-2) return ForestTailStatus.NOT_APPLICABLE;
++						parent[next]=owner; pending.add(next);
++					}
++				}
++			}
++			long remaining=limits.searchNodes()-nodes,cellsNeeded=0;
++			for(int owner:coreOwnerIds) if(active[owner]) {
++				cellsNeeded+=domainCardinalities[owner];
++				if(cellsNeeded>remaining) return ForestTailStatus.NOT_APPLICABLE;
++			}
++			forestTailApplicable++;
++			List<List<Integer>> unaryChecks=lists(domains.length),unaryTerms=lists(domains.length);
++			List<Integer> constantChecks=new ArrayList<>(),constantTerms=new ArrayList<>();
++			Map<Long,List<Integer>> edgeChecks=new HashMap<>(),edgeTerms=new HashMap<>();
++			for(int id=coreChecks.nextSetBit(0);id>=0;id=coreChecks.nextSetBit(id+1))
++				if(!classifyTail(id,unfixedScope(checks.get(id).owners),constantChecks,unaryChecks,edgeChecks))
++					return ForestTailStatus.NOT_APPLICABLE;
++			for(int id:coreTerms)
++				if(!classifyTail(id,unfixedScope(terms.get(id).owners),constantTerms,unaryTerms,edgeTerms))
++					return ForestTailStatus.NOT_APPLICABLE;
++			BigDecimal total=base;
++			for(int id:constantChecks) {
++				Truth truth=evaluate(id,project(checks.get(id).owners,assignment));
++				if(truth==Truth.UNKNOWN) return ForestTailStatus.NOT_APPLICABLE;
++				if(truth==Truth.NO) { forestTailCompletions++; return ForestTailStatus.COMPLETE; }
++			}
++			for(int id:constantTerms) total=total.add(evaluateCost(id,project(terms.get(id).owners,assignment)));
++			int[] candidate=assignment.clone();
++			for(int owner:coreOwnerIds) if(domainCardinalities[owner]==1) {
++				int rule=assignment[owner]; BigDecimal cost=ownerMessageCosts[owner][rule];
++				if(cost==null) { forestTailCompletions++; return ForestTailStatus.COMPLETE; }
++				total=total.add(cost);
++				for(BoundaryTree tree:boundaryTrees.get(owner))
++					reconstructTree(cells,tree.root,tree.rules[rule],candidate);
++			}
++			TreeCell[][] tailCells=cells.clone();
++			boolean[] unknown={false};
++			for(int position=order.size()-1;position>=0;position--) {
++				int owner=order.get(position);
++				tailCells[owner]=new TreeCell[domainSizes[owner]];
++				int[] dynamicChildren=Arrays.stream(branchAdjacent[owner]).filter(next -> parent[next]==owner).toArray();
++				List<BoundaryTree> attached=boundaryTrees.get(owner);
++				for(int rule=domains[owner].nextSetBit(0);rule>=0;rule=domains[owner].nextSetBit(rule+1)) {
++					if(nodes>=limits.searchNodes()) { exhausted=true; return ForestTailStatus.EXHAUSTED; }
++					nodes++; forestTailCells++;
++					boolean legal=true;
++					for(int id:unaryChecks.get(owner)) {
++						Truth truth=evaluate(id,tailValues(checks.get(id).owners,owner,rule,-1,-1));
++						if(truth==Truth.UNKNOWN) { unknown[0]=true; legal=false; break; }
++						if(truth==Truth.NO) { legal=false; break; }
++					}
++					BigDecimal cost=ownerMessageCosts[owner][rule];
++					if(!legal || cost==null) continue;
++					for(int id:unaryTerms.get(owner))
++						cost=cost.add(evaluateCost(id,tailValues(terms.get(id).owners,owner,rule,-1,-1)));
++					int[] children=new int[dynamicChildren.length+attached.size()];
++					int[] childRules=new int[children.length];
++					for(int childPosition=0;childPosition<dynamicChildren.length;childPosition++) {
++						int child=dynamicChildren[childPosition],bestRule=-1;
++						BigDecimal best=null; long edge=edgeKey(owner,child);
++						for(int childRule=0;childRule<tailCells[child].length;childRule++) {
++							TreeCell childCell=tailCells[child][childRule]; if(childCell==null) continue;
++							boolean compatible=true;
++							for(int id:edgeChecks.getOrDefault(edge,List.of())) {
++								Truth truth=evaluate(id,tailValues(checks.get(id).owners,owner,rule,child,childRule));
++								if(truth==Truth.UNKNOWN) { unknown[0]=true; compatible=false; break; }
++								if(truth==Truth.NO) { compatible=false; break; }
++							}
++							if(!compatible) continue;
++							BigDecimal value=childCell.cost;
++							for(int id:edgeTerms.getOrDefault(edge,List.of()))
++								value=value.add(evaluateCost(id,tailValues(terms.get(id).owners,
++									owner,rule,child,childRule)));
++							if(best==null || value.compareTo(best)<0 || value.compareTo(best)==0
++								&& compareTreeChoice(tailCells,child,childRule,bestRule)<0) {
++								best=value; bestRule=childRule;
++							}
++						}
++						if(best==null) { legal=false; break; }
++						cost=cost.add(best); children[childPosition]=child; childRules[childPosition]=bestRule;
++					}
++					if(!legal) continue;
++					for(int attachedPosition=0;attachedPosition<attached.size();attachedPosition++) {
++						BoundaryTree tree=attached.get(attachedPosition);
++						children[dynamicChildren.length+attachedPosition]=tree.root;
++						childRules[dynamicChildren.length+attachedPosition]=tree.rules[rule];
++					}
++					tailCells[owner][rule]=new TreeCell(cost,children,childRules);
++				}
++			}
++			if(unknown[0]) return ForestTailStatus.NOT_APPLICABLE;
++			for(int root:roots) {
++				int bestRule=-1;
++				for(int rule=0;rule<tailCells[root].length;rule++) if(tailCells[root][rule]!=null &&
++					(bestRule<0 || tailCells[root][rule].cost.compareTo(tailCells[root][bestRule].cost)<0
++						|| tailCells[root][rule].cost.compareTo(tailCells[root][bestRule].cost)==0
++						&& compareTreeChoice(tailCells,root,rule,bestRule)<0)) bestRule=rule;
++				if(bestRule<0) { forestTailCompletions++; return ForestTailStatus.COMPLETE; }
++				total=total.add(tailCells[root][bestRule].cost);
++				reconstructTree(tailCells,root,bestRule,candidate);
++			}
++			if(bestCost==null || total.compareTo(bestCost)<0 || total.compareTo(bestCost)==0
++				&& lexicographic(candidate,bestAssignment)<0) { bestCost=total; bestAssignment=candidate; }
++			forestTailCompletions++;
++			return ForestTailStatus.COMPLETE;
++		}
++		private int[] unfixedScope(int[] scope) {
++			return Arrays.stream(scope).filter(owner -> domainCardinalities[owner]>1).toArray();
++		}
++		private boolean classifyTail(int id,int[] residual,List<Integer> constants,
++			List<List<Integer>> unary,Map<Long,List<Integer>> edges) {
++			if(residual.length>2) return false;
++			if(residual.length==0) constants.add(id);
++			else if(residual.length==1) unary.get(residual[0]).add(id);
++			else {
++				long edge=edgeKey(residual[0],residual[1]);
++				edges.computeIfAbsent(edge,ignored -> new ArrayList<>()).add(id);
++			}
++			return true;
++		}
++		private int[] tailValues(int[] scope,int first,int firstRule,int second,int secondRule) {
++			int[] values=new int[scope.length];
++			for(int position=0;position<scope.length;position++) {
++				int owner=scope[position];
++				values[position]=owner==first ? firstRule : owner==second ? secondRule : assignment[owner];
++			}
++			return values;
++		}
+ 		private BigDecimal coreLowerBound() {
+ 			for(int owner=dirtyCoreOwners.nextSetBit(0); owner>=0; owner=dirtyCoreOwners.nextSetBit(owner+1)) {
+-				BigDecimal next=nativeCostBound(owner),old=coreOwnerBounds[owner];
+-				cachedCoreBound=cachedCoreBound.add(next).subtract(old==null ? BigDecimal.ZERO : old);
++				BigDecimal next=ownerMessageBound(owner),old=coreOwnerBounds[owner];
++				if(!sameBoundRepresentation(old,next)) {
++					cachedCoreBound=cachedCoreBound.add(next).subtract(old==null ? BigDecimal.ZERO : old);
++				}
+ 				coreOwnerBounds[owner]=next;
+ 			}
+ 			dirtyCoreOwners.clear();
+ 			for(int id=dirtyCoreTerms.nextSetBit(0); id>=0; id=dirtyCoreTerms.nextSetBit(id+1)) {
+ 				BigDecimal next=currentTermBound(id),old=coreTermBounds[id];
+-				cachedCoreBound=cachedCoreBound.add(next).subtract(old==null ? BigDecimal.ZERO : old);
++				if(!sameBoundRepresentation(old,next)) {
++					cachedCoreBound=cachedCoreBound.add(next).subtract(old==null ? BigDecimal.ZERO : old);
++				}
+ 				coreTermBounds[id]=next;
+ 			}
+ 			dirtyCoreTerms.clear();
+-			for(int id=dirtyBoundaries.nextSetBit(0); id>=0; id=dirtyBoundaries.nextSetBit(id+1)) {
+-				BoundaryTree tree=boundaries.get(id); BigDecimal next=null;
+-				for(int rule=domains[tree.boundary].nextSetBit(0); rule>=0;
+-					rule=domains[tree.boundary].nextSetBit(rule+1)) next=minimum(next,tree.costs[rule]);
+-				BigDecimal old=boundaryBounds[id]; next=Objects.requireNonNull(next);
+-				cachedCoreBound=cachedCoreBound.add(next).subtract(old==null ? BigDecimal.ZERO : old);
+-				boundaryBounds[id]=next;
+-			}
+-			dirtyBoundaries.clear();
+ 			return cachedCoreBound;
+ 		}
++		private BigDecimal ownerMessageBound(int owner) {
++			BigDecimal minimum=null;
++			for(int rule=domains[owner].nextSetBit(0);rule>=0;rule=domains[owner].nextSetBit(rule+1))
++				minimum=minimum(minimum,ownerMessageCosts[owner][rule]);
++			return Objects.requireNonNull(minimum);
++		}
+ 		private void invalidate(int owner) {
+ 			if(coreOwners.get(owner)) dirtyCoreOwners.set(owner);
+ 			for(int id : costIncident[owner]) if(coreTermSet.get(id)) dirtyCoreTerms.set(id);
+-			for(int id : boundaryIncident[owner]) dirtyBoundaries.set(id);
+ 		}
+ 		private int reducedLexicographicFloor(int[] best) {
+ 			for(int owner=0; owner<removed.length; owner++) {
+@@ -1009,8 +1195,9 @@
+ 		}
+ 		for(int owner=dirtyOwnerBounds.nextSetBit(0); owner>=0;
+ 			owner=dirtyOwnerBounds.nextSetBit(owner+1)) {
+-			BigDecimal next=nativeCostBound(owner);
+-			cachedLowerBound=cachedLowerBound.add(next).subtract(ownerBounds[owner]); ownerBounds[owner]=next;
++			BigDecimal old=ownerBounds[owner],next=nativeCostBound(owner);
++			if(!sameBoundRepresentation(old,next)) cachedLowerBound=cachedLowerBound.add(next).subtract(old);
++			ownerBounds[owner]=next;
+ 		}
+ 		dirtyOwnerBounds.clear();
+ 		for(int id=dirtyTermBounds.nextSetBit(0); id>=0; id=dirtyTermBounds.nextSetBit(id+1))
+@@ -1029,10 +1216,15 @@
+ 	}
+ 	private void refreshTermBound(int id) {
+ 		BigDecimal old=termBounds[id],next=computeConditionalCostBound(id);
+-		termBounds[id]=next; dirtyTermBounds.clear(id);
++		dirtyTermBounds.clear(id);
++		termBounds[id]=next;
++		if(sameBoundRepresentation(old,next)) return;
+ 		if(lowerBoundInitialized)
+ 			cachedLowerBound=cachedLowerBound.add(next).subtract(old==null ? BigDecimal.ZERO : old);
+ 	}
++	private static boolean sameBoundRepresentation(BigDecimal left,BigDecimal right) {
++		return left==right || left!=null && left.equals(right);
++	}
+ 
+ 	/**
+ 	 * Minimize one small lazy term over its current projected domains. This is
+@@ -1053,7 +1245,8 @@
+ 			combinations*=size;
+ 		}
+ 		BigDecimal minimum=minimumTerm(id,0,new int[term.owners.length]);
+-		boundCache.put(new ScopedDomainKey(id,-1,-1,term.owners,domains),minimum); return minimum;
++		boundCache.put(new ScopedDomainKey(id,-1,-1,term.owners,domains,compactDomains,wideDomains),minimum);
++		return minimum;
+ 	}
+ 	private BigDecimal minimumTerm(int id,int position,int[] values) {
+ 		CostFactor term=terms.get(id);
+@@ -1086,6 +1279,10 @@
+ 		return selectedOwner;
+ 	}
+ 	private int branchConnectivity(int owner) {
++		assert activeBranchNeighbors[owner]==scanBranchConnectivity(owner);
++		return activeBranchNeighbors[owner];
++	}
++	private int scanBranchConnectivity(int owner) {
+ 		int count=0;
+ 		for(int adjacent : branchAdjacent[owner])
+ 			if(domainCardinalities[adjacent]>1) count++;
+@@ -1101,8 +1298,14 @@
+ 	private void remove(int owner, int rule) {
+ 		assert domains[owner].get(rule);
+ 		domains[owner].clear(rule); trail.add(new int[] {owner, rule}); removedRules++;
++		if(!wideDomains[owner]) compactDomains[owner]&=~(1L<<rule);
+ 		domainCardinalities[owner]--;
++		if(domainCardinalities[owner]==1) for(int adjacent:branchAdjacent[owner]) {
++			activeBranchNeighbors[adjacent]--;
++			assert activeBranchNeighbors[adjacent]==scanBranchConnectivity(adjacent);
++		}
+ 		assert domainCardinalities[owner]==domains[owner].cardinality();
++		assert wideDomains[owner] || compactDomains[owner]==compactMask(domains[owner]);
+ 		revisions[owner]++;
+ 		invalidateCostBounds(owner);
+ 		for(int check : incident[owner]) enqueue(check);
+@@ -1112,12 +1315,22 @@
+ 			int[] entry = trail.remove(trail.size() - 1);
+ 			assert !domains[entry[0]].get(entry[1]);
+ 			domains[entry[0]].set(entry[1]); revisions[entry[0]]++;
++			if(!wideDomains[entry[0]]) compactDomains[entry[0]]|=1L<<entry[1];
+ 			domainCardinalities[entry[0]]++;
++			if(domainCardinalities[entry[0]]==2) for(int adjacent:branchAdjacent[entry[0]]) {
++				activeBranchNeighbors[adjacent]++;
++				assert activeBranchNeighbors[adjacent]==scanBranchConnectivity(adjacent);
++			}
+ 			assert domainCardinalities[entry[0]]==domains[entry[0]].cardinality();
++			assert wideDomains[entry[0]] || compactDomains[entry[0]]==compactMask(domains[entry[0]]);
+ 			invalidateCostBounds(entry[0]);
+ 			for(int check : incident[entry[0]]) enqueue(check);
+ 		}
+ 	}
++	private static long compactMask(BitSet domain) {
++		long[] words=domain.toLongArray();
++		return words.length==0 ? 0 : words[0];
++	}
+ 	private void invalidateCostBounds(int owner) {
+ 		dirtyOwnerBounds.set(owner);
+ 		for(int id : costIncident[owner]) dirtyTermBounds.set(id);
+@@ -1152,7 +1365,8 @@
+ 	private Statistics statistics() {
+ 		return new Statistics(nodes,checkEvaluations,checkCacheHits,supportQueries,supportCacheHits,worklistVisits,
+ 			removedRules,costEvaluations,costCacheHits,boundPrunes,conditionalBoundQueries,
+-			conditionalBoundCacheHits,wideBoundRelaxations);
++			conditionalBoundCacheHits,wideBoundRelaxations,forestTailAttempts,forestTailApplicable,
++			forestTailCompletions,forestTailCells);
+ 	}
+ 	private static int[] uniqueScope(int[] owners) {
+ 		int[] copy = owners.clone();
+@@ -1207,31 +1421,52 @@
+ 	private <V> V cachedDomains(Map<ScopedDomainKey,V> cache,int id,int fixedOwner,int fixedValue,int[] scope) {
+ 		domainProbe.id=id; domainProbe.fixedOwner=fixedOwner; domainProbe.fixedValue=fixedValue;
+ 		domainProbe.scope=scope; domainProbe.domains=domains;
++		domainProbe.compactDomains=compactDomains; domainProbe.wideOwners=wideDomains;
+ 		domainProbe.hash=scopedDomainHash(domainProbe);
+ 		try { return cache.get(domainProbe); }
+ 		finally {
+ 			domainProbe.id=0; domainProbe.fixedOwner=0; domainProbe.fixedValue=0;
+-			domainProbe.scope=null; domainProbe.domains=null; domainProbe.hash=0;
++			domainProbe.scope=null; domainProbe.domains=null; domainProbe.compactDomains=null;
++			domainProbe.wideOwners=null; domainProbe.hash=0;
+ 		}
+ 	}
+ 	private static int scopedDomainHash(ScopedDomainIdentity value) {
+-		int hash=31*(31*value.id()+value.fixedOwner())+value.fixedValue();
+-		for(int position=0;position<value.domainCount();position++)
+-			hash=31*hash+value.domain(position).hashCode();
++		int hash=mixDomainHash(0x6d2b79f5,value.id());
++		hash=mixDomainHash(hash,value.fixedOwner());
++		hash=mixDomainHash(hash,value.fixedValue());
++		for(int position=0;position<value.domainCount();position++) {
++			hash=mixDomainHash(hash,value.wide(position) ? 0x77696465L : 0x636f6d70L);
++			if(value.wide(position)) {
++				BitSet domain=value.wideDomain(position);
++				hash=mixDomainHash(hash,domain.hashCode());
++			}
++			else hash=mixDomainHash(hash,value.compactDomain(position));
++		}
+ 		return hash;
+ 	}
++	private static int mixDomainHash(int hash,long value) {
++		long mixed=value;
++		mixed^=mixed>>>33; mixed*=0xff51afd7ed558ccdL;
++		mixed^=mixed>>>33; mixed*=0xc4ceb9fe1a85ec53L; mixed^=mixed>>>33;
++		return Integer.rotateLeft(hash,13)*5+0xe6546b64 ^ (int)(mixed^(mixed>>>32));
++	}
+ 	private interface ScopedDomainIdentity {
+ 		int id();
+ 		int fixedOwner();
+ 		int fixedValue();
+ 		int domainCount();
+-		BitSet domain(int position);
++		boolean wide(int position);
++		long compactDomain(int position);
++		BitSet wideDomain(int position);
+ 		default boolean sameDomains(Object other) {
+ 			if(!(other instanceof ScopedDomainIdentity value) || id()!=value.id()
+ 				|| fixedOwner()!=value.fixedOwner() || fixedValue()!=value.fixedValue()
+ 				|| domainCount()!=value.domainCount()) return false;
+-			for(int position=0;position<domainCount();position++)
+-				if(!domain(position).equals(value.domain(position))) return false;
++			for(int position=0;position<domainCount();position++) {
++				if(wide(position)!=value.wide(position)) return false;
++				if(wide(position) ? !wideDomain(position).equals(value.wideDomain(position))
++					: compactDomain(position)!=value.compactDomain(position)) return false;
++			}
+ 			return true;
+ 		}
+ 	}
+@@ -1242,12 +1477,16 @@
+ 		private int fixedValue;
+ 		private int[] scope;
+ 		private BitSet[] domains;
++		private long[] compactDomains;
++		private boolean[] wideOwners;
+ 		private int hash;
+ 		@Override public int id() { return id; }
+ 		@Override public int fixedOwner() { return fixedOwner; }
+ 		@Override public int fixedValue() { return fixedValue; }
+ 		@Override public int domainCount() { return scope.length; }
+-		@Override public BitSet domain(int position) { return domains[scope[position]]; }
++		@Override public boolean wide(int position) { return wideOwners[scope[position]]; }
++		@Override public long compactDomain(int position) { return compactDomains[scope[position]]; }
++		@Override public BitSet wideDomain(int position) { return domains[scope[position]]; }
+ 		@Override public int hashCode() { return hash; }
+ 		@Override public boolean equals(Object other) { return sameDomains(other); }
+ 	}
+@@ -1255,20 +1494,27 @@
+ 		private final int id;
+ 		private final int fixedOwner;
+ 		private final int fixedValue;
+-		private final BitSet[] domains;
++		private final long[] compactDomains;
++		private final BitSet[] wideDomains;
+ 		private final int hash;
+-		private ScopedDomainKey(int id,int fixedOwner,int fixedValue,int[] scope,BitSet[] current) {
++		private ScopedDomainKey(int id,int fixedOwner,int fixedValue,int[] scope,BitSet[] current,
++			long[] currentCompact,boolean[] currentWide) {
+ 			this.id=id; this.fixedOwner=fixedOwner; this.fixedValue=fixedValue;
+-			domains=new BitSet[scope.length];
+-			for(int position=0;position<scope.length;position++)
+-				domains[position]=(BitSet)current[scope[position]].clone();
++			compactDomains=new long[scope.length]; wideDomains=new BitSet[scope.length];
++			for(int position=0;position<scope.length;position++) {
++				int owner=scope[position];
++				if(currentWide[owner]) wideDomains[position]=(BitSet)current[owner].clone();
++				else compactDomains[position]=currentCompact[owner];
++			}
+ 			hash=scopedDomainHash(this);
+ 		}
+ 		@Override public int id() { return id; }
+ 		@Override public int fixedOwner() { return fixedOwner; }
+ 		@Override public int fixedValue() { return fixedValue; }
+-		@Override public int domainCount() { return domains.length; }
+-		@Override public BitSet domain(int position) { return domains[position]; }
++		@Override public int domainCount() { return compactDomains.length; }
++		@Override public boolean wide(int position) { return wideDomains[position]!=null; }
++		@Override public long compactDomain(int position) { return compactDomains[position]; }
++		@Override public BitSet wideDomain(int position) { return wideDomains[position]; }
+ 		@Override public int hashCode() { return hash; }
+ 		@Override public boolean equals(Object other) { return sameDomains(other); }
+ 	}
+diff -ru experiments/logreg-bottleneck-20261014/after-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.java experiments/logreg-under10-20261014/candidate03-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.java
+--- experiments/logreg-bottleneck-20261014/after-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.java	2026-10-13 23:50:26.340578048 +0200
++++ experiments/logreg-under10-20261014/candidate03-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.java	2026-10-14 03:26:26.859714963 +0200
+@@ -85,6 +85,40 @@
+ 	private record PrivacyDemand(int occurrence,List<Integer> localInputs,boolean localOutput) { }
+ 	private final Map<PrivacyDemand,Truth> privacyLegality=new LinkedHashMap<>();
+ 	private record MovementEdge(int use,int position) { }
++	private record MovementProjectionKey(MovementEdge edge,List<Integer> frame) {
++		private MovementProjectionKey { frame=List.copyOf(frame); }
++	}
++	private static final class ActivationRow {
++		private final ResolvedOrigin origin;
++		private final MemoBindingResolver.OriginIdentity identity;
++		private final ResolvedEnvironment environment;
++		private List<MovementPrimitive> costRows;
++		private ActivationRow(ResolvedOrigin origin,MemoBindingResolver.OriginIdentity identity,
++			ResolvedEnvironment environment) {
++			this.origin=origin; this.identity=identity; this.environment=environment;
++		}
++		private ResolvedOrigin origin() { return origin; }
++		private MemoBindingResolver.OriginIdentity identity() { return identity; }
++		private ResolvedEnvironment environment() { return environment; }
++	}
++	private record MovementInputProjection(List<ActivationRow> rows,MemoBindingResolver.VisitStatus status) {
++		private MovementInputProjection { rows=List.copyOf(rows); }
++	}
++	private record UnitKey(MemoPartition from,MemoPartition target) { }
++	private static final class MovementPrimitive {
++		private final ResolvedEnvironment environment;
++		private final double weight;
++		private final Map<GuardDecision,Boolean> guards;
++		private final Map<LoopDecision,IterationPhase> phases;
++		private final Map<UnitKey,Long> units=new LinkedHashMap<>();
++		private MovementPrimitive(ResolvedEnvironment environment,double weight,
++			Map<GuardDecision,Boolean> guards,Map<LoopDecision,IterationPhase> phases) {
++			this.environment=environment; this.weight=weight;
++			this.guards=Map.copyOf(guards); this.phases=Map.copyOf(phases);
++		}
++	}
++	public record MovementReuseStatistics(long activationRows,long activationReplays,long postGateRequests,
++		long postGateBuilds,long postGateHits,long primitiveContexts,long contextualViewBuilds) { }
+ 	private record MovementGroup(MemoBindingResolver.OriginIdentity identity,MovementEdge isolated) { }
+ 	private record RetentionScope(MemoPlanRegistry.ScopeKind kind,long statementBlockId) { }
+ 	private record SupplyEdge(long statementBlockId,long producerHopId,long consumerHopId,int inputPosition) { }
+@@ -92,6 +126,8 @@
+ 		SupplyEdge edge,MemoSupplyRegistry.Recipe recipe,MemoPartition target) { }
+ 	private static final int MOVEMENT_FACTOR_WIDTH_DIAGNOSTIC = 8;
+ 	private static final int MOVEMENT_GUARD_STATE_LIMIT = 100_000;
++	private static final int MOVEMENT_ACTIVATION_CACHE_LIMIT = 100_000;
++	private static final int MOVEMENT_PRIMITIVE_CACHE_LIMIT = 100_000;
+ 	private record EntryUse(LoopSlot head,List<Integer> frame) {
+ 		private EntryUse { frame=List.copyOf(frame); }
+ 	}
+@@ -114,6 +150,11 @@
+ 	private final List<Use> uses = new ArrayList<>();
+ 	private final List<String> diagnostics = new ArrayList<>();
+ 	private final Map<Integer,List<Occurrence>> occurrencesByOwner = new LinkedHashMap<>();
++	private final boolean movementReuse;
++	private final Map<MovementProjectionKey,MovementInputProjection> movementProjections=new LinkedHashMap<>();
++	private long movementActivationRows,movementActivationReplays,movementPostGateRequests;
++	private long movementPostGateBuilds,movementPostGateHits,movementPrimitiveContexts,movementContextualViewBuilds;
++	private int cachedMovementActivationRows,cachedMovementPrimitives;
+ 	private final int[] sizes;
+ 	private final boolean[] coverage;
+ 	private final double[][] nativeCosts;
+@@ -141,9 +182,13 @@
+ 
+ 	public MemoProgramModel(MemoProgramFacts facts,MemoSources sources,
+ 		MemoRuleBuilder.Result universe,Profile profile) {
++		this(facts,sources,universe,profile,true);
++	}
++	MemoProgramModel(MemoProgramFacts facts,MemoSources sources,
++		MemoRuleBuilder.Result universe,Profile profile,boolean movementReuse) {
+ 		this.facts = facts; this.sources = sources; this.universe = universe; this.memo = universe.memo();
+ 		this.shapes = universe.shapes();
+-		this.profile = profile; resolver = new MemoBindingResolver(facts);
++		this.profile = profile; this.movementReuse=movementReuse; resolver = new MemoBindingResolver(facts);
+ 		reachableContexts = new MemoReachableContexts(facts,resolver);
+ 		privacy = new MemoPrivacy(facts,resolver,sources);
+ 		facts.requireComplete(); diagnostics.addAll(universe.diagnostics());
+@@ -187,6 +232,7 @@
+ 				List<Integer> bindings = new ArrayList<>();
+ 				for(int i = 0; i < hop.getInput().size(); i++) bindings.add(facts.inputBinding(occurrence.id(),i));
+ 				Use use = new Use(occurrence,List.copyOf(bindings),contexts); uses.add(use);
++				int useIndex=uses.size()-1;
+ 				// Native pattern/shape is already frozen. Privacy transfer observes semantic
+ 				// values, not producer placement choices, so it needs only this rule choice.
+ 				checks.add(new Check(occurrence.id(),new int[] {owner},choices ->
+@@ -195,7 +241,7 @@
+ 					final int input=position;
+ 					int[] scope=scope(List.of(bindings.get(position)),List.of(owner),contexts);
+ 					checks.add(new Check(occurrence.id(),scope,choices ->
+-						inputCompatible(use,input,expand(scope,choices))));
++						inputCompatible(use,new MovementEdge(useIndex,input),expand(scope,choices))));
+ 				}
+ 			}
+ 		}
+@@ -222,6 +268,10 @@
+ 	public RuleMemo memo() { return memo; }
+ 	public List<Head> heads() { return List.copyOf(heads); }
+ 	public List<Check> checks() { return List.copyOf(checks); }
++	public MovementReuseStatistics movementReuseStatistics() {
++		return new MovementReuseStatistics(movementActivationRows,movementActivationReplays,movementPostGateRequests,
++			movementPostGateBuilds,movementPostGateHits,movementPrimitiveContexts,movementContextualViewBuilds);
++	}
+ 	public CostProjectionStatistics costProjectionStatistics(int owner) {
+ 		MutableCostProjectionStatistics statistics=costProjectionStatistics.get(owner);
+ 		return statistics==null ? emptyCostProjectionStatistics()
+@@ -278,8 +328,9 @@
+ 	private Truth compatible(Use use,int[] selected) {
+ 		Truth result=privacyCompatible(use,selected);
+ 		if(result==Truth.NO) return result;
++		int useIndex=uses.indexOf(use);
+ 		for(int position=0; position<use.bindings().size(); position++) {
+-			Truth edge=inputCompatible(use,position,selected);
++			Truth edge=inputCompatible(use,new MovementEdge(useIndex,position),selected);
+ 			if(edge==Truth.NO) return edge;
+ 			if(edge==Truth.UNKNOWN) result=Truth.UNKNOWN;
+ 		}
+@@ -341,7 +392,8 @@
+ 	}
+ 
+ 	/** Universal conjunction distributes over exact guarded input projections. */
+-	private Truth inputCompatible(Use use,int position,int[] selected) {
++	private Truth inputCompatible(Use use,MovementEdge edge,int[] selected) {
++		int position=edge.position();
+ 		int owner=use.consumer().compiledOwnerId(), choice=selected[owner];
+ 		if(choice<0) return Truth.UNKNOWN;
+ 		RuleMemo.Rule rule=memo.rule(owner,choice);
+@@ -349,30 +401,24 @@
+ 		Truth[] result={Truth.YES};
+ 		for(List<Integer> frame : use.frames()) {
+ 			Context context=context(selected,use.consumer().regionId(),frame);
++			MovementInputProjection projection=movementReuse ? cachedMovementProjection(edge,frame) : null;
++			if(projection!=null) {
++				movementActivationReplays++;
++				for(ActivationRow row:projection.rows()) {
++					ResolvedEnvironment environment=row.environment();
++					ResolvedOrigin origin=row.origin();
++					MemoPartition layout=layout(origin,selected);
++					Truth compatible=inputCompatibility(use,position,rule,layout,context,environment);
++					if(compatible==Truth.NO) return Truth.NO;
++					if(compatible==Truth.UNKNOWN) result[0]=Truth.UNKNOWN;
++				}
++				if(projection.status()==MemoBindingResolver.VisitStatus.UNRESOLVED) result[0]=Truth.UNKNOWN;
++				continue;
++			}
+ 			var visit=visitActive(use.consumer(),List.of(binding),context,environment -> {
+ 				ResolvedOrigin origin=environment.origins().get(0);
+ 				MemoPartition layout=layout(origin,selected);
+-				Truth compatible;
+-				if(universe.inputRoles().get(owner).get(position)==InputRole.METADATA)
+-					compatible=layout==null ? Truth.UNKNOWN : layout==rule.inputs().get(position) ? Truth.YES : Truth.NO;
+-				else if(layout==null)
+-					compatible=Truth.UNKNOWN;
+-				else if(MemoMovement.kind(layout,rule.inputs().get(position),false)!=MemoMovement.Kind.COLLECT) {
+-					// DIRECT/IMPOSSIBLE do not depend on payload privacy; uploads only need
+-					// canonical shape/type/pool legality. Native execution privacy is a separate check.
+-					Hop source=use.consumer().hop().getInput(position);
+-					var shape=MemoMovement.kind(layout,rule.inputs().get(position),false)==MemoMovement.Kind.UPLOAD
+-						? shapes.inputShape(use.consumer().id(),position,context.withEnvironment(environment).evaluation()) : null;
+-					compatible=MemoMovement.legal(layout,rule.inputs().get(position),source.getDataType(),null,
+-						shape==null ? -1 : shape.rows(),shape==null ? -1 : shape.columns(),sources.workers(),false);
+-				}
+-				else {
+-					// COLLECT's privacy condition is exactly the consumer's LOCAL-input
+-					// privacy condition. The unary privacyCompatible check owns it once,
+-					// independently of all producer rule choices; do not repeat it per edge tuple.
+-					DataType type=use.consumer().hop().getInput(position).getDataType();
+-					compatible=type==DataType.MATRIX || type==DataType.FRAME ? Truth.YES : Truth.NO;
+-				}
++				Truth compatible=inputCompatibility(use,position,rule,layout,context,environment);
+ 				if(compatible==Truth.NO) { result[0]=Truth.NO; return false; }
+ 				if(compatible==Truth.UNKNOWN) result[0]=Truth.UNKNOWN;
+ 				return true;
+@@ -382,6 +428,23 @@
+ 		}
+ 		return result[0];
+ 	}
++	private Truth inputCompatibility(Use use,int position,RuleMemo.Rule rule,MemoPartition layout,
++		Context context,ResolvedEnvironment environment) {
++		int owner=use.consumer().compiledOwnerId();
++		if(universe.inputRoles().get(owner).get(position)==InputRole.METADATA)
++			return layout==null ? Truth.UNKNOWN : layout==rule.inputs().get(position) ? Truth.YES : Truth.NO;
++		if(layout==null) return Truth.UNKNOWN;
++		MemoMovement.Kind kind=MemoMovement.kind(layout,rule.inputs().get(position),false);
++		if(kind!=MemoMovement.Kind.COLLECT) {
++			Hop source=use.consumer().hop().getInput(position);
++			var shape=kind==MemoMovement.Kind.UPLOAD
++				? shapes.inputShape(use.consumer().id(),position,context.withEnvironment(environment).evaluation()) : null;
++			return MemoMovement.legal(layout,rule.inputs().get(position),source.getDataType(),null,
++				shape==null ? -1 : shape.rows(),shape==null ? -1 : shape.columns(),sources.workers(),false);
++		}
++		DataType type=use.consumer().hop().getInput(position).getDataType();
++		return type==DataType.MATRIX || type==DataType.FRAME ? Truth.YES : Truth.NO;
++	}
+ 
+ 	private Context withPhase(Context context,int loop,List<Integer> frame,IterationPhase phase) {
+ 		EvaluationContext e=context.evaluation();
+@@ -528,24 +591,20 @@
+ 
+ 	private void registerMovementCosts() {
+ 		Map<MovementGroup,Set<MovementEdge>> groups = new LinkedHashMap<>();
+-		int[] none=new int[sizes.length]; Arrays.fill(none,-1);
+ 		for(int u = 0; u < uses.size(); u++) {
+ 			Use use = uses.get(u);
+ 			for(int i = 0; i < use.bindings().size(); i++) {
+-				final int position=i;
+ 				Hop input = use.consumer().hop().getInput(i);
+ 				if(!input.getDataType().isMatrix() && !input.getDataType().isFrame()
+ 					|| universe.inputRoles().get(use.consumer().compiledOwnerId()).get(i) == InputRole.METADATA) continue;
+ 				MovementEdge edge=new MovementEdge(u,i);
+ 				for(List<Integer> frame : use.frames()) {
+-					Context base=context(none,use.consumer().regionId(),frame);
+-					visitActive(use.consumer(),List.of(use.bindings().get(i)),base,environment -> {
+-						var identity=resolver.resolveOriginIdentity(use.bindings().get(position),base.evaluation(),environment);
++					for(ActivationRow row:movementProjection(edge,frame).rows()) {
++						var identity=row.identity();
+ 						if(retentionScope(identity)!=null)
+ 							groups.computeIfAbsent(new MovementGroup(identity,null),ignored -> new LinkedHashSet<>()).add(edge);
+ 						else groups.computeIfAbsent(new MovementGroup(null,edge),ignored -> new LinkedHashSet<>()).add(edge);
+-						return true;
+-					});
++					}
+ 				}
+ 			}
+ 		}
+@@ -569,6 +628,34 @@
+ 			costs.add(new CostTerm(scope,choices -> entryCost(head,expand(scope,choices)),0));
+ 		}
+ 	}
++	private MovementInputProjection movementProjection(MovementEdge edge,List<Integer> frame) {
++		MovementProjectionKey key=new MovementProjectionKey(edge,frame);
++		MovementInputProjection cached=movementProjections.get(key);
++		if(cached!=null) return cached;
++		Use use=uses.get(edge.use());
++		int binding=use.bindings().get(edge.position());
++		int[] none=new int[sizes.length]; Arrays.fill(none,-1);
++		Context base=context(none,use.consumer().regionId(),frame);
++		List<ActivationRow> rows=new ArrayList<>();
++		var visit=visitActive(use.consumer(),List.of(binding),base,environment -> {
++			ResolvedOrigin origin=environment.origins().get(0);
++			var identity=resolver.resolveOriginIdentity(binding,base.evaluation(),environment);
++			rows.add(new ActivationRow(origin,identity,environment));
++			return true;
++		});
++		MovementInputProjection result=new MovementInputProjection(rows,visit.status());
++		movementActivationRows+=rows.size();
++		int cacheCharge=Math.max(1,rows.size());
++		if(visit.status()==MemoBindingResolver.VisitStatus.COMPLETE
++			&& cachedMovementActivationRows+cacheCharge<=MOVEMENT_ACTIVATION_CACHE_LIMIT) {
++			movementProjections.put(key,result);
++			cachedMovementActivationRows+=cacheCharge;
++		}
++		return result;
++	}
++	private MovementInputProjection cachedMovementProjection(MovementEdge edge,List<Integer> frame) {
++		return movementProjections.get(new MovementProjectionKey(edge,frame));
++	}
+ 	record Activation(Map<GuardDecision,Boolean> guards,Map<LoopDecision,IterationPhase> phases,double weight) {
+ 		Activation(Map<GuardDecision,Boolean> guards,double weight) { this(guards,Map.of(),weight); }
+ 		Activation { guards = Map.copyOf(guards); phases=Map.copyOf(phases); }
+@@ -649,6 +736,16 @@
+ 				.inputs().get(position);
+ 			for(List<Integer> frame : use.frames()) {
+ 				Context context = context(selected,use.consumer().regionId(),frame);
++				MovementInputProjection projection=movementReuse ? cachedMovementProjection(edge,frame) : null;
++				if(projection!=null) {
++					movementActivationReplays++;
++					for(ActivationRow row:projection.rows())
++						accumulateMovement(group,use,position,frame,context,row,selected,events,unretainedCost);
++					if(projection.status()==MemoBindingResolver.VisitStatus.UNRESOLVED)
++						throw new IllegalStateException("UNRESOLVED_MOVEMENT_ACTIVATION: occurrence "
++							+use.consumer().id());
++					continue;
++				}
+ 				var visit = visitActive(use.consumer(),List.of(use.bindings().get(position)),context,environment -> {
+ 					ResolvedOrigin origin = environment.origins().get(0); MemoPartition from = layout(origin,selected);
+ 					if(from == null) throw new IllegalStateException("Unresolved source in selected movement cost");
+@@ -697,15 +794,95 @@
+ 		}
+ 		return total;
+ 	}
++	private void accumulateMovement(MovementGroup group,Use use,int position,List<Integer> frame,Context context,
++		ActivationRow row,int[] selected,Map<MovementActivation,List<Activation>> events,double[] unretainedCost) {
++		ResolvedOrigin origin=row.origin();
++		MemoPartition from=layout(origin,selected);
++		if(from==null) throw new IllegalStateException("Unresolved source in selected movement cost");
++		var identity=row.identity();
++		if(group.identity()!=null ? !group.identity().equals(identity) : retentionScope(identity)!=null) return;
++		MemoPartition target=memo.rule(use.consumer().compiledOwnerId(),selected[use.consumer().compiledOwnerId()])
++			.inputs().get(position);
++		MemoMovement.Kind kind=MemoMovement.kind(from,target,false);
++		if(kind==MemoMovement.Kind.DIRECT || kind==MemoMovement.Kind.IMPOSSIBLE) return;
++		movementPostGateRequests++;
++		if(row.costRows!=null) {
++			movementPostGateHits++;
++			for(MovementPrimitive primitive:row.costRows)
++				applyMovementPrimitive(group,identity,use,position,context,primitive,from,target,events,unretainedCost);
++			return;
++		}
++		List<MovementPrimitive> built=new ArrayList<>();
++		ResolvedEnvironment environment=row.environment();
++		Context supplied=context.withEnvironment(environment);
++		visitBindingCostContexts(use.bindings().get(position),supplied,exact -> {
++			ResolvedEnvironment refined=new ResolvedEnvironment(environment.origins(),exact.evaluation().guards(),
++				exact.evaluation().loops(),exact.evaluation().iterationPhases(),exact.evaluation().cardinalities());
++			boolean retained=group.identity()!=null;
++			double weight=retained ? definitionActivationWeight(identity,refined)
++				: frequency(use.consumer().regionId(),frame,exact.evaluation())
++					*environmentProbability(refined,context.evaluation());
++			MovementPrimitive primitive=new MovementPrimitive(refined,weight,Map.of(),Map.of());
++			double unit=movementUnit(use,position,context,primitive,from,target);
++			if(retained) {
++				MovementPrimitive completed=new MovementPrimitive(refined,weight,activeGuards(refined),
++					definitionPhases(identity,refined));
++				completed.units.put(new UnitKey(from,target),Double.doubleToLongBits(unit));
++				primitive=completed;
++			}
++			accumulateMovementPrimitive(group,identity,primitive,target,unit,events,unretainedCost);
++			built.add(primitive);
++		});
++		movementPostGateBuilds++;
++		movementPrimitiveContexts+=built.size();
++		if(cachedMovementPrimitives+built.size()<=MOVEMENT_PRIMITIVE_CACHE_LIMIT) {
++			row.costRows=List.copyOf(built);
++			cachedMovementPrimitives+=built.size();
++		}
++	}
++	private void applyMovementPrimitive(MovementGroup group,MemoBindingResolver.OriginIdentity identity,
++		Use use,int position,Context context,MovementPrimitive primitive,MemoPartition from,MemoPartition target,
++		Map<MovementActivation,List<Activation>> events,double[] unretainedCost) {
++		double unit=movementUnit(use,position,context,primitive,from,target);
++		accumulateMovementPrimitive(group,identity,primitive,target,unit,events,unretainedCost);
++	}
++	private void accumulateMovementPrimitive(MovementGroup group,MemoBindingResolver.OriginIdentity identity,
++		MovementPrimitive primitive,MemoPartition target,double unit,
++		Map<MovementActivation,List<Activation>> events,double[] unretainedCost) {
++		if(group.identity()==null) unretainedCost[0]+=unit*primitive.weight;
++		else {
++			MovementActivation key=new MovementActivation(identity,target,Double.doubleToLongBits(unit));
++			events.computeIfAbsent(key,ignored -> new ArrayList<>()).add(new Activation(
++				primitive.guards,primitive.phases,primitive.weight));
++		}
++	}
++	private double movementUnit(Use use,int position,Context context,MovementPrimitive primitive,
++		MemoPartition from,MemoPartition target) {
++		UnitKey key=new UnitKey(from,target);
++		Long cached=primitive.units.get(key);
++		if(cached!=null) return Double.longBitsToDouble(cached);
++		Context exact=context.withEnvironment(primitive.environment);
++		Hop view=shapes.viewAt(use.consumer().id(),exact.evaluation());
++		movementContextualViewBuilds++;
++		double unit=MemoCostModel.movementCost(view.getInput(position),from,target,
++			Math.max(1,sources.workers()),1);
++		primitive.units.put(key,Double.doubleToLongBits(unit));
++		return unit;
++	}
+ 	private double definitionActivationWeight(MemoBindingResolver.OriginIdentity identity,
+ 		ResolvedEnvironment environment,int[] selected) {
++		return definitionActivationWeight(identity,environment);
++	}
++	private double definitionActivationWeight(MemoBindingResolver.OriginIdentity identity,
++		ResolvedEnvironment environment) {
+ 		Occurrence definition=facts.occurrence(identity.nativeDefinitionOccurrenceId());
++		int[] none=new int[sizes.length]; Arrays.fill(none,-1);
+ 		EvaluationContext evaluation=new EvaluationContext(environment.guards(),environment.loops(),
+-			context(selected,definition.regionId(),identity.callFrame()).evaluation().selections(),4096,
++			context(none,definition.regionId(),identity.callFrame()).evaluation().selections(),4096,
+ 			identity.callFrame(),environment.iterationPhases(),environment.cardinalities());
+ 		Map<GuardDecision,Boolean> all=activeGuards(environment);
+ 		Map<GuardDecision,Boolean> defining=new LinkedHashMap<>(
+-			context(selected,definition.regionId(),identity.callFrame()).evaluation().guards());
++			context(none,definition.regionId(),identity.callFrame()).evaluation().guards());
+ 		defining.entrySet().removeIf(entry -> phaseGuard(entry.getKey().guardId(),entry.getKey().callFrame(),
+ 			environment.iterationPhases())!=null);
+ 		if(!all.entrySet().containsAll(defining.entrySet()))
+diff -ru experiments/logreg-bottleneck-20261014/after-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/MemoShapes.java experiments/logreg-under10-20261014/candidate03-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/MemoShapes.java
+--- experiments/logreg-bottleneck-20261014/after-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/MemoShapes.java	2026-10-14 02:22:22.179267641 +0200
++++ experiments/logreg-under10-20261014/candidate03-engine/main-sources/org/apache/sysds/hops/fedplanner/memo/MemoShapes.java	2026-10-14 03:18:11.499654758 +0200
+@@ -111,6 +111,8 @@
+ 	private final List<Set<Integer>> phaseSensitiveByBinding;
+ 	private final List<Set<Integer>> dimensionPhaseSensitiveByBinding;
+ 	private final List<Set<Integer>> guardSensitiveByBinding;
++	private final List<Set<Integer>> phaseSensitiveByOccurrence;
++	private final List<Set<Integer>> guardSensitiveByOccurrence;
+ 	private final List<LoopSlotIdentity> selectionSensitiveHeads;
+ 	private final Map<BindingGuardKey,CostGuardOutcome> bindingGuardCache;
+ 	private final Map<RepeatProofKey,Boolean> repeatProofCache;
+@@ -155,6 +157,21 @@
+ 		dimensionPhaseSensitiveByBinding=computeBindingDependencies(false).loops();
+ 		phaseSensitiveByBinding=dependencies.loops();
+ 		guardSensitiveByBinding=dependencies.guards();
++		List<Set<Integer>> occurrenceLoops=new ArrayList<>(),occurrenceGuards=new ArrayList<>();
++		for(MemoProgramFacts.Occurrence occurrence:facts.occurrences()) {
++			Set<Integer> loops=new LinkedHashSet<>(),guards=new LinkedHashSet<>();
++			for(int position=0;position<occurrence.hop().getInput().size();position++) {
++				int binding=facts.inputBinding(occurrence.id(),position);
++				if(binding>=0) {
++					loops.addAll(phaseSensitiveByBinding.get(binding));
++					guards.addAll(guardSensitiveByBinding.get(binding));
++				}
++			}
++			occurrenceLoops.add(java.util.Collections.unmodifiableSet(loops));
++			occurrenceGuards.add(java.util.Collections.unmodifiableSet(guards));
++		}
++		phaseSensitiveByOccurrence=List.copyOf(occurrenceLoops);
++		guardSensitiveByOccurrence=List.copyOf(occurrenceGuards);
+ 		List<LoopSlotIdentity> heads=new ArrayList<>();
+ 		for(MemoProgramFacts.LoopRecord loop:facts.loops())
+ 			for(MemoProgramFacts.CarriedValue carried:loop.carriedValues())
+@@ -819,6 +836,10 @@
+ 	private record PhaseNodeKey(boolean occurrence,int id,PhaseContextKey context) { }
+ 
+ 	private EvaluationContext normalizeLoopPhases(EvaluationContext context) {
++		boolean complete=true;
++		for(LoopDecision loop:context.iterationPhases().keySet())
++			if(!context.loops().containsKey(loop)) { complete=false; break; }
++		if(complete) return context;
+ 		Map<LoopDecision,LoopPhase> loops = new HashMap<>(context.loops());
+ 		for(var entry : context.iterationPhases().entrySet())
+ 			loops.putIfAbsent(entry.getKey(),entry.getValue()==IterationPhase.FIRST
+@@ -1097,16 +1118,8 @@
+ 
+ 	private Shape occurrenceShape(int occurrence,EvaluationContext context,
+ 		PhaseEvaluation phaseEvaluation,Set<PhaseVisit> active) {
+-		Set<Integer> loopDependencies=new LinkedHashSet<>();
+-		Set<Integer> guardDependencies=new LinkedHashSet<>();
+-		Hop occurrenceHop=facts.occurrence(occurrence).hop();
+-		for(int position=0; position<occurrenceHop.getInput().size(); position++) {
+-			int binding=facts.inputBinding(occurrence,position);
+-			if(binding>=0) {
+-				loopDependencies.addAll(phaseSensitiveByBinding.get(binding));
+-				guardDependencies.addAll(guardSensitiveByBinding.get(binding));
+-			}
+-		}
++		Set<Integer> loopDependencies=phaseSensitiveByOccurrence.get(occurrence);
++		Set<Integer> guardDependencies=guardSensitiveByOccurrence.get(occurrence);
+ 		PhaseNodeKey cacheKey=new PhaseNodeKey(true,occurrence,
+ 			new PhaseContextKey(facts,context,guardDependencies,loopDependencies));
+ 		Shape cached=phaseShapeCache.get(cacheKey);

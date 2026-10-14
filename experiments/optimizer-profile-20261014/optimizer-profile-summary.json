@@ -1,0 +1,273 @@
+{
+  "schema": "memo-optimizer-standard-jfr-profile-v1",
+  "samplePolicy": {
+    "baselineLogRegRuns": 1,
+    "currentLogRegRuns": 1,
+    "currentGlmRuns": 1,
+    "aggregation": "none",
+    "noReruns": true
+  },
+  "environment": {
+    "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "sameImage": true,
+    "workers": 3,
+    "cpus": 4,
+    "memory": "8g",
+    "network": "none",
+    "caseTimeoutSeconds": 300,
+    "jfr": {
+      "settings": "profile",
+      "stackDepth": 256,
+      "scope": "fed-coordinator-only"
+    }
+  },
+  "baseline": {
+    "commit": "abb5a4822ab78cfd962073bba794da23fdcd6be6",
+    "runId": "optimizer-profile-baseline-01",
+    "status": "PASSED",
+    "logReg": {
+      "passed": true,
+      "fedReturncode": 0,
+      "statistics": {
+        "compilationSeconds": 27.816635,
+        "executionSeconds": 2.911
+      },
+      "memoPlanning": [
+        {
+          "boundPrunes": 2466239,
+          "cacheHits": 82050731,
+          "checks": 60690,
+          "conditionalBoundCacheHits": 11132120,
+          "conditionalBoundQueries": 11135047,
+          "costCacheHits": 3407,
+          "costEvaluations": 4828,
+          "epoch": 1,
+          "estimatedCost": "1301.1526531142989790221751587629165844428591469750244868919253349304199218750",
+          "fedOwners": 20,
+          "nativeRules": 920,
+          "nodes": 2933891,
+          "oracleHits": 75,
+          "oracleMisses": 113,
+          "phaseNanos": {
+            "facts": 53859293,
+            "model": 1475198143,
+            "optimization": 24599641196,
+            "projection": 75672198,
+            "rules": 317741992
+          },
+          "phaseSeconds": {
+            "facts": 0.053859293,
+            "model": 1.475198143,
+            "optimization": 24.599641196,
+            "projection": 0.075672198,
+            "rules": 0.317741992
+          },
+          "pruned": 21182609,
+          "status": "OPTIMAL",
+          "supplies": 1,
+          "supportQueries": 38286830,
+          "totalNanos": 26522112822,
+          "totalSeconds": 26.522112822,
+          "wideBoundRelaxations": 844,
+          "workers": 3,
+          "worklistVisits": 13616123
+        }
+      ],
+      "jfr": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/optimizer-profile-baseline-01/cases/ml_logreg/fed.jfr",
+        "sha256": "7be86cdff63c294695e3cffeb1e398c06449a743ea060a6e11ec3bc181a630ac",
+        "sizeBytes": 6020531,
+        "summary": "experiments/optimizer-profile-20261014/baseline-logreg-jfr-summary.txt",
+        "duration": "33 s",
+        "eventCounts": {
+          "jdk.ExecutionSample": 2040,
+          "jdk.ObjectAllocationSample": 8099,
+          "jdk.CPULoad": 33,
+          "jdk.ThreadCPULoad": 47,
+          "jdk.GCHeapSummary": 358,
+          "jdk.ThreadAllocationStatistics": 34,
+          "jdk.GarbageCollection": 179,
+          "jdk.GCCPUTime": 181
+        }
+      }
+    },
+    "resources": {
+      "path": "experiments/optimizer-profile-20261014/optimizer-profile-baseline-01-resources.tsv",
+      "samples": 16,
+      "maxContainerCpuPercent": 424.09,
+      "maxContainerMemoryBytes": 886046720,
+      "coordinatorColumnsValid": false
+    },
+    "provenance": {
+      "resultSha256": "89ed7141e0d01e2021d5f71977a4af1b17488922f9e8a44abd926aa1cc068864",
+      "manifestSha256": "f681744c1510c88a9878a6cda0200a08fa003d2ae783d6bd7b285b90d4dcd179",
+      "frozenInputsMatchEngine": {
+        "mainSources": true,
+        "testSources": true,
+        "mainClasses": true
+      }
+    }
+  },
+  "current": {
+    "commit": "25662ee7b485af0880a11c9b219620e155cfbee7",
+    "runId": "optimizer-profile-current-01",
+    "status": "FAILED",
+    "logReg": {
+      "passed": true,
+      "fedReturncode": 0,
+      "statistics": {
+        "compilationSeconds": 55.858899,
+        "executionSeconds": 2.788
+      },
+      "memoPlanning": [
+        {
+          "boundPrunes": 2466239,
+          "cacheHits": 82050743,
+          "checks": 60690,
+          "conditionalBoundCacheHits": 11132120,
+          "conditionalBoundQueries": 11135047,
+          "costCacheHits": 3407,
+          "costEvaluations": 4828,
+          "epoch": 1,
+          "estimatedCost": "1301.1526531142989790221751587629165844428591469750244868919253349304199218750",
+          "fedOwners": 20,
+          "nativeRules": 920,
+          "nodes": 2933891,
+          "oracleHits": 0,
+          "oracleMisses": 1057,
+          "phaseNanos": {
+            "facts": 39615343,
+            "model": 977455985,
+            "optimization": 51600745440,
+            "projection": 66473677,
+            "rules": 2207391499
+          },
+          "phaseSeconds": {
+            "facts": 0.039615343,
+            "model": 0.977455985,
+            "optimization": 51.60074544,
+            "projection": 0.066473677,
+            "rules": 2.207391499
+          },
+          "pruned": 21182609,
+          "status": "OPTIMAL",
+          "supplies": 1,
+          "supportQueries": 38286836,
+          "totalNanos": 54891681944,
+          "totalSeconds": 54.891681944,
+          "wideBoundRelaxations": 844,
+          "workers": 3,
+          "worklistVisits": 13616123
+        }
+      ],
+      "jfr": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/optimizer-profile-current-01/cases/ml_logreg/fed.jfr",
+        "sha256": "8b5b04d388da2231b7b86c5c917dd625d3fa163e4f0b5b1f4f3440bf032e1ca0",
+        "sizeBytes": 15320502,
+        "summary": "experiments/optimizer-profile-20261014/current-logreg-jfr-summary.txt",
+        "duration": "62 s",
+        "eventCounts": {
+          "jdk.ExecutionSample": 4111,
+          "jdk.ObjectAllocationSample": 16114,
+          "jdk.CPULoad": 61,
+          "jdk.ThreadCPULoad": 64,
+          "jdk.GCHeapSummary": 484,
+          "jdk.ThreadAllocationStatistics": 72,
+          "jdk.GarbageCollection": 242,
+          "jdk.GCCPUTime": 244
+        }
+      }
+    },
+    "glm": {
+      "passed": false,
+      "fedReturncode": 124,
+      "statistics": {},
+      "memoPlanning": [],
+      "jfr": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/optimizer-profile-current-01/cases/ml_glm/fed.jfr",
+        "sha256": "a9935a0fc9c52f7ca8ce6b4bca22c8cb15c8195beb50c2b5779a6c89f5c438fa",
+        "sizeBytes": 106076023,
+        "summary": "experiments/optimizer-profile-20261014/current-glm-jfr-summary.txt",
+        "duration": "299 s",
+        "eventCounts": {
+          "jdk.ExecutionSample": 18846,
+          "jdk.ObjectAllocationSample": 86936,
+          "jdk.CPULoad": 298,
+          "jdk.ThreadCPULoad": 154,
+          "jdk.GCHeapSummary": 2510,
+          "jdk.ThreadAllocationStatistics": 308,
+          "jdk.GarbageCollection": 1255,
+          "jdk.GCCPUTime": 1257
+        }
+      },
+      "liveJfr": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/optimizer-profile-current-01/cases/ml_glm/live.jfr",
+        "sha256": "0a437cc2ac983523b51fbb022cc389ff990e0727584d2b5f6fd0f5ef7a11a7e6",
+        "sizeBytes": 42921657,
+        "summary": "experiments/optimizer-profile-20261014/current-glm-live-jfr-summary.txt",
+        "duration": "97 s",
+        "eventCounts": {
+          "jdk.ExecutionSample": 5829,
+          "jdk.ObjectAllocationSample": 27968,
+          "jdk.CPULoad": 96,
+          "jdk.ThreadCPULoad": 65,
+          "jdk.GCHeapSummary": 836,
+          "jdk.ThreadAllocationStatistics": 142,
+          "jdk.GarbageCollection": 418,
+          "jdk.GCCPUTime": 420
+        }
+      }
+    },
+    "resources": {
+      "path": "experiments/optimizer-profile-20261014/optimizer-profile-current-01-resources.tsv",
+      "samples": 139,
+      "maxContainerCpuPercent": 381.54,
+      "maxContainerMemoryBytes": 1457067655,
+      "coordinatorColumnsValid": false
+    },
+    "javaCoordinatorProc": {
+      "path": "experiments/optimizer-profile-20261014/optimizer-profile-current-01-java-proc.tsv",
+      "cases": {
+        "ml_glm": {
+          "samples": 161,
+          "firstEpochMs": 1791933055509,
+          "lastEpochMs": 1791933300605,
+          "observedSeconds": 245.096,
+          "cpuTicksDelta": 24933,
+          "clockTicksPerSecond": 100,
+          "cpuSecondsDelta": 249.33,
+          "maxVmRssKiB": 988276,
+          "maxVmHwmKiB": 988276
+        }
+      }
+    },
+    "provenance": {
+      "resultSha256": "f8013bca7c4e4a5dfb73900b43b3d854cdd8adf69bdbbb8397345f7dce90592f",
+      "manifestSha256": "de5ec5d80cda042712192459672ab0353255c1f3f910abfad94a97d7b7f64781",
+      "frozenInputsMatchEngine": {
+        "mainSources": true,
+        "testSources": true,
+        "mainClasses": true
+      }
+    }
+  },
+  "monitorLimitations": {
+    "baselineCoordinatorProc": "unavailable: Java-only monitor began after coordinator exit; no rerun",
+    "currentLogRegCoordinatorProc": "unavailable: first selector sampled timeout wrapper and is excluded; corrected monitor began after LogReg exit",
+    "currentGlmCoordinatorProc": "valid corrected Java PID samples",
+    "containerResourceSamples": "valid container-level CPU/memory; coordinator fields in resources.tsv excluded because they selected timeout wrapper",
+    "invalidExcludedFiles": [
+      "experiments/optimizer-profile-20261014/optimizer-profile-current-01-proc.tsv",
+      "experiments/optimizer-profile-20261014/optimizer-profile-baseline-01-proc.tsv"
+    ]
+  },
+  "evidence": {
+    "baselineCommand": "experiments/optimizer-profile-20261014/optimizer-profile-baseline-command.txt",
+    "baselineConsole": "experiments/optimizer-profile-20261014/optimizer-profile-baseline-01.console.log",
+    "baselineResult": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/optimizer-profile-baseline-01/result.json",
+    "currentCommand": "experiments/optimizer-profile-20261014/optimizer-profile-current-command.txt",
+    "currentConsole": "experiments/optimizer-profile-20261014/optimizer-profile-current-01.console.log",
+    "currentResult": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/optimizer-profile-current-01/result.json"
+  },
+  "containersStopped": true
+}

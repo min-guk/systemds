@@ -1,0 +1,48 @@
+{
+  "schema": "logreg-under10-baseline-reference-v1",
+  "runId": "logreg-bottleneck-after-01",
+  "reusedWithoutRerun": true,
+  "engine": "experiments/logreg-bottleneck-20261014/after-engine",
+  "artifacts": {
+    "result": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-after-01/result.json",
+      "size": 13083,
+      "sha256": "60bdddac6730278bee149bb423ced736c16676f776be025d84bda781adf4e4d3"
+    },
+    "fedLog": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-after-01/cases/ml_logreg/fed.log",
+      "size": 42701,
+      "sha256": "5a01cbfce27db34f7beb14419df4663f93ced46a9d2bab75fcc39bdb60c5894b"
+    },
+    "fedModelCsv": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-after-01/cases/ml_logreg/fed-model.csv",
+      "size": 332,
+      "sha256": "c1afd1422eb05ef396bbc13b48fbd09d5966995de43d9f92147ebb1599d5b848"
+    },
+    "jfr": {
+      "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-after-01/cases/ml_logreg/fed.jfr",
+      "size": 7105949,
+      "sha256": "cc213bda455d79e441fbf88daaa7ade0cc2e9303dc3d9ae48d3d3c65b28571e5"
+    },
+    "summary": {
+      "path": "experiments/logreg-bottleneck-20261014/logreg-bottleneck-after-summary.json",
+      "size": 10640,
+      "sha256": "5e6967711490751e8d67f3abe944a9a8fef97b9b8040ea1a322b7ccb81da867e"
+    },
+    "profile": {
+      "path": "experiments/logreg-bottleneck-20261014/logreg-bottleneck-after-profile.json",
+      "size": 298655,
+      "sha256": "f2611e97159c2842bf8f7d249b33f2f69ee8eb9525e3e1d926da38f0f3ac580a"
+    },
+    "hotspots": {
+      "path": "experiments/logreg-bottleneck-20261014/logreg-bottleneck-after-hotspots.json",
+      "size": 32821,
+      "sha256": "4173df098b42d6e89d9a886666273ac4e67c18b4b5e12f4c1b163f44437e73a4"
+    },
+    "engineManifest": {
+      "path": "experiments/logreg-bottleneck-20261014/after-engine-sha256.json",
+      "size": 1965705,
+      "sha256": "722cff11f9c71dc251f3ce00609d67511fde73426bf30e6a2c3a48cf47c4594c"
+    }
+  }
+}

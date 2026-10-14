@@ -1,0 +1,29 @@
+{
+  "status": "build-and-regression-passed-workload-pending",
+  "candidate": "candidate03",
+  "productionFrozenUnmodified": true,
+  "maven": {
+    "commandFile": "candidate03-compile-command.txt",
+    "log": "candidate03-compile.log",
+    "success": true,
+    "seconds": 38.931
+  },
+  "regression": {
+    "commandFile": "candidate03-unit-command.txt",
+    "log": "candidate03-unit.log",
+    "classes": 50,
+    "tests": 440,
+    "seconds": 44.19,
+    "assertions": true,
+    "hostStack": "8m",
+    "success": true
+  },
+  "harness": {
+    "tests": 45,
+    "success": true,
+    "reused": "unchanged harness: Candidate01 result"
+  },
+  "independentReview": "candidate03-independent-review.md",
+  "frozenEngineFiles": 12512,
+  "knownExcludedClass": "TrainingWorkloadOperationCoverageTest (five stale golden tests; pre-existing)"
+}

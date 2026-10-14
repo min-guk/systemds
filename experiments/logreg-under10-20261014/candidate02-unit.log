@@ -1,0 +1,109 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+................................OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+.............................26/10/14 03:45:28 ERROR controlprogram.ProgramBlock: Function output Y is missing.
+.....................................................................................................................................................................................26/10/14 03:45:46 ERROR federated.FederatedWorkerHandler: Exception in FederatedWorkerHandler while processing requests:
+[FederatedRequest[GET_VAR;3025590;9223372036854775800;t0]]
+org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandlerException: Failed to getVariable 
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.getVariable(FederatedWorkerHandler.java:716)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.executeCommand(FederatedWorkerHandler.java:443)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:333)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:286)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:273)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.response(FederatedWorkerHandler.java:188)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.lambda$channelRead$0(FederatedWorkerHandler.java:168)
+	at java.base/java.util.concurrent.CompletableFuture$UniCompose.tryFire(CompletableFuture.java:1150)
+	at java.base/java.util.concurrent.CompletableFuture$Completion.run(CompletableFuture.java:482)
+	at io.netty.util.concurrent.AbstractEventExecutor.runTask(AbstractEventExecutor.java:174)
+	at io.netty.util.concurrent.AbstractEventExecutor.safeExecute(AbstractEventExecutor.java:167)
+	at io.netty.util.concurrent.SingleThreadEventExecutor.runAllTasks(SingleThreadEventExecutor.java:470)
+	at io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:566)
+	at io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997)
+	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+Caused by: org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandlerException: Variable 9223372036854775800 does not exist at federated worker.
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.getVariable(FederatedWorkerHandler.java:697)
+	... 17 more
+26/10/14 03:45:46 ERROR federated.FederatedWorkerHandler: Exception in FederatedWorkerHandler while processing requests:
+[FederatedRequest[GET_VAR;3025590;9223372036854775800;t0]]
+org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandlerException: Failed to getVariable 
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.getVariable(FederatedWorkerHandler.java:716)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.executeCommand(FederatedWorkerHandler.java:443)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:333)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:286)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:273)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.response(FederatedWorkerHandler.java:188)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.lambda$channelRead$0(FederatedWorkerHandler.java:168)
+	at java.base/java.util.concurrent.CompletableFuture$UniCompose.tryFire(CompletableFuture.java:1150)
+	at java.base/java.util.concurrent.CompletableFuture$Completion.run(CompletableFuture.java:482)
+	at io.netty.util.concurrent.AbstractEventExecutor.runTask(AbstractEventExecutor.java:174)
+	at io.netty.util.concurrent.AbstractEventExecutor.safeExecute(AbstractEventExecutor.java:167)
+	at io.netty.util.concurrent.SingleThreadEventExecutor.runAllTasks(SingleThreadEventExecutor.java:470)
+	at io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:566)
+	at io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997)
+	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+Caused by: org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandlerException: Variable 9223372036854775800 does not exist at federated worker.
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.getVariable(FederatedWorkerHandler.java:697)
+	... 17 more
+..MEMO_EXHAUSTIVE assignments=12 feasible=6 cost=0.5004990875720977783238488625547867039156102464403375051915645599365234375
+.MEMO_EXHAUSTIVE assignments=2352 feasible=584 cost=1.000339155942201614385668047529746871315836642679641954600811004638671875
+.MEMO_EXHAUSTIVE assignments=48 feasible=6 cost=1.00032151341438293457336181861011548122064596100244671106338500976562500
+.MEMO_EXHAUSTIVE assignments=144 feasible=48 cost=1.000336943417787551883702931092116894529198134478065185248851776123046875
+.MEMO_EXHAUSTIVE assignments=48 feasible=8 cost=1.000890621691942214968352941012290358013814284277032129466533660888671875
+..26/10/14 03:45:49 ERROR federated.FederatedData: Exception of type class org.apache.sysds.runtime.DMLRuntimeException thrown when processing privacy constraints request for /tmp/junit14300187003453365731/worker-malformed-fine-privacy
+org.apache.sysds.runtime.DMLRuntimeException: Malformed fine_grained_privacy metadata: privacy level 'Private' must contain an array of ranges
+	at org.apache.sysds.runtime.meta.MetaDataAll.malformedFineGrainedPrivacy(MetaDataAll.java:301)
+	at org.apache.sysds.runtime.meta.MetaDataAll.getPrivacyConstraintsFailClosed(MetaDataAll.java:268)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedData$GetPrivacyConstraints.execute(FederatedData.java:841)
+	at org.apache.sysds.test.component.federated.FederatedPrivacyConstraintResolverTest.malformedFineGrainedPrivacyFailsClosed(FederatedPrivacyConstraintResolverTest.java:159)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59)
+	at org.junit.internal.runners.model.ReflectiveCallable.run(ReflectiveCallable.java:12)
+	at org.junit.runners.model.FrameworkMethod.invokeExplosively(FrameworkMethod.java:56)
+	at org.junit.internal.runners.statements.InvokeMethod.evaluate(InvokeMethod.java:17)
+	at org.junit.rules.ExternalResource$1.evaluate(ExternalResource.java:54)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.BlockJUnit4ClassRunner$1.evaluate(BlockJUnit4ClassRunner.java:100)
+	at org.junit.runners.ParentRunner.runLeaf(ParentRunner.java:366)
+	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:103)
+	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:63)
+	at org.junit.runners.ParentRunner$4.run(ParentRunner.java:331)
+	at org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79)
+	at org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329)
+	at org.junit.runners.ParentRunner.access$100(ParentRunner.java:66)
+	at org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.ParentRunner.run(ParentRunner.java:413)
+	at org.junit.runners.Suite.runChild(Suite.java:128)
+	at org.junit.runners.Suite.runChild(Suite.java:27)
+	at org.junit.runners.ParentRunner$4.run(ParentRunner.java:331)
+	at org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79)
+	at org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329)
+	at org.junit.runners.ParentRunner.access$100(ParentRunner.java:66)
+	at org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.ParentRunner.run(ParentRunner.java:413)
+	at org.junit.runner.JUnitCore.run(JUnitCore.java:137)
+	at org.junit.runner.JUnitCore.run(JUnitCore.java:115)
+	at org.junit.runner.JUnitCore.runMain(JUnitCore.java:77)
+	at org.junit.runner.JUnitCore.main(JUnitCore.java:36)
+...................................................MEMO_SOURCE_PROJECTION ownersPerInput=2 contexts=1 primitives=1 bindingVisits=0
+MEMO_SOURCE_PROJECTION ownersPerInput=11 contexts=1 primitives=1 bindingVisits=0
+MEMO_SOURCE_PROJECTION ownersPerInput=101 contexts=1 primitives=1 bindingVisits=0
+MEMO_SOURCE_PROJECTION ownersPerInput=1001 contexts=1 primitives=1 bindingVisits=0
+..................................................................................LOGREG_MEMO_OPTIMIZATION status=RESOURCE_EXHAUSTED statistics=Statistics[nodes=100000, checkEvaluations=27939, checkCacheHits=84111, supportQueries=57127, supportCacheHits=1710421, worklistVisits=487199, removedRules=731633, costEvaluations=2869, costCacheHits=1785, boundPrunes=83788, conditionalBoundQueries=324113, conditionalBoundCacheHits=322611, wideBoundRelaxations=20] diagnostics=[shape owner=38 binding=69 SHARED_OCCURRENCE_SHAPE_MISMATCH Shape[dataType=MATRIX, valueType=FP64, rows=192, columns=1, nonZeros=-1, knowledge=EXACT] vs Shape[dataType=MATRIX, valueType=FP64, rows=192, columns=2, nonZeros=-1, knowledge=EXACT]]
+................FACTORIZED_GENERATION_WORK|explicitFacts=2401|generatedExplicitFedFacts=686|newRetainedExactFacts=0|generationFedFactsAvoided=686|familyHeaders=5|familyLogicalTuples=1715|fedRelationHeaders=2|fedRelationLogicalTuples=686|relocationWitnessRows=254|explicitCreated=ObjectCreationSnapshot[candidateRuleKeys=2401, candidateRuleFacts=2401, explicitSupportClauses=3087, indexedSupportHandles=0]|relationCreated=ObjectCreationSnapshot[candidateRuleKeys=0, candidateRuleFacts=0, explicitSupportClauses=9, indexedSupportHandles=0]|before=ExecutionRelationSnapshot[relations=0, regions=0, oracleCalls=0, logicalTuples=0]|after=ExecutionRelationSnapshot[relations=1, regions=7, oracleCalls=6, logicalTuples=2401]
+..............................BOUNDARY_CONFLICT_NODES=15
+.....
+Time: 47.838
+
+OK (434 tests)
+

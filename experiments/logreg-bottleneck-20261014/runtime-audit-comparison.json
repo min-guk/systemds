@@ -1,0 +1,22 @@
+[
+  {
+    "before": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-before-01/audit/ml_logreg-fed/runtime-capability-206.jsonl",
+    "after": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-after-01/audit/ml_logreg-fed/runtime-capability-205.jsonl",
+    "beforeSha256": "3fb752031d262bba1e5f4618746b1b9427dae85fd3bcbdd1d7ff2e2307276038",
+    "afterSha256": "62dd17d4a655ba6eae2a647232e0c454d853ee1015d337cef1b17088d58775b3",
+    "byteEqual": false,
+    "sameSize": true,
+    "normalizedWithoutPidEqual": true,
+    "rows": 13
+  },
+  {
+    "before": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-before-01/audit/ml_logreg-fed/runtime-conversion-frontier-206.jsonl",
+    "after": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-docker-20261013/logreg-bottleneck-after-01/audit/ml_logreg-fed/runtime-conversion-frontier-205.jsonl",
+    "beforeSha256": "bcde7044edd205a2ce596ac622929bb608997af0377b87a4e8246e70df4a57ea",
+    "afterSha256": "d192e0add29d1485729eec2e1b6db76e5e1ed61a206fdbcb65fb41c25e933295",
+    "byteEqual": false,
+    "sameSize": true,
+    "normalizedWithoutPidEqual": true,
+    "rows": 20
+  }
+]

@@ -1,0 +1,111 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] --------------------< org.apache.systemds:systemds >--------------------
+[INFO] Building Apache SystemDS 3.4.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:1.4.1:enforce (enforce-maven-version) @ systemds ---
+[INFO] 
+[INFO] --- enforcer:1.4.1:enforce (enforce-java-version) @ systemds ---
+[INFO] 
+[INFO] --- enforcer:1.4.1:enforce (enforce-output-timestamp-property) @ systemds ---
+[INFO] 
+[INFO] --- jacoco:0.8.12:prepare-agent (default-prepare-agent) @ systemds ---
+[INFO] Skipping JaCoCo execution because property jacoco.skip is set.
+[INFO] 
+[INFO] --- remote-resources:1.7.0:process (process-resource-bundles) @ systemds ---
+[INFO] Preparing remote bundle org.apache:apache-jar-resource-bundle:1.4
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- properties:1.1.0:write-project-properties (default) @ systemds ---
+[INFO] 
+[INFO] --- resources:3.2.0:resources (default-resources) @ systemds ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Using 'UTF-8' encoding to copy filtered properties files.
+[INFO] Copying 549 resources to scripts
+[INFO] Copying 2 resources to cuda/kernels
+[INFO] Copying 7 resources to lib
+[INFO] Copying 3 resources to cuda/spoof
+[INFO] Copying 9 resources to cuda/headers
+[INFO] Copying 0 resource to java/spoof
+[INFO] Copying 15 resources to ../lib/hadoop/bin
+[INFO] Copying 3 resources to META-INF/
+[INFO] Copying 1 resource to ./
+[INFO] Copying 3 resources
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ systemds ---
+[INFO] Changes detected - recompiling the module! :source
+[INFO] Compiling 1683 source files with javac [debug release 17] to target/classes
+[WARNING] using incubating module(s): jdk.incubator.vector
+[WARNING] using incubating module(s): jdk.incubator.vector
+[WARNING] using incubating module(s): jdk.incubator.vector
+[INFO] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/main/java/org/apache/sysds/protobuf/SysdsProtos.java: /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/main/java/org/apache/sysds/protobuf/SysdsProtos.java uses or overrides a deprecated API.
+[INFO] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/main/java/org/apache/sysds/protobuf/SysdsProtos.java: Recompile with -Xlint:deprecation for details.
+[INFO] 
+[INFO] --- dependency:3.5.0:copy-dependencies (default) @ systemds ---
+[INFO] 
+[INFO] --- resources:3.2.0:testResources (default-testResources) @ systemds ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Using 'UTF-8' encoding to copy filtered properties files.
+[INFO] Copying 25 resources
+[INFO] Copying 3 resources
+[INFO] 
+[INFO] --- compiler:3.11.0:testCompile (default-testCompile) @ systemds ---
+[INFO] Changes detected - recompiling the module! :dependency
+[INFO] Compiling 2206 source files with javac [debug release 17] to target/test-classes
+[WARNING] using incubating module(s): jdk.incubator.vector
+[WARNING] using incubating module(s): jdk.incubator.vector
+[WARNING] using incubating module(s): jdk.incubator.vector
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/SharedPlannerFunctionPlanPropagationRedTest.java:[278,102] unchecked conversion
+  required: java.util.List<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey>
+  found:    java.util.List
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/PrivacyMovementCertificationTest.java:[602,76] unchecked conversion
+  required: java.util.List<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey>
+  found:    java.util.List
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/DirectSourceSeedProjectionTest.java:[820,110] unchecked cast
+  required: java.util.List<org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization>
+  found:    java.lang.Object
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/DirectSourceSeedProjectionTest.java:[823,107] unchecked cast
+  required: java.util.List<org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization>
+  found:    java.lang.Object
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/DirectSourceSeedProjectionTest.java:[826,121] unchecked cast
+  required: java.util.List<org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionRealization>
+  found:    java.lang.Object
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/CoordinatorMetadataExactCostTest.java:[47,86] unchecked call to noneMatch(java.util.function.Predicate<? super T>) as a member of the raw type java.util.stream.Stream
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalComparisonRowTest.java:[166,72] unchecked cast
+  required: java.util.List<java.util.Map<java.lang.String,java.lang.Object>>
+  found:    java.lang.Object
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionDerivedAuthorityRedTest.java:[551,21] selectedEmissionStates() in org.apache.sysds.hops.fedplanner.placement.PlacementEmissionDerivedAuthorityRedTest.EmissionAwareResult overrides selectedEmissionStates() in org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult
+  return type requires unchecked conversion from java.util.Map to java.util.Map<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey,org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState>
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionDerivedAuthorityRedTest.java:[565,68] selectedEmissionStates() in org.apache.sysds.hops.fedplanner.placement.PlacementEmissionDerivedAuthorityRedTest.Result implements selectedEmissionStates() in org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult
+  return type requires unchecked conversion from java.util.Map to java.util.Map<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey,org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState>
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/CampaignBG014LocalL2SvmLoopRelocationRedTest.java:[88,90] unchecked call to noneMatch(java.util.function.Predicate<? super T>) as a member of the raw type java.util.stream.Stream
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/CampaignBG014LocalL2SvmLoopRelocationRedTest.java:[149,75] unchecked call to <R>map(java.util.function.Function<? super T,? extends R>) as a member of the raw type java.util.stream.Stream
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/test/component/federated/placement/guard/R4Heuristic2Probe.java:[9,51] unchecked call to add(E) as a member of the raw type java.util.List
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/test/component/federated/placement/guard/R4Heuristic2Probe.java:[10,51] unchecked call to put(K,V) as a member of the raw type java.util.Map
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/test/component/federated/placement/guard/R4Heuristic2Probe.java:[11,49] unchecked call to add(E) as a member of the raw type java.util.Set
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/CampaignBG014AbsentLocalMaterializationLoweringRedTest.java:[75,96] unchecked conversion
+  required: java.util.List<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey>
+  found:    java.util.List
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/DerivedFoutRelocationCanonicalizationTest.java:[64,56] unchecked generic array creation for varargs parameter of type java.util.List<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding>[]
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/DerivedFoutRelocationCanonicalizationTest.java:[70,41] unchecked generic array creation for varargs parameter of type java.util.List<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding>[]
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/DerivedFoutRelocationCanonicalizationTest.java:[83,56] unchecked generic array creation for varargs parameter of type java.util.List<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding>[]
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/DerivedFoutRelocationCanonicalizationTest.java:[98,74] Possible heap pollution from parameterized vararg type java.util.List<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateRealizationInputBinding>
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementJointInputBulkEnvironmentTest.java:[213,63] unchecked cast
+  required: java.util.Set<java.lang.Object>
+  found:    java.lang.Object
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransactionRedTest.java:[915,76] unchecked conversion
+  required: java.util.List<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey>
+  found:    java.util.List
+[WARNING] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransactionRedTest.java:[944,76] unchecked conversion
+  required: java.util.List<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey>
+  found:    java.util.List
+[INFO] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/runtime/controlprogram/federated/FederatedPhaseCompletionNettyTest.java: /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/runtime/controlprogram/federated/FederatedPhaseCompletionNettyTest.java uses or overrides a deprecated API.
+[INFO] /grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-oracle-cost-20261013/src/test/java/org/apache/sysds/runtime/controlprogram/federated/FederatedPhaseCompletionNettyTest.java: Recompile with -Xlint:deprecation for details.
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  40.476 s
+[INFO] Finished at: 2026-10-14T03:45:08+02:00
+[INFO] ------------------------------------------------------------------------
