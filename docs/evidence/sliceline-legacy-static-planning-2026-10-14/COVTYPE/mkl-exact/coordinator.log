@@ -1,0 +1,57 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+26/09/21 18:33:56 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+SystemDS Statistics:
+Total elapsed time:		7.970540 sec.
+Total compilation time:		7.970540 sec.
+PlanningFullInitialReceipt schema=planning-full-initial-v1 Tplanning_full_initial_nanos=7968392244
+Compile Phase Parse:		0.000000 sec.
+Compile Phase HopsBuild:	0.000000 sec.
+Compile Phase HopsRewrite:	0.677640 sec.
+Compile Observed HOPs:		678.
+Compile Phase LopsBuild:	6.643470 sec.
+Compile Phase LopsRewrite:	0.001225 sec.
+Compile Phase RuntimeProgram:	0.051161 sec.
+Compile Phase FedPlanner:	1.432763 sec.
+Compile Phase FedPlanner CommonPreparation:	5.185887 sec.
+Compile Phase FedPlanner Decision:	0.898603 sec.
+Compile Phase FedPlanner Diagnostics:	0.000137 sec.
+Compile Phase FedPlanner Conversion:	0.430544 sec.
+Compile Phase FedPlanner Application:	0.098024 sec.
+Compile Phase FedPlanner Finalization:	0.005455 sec.
+Compile Phase FedPlanner CandidateE2E CommonPreparation:	0.014090 sec.
+Compile Phase FedPlanner CandidateE2E Analysis:	5.168668 sec.
+Compile Phase FedPlanner CandidateE2E PlannerSetup:	0.003122 sec.
+Compile Phase FedPlanner CandidateE2E Model:	0.249632 sec.
+Compile Phase FedPlanner CandidateE2E CostSurface:	0.260075 sec.
+Compile Phase FedPlanner CandidateE2E Optimizer:	0.157609 sec.
+Compile Phase FedPlanner CandidateE2E Selection:	0.230125 sec.
+Compile Phase FedPlanner CandidateE2E OtherPlanning:	0.001662 sec.
+Compile Phase FedPlanner CandidateE2E Diagnostics:	0.000023 sec.
+Compile Phase FedPlanner CandidateE2E Conversion:	0.430562 sec.
+Compile Phase FedPlanner CandidateE2E Application:	0.098021 sec.
+Compile Phase FedPlanner CandidateE2E FinalVerification:	0.005426 sec.
+Compile Phase FedPlanner CandidateE2E Registration:	0.004073 sec.
+Compile Phase FedPlanner CandidateE2E ReceiptHandoff:	0.000176 sec.
+Compile Phase FedPlanner CandidateE2E Total:	6.623263 sec.
+CandidateE2EReceipt schema=candidate-e2e-v1 calls=1 exactPhaseCalls=1 commonPreparationNanos=14090451 analysisNanos=5168667549 plannerSetupNanos=3121824 modelNanos=249632225 costSurfaceNanos=260074661 optimizerNanos=157608995 selectionNanos=230124911 otherPlanningNanos=1661855 diagnosticsNanos=22653 conversionNanos=430561651 applicationNanos=98021419 finalVerificationNanos=5426381 registrationNanos=4073182 receiptHandoffNanos=175698 totalNanos=6623263455
+Total execution time:		0.000 sec.
+Cache hits (Mem/Li/WB/FS/HDFS):	0/0/0/0/0.
+Cache writes (Li/WB/FS/HDFS):	0/0/0/0.
+Cache times (ACQr/m, RLS, EXP):	0.000/0.000/0.000/0.000 sec.
+HOP DAGs recompiled (PRED, SB):	0/0.
+HOP DAGs recompile time:	0.000 sec.
+Total JIT compile time:		21.245 sec.
+Total JVM GC count:		2.
+Total JVM GC time:		0.033 sec.
+Heavy hitter instructions:
+ #  Instruction  Time(s)  Count
+ 1  *              0.126      2
+ 2  ceil           0.004      1
+ 3  mvvar          0.003     11
+ 4  -              0.000      4
+ 5  max            0.000      1
+ 6  ==             0.000      3
+
+real 8.97
+user 33.09
+sys 1.93

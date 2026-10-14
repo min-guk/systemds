@@ -1,0 +1,78 @@
+{
+  "candidate": "candidate06",
+  "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+  "note": "candidate06 is uncommitted frozen engine, not published main; see engine SHA manifest",
+  "actualRun": "/home/mchoi/actual-support-candidate06-w3-20261014",
+  "files": [
+    {
+      "path": "sliceline-ADULT-w3/coordinator.log",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/sliceline-ADULT-w3/coordinator.log",
+      "sha256": "3ec7edc51c1ba4c4a453ad51bd0819ce60a5fa1816c9319d0f4936cc4ff6171e"
+    },
+    {
+      "path": "sliceline-ADULT-w3/result.json",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/sliceline-ADULT-w3/result.json",
+      "sha256": "840e958fd6caec8974b03f2956c3e03e5943528a93ec1d61ac0228a919e2f755"
+    },
+    {
+      "path": "sliceline-ADULT-w3/cell.dml",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/sliceline-ADULT-w3/cell.dml",
+      "sha256": "f8a1681cdda0bdf0baf9a13bef1751077edbcb766bf3d913fc42d778adb82ba3"
+    },
+    {
+      "path": "sliceline-COVTYPE-w3/coordinator.log",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/sliceline-COVTYPE-w3/coordinator.log",
+      "sha256": "19f45218715731ea578f5073113080365b98ad5af00bb7d2e896c70841909e77"
+    },
+    {
+      "path": "sliceline-COVTYPE-w3/result.json",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/sliceline-COVTYPE-w3/result.json",
+      "sha256": "e543096d3d70e97d46469c37deafd13a06bb73f958a2d985ee71d260b3747afc"
+    },
+    {
+      "path": "sliceline-COVTYPE-w3/cell.dml",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/sliceline-COVTYPE-w3/cell.dml",
+      "sha256": "06b0f4bb19bf6b0dea4de7c462b06c7e11776ff041e09a0f26158fa325a63dff"
+    },
+    {
+      "path": "p2-P2_PREP-w3/coordinator.log",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/p2-P2_PREP-w3/coordinator.log",
+      "sha256": "f22fbfa6038b34fdd9763bf81c0221a79ca9597531b270ec3c9987fb163ac96c"
+    },
+    {
+      "path": "p2-P2_PREP-w3/result.json",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/p2-P2_PREP-w3/result.json",
+      "sha256": "6e92e1adf99fbf4bc55f779228aa2f7d4a2c91ba750a2683bf432f8fb0a0a727"
+    },
+    {
+      "path": "p2-P2_PREP-w3/cell.dml",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/p2-P2_PREP-w3/cell.dml",
+      "sha256": "d4a4e842bdd730304996ccfc2e6d83e6d237d54b18f9947958c59e4d93e7f308"
+    },
+    {
+      "path": "p1-P1_FULL-w3/coordinator.log",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/p1-P1_FULL-w3/coordinator.log",
+      "sha256": "0ddc9583ef6b95403c5506e8f9a2cc21aeb234fc00ed27be133198e3cbeaf6bc"
+    },
+    {
+      "path": "p1-P1_FULL-w3/result.json",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/p1-P1_FULL-w3/result.json",
+      "sha256": "48824e709cb0423f01938748b4fb3d88424755ee32de52abd50d10cd0b565851"
+    },
+    {
+      "path": "p1-P1_FULL-w3/cell.dml",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/p1-P1_FULL-w3/cell.dml",
+      "sha256": "e4d06659ade70c9925169c9533cca519c01c2d104836c4dce1f63213a57fc8e1"
+    },
+    {
+      "path": "verify_metadata_witness.py",
+      "source": "report logical witness, not benchmark",
+      "sha256": "28165233b6df5e0a694fbdc5491182ee29983209c4e2e95e586d3f8465aedb84"
+    },
+    {
+      "path": "metadata-witness.json",
+      "source": "report logical witness, not benchmark",
+      "sha256": "f53d8a688cf611aa26244df7c13bb4ae2f49069e1a97fe58d1efecbc7d05848c"
+    }
+  ]
+}

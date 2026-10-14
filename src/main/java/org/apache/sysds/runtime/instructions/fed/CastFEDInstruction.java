@@ -153,7 +153,19 @@ public class CastFEDInstruction extends UnaryFEDInstruction {
 		// execute function at federated site.
 		FederatedRequest fr2 = FederationUtils.callInstruction(instString, output, id,
 			new CPOperand[] {input1}, new long[] {mo1.getFedMapping().getID()}, Types.ExecType.SPARK, false);
-		mo1.getFedMapping().execute(getTID(), true, fr1, fr2);
+		try {
+			mo1.getFedMapping().execute(getTID(), true, fr1, fr2);
+		}
+		catch(RuntimeException ex) {
+			try {
+				mo1.getFedMapping().execute(getTID(), true,
+					mo1.getFedMapping().cleanup(getTID(), fr2.getID()));
+			}
+			catch(RuntimeException cleanupFailure) {
+				ex.addSuppressed(cleanupFailure);
+			}
+			throw ex;
+		}
 
 		// Construct output local.
 		FrameObject out = ec.getFrameObject(output);
@@ -164,12 +176,12 @@ public class CastFEDInstruction extends UnaryFEDInstruction {
 			FederatedData om = pair.getValue();
 			FederatedData nf = new FederatedData(Types.DataType.FRAME,
 				om.getAddress(), om.getFilepath(), om.getVarID());
-			newMap.add(Pair.of(pair.getKey(), nf));
+			newMap.add(Pair.of(new FederatedRange(pair.getKey()), nf));
 		}
 		ValueType[] schema = new ValueType[(int) mo1.getDataCharacteristics().getCols()];
 		Arrays.fill(schema, ValueType.FP64);
 		out.setSchema(schema);
-		out.setFedMapping(outMap);
+		out.setFedMapping(new FederationMap(outMap.getID(), newMap, outMap.getType()));
 	}
 
 }

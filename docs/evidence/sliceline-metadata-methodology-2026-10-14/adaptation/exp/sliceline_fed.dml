@@ -1,0 +1,26 @@
+# Global sizes for compile-time stamping in the experiment harness.
+N = __N__
+D = __D__
+
+X = federated(addresses=__X_ADDRS__, ranges=__X_RANGES__)
+e = federated(addresses=__Y_ADDRS__, ranges=__Y_RANGES__)
+
+source("code/workloads/sliceline/slicefinder_core.dml") as SL
+
+sigma = max(ceil(0.01 * N), 8)
+
+[TK, TKC, dbg] = SL::slicefinderX(
+  X=X,
+  e=e,
+  k=10,
+  alpha=0.95,
+  maxL=3,
+  minSup=sigma,
+  tpEval=TRUE,
+  tpBlksz=16,
+  selFeat=TRUE,
+  verbose=FALSE,
+  ltype="for"
+)
+
+write(TKC, "__OUT__", format="csv")

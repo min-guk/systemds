@@ -1,0 +1,597 @@
+### docs/FEDPLANNER_IMPLEMENTATION_SPEC_2026-10-13_KO.md SHA256=5ce851acd5b2f4eb0905b78eb7c3bab226071aa7ada329fbf8d34511ba1f01bd
+
+103: 
+104: ## 3. Assumptions, Scope, ADR
+105: 
+106: ### 3.1 보장할 계획 공간
+107: 
+108: `Lold`는 과거 객체 목록 자체가 아니라 기존 runtime으로 실행 가능한 의미적 계획 집합이다. `Lcanonical`은 사용자 확정 W/partition/privacy/no-direct-reshard 및 확정된 T>1 계약을 만족하는 부분이다. 이번 사용자 정책을 반영한 `Lcontrol`은 그중 loop backedge가 DIRECT-only인 계획이다. If-Else에는 별도의 same-output/no-join-transfer 제한을 추가하지 않는다. `Lspec`은 `Lcontrol`에 다음 **추가 설계 제한**을 적용한다: D1 OFF, 확인된 canonical native variants, 한 epoch의 정적 native variant/input pattern, 증명 가능한 loop invariant, emitter가 지원하는 명시 supply scopes, 비재귀·sequential 실행과 ADR19 설정. Full completeness 주장은 **Lspec에 한정**한다. `Lold ∩ Lcanonical` 전체와 같다고 주장하지 않는다. 과거 backedge normalization 계획의 제외는 runtime 불가능이 아니라 명시적인 새 사용자 정책이다.
+109: 
+110: 추가 제한으로 제외되는 합법 계획을 `INFEASIBLE`이라 부르지 않는다. `UNSUPPORTED_SCOPE(reason)`로 기록한다. 증명/Oracle coverage가 부족하면 `UNRESOLVED(reason)`다. 모든 조합을 정확히 검사해 없음이 증명된 경우만 `INFEASIBLE`이다. Resource 중단은 `RESOURCE_EXHAUSTED(incumbent, certifiedLB)`이며 최적 완료가 아니다.
+111: 
+112: ### 3.2 Architecture Decision Records
+113: 
+114: |ADR|대안과 trade-off|단일 결정 / 영향 / 근거|
+115: |---|---|---|
+116: |01 W/geometry|기존 anchor의 ranges 보존 vs 유일 canonical allocator|**DECIDED:** session-owned ordered W descriptor; q=floor(length/W), remainder를 앞 worker부터 1개씩 배분. ROW는 rows≥W, COL은 cols≥W; 빈 slice 금지. W1 FED는 REP. 현재 allocator의 non-preserve 분기와 같은 산식 [canonical-ranges]|
+117: |02 ingress|자동 normalize vs 명시 변환 vs reject|**DECIDED:** source가 W/type/range/shape를 정확히 만족해야 함. 불일치면 scope 거절. 비정규 PRIVATE 데이터를 몰래 collect하거나 worker 일부만 사용하지 않음. 외부에서 이미 정규화한 입력은 허용|
+118: |03 D1|모든 primitive의 transitive closure vs 한 hop recipe|**DECIDED:** 동일 value에 DIRECT 또는 단일 UPLOAD/COLLECT만. FED→LOCAL→FED(같은 layout/REP 포함) OFF. alias/TRead/function return으로 origin을 지워 우회 금지. 장래 ON은 별도 계약·비용·emission 추가|
+119: |04 REP|FULL/BROADCAST 이름 치환 vs runtime adapter|**DECIDED:** planner는 REP; W1 runtime FULL, W>1 BROADCAST. 각 opcode dispatch를 검증. temporary sliced/broadcast operand는 persistent REP output이 아님|
+120: |05 unknown|모르면 불가능으로 prune vs 보류|**DECIDED:** 삼값 YES/NO/UNKNOWN. 완성된 domain에서 NO 증명만 삭제; UNKNOWN은 보존하되 최종 성공 leaf에는 남길 수 없음|
+
+279: |시점|필요 정보 / NO 증명|soundness 조건|비용|
+280: |---|---|---|---|
+281: |1 native/shape|opcode dispatch, datatype/role, abstract pattern, known shape가 불가능|unknown shape를 false로 치환 금지; variant coverage가 완성되어야 empty 의미 확정|Oracle 패턴 수 P, 호출당 Tnative; cache O(P)|
+282: |2 privacy/movement|rule 자체 금지 또는 release/recipe 금지|선택·guard 의존 조건은 조건으로 보존. PRIVATE_AGGREGATE 결과 공개가 raw input collect 허용을 뜻하지 않음|condition intern O(R+offers), 조건 평가 비용 별도|
+283: |3 ingress/availability|고정 source가 noncanonical/다른 W, 필요한 정의가 해당 env에서 없음|아직 미분석 source를 없음으로 판정 금지. 부적합 scope와 프로그램 내 infeasible 구분|source maps O(total partitions), facts relation traversal|
+284: |4 edge propagation|특정 rule의 필수 input edge에 compatible live support가 전혀 없음|consumer별 marginal support만 검사하면 pruning은 sound하나 complete 아님; shared/joint 문제 남김|단순 pairwise 최악 ΣE KpKcM, witness 재검사 비용 포함|
+285: |4a backedge DIRECT|carried boundary의 native output과 head 계약이 직접 호환하지 않음|동일 exec label만으로 통과 금지. Entry/Exit/일반 body edge는 이 제한 대상이 아님. Guard가 미확정이면 NO 증명 조건 유지|backedge당 O(Kwriter·Khead·directPredicate); movement/scope 순회 없음|
+
+### docs/FEDPLANNER_SIMPLE_MEMO_REDESIGN_2026-10-13_KO.md SHA256=df958f94568f98b636b58e39ab84e0d36a164e63d03cbb441a4bbd4d05237b91
+
+726: **중요한 범위 변화:** canonical source가 아닌 외부 federated 입력을 받아 놓고 canonical이라고 선언할 수 없다. 최초 source validation에서 worker 집합, endpoint 순서, ranges, replica 의미를 확인해야 한다. 거절하거나, 별도로 허용·구현된 import normalization 경계를 사용한다. Protected source를 canonical화하기 위해 COLLECT할 수 있다고 가정하지 않는다.
+727: 
+728: 불일치 native output 뒤에 몰래 collect/reupload를 붙이는 방법도 현재 기본 계약으로 자동 허용되지 않는다. 그것은 비canonical 중간 값을 다룰 runtime action과 privacy/cost를 추가하는 별도 변경이다. 이번 설계는 그런 지원을 새로 가정하지 않는다.
+729: 
+730: ### 10.1 비canonical source 처리와 의도적인 지원 범위 축소
+731: 
+732: **[제안] 초기 권고는 ingress에서 검사하고 명시적으로 거절하는 것이다.** W와 endpoint 순서·전체 range·replica 내용 계약을 만족한 source만 네 상태 중 하나로 Memo에 넣는다. Metadata label만 ROW/FULL이라고 해서 통과시키지 않는다. Source validation 실패와 runtime operator 미지원은 다른 reason으로 기록한다.
+733: 
+734: | 처리안 | 타당성 / 지원 범위 | 판단 |
+735: |---|---|---|
+736: | canonical source만 수용 | subset/pool 불일치, skewed ranges, W>1의 single FULL source를 제외 | 가장 작은 정확한 baseline. 기존 runtime에서 합법이던 입력 일부는 명시적으로 제외됨 |
+737: | 별도 import normalization | 공개 가능한 source를 지원된 collect/upload로 canonical artifact로 바꾼 뒤 진입 | 향후 옵션. 실제 allocator, privacy, 비용, 데이터/metadata 검증 필요. 새 Memo의 암묵적 기능이 아님 |
+738: | source의 실제 ranges를 네 상태 뒤에 계속 숨김 | 같은 shape/type에 여러 mapping이 남음 | canonical 전제를 깨고 Anchor 탐색을 되살리므로 비권고 |
+739: 
+740: 원래 source가 W 밖의 worker나 subset에 있으면 import collect 자체가 “모든 FED는 W 전체” 계약과 충돌할 수 있다. 이를 허용하려면 명시적인 **planner 진입 전 import 범위**로 별도 정의해야 한다. Protected raw data는 collect를 통한 canonical화가 불가능할 수 있다. 이 문서는 그런 import가 이미 지원된다고 가정하지 않는다.
+
+### src/main/java/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.java SHA256=b2519f4691543de1cf7cdd34c91af4d016c3334d2796d42d4c6be5b3abcf55a6
+
+70: 		if(DMLScript.LINEAGE_REUSE != null && DMLScript.LINEAGE_REUSE.isMultilevelReuse()
+71: 			|| LineageCacheConfig.getCacheType() != null && LineageCacheConfig.getCacheType().isMultilevelReuse())
+72: 			throw new IllegalStateException("MEMO_UNSUPPORTED_FUNCTION_OUTPUT_REUSE: disable multilevel lineage reuse");
+73: 		long started = System.nanoTime();
+74: 		MemoProgramFacts facts = MemoProgramFacts.analyze(program); facts.requireComplete();
+75: 		MemoSources sources = MemoSources.acquire(facts,pool);
+76: 		long factsFinished = System.nanoTime();
+77: 		tracePhase("facts",factsFinished-started);
+78: 		MemoNativeRules oracle = new MemoNativeRules();
+79: 		MemoRuleBuilder.Result universe = MemoRuleBuilder.build(facts,sources,oracle);
+80: 		long rulesFinished = System.nanoTime();
+81: 		tracePhase("rules",rulesFinished-factsFinished);
+82: 		traceNativeRequests(universe.requests());
+83: 		traceNativeGeneration(oracle.generationStats());
+84: 		MemoProgramModel model = new MemoProgramModel(facts,sources,universe,MemoProgramModel.Profile.defaults());
+85: 		long modelFinished = System.nanoTime();
+86: 		tracePhase("model",modelFinished-rulesFinished);
+87: 		traceCostProjection(model.costProjectionStatistics());
+88: 		MemoProgramModel.Solution solution = model.optimize(limits);
+89: 		long optimizationFinished = System.nanoTime();
+
+### src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoSources.java SHA256=a0a32fdf191d926283874a96e6a0c98b9e52b12eedaaf9225da1029775d4313e
+
+31: import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.FederatedSourceMetadata;
+32: import org.apache.sysds.parser.DataExpression;
+33: import org.apache.sysds.runtime.controlprogram.federated.CanonicalWorkerPool;
+34: import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
+35: import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
+36: import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
+37: import org.apache.sysds.runtime.meta.MetaDataAll;
+38: import org.apache.sysds.runtime.util.HDFSTool;
+39: 
+40: /** One acquisition of exact ingress metadata, independent of candidate selection. */
+
+77: 			FederatedSourceMetadata resolved = Objects.requireNonNull(metadata.apply(data),"source metadata");
+78: 			List<Pair<FederatedRange,FederatedData>> parts = resolved.partitions();
+79: 			if(parts.isEmpty()) throw new IllegalStateException("Empty federated source: " + data.getName());
+80: 			long rows = 0, columns = 0;
+81: 			for(var part : parts) {
+82: 				rows = Math.max(rows,part.getKey().getEndDims()[0]);
+83: 				columns = Math.max(columns,part.getKey().getEndDims()[1]);
+84: 			}
+85: 			FType type = type(parts,rows,columns);
+86: 			FederationMap map = new FederationMap(-1,parts,type);
+87: 			if(fixed == null) fixed = CanonicalWorkerPool.fromFederationMap(map);
+88: 			// Canonical source ingress is strict. It never reorders workers, drops a
+89: 			// shard or silently collects protected input to normalize its layout.
+90: 			fixed.validateIngress(map,data.getDataType(),type,rows,columns);
+91: 			if(data.getDim1() > 0 && data.getDim1() != rows || data.getDim2() > 0 && data.getDim2() != columns)
+92: 				throw new IllegalStateException("Federated source shape disagrees with its exact ranges: " + data.getName());
+93: 			sources.put(owner,new Source(owner,MemoPartition.fromRuntime(type,fixed.size()),
+94: 				resolved.privacy(),rows,columns));
+95: 			privacyFacts.put(owner, resolved.privacy());
+
+### src/main/java/org/apache/sysds/runtime/controlprogram/federated/CanonicalWorkerPool.java SHA256=b6928c608628affdeed177fcd2c7d650b3c2e3fd839d44b49da163ef680764c4
+
+140: 	public FederatedRange[] canonicalRanges(FType targetType, long rows, long cols) {
+141: 		validateShape(rows, cols);
+142: 		FType runtimeType = runtimeType(targetType);
+143: 		FederatedRange[] ranges = new FederatedRange[size()];
+144: 		if(runtimeType == FType.FULL || runtimeType == FType.BROADCAST) {
+145: 			for(int i = 0; i < ranges.length; i++)
+146: 				ranges[i] = fullRange(rows, cols);
+147: 			return ranges;
+148: 		}
+149: 
+150: 		long length = runtimeType == FType.ROW ? rows : cols;
+151: 		if(length < size())
+152: 			throw new DMLRuntimeException(runtimeType + " canonical partition requires length >= workers: length="
+153: 				+ length + " workers=" + size() + ".");
+154: 		long base = length / size();
+155: 		long remainder = length % size();
+156: 		long begin = 0;
+157: 		for(int i = 0; i < ranges.length; i++) {
+158: 			long end = begin + base + (i < remainder ? 1 : 0);
+159: 			ranges[i] = runtimeType == FType.ROW
+160: 				? new FederatedRange(new long[] {begin, 0}, new long[] {end, cols})
+161: 				: new FederatedRange(new long[] {0, begin}, new long[] {rows, end});
+162: 			begin = end;
+163: 		}
+164: 		return ranges;
+
+190: 	public void validateIngress(FederationMap map, DataType dataType, FType targetType, long rows, long cols) {
+191: 		if(dataType != DataType.MATRIX && dataType != DataType.FRAME)
+192: 			throw new DMLRuntimeException("Canonical ingress supports matrix and frame values only.");
+193: 		if(map == null || map.getSize() != size() || map.getType() != runtimeType(targetType))
+194: 			throw new DMLRuntimeException("Federated value does not match the canonical worker pool/type.");
+195: 		FederatedRange[] expectedRanges = canonicalRanges(targetType, rows, cols);
+196: 		for(int i = 0; i < size(); i++) {
+197: 			Pair<FederatedRange, FederatedData> entry = map.getMap().get(i);
+198: 			if(entry == null || entry.getKey() == null || entry.getValue() == null
+199: 				|| entry.getValue().getAddress() == null
+200: 				|| entry.getValue().getDataType() != dataType
+201: 				|| !sameEndpoint(_workers.get(i), entry.getValue().getAddress())
+202: 				|| !java.util.Arrays.equals(expectedRanges[i].getBeginDims(), entry.getKey().getBeginDims())
+203: 				|| !java.util.Arrays.equals(expectedRanges[i].getEndDims(), entry.getKey().getEndDims()))
+204: 				throw new DMLRuntimeException("Federated value violates canonical ingress at worker index " + i + ".");
+205: 		}
+206: 	}
+
+### src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoShapes.java SHA256=b3b71bf000d803341beb80ee9efd9215ff20e3a0796891ace7a3fe6582ddffb9
+
+2064: 	private static Shape multiReturnOutputShape(FunctionOp function,int slot,Shape input) {
+2065: 		if(input==null || !input.exact() || slot<0 || function.getOutputs()==null
+2066: 			|| slot>=function.getOutputs().size() || function.getOutputs().get(slot)==null) return null;
+2067: 		Hop output=function.getOutputs().get(slot);
+2068: 		if(shapePreservingTransformEncode(function) && slot==0)
+2069: 			return new Shape(DataType.MATRIX,ValueType.FP64,input.rows(),input.columns(),-1,Knowledge.EXACT);
+2070: 		if(function.getFunctionName().equalsIgnoreCase(Opcodes.EIGEN.toString()) && slot<2) {
+2071: 			FunctionOp contextual=(FunctionOp)cloneView(function);
+2072: 			applyShape(contextual.getInput().get(0),input);
+2073: 			Hop contextualOutput=contextual.getOutputs().get(slot);
+2074: 			long[] dimensions=contextual.getMultiReturnBuiltinOutputDims(contextualOutput);
+2075: 			long rows=dimensions[0],columns=dimensions[1];
+2076: 			return rows>0 && columns>0
+2077: 				? new Shape(output.getDataType(),output.getValueType(),rows,columns,
+2078: 					-1,Knowledge.EXACT) : null;
+2079: 		}
+2080: 		return null;
+2081: 	}
+2082: 
+2083: 	private static boolean shapePreservingTransformEncode(Hop hop) {
+2084: 		if(!(hop instanceof FunctionOp function)
+2085: 			|| function.getFunctionType()!=FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+2086: 			|| !function.getFunctionName().equalsIgnoreCase(Opcodes.TRANSFORMENCODE.toString())
+2087: 			|| function.getInput().size()!=2 || !(function.getInput(1) instanceof LiteralOp literal)) return false;
+2088: 		try {
+2089: 			JSONObject spec=new JSONObject(literal.getStringValue());
+2090: 			return spec.containsKey("recode") && !spec.containsKey("dummycode")
+2091: 				&& !spec.containsKey("omit") && !spec.containsKey("impute")
+2092: 				&& !spec.containsKey("bin") && !spec.containsKey("hash");
+2093: 		}
+2094: 		catch(Exception ignored) { return false; }
+2095: 	}
+
+### src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoCostModel.java SHA256=f2bc64e7e723bdc207730633b6e8e37d60fd75eacefa912ff599e915dd9fcd86
+
+83: 	/** Cost of executing one selected native rule at the explicit occurrence frequency. */
+84: 	public static double nativeCost(Hop hop, RuleMemo.Rule rule, int workers, double frequency) {
+85: 		Objects.requireNonNull(hop, "hop");
+86: 		Objects.requireNonNull(rule, "rule");
+87: 		validateWorkersAndFrequency(workers, frequency);
+88: 		if(rule.inputs().size() != hop.getInput().size())
+89: 			throw failure(DiagnosticCode.RULE_ARITY_MISMATCH,
+90: 				"rule inputs=" + rule.inputs().size() + " hop inputs=" + hop.getInput().size());
+91: 		if(frequency == 0.0 || isCarrier(hop))
+92: 			return 0.0;
+93: 		if(hop instanceof FunctionOp function
+94: 			&& function.getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN)
+95: 			return multiReturnBuiltinCost(function,rule,workers,frequency);
+96: 		if(!supportedKernel(hop, rule.exec()))
+97: 			throw failure(DiagnosticCode.UNSUPPORTED_OPERATOR_FAMILY,
+98: 				hop.getClass().getName() + " / " + rule.exec());
+99: 		ensureKernelSizesKnown(hop);
+100: 
+101: 		double base = requireFiniteCost(FederatedCostModel.computeOpCostWithFallback(hop),
+102: 			"local primitive for " + hop.getClass().getSimpleName());
+103: 		if(rule.exec() == ExecType.CP)
+104: 			return scale(base, frequency, "CP native cost");
+
+140: 	private static double multiReturnBuiltinCost(FunctionOp hop,RuleMemo.Rule rule,
+141: 		int workers,double frequency) {
+142: 		if(hop.getOutputs()==null || hop.getOutputs().isEmpty()
+143: 			|| rule.outputs().size()!=hop.getOutputs().size())
+144: 			throw failure(DiagnosticCode.RULE_ARITY_MISMATCH,
+145: 				"multi-return outputs="+(hop.getOutputs()==null ? 0 : hop.getOutputs().size())
+146: 					+" rule outputs="+rule.outputs().size());
+147: 		ensureKernelSizesKnown(hop);
+148: 		boolean transform=hop.getFunctionName().equalsIgnoreCase(
+149: 			org.apache.sysds.common.Opcodes.TRANSFORMENCODE.toString());
+150: 		if(transform) {
+151: 			if(!shapePreservingTransformEncode(hop))
+152: 				throw failure(DiagnosticCode.UNKNOWN_SIZE,
+153: 					"data-dependent transformencode output for "+describe(hop));
+154: 		}
+155: 		else for(Hop output : hop.getOutputs())
+156: 			if(output==null || isMatrixPayload(output) && (output.getDim1()<=0 || output.getDim2()<=0))
+157: 				throw failure(DiagnosticCode.UNKNOWN_SIZE,"unknown multi-return output for "+describe(hop));
+158: 		double base=requireFiniteCost(FederatedCostModel.computeOpCostWithFallback(hop),
+159: 			"multi-return primitive for "+hop.getFunctionName());
+160: 		if(rule.exec()==ExecType.CP) return scale(base,frequency,"CP multi-return native cost");
+161: 		if(!transform)
+162: 			throw failure(DiagnosticCode.UNSUPPORTED_OPERATOR_FAMILY,
+163: 				"no verified FED multi-return runtime for "+hop.getFunctionName());
+164: 		FType executionType=executionType(hop,rule,workers);
+165: 		List<FType> inputTypes=runtimeInputTypes(rule,workers);
+166: 		double compute=FederatedCostModel.computeFederatedComputeCost(hop,base,workers,false);
+167: 		double unit=compute+FederatedCostModel.computeFederatedInstructionNetworkCost(hop,1.0)
+168: 			+implicitLocalInputBroadcastCost(hop,rule,inputTypes,workers);
+169: 		for(int slot=0;slot<rule.outputs().size();slot++) {
+170: 			if(rule.outputs().get(slot)==MemoPartition.LOCAL) {
+171: 				// FED transformencode constructs its metadata frame at the coordinator;
+172: 				// it is not a federated output that must be downloaded.
+173: 				if(!(transform && slot==1))
+174: 					unit+=FederatedCostModel.computeReusableMaterializationDownloadCost(
+175: 						knownOutputBytes(hop.getOutputs().get(slot),false),executionType,workers);
+176: 			}
+177: 		}
+178: 		return scale(requireFiniteCost(unit,"FED multi-return native cost"),frequency,
+179: 			"FED multi-return frequency");
+180: 	}
+181: 
+182: 	private static boolean shapePreservingTransformEncode(FunctionOp hop) {
+183: 		if(hop.getInput().size()!=2 || !(hop.getInput(1) instanceof LiteralOp literal)
+184: 			|| hop.getInput(0).getDim1()<=0 || hop.getInput(0).getDim2()<=0) return false;
+185: 		try {
+186: 			JSONObject spec=new JSONObject(literal.getStringValue());
+187: 			return spec.containsKey("recode") && !spec.containsKey("dummycode")
+188: 				&& !spec.containsKey("omit") && !spec.containsKey("impute")
+189: 				&& !spec.containsKey("bin") && !spec.containsKey("hash");
+190: 		}
+191: 		catch(Exception ignored) { return false; }
+192: 	}
+
+409: 	private static void ensureKernelSizesKnown(Hop hop) {
+410: 		if(isMatrixPayload(hop) && (hop.getDim1() <= 0 || hop.getDim2() <= 0))
+411: 			throw failure(DiagnosticCode.UNKNOWN_SIZE,
+412: 				"unknown kernel output dimensions for " + describe(hop));
+413: 		for(int position = 0; position < hop.getInput().size(); position++) {
+414: 			Hop input = hop.getInput(position);
+415: 			if(isMatrixPayload(input) && (input.getDim1() <= 0 || input.getDim2() <= 0))
+416: 				throw failure(DiagnosticCode.UNKNOWN_SIZE,
+417: 					"unknown kernel input " + position + " for " + describe(hop)
+418: 						+ ": " + describe(input));
+419: 		}
+420: 	}
+421: 
+422: 	private static String describe(Hop hop) {
+423: 		return "hop " + hop.getHopID() + " " + hop.getClass().getSimpleName() + '/' + hop.getOpString()
+424: 			+ " " + hop.getDataType() + ' ' + hop.getDim1() + 'x' + hop.getDim2();
+
+### src/main/java/org/apache/sysds/runtime/instructions/fed/MultiReturnParameterizedBuiltinFEDInstruction.java SHA256=4fedae26273b2795ded50bc820aa4af0182d121e714dd82d9c6d0b3397fdef60
+
+159: 	@Override
+160: 	public void processInstruction(ExecutionContext ec) {
+161: 		// obtain and pin input frame
+162: 		FrameObject fin = ec.getFrameObject(input1.getName());
+163: 		String spec = TransformEncodeMetadataPrivacy.validateAndStripReleaseRequest(
+164: 			ec.getScalarInput(input2).getStringValue());
+165: 
+166: 		String[] colNames = new String[(int) fin.getNumColumns()];
+167: 		Arrays.fill(colNames, "");
+168: 
+169: 		// the encoder in which the complete encoding information will be aggregated
+170: 		MultiColumnEncoder globalEncoder = new MultiColumnEncoder(new ArrayList<>());
+171: 		FederationMap fedMapping = fin.getFedMapping();
+172: 
+173: 		boolean containsEquiWidthEncoder = !fin.isFederated(FTypes.FType.ROW) && spec.toLowerCase().contains("equi-height");
+174: 		if(containsEquiWidthEncoder) {
+175: 			EncoderColnames ret = createGlobalEncoderWithEquiHeight(ec, fin, spec);
+176: 			globalEncoder = ret._encoder;
+177: 			colNames = ret._colnames;
+178: 		} else {
+179: 			// first create encoders at the federated workers, then collect them and aggregate them to a single large
+180: 			// encoder
+181: 			List<Pair<FederatedRange, FederatedData>> partitions = new ArrayList<>(fedMapping.getMap());
+182: 			partitions.sort((left, right) -> {
+183: 				int rowOrder = Long.compare(left.getKey().getBeginDims()[0], right.getKey().getBeginDims()[0]);
+184: 				return rowOrder != 0 ? rowOrder :
+185: 					Long.compare(left.getKey().getBeginDims()[1], right.getKey().getBeginDims()[1]);
+186: 			});
+187: 			List<Future<FederatedResponse>> responses = new ArrayList<>(partitions.size());
+188: 			for(Pair<FederatedRange, FederatedData> partition : partitions) {
+189: 				FederatedRange range = partition.getKey();
+190: 				int columnOffset = (int) range.getBeginDims()[1];
+191: 				responses.add(partition.getValue().executeFederatedOperation(new FederatedRequest(
+192: 					RequestType.EXEC_UDF,
+193: 					-1, new CreateFrameEncoder(partition.getValue().getVarID(), spec, columnOffset + 1))));
+194: 			}
+195: 			// RPCs are issued eagerly above, but their encoders are merged in logical
+196: 			// range order. Recode IDs depend on first occurrence, so completion-order
+197: 			// merging would make ROW-partitioned dummycoding nondeterministic.
+198: 			for(int i = 0; i < partitions.size(); i++) {
+199: 				FederatedRange range = partitions.get(i).getKey();
+200: 				int columnOffset = (int) range.getBeginDims()[1];
+201: 				try {
+202: 					FederatedResponse response = responses.get(i).get();
+203: 					MultiColumnEncoder encoder = (MultiColumnEncoder) response.getData()[0];
+204: 					globalEncoder.mergeAt(encoder, columnOffset, (int) (range.getBeginDims()[0] + 1));
+205: 					String[] subRangeColNames = (String[]) response.getData()[1];
+206: 					System.arraycopy(subRangeColNames, 0, colNames, columnOffset, subRangeColNames.length);
+207: 				}
+208: 				catch(Exception e) {
+209: 					throw new DMLRuntimeException("Federated encoder creation failed: ", e);
+210: 				}
+211: 			}
+212: 		}
+213: 
+214: 		// sort for consistent encoding in local and federated
+215: 		if(ColumnEncoderRecode.SORT_RECODE_MAP) {
+216: 			globalEncoder.applyToAll(ColumnEncoderRecode.class, ColumnEncoderRecode::sortCPRecodeMaps);
+217: 		}
+218: 
+219: 		FrameBlock meta = new FrameBlock((int) fin.getNumColumns(), Types.ValueType.STRING);
+220: 		meta.setColumnNames(colNames);
+221: 		globalEncoder.getMetaData(meta);
+222: 		globalEncoder.initMetaData(meta);
+223: 
+224: 		encodeFederatedFrames(fedMapping, globalEncoder, ec.getMatrixObject(getOutput(0)));
+225: 
+226: 		// release input and outputs
+227: 		ec.setFrameOutput(getOutput(1).getName(), _metaReturn ? meta : new FrameBlock());
+
+360: 	public static class CreateFrameEncoder extends FederatedUDF {
+361: 		private static final long serialVersionUID = 2376756757742169692L;
+362: 		private final String _spec;
+363: 		private final int _offset;
+364: 
+365: 		public CreateFrameEncoder(long input, String spec, int offset) {
+366: 			super(new long[] {input});
+367: 			_spec = spec;
+368: 			_offset = offset;
+369: 		}
+370: 
+371: 		@Override
+372: 		public FederatedResponse execute(ExecutionContext ec, Data... data) {
+373: 			FrameObject fo = (FrameObject) data[0];
+374: 			FrameBlock fb = fo.acquireRead();
+375: 			String[] colNames = fb.getColumnNames();
+376: 
+377: 			// create the encoder
+378: 			MultiColumnEncoder encoder = EncoderFactory
+379: 				.createEncoder(_spec, colNames, fb.getNumColumns(), null, _offset, _offset + fb.getNumColumns());
+380: 
+381: 			// build necessary structures for encoding
+382: 			//encoder.build(fb, OptimizerUtils.getTransformNumThreads()); // FIXME skip equi-height sorting
+383: 			// FIXME: Enabling multithreading intermittently hangs
+384: 			encoder.build(fb, 1);
+385: 			fo.release();
+386: 
+387: 			// create federated response
+388: 			return new FederatedResponse(ResponseType.SUCCESS, new Object[] {encoder, fb.getColumnNames()});
+389: 		}
+
+### src/main/java/org/apache/sysds/runtime/transform/TransformEncodeMetadataPrivacy.java SHA256=5a4c1c2716ebb12fa6c329ba95709d46705c33b7a713d5e4d101c7475d296486
+
+35: public final class TransformEncodeMetadataPrivacy {
+36: 	public static final String RELEASE_PROPERTY = "sysds.privacy.allowPublicRecodeMetadata";
+37: 	public static final String RELEASE_SPEC_KEY = "cofeePublicRecodeMetadata";
+38: 
+39: 	private static final Set<String> RELEASE_SPEC_KEYS = new HashSet<>(
+40: 		Arrays.asList("ids", "recode", "dummycode", RELEASE_SPEC_KEY));
+
+53: 	public static boolean allowsPublicRecodeMetadata(String spec) {
+54: 		if(!Boolean.getBoolean(RELEASE_PROPERTY) || spec == null)
+55: 			return false;
+56: 
+57: 		try {
+58: 			JSONObject parsedSpec = new JSONObject(spec);
+59: 			if(!Boolean.TRUE.equals(parsedSpec.get(RELEASE_SPEC_KEY)) ||
+60: 				!Boolean.TRUE.equals(parsedSpec.get("ids")))
+61: 				return false;
+62: 
+63: 			@SuppressWarnings("unchecked")
+64: 			Iterator<String> keys = parsedSpec.keys();
+65: 			while(keys.hasNext())
+66: 				if(!RELEASE_SPEC_KEYS.contains(keys.next()))
+67: 					return false;
+68: 
+69: 			boolean hasRecode = parsedSpec.containsKey("recode");
+70: 			boolean hasDummycode = parsedSpec.containsKey("dummycode");
+71: 			return (hasRecode || hasDummycode) &&
+72: 				(!hasRecode || isPositiveIntegerArray(parsedSpec.get("recode"))) &&
+73: 				(!hasDummycode || isPositiveIntegerArray(parsedSpec.get("dummycode")));
+74: 		}
+75: 		catch(Exception ex) {
+76: 			return false;
+77: 		}
+
+88: 	public static void validateReleaseRequest(String spec) {
+89: 		if(!explicitlyRequestsRelease(spec))
+90: 			return;
+91: 		if(!allowsPublicRecodeMetadata(spec))
+92: 			throw new DMLRuntimeException("Public transformencode recode metadata release is not authorized " +
+93: 				"or the transform specification is not metadata-only");
+94: 	}
+95: 
+96: 	/**
+97: 	 * Validates an explicit release request and returns the ordinary transform
+98: 	 * specification consumed by encoder construction. The policy declaration is
+99: 	 * removed only after successful validation.
+100: 	 *
+101: 	 * @param spec transform specification
+102: 	 * @return the original ordinary specification, or a validated release specification without its declaration
+103: 	 */
+104: 	public static String validateAndStripReleaseRequest(String spec) {
+105: 		validateReleaseRequest(spec);
+106: 		if(!explicitlyRequestsRelease(spec))
+107: 			return spec;
+108: 
+109: 		try {
+110: 			JSONObject parsedSpec = new JSONObject(spec);
+111: 			parsedSpec.remove(RELEASE_SPEC_KEY);
+112: 			return parsedSpec.toString();
+113: 		}
+114: 		catch(Exception ex) {
+115: 			throw new DMLRuntimeException("Failed to normalize validated transformencode release specification", ex);
+
+### src/main/java/org/apache/sysds/runtime/transform/encode/ColumnEncoderRecode.java SHA256=371bf282038c56c9a35bd5acebb140b615f9b787ebf8948ff147a17bf16cc00a
+
+264: 	public void mergeAt(ColumnEncoder other) {
+265: 		if(!(other instanceof ColumnEncoderRecode)) {
+266: 			super.mergeAt(other);
+267: 			return;
+268: 		}
+269: 		assert other._colID == _colID;
+270: 		// merge together overlapping columns
+271: 		ColumnEncoderRecode otherRec = (ColumnEncoderRecode) other;
+272: 		Map<Object, Integer> otherMap = otherRec._rcdMap;
+273: 		if(otherMap != null) {
+274: 			// for each column, add all non present recode values
+275: 			for(Map.Entry<Object, Integer> entry : otherMap.entrySet()) {
+276: 				if(lookupRCDMap(entry.getKey()) == -1) {
+277: 					// key does not yet exist
+278: 					putCode(_rcdMap, entry.getKey());
+279: 				}
+280: 			}
+281: 		}
+282: 	}
+283: 
+284: 	public int getNumDistinctValues() {
+285: 		return _rcdMap.size();
+286: 	}
+287: 	
+288: 	@Override
+289: 	public void allocateMetaData(FrameBlock meta) {
+290: 		// allocate output rows
+291: 		meta.ensureAllocatedColumns(getNumDistinctValues());
+292: 	}
+293: 
+294: 	@Override
+295: 	public FrameBlock getMetaData(FrameBlock meta) {
+296: 		if(!isApplicable())
+297: 			return meta;
+298: 
+299: 		// inverse operation to initRecodeMaps
+300: 
+301: 		// allocate output rows
+302: 		meta.ensureAllocatedColumns(getNumDistinctValues());
+303: 
+304: 		// create compact meta data representation
+305: 		StringBuilder sb = new StringBuilder(); // for reuse
+306: 		final Inc rowID = new Inc();
+307: 	
+308: 		final int colIDCorrected = _colID - 1;
+309: 		_rcdMap.forEach( (k,v) -> {
+310: 			meta.set(rowID.i(), colIDCorrected, // 1-based
+311: 				constructRecodeMapEntry(k, v, sb));
+312: 		});
+313: 		// for(Entry<Object, Integer> e : _rcdMap.entrySet()) {
+314: 		// }
+315: 		meta.getColumnMetadata(colIDCorrected).setNumDistinct(getNumDistinctValues());
+316: 
+317: 		return meta;
+
+340: 	public void writeExternal(ObjectOutput out) throws IOException {
+341: 		super.writeExternal(out);
+342: 		out.writeInt(_rcdMap.size());
+343: 		
+344: 		_rcdMap.forEach((k, v)-> {
+345: 			try{
+346: 				out.writeUTF(k.toString());
+347: 				out.writeInt(v);
+348: 			}
+349: 			catch(Exception e){
+350: 				throw new RuntimeException(e);
+351: 			}
+352: 		});
+353: 	}
+354: 
+355: 	@Override
+356: 	public void readExternal(ObjectInput in) throws IOException {
+357: 		super.readExternal(in);
+358: 		int size = in.readInt();
+359: 		for(int j = 0; j < size; j++) {
+360: 			String key = in.readUTF();
+361: 			Integer value = in.readInt();
+362: 			_rcdMap.put(key, value);
+363: 		}
+
+### src/main/java/org/apache/sysds/runtime/transform/encode/ColumnEncoderDummycode.java SHA256=3bcd7912a7cb06d39da86d05815260c03914cdb484137e5647c5d84846352e6a
+
+201: 	@Override
+202: 	public void updateIndexRanges(long[] beginDims, long[] endDims, int colOffset) {
+203: 
+204: 		// new columns inserted in this (federated) block
+205: 		beginDims[1] += colOffset;
+206: 		endDims[1] += _domainSize - 1 + colOffset;
+207: 	}
+208: 
+209: 	public void updateDomainSizes(List<ColumnEncoder> columnEncoders) {
+210: 		if(_colID == -1)
+211: 			return;
+212: 		for(ColumnEncoder columnEncoder : columnEncoders) {
+213: 			int distinct = -1;
+214: 			if(columnEncoder instanceof ColumnEncoderRecode) {
+215: 				ColumnEncoderRecode columnEncoderRecode = (ColumnEncoderRecode) columnEncoder;
+216: 				distinct = columnEncoderRecode.getNumDistinctValues();
+217: 			}
+218: 			else if(columnEncoder instanceof ColumnEncoderBin) {
+219: 				distinct = ((ColumnEncoderBin) columnEncoder)._numBin;
+220: 			}
+221: 			else if(columnEncoder instanceof ColumnEncoderFeatureHash){
+222: 				distinct = (int) ((ColumnEncoderFeatureHash) columnEncoder).getK();
+223: 			}
+224: 
+225: 			if(distinct != -1) {
+226: 				_domainSize = Math.max(1, distinct);
+227: 				if(LOG.isDebugEnabled()){
+228: 
+229: 					LOG.debug("DummyCoder for column: " + _colID + " has domain size: " + _domainSize);
+230: 				}
+231: 			}
+232: 		}
+233: 	}
+234: 
+235: 	@Override
+236: 	public void allocateMetaData(FrameBlock meta) {
+237: 		return;
+238: 	}
+239: 
+240: 	@Override
+241: 	public FrameBlock getMetaData(FrameBlock meta) {
+242: 		return meta;
+243: 	}
+244: 
+245: 	@Override
+246: 	public void initMetaData(FrameBlock meta) {
+247: 		// initialize domain sizes and output num columns
+248: 		_domainSize = Math.max(1, (int) meta.getColumnMetadata()[_colID - 1].getNumDistinct());
+
+### src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoPrivacy.java SHA256=fdb8e6c7b6c3ad75563f9df040b78bdfe7366414ba7aae2f03ca89e63dca7ea9
+
+1082: 	private Result outputPrivacyAt(int occurrence,int slot,Context context,Set<EvaluationKey> active) {
+1083: 		if(slot==1 && publicTransformMetadata.contains(occurrence))
+1084: 			return Result.exact(Privacy.PUBLIC);
+1085: 		return evaluateOccurrence(occurrence,context,active);
+1086: 	}
+1087: 
+1088: 	private static boolean allowsPublicTransformMetadata(Hop hop) {
+1089: 		if(!(hop instanceof FunctionOp function)
+1090: 			|| function.getFunctionType()!=FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+1091: 			|| !"transformencode".equalsIgnoreCase(function.getFunctionName())
+1092: 			|| function.getInput().size()!=2 || function.getOutputs()==null || function.getOutputs().size()!=2
+1093: 			|| !(function.getInput().get(1) instanceof LiteralOp literal))
+1094: 			return false;
+1095: 		return TransformEncodeMetadataPrivacy.allowsPublicRecodeMetadata(literal.getStringValue());
+

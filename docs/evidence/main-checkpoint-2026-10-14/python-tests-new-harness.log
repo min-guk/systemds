@@ -1,0 +1,18 @@
+test_cgroup_snapshot_is_explicitly_not_process_rss (test_run_memo_metadata_planning.MemoMetadataPlanningTest.test_cgroup_snapshot_is_explicitly_not_process_rss) ... ok
+test_commands_fail_closed_on_existing_container_and_ports (test_run_memo_metadata_planning.MemoMetadataPlanningTest.test_commands_fail_closed_on_existing_container_and_ports) ... ok
+test_exclusive_lane_is_nonblocking_and_released (test_run_memo_metadata_planning.MemoMetadataPlanningTest.test_exclusive_lane_is_nonblocking_and_released) ... ok
+test_inventory_contains_full_hashes_and_exact_shard_directory_check (test_run_memo_metadata_planning.MemoMetadataPlanningTest.test_inventory_contains_full_hashes_and_exact_shard_directory_check) ... ok
+test_lane_is_p2_only_and_closed_to_w1357 (test_run_memo_metadata_planning.MemoMetadataPlanningTest.test_lane_is_p2_only_and_closed_to_w1357) ... ok
+test_lifecycle_preserves_endpoints_and_explicit_resources (test_run_memo_metadata_planning.MemoMetadataPlanningTest.test_lifecycle_preserves_endpoints_and_explicit_resources) ... ok
+test_metadata_receipt_is_exactly_one_and_uses_collections_not_rpc_count (test_run_memo_metadata_planning.MemoMetadataPlanningTest.test_metadata_receipt_is_exactly_one_and_uses_collections_not_rpc_count) ... ok
+test_success_requires_compile_optimal_and_worker_identity (test_run_memo_metadata_planning.MemoMetadataPlanningTest.test_success_requires_compile_optimal_and_worker_identity) ... ok
+test_verified_per_host_image_ids_are_bound_without_arbitrary_tag (test_run_memo_metadata_planning.MemoMetadataPlanningTest.test_verified_per_host_image_ids_are_bound_without_arbitrary_tag) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 1.546s
+
+OK
+
+WALL_SECONDS=1.66
+MAX_RSS_KB=33060
+EXIT=0

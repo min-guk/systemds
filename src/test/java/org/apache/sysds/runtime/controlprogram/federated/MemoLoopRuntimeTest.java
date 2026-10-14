@@ -39,7 +39,11 @@ import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysds.runtime.instructions.cp.BooleanObject;
+import org.apache.sysds.runtime.instructions.cp.Data;
+import org.apache.sysds.runtime.instructions.cp.DoubleObject;
 import org.apache.sysds.runtime.instructions.cp.IntObject;
+import org.apache.sysds.runtime.instructions.cp.StringObject;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 import org.apache.sysds.runtime.meta.MetaDataFormat;
@@ -138,6 +142,8 @@ public class MemoLoopRuntimeTest {
 		MemoLoopRuntime.Contract scalar = new MemoLoopRuntime.Contract("i", DataType.SCALAR,
 			ValueType.INT64, MemoPartition.LOCAL, -1, -1, Privacy.PUBLIC,
 			List.of(new Recipe(MemoPartition.LOCAL, Movement.DIRECT, null)), null);
+		assertEquals(ValueType.INT64, scalar.entryValueType());
+		assertEquals(scalar.entryValueType(), scalar.valueType());
 		StatementBlock selected = new StatementBlock();
 		StatementBlock unselected = new StatementBlock();
 		MemoLoopRuntime.register(selected, List.of(scalar));
@@ -153,6 +159,67 @@ public class MemoLoopRuntimeTest {
 			scope.complete();
 		}
 		assertFalse(ec.getVariable("i") == null);
+	}
+
+	@Test
+	public void numericScalarEntryAndRepeatTypesAreValidatedByPhase() {
+		MemoLoopRuntime.Contract scalar = new MemoLoopRuntime.Contract("step_sz", DataType.SCALAR,
+			ValueType.INT64, ValueType.FP64, MemoPartition.LOCAL, -1, -1, -1, -1, true, true,
+			List.of(new Recipe(MemoPartition.LOCAL, Movement.DIRECT, null)), null);
+		StatementBlock loop = new StatementBlock();
+		MemoLoopRuntime.register(loop, List.of(scalar));
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		ec.setVariable("step_sz", new IntObject(0));
+		try(MemoLoopRuntime.Scope scope = MemoLoopRuntime.enter(loop, ec, 0)) {
+			ec.setVariable("step_sz", new DoubleObject(0.5));
+			scope.iterationCompleted(true);
+			scope.iterationCompleted(false);
+			scope.complete();
+		}
+		ec.setVariable("step_sz", new IntObject(0));
+		try(MemoLoopRuntime.Scope scope = MemoLoopRuntime.enter(loop, ec, 0)) {
+			scope.complete();
+		}
+		ec.setVariable("step_sz", new IntObject(0));
+		try(MemoLoopRuntime.Scope scope = MemoLoopRuntime.enter(loop, ec, 0)) {
+			ec.setVariable("step_sz", new DoubleObject(0.5));
+			scope.iterationCompleted(false);
+			scope.complete();
+		}
+		assertEquals(ValueType.INT64, scalar.entryValueType());
+		assertEquals(ValueType.FP64, scalar.valueType());
+	}
+
+	@Test
+	public void numericScalarTransitionRejectsWrongEntryAndWrongRepeatTypes() {
+		MemoLoopRuntime.Contract scalar = new MemoLoopRuntime.Contract("step_sz", DataType.SCALAR,
+			ValueType.INT64, ValueType.FP64, MemoPartition.LOCAL, -1, -1, -1, -1, true, true,
+			List.of(new Recipe(MemoPartition.LOCAL, Movement.DIRECT, null)), null);
+		StatementBlock loop = new StatementBlock();
+		MemoLoopRuntime.register(loop, List.of(scalar));
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		ec.setVariable("step_sz", new DoubleObject(0));
+		assertThrows(DMLRuntimeException.class, () -> MemoLoopRuntime.enter(loop, ec, 0));
+
+		ec.setVariable("step_sz", new IntObject(0));
+		try(MemoLoopRuntime.Scope scope = MemoLoopRuntime.enter(loop, ec, 0)) {
+			for(Data wrong : List.of(new IntObject(1), new BooleanObject(true), new StringObject("x"),
+				matrixObject("X", matrix(1, 1)))) {
+				ec.setVariable("step_sz", wrong);
+				assertThrows(DMLRuntimeException.class, () -> scope.iterationCompleted(true));
+			}
+		}
+	}
+
+	@Test
+	public void contractRejectsEveryOtherEntryRepeatTypeTransition() {
+		List<Recipe> direct = List.of(new Recipe(MemoPartition.LOCAL, Movement.DIRECT, null));
+		assertThrows(IllegalArgumentException.class, () -> new MemoLoopRuntime.Contract("x", DataType.SCALAR,
+			ValueType.FP64, ValueType.INT64, MemoPartition.LOCAL, -1, -1, -1, -1, true, true, direct, null));
+		assertThrows(IllegalArgumentException.class, () -> new MemoLoopRuntime.Contract("x", DataType.SCALAR,
+			ValueType.INT32, ValueType.FP64, MemoPartition.LOCAL, -1, -1, -1, -1, true, true, direct, null));
+		assertThrows(IllegalArgumentException.class, () -> new MemoLoopRuntime.Contract("X", DataType.MATRIX,
+			ValueType.INT64, ValueType.FP64, MemoPartition.LOCAL, 1, 1, 1, 1, true, true, direct, null));
 	}
 
 	@Test

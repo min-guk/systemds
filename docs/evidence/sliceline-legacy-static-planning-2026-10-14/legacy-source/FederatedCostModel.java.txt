@@ -1,0 +1,59 @@
+BASE COMMIT fe000959c48ffa1172399e49124d082fe42d0c6d
+SOURCE src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel.java
+NOTE: measured JAR also included uncommitted changes.
+
+LINES 152-177
+152: 	// Additional per-byte overhead term for federated transfers (disabled by default).
+153: 	private static final double DEFAULT_MBS_NETWORK_SERDES_BANDWIDTH = 0.0;
+154: 	// FederatedResponseEncoder preallocates one Netty response buffer. Netty 4.1.96's
+155: 	// default pooled allocator chunk is 4 MiB; responses above this boundary use the
+156: 	// separately calibrated large W2C path instead of the small-response critical path.
+157: 	private static final double DEFAULT_REUSABLE_MATERIALIZATION_FAST_RESPONSE_MAX_MB = 4.0;
+158: 	// Network latency between federated sites (1 ms).
+159: 	private static final double DEFAULT_MBS_NETWORK_LATENCY = 0.001;
+160: 	private static final double DEFAULT_LOCAL_TO_FED_CTRL_OVERHEAD_MS = 0.0;
+161: 	// Clamp suspiciously large upload-size estimates when output dimensions are unknown.
+162: 	// This avoids over-penalizing CP->FOUT candidates for shape-dependent operators
+163: 	// (e.g., rightIndex/matmult chains before recompile resolves dimensions).
+164: 	private static final double DEFAULT_UPLOAD_ESTIMATE_CLAMP_RATIO = 4.0;
+165: 	private static final double DEFAULT_UNKNOWN_DIM_MEM_SENTINEL_BYTES = 8d * 1024 * 1024 * 1024;
+166: 	private static final double UNKNOWN_DIM_MEM_SENTINEL_EPSILON = 0.01;
+167: 	private static final int UNKNOWN_DIM_DESCENT_MAX_DEPTH = 6;
+168: 	// Fallback transfer payload used when output dimensions remain unknown and no
+169: 	// reliable descendant size estimate is available. This value directly impacts
+170: 	// DP/Exact decisions that trade off local materialization vs. federated plans
+171: 	// in early planning phases (before recompile resolves dimensions).
+172: 	//
+173: 	// In practice (notably in sliceline), under-estimation here can cause DP to
+174: 	// over-prefer CP/LOUT materialization and later pay large local->FED forwarding
+175: 	// costs. Use a conservative default; it can still be overridden via
+176: 	// SYSDS_FED_COST_UNKNOWN_DIM_TRANSFER_MB.
+177: 	private static final double DEFAULT_UNKNOWN_DIM_TRANSFER_FALLBACK_MB = 256.0;
+
+LINES 1895-1920
+1895: 	private static double clampUnknownDimOutputMemEstimate(Hop hop, double outputMemEstimate, double inputMemEstimate) {
+1896: 		if (hop == null || outputMemEstimate <= 0.0 || !hasUnknownOutputDims(hop))
+1897: 			return Math.max(0.0, outputMemEstimate);
+1898: 
+1899: 		double clampedOutputMemEstimate = Math.max(0.0, outputMemEstimate);
+1900: 		double indexingBound = getIndexingUploadBound(hop);
+1901: 		if (indexingBound > 0.0)
+1902: 			clampedOutputMemEstimate = Math.min(clampedOutputMemEstimate, indexingBound);
+1903: 
+1904: 		if (isLikelyDefaultUnknownMemEstimate(clampedOutputMemEstimate)) {
+1905: 			Set<Long> visited = new HashSet<>();
+1906: 			visited.add(hop.getHopID());
+1907: 			double descendantKnownMem = getKnownDescendantOutputMemEstimate(hop, UNKNOWN_DIM_DESCENT_MAX_DEPTH, visited);
+1908: 			if (descendantKnownMem > 0.0)
+1909: 				clampedOutputMemEstimate = Math.min(clampedOutputMemEstimate, descendantKnownMem);
+1910: 		}
+1911: 
+1912: 		if (UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES > 0.0)
+1913: 			clampedOutputMemEstimate = Math.min(clampedOutputMemEstimate, UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES);
+1914: 
+1915: 		double clampRatio = Math.max(1.0, UPLOAD_ESTIMATE_CLAMP_RATIO);
+1916: 		if (inputMemEstimate > 0.0)
+1917: 			clampedOutputMemEstimate = Math.min(clampedOutputMemEstimate, inputMemEstimate * clampRatio);
+1918: 
+1919: 		return clampedOutputMemEstimate;
+1920: 	}

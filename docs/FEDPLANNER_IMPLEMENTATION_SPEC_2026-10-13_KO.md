@@ -1433,6 +1433,10 @@ B1/B4는 최소 정적 catalog 조사로 먼저 구현 착수 범위를 닫을 �
 [rd-physical]: ../src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedExact/ExactPhysicalModel.java#L1942
 
 
+## P2 후속 확장 참조 (2026-10-14, 구현·검증 진행 중)
+
+ADR01/02의 canonical source 제한을 실제 P2에 적용할 때의 지원 범위 충돌과, 유일 map 전제를 유지하는 session별 불변 axis-length profile 확장은 [P2 source geometry 계약](FEDPLANNER_P2_SOURCE_GEOMETRY_EXTENSION_2026-10-14_KO.md)에 명시한다. 기존 floor allocator의 기본값을 전역 ceil로 변경하거나 ingress 검사를 삭제하지 않는다. 해당 문서의 완료 gate를 통과하기 전까지 새 범위의 지원 완료를 주장하지 않는다.
+
 ## ADR22 — 0/1/many loop 실행과 비용 profile (DECIDED, 구현 검증 중)
 
 사용자 명시 승인으로 T>1 지원 제한을 해제한다. Loop invocation별 실행 cardinality는 runtime 환경의 사실이며 optimizer가 자유롭게 고르는 변수가 아니다. 같은 loop의 모든 carried value는 하나의 correlated cardinality decision을 공유한다. Facts는 정적으로 확인한 cardinality를 좁히고, 불명확하면 ZERO/ONE/MANY 모두의 합법성을 검사한다.

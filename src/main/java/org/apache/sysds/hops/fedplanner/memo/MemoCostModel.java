@@ -15,6 +15,7 @@ import java.util.Set;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp3;
+import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.BinaryOp;
@@ -35,6 +36,7 @@ import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.codegen.SpoofFusedOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
+import org.apache.sysds.runtime.transform.TransformEncodeMetadataPrivacy;
 import org.apache.wink.json4j.JSONObject;
 
 /**
@@ -81,6 +83,11 @@ public final class MemoCostModel {
 
 	/** Cost of executing one selected native rule at the explicit occurrence frequency. */
 	public static double nativeCost(Hop hop, RuleMemo.Rule rule, int workers, double frequency) {
+		return nativeCost(hop,rule,workers,frequency,-1,null);
+	}
+
+	static double nativeCost(Hop hop,RuleMemo.Rule rule,int workers,double frequency,int owner,
+		MemoTransformFacts.Proof transformProof) {
 		Objects.requireNonNull(hop, "hop");
 		Objects.requireNonNull(rule, "rule");
 		validateWorkersAndFrequency(workers, frequency);
@@ -91,7 +98,7 @@ public final class MemoCostModel {
 			return 0.0;
 		if(hop instanceof FunctionOp function
 			&& function.getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN)
-			return multiReturnBuiltinCost(function,rule,workers,frequency);
+			return multiReturnBuiltinCost(function,rule,workers,frequency,owner,transformProof);
 		if(!supportedKernel(hop, rule.exec()))
 			throw failure(DiagnosticCode.UNSUPPORTED_OPERATOR_FAMILY,
 				hop.getClass().getName() + " / " + rule.exec());
@@ -137,7 +144,7 @@ public final class MemoCostModel {
 	}
 
 	private static double multiReturnBuiltinCost(FunctionOp hop,RuleMemo.Rule rule,
-		int workers,double frequency) {
+		int workers,double frequency,int owner,MemoTransformFacts.Proof transformProof) {
 		if(hop.getOutputs()==null || hop.getOutputs().isEmpty()
 			|| rule.outputs().size()!=hop.getOutputs().size())
 			throw failure(DiagnosticCode.RULE_ARITY_MISMATCH,
@@ -147,7 +154,8 @@ public final class MemoCostModel {
 		boolean transform=hop.getFunctionName().equalsIgnoreCase(
 			org.apache.sysds.common.Opcodes.TRANSFORMENCODE.toString());
 		if(transform) {
-			if(!shapePreservingTransformEncode(hop))
+			if(transformProof!=null ? !matchesTransformProof(hop,owner,transformProof)
+				: !shapePreservingTransformEncode(hop))
 				throw failure(DiagnosticCode.UNKNOWN_SIZE,
 					"data-dependent transformencode output for "+describe(hop));
 		}
@@ -176,6 +184,21 @@ public final class MemoCostModel {
 		}
 		return scale(requireFiniteCost(unit,"FED multi-return native cost"),frequency,
 			"FED multi-return frequency");
+	}
+
+	private static boolean matchesTransformProof(FunctionOp hop,int owner,MemoTransformFacts.Proof proof) {
+		if(owner<0 || proof.functionOwner()!=owner || hop.getInput().size()!=2
+			|| hop.getOutputs()==null || hop.getOutputs().size()!=proof.outputArity()
+			|| !(hop.getInput(1) instanceof LiteralOp literal)
+			|| !proof.rawSpec().equals(literal.getStringValue())
+			|| !TransformEncodeMetadataPrivacy.allowsPublicRecodeMetadata(proof.rawSpec())) return false;
+		Hop input=hop.getInput(0),primary=hop.getOutputs().get(0),metadata=hop.getOutputs().get(1);
+		return input.getDataType()==proof.inputDataType() && input.getDim1()==proof.inputRows()
+			&& input.getDim2()==proof.inputColumns() && primary!=null && metadata!=null
+			&& primary.getDataType()==proof.primaryDataType()
+			&& metadata.getDataType()==proof.metadataDataType()
+			&& primary.getDim1()==proof.outputRows() && primary.getDim2()==proof.outputColumns()
+			&& metadata.getDim1()==proof.metadataRows() && metadata.getDim2()==proof.metadataColumns();
 	}
 
 	private static boolean shapePreservingTransformEncode(FunctionOp hop) {
@@ -281,6 +304,31 @@ public final class MemoCostModel {
 	}
 
 	private static FType executionType(Hop hop, RuleMemo.Rule rule, int workers) {
+		if(hop instanceof TernaryOp table && table.getOp()==OpOp3.CTABLE) {
+			// Ordinary CtableFEDInstruction uses input0's map when federated, else
+			// input1's. The secondary category input is collected and sliced against
+			// that map, even when it has a different persistent axis. The sequence
+			// rewrite erases input0 and executes on input1 (the values) instead.
+			int primary=table.isSequenceRewriteApplicable(true)
+				|| !rule.inputs().get(0).federated() ? 1 : 0;
+			MemoPartition anchor=rule.inputs().get(primary).normalize(workers);
+			if(anchor.federated()) return anchor.runtimeType(workers);
+			throw failure(DiagnosticCode.AMBIGUOUS_FED_EXECUTION_LAYOUT,
+				"FED CTABLE rule does not prove its category execution map for "
+					+describe(hop)+": "+rule.inputs()+" variant="+rule.variant());
+		}
+		if(hop instanceof QuaternaryOp quaternary && quaternary.getOp()==OpOp4.WDIVMM) {
+			MemoPartition weights=rule.inputs().get(0).normalize(workers);
+			// QuaternaryWDivMMFEDInstruction executes exclusively on X/input0's
+			// FederationMap. U, V, and an optional matrix fourth input are reused or
+			// broadcast against that map; their persistent axes never choose execution.
+			if(weights==MemoPartition.ROW || weights==MemoPartition.COL
+				|| weights==MemoPartition.REP && workers==1)
+				return weights.runtimeType(workers);
+			throw failure(DiagnosticCode.AMBIGUOUS_FED_EXECUTION_LAYOUT,
+				"FED WDIVMM rule does not prove a ROW/COL/FULL input0 execution layout for "
+					+describe(hop)+": "+rule.inputs()+" variant="+rule.variant());
+		}
 		if(hop instanceof TernaryOp ternary && (ternary.getOp() == OpOp3.PLUS_MULT
 			|| ternary.getOp() == OpOp3.MINUS_MULT || ternary.getOp() == OpOp3.IFELSE))
 			for(MemoPartition input : rule.inputs())

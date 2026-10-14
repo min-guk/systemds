@@ -1,0 +1,3 @@
+MEMO_MATRIX cell=ml|logreg|lan|w3|Memo rendererCell=ml|logreg|lan|w3|DP-global status=passed resume=no memoSeconds=2.045078336 compileSeconds=3.340381
+MEMO_MATRIX cell=ml|glm|lan|w3|Memo rendererCell=ml|glm|lan|w3|DP-global status=passed resume=no memoSeconds=6.958085988 compileSeconds=8.681548
+MEMO_MATRIX cell=ml|gnmf|lan|w3|Memo rendererCell=ml|gnmf|lan|w3|DP-global status=passed resume=no memoSeconds=0.792698919 compileSeconds=1.624928

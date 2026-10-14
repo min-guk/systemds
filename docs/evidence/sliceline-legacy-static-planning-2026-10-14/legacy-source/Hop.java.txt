@@ -1,0 +1,81 @@
+BASE COMMIT fe000959c48ffa1172399e49124d082fe42d0c6d
+SOURCE src/main/java/org/apache/sysds/hops/Hop.java
+NOTE: measured JAR also included uncommitted changes.
+
+LINES 930-1005
+930: 	 * 
+931: 	 * @param memo memory table
+932: 	 */
+933: 	public void computeMemEstimate(MemoTable memo)
+934: 	{
+935: 		DataCharacteristics wdc = null; 
+936: 		
+937: 		////////
+938: 		//Step 1) Compute hop output memory estimate (incl size inference) 
+939: 		
+940: 		switch( getDataType() )
+941: 		{
+942: 			case SCALAR: {
+943: 				//memory estimate always known
+944: 				if( getValueType()== ValueType.FP64) //default case
+945: 					_outputMemEstimate = OptimizerUtils.DOUBLE_SIZE;
+946: 				else //literalops, dataops
+947: 					_outputMemEstimate = computeOutputMemEstimate( getDim1(), getDim2(), getNnz() );
+948: 				break;
+949: 			}
+950: 			case FRAME:
+951: 			case MATRIX:
+952: 			case TENSOR:
+953: 			case LIST:
+954: 			{
+955: 				if(isCompressedOutput() && _compressedSize >= 0){
+956: 					_outputMemEstimate =  _compressedSize;
+957: 				}
+958: 				//1a) mem estimate based on exactly known dimensions and sparsity
+959: 				else if( dimsKnown(true) ) { 
+960: 					//nnz always exactly known (see dimsKnown(true))
+961: 					_outputMemEstimate = computeOutputMemEstimate(getDim1(), getDim2(), getNnz());
+962: 				}
+963: 				//1b) infer output statistics and mem estimate based on worst-case statistics
+964: 				else if( memo.hasInputStatistics(this) )
+965: 				{
+966: 					//infer the output stats
+967: 					wdc = inferOutputCharacteristics(memo);
+968: 					
+969: 					if( wdc != null && wdc.dimsKnown() ) {
+970: 						//use worst case characteristics to estimate mem
+971: 						long lnnz = wdc.nnzKnown() ? wdc.getNonZeros() : wdc.getLength();
+972: 						_outputMemEstimate = computeOutputMemEstimate(wdc.getRows(), wdc.getCols(), lnnz );
+973: 						
+974: 						//propagate worst-case estimate
+975: 						memo.memoizeStatistics(getHopID(), wdc);
+976: 					}
+977: 					else if( dimsKnown() ) {
+978: 						//nnz unknown, estimate mem as dense
+979: 						long lnnz = getLength();
+980: 						_outputMemEstimate = computeOutputMemEstimate(getDim1(), getDim2(), lnnz );
+981: 					}
+982: 					else {
+983: 						//unknown output size
+984: 						_outputMemEstimate = OptimizerUtils.DEFAULT_SIZE;
+985: 					}
+986: 				}
+987: 				//1c) mem estimate based on exactly known dimensions and unknown sparsity
+988: 				//(required e.g., for datagenops w/o any input statistics)
+989: 				else if( dimsKnown() ) {
+990: 					//nnz unknown, estimate mem as dense
+991: 					long lnnz = getLength();
+992: 					_outputMemEstimate = computeOutputMemEstimate(getDim1(), getDim2(), lnnz);
+993: 				}
+994: 				//1d) fallback: unknown output size
+995: 				else {
+996: 					_outputMemEstimate = OptimizerUtils.DEFAULT_SIZE;
+997: 				}
+998: 				
+999: 				break;
+1000: 			}
+1001: 			default: {
+1002: 				//memory estimate always unknown
+1003: 				_outputMemEstimate = OptimizerUtils.DEFAULT_SIZE;
+1004: 				break;
+1005: 			}

@@ -111,11 +111,13 @@ public final class MemoRuleBuilder {
 	}
 	private MemoRuleBuilder() { }
 	public static Result build(MemoProgramFacts facts,MemoSources sources,MemoNativeRules oracle) {
-		return build(facts,sources,oracle,MemoShapes.analyze(facts,sources));
+		MemoTransformFacts transformFacts=MemoTransformFacts.prepareDefault(facts,sources);
+		return build(facts,sources,oracle,MemoShapes.analyze(facts,sources,transformFacts));
 	}
 	public static Result build(MemoProgramFacts facts,MemoSources sources,MemoNativeRules oracle,
 		MemoShapes shapes) {
 		shapes.requireRequest(facts,sources);
+		if(sources.pool()!=null) oracle.bindGeometry(sources.pool());
 		List<List<RuleMemo.Rule>> rules = new ArrayList<>();
 		List<List<InputRole>> roles = new ArrayList<>();
 		List<String> diagnostics = new ArrayList<>();
@@ -126,6 +128,8 @@ public final class MemoRuleBuilder {
 		for(MemoShapes.Diagnostic diagnostic : shapes.diagnostics())
 			diagnostics.add("shape owner=" + diagnostic.owner() + " binding=" + diagnostic.binding()
 				+ " " + diagnostic.code() + " " + diagnostic.message());
+		for(String diagnostic:shapes.transformDiagnostics())
+			diagnostics.add("transform-metadata "+diagnostic);
 		boolean[] complete = new boolean[facts.compiledOwnerCount()]; Arrays.fill(complete,true);
 		MemoBindingResolver bindingResolver=new MemoBindingResolver(facts);
 		MemoReachableContexts reachableContexts=new MemoReachableContexts(facts,bindingResolver);

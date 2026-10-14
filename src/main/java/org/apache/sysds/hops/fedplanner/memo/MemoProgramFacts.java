@@ -55,6 +55,7 @@ import org.apache.sysds.parser.ParForStatementBlock;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.parser.WhileStatement;
 import org.apache.sysds.parser.WhileStatementBlock;
+import org.apache.sysds.runtime.util.UtilFunctions;
 
 /**
  * Immutable, placement-independent program facts consumed by the memo planner.
@@ -660,6 +661,7 @@ public final class MemoProgramFacts {
 	}
 
 	private static final class Builder {
+		private static final long MAX_EXACT_DOUBLE_INTEGER=1L<<53;
 		private final DMLProgram program;
 		private final List<Region> regions = new ArrayList<>();
 		private final List<Occurrence> occurrences = new ArrayList<>();
@@ -685,6 +687,7 @@ public final class MemoProgramFacts {
 		private final Set<Integer> registeredControlRoots = new LinkedHashSet<>();
 		private final Map<Long,StatementBlock> statementBlocks = new LinkedHashMap<>();
 		private final Map<Integer,Double> staticLoopIterations = new LinkedHashMap<>();
+		private final Map<Integer,ParForProof> parForProofs = new LinkedHashMap<>();
 		private final Map<Integer,Integer> callRegions = new LinkedHashMap<>();
 		private final Set<String> activeFunctions = new LinkedHashSet<>();
 		private int nextLoopId;
@@ -780,11 +783,6 @@ public final class MemoProgramFacts {
 		private Map<String,Integer> analyzeBlock(StatementBlock block, int parentRegion, String context,
 			Map<String,Integer> input,FlowState flow) {
 			statementBlocks.put(block.getSBID(), block);
-			if(block instanceof ParForStatementBlock) {
-				diagnostic(Status.UNSUPPORTED,"UNSUPPORTED_PARFOR",
-					"Memo planning supports sequential loops only",parentRegion);
-				return new LinkedHashMap<>(input);
-			}
 			if(block instanceof IfStatementBlock)
 				return analyzeIf((IfStatementBlock) block, parentRegion, context, input,flow);
 			if(block instanceof WhileStatementBlock || block instanceof ForStatementBlock)
@@ -886,14 +884,15 @@ public final class MemoProgramFacts {
 			Map<String,Integer> headByName = new LinkedHashMap<>();
 			String forIteratorName = null;
 			int forIteratorBinding = -1;
+			int fromOccurrence = -1, incrementOccurrence = -1;
 			if(forBlock != null) {
 				String loopVariable = forBlock.getIterPredicate().getIterVar().getName();
 				forIteratorName = loopVariable;
 				Hop from = forBlock.getFromHops();
-				int fromOccurrence = visitRoot(from, block, region, context + "/loop-" + loopId + "/from",
+				fromOccurrence = visitRoot(from, block, region, context + "/loop-" + loopId + "/from",
 					input, true,flow);
 				recordControlRoot(fromOccurrence, from, region);
-				int incrementOccurrence = visitRoot(forBlock.getIncrementHops(), block, region,
+				incrementOccurrence = visitRoot(forBlock.getIncrementHops(), block, region,
 					context + "/loop-" + loopId + "/increment",
 					input, true,flow);
 				recordControlRoot(incrementOccurrence, forBlock.getIncrementHops(), region);
@@ -951,6 +950,9 @@ public final class MemoProgramFacts {
 			}
 			loops.add(new LoopRecord(loopId, block.getSBID(), region, guardId,loopActivation,
 				bodyFlow.activation,carried,loopExecutionCases(staticLoopIterations.getOrDefault(loopId,-1D))));
+			if(block instanceof ParForStatementBlock)
+				parForProofs.put(loopId,new ParForProof(loopId,region,fromOccurrence,predicateOccurrence,
+					incrementOccurrence));
 			deriveGuardPhases(loopId,region,forBlock,carried);
 			return output;
 		}
@@ -1100,7 +1102,9 @@ public final class MemoProgramFacts {
 			Hop hop=occurrences.get(occurrence).hop();
 			if(hop instanceof LiteralOp literal) return switch(literal.getValueType()) {
 				case BOOLEAN -> literal.getBooleanValue() ? 1D : 0D;
-				case INT32,INT64,FP32,FP64 -> literal.getDoubleValue();
+				case INT32 -> (double)literal.getLongValue();
+				case INT64 -> exactInteger(literal.getLongValue());
+				case FP32,FP64 -> literal.getDoubleValue();
 				default -> null;
 			};
 			if(hop instanceof DataOp data && data.getOp()==OpOpData.TRANSIENTREAD) {
@@ -1170,18 +1174,103 @@ public final class MemoProgramFacts {
 		}
 
 		private Double numericBinding(int bindingId,Set<Integer> seen) {
+			return numericBinding(bindingId,Map.of(),seen);
+		}
+
+		private Double numericBinding(int bindingId,Map<Integer,Double> formalValues,Set<Integer> seen) {
 			if(bindingId < 0 || !seen.add(bindingId)) return null;
 			BindingNode node = bindingDrafts.get(bindingId);
 			if(node == null) return null;
-			if(!node.children().isEmpty()) {
-				Double value = numericBinding(node.children().get(0),seen);
-				if(node.kind() != BindingKind.SELECT || node.children().size() == 1) return value;
-				Double other = numericBinding(node.children().get(1),seen);
-				return value != null && value.equals(other) ? value : null;
+			try {
+				if(node.kind()==BindingKind.FORMAL) return formalValues.get(bindingId);
+				if(!node.children().isEmpty()) {
+					Double value=null;
+					for(int child : node.children()) {
+						Double current=numericBinding(child,formalValues,new LinkedHashSet<>(seen));
+						if(current==null || value!=null && !value.equals(current)) return null;
+						value=current;
+					}
+					return value;
+				}
+				return numericOccurrence(node.referenceId(),formalValues,seen);
 			}
-			if(node.referenceId() < 0 || node.referenceId() >= occurrences.size()) return null;
-			Hop hop = unwrapScalar(occurrences.get(node.referenceId()).hop());
-			return hop instanceof LiteralOp ? ((LiteralOp) hop).getDoubleValue() : null;
+			finally { seen.remove(bindingId); }
+		}
+
+		private Double numericOccurrence(int occurrence,Map<Integer,Double> formalValues,Set<Integer> seen) {
+			if(occurrence<0 || occurrence>=occurrences.size()) return null;
+			Hop hop=occurrences.get(occurrence).hop();
+			if(hop instanceof LiteralOp literal) return switch(literal.getValueType()) {
+				case BOOLEAN -> literal.getBooleanValue() ? 1D : 0D;
+				case INT32 -> (double)literal.getLongValue();
+				case INT64 -> exactInteger(literal.getLongValue());
+				case FP32,FP64 -> literal.getDoubleValue();
+				default -> null;
+			};
+			if(hop instanceof DataOp data && data.getOp()==OpOpData.TRANSIENTREAD) {
+				Integer binding=occurrenceValues.get(occurrence);
+				return binding==null ? null : numericBinding(binding,formalValues,seen);
+			}
+			if(hop instanceof DataOp data && hop.getInput().size()==1
+				&& (data.getOp()==OpOpData.TRANSIENTWRITE || data.getOp()==OpOpData.FUNCTIONOUTPUT)) {
+				Integer input=inputBindingValues.get(edgeKey(occurrence,0));
+				return input==null ? null : numericBinding(input,formalValues,seen);
+			}
+			if(hop.getInput().size()==1 && hop instanceof UnaryOp unary) {
+				Integer input=inputBindingValues.get(edgeKey(occurrence,0));
+				Double value=input==null ? null : numericBinding(input,formalValues,seen);
+				if(value==null) return null;
+				return switch(unary.getOp()) {
+					case NOT -> value==0D ? 1D : 0D;
+					case CAST_AS_BOOLEAN -> value!=0D ? 1D : 0D;
+					case CAST_AS_DOUBLE -> value;
+					case CAST_AS_INT -> exactInteger(UtilFunctions.toLong(value));
+					default -> null;
+				};
+			}
+			if(!(hop instanceof BinaryOp binary) || hop.getInput().size()!=2) return null;
+			Integer leftBinding=inputBindingValues.get(edgeKey(occurrence,0));
+			Integer rightBinding=inputBindingValues.get(edgeKey(occurrence,1));
+			Double left=leftBinding==null ? null
+				: numericBinding(leftBinding,formalValues,new LinkedHashSet<>(seen));
+			Double right=rightBinding==null ? null
+				: numericBinding(rightBinding,formalValues,new LinkedHashSet<>(seen));
+			if(left==null || right==null) return null;
+			return switch(binary.getOp()) {
+				case PLUS -> binary.getValueType()==ValueType.INT64 ? exactIntegerArithmetic(left,right,binary.getOp())
+					: left+right;
+				case MINUS -> binary.getValueType()==ValueType.INT64 ? exactIntegerArithmetic(left,right,binary.getOp())
+					: left-right;
+				case MULT -> binary.getValueType()==ValueType.INT64 ? exactIntegerArithmetic(left,right,binary.getOp())
+					: left*right;
+				case DIV -> right==0D ? null : left/right;
+				default -> null;
+			};
+		}
+
+		private static Double exactIntegerArithmetic(double left,double right,OpOp2 operator) {
+			Long leftInteger=exactLong(left),rightInteger=exactLong(right);
+			if(leftInteger==null || rightInteger==null) return null;
+			try {
+				long result=switch(operator) {
+					case PLUS -> Math.addExact(leftInteger,rightInteger);
+					case MINUS -> Math.subtractExact(leftInteger,rightInteger);
+					case MULT -> Math.multiplyExact(leftInteger,rightInteger);
+					default -> throw new IllegalArgumentException("Not an integer arithmetic operator: "+operator);
+				};
+				return exactInteger(result);
+			}
+			catch(ArithmeticException overflow) { return null; }
+		}
+
+		private static Double exactInteger(long value) {
+			return value < -MAX_EXACT_DOUBLE_INTEGER || value > MAX_EXACT_DOUBLE_INTEGER ? null : (double)value;
+		}
+
+		private static Long exactLong(double value) {
+			if(!Double.isFinite(value) || value!=Math.rint(value)
+				|| value < -MAX_EXACT_DOUBLE_INTEGER || value > MAX_EXACT_DOUBLE_INTEGER) return null;
+			return (long)value;
 		}
 
 		private Double affineDelta(int bindingId,String variable,Set<Integer> seen) {
@@ -1200,7 +1289,9 @@ public final class MemoProgramFacts {
 			Hop left=binary.getInput(0), right=binary.getInput(1);
 			if(isTransientRead(left) && variable.equals(left.getName()) && right instanceof LiteralOp) {
 				double literal=((LiteralOp) right).getDoubleValue();
-				return binary.getOp()==OpOp2.PLUS ? literal : binary.getOp()==OpOp2.MINUS ? -literal : null;
+				if(binary.getOp()==OpOp2.PLUS) return literal;
+				if(binary.getOp()==OpOp2.MINUS) return -literal;
+				return null;
 			}
 			if(isTransientRead(right) && variable.equals(right.getName()) && left instanceof LiteralOp
 				&& binary.getOp()==OpOp2.PLUS) return ((LiteralOp) left).getDoubleValue();
@@ -1575,6 +1666,8 @@ public final class MemoProgramFacts {
 				definitelyDefined = Set.copyOf(definitelyDefined);
 			}
 		}
+		private record ParForProof(int loopId,int regionId,int fromOccurrence,int toOccurrence,
+			int incrementOccurrence) { }
 
 		private static final class FlowState {
 			private int activation;
@@ -1642,20 +1735,77 @@ public final class MemoProgramFacts {
 		}
 
 		private void validateActiveLoopIterations() {
-			Set<Integer> reachableFunctions = new LinkedHashSet<>();
-			boolean changed;
-			do {
-				changed = false;
-				for(CallBinding call : calls) {
-					int caller = enclosingFunction(callRegions.getOrDefault(call.id(), -1));
-					if((caller < 0 || reachableFunctions.contains(caller))
-						&& reachableFunctions.add(call.functionSummaryId()))
-						changed = true;
+			if(parForProofs.isEmpty()) return;
+			Map<Integer,List<Map<Integer,Double>>> invocations = reachableFunctionInvocations();
+			for(ParForProof proof : parForProofs.values()) {
+				int function=enclosingFunction(proof.regionId());
+				List<Map<Integer,Double>> environments=function<0 ? List.of(Map.of())
+					: invocations.getOrDefault(function,List.of());
+				if(environments.isEmpty()) continue; // An unused function cannot execute its PARFOR.
+				Double staticIterations=staticLoopIterations.get(proof.loopId());
+				Double proven=staticIterations!=null && staticIterations>=0 ? staticIterations : null;
+				if(proven==null) for(Map<Integer,Double> environment : environments) {
+					Double from=numericOccurrence(proof.fromOccurrence(),environment,new LinkedHashSet<>());
+					Double to=numericOccurrence(proof.toOccurrence(),environment,new LinkedHashSet<>());
+					Double increment=proof.incrementOccurrence()<0
+						? from==null || to==null ? null
+							: UtilFunctions.toLong(from)<=UtilFunctions.toLong(to) ? 1D : -1D
+						: numericOccurrence(proof.incrementOccurrence(),environment,new LinkedHashSet<>());
+					Double iterations=exactIterations(from,to,increment);
+					if(iterations==null || iterations>1 || proven!=null && !proven.equals(iterations)) {
+						diagnostic(Status.UNSUPPORTED,"UNSUPPORTED_PARFOR",
+							"Memo planning requires the same exact zero/one PARFOR cardinality in every reachable call frame",
+							proof.regionId());
+						proven=null;
+						break;
+					}
+					proven=iterations;
+				}
+				if(proven!=null && proven>1) {
+					diagnostic(Status.UNSUPPORTED,"UNSUPPORTED_PARFOR",
+						"Memo planning supports PARFOR only when exactly zero or one iteration is proven",
+						proof.regionId());
+					proven=null;
+				}
+				if(proven!=null) {
+					staticLoopIterations.put(proof.loopId(),proven);
+					LoopRecord loop=loops.get(proof.loopId());
+					loops.set(proof.loopId(),new LoopRecord(loop.id(),loop.statementBlockId(),loop.regionId(),
+						loop.guardId(),loop.activationBindingId(),loop.backedgeActivationBindingId(),
+						loop.carriedValues(),loopExecutionCases(proven)));
 				}
 			}
-			while(changed);
-			// Reachability is still computed for recursion/function diagnostics. Literal
-			// zero/one-iteration loops are exact supported execution cases, not failures.
+		}
+
+		private Map<Integer,List<Map<Integer,Double>>> reachableFunctionInvocations() {
+			Map<Integer,List<Map<Integer,Double>>> result=new LinkedHashMap<>();
+			for(CallBinding call : calls)
+				if(enclosingFunction(callRegions.getOrDefault(call.id(),-1))<0)
+					collectInvocation(call,Map.of(),result,new LinkedHashSet<>());
+			return result;
+		}
+
+		private void collectInvocation(CallBinding call,Map<Integer,Double> callerEnvironment,
+			Map<Integer,List<Map<Integer,Double>>> result,Set<Integer> activeFunctions) {
+			int function=call.functionSummaryId();
+			if(!activeFunctions.add(function)) return; // recursion is diagnosed independently
+			FunctionSummary summary=functionSummaries.get(function);
+			Map<Integer,Double> environment=new LinkedHashMap<>();
+			for(int position=0;position<summary.formalBindingIds().size();position++) {
+				Double value=position<call.actualBindingIds().size()
+					? numericBinding(call.actualBindingIds().get(position),callerEnvironment,new LinkedHashSet<>()) : null;
+				if(value!=null) environment.put(summary.formalBindingIds().get(position),value);
+			}
+			result.computeIfAbsent(function,ignored -> new ArrayList<>()).add(Map.copyOf(environment));
+			for(CallBinding nested : calls)
+				if(enclosingFunction(callRegions.getOrDefault(nested.id(),-1))==function)
+					collectInvocation(nested,environment,result,new LinkedHashSet<>(activeFunctions));
+		}
+
+		private static Double exactIterations(Double from,Double to,Double increment) {
+			if(from==null || to==null || increment==null || UtilFunctions.toLong(increment)==0) return null;
+			long count=UtilFunctions.getSeqLength(from,to,increment,false);
+			return count>=0 ? (double)count : null;
 		}
 
 		private int enclosingFunction(int regionId) {
@@ -1678,9 +1828,8 @@ public final class MemoProgramFacts {
 		private static double staticForIterations(ForStatementBlock block) {
 			double[] range=staticForRange(block);
 			if(range==null) return -1;
-			double from=range[0],to=range[1],increment=range[2];
-			if(increment == 0 || (increment > 0 && from > to) || (increment < 0 && from < to)) return 0;
-			return Math.floor((to - from) / increment) + 1;
+			Double iterations=exactIterations(range[0],range[1],range[2]);
+			return iterations==null ? -1 : iterations;
 		}
 
 		private static double[] staticForRange(ForStatementBlock block) {
@@ -1689,7 +1838,8 @@ public final class MemoProgramFacts {
 				&& (block.getIncrementHops() == null || block.getIncrementHops() instanceof LiteralOp)) {
 				from = ((LiteralOp) block.getFromHops()).getDoubleValue();
 				to = ((LiteralOp) block.getToHops()).getDoubleValue();
-				increment = block.getIncrementHops() == null ? 1
+				increment = block.getIncrementHops() == null
+					? (UtilFunctions.toLong(from)<=UtilFunctions.toLong(to) ? 1 : -1)
 					: ((LiteralOp) block.getIncrementHops()).getDoubleValue();
 			}
 			else if(block.getIterPredicate().getFromExpr() instanceof ConstIdentifier

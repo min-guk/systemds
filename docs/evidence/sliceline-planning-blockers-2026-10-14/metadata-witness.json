@@ -1,0 +1,370 @@
+{
+  "purpose": "information insufficiency witness, not actual data or performance evidence",
+  "formulaSource": "slicefinder_core.dml:105-120",
+  "workers": 3,
+  "N": 96,
+  "minSup": 8,
+  "sameStatisticalMetadata": {
+    "X": {
+      "rows": 96,
+      "cols": 2,
+      "nnz": 192,
+      "columns": [
+        {
+          "min": 1,
+          "max": 2,
+          "sum": 144,
+          "distinct": [
+            1,
+            2
+          ],
+          "histogram": [
+            [
+              1,
+              48
+            ],
+            [
+              2,
+              48
+            ]
+          ]
+        },
+        {
+          "min": 1,
+          "max": 2,
+          "sum": 144,
+          "distinct": [
+            1,
+            2
+          ],
+          "histogram": [
+            [
+              1,
+              48
+            ],
+            [
+              2,
+              48
+            ]
+          ]
+        }
+      ]
+    },
+    "e": {
+      "rows": 96,
+      "cols": 1,
+      "nnz": 48,
+      "columns": [
+        {
+          "min": 0,
+          "max": 1,
+          "sum": 48,
+          "distinct": [
+            0,
+            1
+          ],
+          "histogram": [
+            [
+              0,
+              48
+            ],
+            [
+              1,
+              48
+            ]
+          ]
+        }
+      ]
+    },
+    "workers": [
+      {
+        "range": [
+          0,
+          32
+        ],
+        "X": {
+          "rows": 32,
+          "cols": 2,
+          "nnz": 64,
+          "columns": [
+            {
+              "min": 1,
+              "max": 2,
+              "sum": 48,
+              "distinct": [
+                1,
+                2
+              ],
+              "histogram": [
+                [
+                  1,
+                  16
+                ],
+                [
+                  2,
+                  16
+                ]
+              ]
+            },
+            {
+              "min": 1,
+              "max": 2,
+              "sum": 48,
+              "distinct": [
+                1,
+                2
+              ],
+              "histogram": [
+                [
+                  1,
+                  16
+                ],
+                [
+                  2,
+                  16
+                ]
+              ]
+            }
+          ]
+        },
+        "e": {
+          "rows": 32,
+          "cols": 1,
+          "nnz": 16,
+          "columns": [
+            {
+              "min": 0,
+              "max": 1,
+              "sum": 16,
+              "distinct": [
+                0,
+                1
+              ],
+              "histogram": [
+                [
+                  0,
+                  16
+                ],
+                [
+                  1,
+                  16
+                ]
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "range": [
+          32,
+          64
+        ],
+        "X": {
+          "rows": 32,
+          "cols": 2,
+          "nnz": 64,
+          "columns": [
+            {
+              "min": 1,
+              "max": 2,
+              "sum": 48,
+              "distinct": [
+                1,
+                2
+              ],
+              "histogram": [
+                [
+                  1,
+                  16
+                ],
+                [
+                  2,
+                  16
+                ]
+              ]
+            },
+            {
+              "min": 1,
+              "max": 2,
+              "sum": 48,
+              "distinct": [
+                1,
+                2
+              ],
+              "histogram": [
+                [
+                  1,
+                  16
+                ],
+                [
+                  2,
+                  16
+                ]
+              ]
+            }
+          ]
+        },
+        "e": {
+          "rows": 32,
+          "cols": 1,
+          "nnz": 16,
+          "columns": [
+            {
+              "min": 0,
+              "max": 1,
+              "sum": 16,
+              "distinct": [
+                0,
+                1
+              ],
+              "histogram": [
+                [
+                  0,
+                  16
+                ],
+                [
+                  1,
+                  16
+                ]
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "range": [
+          64,
+          96
+        ],
+        "X": {
+          "rows": 32,
+          "cols": 2,
+          "nnz": 64,
+          "columns": [
+            {
+              "min": 1,
+              "max": 2,
+              "sum": 48,
+              "distinct": [
+                1,
+                2
+              ],
+              "histogram": [
+                [
+                  1,
+                  16
+                ],
+                [
+                  2,
+                  16
+                ]
+              ]
+            },
+            {
+              "min": 1,
+              "max": 2,
+              "sum": 48,
+              "distinct": [
+                1,
+                2
+              ],
+              "histogram": [
+                [
+                  1,
+                  16
+                ],
+                [
+                  2,
+                  16
+                ]
+              ]
+            }
+          ]
+        },
+        "e": {
+          "rows": 32,
+          "cols": 1,
+          "nnz": 16,
+          "columns": [
+            {
+              "min": 0,
+              "max": 1,
+              "sum": 16,
+              "distinct": [
+                0,
+                1
+              ],
+              "histogram": [
+                [
+                  0,
+                  16
+                ],
+                [
+                  1,
+                  16
+                ]
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "sameXContentSha256": "501c2d971cf658c451549f175cd47af1a845994fd0e3a28b7d9d2f768b9020da",
+  "differentContentIdentity": true,
+  "cases": [
+    {
+      "eContentSha256": "48c48cd8f487cfef5f102afbaca5f6f884a7b8bfcb45619a82db62b70ffe7cc2",
+      "cCnts": [
+        48,
+        48,
+        48,
+        48
+      ],
+      "err": [
+        48,
+        0,
+        48,
+        0
+      ],
+      "selCols": [
+        true,
+        false,
+        true,
+        false
+      ],
+      "attrRows": 2,
+      "S_shape": [
+        2,
+        4
+      ]
+    },
+    {
+      "eContentSha256": "44531da254e48557d9c813f0c1f275b4a146b5b6d7f60687e04128b56bad433f",
+      "cCnts": [
+        48,
+        48,
+        48,
+        48
+      ],
+      "err": [
+        24,
+        24,
+        24,
+        24
+      ],
+      "selCols": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "attrRows": 4,
+      "S_shape": [
+        4,
+        4
+      ]
+    }
+  ],
+  "limitation": "No SystemDS/Docker workload execution; no runtime/optimum claim. Content hashes differ; identical statistics do not imply identical datasets."
+}

@@ -485,3 +485,148 @@
 - **실패 파일:** `test_build_plan_space_exclusion_ledger`, `test_verify_compact_physical_shard`, scope audit/certify, closed comparison/inventory, matrix overhead/runtime diagnostic, pinned runtime contract 테스트.
 - **조치/잔여:** 실제 성능을 좋게 보이기 위해 이 실패를 skip하거나 assertion을 완화하지 않았다. 변경 전 동일 환경 전체 discovery 비교는 수행하지 않아 전부 기존 실패라고 단정하지 않는다. raw log는 `experiments/full-ml-under10-20261014/full-python-discovery.log`, 문서 evidence에도 복사했다.
 - **회귀 위험/감지:** 이 범위의 campaign/tooling을 수정하거나 사용하는 후속 작업에서 fixture/manifest 계약을 별도로 복원하고 전체 discovery를 재검증해야 한다.
+
+## 실제 나머지 workload 지원 — 진행중 (사용자 우선순위 변경)
+
+- **상태/요청:** 기존 actual LogReg/GLM 8조건 under10 구현은 `b95989bdddd7`로 GitHub main 게시 완료. 추가 최적화 계획보다 나머지 실제 workload의 planning+compile 성공을 먼저 수정하라는 새 요청을 적용한다.
+- **새 W3 실측:** frozen final engine로 다른 12 workload 각1회: GNMF만 OPTIMAL/fullcompile1.299955s/runtime0. 나머지11은 timeout이 아니라 기존 shape/cost/native catalog, PARFOR, canonical ingress 및 GMM NPE 오류다. raw `/home/mchoi/remaining-optimization-workload-scope-20261014`.
+- **해결 계획:** 실제 오류 stack을 확보하고 실패 회귀를 먼저 추가한다. source/Oracle/runtime 계약에 맞는 지원을 구현하고 W3 후보 검증 후 workers1/3/5/7 전체를 검증한다. `MemoProgramFacts`의 PARFOR 거절, `MemoSources`의 정확한 canonical ingress 검사를 단순 삭제하지 않는다.
+- **잠재 위험:** sealed P2의 ceil-tail range는 현재 ordered-remainder canonical geometry와 다르다. 입력을 조용히 변경하거나 다른 map을 같은 canonical state로 인정하면 worker binding이 깨진다. PARFOR를 순차loop로 간주하면 task-local state/result merge/retention이 깨진다. 이 두 계약 확장은 별도 설계와 정확성 회귀가 필요하다.
+- **변경/검증:** 아직 이 요청의 production 수정 없음. 진단 옵션은 기존 `-debug` CLI만 추가하며 성능 합격으로 사용하지 않는다. 기존 실제 LogReg/GLM under10 gate를 회귀 기준으로 유지한다.
+
+### SliceLine 원본 reproduce와 metadata-assisted planning 경계 — 방법론 결정, 구현 미완료
+
+- **증상/사용자 질문:** P2 dummycode의 exact output width가 봉인 metadata에 없어 worker 집계 수집을 제안했으나, 원본 SliceLine reproduce의 실제 경계와 연구 목적에 근거해야 한다는 지적.
+- **확인:** 원본 `sigmod2021-sliceline-p218`은 run4에서 recoded X/error vector를 준비하고 run5에서 본 알고리즘을 실행한다. one-hot/candidate pruning/내부 recode 등은 본 연산에 남아 있다. 원본 shell은 Java 프로세스 시간에서 1.5s를 차감하며 3회 반복하지만 현재 실험에 이 관행을 복사하지 않는다.
+- **결정/해결:** 입력 통계 준비는 공통·정확·명시적 privacy 허용·동일 artifact 조건으로 별도 도입 가능. P2 전처리 자체를 측정 밖으로 옮기지 않는다. cold total에는 수집 포함, warm compile-only 별도 표기. aggregate count 허용은 categorical dictionary 공개 허용과 다르다. 새 production collector는 아직 구현하지 않았다.
+- **파일/증거:** `docs/FEDPLANNER_SLICELINE_REPRODUCE_METADATA_CONTRACT_2026-10-14_KO.md`, `docs/evidence/sliceline-metadata-methodology-2026-10-14/manifest.json` 및 해시 고정 원본/현재 adaptation 복사본.
+- **검증:** 원본 로컬 subtree clean 및 소스/timer 경계 직접 확인. reproduction 스크립트 실행/데이터 변경 없음. 원본 중앙집중 실험을 private federated 공개 권한 또는 compile-only 성능 증거로 사용하지 않는다.
+- **잔여 이슈:** SliceLine 중간 candidate shape·일반 PARFOR, P2 global distinct exact 획득/privacy와 canonical geometry는 별도 지원 공백이다. 아직 all14 성공 아님.
+- **잠재 회귀 위험/감지:** 사전 실행 비용 숨김·미승인 dictionary 유출·stale statistics·다른 입력 병합. cold/warm 이중 타이머, 공개 정책 부정 테스트, snapshot/spec/pool identity 및 CP/FED encoder parity로 탐지한다.
+
+- **독립 방법론 review 반영:** exact global dictionary 수집은 P2 transformencode build의 spec-specific preprocessing임을 명시했다. workload/spec 이전 공표 통계와 구분하고 cold 비용 전부 포함한다. metadata를 baseline에 제공만 하고 소비하지 못하면 공정성 충분 조건이 아니므로 native/no-new-metadata와 common-information 비교를 분리한다. OPTIMAL/coverage/privacy/worker identity/frozen-cost 재계산/full RuntimeProgram 증거 gate와 artifact provenance를 추가했다. 원본 조사 완료와 collector/전체 지원 완료를 구분한다.
+
+### Actual workload 첫 후보와 후속 수정 — 진행중, 아직 전체 합격 아님
+
+- **환경/재현:** 기존 actual sealed DML·metadata·범위, `run_LAN_docker.sh --memo-planning-matrix`, W3 각1회, 4CPU/8GiB/3GiB coordinator heap/network-none/compile-only. 원본 actual8 under10 기준 main `b95989bdddd7` 유지. 후보별 engine classes/dependencies SHA 동결.
+- **관측/원인:** PCA EIGEN output shape 미전파; ALS WDIVMM의 보조 입력 U/V를 주 실행 map으로 오판; LM 실제 CP-only solve를 미구현 catalog로 분류하고 rdiag canonical 축 증명 누락; GMM non-affine counter 처리의 ternary null unboxing. 별도 RED 테스트에서 기존 frozen engine의 PCA/ALS 3개, LM 3개 실패 및 GMM counter NPE 확인.
+- **candidate01 해결:** EIGEN exact input 기반 output dimensions, WDIVMM input0 기반 실행 layout, solve의 실제 native missing 분류와 DIAG 축 증명, affineDelta 명시적 분기. test-compile 및 집중76 tests PASS. raw `experiments/actual-workload-support-20261014/candidate01-*`.
+- **candidate01 실제 결과:** `/home/mchoi/actual-support-candidate01-w3-20261014`. LM만 OPTIMAL/fullcompile **1.157091s**/runtime0 PASS. PCA는 다음 ctable output shape, ALS는 nested phase-head alias cycle, GMM은 contextual metadata shape 재귀 StackOverflow에 도달했다. 이전 오류 해소를 전체 workload 합격으로 세지 않는다.
+- **후속 수정:** PCA seq×sort-index permutation의 no-explicit-dims CTABLE만 정확한 D×D 전파. EIGEN NNZ는 dense 추정을 사실로 넣지 않고 -1 유지. ALS는 entry/backedge 모두 independently exact인 동일 shape invariant만 phase head에서 재사용. L2는 LOCAL/DIRECT/LEGAL scalar INT64 entry→FP64 repeated contract를 분리해 runtime cast 없이 검증. GMM scalar nrow/ncol 조회가 public bindingShape로 PhaseEvaluation을 재생성하던 문제를 같은 phase proof/cycle state 재사용으로 수정.
+- **GMM 검증:** `MemoRecursiveMetadataShapeTest`의 first-overwrite+metadata-driven 반복 dimension fixture가 frozen candidate01에서 StackOverflow RED (`gmm-shape-before3.log`), 수정 후 candidate02/03 집중 실행에서 PASS. 이전 두 fixture는 재현 실패/fixture 오류로 보존했고 RED 증거로 사용하지 않는다.
+- **검증 상태:** candidate02 126tests 중 5개, candidate03 132tests 중 5개 새 PARFOR/unknown-read fixture 실패. GMM·L2·나머지 집중 테스트는 통과했지만 전체 합격은 아직 아니다. PARFOR fixture 및 exact-call-bound proof를 담당 agent가 수정/재검증 중. 최종 shared build와 actual 재실행 전에는 새 속도/지원 성공을 주장하지 않는다.
+- **잔여 이슈/위험:** 일반 PARFOR 지원은 미구현; exact0/1에서만 기존 sequential runtime 경로를 증명하여 허용하는 범위다. review에서 multi-child bound 오판, scalar cast/stride 불일치, zero exit 누락, unused function registry 처리 문제가 발견되어 수정 중이다. Runtime proof drift는 실행 전에 fail-close해야 하며 zero path의 planned exits도 수행해야 한다.
+- **원칙/판정 근거:** UNKNOWN을 임의 exact로 전환하거나 입력/DML을 줄이지 않는다. loop-head 가변 shape·명시적 CTABLE 차원·미승인 scalar 타입·다회 PARFOR를 부정 회귀로 탐지한다. 기존 700 soundness 회귀와 actual LogReg/GLM을 후속 gate로 유지한다.
+
+### 비귀납적 metadata dimension의 허위 EXACT head — 근본 원인 수정, 통합 검증중
+
+- **증상:** 새 부정 회귀 `A=matrix(1,1,3); for(i in 1:3){A=matrix(1,rows=nrow(A)+1,cols=ncol(A));}`는 실제2×3→3×3→4×3인데 contextual head를2×3 EXACT로 고정했다. candidate04 full731tests 중 이 신규1개만 실패했다. global head는 UNKNOWN인데 contextual early-return에서 compiler 초기 차원을 재사용한 것이므로 캐시-hit 때문이라고 단정하지 않았다.
+- **원인:** `computeBindingDependencies`의 축약 phase 의존성은 globally exact-looking binding을 제외한다. `resolvedBindingShape`가 이를 exact relevance authority로 사용하여 실제 nrow(A) 의존성을 놓쳤다. 별도 probe에서 FIRST/MIDDLE binding 둘다 frozen2×3, phase cache counter0을 확인했다.
+- **수정:** 완전한 syntax/transitive closure인 기존 `shapeDependenciesByBinding`을 relevance와 cache key의 공통 authority로 사용. 새 key 중복 구현/전역 캐시 off 없음. root는 동일 PhaseEvaluation 재사용, integer scalar dimension의 exact arithmetic/overflow 거절, 미해결 DataGen dimension을 초기 compiler expression으로 복구하지 않는 검사를 함께 유지했다.
+- **검증:** debugger fresh private overlay metadata2tests PASS, 전체shape74tests PASS(34.739s). candidate05에서 최신 통합 test-compile/전체 회귀 재실행 중이다. 성능 효과는 아직 실제 Docker로 확인하지 않았으며, 기존 under10를 다시 검증해야 한다.
+- **추가 review 수정:** eager invariant head seed는 NNZ loss를 고친 뒤에도 GLM phase query counter를 거의2배 증가시켰으므로 정상 경로에는 넣지 않고 실제 재귀 cycle에 한해 independently proved invariant를 lazy seed로 사용한다. context별NNZ32/2 유지와 실패 seed 정리를 검증했다.
+- **잔여/위험:** 더 정확한 dependency closure가 실제 planning 비용을 증가시킬 수 있다. 그래도 의존성을 생략해 UNKNOWN을 EXACT로 만드는 이전 shortcut으로 복귀하지 않는다. 정확성 gate 후 동일 actual workload로 계측하고, 증명된 불변 결과만 재사용한다.
+
+### Candidate05 실제 W3 — 3/9 완료, GLM compile 회귀 포함
+
+- **상태:** 진행중. test-compile 및 108 classes / 733 tests PASS는 실제 workload 완료를 보장하지 않았다.
+- **재현/증거:** `experiments/actual-workload-support-20261014/candidate05-w3-command.sh`, raw `/home/mchoi/actual-support-candidate05-w3-20261014`; 동결 candidate05 engine, W3 각1회, 실제 sealed workload 유지.
+- **결과:** LogReg fullcompile3.801030s, LM1.343043s, L2SVM2.409471s PASS/OPTIMAL/runtime0. GLM은 optimizer OPTIMAL 이후 `Selected loop contract has unresolved phase shape/source: beta`로 전체 compile 실패. PCA ctable shape, ALS WDIVMM COL canonical effect, GMM binary dimension, KMeans CTABLE execution anchor, P1 PARFOR proof 미해결. 6건 실패를 timeout이나 성공으로 바꾸어 기록하지 않는다.
+- **수정 계획:** GLM phase contract의 physical axes와 NNZ identity를 분리해야 하는지 실제 증거로 확인; PCA는 실제 rewritten pattern, ALS는 runtime range effect를 검증. KMeans의 ordinary CTABLE은 `CtableFEDInstruction.processInstruction()`의 첫 번째 federated category input map을 사용하며 secondary는 materialize/sliced-broadcast한다. 두 축이 달라도 실행 map이 모호하지 않으므로 비용 adapter가 이 dispatch를 정확히 반영하도록 RED 회귀 후 수정한다. expand form은 두 번째 value input을 따로 사용한다.
+- **원칙/위험:** 비용 adapter 수정은 후보를 강제 제거하거나 opcode를 CP-only로 축소하는 것이 아니다. metadata-only gate와 canonical/privacy/coverage 검사는 그대로 둔다. GLM의 실패 원인은 아직 가설이며, NNZ를 전역 삭제해 통과시키지 않는다. 수정 후 전체 regression 및 actual candidate별 1회 검증을 다시 수행한다.
+
+### P1 region78은 proof 누락이 아니라 실제 다회 PARFOR — 미지원 범위 확정
+
+- **상태:** 미해결, read-only 근본 원인 확인.
+- **증상/근거:** candidate05 P1은 `UNSUPPORTED_PARFOR regionId=78`. 실제 sealed `gmm_p1_compat.dml:118`의 KMeans 초기화는 `runs=10`; main P1 직접 호출은 `runs=1`. builtin `kmeans.dml:122`의 동일 `parfor(run_index in 1:num_runs)`가 두 문맥에서 실행된다. `n_components=1`은 k이지 runs가 아니다. compat 기본 init_params="kmeans"이므로 내부 경로는 실제 도달 가능하다.
+- **판정:** 모든 도달 가능한 호출을 검사하는 `MemoProgramFacts.validateActiveLoopIterations`의 >1 및 호출 간 불일치 거절이 맞다. literal10을 1로 바꾸거나 해당 호출을 무시하는 proof 확장은 금지한다.
+- **필요한 해결:** invocation/context별 cardinality와 task-local binding, planned supply/retention, result merge, privacy/coverage 및 비용을 모델링하는 일반 PARFOR 지원. 현재 SB별 단일0/1 registry로는 {1,10}을 표현하지 못한다. worker input metadata 수집과 별개 문제다.
+- **검증/위험:** mounted dependency receipt/hash와 소스 call chain 확인; 변경/실행 없음. 추후 일반 지원은 다중 호출·병렬 task 상태 격리·merge와 원본 결과 동등성 검증이 필요하다. PARFOR를 FOR로 치환하거나 강제 직렬화해 성공 처리하지 않는다.
+
+### CTABLE 비용 실행 map 정정 — 집중 회귀 통과, actual 검증 대기
+
+- **증상/원인:** KMeans 실제 six-input CTABLE `[ROW,COL,LOCAL,...]`의 두 input axis를 비용 adapter가 모호하다고 판정. runtime ordinary CTABLE은 input0(없으면 input1) map을 사용하고 secondary를 materialize/sliced-broadcast한다. expand는 input1 value map이다.
+- **수정 파일:** `MemoCostModel.java`, `MemoCostModelTest.java`. primary 선택만 runtime과 맞추고 기존 준비/통신/결과 비용을 재사용한다. 비용 축소, candidate pruning, privacy gate 변경 없음.
+- **검증:** fixture/module 오류인 최초로그와 구분하여 `ctable-cost-before-r2.log`에서 신규2개 AMBIGUOUS 오류 RED; 수정 후 cost+CTABLE preparation **30tests PASS** (`ctable-cost-after.log`). W1/3/5/7, reversed/local-secondary/expand와 exact cost formula 검증.
+- **잔여/위험:** actual KMeans는 다음 coverage/shape 문제가 있을 수 있으며 아직 완료를 주장하지 않는다. primary map 외 입력의 준비 비용 유실을 회귀로 감지한다.
+
+- **CTABLE 독립 cross-review:** 처음에는 `[LOCAL,LOCAL,ROW(weights)]`가 누락된 valid anchor라는 지적이 있었으나, 실행 순서 재검토 후 철회했다. `CtableFEDInstruction.java:164–167`은 local input0의 null map을 먼저 역참조하고, intended weights reorder는 `169–176`에 있어 도달하지 못한다. parser/Oracle는 weights-only ROW를 허용하므로 이는 **기존 catalog/runtime 불일치로 미해결**이다. 비용 adapter에서 이 조합을 성공으로 꾸미지 않고 명시적으로 거절한다. 완전 지원은 runtime dimension/reorder 및 준비 비용의 별도 동시 수정·검증이 필요하며 이번 mixed-axis KMeans 수정의 완료 범위가 아니다.
+
+### Candidate06 실제 W3 전체14 — 5개 compile 완료 / 9개 미완료
+
+- **상태:** 전체 지원 미완료. 새 통합 test-compile / 108classes **745tests PASS** (114.016s). `candidate06-{compile,regression}.log`와 result JSON 보존.
+- **실측:** `/home/mchoi/actual-support-candidate06-w3-20261014`, 실제14개 W3 각1회. LogReg3.951203s, GLM10.920863s, LM1.306245s, L2SVM2.684724s, GNMF1.275093s fullcompile/OPTIMAL/runtime0. **GLM은 compile 회귀는 해소됐지만 under10 미달**이다.
+- **GLM 비교:** published W3 8.499098s 대비 rules2.636→4.297s, optimize2.284→3.380s. objective `426.222945173122011978444871186836413398668632623866869835183024406433105468750000`, nodes1,360,977/checks94,153 동일. 완전 dependency closure의 phaseShape requests389,624→1,204,219/cache entries225,123→788,142 증가. NNZ만 다른 physical runtime contract 합치기는 성공했고 cost NNZ는 유지했다.
+- **다음 오류:** PCA ctable exact proof 이후 downstream MM128×-1; KMeans mixed-axis CTABLE 이후 SEQ50×-1; GMM binary<=-1×128; StepLM unresolved repeated cost context. ALS native-effect 오류 해소 후 optimizer **300초 timeout**. P1·SliceLine2개는 genuine PARFOR unsupported. P2는 canonical ingress 실제범위 불일치. 실패를 부분 planning 성공으로 집계하지 않는다.
+- **별도 GLM JFR:** `/home/mchoi/actual-support-candidate06-glm-profile-20261014`는 diagnostic-only1회, compile9.545022s. startupJFR 때문에 동일한 acceptance 측정이 아니므로 더 빠른 수치를 under10 합격으로 골라 쓰지 않는다. 원시JFR/process100ms samples + 추출 `candidate06-glm-{events.jsonl,profile.json,profile.txt}` 보존. 368 main execution samples; shape/resolver가 보이는 truncated/unattributed139 samples와 rule-building63 samples가 주요 반복 작업. 26GC pause합0.429s, observed peak RSS1,024,245,760B; 할당샘플 가중치는 추정량이며 실제 메서드 시간/retained bytes가 아니다.
+- **잔여/위험:** source closure 정확성을 되돌려 속도를 복원하지 않는다. key 구성의 동일 identity 재사용과 proof의 downstream 전파부터 검토. 미해결 일반PARFOR/data-dependent middle shape를 metadata 수집만으로 해결할 수 있다고 주장하지 않는다. 변경은 아직 미커밋이며 publishedmain은 기존 b95989bdddd7이다.
+
+### SliceLine 문제 정의 보고서 — 문서화 완료, 지원 구현은 미완료
+
+- **상태/요청:** 사용자가 metadata·단계별 planning 선택 대신 정확한 문제의 보고서를 요청했다. 새 production 수정 및 추가 workload 평가를 시작하지 않고 문서화로 전환했다.
+- **증상:** candidate06 실제 ADULT/COVTYPE W3의 첫 실패는 `UNSUPPORTED_PARFOR regionId=10`이다. 이 gate 이후의 shape 오류나 timeout은 실제 관측한 것으로 주장하지 않는다. region10의 lexical mapping은 미확인이다.
+- **원인/분리:** 일반 PARFOR 의미 지원 공백과 데이터 의존 intermediate shape 정보 부족은 별개다. 원본 reproduce도 준비된 X/e만 분리하며 pruning·후보 생성을 본 실행에 남긴다. P2의 실제 첫 오류는 canonical ingress geometry이며 input domain 정보 수집은 별도 과제다.
+- **해결/파일:** `FEDPLANNER_SLICELINE_PLANNING_BLOCKERS_ROOT_CAUSE_2026-10-14_KO.md`에 관측·소스·추론·미확인을 구분했다. 공개 main과 미커밋 candidate06/현재 작업 트리도 구분했다. production 해결 완료를 뜻하지 않는다.
+- **검증:** W3/global 개별 통계는 같지만 feature-error 연관성에 따라 기본 S가2×4/4×4로 달라지는 정수 산술 반례 PASS. 성능 benchmark나 실제 데이터 대체가 아니다. 두 evidence manifest 총25파일 SHA와 원본 복사 일치, local 문서 링크 존재 확인. content hash가 다른 입력을 병합하는 근거로 사용하지 않는다.
+- **잔여 이슈:** 일반 PARFOR, P2 수집/공개 정책/geometry, intermediate shape의 표현·실행 경계와 최적성 계약은 미해결. KMeans SEQ 후속 패치는 사용자 요청에 따라 미컴파일·미검증 상태로 보존했다. 새 candidate07/commit/push 없음.
+- **원칙/위험:** UNKNOWN을 exact로 꾸미거나 pruning 실행을 무료 metadata로 숨기지 않는다. staged optimum을 전체 optimum으로 오인하지 않는다. 후속 검증은 실제 원본 workload와 fullcompile receipt로 수행해야 한다.
+- **기존 진단 회수:** 보고서 요청 전에 시작한 ALS60초 JFR은 완료되어 읽기 전용 추출만 수행했다. 5,063 main execution samples 중5,011개가 legacy-search 경로, GC337회 pause합0.308s, observed RSS480,301,056B다. raw `/home/mchoi/actual-support-candidate06-als-profile-20261014`, 추출 `experiments/actual-workload-support-20261014/candidate06-als-profile.{json,txt}`. 진단용 짧은 cutoff이며 기존300초 timeout의 대체/성공 근거가 아니다.
+- **보고서 독립 review:** PARFOR 관측/추론 구분, 반례 산술, exact cost 의미, reproduce 경계에 substantive 오류 없음. P1 region78과 GMM-init PARFOR의 직접 매핑 receipt가 보고서에 없다는 추적성 지적을 반영하여 관측 오류와 소스 호출 확인을 분리했다. 앞선 세션 메모의 mapping 표현과 달리 이 보고서는 직접 매핑을 입증했다고 주장하지 않는다.
+
+### P2 전용 근본 원인 보고서 — 문서 검증 완료, production 해결 미실시
+
+- **요청/상태:** 사용자 요청에 따라 P2의 문제를 별도 보고서로 작성했다. production 수정·build·worker/RPC·실제 workload 재실행은 하지 않았다.
+- **관측:** C26 W1/W5는 `nrow` 입력 `TRead X -1x-1`의 UNKNOWN_SIZE, W3/W7은 canonical ingress index1/5. 최신 candidate06은 W3 index1을 다시 관측했다. 모두 fullcompile=null이며 약2초 wall은 실패까지의 시간이지 성공 시간이 아니다. 300초 timeout이 아니다.
+- **원인:** ADR01/02는 floor+remainder-front ranges를 강제하고 noncanonical scope를 거절한다. 실제 P2 ceil-tail과 W3/W7에서1행 경계 차이가 난다. 거절 자체는 spec 준수다. 별도로 sealed metadata에 dummycode first-column global domain이 없으며, current shape/cost는 recode-only라 **exact width를 채워도 cost predicate가 dummycode를 거절**한다.
+- **문서/증거:** `docs/FEDPLANNER_P2_PLANNING_BLOCKERS_ROOT_CAUSE_2026-10-14_KO.md`, `docs/evidence/p2-planning-blockers-2026-10-14/`. 기존 support status와 reproduce metadata 계약에 링크와 cost 지원 공백을 추가했다.
+- **검증:** 기존5조건의 raw/DML/result/render receipt, 입력 sidecar8개, source/spec 발췌를 보존.31evidence SHA/원본 복사,12current source/spec SHA,15local links PASS. 정적 검증 스크립트는 DML↔receipt geometry, index mismatch, 실패 status, local distinct counts의 불충분성 반례 PASS. dataset row payload/worker는 읽지 않았다. MemoShapes current whole-file만 candidate06과 다르며 이를 manifest에 공개했다. 나머지 발췌Java9개는 candidate06 source hash와 동일하다.
+- **해결 설계:** 명시적인 source-map/import 계약 확장, 기존 encoder build/merge의 재사용, narrow identity-bound exact domain fact, multi-return shape 및 비용 primitive 연결을 분리한다. metadata 수집/필요한 numeric→frame 변환/통신/검증 비용은 cold 시간에 포함한다.
+- **잔여 이슈:** 실제 global K·수집시간·privacy runtime audit, geometry 지원, dummycode 비용 지원, 이후 binding/scale/split/metadata output coverage는 미검증. 최신 W1/5/7 평가 없음. metadata collector나 spec 변경은 구현하지 않았다.
+- **회귀 위험/검출:** ingress 검사 삭제로 다른 ROW map을 DIRECT 취급, partial dictionary를 count-only로 설명, spec-specific preprocessing 시간을 숨김, metadata만으로 전체 성공 주장할 위험. 실제 range/worker identity 회귀, 원 encoder 결과와 M mapping parity, stale/권한 부정 테스트, exact objective/fullcompile receipt로 검출한다.
+- **최종 독립 검토:** code-reviewer가 보고서·증거33파일 및12source/spec를 대조해 구체적 오류0, APPROVE.31/31evidence SHA,12/12source SHA,15/15links와 정적 검증 PASS를 별도 확인했다. production build/workload를 수행하지 않은 문서 검증이다.
+
+### Legacy SliceLine 정적 planning과 비용 추정 — 문서화 완료
+
+- **상태/요청:** legacy가 SliceLine을 계획했던 방법과 default/heuristic shape의 역할을 문서화했다. 새 production 수정·빌드·실제 workload 실행 없이 기존 자료를 검증했다.
+- **문제 정의:** 현재 Memo의 concrete dimension 비용 gate를 static planning 일반의 불가능성으로 읽으면 legacy의 초기 fullcompile 성공과 모순되는 인상을 준다. 실제 shape의 사전 결정, 비용 모델의 추정, 실행 합법성 증명을 분리해야 한다.
+- **관측/소스:** 2026-09-21 final805 W4의 ADULT/COVTYPE 라벨8조건 receipt success/runtime0, RuntimeProgram 단계 완료. DP-global 전체 compile7.871327/7.970540s. 기준 commit에는 RMEMPTY worst-case, default memory, unknown transfer256MiB clamp, ComputeCost unknownaxis floor1 경로가 있다. 당시 JAR은 base+dirty이므로 각 HOP fallback 사용을 직접 입증한 것은 아니다.
+- **문서/변경:** `FEDPLANNER_SLICELINE_LEGACY_STATIC_SHAPE_COST_ESTIMATION_2026-10-14_KO.md`, `docs/evidence/sliceline-legacy-static-planning-2026-10-14/`; 기존 SliceLine root-cause 보고서 상단에 보완 링크를 추가했다. 추정 모델에 대한 exact optimum과 실제 데이터 비용의 optimum 차이, UNKNOWN/DEFER·privacy·worker/range 보존 조건을 명시했다.
+- **검증:** evidence34파일 SHA, source7발췌의 원문 SHA/라인, 공식8receipts의 log/config 해시, 문서2개의 local34links PASS. production tracked diff SHA 불변. 실제 dataset row payload/worker RPC 없음.
+- **독립 review 반영:** measured JAR에서 fallback이 성공을 유발했다고 단정하지 않도록 요약을 제한했다. 보존된 wrapper는 N/D·주소·range placeholder template이며 개별 rendered DML은 이번 증거 묶음에 없음을 명시했다. 데이터 크기는 당시 보고서 기준이며 실제 input binding 전체를 재검증한 것으로 표현하지 않는다.
+- **잔여 이슈/위험:** 비용 추정 정책 도입은 미구현이며 기존 cost contract 변경으로 다뤄야 한다. estimate를 EXACT shape 또는 Oracle 합법성의 근거로 쓰는 회귀가 핵심 위험이다. proof/estimate 격리, identity/context 회귀, declared objective audit, 실제 fullcompile 및 별도 runtime 결과 검증으로 탐지해야 한다. general PARFOR는 별도 미지원 과제다. 새 commit/push 없음.
+
+### P2 보고서 후속 구현 — geometry·encoder 완료, proof/실제 검증 진행 중
+
+- **요청/상태:** 사용자가 보고서대로 진행을 요청했다. 기존 미커밋 workload 수정은 보존하고 P2 지원을 구현 중이다. 아직 actual P2 성공이나 10초 달성을 주장하지 않는다.
+- **Baseline:** `experiments/p2-support-20261014/pre-p2-working-tree.patch`, `pre-p2-source-sha256.json`으로 이전 상태를 보존했다. inherited KMeans 테스트의 잘못된 `occurrenceContext` API를 수정한 뒤 Maven test-compile PASS. 기존 63개 집중 테스트 중 fixture의 compiler hint 가정 1개 실패를 test-only로 바로잡았고, 해당 CostShapeProjection 15개 PASS. 이는 P2 기능 성공 증거가 아니다.
+- **Geometry 해결:** ADR01/02를 명시적으로 확장하는 `FEDPLANNER_P2_SOURCE_GEOMETRY_EXTENSION_2026-10-14_KO.md`를 작성했다. 요청별 immutable axisLength→cuts profile, POOLv2/v1 호환, all-source 충돌 검증, Oracle geometry 결합, indexing canonical effect authority 재사용을 구현했다. private overlay 35개 PASS. reshard·hidden collect·입력 range 변경 없음.
+- **Encoder 해결:** existing worker build/logical-range merge/SORT/getMetaData/initMetaData를 build-only helper로 추출했다. apply는 호출하지 않는다. 원 runtime non-equiheight 경로도 같은 helper를 사용한다. 신규3개 및 privacy/placement 포함89개 private overlay 테스트 PASS. 반환 record의 encoder/frame은 mutable이므로 deep immutable proof로 사용하지 않는다.
+- **설계 단순화:** persistent artifact/cache 대신 explicit inline metadata preparation을 선택했다. 별도 planning RPC opt-in + 기존 release 정책을 요구한다. static sealed input lifetime을 명시하며 `:ro` 또는 self-declared SHA로 snapshot isolation을 주장하지 않는다. `FEDPLANNER_P2_METADATA_ASSISTED_COMPILATION_CONTRACT_2026-10-14_KO.md` 참조.
+- **진행 작업:** 모든 reachable context의 동일 source 증명, immutable owner proof, multi-return shape와 native cost 연결, preparation-owned read/cast/build/cleanup, 실제 Docker worker lane 구현 중.
+- **새 발견:** 기존 FED matrix→frame cast가 FRAME 타입 `newMap`을 만들고도 원 MATRIX map을 output에 설정한다. 좁은 runtime map 수정과 값/schema/range 회귀가 필요하다. 실패 응답을 metadata 성공으로 덮지 않는다.
+- **잔여/회귀 위험:** partial dictionary 노출을 count-only로 오해, context/clone identity 혼동, preparation 시간 누락, 실패/부분 cleanup, runtime build 비용 임의 차감, 이후 scale/split 미지원. negative tests·전체 regression·실제 W1/3/5/7 fullcompile 및 metadata/time receipt로 검증한다. 공유 통합 build 및 actual 실행은 아직 대기 중이며 새 commit/push는 하지 않았다.
+
+
+## SliceLine 중심 추가 metadata 요구사항 문서화
+
+- **상태:** 문서화 완료. metadata 수집·production 구현·새 workload 실행·commit/push는 수행하지 않았다.
+- **문제 정의/증상:** 기존 rows/cols/nnz만으로는 SliceLine의 category code 의미·one-hot 폭·X/e 행 대응을 증명할 수 없고, 추가 통계와 본 실행의 경계가 불분명할 수 있다.
+- **원인:** encoding 계약·열별 최대 코드·입력 identity·통계 정확성 수준이 별도로 필요하다. distinct count와 최대 코드는 일반적으로 다르며 후속 후보 크기는 입력 통계만으로 확정되지 않는다.
+- **해결 요약:** 최소 metadata 4종, 선택적인 category/error 통계, 기존 전처리 fdom 재사용, EXACT/PROVEN_BOUND/ESTIMATE 구분, global/local·privacy·수집 비용·검증 항목을 문서화했다. 진행 중인 P2 inline preparation 계약은 변경하지 않았다.
+- **수정 파일:** `docs/FEDPLANNER_ADDITIONAL_METADATA_REQUIREMENTS_2026-10-14_KO.md`, 이 세션 문서의 본 항목.
+- **의사결정 근거:** Oracle/runtime 규칙은 수정하지 않고, 증명된 입력 사실과 비용 추정의 역할을 구분하는 metadata 요구사항만 정리했다.
+- **검증:** SliceLine core·ADULT/COVTYPE 전처리·보존 sidecar·MemoSources 및 P2 준비 계약과 대조했다. 문서의 로컬 링크 존재, 코드 fence 짝, 변경 문서 whitespace를 확인했다. 코드 테스트와 성능 측정은 문서-only 범위이므로 실행하지 않았다.
+- **잔여 이슈:** metadata 보존/reader, source identity 검증, bound/비용 소비 경로, 실제 ADULT/COVTYPE planning/fullcompile 및 runtime 동등성 검증은 후속 작업이다.
+- **잠재 회귀 위험/감지:** stale 통계를 EXACT로 수용, local distinct 합산, 추정 range 사용, 집계의 무단 공개, 수집 시간 누락을 금지한다. 문서 §9의 negative·통합 검증으로 감지한다.
+
+### 현재 COFEE main 게시 체크포인트 — 통합 회귀 및 게시 경로 검증
+
+- **상태/요청:** 사용자의 현재 작업 커밋·main push 요청에 따라 누적 source/test/scripts/docs를 체크포인트로 묶는다. 지원 범위와 실제 측정 공백은 `FEDPLANNER_CURRENT_MAIN_CHECKPOINT_2026-10-14_KO.md`에 명시한다. 앞선 항목의 “미커밋/구현 중/새 push 없음”은 각 작업 당시 상태다.
+- **문제 정의/증상:** 작업 clone의 `origin`은 실제 GitHub가 아닌 `/home/mchoi/fedplanner-memo-20261013` 로컬 저장소이고, 그 저장소에는 별도의 미커밋 작업이 있다. Python 전체 테스트도 red여서 신규 회귀인지 분리해야 했다. 게시 전 리뷰에서는 metadata receipt stderr 누락, health 증거 수집 오류 뒤 성공 판정, container 시작 전 UUID namespace 정리 누락을 발견했다.
+- **원인:** clone의 remote 이름과 실제 게시 endpoint가 다르다. Python은 외부 sealed evaluation fixture/manifest/경로에 의존한다. 새 harness는 성공 stdout 파싱과 시작 이후 cleanup만 고려하여 stderr 및 실패 lifecycle 경계를 놓쳤다.
+- **해결 요약:** 실제 GitHub main SHA가 부모 `b95989bdddd7`과 일치함을 확인했고 로컬 원본을 변경하지 않는 direct-URL fast-forward 게시 경로를 선택했다. 독립 detached baseline과 Python 실패 ID/traceback을 대조했다. harness는 stdout+stderr 통합 검증, 필수 health/resource 증거 실패 시 실패 판정, 시작 여부와 무관한 정확한 요청 소유 namespace cleanup으로 좁게 수정한다. 테스트로 실패를 먼저 재현한 후 수정했다. 저장/검증 log 문자열의 개행 차이도 후속 회귀로 고쳤고 최종 독립 review APPROVE를 받았다.
+- **의사결정 근거/제약:** Oracle/privacy/feasibility/cost 규칙을 완화하지 않는다. 수정은 실행 도구의 실제 증거와 완료 판정을 일치시키는 것이다. 다른 요청의 container/path, 원본 repository 작업 트리, external fixture를 변경하지 않는다. force push하지 않는다.
+- **수정 파일:** `scripts/fedplanner/run_memo_metadata_planning.py`, 해당 Python 회귀 테스트, 최신 체크포인트/상태/metadata 계약 문서, 이 세션 기록. 게시 묶음에는 앞서 구현한 Java와 관련 보고서도 포함한다.
+- **검증:** Maven test-compile PASS, Java **114 classes / 779 tests PASS**. 최초 Python 현재670개 vs 부모 baseline661개는 **동일한 2 failures+16 errors, 1 skipped**였고 저장소 경로만 정규화한 traceback도 같았다. 신규 harness9개는 PASS. 리뷰 후 최종 harness **15 tests PASS**, Python 전체 **676 tests / 동일 기존18개 실패**를 재확인했다. 독립 최종 review APPROVE. 실행 인자·원본 로그는 `docs/evidence/main-checkpoint-2026-10-14/` 및 체크포인트 §5에 보존한다.
+- **잔여 이슈:** 실제 P2 Docker workers1/3/5/7 fullcompile/시간/runtime 동등성은 아직 검증하지 않았다. 현재 새 lane은 so007/cpuset/netem 조건이라 기존 local CPU-quota no-RPC lane과 동일하지 않다. 입력 column statistics의 저장/reader는 미구현이며 exact K 수집은 기본 OFF 대안이다. 일반 PARFOR·SliceLine 동적 중간 shape·ALS 및 candidate06 GLM under10 회귀는 해결 완료로 표시하지 않는다. 기존 Python18개 실패는 남아 있다.
+- **잠재 회귀 위험/감지:** opt-in metadata RPC의 정보 공개 범위, stale input identity, context 혼합, cleanup 실패를 계속 검사해야 한다. 이번 publication은 작은 fixture 성능으로 actual 완료를 주장하지 않으며, 실제 workload acceptance는 별도 조건별1회 receipt와 runtime 결과 검증으로 수행해야 한다.

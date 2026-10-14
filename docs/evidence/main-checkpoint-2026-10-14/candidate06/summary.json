@@ -1,0 +1,1839 @@
+{
+  "attemptedCells": 14,
+  "complete": true,
+  "expectedCells": 14,
+  "rows": [
+    {
+      "cell": {
+        "id": "ml|logreg|lan|w3|Memo",
+        "planner": "Memo",
+        "planner_enum": "COMPILE_MEMO",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "logreg"
+      },
+      "compileOnly": true,
+      "compileOnlyVerified": true,
+      "containerResources": {
+        "coordinatorHeap": "3g",
+        "cpus": 4,
+        "memory": "8g",
+        "workerProcesses": 0,
+        "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+      },
+      "costContract": {
+        "codegen": false,
+        "costEnvironment": {},
+        "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+        "nativeBlas": "none",
+        "productionDefaults": {
+          "aggregateBinaryFlopsPerSecond": 32000000000,
+          "flopsPerSecond": 2147483648,
+          "memoryBandwidthMiBPerSecond": 25000.0,
+          "networkBandwidthC2WMiBPerSecond": 125.0,
+          "networkBandwidthW2CMiBPerSecond": 125.0,
+          "networkLatencyC2WSeconds": 0.0005,
+          "networkLatencyW2CSeconds": 0.0005,
+          "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+          "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+          "unknownDimensionTransferFallbackMiB": 256.0,
+          "uploadEstimateClampRatio": 4.0
+        },
+        "semantics": "production-default-costs-no-overrides/v1"
+      },
+      "executionPlanner": "COMPILE_MEMO",
+      "failureCategory": null,
+      "harnessTimeout": false,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "memoConstruction": {
+        "costProjection": [
+          {
+            "activationEnvironments": 3052,
+            "bindingDagVisits": 133308,
+            "invariantProjectionStops": 43317,
+            "noRegionsSkipped": 10868,
+            "primitiveValueBytes": 305584,
+            "primitiveValues": 38198,
+            "primitiveVectors": 4455,
+            "projectedContexts": 4455,
+            "projectionCacheHits": 21700,
+            "relevantGuardDecisions": 3400,
+            "supportPrefixChecks": 9852,
+            "unknownObligations": 0
+          }
+        ],
+        "nativeGeneration": [
+          {
+            "coverageObligations": 36,
+            "cpPatterns": 155,
+            "determinantRegions": 628,
+            "evidenceReuses": 0,
+            "oracleEvaluations": 638,
+            "prefixRequests": 30,
+            "prunedPrefixes": 263,
+            "publishedRules": 595,
+            "unknownPrefixes": 4,
+            "visitedNativePatterns": 381
+          }
+        ],
+        "nativeRequests": [
+          {
+            "canonicalStringsCreated": 83,
+            "canonicalStringsReused": 5840,
+            "contextualViewBuilds": 155,
+            "oracleRequests": 155,
+            "preparedRequests": 5995,
+            "reusedResults": 5840,
+            "uncacheableRequests": 72
+          }
+        ]
+      },
+      "memoPlanning": [
+        {
+          "binarySupportHits": 870,
+          "binarySupportRows": 1937,
+          "boundPrunes": 0,
+          "cacheHits": 36559,
+          "checks": 60229,
+          "conditionalBoundCacheHits": 0,
+          "conditionalBoundQueries": 0,
+          "costCacheHits": 0,
+          "costEvaluations": 1625,
+          "epoch": 1,
+          "estimatedCost": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+          "fedOwners": 26,
+          "nativeRules": 921,
+          "nodes": 14744,
+          "oracleHits": 0,
+          "oracleMisses": 155,
+          "phaseNanos": {
+            "facts": 54554774,
+            "model": 597203756,
+            "optimization": 809252019,
+            "projection": 76176000,
+            "rules": 1323098544
+          },
+          "phaseSeconds": {
+            "facts": 0.054554774,
+            "model": 0.597203756,
+            "optimization": 0.809252019,
+            "projection": 0.076176,
+            "rules": 1.323098544
+          },
+          "pruned": 255,
+          "status": "OPTIMAL",
+          "supplies": 3,
+          "supportCacheHits": 0,
+          "supportQueries": 49209,
+          "supportWitnessHits": 870,
+          "totalNanos": 2860285093,
+          "totalSeconds": 2.860285093,
+          "wideBoundRelaxations": 0,
+          "workers": 3,
+          "worklistVisits": 5397
+        }
+      ],
+      "memoSearch": [
+        {
+          "binarySupportHits": 870,
+          "binarySupportRows": 1937,
+          "boundPrunes": 0,
+          "checkCacheHits": 36559,
+          "checkEvaluations": 60229,
+          "conditionalBoundCacheHits": 0,
+          "conditionalBoundQueries": 0,
+          "costCacheHits": 0,
+          "costEvaluations": 1625,
+          "nodes": 14744,
+          "removedRules": 255,
+          "status": "OPTIMAL",
+          "supportCacheHits": 0,
+          "supportQueries": 49209,
+          "supportWitnessHits": 870,
+          "wideBoundRelaxations": 0,
+          "worklistVisits": 5397
+        }
+      ],
+      "p2PublicRecodeMetadataJvmProperty": false,
+      "provenance": {
+        "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+        "dmlSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+        "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/actual-workload-support-20261014/candidate06-engine",
+        "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+        "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+        "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+        "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+        "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+      },
+      "renderCell": {
+        "id": "ml|logreg|lan|w3|DP-global",
+        "planner": "DP-global",
+        "planner_enum": "COMPILE_EXACT",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "logreg"
+      },
+      "rendererAuthorityPlanner": "COMPILE_EXACT",
+      "reportedWorkerCountVerified": true,
+      "returncode": 0,
+      "schema": "systemds-memo-planning-attempt/v1",
+      "status": "passed",
+      "timing": {
+        "executionSeconds": 0.0,
+        "fullCompileSeconds": 3.951203,
+        "fullInitialPlanningSeconds": 3.941874246,
+        "harnessWallSeconds": 6.088033311069012,
+        "memoPlanningSeconds": 2.860285093,
+        "runtimeProgramSeconds": 0.050094
+      }
+    },
+    {
+      "cell": {
+        "id": "ml|glm|lan|w3|Memo",
+        "planner": "Memo",
+        "planner_enum": "COMPILE_MEMO",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "glm"
+      },
+      "compileOnly": true,
+      "compileOnlyVerified": true,
+      "containerResources": {
+        "coordinatorHeap": "3g",
+        "cpus": 4,
+        "memory": "8g",
+        "workerProcesses": 0,
+        "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+      },
+      "costContract": {
+        "codegen": false,
+        "costEnvironment": {},
+        "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+        "nativeBlas": "none",
+        "productionDefaults": {
+          "aggregateBinaryFlopsPerSecond": 32000000000,
+          "flopsPerSecond": 2147483648,
+          "memoryBandwidthMiBPerSecond": 25000.0,
+          "networkBandwidthC2WMiBPerSecond": 125.0,
+          "networkBandwidthW2CMiBPerSecond": 125.0,
+          "networkLatencyC2WSeconds": 0.0005,
+          "networkLatencyW2CSeconds": 0.0005,
+          "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+          "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+          "unknownDimensionTransferFallbackMiB": 256.0,
+          "uploadEstimateClampRatio": 4.0
+        },
+        "semantics": "production-default-costs-no-overrides/v1"
+      },
+      "executionPlanner": "COMPILE_MEMO",
+      "failureCategory": null,
+      "harnessTimeout": false,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "memoConstruction": {
+        "costProjection": [
+          {
+            "activationEnvironments": 7545,
+            "bindingDagVisits": 366951,
+            "invariantProjectionStops": 133713,
+            "noRegionsSkipped": 64516,
+            "primitiveValueBytes": 398888,
+            "primitiveValues": 49861,
+            "primitiveVectors": 9500,
+            "projectedContexts": 9500,
+            "projectionCacheHits": 42138,
+            "relevantGuardDecisions": 6152,
+            "supportPrefixChecks": 19849,
+            "unknownObligations": 0
+          }
+        ],
+        "nativeGeneration": [
+          {
+            "coverageObligations": 50,
+            "cpPatterns": 457,
+            "determinantRegions": 3025,
+            "evidenceReuses": 0,
+            "oracleEvaluations": 3101,
+            "prefixRequests": 153,
+            "prunedPrefixes": 2171,
+            "publishedRules": 1289,
+            "unknownPrefixes": 36,
+            "visitedNativePatterns": 971
+          }
+        ],
+        "nativeRequests": [
+          {
+            "canonicalStringsCreated": 121,
+            "canonicalStringsReused": 11239,
+            "contextualViewBuilds": 454,
+            "oracleRequests": 454,
+            "preparedRequests": 11693,
+            "reusedResults": 11239,
+            "uncacheableRequests": 333
+          }
+        ]
+      },
+      "memoPlanning": [
+        {
+          "binarySupportHits": 1853,
+          "binarySupportRows": 4090,
+          "boundPrunes": 0,
+          "cacheHits": 54684,
+          "checks": 94153,
+          "conditionalBoundCacheHits": 0,
+          "conditionalBoundQueries": 0,
+          "costCacheHits": 0,
+          "costEvaluations": 11556,
+          "epoch": 1,
+          "estimatedCost": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+          "fedOwners": 25,
+          "nativeRules": 2030,
+          "nodes": 1360977,
+          "oracleHits": 0,
+          "oracleMisses": 454,
+          "phaseNanos": {
+            "facts": 65057352,
+            "model": 1530297576,
+            "optimization": 3379531089,
+            "projection": 165533135,
+            "rules": 4297343790
+          },
+          "phaseSeconds": {
+            "facts": 0.065057352,
+            "model": 1.530297576,
+            "optimization": 3.379531089,
+            "projection": 0.165533135,
+            "rules": 4.29734379
+          },
+          "pruned": 481,
+          "status": "OPTIMAL",
+          "supplies": 5,
+          "supportCacheHits": 0,
+          "supportQueries": 73291,
+          "supportWitnessHits": 1853,
+          "totalNanos": 9437762942,
+          "totalSeconds": 9.437762942,
+          "wideBoundRelaxations": 0,
+          "workers": 3,
+          "worklistVisits": 8200
+        }
+      ],
+      "memoSearch": [
+        {
+          "binarySupportHits": 1853,
+          "binarySupportRows": 4090,
+          "boundPrunes": 0,
+          "checkCacheHits": 54684,
+          "checkEvaluations": 94153,
+          "conditionalBoundCacheHits": 0,
+          "conditionalBoundQueries": 0,
+          "costCacheHits": 0,
+          "costEvaluations": 11556,
+          "nodes": 1360977,
+          "removedRules": 481,
+          "status": "OPTIMAL",
+          "supportCacheHits": 0,
+          "supportQueries": 73291,
+          "supportWitnessHits": 1853,
+          "wideBoundRelaxations": 0,
+          "worklistVisits": 8200
+        }
+      ],
+      "p2PublicRecodeMetadataJvmProperty": false,
+      "provenance": {
+        "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+        "dmlSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+        "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/actual-workload-support-20261014/candidate06-engine",
+        "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+        "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+        "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+        "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+        "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+      },
+      "renderCell": {
+        "id": "ml|glm|lan|w3|DP-global",
+        "planner": "DP-global",
+        "planner_enum": "COMPILE_EXACT",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "glm"
+      },
+      "rendererAuthorityPlanner": "COMPILE_EXACT",
+      "reportedWorkerCountVerified": true,
+      "returncode": 0,
+      "schema": "systemds-memo-planning-attempt/v1",
+      "status": "passed",
+      "timing": {
+        "executionSeconds": 0.0,
+        "fullCompileSeconds": 10.920863,
+        "fullInitialPlanningSeconds": 10.899295657,
+        "harnessWallSeconds": 11.9170518592,
+        "memoPlanningSeconds": 9.437762942,
+        "runtimeProgramSeconds": 0.07685
+      }
+    },
+    {
+      "cell": {
+        "id": "ml|pca|lan|w3|Memo",
+        "planner": "Memo",
+        "planner_enum": "COMPILE_MEMO",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "pca"
+      },
+      "compileOnly": true,
+      "compileOnlyVerified": false,
+      "containerResources": {
+        "coordinatorHeap": "3g",
+        "cpus": 4,
+        "memory": "8g",
+        "workerProcesses": 0,
+        "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+      },
+      "costContract": {
+        "codegen": false,
+        "costEnvironment": {},
+        "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+        "nativeBlas": "none",
+        "productionDefaults": {
+          "aggregateBinaryFlopsPerSecond": 32000000000,
+          "flopsPerSecond": 2147483648,
+          "memoryBandwidthMiBPerSecond": 25000.0,
+          "networkBandwidthC2WMiBPerSecond": 125.0,
+          "networkBandwidthW2CMiBPerSecond": 125.0,
+          "networkLatencyC2WSeconds": 0.0005,
+          "networkLatencyW2CSeconds": 0.0005,
+          "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+          "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+          "unknownDimensionTransferFallbackMiB": 256.0,
+          "uploadEstimateClampRatio": 4.0
+        },
+        "semantics": "production-default-costs-no-overrides/v1"
+      },
+      "executionPlanner": "COMPILE_MEMO",
+      "failureCategory": "evidence_validation_failure",
+      "harnessTimeout": false,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "memoConstruction": {
+        "costProjection": [],
+        "nativeGeneration": [
+          {
+            "coverageObligations": 0,
+            "cpPatterns": 49,
+            "determinantRegions": 241,
+            "evidenceReuses": 0,
+            "oracleEvaluations": 241,
+            "prefixRequests": 0,
+            "prunedPrefixes": 116,
+            "publishedRules": 211,
+            "unknownPrefixes": 0,
+            "visitedNativePatterns": 125
+          }
+        ],
+        "nativeRequests": [
+          {
+            "canonicalStringsCreated": 16,
+            "canonicalStringsReused": 18,
+            "contextualViewBuilds": 47,
+            "oracleRequests": 47,
+            "preparedRequests": 65,
+            "reusedResults": 18,
+            "uncacheableRequests": 31
+          }
+        ]
+      },
+      "memoPlanning": [],
+      "memoSearch": [],
+      "p2PublicRecodeMetadataJvmProperty": false,
+      "provenance": {
+        "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+        "dmlSha256": "b0b9c91c4c8e3b1b500289e39f86cf6e2d6620e69208ab73c647f2f0f6c13204",
+        "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/actual-workload-support-20261014/candidate06-engine",
+        "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+        "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+        "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+        "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+        "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+      },
+      "renderCell": {
+        "id": "ml|pca|lan|w3|DP-global",
+        "planner": "DP-global",
+        "planner_enum": "COMPILE_EXACT",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "pca"
+      },
+      "rendererAuthorityPlanner": "COMPILE_EXACT",
+      "reportedWorkerCountVerified": false,
+      "returncode": 0,
+      "schema": "systemds-memo-planning-attempt/v1",
+      "status": "failed",
+      "timing": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "harnessWallSeconds": 2.1277214735746384,
+        "memoPlanningSeconds": null,
+        "runtimeProgramSeconds": null
+      }
+    },
+    {
+      "cell": {
+        "id": "ml|als|lan|w3|Memo",
+        "planner": "Memo",
+        "planner_enum": "COMPILE_MEMO",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "als"
+      },
+      "compileOnly": true,
+      "compileOnlyVerified": false,
+      "containerResources": {
+        "coordinatorHeap": "3g",
+        "cpus": 4,
+        "memory": "8g",
+        "workerProcesses": 0,
+        "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+      },
+      "costContract": {
+        "codegen": false,
+        "costEnvironment": {},
+        "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+        "nativeBlas": "none",
+        "productionDefaults": {
+          "aggregateBinaryFlopsPerSecond": 32000000000,
+          "flopsPerSecond": 2147483648,
+          "memoryBandwidthMiBPerSecond": 25000.0,
+          "networkBandwidthC2WMiBPerSecond": 125.0,
+          "networkBandwidthW2CMiBPerSecond": 125.0,
+          "networkLatencyC2WSeconds": 0.0005,
+          "networkLatencyW2CSeconds": 0.0005,
+          "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+          "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+          "unknownDimensionTransferFallbackMiB": 256.0,
+          "uploadEstimateClampRatio": 4.0
+        },
+        "semantics": "production-default-costs-no-overrides/v1"
+      },
+      "executionPlanner": "COMPILE_MEMO",
+      "failureCategory": "timeout_not_proven",
+      "harnessTimeout": false,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "memoConstruction": {
+        "costProjection": [
+          {
+            "activationEnvironments": 1275,
+            "bindingDagVisits": 15680,
+            "invariantProjectionStops": 3414,
+            "noRegionsSkipped": 1064,
+            "primitiveValueBytes": 72112,
+            "primitiveValues": 9014,
+            "primitiveVectors": 922,
+            "projectedContexts": 922,
+            "projectionCacheHits": 2152,
+            "relevantGuardDecisions": 164,
+            "supportPrefixChecks": 1603,
+            "unknownObligations": 0
+          }
+        ],
+        "nativeGeneration": [
+          {
+            "coverageObligations": 10,
+            "cpPatterns": 60,
+            "determinantRegions": 324,
+            "evidenceReuses": 180,
+            "oracleEvaluations": 324,
+            "prefixRequests": 0,
+            "prunedPrefixes": 127,
+            "publishedRules": 663,
+            "unknownPrefixes": 0,
+            "visitedNativePatterns": 377
+          }
+        ],
+        "nativeRequests": [
+          {
+            "canonicalStringsCreated": 41,
+            "canonicalStringsReused": 1187,
+            "contextualViewBuilds": 60,
+            "oracleRequests": 60,
+            "preparedRequests": 1247,
+            "reusedResults": 1187,
+            "uncacheableRequests": 19
+          }
+        ]
+      },
+      "memoPlanning": [],
+      "memoSearch": [],
+      "p2PublicRecodeMetadataJvmProperty": false,
+      "provenance": {
+        "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+        "dmlSha256": "63711ffac72c5d3e0009f1ef24d84f1d0a29553bb1567a32eed5be35e42b4ac7",
+        "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/actual-workload-support-20261014/candidate06-engine",
+        "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+        "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+        "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+        "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+        "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+      },
+      "renderCell": {
+        "id": "ml|als|lan|w3|DP-global",
+        "planner": "DP-global",
+        "planner_enum": "COMPILE_EXACT",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "als"
+      },
+      "rendererAuthorityPlanner": "COMPILE_EXACT",
+      "reportedWorkerCountVerified": false,
+      "returncode": 124,
+      "schema": "systemds-memo-planning-attempt/v1",
+      "status": "failed",
+      "timing": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "harnessWallSeconds": 300.4535529911518,
+        "memoPlanningSeconds": null,
+        "runtimeProgramSeconds": null
+      }
+    },
+    {
+      "cell": {
+        "id": "ml|kmeans|lan|w3|Memo",
+        "planner": "Memo",
+        "planner_enum": "COMPILE_MEMO",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "kmeans"
+      },
+      "compileOnly": true,
+      "compileOnlyVerified": false,
+      "containerResources": {
+        "coordinatorHeap": "3g",
+        "cpus": 4,
+        "memory": "8g",
+        "workerProcesses": 0,
+        "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+      },
+      "costContract": {
+        "codegen": false,
+        "costEnvironment": {},
+        "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+        "nativeBlas": "none",
+        "productionDefaults": {
+          "aggregateBinaryFlopsPerSecond": 32000000000,
+          "flopsPerSecond": 2147483648,
+          "memoryBandwidthMiBPerSecond": 25000.0,
+          "networkBandwidthC2WMiBPerSecond": 125.0,
+          "networkBandwidthW2CMiBPerSecond": 125.0,
+          "networkLatencyC2WSeconds": 0.0005,
+          "networkLatencyW2CSeconds": 0.0005,
+          "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+          "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+          "unknownDimensionTransferFallbackMiB": 256.0,
+          "uploadEstimateClampRatio": 4.0
+        },
+        "semantics": "production-default-costs-no-overrides/v1"
+      },
+      "executionPlanner": "COMPILE_MEMO",
+      "failureCategory": "evidence_validation_failure",
+      "harnessTimeout": false,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "memoConstruction": {
+        "costProjection": [],
+        "nativeGeneration": [
+          {
+            "coverageObligations": 19,
+            "cpPatterns": 189,
+            "determinantRegions": 855,
+            "evidenceReuses": 0,
+            "oracleEvaluations": 855,
+            "prefixRequests": 0,
+            "prunedPrefixes": 385,
+            "publishedRules": 689,
+            "unknownPrefixes": 0,
+            "visitedNativePatterns": 470
+          }
+        ],
+        "nativeRequests": [
+          {
+            "canonicalStringsCreated": 80,
+            "canonicalStringsReused": 372,
+            "contextualViewBuilds": 186,
+            "oracleRequests": 186,
+            "preparedRequests": 558,
+            "reusedResults": 372,
+            "uncacheableRequests": 106
+          }
+        ]
+      },
+      "memoPlanning": [],
+      "memoSearch": [],
+      "p2PublicRecodeMetadataJvmProperty": false,
+      "provenance": {
+        "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+        "dmlSha256": "efb7bc8fe69e9fc41921d0af3c6c57465f21e323f22b2f6e9394cc5f31acefb0",
+        "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/actual-workload-support-20261014/candidate06-engine",
+        "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+        "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+        "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+        "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+        "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+      },
+      "renderCell": {
+        "id": "ml|kmeans|lan|w3|DP-global",
+        "planner": "DP-global",
+        "planner_enum": "COMPILE_EXACT",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "kmeans"
+      },
+      "rendererAuthorityPlanner": "COMPILE_EXACT",
+      "reportedWorkerCountVerified": false,
+      "returncode": 0,
+      "schema": "systemds-memo-planning-attempt/v1",
+      "status": "failed",
+      "timing": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "harnessWallSeconds": 2.7159461081027985,
+        "memoPlanningSeconds": null,
+        "runtimeProgramSeconds": null
+      }
+    },
+    {
+      "cell": {
+        "id": "ml|lm|lan|w3|Memo",
+        "planner": "Memo",
+        "planner_enum": "COMPILE_MEMO",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "lm"
+      },
+      "compileOnly": true,
+      "compileOnlyVerified": true,
+      "containerResources": {
+        "coordinatorHeap": "3g",
+        "cpus": 4,
+        "memory": "8g",
+        "workerProcesses": 0,
+        "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+      },
+      "costContract": {
+        "codegen": false,
+        "costEnvironment": {},
+        "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+        "nativeBlas": "none",
+        "productionDefaults": {
+          "aggregateBinaryFlopsPerSecond": 32000000000,
+          "flopsPerSecond": 2147483648,
+          "memoryBandwidthMiBPerSecond": 25000.0,
+          "networkBandwidthC2WMiBPerSecond": 125.0,
+          "networkBandwidthW2CMiBPerSecond": 125.0,
+          "networkLatencyC2WSeconds": 0.0005,
+          "networkLatencyW2CSeconds": 0.0005,
+          "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+          "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+          "unknownDimensionTransferFallbackMiB": 256.0,
+          "uploadEstimateClampRatio": 4.0
+        },
+        "semantics": "production-default-costs-no-overrides/v1"
+      },
+      "executionPlanner": "COMPILE_MEMO",
+      "failureCategory": null,
+      "harnessTimeout": false,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "memoConstruction": {
+        "costProjection": [
+          {
+            "activationEnvironments": 44,
+            "bindingDagVisits": 0,
+            "invariantProjectionStops": 32,
+            "noRegionsSkipped": 0,
+            "primitiveValueBytes": 712,
+            "primitiveValues": 89,
+            "primitiveVectors": 44,
+            "projectedContexts": 44,
+            "projectionCacheHits": 0,
+            "relevantGuardDecisions": 0,
+            "supportPrefixChecks": 44,
+            "unknownObligations": 0
+          }
+        ],
+        "nativeGeneration": [
+          {
+            "coverageObligations": 0,
+            "cpPatterns": 21,
+            "determinantRegions": 75,
+            "evidenceReuses": 0,
+            "oracleEvaluations": 75,
+            "prefixRequests": 0,
+            "prunedPrefixes": 45,
+            "publishedRules": 70,
+            "unknownPrefixes": 0,
+            "visitedNativePatterns": 30
+          }
+        ],
+        "nativeRequests": [
+          {
+            "canonicalStringsCreated": 5,
+            "canonicalStringsReused": 0,
+            "contextualViewBuilds": 21,
+            "oracleRequests": 21,
+            "preparedRequests": 21,
+            "reusedResults": 0,
+            "uncacheableRequests": 16
+          }
+        ]
+      },
+      "memoPlanning": [
+        {
+          "binarySupportHits": 9,
+          "binarySupportRows": 25,
+          "boundPrunes": 0,
+          "cacheHits": 325,
+          "checks": 248,
+          "conditionalBoundCacheHits": 0,
+          "conditionalBoundQueries": 0,
+          "costCacheHits": 71,
+          "costEvaluations": 51,
+          "epoch": 1,
+          "estimatedCost": "23.420388795634113465348021950406497138086336917695007286965847015380859375",
+          "fedOwners": 5,
+          "nativeRules": 89,
+          "nodes": 67,
+          "oracleHits": 0,
+          "oracleMisses": 21,
+          "phaseNanos": {
+            "facts": 35112940,
+            "model": 81042796,
+            "optimization": 69024676,
+            "projection": 59745736,
+            "rules": 181155582
+          },
+          "phaseSeconds": {
+            "facts": 0.03511294,
+            "model": 0.081042796,
+            "optimization": 0.069024676,
+            "projection": 0.059745736,
+            "rules": 0.181155582
+          },
+          "pruned": 22,
+          "status": "OPTIMAL",
+          "supplies": 0,
+          "supportCacheHits": 0,
+          "supportQueries": 143,
+          "supportWitnessHits": 26,
+          "totalNanos": 426081730,
+          "totalSeconds": 0.42608173,
+          "wideBoundRelaxations": 0,
+          "workers": 3,
+          "worklistVisits": 119
+        }
+      ],
+      "memoSearch": [
+        {
+          "binarySupportHits": 9,
+          "binarySupportRows": 25,
+          "boundPrunes": 0,
+          "checkCacheHits": 325,
+          "checkEvaluations": 248,
+          "conditionalBoundCacheHits": 0,
+          "conditionalBoundQueries": 0,
+          "costCacheHits": 71,
+          "costEvaluations": 51,
+          "nodes": 67,
+          "removedRules": 22,
+          "status": "OPTIMAL",
+          "supportCacheHits": 0,
+          "supportQueries": 143,
+          "supportWitnessHits": 26,
+          "wideBoundRelaxations": 0,
+          "worklistVisits": 119
+        }
+      ],
+      "p2PublicRecodeMetadataJvmProperty": false,
+      "provenance": {
+        "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+        "dmlSha256": "100e776524a5925397cedae3844e124f111ff2ab66f4833acf5e0b718f9be627",
+        "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/actual-workload-support-20261014/candidate06-engine",
+        "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+        "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+        "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+        "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+        "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+      },
+      "renderCell": {
+        "id": "ml|lm|lan|w3|DP-global",
+        "planner": "DP-global",
+        "planner_enum": "COMPILE_EXACT",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "lm"
+      },
+      "rendererAuthorityPlanner": "COMPILE_EXACT",
+      "reportedWorkerCountVerified": true,
+      "returncode": 0,
+      "schema": "systemds-memo-planning-attempt/v1",
+      "status": "passed",
+      "timing": {
+        "executionSeconds": 0.0,
+        "fullCompileSeconds": 1.306245,
+        "fullInitialPlanningSeconds": 1.299026067,
+        "harnessWallSeconds": 2.662123054265976,
+        "memoPlanningSeconds": 0.42608173,
+        "runtimeProgramSeconds": 0.028547
+      }
+    },
+    {
+      "cell": {
+        "id": "ml|l2svm|lan|w3|Memo",
+        "planner": "Memo",
+        "planner_enum": "COMPILE_MEMO",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "l2svm"
+      },
+      "compileOnly": true,
+      "compileOnlyVerified": true,
+      "containerResources": {
+        "coordinatorHeap": "3g",
+        "cpus": 4,
+        "memory": "8g",
+        "workerProcesses": 0,
+        "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+      },
+      "costContract": {
+        "codegen": false,
+        "costEnvironment": {},
+        "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+        "nativeBlas": "none",
+        "productionDefaults": {
+          "aggregateBinaryFlopsPerSecond": 32000000000,
+          "flopsPerSecond": 2147483648,
+          "memoryBandwidthMiBPerSecond": 25000.0,
+          "networkBandwidthC2WMiBPerSecond": 125.0,
+          "networkBandwidthW2CMiBPerSecond": 125.0,
+          "networkLatencyC2WSeconds": 0.0005,
+          "networkLatencyW2CSeconds": 0.0005,
+          "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+          "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+          "unknownDimensionTransferFallbackMiB": 256.0,
+          "uploadEstimateClampRatio": 4.0
+        },
+        "semantics": "production-default-costs-no-overrides/v1"
+      },
+      "executionPlanner": "COMPILE_MEMO",
+      "failureCategory": null,
+      "harnessTimeout": false,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "memoConstruction": {
+        "costProjection": [
+          {
+            "activationEnvironments": 1035,
+            "bindingDagVisits": 17296,
+            "invariantProjectionStops": 4997,
+            "noRegionsSkipped": 0,
+            "primitiveValueBytes": 47296,
+            "primitiveValues": 5912,
+            "primitiveVectors": 973,
+            "projectedContexts": 973,
+            "projectionCacheHits": 2408,
+            "relevantGuardDecisions": 468,
+            "supportPrefixChecks": 1971,
+            "unknownObligations": 0
+          }
+        ],
+        "nativeGeneration": [
+          {
+            "coverageObligations": 20,
+            "cpPatterns": 62,
+            "determinantRegions": 265,
+            "evidenceReuses": 0,
+            "oracleEvaluations": 303,
+            "prefixRequests": 76,
+            "prunedPrefixes": 119,
+            "publishedRules": 257,
+            "unknownPrefixes": 18,
+            "visitedNativePatterns": 204
+          }
+        ],
+        "nativeRequests": [
+          {
+            "canonicalStringsCreated": 46,
+            "canonicalStringsReused": 1237,
+            "contextualViewBuilds": 62,
+            "oracleRequests": 62,
+            "preparedRequests": 1299,
+            "reusedResults": 1237,
+            "uncacheableRequests": 16
+          }
+        ]
+      },
+      "memoPlanning": [
+        {
+          "binarySupportHits": 806,
+          "binarySupportRows": 1024,
+          "boundPrunes": 0,
+          "cacheHits": 11923,
+          "checks": 17307,
+          "conditionalBoundCacheHits": 0,
+          "conditionalBoundQueries": 0,
+          "costCacheHits": 0,
+          "costEvaluations": 1842,
+          "epoch": 1,
+          "estimatedCost": "300.905977516323343712656017116965044555509933843495673500001430511474609375",
+          "fedOwners": 17,
+          "nativeRules": 487,
+          "nodes": 9424,
+          "oracleHits": 0,
+          "oracleMisses": 62,
+          "phaseNanos": {
+            "facts": 60076403,
+            "model": 309437110,
+            "optimization": 577519133,
+            "projection": 90273647,
+            "rules": 613194154
+          },
+          "phaseSeconds": {
+            "facts": 0.060076403,
+            "model": 0.30943711,
+            "optimization": 0.577519133,
+            "projection": 0.090273647,
+            "rules": 0.613194154
+          },
+          "pruned": 152,
+          "status": "OPTIMAL",
+          "supplies": 8,
+          "supportCacheHits": 0,
+          "supportQueries": 15006,
+          "supportWitnessHits": 1371,
+          "totalNanos": 1650500447,
+          "totalSeconds": 1.650500447,
+          "wideBoundRelaxations": 0,
+          "workers": 3,
+          "worklistVisits": 1838
+        }
+      ],
+      "memoSearch": [
+        {
+          "binarySupportHits": 806,
+          "binarySupportRows": 1024,
+          "boundPrunes": 0,
+          "checkCacheHits": 11923,
+          "checkEvaluations": 17307,
+          "conditionalBoundCacheHits": 0,
+          "conditionalBoundQueries": 0,
+          "costCacheHits": 0,
+          "costEvaluations": 1842,
+          "nodes": 9424,
+          "removedRules": 152,
+          "status": "OPTIMAL",
+          "supportCacheHits": 0,
+          "supportQueries": 15006,
+          "supportWitnessHits": 1371,
+          "wideBoundRelaxations": 0,
+          "worklistVisits": 1838
+        }
+      ],
+      "p2PublicRecodeMetadataJvmProperty": false,
+      "provenance": {
+        "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+        "dmlSha256": "d4c69f58accb56e0616d3b674866b50eedf35b55cdbf2bd37fe8f219d943aa81",
+        "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/actual-workload-support-20261014/candidate06-engine",
+        "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+        "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+        "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+        "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+        "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+      },
+      "renderCell": {
+        "id": "ml|l2svm|lan|w3|DP-global",
+        "planner": "DP-global",
+        "planner_enum": "COMPILE_EXACT",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "l2svm"
+      },
+      "rendererAuthorityPlanner": "COMPILE_EXACT",
+      "reportedWorkerCountVerified": true,
+      "returncode": 0,
+      "schema": "systemds-memo-planning-attempt/v1",
+      "status": "passed",
+      "timing": {
+        "executionSeconds": 0.0,
+        "fullCompileSeconds": 2.684724,
+        "fullInitialPlanningSeconds": 2.673079379,
+        "harnessWallSeconds": 4.358450025320053,
+        "memoPlanningSeconds": 1.650500447,
+        "runtimeProgramSeconds": 0.060075
+      }
+    },
+    {
+      "cell": {
+        "id": "ml|steplm|lan|w3|Memo",
+        "planner": "Memo",
+        "planner_enum": "COMPILE_MEMO",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "steplm"
+      },
+      "compileOnly": true,
+      "compileOnlyVerified": false,
+      "containerResources": {
+        "coordinatorHeap": "3g",
+        "cpus": 4,
+        "memory": "8g",
+        "workerProcesses": 0,
+        "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+      },
+      "costContract": {
+        "codegen": false,
+        "costEnvironment": {},
+        "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+        "nativeBlas": "none",
+        "productionDefaults": {
+          "aggregateBinaryFlopsPerSecond": 32000000000,
+          "flopsPerSecond": 2147483648,
+          "memoryBandwidthMiBPerSecond": 25000.0,
+          "networkBandwidthC2WMiBPerSecond": 125.0,
+          "networkBandwidthW2CMiBPerSecond": 125.0,
+          "networkLatencyC2WSeconds": 0.0005,
+          "networkLatencyW2CSeconds": 0.0005,
+          "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+          "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+          "unknownDimensionTransferFallbackMiB": 256.0,
+          "uploadEstimateClampRatio": 4.0
+        },
+        "semantics": "production-default-costs-no-overrides/v1"
+      },
+      "executionPlanner": "COMPILE_MEMO",
+      "failureCategory": "evidence_validation_failure",
+      "harnessTimeout": false,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "memoConstruction": {
+        "costProjection": [],
+        "nativeGeneration": [
+          {
+            "coverageObligations": 34,
+            "cpPatterns": 307,
+            "determinantRegions": 1279,
+            "evidenceReuses": 0,
+            "oracleEvaluations": 1279,
+            "prefixRequests": 0,
+            "prunedPrefixes": 713,
+            "publishedRules": 865,
+            "unknownPrefixes": 0,
+            "visitedNativePatterns": 566
+          }
+        ],
+        "nativeRequests": [
+          {
+            "canonicalStringsCreated": 82,
+            "canonicalStringsReused": 4752,
+            "contextualViewBuilds": 283,
+            "oracleRequests": 283,
+            "preparedRequests": 5035,
+            "reusedResults": 4752,
+            "uncacheableRequests": 201
+          }
+        ]
+      },
+      "memoPlanning": [],
+      "memoSearch": [],
+      "p2PublicRecodeMetadataJvmProperty": false,
+      "provenance": {
+        "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+        "dmlSha256": "deae69a449e5f54c96c77bf545139e27faca4cb02f4048574708fe4957d6ee58",
+        "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/actual-workload-support-20261014/candidate06-engine",
+        "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+        "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+        "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+        "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+        "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+      },
+      "renderCell": {
+        "id": "ml|steplm|lan|w3|DP-global",
+        "planner": "DP-global",
+        "planner_enum": "COMPILE_EXACT",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "steplm"
+      },
+      "rendererAuthorityPlanner": "COMPILE_EXACT",
+      "reportedWorkerCountVerified": false,
+      "returncode": 0,
+      "schema": "systemds-memo-planning-attempt/v1",
+      "status": "failed",
+      "timing": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "harnessWallSeconds": 4.68892078101635,
+        "memoPlanningSeconds": null,
+        "runtimeProgramSeconds": null
+      }
+    },
+    {
+      "cell": {
+        "id": "ml|gnmf|lan|w3|Memo",
+        "planner": "Memo",
+        "planner_enum": "COMPILE_MEMO",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "gnmf"
+      },
+      "compileOnly": true,
+      "compileOnlyVerified": true,
+      "containerResources": {
+        "coordinatorHeap": "3g",
+        "cpus": 4,
+        "memory": "8g",
+        "workerProcesses": 0,
+        "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+      },
+      "costContract": {
+        "codegen": false,
+        "costEnvironment": {},
+        "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+        "nativeBlas": "none",
+        "productionDefaults": {
+          "aggregateBinaryFlopsPerSecond": 32000000000,
+          "flopsPerSecond": 2147483648,
+          "memoryBandwidthMiBPerSecond": 25000.0,
+          "networkBandwidthC2WMiBPerSecond": 125.0,
+          "networkBandwidthW2CMiBPerSecond": 125.0,
+          "networkLatencyC2WSeconds": 0.0005,
+          "networkLatencyW2CSeconds": 0.0005,
+          "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+          "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+          "unknownDimensionTransferFallbackMiB": 256.0,
+          "uploadEstimateClampRatio": 4.0
+        },
+        "semantics": "production-default-costs-no-overrides/v1"
+      },
+      "executionPlanner": "COMPILE_MEMO",
+      "failureCategory": null,
+      "harnessTimeout": false,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "memoConstruction": {
+        "costProjection": [
+          {
+            "activationEnvironments": 173,
+            "bindingDagVisits": 3852,
+            "invariantProjectionStops": 366,
+            "noRegionsSkipped": 0,
+            "primitiveValueBytes": 13448,
+            "primitiveValues": 1681,
+            "primitiveVectors": 203,
+            "projectedContexts": 203,
+            "projectionCacheHits": 1152,
+            "relevantGuardDecisions": 72,
+            "supportPrefixChecks": 317,
+            "unknownObligations": 0
+          }
+        ],
+        "nativeGeneration": [
+          {
+            "coverageObligations": 3,
+            "cpPatterns": 38,
+            "determinantRegions": 209,
+            "evidenceReuses": 0,
+            "oracleEvaluations": 209,
+            "prefixRequests": 0,
+            "prunedPrefixes": 100,
+            "publishedRules": 215,
+            "unknownPrefixes": 0,
+            "visitedNativePatterns": 109
+          }
+        ],
+        "nativeRequests": [
+          {
+            "canonicalStringsCreated": 19,
+            "canonicalStringsReused": 148,
+            "contextualViewBuilds": 38,
+            "oracleRequests": 38,
+            "preparedRequests": 186,
+            "reusedResults": 148,
+            "uncacheableRequests": 19
+          }
+        ]
+      },
+      "memoPlanning": [
+        {
+          "binarySupportHits": 211,
+          "binarySupportRows": 514,
+          "boundPrunes": 0,
+          "cacheHits": 2720,
+          "checks": 4875,
+          "conditionalBoundCacheHits": 0,
+          "conditionalBoundQueries": 0,
+          "costCacheHits": 0,
+          "costEvaluations": 419,
+          "epoch": 1,
+          "estimatedCost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "fedOwners": 15,
+          "nativeRules": 236,
+          "nodes": 3308,
+          "oracleHits": 0,
+          "oracleMisses": 38,
+          "phaseNanos": {
+            "facts": 35861390,
+            "model": 125731502,
+            "optimization": 158784233,
+            "projection": 68033685,
+            "rules": 219503558
+          },
+          "phaseSeconds": {
+            "facts": 0.03586139,
+            "model": 0.125731502,
+            "optimization": 0.158784233,
+            "projection": 0.068033685,
+            "rules": 0.219503558
+          },
+          "pruned": 29,
+          "status": "OPTIMAL",
+          "supplies": 0,
+          "supportCacheHits": 0,
+          "supportQueries": 3406,
+          "supportWitnessHits": 245,
+          "totalNanos": 607914368,
+          "totalSeconds": 0.607914368,
+          "wideBoundRelaxations": 0,
+          "workers": 3,
+          "worklistVisits": 363
+        }
+      ],
+      "memoSearch": [
+        {
+          "binarySupportHits": 211,
+          "binarySupportRows": 514,
+          "boundPrunes": 0,
+          "checkCacheHits": 2720,
+          "checkEvaluations": 4875,
+          "conditionalBoundCacheHits": 0,
+          "conditionalBoundQueries": 0,
+          "costCacheHits": 0,
+          "costEvaluations": 419,
+          "nodes": 3308,
+          "removedRules": 29,
+          "status": "OPTIMAL",
+          "supportCacheHits": 0,
+          "supportQueries": 3406,
+          "supportWitnessHits": 245,
+          "wideBoundRelaxations": 0,
+          "worklistVisits": 363
+        }
+      ],
+      "p2PublicRecodeMetadataJvmProperty": false,
+      "provenance": {
+        "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+        "dmlSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+        "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/actual-workload-support-20261014/candidate06-engine",
+        "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+        "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+        "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+        "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+        "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+      },
+      "renderCell": {
+        "id": "ml|gnmf|lan|w3|DP-global",
+        "planner": "DP-global",
+        "planner_enum": "COMPILE_EXACT",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "gnmf"
+      },
+      "rendererAuthorityPlanner": "COMPILE_EXACT",
+      "reportedWorkerCountVerified": true,
+      "returncode": 0,
+      "schema": "systemds-memo-planning-attempt/v1",
+      "status": "passed",
+      "timing": {
+        "executionSeconds": 0.0,
+        "fullCompileSeconds": 1.275093,
+        "fullInitialPlanningSeconds": 1.269420739,
+        "harnessWallSeconds": 3.5049303248524666,
+        "memoPlanningSeconds": 0.607914368,
+        "runtimeProgramSeconds": 0.026424
+      }
+    },
+    {
+      "cell": {
+        "id": "ml|gmm|lan|w3|Memo",
+        "planner": "Memo",
+        "planner_enum": "COMPILE_MEMO",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "gmm"
+      },
+      "compileOnly": true,
+      "compileOnlyVerified": false,
+      "containerResources": {
+        "coordinatorHeap": "3g",
+        "cpus": 4,
+        "memory": "8g",
+        "workerProcesses": 0,
+        "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+      },
+      "costContract": {
+        "codegen": false,
+        "costEnvironment": {},
+        "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+        "nativeBlas": "none",
+        "productionDefaults": {
+          "aggregateBinaryFlopsPerSecond": 32000000000,
+          "flopsPerSecond": 2147483648,
+          "memoryBandwidthMiBPerSecond": 25000.0,
+          "networkBandwidthC2WMiBPerSecond": 125.0,
+          "networkBandwidthW2CMiBPerSecond": 125.0,
+          "networkLatencyC2WSeconds": 0.0005,
+          "networkLatencyW2CSeconds": 0.0005,
+          "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+          "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+          "unknownDimensionTransferFallbackMiB": 256.0,
+          "uploadEstimateClampRatio": 4.0
+        },
+        "semantics": "production-default-costs-no-overrides/v1"
+      },
+      "executionPlanner": "COMPILE_MEMO",
+      "failureCategory": "evidence_validation_failure",
+      "harnessTimeout": false,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "memoConstruction": {
+        "costProjection": [],
+        "nativeGeneration": [
+          {
+            "coverageObligations": 415,
+            "cpPatterns": 158,
+            "determinantRegions": 1039,
+            "evidenceReuses": 0,
+            "oracleEvaluations": 1039,
+            "prefixRequests": 1,
+            "prunedPrefixes": 201,
+            "publishedRules": 821,
+            "unknownPrefixes": 0,
+            "visitedNativePatterns": 839
+          }
+        ],
+        "nativeRequests": [
+          {
+            "canonicalStringsCreated": 103,
+            "canonicalStringsReused": 634,
+            "contextualViewBuilds": 134,
+            "oracleRequests": 134,
+            "preparedRequests": 768,
+            "reusedResults": 634,
+            "uncacheableRequests": 31
+          }
+        ]
+      },
+      "memoPlanning": [],
+      "memoSearch": [],
+      "p2PublicRecodeMetadataJvmProperty": false,
+      "provenance": {
+        "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+        "dmlSha256": "32a3d4f98f350f138d4d4ce6b52f29a24154dc8f488c094f87e20dcab8c43727",
+        "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/actual-workload-support-20261014/candidate06-engine",
+        "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+        "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+        "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+        "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+        "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+      },
+      "renderCell": {
+        "id": "ml|gmm|lan|w3|DP-global",
+        "planner": "DP-global",
+        "planner_enum": "COMPILE_EXACT",
+        "profile": "lan",
+        "suite": "ml",
+        "workers": 3,
+        "workload": "gmm"
+      },
+      "rendererAuthorityPlanner": "COMPILE_EXACT",
+      "reportedWorkerCountVerified": false,
+      "returncode": 0,
+      "schema": "systemds-memo-planning-attempt/v1",
+      "status": "failed",
+      "timing": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "harnessWallSeconds": 4.3124252408742905,
+        "memoPlanningSeconds": null,
+        "runtimeProgramSeconds": null
+      }
+    },
+    {
+      "cell": {
+        "id": "p1|P1_FULL|lan|w3|Memo",
+        "planner": "Memo",
+        "planner_enum": "COMPILE_MEMO",
+        "profile": "lan",
+        "suite": "p1",
+        "workers": 3,
+        "workload": "P1_FULL"
+      },
+      "compileOnly": true,
+      "compileOnlyVerified": false,
+      "containerResources": {
+        "coordinatorHeap": "3g",
+        "cpus": 4,
+        "memory": "8g",
+        "workerProcesses": 0,
+        "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+      },
+      "costContract": {
+        "codegen": false,
+        "costEnvironment": {},
+        "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+        "nativeBlas": "none",
+        "productionDefaults": {
+          "aggregateBinaryFlopsPerSecond": 32000000000,
+          "flopsPerSecond": 2147483648,
+          "memoryBandwidthMiBPerSecond": 25000.0,
+          "networkBandwidthC2WMiBPerSecond": 125.0,
+          "networkBandwidthW2CMiBPerSecond": 125.0,
+          "networkLatencyC2WSeconds": 0.0005,
+          "networkLatencyW2CSeconds": 0.0005,
+          "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+          "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+          "unknownDimensionTransferFallbackMiB": 256.0,
+          "uploadEstimateClampRatio": 4.0
+        },
+        "semantics": "production-default-costs-no-overrides/v1"
+      },
+      "executionPlanner": "COMPILE_MEMO",
+      "failureCategory": "evidence_validation_failure",
+      "harnessTimeout": false,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "memoConstruction": {
+        "costProjection": [],
+        "nativeGeneration": [],
+        "nativeRequests": []
+      },
+      "memoPlanning": [],
+      "memoSearch": [],
+      "p2PublicRecodeMetadataJvmProperty": false,
+      "provenance": {
+        "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+        "dmlSha256": "e4d06659ade70c9925169c9533cca519c01c2d104836c4dce1f63213a57fc8e1",
+        "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/actual-workload-support-20261014/candidate06-engine",
+        "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+        "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+        "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+        "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+        "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+      },
+      "renderCell": {
+        "id": "p1|P1_FULL|lan|w3|DP-global",
+        "planner": "DP-global",
+        "planner_enum": "COMPILE_EXACT",
+        "profile": "lan",
+        "suite": "p1",
+        "workers": 3,
+        "workload": "P1_FULL"
+      },
+      "rendererAuthorityPlanner": "COMPILE_EXACT",
+      "reportedWorkerCountVerified": false,
+      "returncode": 0,
+      "schema": "systemds-memo-planning-attempt/v1",
+      "status": "failed",
+      "timing": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "harnessWallSeconds": 3.1686264276504517,
+        "memoPlanningSeconds": null,
+        "runtimeProgramSeconds": null
+      }
+    },
+    {
+      "cell": {
+        "id": "p2|P2_PREP|lan|w3|Memo",
+        "planner": "Memo",
+        "planner_enum": "COMPILE_MEMO",
+        "profile": "lan",
+        "suite": "p2",
+        "workers": 3,
+        "workload": "P2_PREP"
+      },
+      "compileOnly": true,
+      "compileOnlyVerified": false,
+      "containerResources": {
+        "coordinatorHeap": "3g",
+        "cpus": 4,
+        "memory": "8g",
+        "workerProcesses": 0,
+        "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+      },
+      "costContract": {
+        "codegen": false,
+        "costEnvironment": {},
+        "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+        "nativeBlas": "none",
+        "productionDefaults": {
+          "aggregateBinaryFlopsPerSecond": 32000000000,
+          "flopsPerSecond": 2147483648,
+          "memoryBandwidthMiBPerSecond": 25000.0,
+          "networkBandwidthC2WMiBPerSecond": 125.0,
+          "networkBandwidthW2CMiBPerSecond": 125.0,
+          "networkLatencyC2WSeconds": 0.0005,
+          "networkLatencyW2CSeconds": 0.0005,
+          "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+          "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+          "unknownDimensionTransferFallbackMiB": 256.0,
+          "uploadEstimateClampRatio": 4.0
+        },
+        "semantics": "production-default-costs-no-overrides/v1"
+      },
+      "executionPlanner": "COMPILE_MEMO",
+      "failureCategory": "evidence_validation_failure",
+      "harnessTimeout": false,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "memoConstruction": {
+        "costProjection": [],
+        "nativeGeneration": [],
+        "nativeRequests": []
+      },
+      "memoPlanning": [],
+      "memoSearch": [],
+      "p2PublicRecodeMetadataJvmProperty": true,
+      "provenance": {
+        "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+        "dmlSha256": "d4a4e842bdd730304996ccfc2e6d83e6d237d54b18f9947958c59e4d93e7f308",
+        "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/actual-workload-support-20261014/candidate06-engine",
+        "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+        "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+        "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+        "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+        "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+      },
+      "renderCell": {
+        "id": "p2|P2_PREP|lan|w3|DP-global",
+        "planner": "DP-global",
+        "planner_enum": "COMPILE_EXACT",
+        "profile": "lan",
+        "suite": "p2",
+        "workers": 3,
+        "workload": "P2_PREP"
+      },
+      "rendererAuthorityPlanner": "COMPILE_EXACT",
+      "reportedWorkerCountVerified": false,
+      "returncode": 0,
+      "schema": "systemds-memo-planning-attempt/v1",
+      "status": "failed",
+      "timing": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "harnessWallSeconds": 2.128806747496128,
+        "memoPlanningSeconds": null,
+        "runtimeProgramSeconds": null
+      }
+    },
+    {
+      "cell": {
+        "id": "sliceline|ADULT|lan|w3|Memo",
+        "planner": "Memo",
+        "planner_enum": "COMPILE_MEMO",
+        "profile": "lan",
+        "suite": "sliceline",
+        "workers": 3,
+        "workload": "ADULT"
+      },
+      "compileOnly": true,
+      "compileOnlyVerified": false,
+      "containerResources": {
+        "coordinatorHeap": "3g",
+        "cpus": 4,
+        "memory": "8g",
+        "workerProcesses": 0,
+        "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+      },
+      "costContract": {
+        "codegen": false,
+        "costEnvironment": {},
+        "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+        "nativeBlas": "none",
+        "productionDefaults": {
+          "aggregateBinaryFlopsPerSecond": 32000000000,
+          "flopsPerSecond": 2147483648,
+          "memoryBandwidthMiBPerSecond": 25000.0,
+          "networkBandwidthC2WMiBPerSecond": 125.0,
+          "networkBandwidthW2CMiBPerSecond": 125.0,
+          "networkLatencyC2WSeconds": 0.0005,
+          "networkLatencyW2CSeconds": 0.0005,
+          "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+          "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+          "unknownDimensionTransferFallbackMiB": 256.0,
+          "uploadEstimateClampRatio": 4.0
+        },
+        "semantics": "production-default-costs-no-overrides/v1"
+      },
+      "executionPlanner": "COMPILE_MEMO",
+      "failureCategory": "evidence_validation_failure",
+      "harnessTimeout": false,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "memoConstruction": {
+        "costProjection": [],
+        "nativeGeneration": [],
+        "nativeRequests": []
+      },
+      "memoPlanning": [],
+      "memoSearch": [],
+      "p2PublicRecodeMetadataJvmProperty": false,
+      "provenance": {
+        "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+        "dmlSha256": "f8a1681cdda0bdf0baf9a13bef1751077edbcb766bf3d913fc42d778adb82ba3",
+        "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/actual-workload-support-20261014/candidate06-engine",
+        "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+        "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+        "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+        "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+        "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+      },
+      "renderCell": {
+        "id": "sliceline|ADULT|lan|w3|DP-global",
+        "planner": "DP-global",
+        "planner_enum": "COMPILE_EXACT",
+        "profile": "lan",
+        "suite": "sliceline",
+        "workers": 3,
+        "workload": "ADULT"
+      },
+      "rendererAuthorityPlanner": "COMPILE_EXACT",
+      "reportedWorkerCountVerified": false,
+      "returncode": 0,
+      "schema": "systemds-memo-planning-attempt/v1",
+      "status": "failed",
+      "timing": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "harnessWallSeconds": 2.831886440515518,
+        "memoPlanningSeconds": null,
+        "runtimeProgramSeconds": null
+      }
+    },
+    {
+      "cell": {
+        "id": "sliceline|COVTYPE|lan|w3|Memo",
+        "planner": "Memo",
+        "planner_enum": "COMPILE_MEMO",
+        "profile": "lan",
+        "suite": "sliceline",
+        "workers": 3,
+        "workload": "COVTYPE"
+      },
+      "compileOnly": true,
+      "compileOnlyVerified": false,
+      "containerResources": {
+        "coordinatorHeap": "3g",
+        "cpus": 4,
+        "memory": "8g",
+        "workerProcesses": 0,
+        "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+      },
+      "costContract": {
+        "codegen": false,
+        "costEnvironment": {},
+        "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+        "nativeBlas": "none",
+        "productionDefaults": {
+          "aggregateBinaryFlopsPerSecond": 32000000000,
+          "flopsPerSecond": 2147483648,
+          "memoryBandwidthMiBPerSecond": 25000.0,
+          "networkBandwidthC2WMiBPerSecond": 125.0,
+          "networkBandwidthW2CMiBPerSecond": 125.0,
+          "networkLatencyC2WSeconds": 0.0005,
+          "networkLatencyW2CSeconds": 0.0005,
+          "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+          "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+          "unknownDimensionTransferFallbackMiB": 256.0,
+          "uploadEstimateClampRatio": 4.0
+        },
+        "semantics": "production-default-costs-no-overrides/v1"
+      },
+      "executionPlanner": "COMPILE_MEMO",
+      "failureCategory": "evidence_validation_failure",
+      "harnessTimeout": false,
+      "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+      "memoConstruction": {
+        "costProjection": [],
+        "nativeGeneration": [],
+        "nativeRequests": []
+      },
+      "memoPlanning": [],
+      "memoSearch": [],
+      "p2PublicRecodeMetadataJvmProperty": false,
+      "provenance": {
+        "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+        "dmlSha256": "06b0f4bb19bf6b0dea4de7c462b06c7e11776ff041e09a0f26158fa325a63dff",
+        "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/actual-workload-support-20261014/candidate06-engine",
+        "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+        "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+        "repositoryCommit": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+        "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+        "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+      },
+      "renderCell": {
+        "id": "sliceline|COVTYPE|lan|w3|DP-global",
+        "planner": "DP-global",
+        "planner_enum": "COMPILE_EXACT",
+        "profile": "lan",
+        "suite": "sliceline",
+        "workers": 3,
+        "workload": "COVTYPE"
+      },
+      "rendererAuthorityPlanner": "COMPILE_EXACT",
+      "reportedWorkerCountVerified": false,
+      "returncode": 0,
+      "schema": "systemds-memo-planning-attempt/v1",
+      "status": "failed",
+      "timing": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "harnessWallSeconds": 2.788829281926155,
+        "memoPlanningSeconds": null,
+        "runtimeProgramSeconds": null
+      }
+    }
+  ],
+  "schema": "systemds-memo-planning-matrix-summary/v1",
+  "successfulCells": 5
+}

@@ -25,7 +25,10 @@ import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.OpOpDG;
 import org.apache.sysds.common.Types.OpOp1;
+import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
+import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.DataGenOp;
@@ -36,6 +39,8 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
+import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.parser.Statement;
@@ -106,6 +111,7 @@ public final class MemoShapes {
 
 	private final MemoProgramFacts facts;
 	private final MemoSources sources;
+	private final MemoTransformFacts transformFacts;
 	private final MemoBindingResolver resolver;
 	private final Hop[] views;
 	private final Map<Hop,Integer> viewOwners = new IdentityHashMap<>();
@@ -217,11 +223,14 @@ public final class MemoShapes {
 	private int movementPrefixNodes;
 	private long movementPrefixRequests,movementPrefixCompleteHits,movementPrefixBuilds;
 
-	private MemoShapes(MemoProgramFacts facts, MemoSources sources,int bindingGuardCacheEntries,
+	private MemoShapes(MemoProgramFacts facts, MemoSources sources,MemoTransformFacts transformFacts,
+		int bindingGuardCacheEntries,
 		int repeatProofCacheEntries,int transferCacheEntries,boolean indexedContexts,int indexedAtomLimit) {
 		this.facts = Objects.requireNonNull(facts, "program facts");
 		phaseGuardDependencies=computePhaseGuardDependencies();
 		this.sources = Objects.requireNonNull(sources, "sources");
+		this.transformFacts=Objects.requireNonNull(transformFacts,"transform facts");
+		this.transformFacts.requireRequest(facts,sources);
 		resolvedShapeAliasRepresentatives=shapeAliasRepresentatives(facts.bindings());
 		movementPrefixes=new MovementPrefixNode[facts.occurrences().size()];
 		this.indexedContexts=indexedContexts;
@@ -322,7 +331,11 @@ public final class MemoShapes {
 	}
 
 	public static MemoShapes analyze(MemoProgramFacts facts, MemoSources sources) {
-		return new MemoShapes(facts,sources,DEFAULT_PROOF_CACHE_ENTRIES,DEFAULT_PROOF_CACHE_ENTRIES,
+		return analyze(facts,sources,MemoTransformFacts.none(facts,sources));
+	}
+
+	static MemoShapes analyze(MemoProgramFacts facts,MemoSources sources,MemoTransformFacts transformFacts) {
+		return new MemoShapes(facts,sources,transformFacts,DEFAULT_PROOF_CACHE_ENTRIES,DEFAULT_PROOF_CACHE_ENTRIES,
 			DEFAULT_TRANSFER_CACHE_ENTRIES,true,DEFAULT_INDEXED_ATOM_LIMIT);
 	}
 
@@ -330,6 +343,8 @@ public final class MemoShapes {
 		if(this.facts!=facts || this.sources!=sources)
 			throw new IllegalArgumentException("Shape authority belongs to another planning request");
 	}
+	MemoTransformFacts.Proof transformProof(int owner) { return transformFacts.proof(owner); }
+	List<String> transformDiagnostics() { return transformFacts.diagnostics(); }
 
 	static MemoShapes analyze(MemoProgramFacts facts,MemoSources sources,int bindingGuardCacheEntries,
 		int repeatProofCacheEntries) {
@@ -341,14 +356,16 @@ public final class MemoShapes {
 		int repeatProofCacheEntries,int transferCacheEntries) {
 		if(bindingGuardCacheEntries<0 || repeatProofCacheEntries<0 || transferCacheEntries<0)
 			throw new IllegalArgumentException("proof cache sizes must be nonnegative");
-		return new MemoShapes(facts,sources,bindingGuardCacheEntries,repeatProofCacheEntries,
+		return new MemoShapes(facts,sources,MemoTransformFacts.none(facts,sources),
+			bindingGuardCacheEntries,repeatProofCacheEntries,
 			transferCacheEntries,true,DEFAULT_INDEXED_ATOM_LIMIT);
 	}
 
 	static MemoShapes analyze(MemoProgramFacts facts,MemoSources sources,boolean indexedContexts,
 		int indexedAtomLimit) {
 		if(indexedAtomLimit<0) throw new IllegalArgumentException("indexed atom limit must be nonnegative");
-		return new MemoShapes(facts,sources,DEFAULT_PROOF_CACHE_ENTRIES,DEFAULT_PROOF_CACHE_ENTRIES,
+		return new MemoShapes(facts,sources,MemoTransformFacts.none(facts,sources),
+			DEFAULT_PROOF_CACHE_ENTRIES,DEFAULT_PROOF_CACHE_ENTRIES,
 			DEFAULT_TRANSFER_CACHE_ENTRIES,indexedContexts,indexedAtomLimit);
 	}
 
@@ -703,14 +720,18 @@ public final class MemoShapes {
 	private static boolean costRelevantInput(Hop hop,int position) {
 		Hop input=hop.getInput(position);
 		// Matrix/frame inputs contribute size and sparsity. Integer parameters can
-		// control ordinary dimensions/index ranges; SEQ is the one native shape
-		// operator whose FP64 from/to/increment values also control cardinality.
+		// control ordinary dimensions/index ranges. DataGen dimensions and SEQ
+		// bounds also accept FP64 scalar values that control output cardinality.
 		return isMatrixLike(input) || input.getValueType()==ValueType.INT64
 			|| costRelevantNumericScalar(hop,position);
 	}
 
 	private static boolean costRelevantNumericScalar(Hop hop,int position) {
-		if(!(hop instanceof DataGenOp dataGen) || dataGen.getOp()!=OpOpDG.SEQ) return false;
+		if(!(hop instanceof DataGenOp dataGen)) return false;
+		if(dataGen.getOp()==OpOpDG.RAND || dataGen.getOp()==OpOpDG.SINIT || dataGen.getOp()==OpOpDG.FRAMEINIT)
+			return Objects.equals(dataGen.getParamIndexMap().get(DataExpression.RAND_ROWS),position)
+				|| Objects.equals(dataGen.getParamIndexMap().get(DataExpression.RAND_COLS),position);
+		if(dataGen.getOp()!=OpOpDG.SEQ) return false;
 		Map<String,Integer> parameters=dataGen.getParamIndexMap();
 		return Objects.equals(parameters.get(Statement.SEQ_FROM),position)
 			|| Objects.equals(parameters.get(Statement.SEQ_TO),position)
@@ -984,7 +1005,7 @@ public final class MemoShapes {
 		for(int position=0; position<view.getInput().size(); position++)
 			applyShape(view.getInput(position),resolvedBindingShape(facts.inputBinding(occurrence,position),
 				normalized,phaseEvaluation,active));
-		applyMultiReturnOutputShapes(view);
+		applyMultiReturnOutputShapes(view,facts.occurrence(occurrence).compiledOwnerId());
 		return view;
 	}
 
@@ -1045,7 +1066,7 @@ public final class MemoShapes {
 			return new PreparedMovementView(recipe,null);
 		}
 		if(view==null) { view=materializeMovementView(recipe); movementPrefixBuilds++; }
-		else applyMultiReturnOutputShapes(view);
+		else applyMultiReturnOutputShapes(view,facts.occurrence(occurrence).compiledOwnerId());
 		if(node!=null) node.complete=true;
 		return new PreparedMovementView(recipe,view);
 	}
@@ -1068,7 +1089,7 @@ public final class MemoShapes {
 		applyShape(view,recipe.output());
 		for(int position=0;position<recipe.inputs().size();position++)
 			applyShape(view.getInput(position),recipe.inputs().get(position));
-		applyMultiReturnOutputShapes(view);
+		applyMultiReturnOutputShapes(view,facts.occurrence(recipe.occurrence()).compiledOwnerId());
 		return view;
 	}
 
@@ -1730,7 +1751,23 @@ public final class MemoShapes {
 			LoopSlotKey key=new LoopSlotKey(loop,slot);
 			Shape known=heads.get(key);
 			if(known!=null) return known;
-			if(!evaluating.add(key)) return unknown((Hop)null);
+			if(!evaluating.add(key)) {
+				MemoProgramFacts.CarriedValue carried=carriedValue(loop.loopId(),slot);
+				if(carried==null) return unknown((Hop)null);
+				// Use the independently finalized all-path invariant only when an
+				// actual recursive reconstruction needs a seed. Normal evaluation
+				// must still derive its contextual FIRST and repeat shapes.
+				Shape invariant=bindingShapes[carried.headBindingId()];
+				Shape entry=bindingShapes[carried.entryBindingId()];
+				Shape backedge=bindingShapes[carried.backedgeBindingId()];
+				if(invariant!=null && invariant.exact() && entry!=null && backedge!=null
+					&& entry.exact() && backedge.exact() && sameDimensions(entry,backedge)) {
+					heads.put(key,invariant);
+					return invariant;
+				}
+				return unknown((Hop)null);
+			}
+			boolean proved=false;
 			try {
 				MemoProgramFacts.CarriedValue carried=carriedValue(loop.loopId(),slot);
 				if(carried==null) return unknown((Hop)null);
@@ -1744,12 +1781,15 @@ public final class MemoShapes {
 				EvaluationContext middle=withPhase(context,loop,IterationPhase.MIDDLE,LoopPhase.BACKEDGE);
 				Shape repeat=resolvedBindingShape(carried.backedgeBindingId(),middle,this,new LinkedHashSet<>());
 				if(!repeat.exact() || !sameDimensions(seed,repeat)) {
-					heads.remove(key);
 					return unknown((Hop)null);
 				}
+				proved=true;
 				return seed;
 			}
-			finally { evaluating.remove(key); }
+			finally {
+				if(!proved) heads.remove(key);
+				evaluating.remove(key);
+			}
 		}
 
 		private EvaluationContext bindDirectHeads(int binding,EvaluationContext context) {
@@ -1895,8 +1935,9 @@ public final class MemoShapes {
 		// head has an exact inductive shape.
 		if(node.kind()==BindingKind.DEFINITION && !node.children().isEmpty())
 			return resolvedBindingShape(node.children().get(0),context,phaseEvaluation,active);
-		Set<Integer> loopDependencies=phaseSensitiveByBinding.get(binding);
-		Set<Integer> guardDependencies=guardSensitiveByBinding.get(binding);
+		ShapeDependencies exactDependencies=shapeDependenciesByBinding.get(binding);
+		Set<Integer> loopDependencies=exactDependencies.loops();
+		Set<Integer> guardDependencies=exactDependencies.guards();
 		boolean phaseRelevant=false;
 		for(LoopDecision loop:context.iterationPhases().keySet())
 			if(loopDependencies.contains(loop.loopId())) { phaseRelevant=true; break; }
@@ -1994,13 +2035,13 @@ public final class MemoShapes {
 	private Shape multiReturnOutputShape(ResolvedOrigin origin,EvaluationContext context,
 		PhaseEvaluation phaseEvaluation,Set<PhaseVisit> active) {
 		Shape result=multiReturnOutputShape(origin.referenceId(),origin.boundarySlot());
-		if(result!=null && result.exact() || origin.boundarySlot()!=0) return result;
+		if(result!=null && result.exact()) return result;
 		Hop hop=facts.occurrence(origin.referenceId()).hop();
-		if(!shapePreservingTransformEncode(hop) || hop.getInput().isEmpty()) return result;
+		if(!(hop instanceof FunctionOp function) || hop.getInput().isEmpty()) return result;
 		Shape input=resolvedBindingShape(facts.inputBinding(origin.referenceId(),0),
 			context.withCallFrame(origin.callFrame()),phaseEvaluation,active);
-		return input.exact() ? new Shape(DataType.MATRIX,ValueType.FP64,input.rows(),input.columns(),
-			-1,Knowledge.EXACT) : result;
+		Shape derived=multiReturnOutputShape(function,origin.compiledOwnerId(),origin.boundarySlot(),input);
+		return derived!=null ? derived : result;
 	}
 
 	private Shape multiReturnOutputShape(int occurrence,int slot) {
@@ -2011,25 +2052,63 @@ public final class MemoShapes {
 			|| function.getOutputs()==null || slot>=function.getOutputs().size()) return null;
 		Hop output=function.getOutputs().get(slot);
 		Shape result=output==null ? null : fromView(output);
-		if(slot==0 && (result==null || !result.exact()) && shapePreservingTransformEncode(function)
-			&& !function.getInput().isEmpty()) {
+		if((result==null || !result.exact()) && !function.getInput().isEmpty()) {
 			int inputBinding=facts.inputBinding(occurrence,0);
 			Shape input=inputBinding>=0 ? bindingShapes[inputBinding] : null;
-			if(input!=null && input.exact())
-				return new Shape(DataType.MATRIX,ValueType.FP64,input.rows(),input.columns(),-1,Knowledge.EXACT);
+			Shape derived=multiReturnOutputShape(function,facts.occurrence(occurrence).compiledOwnerId(),slot,input);
+			if(derived!=null) return derived;
 		}
 		return result;
 	}
 
-	private static void applyMultiReturnOutputShapes(Hop hop) {
-		if(!(hop instanceof FunctionOp function) || !shapePreservingTransformEncode(function)
-			|| function.getInput().get(0).getDim1()<=0 || function.getInput().get(0).getDim2()<=0
-			|| function.getOutputs()==null || function.getOutputs().isEmpty()) return;
-		Hop input=function.getInput().get(0);
-		Hop output=function.getOutputs().get(0);
-		if(output!=null)
-			applyShape(output,new Shape(DataType.MATRIX,ValueType.FP64,input.getDim1(),input.getDim2(),
-				-1,Knowledge.EXACT));
+	private void applyMultiReturnOutputShapes(Hop hop,int owner) {
+		if(!(hop instanceof FunctionOp function)
+			|| function.getFunctionType()!=FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+			|| function.getInput().isEmpty() || function.getOutputs()==null) return;
+		Shape input=fromView(function.getInput().get(0));
+		for(int slot=0;slot<function.getOutputs().size();slot++) {
+			Hop output=function.getOutputs().get(slot);
+			Shape derived=multiReturnOutputShape(function,owner,slot,input);
+			if(output!=null && derived!=null) applyShape(output,derived);
+		}
+	}
+
+	private Shape multiReturnOutputShape(FunctionOp function,int owner,int slot,Shape input) {
+		if(input==null || !input.exact() || slot<0 || function.getOutputs()==null
+			|| slot>=function.getOutputs().size() || function.getOutputs().get(slot)==null) return null;
+		Hop output=function.getOutputs().get(slot);
+		MemoTransformFacts.Proof proof=transformFacts.proof(owner);
+		if(proof!=null && preparedTransformMatches(function,owner,input,proof)) {
+			long rows=slot==0 ? proof.outputRows() : proof.metadataRows();
+			long columns=slot==0 ? proof.outputColumns() : proof.metadataColumns();
+			return new Shape(output.getDataType(),output.getValueType(),rows,columns,-1,Knowledge.EXACT);
+		}
+		if(shapePreservingTransformEncode(function) && slot==0)
+			return new Shape(DataType.MATRIX,ValueType.FP64,input.rows(),input.columns(),-1,Knowledge.EXACT);
+		if(function.getFunctionName().equalsIgnoreCase(Opcodes.EIGEN.toString()) && slot<2) {
+			FunctionOp contextual=(FunctionOp)cloneView(function);
+			applyShape(contextual.getInput().get(0),input);
+			Hop contextualOutput=contextual.getOutputs().get(slot);
+			long[] dimensions=contextual.getMultiReturnBuiltinOutputDims(contextualOutput);
+			long rows=dimensions[0],columns=dimensions[1];
+			return rows>0 && columns>0
+				? new Shape(output.getDataType(),output.getValueType(),rows,columns,
+					-1,Knowledge.EXACT) : null;
+		}
+		return null;
+	}
+
+	private static boolean preparedTransformMatches(FunctionOp function,int owner,Shape input,
+		MemoTransformFacts.Proof proof) {
+		if(proof.functionOwner()!=owner || !function.getFunctionName().equalsIgnoreCase(
+			Opcodes.TRANSFORMENCODE.toString()) || function.getInput().size()!=2
+			|| function.getOutputs()==null || function.getOutputs().size()!=proof.outputArity()
+			|| !(function.getInput(1) instanceof LiteralOp literal)
+			|| !proof.rawSpec().equals(literal.getStringValue()) || input==null || !input.exact()) return false;
+		return input.dataType()==proof.inputDataType() && input.rows()==proof.inputRows()
+			&& input.columns()==proof.inputColumns()
+			&& function.getOutputs().get(0).getDataType()==proof.primaryDataType()
+			&& function.getOutputs().get(1).getDataType()==proof.metadataDataType();
 	}
 
 	private static boolean shapePreservingTransformEncode(Hop hop) {
@@ -2114,16 +2193,27 @@ public final class MemoShapes {
 				Hop input=template.getInput(position);
 				if(input.getDataType().isScalar() && !(input instanceof LiteralOp)) {
 					if(input.getValueType()==ValueType.INT64) {
-						Long value=scalarLong(facts.inputBinding(occurrence,position),context,new LinkedHashSet<>());
+						Long value=scalarLong(facts.inputBinding(occurrence,position),context,phaseEvaluation,active);
 						replacements.add(ScalarReplacement.of(value));
 					}
 					else if(costRelevantNumericScalar(template,position)) {
-						Double value=scalarDouble(facts.inputBinding(occurrence,position),context,new LinkedHashSet<>());
+						Double value=scalarDouble(facts.inputBinding(occurrence,position),context,phaseEvaluation,active);
 						replacements.add(ScalarReplacement.of(value));
 					}
 					else replacements.add(ScalarReplacement.NONE);
 				}
 				else replacements.add(ScalarReplacement.NONE);
+			}
+			// Do not let a dynamic dimension fall back to the compiler's first-iteration
+			// expression tree after its contextual metadata proof became unknown.
+			if(template instanceof DataGenOp dataGen && (dataGen.getOp()==OpOpDG.RAND
+				|| dataGen.getOp()==OpOpDG.SINIT || dataGen.getOp()==OpOpDG.FRAMEINIT)) {
+				for(String name : List.of(DataExpression.RAND_ROWS,DataExpression.RAND_COLS)) {
+					Integer position=dataGen.getParamIndexMap().get(name);
+					if(position!=null && !(template.getInput(position) instanceof LiteralOp)
+						&& replacements.get(position).kind()==ScalarReplacementKind.NONE)
+						return unknown(template);
+				}
 			}
 			OccurrenceTransferKey transferKey=transferable && occurrenceTransferEnabled
 				? new OccurrenceTransferKey(occurrence,inputs,replacements) : null;
@@ -2142,13 +2232,20 @@ public final class MemoShapes {
 				else if(replacement.kind()==ScalarReplacementKind.FP64)
 					view.getInput().set(position,new LiteralOp(replacement.doubleValue()));
 			}
-			applyMultiReturnOutputShapes(view);
+			applyMultiReturnOutputShapes(view,facts.occurrence(occurrence).compiledOwnerId());
 			if(isMatrixLike(view) && !view.getInput().isEmpty()) {
 				view.setDim1(-1); view.setDim2(-1); view.setNnz(-1);
 			}
 			view.refreshSizeInformation();
 			Shape derived=fromView(view);
-			result=derived.exact() ? derived : occurrenceOutputShape(facts.occurrence(occurrence));
+			Shape sequence=derived.exact() ? null : sequenceOutputShape(occurrence,view);
+			if(sequence!=null) derived=sequence;
+			Shape contracted=ctablePermutationOutputShape(view,inputs);
+			if(contracted!=null) derived=contracted;
+			// A dynamic sequence is intrinsically a column vector. Its semantic
+			// UNKNOWN must not fall back to DataGenOp's parent-CTABLE row heuristic.
+			result=derived.exact() || sequence!=null ? derived
+				: occurrenceOutputShape(facts.occurrence(occurrence));
 			occurrenceTransferBuilds++;
 			if(transferKey!=null && derived.exact()) occurrenceTransferCache.put(transferKey,result);
 			return result;
@@ -2157,6 +2254,109 @@ public final class MemoShapes {
 			return occurrenceOutputShape(facts.occurrence(occurrence));
 		}
 		finally { active.remove(key); }
+	}
+
+	private static Shape ctablePermutationOutputShape(Hop hop,List<Shape> inputs) {
+		if(!(hop instanceof TernaryOp table) || table.getOp()!=OpOp3.CTABLE
+			|| table.getInput().size()!=3 || inputs.size()!=3
+			|| !(table.getInput(1) instanceof ReorgOp order)
+			|| order.getOp()!=ReOrgOp.SORT || order.getInput().size()<4
+			|| !(order.getInput(3) instanceof LiteralOp indexReturn) || !indexReturn.getBooleanValue()) return null;
+		long extent=oneBasedSequenceExtent(table.getInput(0),inputs.get(0));
+		Shape permutation=inputs.get(1);
+		if(extent<=0 || permutation==null || !permutation.exact()
+			|| permutation.dataType()!=DataType.MATRIX || permutation.columns()!=1
+			|| permutation.rows()!=extent) return null;
+		return new Shape(hop.getDataType(),hop.getValueType(),extent,extent,-1,Knowledge.EXACT);
+	}
+
+	/**
+	 * Exact narrow contract for the KMeans sequence {@code seq(i, 0+i, k)}.
+	 * DataGenOp may otherwise borrow the CTABLE output row count (50 in the
+	 * production workload), which is not the sequence length. Only an exact
+	 * non-zero integer stride and value-identical bounds, modulo a transparent
+	 * assignment and integer {@code +0}, establish the one-row result.
+	 */
+	private Shape sequenceOutputShape(int occurrence,Hop hop) {
+		if(!(hop instanceof DataGenOp sequence) || sequence.getOp()!=OpOpDG.SEQ) return null;
+		Integer fromPosition=sequence.getParamIndexMap().get(Statement.SEQ_FROM);
+		Integer toPosition=sequence.getParamIndexMap().get(Statement.SEQ_TO);
+		Integer incrementPosition=sequence.getParamIndexMap().get(Statement.SEQ_INCR);
+		if(fromPosition==null || toPosition==null || incrementPosition==null)
+			return new Shape(hop.getDataType(),hop.getValueType(),-1,1,-1,Knowledge.UNKNOWN);
+		int from=facts.inputBinding(occurrence,fromPosition);
+		int to=facts.inputBinding(occurrence,toPosition);
+		Long increment=scalarLongAtInput(occurrence,incrementPosition);
+		if(increment!=null && increment!=0
+			&& sameIntegerBindingModuloZero(from,to,new LinkedHashSet<>()))
+			return new Shape(hop.getDataType(),hop.getValueType(),1,1,-1,Knowledge.EXACT);
+		return new Shape(hop.getDataType(),hop.getValueType(),-1,1,-1,Knowledge.UNKNOWN);
+	}
+
+	private boolean sameIntegerBindingModuloZero(int left,int right,Set<Long> visiting) {
+		if(left<0 || right<0) return false;
+		left=transparentIntegerBinding(left);
+		right=transparentIntegerBinding(right);
+		if(left==right) return true;
+		long key=((long)left<<32)^(right&0xffffffffL);
+		if(!visiting.add(key)) return false;
+		try {
+			Integer peer=integerPlusZeroPeer(left);
+			if(peer!=null && sameIntegerBindingModuloZero(peer,right,visiting)) return true;
+			peer=integerPlusZeroPeer(right);
+			return peer!=null && sameIntegerBindingModuloZero(left,peer,visiting);
+		}
+		finally { visiting.remove(key); }
+	}
+
+	private int transparentIntegerBinding(int binding) {
+		Set<Integer> visiting=new LinkedHashSet<>();
+		while(binding>=0 && visiting.add(binding)) {
+			MemoProgramFacts.BindingNode node=facts.binding(binding);
+			if((node.kind()==BindingKind.DEFINITION || node.kind()==BindingKind.CALL_ARG)
+				&& node.children().size()==1)
+				binding=node.children().get(0);
+			else break;
+		}
+		return binding;
+	}
+
+	private Integer integerPlusZeroPeer(int binding) {
+		MemoProgramFacts.BindingNode node=facts.binding(binding);
+		if(node.kind()!=BindingKind.DEFINITION || node.referenceId()<0
+			|| node.referenceId()>=facts.occurrences().size()) return null;
+		Hop hop=facts.occurrence(node.referenceId()).hop();
+		if(!(hop instanceof BinaryOp binary) || binary.getValueType()!=ValueType.INT64
+			|| binary.getOp()!=OpOp2.PLUS) return null;
+		int left=facts.inputBinding(node.referenceId(),0);
+		int right=facts.inputBinding(node.referenceId(),1);
+		Long leftValue=scalarLong(left,new LinkedHashSet<>());
+		if(leftValue!=null && leftValue==0) return right;
+		Long rightValue=scalarLong(right,new LinkedHashSet<>());
+		return rightValue!=null && rightValue==0 ? left : null;
+	}
+
+	private static long oneBasedSequenceExtent(Hop hop,Shape shape) {
+		if(hop instanceof DataGenOp sequence && sequence.getOp()==OpOpDG.SEQ) {
+			Hop from=sequence.getParam(Statement.SEQ_FROM),increment=sequence.getParam(Statement.SEQ_INCR);
+			return from instanceof LiteralOp fromLiteral && fromLiteral.getDoubleValue()==1D
+				&& increment instanceof LiteralOp incrementLiteral && incrementLiteral.getDoubleValue()==1D
+				&& shape!=null && shape.exact() && shape.dataType()==DataType.MATRIX
+				&& shape.columns()==1 && shape.rows()>0 ? shape.rows() : -1;
+		}
+		if(!(hop instanceof LiteralOp literal) || literal.getValueType()!=ValueType.STRING) return -1;
+		String encoded=literal.getStringValue();
+		String prefix="seq(1, ";
+		if(!encoded.startsWith(prefix) || !encoded.endsWith(")")) return -1;
+		String digits=encoded.substring(prefix.length(),encoded.length()-1);
+		if(digits.isEmpty() || digits.charAt(0)=='0') return -1;
+		for(int index=0;index<digits.length();index++)
+			if(!Character.isDigit(digits.charAt(index))) return -1;
+		try {
+			long extent=Long.parseLong(digits);
+			return extent>0 && encoded.equals(prefix+extent+")") ? extent : -1;
+		}
+		catch(NumberFormatException ignored) { return -1; }
 	}
 
 	/**
@@ -2172,7 +2372,7 @@ public final class MemoShapes {
 			applyShape(cached, occurrenceOutputShape(use));
 			for(int position = 0; position < cached.getInput().size(); position++)
 				applyShape(cached.getInput(position), inputShape(occurrence, position));
-			applyMultiReturnOutputShapes(cached);
+			applyMultiReturnOutputShapes(cached,use.compiledOwnerId());
 			occurrenceViews[occurrence] = cached;
 		}
 		// Oracle and runtime-cost preparation operate on mutable HOP APIs. Never
@@ -2200,10 +2400,13 @@ public final class MemoShapes {
 	 */
 	private Shape refreshOccurrenceShape(MemoProgramFacts.Occurrence occurrence) {
 		Hop view = cloneView(views[occurrence.compiledOwnerId()]);
+		List<Shape> inputs=new ArrayList<>(view.getInput().size());
 		for(int position = 0; position < view.getInput().size(); position++) {
 			int binding = facts.inputBinding(occurrence.id(),position);
 			if(binding < 0 || bindingShapes[binding] == null) return null;
-			applyShape(view.getInput(position),bindingShapes[binding]);
+			Shape input=bindingShapes[binding];
+			inputs.add(input);
+			applyShape(view.getInput(position),input);
 		}
 		try {
 			if(isMatrixLike(view) && !view.getInput().isEmpty()) {
@@ -2212,7 +2415,10 @@ public final class MemoShapes {
 				view.setNnz(-1);
 			}
 			view.refreshSizeInformation();
-			return fromView(view);
+			Shape sequence=sequenceOutputShape(occurrence.id(),view);
+			if(sequence!=null) return sequence;
+			Shape contracted=ctablePermutationOutputShape(view,inputs);
+			return contracted!=null ? contracted : fromView(view);
 		}
 		catch(RuntimeException ignored) {
 			return null;
@@ -2520,7 +2726,8 @@ public final class MemoShapes {
 		finally { visiting.remove(binding); }
 	}
 
-	private Long scalarLong(int binding,EvaluationContext context,Set<PhaseVisit> active) {
+	private Long scalarLong(int binding,EvaluationContext context,
+		PhaseEvaluation phaseEvaluation,Set<PhaseVisit> active) {
 		if(binding<0) return null;
 		PhaseVisit key=new PhaseVisit(false,binding,context.callFrame());
 		if(!active.add(key)) return null;
@@ -2529,9 +2736,9 @@ public final class MemoShapes {
 			if(node.kind()==BindingKind.SELECT) {
 				Boolean selected=context.guards().get(facts.guardDecision(node.referenceId(),context.callFrame()));
 				if(selected!=null) return scalarLong(node.children().get(
-					facts.branchGuardValue(node.referenceId(),context.callFrame(),selected) ? 0 : 1),context,active);
-				Long left=scalarLong(node.children().get(0),context,active);
-				Long right=scalarLong(node.children().get(1),context,active);
+					facts.branchGuardValue(node.referenceId(),context.callFrame(),selected) ? 0 : 1),context,phaseEvaluation,active);
+				Long left=scalarLong(node.children().get(0),context,phaseEvaluation,active);
+				Long right=scalarLong(node.children().get(1),context,phaseEvaluation,active);
 				return Objects.equals(left,right) ? left : null;
 			}
 			if(node.kind()==BindingKind.FORMAL) {
@@ -2540,25 +2747,43 @@ public final class MemoShapes {
 					if(call.functionSummaryId()==node.referenceId() && node.position()>=0
 						&& node.position()<call.actualBindingIds().size())
 						return scalarLong(call.actualBindingIds().get(node.position()),
-							context.withCallFrame(context.callFrame().subList(0,index)),active);
+							context.withCallFrame(context.callFrame().subList(0,index)),phaseEvaluation,active);
 				}
 				return scalarLong(binding,new LinkedHashSet<>());
 			}
 			if(node.kind()==BindingKind.CALL_RETURN) {
-				if(node.children().size()>1) return scalarLong(node.children().get(1),context,active);
+				if(node.children().size()>1) return scalarLong(node.children().get(1),context,phaseEvaluation,active);
 				if(node.children().isEmpty()) return null;
 				List<Integer> frame=new ArrayList<>(context.callFrame()); frame.add(node.referenceId());
-				return scalarLong(node.children().get(0),context.withCallFrame(frame),active);
+				return scalarLong(node.children().get(0),context.withCallFrame(frame),phaseEvaluation,active);
 			}
 			if(node.kind()==BindingKind.DEFINITION && !node.children().isEmpty()
 				|| node.kind()==BindingKind.CALL_ARG)
-				return scalarLong(node.children().get(0),context,active);
+				return scalarLong(node.children().get(0),context,phaseEvaluation,active);
 			if(node.kind()==BindingKind.DEFINITION && node.referenceId()>=0) {
 				Hop hop=facts.occurrence(node.referenceId()).hop();
 				if(hop instanceof LiteralOp literal && hop.getValueType()==ValueType.INT64)
 					return literal.getLongValue();
+				if(hop instanceof BinaryOp binary && hop.getValueType()==ValueType.INT64
+					&& (binary.getOp()==OpOp2.PLUS || binary.getOp()==OpOp2.MINUS || binary.getOp()==OpOp2.MULT)) {
+					Long left=scalarLong(facts.inputBinding(node.referenceId(),0),context,phaseEvaluation,active);
+					Long right=scalarLong(facts.inputBinding(node.referenceId(),1),context,phaseEvaluation,active);
+					if(left==null || right==null) return null;
+					try {
+						return switch(binary.getOp()) {
+							case PLUS -> Math.addExact(left,right);
+							case MINUS -> Math.subtractExact(left,right);
+							case MULT -> Math.multiplyExact(left,right);
+							default -> null;
+						};
+					}
+					catch(ArithmeticException ignored) { return null; }
+				}
 				if(hop instanceof UnaryOp unary && (unary.getOp()==OpOp1.NROW || unary.getOp()==OpOp1.NCOL)) {
-					Shape input=bindingShape(facts.inputBinding(node.referenceId(),0),context);
+					// Keep the grounded loop-head proof and cycle detection of this query.
+					// Public bindingShape would restart PhaseEvaluation and recurse indefinitely.
+					Shape input=resolvedBindingShape(facts.inputBinding(node.referenceId(),0),
+						context,phaseEvaluation,active);
 					long value=unary.getOp()==OpOp1.NROW ? input.rows() : input.columns();
 					return value>0 ? value : null;
 				}
@@ -2568,7 +2793,8 @@ public final class MemoShapes {
 		finally { active.remove(key); }
 	}
 
-	private Double scalarDouble(int binding,EvaluationContext context,Set<PhaseVisit> active) {
+	private Double scalarDouble(int binding,EvaluationContext context,
+		PhaseEvaluation phaseEvaluation,Set<PhaseVisit> active) {
 		if(binding<0) return null;
 		PhaseVisit key=new PhaseVisit(false,binding,context.callFrame());
 		if(!active.add(key)) return null;
@@ -2577,9 +2803,9 @@ public final class MemoShapes {
 			if(node.kind()==BindingKind.SELECT) {
 				Boolean selected=context.guards().get(facts.guardDecision(node.referenceId(),context.callFrame()));
 				if(selected!=null) return scalarDouble(node.children().get(
-					facts.branchGuardValue(node.referenceId(),context.callFrame(),selected) ? 0 : 1),context,active);
-				Double left=scalarDouble(node.children().get(0),context,active);
-				Double right=scalarDouble(node.children().get(1),context,active);
+					facts.branchGuardValue(node.referenceId(),context.callFrame(),selected) ? 0 : 1),context,phaseEvaluation,active);
+				Double left=scalarDouble(node.children().get(0),context,phaseEvaluation,active);
+				Double right=scalarDouble(node.children().get(1),context,phaseEvaluation,active);
 				return Objects.equals(left,right) ? left : null;
 			}
 			if(node.kind()==BindingKind.FORMAL) {
@@ -2588,24 +2814,27 @@ public final class MemoShapes {
 					if(call.functionSummaryId()==node.referenceId() && node.position()>=0
 						&& node.position()<call.actualBindingIds().size())
 						return scalarDouble(call.actualBindingIds().get(node.position()),
-							context.withCallFrame(context.callFrame().subList(0,index)),active);
+							context.withCallFrame(context.callFrame().subList(0,index)),phaseEvaluation,active);
 				}
 				return null;
 			}
 			if(node.kind()==BindingKind.CALL_RETURN) {
-				if(node.children().size()>1) return scalarDouble(node.children().get(1),context,active);
+				if(node.children().size()>1) return scalarDouble(node.children().get(1),context,phaseEvaluation,active);
 				if(node.children().isEmpty()) return null;
 				List<Integer> frame=new ArrayList<>(context.callFrame()); frame.add(node.referenceId());
-				return scalarDouble(node.children().get(0),context.withCallFrame(frame),active);
+				return scalarDouble(node.children().get(0),context.withCallFrame(frame),phaseEvaluation,active);
 			}
 			if(node.kind()==BindingKind.DEFINITION && !node.children().isEmpty()
 				|| node.kind()==BindingKind.CALL_ARG)
-				return scalarDouble(node.children().get(0),context,active);
+				return scalarDouble(node.children().get(0),context,phaseEvaluation,active);
 			if(node.kind()==BindingKind.DEFINITION && node.referenceId()>=0) {
 				Hop hop=facts.occurrence(node.referenceId()).hop();
 				if(hop instanceof LiteralOp literal) return literal.getDoubleValue();
 				if(hop instanceof UnaryOp unary && (unary.getOp()==OpOp1.NROW || unary.getOp()==OpOp1.NCOL)) {
-					Shape input=bindingShape(facts.inputBinding(node.referenceId(),0),context);
+					// Keep the grounded loop-head proof and cycle detection of this query.
+					// Public bindingShape would restart PhaseEvaluation and recurse indefinitely.
+					Shape input=resolvedBindingShape(facts.inputBinding(node.referenceId(),0),
+						context,phaseEvaluation,active);
 					long value=unary.getOp()==OpOp1.NROW ? input.rows() : input.columns();
 					return value>0 ? (double)value : null;
 				}
@@ -2676,6 +2905,11 @@ public final class MemoShapes {
 			return unknown(entry);
 		if(sameDimensions(entry, backedge))
 			return mergeNonZeros(entry, backedge);
+		// Scalar numeric widening is a value-type transition, not a physical loop
+		// shape conflict. The unphased head has no single exact value type; phase
+		// evaluation still observes the exact entry and repeated types separately.
+		if(integerSeedToFloatingRepeat(entry,backedge))
+			return new Shape(DataType.SCALAR,ValueType.UNKNOWN,-1,-1,-1,Knowledge.UNKNOWN);
 		diagnostic(DiagnosticKind.MISMATCH, "LOOP_CARRIED_SHAPE_MISMATCH", -1, node.id(),
 			entry + " vs " + backedge);
 		return unknown(entry);
@@ -2857,6 +3091,11 @@ public final class MemoShapes {
 			return false;
 		return left.dataType() != DataType.MATRIX && left.dataType() != DataType.FRAME
 			|| left.rows() == right.rows() && left.columns() == right.columns();
+	}
+
+	private static boolean integerSeedToFloatingRepeat(Shape left,Shape right) {
+		return left.dataType()==DataType.SCALAR && right.dataType()==DataType.SCALAR
+			&& left.valueType()==ValueType.INT64 && right.valueType()==ValueType.FP64;
 	}
 
 	private static Shape mergeNonZeros(Shape left, Shape right) {

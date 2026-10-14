@@ -1,0 +1,7 @@
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_3_1.data","130.149.237.13:8002//workspace/experiments/data/continuous/ADULT_features_3_2.data","130.149.237.14:8003//workspace/experiments/data/continuous/ADULT_features_3_3.data"), ranges=list(list(0,0),list(16667,128),list(16667,0),list(33334,128),list(33334,0),list(50000,128)))
+
+[C_n, Y_n] = kmeans(X=X, k=50, is_verbose=FALSE,
+    runs = 1, eps = 1e-9, max_iter = 60,
+    avg_sample_size_per_centroid = 50,
+    seed=133815928)
+write(Y_n, "tmp/w1357/c17901bdd911230dda12/result", format= "csv")

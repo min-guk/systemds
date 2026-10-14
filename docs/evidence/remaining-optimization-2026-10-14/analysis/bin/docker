@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Diagnostic-only Docker pass-through: JFR at startup + read-only host /proc sampling."""
+import hashlib,json,os,subprocess,sys,time
+from pathlib import Path
+REAL='/usr/local/bin/docker'
+args=sys.argv[1:]
+if not args or args[0]!='run':
+ os.execv(REAL,[REAL,*args])
+name=args[args.index('--name')+1]
+mount=next(args[i+1] for i,v in enumerate(args[:-1]) if v=='--volume' and args[i+1].endswith(':/evidence:rw'))
+attempt=Path(mount[:-len(':/evidence:rw')])
+options='-XX:StartFlightRecording=filename=/evidence/planning.jfr,settings=profile,dumponexit=true -XX:FlightRecorderOptions=stackdepth=128'
+command=[REAL,'run','--env','JAVA_TOOL_OPTIONS='+options,*args[1:]]
+(attempt/'profiling.json').write_text(json.dumps({'kind':'diagnostic-only-not-performance-acceptance','jvmOptions':options,'executedCommand':command,'shimSha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'processSamplingIntervalSeconds':0.1},indent=2)+'\n')
+hz=os.sysconf('SC_CLK_TCK'); page=os.sysconf('SC_PAGE_SIZE')
+def descendants(pid):
+ found=[]; todo=[pid]
+ while todo:
+  p=todo.pop()
+  try:
+   if b'org.apache.sysds.api.DMLScript' in Path(f'/proc/{p}/cmdline').read_bytes() and Path(f'/proc/{p}/comm').read_text().strip()=='java': found.append(p)
+   todo.extend(int(x) for x in Path(f'/proc/{p}/task/{p}/children').read_text().split())
+  except (OSError,ValueError): pass
+ return found
+p=subprocess.Popen(command); root_pid=None; samples=[]; started=time.time()
+while p.poll() is None:
+ if not root_pid:
+  r=subprocess.run([REAL,'inspect','--format','{{.State.Pid}}',name],capture_output=True,text=True)
+  try: root_pid=int(r.stdout.strip()) or None
+  except ValueError: pass
+ if root_pid:
+  for pid in descendants(root_pid):
+   try:
+    stat=Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()
+    main=Path(f'/proc/{pid}/task/{pid}/stat').read_text().rsplit(')',1)[1].split()
+    samples.append({'epoch':time.time(),'pid':pid,'processCpuSeconds':(int(stat[11])+int(stat[12]))/hz,'mainCpuSeconds':(int(main[11])+int(main[12]))/hz,'rssBytes':int(stat[21])*page})
+   except (OSError,ValueError): pass
+ time.sleep(0.1)
+rc=p.wait()
+(attempt/'process-samples.json').write_text(json.dumps({'returncode':rc,'wallSeconds':time.time()-started,'clockTicksPerSecond':hz,'sampleIntervalSeconds':0.1,'samples':samples},indent=2)+'\n')
+raise SystemExit(rc)

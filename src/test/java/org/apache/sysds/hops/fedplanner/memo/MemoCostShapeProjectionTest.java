@@ -15,14 +15,19 @@ import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.OpOp1;
+import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.OpOpDG;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.DataGenOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
+import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -184,6 +189,192 @@ public class MemoCostShapeProjectionTest {
 		Assert.assertEquals("compiled output remains untouched",-1,encoded.getDim1());
 	}
 
+	@Test public void eigenOutputsUseTheExactContextualInputShape() throws Exception {
+		DMLProgram program=parse("X=matrix(1,rows=8,cols=8);[D,V]=eigen(X);print(sum(D)+sum(V));");
+		MemoProgramFacts facts=MemoProgramFacts.analyze(program);
+		var occurrence=facts.occurrences().stream().filter(value -> value.hop() instanceof FunctionOp function
+			&& function.getFunctionType()==FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+			&& "eigen".equalsIgnoreCase(function.getFunctionName())).findFirst().orElseThrow();
+		FunctionOp compiled=(FunctionOp)occurrence.hop();
+		for(Hop output:compiled.getOutputs()) {
+			output.setDim1(-1);
+			output.setDim2(-1);
+			output.setNnz(-1);
+		}
+
+		MemoShapes shapes=MemoShapes.analyze(facts,MemoSources.acquire(facts,null));
+		FunctionOp view=(FunctionOp)shapes.viewAt(occurrence.id(),MemoBindingResolver.EvaluationContext.empty());
+		Assert.assertEquals(8,view.getOutputs().get(0).getDim1());
+		Assert.assertEquals(1,view.getOutputs().get(0).getDim2());
+		Assert.assertEquals(8,view.getOutputs().get(1).getDim1());
+		Assert.assertEquals(8,view.getOutputs().get(1).getDim2());
+		Assert.assertEquals("eigen density is not an exact shape fact",-1,view.getOutputs().get(0).getNnz());
+		Assert.assertEquals("eigen density is not an exact shape fact",-1,view.getOutputs().get(1).getNnz());
+		Assert.assertTrue(MemoCostModel.nativeCost(view,
+			new RuleMemo.Rule(ExecType.CP,List.of(MemoPartition.LOCAL),
+				List.of(MemoPartition.LOCAL,MemoPartition.LOCAL),"cp/eigen"),1,1)>0);
+		Assert.assertEquals("compiled output remains untouched",-1,compiled.getOutputs().get(0).getDim1());
+	}
+
+	@Test public void rewrittenOneBasedSequenceCtableKeepsExactCostDimensions() throws Exception {
+		DMLProgram program=rewritten("X=rand(rows=8,cols=1);"
+			+"I=order(target=X,by=1,decreasing=TRUE,index.return=TRUE);"
+			+"P=table(seq(1,8),I);print(P[1,1]);");
+		MemoProgramFacts facts=MemoProgramFacts.analyze(program);
+		var occurrence=facts.occurrences().stream().filter(value -> value.hop() instanceof TernaryOp table
+			&& table.getOp()==OpOp3.CTABLE).findFirst().orElseThrow();
+		TernaryOp table=(TernaryOp)occurrence.hop();
+		Assert.assertTrue("the production rewrite encodes the fused sequence as a string literal",
+			table.getInput(0) instanceof LiteralOp literal
+				&& "seq(1, 8)".equals(literal.getStringValue()));
+		table.setDim1(-1); table.setDim2(-1); table.setNnz(-1);
+
+		MemoShapes shapes=MemoShapes.analyze(facts,MemoSources.acquire(facts,null));
+		Hop view=shapes.viewAt(occurrence.id(),MemoBindingResolver.EvaluationContext.empty());
+		Assert.assertEquals(8,view.getDim1());
+		Assert.assertEquals(8,view.getDim2());
+		Assert.assertTrue(MemoCostModel.nativeCost(view,
+			new RuleMemo.Rule(ExecType.CP,List.of(MemoPartition.LOCAL,MemoPartition.LOCAL,
+				MemoPartition.LOCAL),List.of(MemoPartition.LOCAL),"cp/ctable"),1,1)>0);
+	}
+
+	@Test public void rewrittenCtableSequenceExtentMustMatchTheSortedPermutation() throws Exception {
+		DMLProgram program=rewritten("X=rand(rows=8,cols=1);"
+			+"I=order(target=X,by=1,decreasing=TRUE,index.return=TRUE);"
+			+"P=table(seq(1,8),I);print(P[1,1]);");
+		MemoProgramFacts facts=MemoProgramFacts.analyze(program);
+		var occurrence=facts.occurrences().stream().filter(value -> value.hop() instanceof TernaryOp table
+			&& table.getOp()==OpOp3.CTABLE).findFirst().orElseThrow();
+		TernaryOp table=(TernaryOp)occurrence.hop();
+		HopRewriteUtils.replaceChildReference(table,table.getInput(0),new LiteralOp("seq(1, 7)"),0);
+		table.setDim1(-1); table.setDim2(-1); table.setNnz(-1);
+
+		MemoShapes shapes=MemoShapes.analyze(facts,MemoSources.acquire(facts,null));
+		Hop view=shapes.viewAt(occurrence.id(),MemoBindingResolver.EvaluationContext.empty());
+		Assert.assertEquals(-1,view.getDim1());
+		Assert.assertEquals(-1,view.getDim2());
+	}
+
+	@Test public void malformedRewrittenCtableSequenceMarkerRemainsUnknown() throws Exception {
+		DMLProgram program=rewritten("X=rand(rows=8,cols=1);"
+			+"I=order(target=X,by=1,decreasing=TRUE,index.return=TRUE);"
+			+"P=table(seq(1,8),I);print(P[1,1]);");
+		MemoProgramFacts facts=MemoProgramFacts.analyze(program);
+		var occurrence=facts.occurrences().stream().filter(value -> value.hop() instanceof TernaryOp table
+			&& table.getOp()==OpOp3.CTABLE).findFirst().orElseThrow();
+		TernaryOp table=(TernaryOp)occurrence.hop();
+		HopRewriteUtils.replaceChildReference(table,table.getInput(0),new LiteralOp("seq(1, 8.0)"),0);
+		table.setDim1(-1); table.setDim2(-1); table.setNnz(-1);
+
+		MemoShapes shapes=MemoShapes.analyze(facts,MemoSources.acquire(facts,null));
+		Hop view=shapes.viewAt(occurrence.id(),MemoBindingResolver.EvaluationContext.empty());
+		Assert.assertEquals(-1,view.getDim1());
+		Assert.assertEquals(-1,view.getDim2());
+	}
+
+	@Test public void rewrittenCtableWithUnknownSortExtentRemainsUnknown() throws Exception {
+		directory=Files.createTempDirectory("memo-ctable-unknown-sort");
+		Path data=directory.resolve("X.csv");
+		Files.writeString(data,"1\n2\n3\n4\n5\n6\n7\n8\n");
+		String path=data.toString().replace("\\","\\\\").replace("\"","\\\"");
+		DMLProgram program=rewritten("X=read(\""+path+"\",data_type=\"matrix\",format=\"csv\");"
+			+"I=order(target=X,by=1,decreasing=TRUE,index.return=TRUE);"
+			+"P=table(seq(1,8),I);print(P[1,1]);");
+		MemoProgramFacts facts=MemoProgramFacts.analyze(program);
+		var occurrence=facts.occurrences().stream().filter(value -> value.hop() instanceof TernaryOp table
+			&& table.getOp()==OpOp3.CTABLE).findFirst().orElseThrow();
+		TernaryOp table=(TernaryOp)occurrence.hop();
+		table.setDim1(-1); table.setDim2(-1); table.setNnz(-1);
+
+		MemoShapes shapes=MemoShapes.analyze(facts,MemoSources.acquire(facts,null));
+		Assert.assertFalse(shapes.inputShape(occurrence.id(),1,
+			MemoBindingResolver.EvaluationContext.empty()).exact());
+		Hop view=shapes.viewAt(occurrence.id(),MemoBindingResolver.EvaluationContext.empty());
+		Assert.assertEquals(-1,view.getDim1());
+		Assert.assertEquals(-1,view.getDim2());
+	}
+
+	@Test public void pcaPermutationShapeReachesTheDownstreamMatrixMultiply() throws Exception {
+		DMLProgram program=rewritten("C=rand(rows=8,cols=8);[D,V]=eigen(C);"
+			+"I=order(target=D,by=1,decreasing=TRUE,index.return=TRUE);"
+			+"P=table(seq(1,8),I);S=V%*%P;write(S,\"out\",format=\"binary\");");
+		MemoProgramFacts facts=MemoProgramFacts.analyze(program);
+		var tableOccurrence=facts.occurrences().stream()
+			.filter(value -> value.hop() instanceof TernaryOp table && table.getOp()==OpOp3.CTABLE)
+			.findFirst().orElseThrow();
+		TernaryOp table=(TernaryOp)tableOccurrence.hop();
+		Assert.assertTrue(table.getInput(0) instanceof LiteralOp literal
+			&& "seq(1, 8)".equals(literal.getStringValue()));
+		var eigen=facts.occurrences().stream().filter(value -> value.hop() instanceof FunctionOp function
+			&& "eigen".equalsIgnoreCase(function.getFunctionName())).findFirst().orElseThrow();
+		for(Hop output:((FunctionOp)eigen.hop()).getOutputs()) {
+			output.setDim1(-1); output.setDim2(-1); output.setNnz(-1);
+		}
+		var multiply=facts.occurrences().stream().filter(value -> value.hop() instanceof AggBinaryOp)
+			.findFirst().orElseThrow();
+		table.setDim1(-1); table.setDim2(-1); table.setNnz(-1);
+		multiply.hop().setDim1(-1); multiply.hop().setDim2(-1); multiply.hop().setNnz(-1);
+
+		MemoShapes shapes=MemoShapes.analyze(facts,MemoSources.acquire(facts,null));
+		Assert.assertEquals(8,shapes.inputShape(multiply.id(),1).rows());
+		Assert.assertEquals(8,shapes.inputShape(multiply.id(),1).columns());
+		Hop view=shapes.viewAt(multiply.id(),MemoBindingResolver.EvaluationContext.empty());
+		Assert.assertEquals(8,view.getDim1());
+		Assert.assertEquals(8,view.getDim2());
+		Assert.assertTrue(MemoCostModel.nativeCost(view,
+			new RuleMemo.Rule(ExecType.CP,List.of(MemoPartition.LOCAL,MemoPartition.LOCAL),
+				List.of(MemoPartition.LOCAL),"cp/pca-mm"),1,1)>0);
+	}
+
+	@Test public void correlatedKmeansSequenceBoundsProveOneByOneInEveryReachableContext() throws Exception {
+		DMLProgram program=rewritten("k=50;runs=1;All_Centroids=matrix(1,rows=50,cols=2);z=0;"
+			+"for(i in 1:k){S=seq(i,k*(runs-1)+i,k);"
+			+"P=table(S,seq(1,runs,1),nrow(All_Centroids),runs);z=z+sum(P);}print(z);");
+		MemoProgramFacts facts=MemoProgramFacts.analyze(program);
+		var sequence=facts.occurrences().stream().filter(value -> value.hop() instanceof DataGenOp dataGen
+			&& dataGen.getOp()==OpOpDG.SEQ && !(dataGen.getParam(org.apache.sysds.parser.Statement.SEQ_FROM)
+				instanceof LiteralOp)).findFirst().orElseThrow();
+		// Rewrites may clear this hint before facts analysis. Inject the exact
+		// compiler hint observed on the production KMeans CTABLE parent so the
+		// regression tests semantic proof, independently of rewrite ordering.
+		sequence.hop().setDim1(50);
+		sequence.hop().setDim2(-1);
+		MemoShapes shapes=MemoShapes.analyze(facts,MemoSources.acquire(facts,null));
+		int loop=facts.occurrenceContexts(sequence.id()).get(0).phaseLoops().get(0).loopId();
+		for(var phase:MemoProgramFacts.IterationPhase.values()) {
+			var context=MemoBindingResolver.EvaluationContext.empty().withIterationPhase(loop,phase);
+			MemoShapes.Shape shape=shapes.shapeAt(sequence.id(),context);
+			Assert.assertTrue("the correlated iterator cancels from the sequence length: "+context,
+				shape.exact());
+			Assert.assertEquals("the CTABLE row extent must not become the sequence length",1,shape.rows());
+			Assert.assertEquals(1,shape.columns());
+		}
+	}
+
+	@Test public void unrelatedDynamicSequenceBoundsRemainUnknown() throws Exception {
+		DMLProgram program=parse("a=as.integer(as.scalar(rand(rows=1,cols=1))*10);"
+			+"b=as.integer(as.scalar(rand(rows=1,cols=1))*10);S=seq(a,b,1);print(sum(S));");
+		MemoProgramFacts facts=MemoProgramFacts.analyze(program);
+		var sequence=facts.occurrences().stream().filter(value -> value.hop() instanceof DataGenOp dataGen
+			&& dataGen.getOp()==OpOpDG.SEQ).findFirst().orElseThrow();
+		MemoShapes.Shape shape=MemoShapes.analyze(facts,MemoSources.acquire(facts,null))
+			.shapeAt(sequence.id(),MemoBindingResolver.EvaluationContext.empty());
+		Assert.assertFalse(shape.exact());
+		Assert.assertEquals(1,shape.columns());
+	}
+
+	@Test public void invalidCorrelatedSequenceStrideRemainsUnknown() throws Exception {
+		DMLProgram program=parse("a=as.integer(as.scalar(rand(rows=1,cols=1))*10);"
+			+"S=seq(a,a+10,-1);print(sum(S));");
+		MemoProgramFacts facts=MemoProgramFacts.analyze(program);
+		var sequence=facts.occurrences().stream().filter(value -> value.hop() instanceof DataGenOp dataGen
+			&& dataGen.getOp()==OpOpDG.SEQ).findFirst().orElseThrow();
+		MemoShapes.Shape shape=MemoShapes.analyze(facts,MemoSources.acquire(facts,null))
+			.shapeAt(sequence.id(),MemoBindingResolver.EvaluationContext.empty());
+		Assert.assertFalse(shape.exact());
+		Assert.assertEquals(1,shape.columns());
+	}
+
 	private static MemoBindingResolver.EvaluationContext context(MemoBindingResolver.GuardDecision guard,
 		boolean arm) {
 		return new MemoBindingResolver.EvaluationContext(Map.of(guard,arm),Map.of(),
@@ -194,6 +385,11 @@ public class MemoCostShapeProjectionTest {
 			script,new HashMap<>());
 		DMLTranslator translator=new DMLTranslator(program);
 		translator.liveVariableAnalysis(program);translator.validateParseTree(program);translator.constructHops(program);
+		return program;
+	}
+	private static DMLProgram rewritten(String script) throws Exception {
+		DMLProgram program=parse(script);
+		new DMLTranslator(program).rewriteHopsDAG(program);
 		return program;
 	}
 }

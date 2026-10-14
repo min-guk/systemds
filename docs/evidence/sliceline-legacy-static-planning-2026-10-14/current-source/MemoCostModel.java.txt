@@ -1,0 +1,16 @@
+CURRENT WORKTREE SOURCE src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoCostModel.java
+NOTE: uncommitted support changes exist; not the measured legacy JAR.
+
+LINES 409-420
+409: 	private static void ensureKernelSizesKnown(Hop hop) {
+410: 		if(isMatrixPayload(hop) && (hop.getDim1() <= 0 || hop.getDim2() <= 0))
+411: 			throw failure(DiagnosticCode.UNKNOWN_SIZE,
+412: 				"unknown kernel output dimensions for " + describe(hop));
+413: 		for(int position = 0; position < hop.getInput().size(); position++) {
+414: 			Hop input = hop.getInput(position);
+415: 			if(isMatrixPayload(input) && (input.getDim1() <= 0 || input.getDim2() <= 0))
+416: 				throw failure(DiagnosticCode.UNKNOWN_SIZE,
+417: 					"unknown kernel input " + position + " for " + describe(hop)
+418: 						+ ": " + describe(input));
+419: 		}
+420: 	}

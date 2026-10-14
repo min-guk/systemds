@@ -34,6 +34,7 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp3;
+import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.OpOpN;
 import org.apache.sysds.hops.AggBinaryOp;
@@ -44,6 +45,7 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.NaryOp;
+import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
@@ -53,6 +55,7 @@ import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
+import org.apache.sysds.runtime.controlprogram.federated.CanonicalWorkerPool;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.wink.json4j.JSONException;
 import org.apache.wink.json4j.JSONObject;
@@ -207,6 +210,7 @@ public final class MemoNativeRules {
 	}
 
 	private final OracleFacade oracle;
+	private CanonicalWorkerPool geometry;
 	private final Map<RequestKey, Result> cache = new LinkedHashMap<>();
 	private long cacheHits;
 	private long cacheMisses;
@@ -218,6 +222,18 @@ public final class MemoNativeRules {
 
 	MemoNativeRules(OracleFacade oracle) {
 		this.oracle = Objects.requireNonNull(oracle);
+	}
+
+	/** Bind this catalog instance to the complete immutable runtime geometry before its first request. */
+	synchronized void bindGeometry(CanonicalWorkerPool pool) {
+		Objects.requireNonNull(pool,"canonical worker pool");
+		if(geometry==null) {
+			if(cacheHits!=0 || cacheMisses!=0)
+				throw new IllegalStateException("Native rule catalog geometry must be bound before its first request");
+			geometry=pool;
+		}
+		else if(!geometry.encode().equals(pool.encode()))
+			throw new IllegalStateException("Native rule catalog cannot be reused across canonical worker geometries");
 	}
 
 	/**
@@ -267,6 +283,8 @@ public final class MemoNativeRules {
 	public synchronized GenerationStats generationStats() { return generation.snapshot(); }
 
 	private Result enumerate(Hop hop, int workers, ShapeHint.DiagnosticSnapshot shape) {
+		if(geometry!=null && geometry.size()!=workers)
+			throw new IllegalStateException("Native rule request worker count disagrees with its bound geometry");
 		GenerationCounter generation = new GenerationCounter();
 		List<InputRole> roles = inputRoles(hop);
 		BitSet metadata = new BitSet(roles.size());
@@ -352,7 +370,7 @@ public final class MemoNativeRules {
 			String variant = caps.placement() == FederatedOutput.LOUT && vectorLineage.isPresent()
 				? "fed/vector-local/" + vectorLineage.get().name().toLowerCase()
 				: "oracle/" + caps.opcode() + '/' + caps.reason().name().toLowerCase();
-			Optional<MemoPartition> output = nativeOutput(hop, pattern, workers, shape, caps, diagnostics);
+			Optional<MemoPartition> output = nativeOutput(hop, pattern, workers, shape, caps, diagnostics,geometry);
 			output.ifPresent(value -> addRule(rules,
 				new RuleMemo.Rule(ExecType.FED,pattern,List.of(value),variant),generation));
 
@@ -448,7 +466,8 @@ public final class MemoNativeRules {
 	}
 
 	private static Optional<MemoPartition> nativeOutput(Hop hop, List<MemoPartition> pattern,
-		int workers, ShapeHint.DiagnosticSnapshot shape, OpCaps caps, List<Diagnostic> diagnostics) {
+		int workers, ShapeHint.DiagnosticSnapshot shape, OpCaps caps, List<Diagnostic> diagnostics,
+		CanonicalWorkerPool geometry) {
 		if(caps.placement() == FederatedOutput.LOUT)
 			return Optional.of(MemoPartition.LOCAL);
 		FType outputType = caps.foutFType().orElse(null);
@@ -464,7 +483,7 @@ public final class MemoNativeRules {
 			return Optional.empty();
 		}
 		if(hop instanceof IndexingOp indexing && hop.getDataType() == DataType.MATRIX) {
-			CanonicalEffect effect = indexingCanonicalEffect(indexing, outputType, workers, shape);
+			CanonicalEffect effect = indexingCanonicalEffect(indexing, outputType, workers, shape,geometry);
 			if(effect != CanonicalEffect.PROVED) {
 				diagnostics.add(effect == CanonicalEffect.UNKNOWN
 					? gap("INDEXING_CANONICAL_OUTPUT_UNRESOLVED", pattern.toString(),
@@ -623,7 +642,7 @@ public final class MemoNativeRules {
 	private enum CanonicalEffect { PROVED, EXCLUDED, UNKNOWN }
 
 	private static CanonicalEffect indexingCanonicalEffect(IndexingOp hop, FType outputType, int workers,
-		ShapeHint.DiagnosticSnapshot shape) {
+		ShapeHint.DiagnosticSnapshot shape,CanonicalWorkerPool geometry) {
 		if(outputType == FType.FULL || outputType == FType.BROADCAST)
 			return literalBounds(hop).isPresent() ? CanonicalEffect.PROVED : CanonicalEffect.UNKNOWN;
 		if(outputType != FType.ROW && outputType != FType.COL)
@@ -646,22 +665,23 @@ public final class MemoNativeRules {
 		if(axisSize < workers || outputSize < workers)
 			return CanonicalEffect.EXCLUDED;
 		for(int worker = 0; worker < workers; worker++) {
-			long inputBegin = canonicalBoundary(axisSize, workers, worker);
-			long inputEnd = canonicalBoundary(axisSize, workers, worker + 1);
+			long inputBegin = canonicalBoundary(geometry,axisSize, workers, worker);
+			long inputEnd = canonicalBoundary(geometry,axisSize, workers, worker + 1);
 			if(start >= inputEnd || end <= inputBegin)
 				return CanonicalEffect.EXCLUDED;
 			long actualBegin = Math.max(inputBegin - start, 0);
 			long actualEnd = Math.min(inputEnd - start, outputSize);
-			long canonicalBegin = canonicalBoundary(outputSize, workers, worker);
-			long canonicalEnd = canonicalBoundary(outputSize, workers, worker + 1);
+			long canonicalBegin = canonicalBoundary(geometry,outputSize, workers, worker);
+			long canonicalEnd = canonicalBoundary(geometry,outputSize, workers, worker + 1);
 			if(actualBegin != canonicalBegin || actualEnd != canonicalEnd)
 				return CanonicalEffect.EXCLUDED;
 		}
 		return CanonicalEffect.PROVED;
 	}
 
-	/** Mirrors CanonicalWorkerPool's ordered-remainder range construction. */
-	private static long canonicalBoundary(long length, int workers, int boundary) {
+	/** Uses the bound pool authority; standalone catalog tests retain the legacy default allocator. */
+	private static long canonicalBoundary(CanonicalWorkerPool geometry,long length, int workers, int boundary) {
+		if(geometry!=null) return geometry.axisCuts(length)[boundary];
 		long base = length / workers;
 		long remainder = length % workers;
 		return boundary * base + Math.min(boundary, remainder);
@@ -715,6 +735,8 @@ public final class MemoNativeRules {
 			return pattern.contains(MemoPartition.REP) ? CanonicalEffect.PROVED : CanonicalEffect.UNKNOWN;
 		if(outputType != FType.ROW && outputType != FType.COL)
 			return CanonicalEffect.UNKNOWN;
+		if(hop instanceof QuaternaryOp quaternary && quaternary.getOp() == OpOp4.WDIVMM)
+			return wdivmmCanonicalEffect(quaternary, pattern, outputType, workers, shape);
 		long outputAxis = outputType == FType.ROW
 			? positive(shape.rows(), hop.getDim1()) : positive(shape.cols(), hop.getDim2());
 		if(outputAxis <= 0)
@@ -726,6 +748,19 @@ public final class MemoNativeRules {
 			long inputAxis = outputType == FType.ROW
 				? inputDimension(hop, shape, 0, false) : inputDimension(hop, shape, 0, true);
 			return pattern.get(0) == opposite && inputAxis == outputAxis && outputAxis >= workers
+				? CanonicalEffect.PROVED : CanonicalEffect.EXCLUDED;
+		}
+		if(hop instanceof ReorgOp reorg && reorg.getOp() == org.apache.sysds.common.Types.ReOrgOp.DIAG
+			&& hop.getInput().size() == 1 && !pattern.isEmpty()) {
+			// Rdiag rebuilds ROW output ranges from the input's partitioned axis:
+			// input row intervals for ROW, input column intervals for COL.
+			MemoPartition input = pattern.get(0);
+			if(input != MemoPartition.ROW && input != MemoPartition.COL)
+				return CanonicalEffect.UNKNOWN;
+			long inputAxis = inputDimension(hop, shape, 0, input == MemoPartition.ROW);
+			if(inputAxis <= 0)
+				return CanonicalEffect.UNKNOWN;
+			return inputAxis == outputAxis && outputAxis >= workers
 				? CanonicalEffect.PROVED : CanonicalEffect.EXCLUDED;
 		}
 		boolean sawAxis = false;
@@ -740,6 +775,39 @@ public final class MemoNativeRules {
 				return CanonicalEffect.UNKNOWN;
 		}
 		return sawAxis ? CanonicalEffect.EXCLUDED : CanonicalEffect.UNKNOWN;
+	}
+
+	private static CanonicalEffect wdivmmCanonicalEffect(QuaternaryOp hop,
+		List<MemoPartition> pattern,FType outputType,int workers,ShapeHint.DiagnosticSnapshot shape) {
+		if(pattern.isEmpty()) return CanonicalEffect.UNKNOWN;
+		MemoPartition primary;
+		boolean primaryRows;
+		switch(hop.getBaseType()) {
+			case 0 -> { // BASIC copies X's map without changing its partition axis.
+				if(outputType == FType.ROW) { primary=MemoPartition.ROW; primaryRows=true; }
+				else if(outputType == FType.COL) { primary=MemoPartition.COL; primaryRows=false; }
+				else return CanonicalEffect.UNKNOWN;
+			}
+			case 1,3 -> { // LEFT transposes a COL X map into output ROW ranges.
+				if(outputType != FType.ROW) return CanonicalEffect.EXCLUDED;
+				primary=MemoPartition.COL; primaryRows=false;
+			}
+			case 2,4 -> { // RIGHT preserves a ROW X map as output ROW ranges.
+				if(outputType != FType.ROW) return CanonicalEffect.EXCLUDED;
+				primary=MemoPartition.ROW; primaryRows=true;
+			}
+			default -> { return CanonicalEffect.UNKNOWN; }
+		}
+		if(pattern.get(0) != primary) return CanonicalEffect.EXCLUDED;
+		long primaryAxis=inputDimension(hop,shape,0,primaryRows);
+		if(primaryAxis <= 0) return CanonicalEffect.UNKNOWN;
+		long declaredOutputAxis=outputType == FType.ROW
+			? positive(shape.rows(),hop.getDim1()) : positive(shape.cols(),hop.getDim2());
+		if(declaredOutputAxis > 0 && declaredOutputAxis != primaryAxis)
+			return CanonicalEffect.EXCLUDED;
+		// QuaternaryWDivMMFEDInstruction.setFederatedOutput copies X's map, then
+		// transposes it only for LEFT and changes only the non-partitioned range.
+		return primaryAxis >= workers ? CanonicalEffect.PROVED : CanonicalEffect.EXCLUDED;
 	}
 
 	private static long inputDimension(Hop hop, ShapeHint.DiagnosticSnapshot shape,

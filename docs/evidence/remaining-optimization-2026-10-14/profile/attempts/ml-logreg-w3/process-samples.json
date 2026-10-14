@@ -1,0 +1,316 @@
+{
+  "returncode": 0,
+  "wallSeconds": 5.023830890655518,
+  "clockTicksPerSecond": 100,
+  "sampleIntervalSeconds": 0.1,
+  "samples": [
+    {
+      "epoch": 1791999636.1511395,
+      "pid": 361479,
+      "processCpuSeconds": 0.23,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 42467328
+    },
+    {
+      "epoch": 1791999636.251861,
+      "pid": 361479,
+      "processCpuSeconds": 0.45,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 49152000
+    },
+    {
+      "epoch": 1791999636.352647,
+      "pid": 361479,
+      "processCpuSeconds": 0.81,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 63508480
+    },
+    {
+      "epoch": 1791999636.4534414,
+      "pid": 361479,
+      "processCpuSeconds": 1.2,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 80191488
+    },
+    {
+      "epoch": 1791999636.5542455,
+      "pid": 361479,
+      "processCpuSeconds": 1.56,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 82944000
+    },
+    {
+      "epoch": 1791999636.6549745,
+      "pid": 361479,
+      "processCpuSeconds": 1.78,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 86482944
+    },
+    {
+      "epoch": 1791999636.7556887,
+      "pid": 361479,
+      "processCpuSeconds": 2.04,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 101425152
+    },
+    {
+      "epoch": 1791999636.8563218,
+      "pid": 361479,
+      "processCpuSeconds": 2.4,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 116416512
+    },
+    {
+      "epoch": 1791999636.9569488,
+      "pid": 361479,
+      "processCpuSeconds": 2.78,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 119562240
+    },
+    {
+      "epoch": 1791999637.0576112,
+      "pid": 361479,
+      "processCpuSeconds": 3.03,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 124674048
+    },
+    {
+      "epoch": 1791999637.1581316,
+      "pid": 361479,
+      "processCpuSeconds": 3.33,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 128999424
+    },
+    {
+      "epoch": 1791999637.2586641,
+      "pid": 361479,
+      "processCpuSeconds": 3.76,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 142368768
+    },
+    {
+      "epoch": 1791999637.359293,
+      "pid": 361479,
+      "processCpuSeconds": 4.16,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 156524544
+    },
+    {
+      "epoch": 1791999637.4597728,
+      "pid": 361479,
+      "processCpuSeconds": 4.54,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 170287104
+    },
+    {
+      "epoch": 1791999637.560183,
+      "pid": 361479,
+      "processCpuSeconds": 4.91,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 182833152
+    },
+    {
+      "epoch": 1791999637.6607177,
+      "pid": 361479,
+      "processCpuSeconds": 5.26,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 210751488
+    },
+    {
+      "epoch": 1791999637.761181,
+      "pid": 361479,
+      "processCpuSeconds": 5.62,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 234897408
+    },
+    {
+      "epoch": 1791999637.8616853,
+      "pid": 361479,
+      "processCpuSeconds": 6.02,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 234258432
+    },
+    {
+      "epoch": 1791999637.9621565,
+      "pid": 361479,
+      "processCpuSeconds": 6.4,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 236224512
+    },
+    {
+      "epoch": 1791999638.0626216,
+      "pid": 361479,
+      "processCpuSeconds": 6.73,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 219828224
+    },
+    {
+      "epoch": 1791999638.1630735,
+      "pid": 361479,
+      "processCpuSeconds": 6.98,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 221794304
+    },
+    {
+      "epoch": 1791999638.263507,
+      "pid": 361479,
+      "processCpuSeconds": 7.35,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 222580736
+    },
+    {
+      "epoch": 1791999638.3640034,
+      "pid": 361479,
+      "processCpuSeconds": 7.75,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 223367168
+    },
+    {
+      "epoch": 1791999638.4646256,
+      "pid": 361479,
+      "processCpuSeconds": 8.13,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 226512896
+    },
+    {
+      "epoch": 1791999638.5652792,
+      "pid": 361479,
+      "processCpuSeconds": 8.5,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 228085760
+    },
+    {
+      "epoch": 1791999638.6658056,
+      "pid": 361479,
+      "processCpuSeconds": 8.87,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 239095808
+    },
+    {
+      "epoch": 1791999638.7664323,
+      "pid": 361479,
+      "processCpuSeconds": 9.26,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 248139776
+    },
+    {
+      "epoch": 1791999638.867,
+      "pid": 361479,
+      "processCpuSeconds": 9.6,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 249319424
+    },
+    {
+      "epoch": 1791999638.9675696,
+      "pid": 361479,
+      "processCpuSeconds": 9.92,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 252071936
+    },
+    {
+      "epoch": 1791999639.068157,
+      "pid": 361479,
+      "processCpuSeconds": 10.22,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 261115904
+    },
+    {
+      "epoch": 1791999639.1686947,
+      "pid": 361479,
+      "processCpuSeconds": 10.58,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 282349568
+    },
+    {
+      "epoch": 1791999639.2693596,
+      "pid": 361479,
+      "processCpuSeconds": 10.95,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 298471424
+    },
+    {
+      "epoch": 1791999639.3699512,
+      "pid": 361479,
+      "processCpuSeconds": 11.28,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 319311872
+    },
+    {
+      "epoch": 1791999639.4705105,
+      "pid": 361479,
+      "processCpuSeconds": 11.6,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 320491520
+    },
+    {
+      "epoch": 1791999639.5710866,
+      "pid": 361479,
+      "processCpuSeconds": 11.93,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 321671168
+    },
+    {
+      "epoch": 1791999639.671639,
+      "pid": 361479,
+      "processCpuSeconds": 12.3,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 322850816
+    },
+    {
+      "epoch": 1791999639.7722852,
+      "pid": 361479,
+      "processCpuSeconds": 12.69,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 324816896
+    },
+    {
+      "epoch": 1791999639.8728876,
+      "pid": 361479,
+      "processCpuSeconds": 13.01,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 324816896
+    },
+    {
+      "epoch": 1791999639.973446,
+      "pid": 361479,
+      "processCpuSeconds": 13.39,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 325210112
+    },
+    {
+      "epoch": 1791999640.074058,
+      "pid": 361479,
+      "processCpuSeconds": 13.73,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 328749056
+    },
+    {
+      "epoch": 1791999640.1747265,
+      "pid": 361479,
+      "processCpuSeconds": 14.06,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 329142272
+    },
+    {
+      "epoch": 1791999640.2754128,
+      "pid": 361479,
+      "processCpuSeconds": 14.39,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 367284224
+    },
+    {
+      "epoch": 1791999640.3762712,
+      "pid": 361479,
+      "processCpuSeconds": 14.73,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 381046784
+    },
+    {
+      "epoch": 1791999640.4768336,
+      "pid": 361479,
+      "processCpuSeconds": 15.07,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 383799296
+    }
+  ]
+}

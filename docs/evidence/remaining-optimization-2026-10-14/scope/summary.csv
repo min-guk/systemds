@@ -1,0 +1,13 @@
+cellId,suite,workload,workers,executionPlanner,rendererAuthorityPlanner,status,failureCategory,memoPlanningSeconds,fullCompileSeconds,fullInitialPlanningSeconds,harnessWallSeconds
+ml|pca|lan|w3|Memo,ml,pca,3,COMPILE_MEMO,COMPILE_EXACT,failed,evidence_validation_failure,,,,2.302237816154957
+ml|als|lan|w3|Memo,ml,als,3,COMPILE_MEMO,COMPILE_EXACT,failed,evidence_validation_failure,,,,2.7495300620794296
+ml|kmeans|lan|w3|Memo,ml,kmeans,3,COMPILE_MEMO,COMPILE_EXACT,failed,evidence_validation_failure,,,,2.122775122523308
+ml|lm|lan|w3|Memo,ml,lm,3,COMPILE_MEMO,COMPILE_EXACT,failed,planner_failure,,,,2.4396600499749184
+ml|l2svm|lan|w3|Memo,ml,l2svm,3,COMPILE_MEMO,COMPILE_EXACT,failed,planner_failure,,,,2.8571766018867493
+ml|steplm|lan|w3|Memo,ml,steplm,3,COMPILE_MEMO,COMPILE_EXACT,failed,evidence_validation_failure,,,,3.1426327973604202
+ml|gnmf|lan|w3|Memo,ml,gnmf,3,COMPILE_MEMO,COMPILE_EXACT,passed,,0.616865257,1.299955,1.294344027,2.396793432533741
+ml|gmm|lan|w3|Memo,ml,gmm,3,COMPILE_MEMO,COMPILE_EXACT,failed,evidence_validation_failure,,,,2.2389468997716904
+p1|P1_FULL|lan|w3|Memo,p1,P1_FULL,3,COMPILE_MEMO,COMPILE_EXACT,failed,evidence_validation_failure,,,,2.5888506546616554
+p2|P2_PREP|lan|w3|Memo,p2,P2_PREP,3,COMPILE_MEMO,COMPILE_EXACT,failed,evidence_validation_failure,,,,1.908304050564766
+sliceline|ADULT|lan|w3|Memo,sliceline,ADULT,3,COMPILE_MEMO,COMPILE_EXACT,failed,evidence_validation_failure,,,,2.2389610558748245
+sliceline|COVTYPE|lan|w3|Memo,sliceline,COVTYPE,3,COMPILE_MEMO,COMPILE_EXACT,failed,evidence_validation_failure,,,,2.5656216964125633

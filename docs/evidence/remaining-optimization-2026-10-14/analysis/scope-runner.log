@@ -1,0 +1,12 @@
+MEMO_MATRIX cell=ml|pca|lan|w3|Memo rendererCell=ml|pca|lan|w3|DP-global status=failed resume=no memoSeconds=None compileSeconds=None
+MEMO_MATRIX cell=ml|als|lan|w3|Memo rendererCell=ml|als|lan|w3|DP-global status=failed resume=no memoSeconds=None compileSeconds=None
+MEMO_MATRIX cell=ml|kmeans|lan|w3|Memo rendererCell=ml|kmeans|lan|w3|DP-global status=failed resume=no memoSeconds=None compileSeconds=None
+MEMO_MATRIX cell=ml|lm|lan|w3|Memo rendererCell=ml|lm|lan|w3|DP-global status=failed resume=no memoSeconds=None compileSeconds=None
+MEMO_MATRIX cell=ml|l2svm|lan|w3|Memo rendererCell=ml|l2svm|lan|w3|DP-global status=failed resume=no memoSeconds=None compileSeconds=None
+MEMO_MATRIX cell=ml|steplm|lan|w3|Memo rendererCell=ml|steplm|lan|w3|DP-global status=failed resume=no memoSeconds=None compileSeconds=None
+MEMO_MATRIX cell=ml|gnmf|lan|w3|Memo rendererCell=ml|gnmf|lan|w3|DP-global status=passed resume=no memoSeconds=0.616865257 compileSeconds=1.299955
+MEMO_MATRIX cell=ml|gmm|lan|w3|Memo rendererCell=ml|gmm|lan|w3|DP-global status=failed resume=no memoSeconds=None compileSeconds=None
+MEMO_MATRIX cell=p1|P1_FULL|lan|w3|Memo rendererCell=p1|P1_FULL|lan|w3|DP-global status=failed resume=no memoSeconds=None compileSeconds=None
+MEMO_MATRIX cell=p2|P2_PREP|lan|w3|Memo rendererCell=p2|P2_PREP|lan|w3|DP-global status=failed resume=no memoSeconds=None compileSeconds=None
+MEMO_MATRIX cell=sliceline|ADULT|lan|w3|Memo rendererCell=sliceline|ADULT|lan|w3|DP-global status=failed resume=no memoSeconds=None compileSeconds=None
+MEMO_MATRIX cell=sliceline|COVTYPE|lan|w3|Memo rendererCell=sliceline|COVTYPE|lan|w3|DP-global status=failed resume=no memoSeconds=None compileSeconds=None

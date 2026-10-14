@@ -1,0 +1,158 @@
+Picked up JAVA_TOOL_OPTIONS: -XX:StartFlightRecording=filename=/evidence/planning.jfr,settings=profile,dumponexit=true -XX:FlightRecorderOptions=stackdepth=128
+WARNING: Using incubator modules: jdk.incubator.vector
+[0.386s][info][jfr,startup] Started recording 1. No limit specified, using maxsize=250MB as default.
+[0.386s][info][jfr,startup] 
+[0.386s][info][jfr,startup] Use jcmd 10 JFR.dump name=1 to copy recording data to file.
+26/10/14 17:40:52 WARN utils.SettingsChecker: Low memory budget of total:    251 GB set to:      3 GB
+26/10/14 17:40:52 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[MemoPlannerPhase] phase=facts elapsedNs=45393086
+[MemoPlannerPhase] phase=rules elapsedNs=301286359
+[MemoNativeRequests] preparedRequests=186 reusedResults=148 oracleRequests=38 canonicalStringsCreated=19 canonicalStringsReused=148 uncacheableRequests=19 contextualViewBuilds=38
+[MemoNativeGeneration] cpPatterns=38 prefixRequests=0 prunedPrefixes=100 unknownPrefixes=0 visitedNativePatterns=109 determinantRegions=209 oracleEvaluations=209 evidenceReuses=0 publishedRules=215 coverageObligations=3
+[MemoPlannerPhase] phase=model elapsedNs=176837681
+[MemoCostProjection] bindingDagVisits=3852 projectionCacheHits=1152 relevantGuardDecisions=72 supportPrefixChecks=317 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=366 activationEnvironments=173 projectedContexts=203 primitiveVectors=203 primitiveValues=1681 primitiveValueBytes=13448
+[MemoPlannerPhase] phase=optimization elapsedNs=212121360
+[MemoSearch] status=OPTIMAL nodes=3308 checkEvaluations=4875 checkCacheHits=2720 supportQueries=3406 supportCacheHits=0 supportWitnessHits=245 binarySupportHits=211 binarySupportRows=514 worklistVisits=363 removedRules=29 costEvaluations=419 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=16 cells=3308 rows=348 factorHits=5754
+[MemoShapeReuse] bindingGuardRequests=348 bindingGuardCacheHits=110 repeatProofRequests=1914 repeatProofCacheHits=1890 phaseShapeRequests=3622 phaseShapeCacheHits=3030 phaseShapeCacheEntries=592 guardRelevanceRequests=3504 guardRelevanceCacheHits=3499 guardRelevanceIndexEntries=5 occurrenceTransferRequests=1521 occurrenceTransferCacheHits=1426 occurrenceTransferBuilds=95 occurrenceTransferEntries=95 guardAtomRequests=1768 guardAtomHits=1766 guardAtomIdentities=1
+[MemoMovementReuse] activationRows=175 activationReplays=604 postGateRequests=1266 postGateBuilds=134 postGateHits=1132 primitiveContexts=234 contextualViewBuilds=105 unionRequests=249 unionCacheHits=218 measurementRequests=1228 measurementHits=782
+[MemoNativeCostReuse] requests=129 cacheHits=68 vectorBuilds=135 entries=61
+[MemoContextAnalysisReuse] requests=1395 hits=1387 entries=8
+[MemoDirectRoots] resolver=shapes requests=592 eligibleCalls=592 fastPathCalls=592 rootsResolved=592
+[MemoDirectRoots] resolver=modelPrivacy requests=719 eligibleCalls=355 fastPathCalls=355 rootsResolved=355
+[MemoCheckProjection] annotatedChecks=184 invariantCheckAxes=48 binaryChecksReduced=12 branchEdgesRemovedDuringNormalization=6
+[MemoPlanner] status=OPTIMAL epoch=1 workers=3 nativeRules=236 fedOwners=15 supplies=0 nodes=3308 checks=4875 cacheHits=2720 pruned=29 supportQueries=3406 supportCacheHits=0 supportWitnessHits=245 binarySupportHits=211 binarySupportRows=514 worklistVisits=363 costEvaluations=419 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=38 oracleHits=0 factsNs=45393086 rulesNs=301286359 modelNs=176837681 optimizationNs=212121360 projectionNs=57060433 cost=217.047325383116814386166933852680832606196759115846361964941024780273437500
+[MemoLowering] status=MATCH sb=7 hops=11 supplies=0
+[MemoLowering] status=MATCH sb=10 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=2 hops=21 supplies=0
+[MemoLowering] status=MATCH sb=12 hops=19 supplies=0
+[MemoLowering] status=MATCH sb=14 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=0 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=15 hops=5 supplies=0
+[MemoLowering] status=MATCH sb=16 hops=6 supplies=0
+# EXPLAIN (RUNTIME):
+# Memory Budget local/remote = 2150MB/?MB/?MB
+# Degree of Parallelism (vcores) local/remote = 4/
+PROGRAM ( size CP/MR = 66/0 )
+--FUNCTIONS
+----FUNCTION CALL GRAPH
+------MAIN PROGRAM
+--------.builtinNS::m_gnmf
+----FUNCTION .builtinNS::m_gnmf [recompile=false]
+------GENERIC (lines 51-57) [recompile=false]
+--------CP createvar _mVar2 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp0 true MATRIX binary 50000 10 1000 500000 copy
+--------CP rand 50000.SCALAR.INT64.true 10.SCALAR.INT64.true 1000 0 0.05 1.0 1011081480 uniform 1.0 4 _mVar2.MATRIX.FP64
+--------CP createvar _mVar3 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp1 true MATRIX binary 10 128 1000 1280 copy
+--------CP rand 10.SCALAR.INT64.true 128.SCALAR.INT64.true 1000 0 0.05 1.0 1011081481 uniform 1.0 4 _mVar3.MATRIX.FP64
+--------CP assignvar 0.SCALAR.INT64.true i.SCALAR.INT64
+--------CP cpvar _mVar2 W
+--------CP cpvar _mVar3 H
+--------CP rmvar _mVar2 _mVar3 seed rnk
+------WHILE (lines 58-62)
+--------CP < i.SCALAR.INT64.false 10.SCALAR.INT64.true _Var4.SCALAR.BOOLEAN
+--------CP mvvar _Var4 __pred
+--------GENERIC (lines 59-61) [recompile=false]
+----------CP createvar _mVar5 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp2 true MATRIX binary 10 50000 1000 -1 copy
+----------FED r' W.MATRIX.FP64 _mVar5.MATRIX.FP64 4 FOUT
+----------CP createvar _mVar6 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp3 true MATRIX binary 10 128 1000 -1 copy
+----------FED ba+* _mVar5.MATRIX.FP64 X.MATRIX.FP64 _mVar6.MATRIX.FP64 4 LOUT
+----------CP createvar _mVar7 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp4 true MATRIX binary 10 10 1000 -1 copy
+----------FED ba+* _mVar5.MATRIX.FP64 W.MATRIX.FP64 _mVar7.MATRIX.FP64 4 LOUT
+----------CP rmvar _mVar5
+----------CP createvar _mVar8 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp5 true MATRIX binary 10 128 1000 -1 copy
+----------CP ba+* _mVar7.MATRIX.FP64 H.MATRIX.FP64 _mVar8.MATRIX.FP64 4
+----------CP rmvar _mVar7
+----------CP createvar _mVar9 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp6 true MATRIX binary 10 128 1000 -1 copy
+----------CP + _mVar8.MATRIX.FP64 1.0E-8.SCALAR.FP64.true _mVar9.MATRIX.FP64 4
+----------CP rmvar _mVar8
+----------CP createvar _mVar10 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp7 true MATRIX binary 10 128 1000 -1 copy
+----------CP / _mVar6.MATRIX.FP64 _mVar9.MATRIX.FP64 _mVar10.MATRIX.FP64 4
+----------CP rmvar _mVar6 _mVar9
+----------CP createvar _mVar11 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp8 true MATRIX binary 10 128 1000 -1 copy
+----------CP * H.MATRIX.FP64 _mVar10.MATRIX.FP64 _mVar11.MATRIX.FP64 4
+----------CP rmvar _mVar10
+----------CP createvar _mVar12 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp9 true MATRIX binary 128 10 1000 -1 copy
+----------CP r' _mVar11.MATRIX.FP64 _mVar12.MATRIX.FP64 4
+----------CP createvar _mVar13 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp10 true MATRIX binary 50000 10 1000 -1 copy
+----------FED ba+* X.MATRIX.FP64 _mVar12.MATRIX.FP64 _mVar13.MATRIX.FP64 4 FOUT
+----------CP createvar _mVar14 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp11 true MATRIX binary 10 10 1000 -1 copy
+----------CP ba+* _mVar11.MATRIX.FP64 _mVar12.MATRIX.FP64 _mVar14.MATRIX.FP64 4
+----------CP rmvar _mVar12
+----------CP createvar _mVar15 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp12 true MATRIX binary 50000 10 1000 -1 copy
+----------FED ba+* W.MATRIX.FP64 _mVar14.MATRIX.FP64 _mVar15.MATRIX.FP64 4 FOUT
+----------CP rmvar _mVar14
+----------CP createvar _mVar16 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp13 true MATRIX binary 50000 10 1000 -1 copy
+----------FED + _mVar15.MATRIX.FP64 1.0E-8.SCALAR.FP64.true _mVar16.MATRIX.FP64 4 FOUT
+----------CP rmvar _mVar15
+----------CP createvar _mVar17 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp14 true MATRIX binary 50000 10 1000 -1 copy
+----------FED / _mVar13.MATRIX.FP64 _mVar16.MATRIX.FP64 _mVar17.MATRIX.FP64 4 FOUT
+----------CP rmvar _mVar13 _mVar16
+----------CP createvar _mVar18 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp15 true MATRIX binary 50000 10 1000 -1 copy
+----------FED * W.MATRIX.FP64 _mVar17.MATRIX.FP64 _mVar18.MATRIX.FP64 4 FOUT
+----------CP rmvar _mVar17
+----------CP + i.SCALAR.INT64.false 1.SCALAR.INT64.true _Var19.SCALAR.INT64
+----------CP rmvar H
+----------CP mvvar _Var19 i
+----------CP cpvar _mVar11 H
+----------CP cpvar _mVar18 W
+----------CP rmvar _mVar11 _mVar18
+--------CP rmvar i eps maxi
+--MAIN PROGRAM
+----GENERIC (lines 1-5) [recompile=false]
+------CP list 130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_3_1.data.SCALAR.STRING.true 130.149.237.13:8002//workspace/experiments/data/continuous/ADULT_features_3_2.data.SCALAR.STRING.true 130.149.237.14:8003//workspace/experiments/data/continuous/ADULT_features_3_3.data.SCALAR.STRING.true _Var20.LIST.UNKNOWN
+------CP list 0.SCALAR.INT64.true 0.SCALAR.INT64.true _Var21.LIST.UNKNOWN
+------CP list 16667.SCALAR.INT64.true 128.SCALAR.INT64.true _Var22.LIST.UNKNOWN
+------CP list 16667.SCALAR.INT64.true 0.SCALAR.INT64.true _Var23.LIST.UNKNOWN
+------CP list 33334.SCALAR.INT64.true 128.SCALAR.INT64.true _Var24.LIST.UNKNOWN
+------CP list 33334.SCALAR.INT64.true 0.SCALAR.INT64.true _Var25.LIST.UNKNOWN
+------CP list 50000.SCALAR.INT64.true 128.SCALAR.INT64.true _Var26.LIST.UNKNOWN
+------CP list _Var21.LIST.UNKNOWN.false _Var22.LIST.UNKNOWN.false _Var23.LIST.UNKNOWN.false _Var24.LIST.UNKNOWN.false _Var25.LIST.UNKNOWN.false _Var26.LIST.UNKNOWN.false _Var27.LIST.UNKNOWN
+------CP rmvar _Var21 _Var22 _Var23 _Var24 _Var25 _Var26
+------CP createvar X /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp16 true MATRIX binary -1 -1 -1 -1 copy
+------FED fedinit matrix.SCALAR.STRING.true _Var20.LIST.UNKNOWN.false _Var27.LIST.UNKNOWN.false X.MATRIX.FP64
+------CP rmvar _Var20 _Var27
+------FED uamin X.MATRIX.FP64 _Var28.SCALAR.FP64 4 LOUT
+------CP mvvar _Var28 xmin
+------CP cpvar X X
+----IF (lines 6-8)
+------CP < xmin.SCALAR.FP64.false 0.SCALAR.INT64.true _Var29.SCALAR.BOOLEAN
+------CP mvvar _Var29 __pred
+------GENERIC (lines 7-7) [recompile=false]
+--------CP createvar _mVar30 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp17 true MATRIX binary 50000 128 1000 -1 copy
+--------FED - X.MATRIX.FP64 xmin.SCALAR.FP64.false _mVar30.MATRIX.FP64 4 FOUT
+--------CP mvvar _mVar30 X
+------CP rmvar xmin
+----GENERIC (lines 10-10) [recompile=false]
+------CP FCall .builtinNS m_gnmf true 5 2 X=X.MATRIX.FP64 rnk=10.SCALAR.INT64.true eps=1.0E-8.SCALAR.FP64.true maxi=10.SCALAR.INT64.true seed=1011081480.SCALAR.INT64.true W H
+----GENERIC (lines 12-12) [recompile=false]
+------CP write H.MATRIX.FP64 tmp/w1357/254ca9dfdf8c0551864e/result.SCALAR.STRING.true csv.SCALAR.STRING.true false , false .SCALAR.STRING.true -1
+------CP rmvar H
+
+SystemDS Statistics:
+Total elapsed time:		1.624928 sec.
+Total compilation time:		1.624928 sec.
+PlanningFullInitialReceipt schema=planning-full-initial-v1 Tplanning_full_initial_nanos=1613800254
+Compile Phase Parse:		0.000000 sec.
+Compile Phase HopsBuild:	0.000000 sec.
+Compile Phase HopsRewrite:	0.445889 sec.
+Compile Observed HOPs:		82.
+Compile Phase LopsBuild:	0.819541 sec.
+Compile Phase LopsRewrite:	0.000663 sec.
+Compile Phase RuntimeProgram:	0.030920 sec.
+Compile Phase FedPlanner:	0.803289 sec.
+Total execution time:		0.000 sec.
+Cache hits (Mem/Li/WB/FS/HDFS):	0/0/0/0/0.
+Cache writes (Li/WB/FS/HDFS):	0/0/0/0.
+Cache times (ACQr/m, RLS, EXP):	0.000/0.000/0.000/0.000 sec.
+HOP DAGs recompiled (PRED, SB):	0/0.
+HOP DAGs recompile time:	0.000 sec.
+Total JIT compile time:		3.06 sec.
+Total JVM GC count:		6.
+Total JVM GC time:		0.03 sec.
+Heavy hitter instructions:
+ #  Instruction  Time(s)  Count
+ 1  !=             0.157      1
+ 2  mvvar          0.000      2
+ 3  +              0.000      1
+

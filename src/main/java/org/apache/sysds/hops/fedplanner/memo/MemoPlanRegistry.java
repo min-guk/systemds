@@ -90,7 +90,8 @@ public final class MemoPlanRegistry {
 	}
 
 	private record Plan(long epoch, Map<Long, Selection> selections,
-		Map<Long, List<Supply>> supplies, SupplySchedule schedule,Map<Long,CompilerState> originals) {
+		Map<Long, List<Supply>> supplies, SupplySchedule schedule,Map<Long,Long> parForIterations,
+		Map<Long,CompilerState> originals) {
 	}
 
 	public enum ScopeKind { PROGRAM_ROOT, FUNCTION_INVOCATION, SAME_SB, LOOP_INVOCATION, LOOP_ITERATION }
@@ -241,11 +242,23 @@ public final class MemoPlanRegistry {
 		SupplySchedule schedule = validateSchedule(epoch,
 			Objects.requireNonNull(scheduleFactory.apply(epoch), "supply schedule"), immutableSupplies, selections);
 		Map<Long,CompilerState> originals=new LinkedHashMap<>();
+		Map<Long,Long> parForIterations=new LinkedHashMap<>();
+		for(MemoProgramFacts.LoopRecord loop:facts.loops()) {
+			StatementBlock block=facts.statementBlock(loop.statementBlockId());
+			if(!(block instanceof org.apache.sysds.parser.ParForStatementBlock)) continue;
+			if(facts.callFramesForRegion(loop.regionId()).isEmpty()) continue;
+			if(loop.executionCases().size()!=1 || loop.executionCases().get(0).exactIterations()<0
+				|| loop.executionCases().get(0).exactIterations()>1)
+				throw new IllegalStateException("Selected Memo PARFOR lacks an exact zero/one cardinality proof: "
+					+ loop.statementBlockId());
+			parForIterations.put(loop.statementBlockId(),(long) loop.executionCases().get(0).exactIterations());
+		}
 		Plan prior=plan(owner);
 		if(prior!=null) originals.putAll(prior.originals());
 		for(var entry:selectedHops.entrySet()) originals.putIfAbsent(entry.getKey(),
 			originalStates.getOrDefault(entry.getKey(),CompilerState.capture(entry.getValue())));
-		Plan plan = new Plan(epoch, Map.copyOf(selections), immutableSupplies, schedule,Map.copyOf(originals));
+		Plan plan = new Plan(epoch, Map.copyOf(selections), immutableSupplies, schedule,
+			Map.copyOf(parForIterations),Map.copyOf(originals));
 		synchronized(MemoPlanRegistry.class) {
 			if(ACTIVE_RECOMPILES.contains(owner))
 				throw new StaleMemoPlanException("Cannot replace a memo plan during exact recompilation");
@@ -375,6 +388,12 @@ public final class MemoPlanRegistry {
 	public static long epoch(DMLProgram owner) {
 		Plan plan = plan(owner);
 		return plan != null ? plan.epoch() : -1;
+	}
+
+	/** Exact compile-time cardinality for a selected Memo PARFOR, or {@code null} when it is not selected. */
+	public static Long selectedParForIterations(DMLProgram owner,long statementBlockId) {
+		Plan plan=plan(owner);
+		return plan==null ? null : plan.parForIterations().get(statementBlockId);
 	}
 
 	static CompilerState originalState(DMLProgram owner,Hop hop) {

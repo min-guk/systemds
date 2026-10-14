@@ -1,0 +1,270 @@
+{
+  "cell": {
+    "id": "p1|P1_FULL|lan|w3|DP-global",
+    "planner": "DP-global",
+    "planner_enum": "COMPILE_EXACT",
+    "profile": "lan",
+    "suite": "p1",
+    "workers": 3,
+    "workload": "P1_FULL"
+  },
+  "content_verification": {
+    "cache_contract": "hash reused only while dev/inode/size/mtime_ns/ctime_ns are unchanged",
+    "execution_note": "pure render only; re-render immediately before any separately qualified run",
+    "selected_template_metadata_and_data_blocks": "sha256-verified-at-render",
+    "stage_manifest_sha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+  },
+  "dependencies": [
+    {
+      "path": "harness/sigmod2021-exdra-p523/experiments/code/exp/gmm_p1_compat.dml",
+      "sha256": "a543657456d5a199d7b90ab2bcaeccc039cae540492ca12f5fe7bda42f151a6d"
+    }
+  ],
+  "execution_authorized": false,
+  "inputs": [
+    {
+      "cols": 68,
+      "metadata_path": "data/P1_features.data.mtd",
+      "metadata_sha256": "959d9081c8d61a75b1b3a7890a8e9a6f61b4b443204eac7883cd29cf0cd78929",
+      "nnz": 6800000,
+      "privacy": "private-aggregate",
+      "role": "X",
+      "rows": 100000,
+      "shards": [
+        {
+          "address": "130.149.237.12:8001//workspace/experiments/data/P1_features_3_1.data",
+          "blocks": [
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_1.data/0-m-00000",
+              "sha256": "15e431f228e7adf07e62514a305826634c6712d27a8f0c5b7de3831540e734c2"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_1.data/0-m-00001",
+              "sha256": "7284088aab1706a9cfbc5ed89a6d8aeae147e5cf5483a68905b99ff7541da573"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_1.data/0-m-00002",
+              "sha256": "1d07b303068d59c7a480ff49110f8c7dac9f4c1a3c59a0b67a01c5278be9b7d2"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_1.data/0-m-00003",
+              "sha256": "087d72ef9fefe7d32f997ee1008b74cd8fb1b87acd0a57aed01e279c28778da5"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_1.data/0-m-00004",
+              "sha256": "0ff41408e7e8e2fc1ea07bffffa9c0370d01d5a72d5856c9ebe254e725640e93"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_1.data/0-m-00005",
+              "sha256": "6c4f4188689bc43416757d02f969214fe5df8dcc396892923cc56bff30034977"
+            },
+            {
+              "bytes": 1814014,
+              "path": "data/P1_features_3_1.data/0-m-00006",
+              "sha256": "36043dcd96ba480242458f051bd3b897aef3ea857258c2e1988393d6987729e2"
+            }
+          ],
+          "cols": 68,
+          "endpoint": "130.149.237.12:8001",
+          "metadata_path": "data/P1_features_3_1.data.mtd",
+          "metadata_sha256": "5005780f2cd1389091c6cee09501ba4c58b0fb117145a683242abe9141c635f7",
+          "nnz": 2266712,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              0,
+              0
+            ],
+            [
+              33334,
+              68
+            ]
+          ],
+          "rows": 33334,
+          "stage_path": "data/P1_features_3_1.data",
+          "worker": {
+            "host": "so002",
+            "index": 1,
+            "ip": "130.149.237.12",
+            "port": 8001
+          }
+        },
+        {
+          "address": "130.149.237.13:8002//workspace/experiments/data/P1_features_3_2.data",
+          "blocks": [
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_2.data/0-m-00000",
+              "sha256": "1357f5754724ae6ab3ef98a8fe404b7babb87ddf15104ed5defc825046edbfaf"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_2.data/0-m-00001",
+              "sha256": "83197d672fc29604d94c95c56997d134240cc5dd1d2377e9ae58789988dda7d2"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_2.data/0-m-00002",
+              "sha256": "a769257c1249bac54b39e0ccaddd17a51f3b7dc6a93ca5f568af2b9b5d0372be"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_2.data/0-m-00003",
+              "sha256": "8b019615446ee98286fa7d822cc2b65802aab4a47a91de9fae7816f25732ea29"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_2.data/0-m-00004",
+              "sha256": "adaf7253bac71a5fe62ccc436f386f6efc19f32bd2af72551d61a40fa0feb375"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_2.data/0-m-00005",
+              "sha256": "f7d00b90b8236013bf5cf1d6bb2d558153c6521d08034d5bf8316aedd67e3987"
+            },
+            {
+              "bytes": 1814014,
+              "path": "data/P1_features_3_2.data/0-m-00006",
+              "sha256": "7fcc7a934637b89855ddd9902a83416910b0c39a203f0429edb9c78c787bfd9e"
+            }
+          ],
+          "cols": 68,
+          "endpoint": "130.149.237.13:8002",
+          "metadata_path": "data/P1_features_3_2.data.mtd",
+          "metadata_sha256": "d918b5bfdff349231e9233f3538a2e3b8b631af83193f9da87ee52b5e169530f",
+          "nnz": 2266712,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              33334,
+              0
+            ],
+            [
+              66668,
+              68
+            ]
+          ],
+          "rows": 33334,
+          "stage_path": "data/P1_features_3_2.data",
+          "worker": {
+            "host": "so003",
+            "index": 2,
+            "ip": "130.149.237.13",
+            "port": 8002
+          }
+        },
+        {
+          "address": "130.149.237.14:8003//workspace/experiments/data/P1_features_3_3.data",
+          "blocks": [
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_3.data/0-m-00000",
+              "sha256": "c8788234cb32d9d746e934a8be291497c497ee5d5ccaf419f21eb6f4971115cc"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_3.data/0-m-00001",
+              "sha256": "e4216b6954293a8ab42fea767d6f04f37ed924a8f05c64ace0a49963fa0749fc"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_3.data/0-m-00002",
+              "sha256": "9f3fe4856c4ae1fb4c97168ae63e3083911dd4d5349555dd36875078beea2341"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_3.data/0-m-00003",
+              "sha256": "650125b0a393742c5adef303cc02319ec28d040b34df49bc9f9bfc1049c30871"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_3.data/0-m-00004",
+              "sha256": "792c0f01cafeeed48e01e0b3f49fa4c7ae24c5b0ab34d64eb1416c35d7676ec4"
+            },
+            {
+              "bytes": 2720371,
+              "path": "data/P1_features_3_3.data/0-m-00005",
+              "sha256": "32d54df2b615b8b6b739371cdd6d8b7d2a3673575806dab0c11f3f643c246499"
+            },
+            {
+              "bytes": 1812926,
+              "path": "data/P1_features_3_3.data/0-m-00006",
+              "sha256": "f796087da13c0d47a982bbabeaf9819fb84e42e46caa0d3023e66efa0b5d279c"
+            }
+          ],
+          "cols": 68,
+          "endpoint": "130.149.237.14:8003",
+          "metadata_path": "data/P1_features_3_3.data.mtd",
+          "metadata_sha256": "a387c892a48c65f8bdb22be15f79a26ab784166be984299f880459ec6ccb70fa",
+          "nnz": 2266576,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              66668,
+              0
+            ],
+            [
+              100000,
+              68
+            ]
+          ],
+          "rows": 33332,
+          "stage_path": "data/P1_features_3_3.data",
+          "worker": {
+            "host": "so004",
+            "index": 3,
+            "ip": "130.149.237.14",
+            "port": 8003
+          }
+        }
+      ],
+      "stem": "P1_features"
+    }
+  ],
+  "ml_view": null,
+  "outputs": [
+    {
+      "data_type": "matrix",
+      "format": "binary",
+      "path": "tmp/w1357/3ad127a4e4cf9fc01750/result",
+      "role": "result"
+    }
+  ],
+  "qualification": "PURE_RENDER_ONLY",
+  "schema": "cofee-w1357-render/v1",
+  "seeds": {
+    "ALS_SEED": 1389632218,
+    "GMM_DML_SEED": 20260904,
+    "GNMF_SEED": 1011081480,
+    "KMEANS_SEED": 133815928,
+    "ORDER_SEED": 20260922,
+    "PYTHONHASHSEED": 20260922,
+    "SYSTEMDS_SEED": 1011081480
+  },
+  "template": {
+    "canonical_for_execution": false,
+    "canonical_source_bytes": true,
+    "contract_status": "CANONICAL_SOURCE_PURE_RENDER_ONLY",
+    "future_variant_policy": "corrected/canonical templates require an explicit repo-tracked hash and contract revision; recognized variants remain pure-render-only and no variant is auto-authorized",
+    "id": "CANONICAL_TRACKED_STAGE_V2",
+    "known_limitation": null,
+    "path": "harness/sigmod2021-exdra-p523/experiments/code/exp/P1_FULL.dml",
+    "provenance": "sealed-canonical-stage-template",
+    "sha256": "13a5274c0a51ecc7ca337c3f36a15a2c59ef49bee131cfcad8c997599de548d9"
+  },
+  "topology": {
+    "path": "/home/mchoi/cofee-evaluation/config/multihost_topology.json",
+    "sha256": "30c741dbc300bacc7180c04196b7c764ea4c5e2a7c96ce91113005c5f4fb7cc8",
+    "workers": [
+      "so002",
+      "so003",
+      "so004"
+    ]
+  }
+}

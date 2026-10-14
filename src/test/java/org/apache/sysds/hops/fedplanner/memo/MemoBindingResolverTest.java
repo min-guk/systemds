@@ -51,6 +51,43 @@ import org.junit.Test;
 
 public class MemoBindingResolverTest {
 	@Test
+	public void equalCallFrameReusesTheImmutableEvaluationContext() {
+		MemoBindingResolver.EvaluationContext context=
+			MemoBindingResolver.EvaluationContext.empty().withCallFrame(List.of(4,9));
+
+		Assert.assertSame("an equal immutable call frame must not allocate another context",context,
+			context.withCallFrame(new ArrayList<>(List.of(4,9))));
+	}
+
+	@Test
+	public void changedCallFramePreservesSemanticFieldsAndCopiesTheFrame() {
+		MemoBindingResolver.GuardDecision guard=
+			new MemoBindingResolver.GuardDecision(1,List.of());
+		MemoBindingResolver.LoopDecision loop=
+			new MemoBindingResolver.LoopDecision(2,List.of());
+		MemoBindingResolver.LoopCardinalityDecision cardinality=
+			new MemoBindingResolver.LoopCardinalityDecision(2,List.of());
+		MemoBindingResolver.SelectionLookup selection=new MemoBindingResolver.SelectionLookup() { };
+		MemoBindingResolver.EvaluationContext context=new MemoBindingResolver.EvaluationContext(
+			Map.of(guard,true),Map.of(loop,MemoBindingResolver.LoopPhase.BACKEDGE),selection,17,List.of(4,9),
+			Map.of(loop,MemoProgramFacts.IterationPhase.MIDDLE),
+			Map.of(cardinality,MemoProgramFacts.LoopCardinality.MANY));
+		List<Integer> requested=new ArrayList<>(List.of(7,8));
+
+		MemoBindingResolver.EvaluationContext changed=context.withCallFrame(requested);
+		requested.add(10);
+
+		Assert.assertNotSame(context,changed);
+		Assert.assertEquals(context.guards(),changed.guards());
+		Assert.assertEquals(context.loops(),changed.loops());
+		Assert.assertSame(selection,changed.selections());
+		Assert.assertEquals(context.maxDepth(),changed.maxDepth());
+		Assert.assertEquals(context.iterationPhases(),changed.iterationPhases());
+		Assert.assertEquals(context.cardinalities(),changed.cardinalities());
+		Assert.assertEquals(List.of(7,8),changed.callFrame());
+	}
+
+	@Test
 	public void overwriteUsesOnlyTheExactReachingDefinition() {
 		DMLProgram program = new DMLProgram();
 		DataOp initialA = transientWrite("A", new LiteralOp(1L));

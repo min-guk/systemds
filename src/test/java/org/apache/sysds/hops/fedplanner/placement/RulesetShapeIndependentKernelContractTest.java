@@ -33,6 +33,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.Rule;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
@@ -78,6 +79,14 @@ public class RulesetShapeIndependentKernelContractTest {
 			OpSig.InputKind.MATRIX));
 		assertNoKernel(new Rulesets.FunctionOutputRule(), sig(OpOpData.FUNCTIONOUTPUT.toString(), OpCategory.OTHER,
 			OpSig.InputKind.MATRIX));
+	}
+
+	@Test
+	public void solveUsesTheKnownMissingFederatedInstructionReason() {
+		OpSig solve = sig(Opcodes.SOLVE.toString(), OpCategory.BINARY_EWISE,
+			OpSig.InputKind.MATRIX, OpSig.InputKind.MATRIX);
+		Assert.assertEquals(ReasonCode.MISSING_FED_INSTRUCTION,
+			new Rulesets.SolveRule().caps(solve, List.of(FType.ROW, FType.ROW), HINTS.get(0).create()).reason());
 	}
 
 	private static List<KernelCase> kernels() {

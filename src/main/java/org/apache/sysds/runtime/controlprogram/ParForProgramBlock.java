@@ -44,6 +44,7 @@ import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.CompilerConfig;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry;
 import org.apache.sysds.hops.recompile.Recompiler;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.parser.DMLProgram;
@@ -581,10 +582,17 @@ public class ParForProgramBlock extends ForProgramBlock {
 		//early exit on num iterations (e.g., for invalid loop bounds)
 		_numIterations = UtilFunctions.getSeqLength( 
 			from0.getDoubleValue(), to0.getDoubleValue(), incr0.getDoubleValue(), false);
+		Long memoIterations=MemoPlanRegistry.selectedParForIterations(sb.getDMLProg(),sb.getSBID());
+		if(memoIterations!=null && _numIterations!=memoIterations)
+			throw new DMLRuntimeException(this.printBlockErrorLocation()
+				+ "Selected Memo PARFOR was proven to have exactly " + memoIterations
+				+ " iterations but evaluated to " + _numIterations + ".");
 		// avoid unnecessary optimization/initialization, and issue with simplification rewrites
 		// (e.g., rewriting leftindexing into a result variable, to assignment)
-		if( _numIterations <= 0 )
-			return; 
+		if( _numIterations <= 0 ) {
+			executeExitInstructions("parfor", ec);
+			return;
+		}
 		if( _numIterations == 1 ) {
 			//fallback to basic for loop.
 			super.execute(ec);

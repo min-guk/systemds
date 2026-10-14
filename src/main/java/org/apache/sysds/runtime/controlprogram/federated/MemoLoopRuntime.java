@@ -46,16 +46,25 @@ import org.apache.sysds.runtime.instructions.fed.FEDSupplyInstruction;
 
 /** Runtime enforcement of one selected, transfer-free loop backedge contract. */
 public final class MemoLoopRuntime {
-	public record Contract(String variable, DataType dataType, ValueType valueType,
+	public record Contract(String variable, DataType dataType, ValueType entryValueType, ValueType valueType,
 		MemoPartition target, long entryRows, long entryColumns, long repeatRows, long repeatColumns,
 		boolean entryRequired, boolean localResidencyApproved,
 		List<Recipe> entryRecipes, CanonicalWorkerPool pool) {
+		/** Compatibility constructor for contracts whose entry and repeat values have the same type. */
+		public Contract(String variable, DataType dataType, ValueType valueType,
+			MemoPartition target, long entryRows, long entryColumns, long repeatRows, long repeatColumns,
+			boolean entryRequired, boolean localResidencyApproved,
+			List<Recipe> entryRecipes, CanonicalWorkerPool pool) {
+			this(variable,dataType,valueType,valueType,target,entryRows,entryColumns,repeatRows,repeatColumns,
+				entryRequired,localResidencyApproved,entryRecipes,pool);
+		}
+
 		/** Compatibility constructor; privacy is converted only to the runtime's local-residency gate. */
 		public Contract(String variable, DataType dataType, ValueType valueType,
 			MemoPartition target, long entryRows, long entryColumns, long repeatRows, long repeatColumns,
 			boolean entryRequired, Privacy privacy, List<Recipe> entryRecipes, CanonicalWorkerPool pool) {
-			this(variable,dataType,valueType,target,entryRows,entryColumns,repeatRows,repeatColumns,entryRequired,
-				!unreleased(Objects.requireNonNull(privacy,"privacy")),entryRecipes,pool);
+			this(variable,dataType,valueType,valueType,target,entryRows,entryColumns,repeatRows,repeatColumns,
+				entryRequired,!unreleased(Objects.requireNonNull(privacy,"privacy")),entryRecipes,pool);
 		}
 
 		/** Backward-compatible contract where entry and repeat values have the same required shape. */
@@ -70,11 +79,18 @@ public final class MemoLoopRuntime {
 			if(variable == null || variable.isEmpty())
 				throw new IllegalArgumentException("A loop contract requires an exact variable name.");
 			Objects.requireNonNull(dataType, "dataType");
+			Objects.requireNonNull(entryValueType, "entryValueType");
 			Objects.requireNonNull(valueType, "valueType");
+			if(entryValueType == ValueType.UNKNOWN || valueType == ValueType.UNKNOWN)
+				throw new IllegalArgumentException("Loop entry and repeat types must be exact.");
 			Objects.requireNonNull(target, "target");
 			entryRecipes = List.copyOf(Objects.requireNonNull(entryRecipes, "entryRecipes"));
 			if(entryRequired && entryRecipes.isEmpty())
 				throw new IllegalArgumentException("A loop contract requires its selected entry supply.");
+			if(entryValueType != valueType && !(entryRequired && dataType == DataType.SCALAR
+				&& entryValueType == ValueType.INT64 && valueType == ValueType.FP64))
+				throw new IllegalArgumentException("Unsupported loop entry/repeat type transition "
+					+ entryValueType + " -> " + valueType + '.');
 			if(dataType == DataType.SCALAR) {
 				if(target != MemoPartition.LOCAL || entryRows >= 0 || entryColumns >= 0
 					|| repeatRows >= 0 || repeatColumns >= 0)
@@ -249,7 +265,7 @@ public final class MemoLoopRuntime {
 			Recipe selected = selectedRecipes[position];
 			if(selected.movement() != Movement.DIRECT) {
 				FEDSupplyInstruction.supplyInPlace(ec, tid, contract.variable(), contract.dataType(),
-					contract.valueType(), contract.target(), List.of(selected));
+					contract.entryValueType(), contract.target(), List.of(selected));
 				ENTRY_TRANSFERS.incrementAndGet();
 			}
 			validateEntryValue(ec, contract);
@@ -271,7 +287,7 @@ public final class MemoLoopRuntime {
 		Data value = ec.getVariable(contract.variable());
 		if(value == null)
 			throw new DMLRuntimeException("Missing loop-carried variable " + contract.variable() + '.');
-		if(value.getDataType() != contract.dataType() || value.getValueType() != contract.valueType())
+		if(value.getDataType() != contract.dataType() || value.getValueType() != contract.entryValueType())
 			throw new DMLRuntimeException("Loop entry type mismatch for " + contract.variable() + '.');
 		if(contract.dataType() != DataType.SCALAR) {
 			long[] shape = runtimeShape((CacheableData<?>) value);
@@ -290,20 +306,22 @@ public final class MemoLoopRuntime {
 	}
 
 	private static void validateEntryValue(ExecutionContext ec, Contract contract) {
-		validateValue(ec, contract, "entry", contract.entryRows(), contract.entryColumns());
+		validateValue(ec, contract, "entry", contract.entryValueType(),
+			contract.entryRows(), contract.entryColumns());
 	}
 
 	private static void validateValue(ExecutionContext ec, Contract contract, String boundary) {
-		validateValue(ec, contract, boundary, contract.repeatRows(), contract.repeatColumns());
+		validateValue(ec, contract, boundary, contract.valueType(),
+			contract.repeatRows(), contract.repeatColumns());
 	}
 
 	private static void validateValue(ExecutionContext ec, Contract contract, String boundary,
-		long expectedRows, long expectedColumns) {
+		ValueType expectedValueType, long expectedRows, long expectedColumns) {
 		Data value = ec.getVariable(contract.variable());
 		if(value == null)
 			throw new DMLRuntimeException("Missing loop-carried variable at " + boundary + ": "
 				+ contract.variable());
-		if(value.getDataType() != contract.dataType() || value.getValueType() != contract.valueType())
+		if(value.getDataType() != contract.dataType() || value.getValueType() != expectedValueType)
 			throw new DMLRuntimeException("Loop-carried type changed at " + boundary + ": "
 				+ contract.variable());
 		if(contract.dataType() == DataType.SCALAR)

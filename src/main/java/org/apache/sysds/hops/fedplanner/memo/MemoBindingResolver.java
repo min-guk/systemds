@@ -128,6 +128,7 @@ public final class MemoBindingResolver {
 		}
 
 		public EvaluationContext withCallFrame(List<Integer> frame) {
+			if(callFrame.equals(frame)) return this;
 			return new EvaluationContext(guards, loops, selections, maxDepth, frame,iterationPhases,cardinalities);
 		}
 

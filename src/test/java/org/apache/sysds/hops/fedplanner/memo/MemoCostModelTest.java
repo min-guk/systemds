@@ -16,6 +16,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp3;
+import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.OpOpDnn;
 import org.apache.sysds.common.Types.ValueType;
@@ -26,6 +27,8 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.DnnOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -178,6 +181,79 @@ public class MemoCostModelTest {
 	}
 
 	@Test
+	public void wdivmmUsesTheRuntimeWeightsExecutionAnchor() {
+		QuaternaryOp wdivmm=wdivmm();
+		RuleMemo.Rule rule=rule(ExecType.FED,
+			List.of(MemoPartition.ROW,MemoPartition.LOCAL,MemoPartition.COL,MemoPartition.LOCAL),
+			MemoPartition.LOCAL);
+
+		double cost=MemoCostModel.nativeCost(wdivmm,rule,WORKERS,1);
+		Assert.assertTrue(Double.isFinite(cost));
+		Assert.assertTrue(cost>0);
+	}
+
+	@Test
+	public void mixedAxisCtableUsesItsPrimaryCategoryMapWithoutLosingPreparationCosts() {
+		TernaryOp table=new TernaryOp("table",DataType.MATRIX,ValueType.FP64,OpOp3.CTABLE,
+			matrix("A",8,4),matrix("B",8,4),new LiteralOp(1D),
+			new LiteralOp(16L),new LiteralOp(12L),new LiteralOp(false));
+		table.setDim1(16);
+		table.setDim2(12);
+		for(int workers : List.of(1,3,5,7))
+			for(List<MemoPartition> inputs : List.of(
+				List.of(MemoPartition.ROW,MemoPartition.COL,MemoPartition.LOCAL,
+					MemoPartition.LOCAL,MemoPartition.LOCAL,MemoPartition.LOCAL),
+				List.of(MemoPartition.COL,MemoPartition.ROW,MemoPartition.LOCAL,
+					MemoPartition.LOCAL,MemoPartition.LOCAL,MemoPartition.LOCAL),
+				List.of(MemoPartition.LOCAL,MemoPartition.ROW,MemoPartition.LOCAL,
+					MemoPartition.LOCAL,MemoPartition.LOCAL,MemoPartition.LOCAL))) {
+				FType anchor=inputs.get(inputs.get(0).federated() ? 0 : 1).runtimeType(workers);
+				assertCtableCost(table,inputs,workers,anchor);
+			}
+	}
+
+	@Test
+	public void ctableExpandUsesTheValueMapNotTheErasedSequenceMap() {
+		TernaryOp table=new TernaryOp("expand",DataType.MATRIX,ValueType.FP64,OpOp3.CTABLE,
+			org.apache.sysds.hops.rewrite.HopRewriteUtils.createSeqDataGenOp(matrix("X",8,1)),
+			matrix("values",8,1),new LiteralOp(1D));
+		table.setDim1(8);
+		table.setDim2(4);
+		Assert.assertTrue(table.isSequenceRewriteApplicable(true));
+		assertCtableCost(table,List.of(MemoPartition.COL,MemoPartition.ROW,MemoPartition.LOCAL),
+			WORKERS,FType.ROW);
+	}
+
+	private static void assertCtableCost(TernaryOp table,List<MemoPartition> inputs,int workers,FType anchor) {
+		List<FType> types=inputs.stream().map(p -> p.runtimeType(workers)).toList();
+		double base=FederatedCostModel.computeOpCostWithFallback(table);
+		double outputBytes=FederatedCostModel.getEffectiveOutputMemEstimate(table);
+		FederatedCostModel.MixedFedLocalCost mixed=FederatedCostModel.computeMixedFedLocalCost(
+			table,table.getInput(),types,anchor,base,outputBytes,workers);
+		double result=mixed.hasCoordinatorPhase() ? mixed.getCoordinatorPhaseCost()
+			: FederatedCostModel.computeNativeFederatedLoutResultCost(table,types,anchor,
+				FederatedCostModel.getEffectiveUploadMemEstimate(table),workers);
+		double expected=FederatedCostModel.computeFederatedComputeCost(table,base,workers,
+			FederatedCostModel.hasOnlyBroadcastMatrixInputs(table.getInput(),types))
+			+FederatedCostModel.computeFederatedInstructionNetworkCost(table,1)
+			+mixed.getInputPreparationCost()+result;
+		Assert.assertTrue(expected>0);
+		Assert.assertEquals(expected,
+			MemoCostModel.nativeCost(table,rule(ExecType.FED,inputs,MemoPartition.LOCAL),workers,1),1e-12);
+	}
+
+	@Test
+	public void replicatedWdivmmWeightsDoNotBorrowAnotherInputsPartitionMap() {
+		RuleMemo.Rule rule=rule(ExecType.FED,
+			List.of(MemoPartition.REP,MemoPartition.LOCAL,MemoPartition.COL,MemoPartition.LOCAL),
+			MemoPartition.LOCAL);
+
+		MemoCostModel.CostException error=Assert.assertThrows(MemoCostModel.CostException.class,
+			() -> MemoCostModel.nativeCost(wdivmm(),rule,WORKERS,1));
+		Assert.assertEquals(MemoCostModel.DiagnosticCode.AMBIGUOUS_FED_EXECUTION_LAYOUT,error.code());
+	}
+
+	@Test
 	public void crossAxisForcedLocalAppendPricesBothRuntimeCollections() {
 		BinaryOp append = new BinaryOp("cbind", DataType.MATRIX, ValueType.FP64,
 			OpOp2.CBIND, matrix("rows", 8, 1), matrix("cols", 8, 1));
@@ -325,6 +401,15 @@ public class MemoCostModelTest {
 
 	private static RuleMemo.Rule rule(ExecType exec, List<MemoPartition> inputs, MemoPartition output) {
 		return new RuleMemo.Rule(exec, inputs, List.of(output), "test");
+	}
+
+	private static QuaternaryOp wdivmm() {
+		QuaternaryOp result=new QuaternaryOp("wdivmm",DataType.MATRIX,ValueType.FP64,
+			OpOp4.WDIVMM,matrix("X",8,4),matrix("U",8,2),matrix("V",4,2),
+			new LiteralOp(-1L),0,false,false);
+		result.setDim1(8);
+		result.setDim2(4);
+		return result;
 	}
 
 	private static UnaryOp unary(Hop input) {

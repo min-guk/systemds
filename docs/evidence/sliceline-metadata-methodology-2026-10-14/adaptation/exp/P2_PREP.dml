@@ -1,0 +1,31 @@
+##################################################
+# PIPELINE P2_PREP: paper-production preprocessing
+##################################################
+# This stops at the original P2 preprocessing boundary.  The large row-level
+# train/test matrices remain protected; aggregate checksums force their complete
+# execution, while the small transform metadata is retained as pipeline output.
+
+Xraw = federated(addresses=__X_ADDRS__, ranges=__X_RANGES__);
+Fall = as.frame(Xraw);
+jspec = "{ ids:true, dummycode:[1], cofeePublicRecodeMetadata:true }";
+[X0, M] = transformencode(target=Fall, spec=jspec);
+y = federated(addresses=__Y_ADDRS__, ranges=__Y_RANGES__);
+
+colSD = colSds(X0);
+colMean = colMeans(X0);
+upperBound = colMean + 1.5 * colSD;
+lowerBound = colMean - 1.5 * colSD;
+outFilter = (X0 < lowerBound) | (X0 > upperBound);
+X = X0 - outFilter * X0 + outFilter * colMean;
+
+X = scale(X=X, center=TRUE, scale=TRUE);
+[Xtrain, Xtest, ytrain, ytest] = split(X=X, Y=y, f=0.7,
+  cont=FALSE, seed=2026072701);
+
+# A scalar aggregate is legal for PrivateAggregation and prevents dead-code
+# elimination without forcing the protected preprocessed rows onto the coordinator.
+checksum = sum(Xtrain) + sum(Xtest) + sum(ytrain) + sum(ytest);
+result = matrix(checksum, rows=1, cols=1);
+print("PIPELINE_RESULT,P2_PREP_AGGREGATE=" + checksum);
+write(result, "__OUT__", format="binary");
+write(M, "__OUT___metadata", format="binary");

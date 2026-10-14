@@ -1,0 +1,284 @@
+{
+  "purpose": "Existing legacy compile-only evidence and source excerpts; no workload rerun, dataset scan, or production edit",
+  "legacyBaseCommit": "fe000959c48ffa1172399e49124d082fe42d0c6d",
+  "legacyJarSha256Reported": "805095277f03d4cda0a85278be64c09072c118696f908f00e1f03f62afbf3f28",
+  "legacyBuildCaveat": "Contemporaneous report identifies base commit plus uncommitted changes; excerpts are base-commit evidence, not byte-exact reconstruction of the measured JAR",
+  "files": [
+    {
+      "path": "ADULT/mkl-single-pass/receipt.json",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_49_sliceline_ADULT_mkl-single-pass_20260921_lan_coordinator1/mkl-single-pass.json",
+      "sha256": "e220621feee4b65e753f71a9a235dbd147ce2f78a31495a9f2fee9ff75568205"
+    },
+    {
+      "path": "ADULT/mkl-single-pass/coordinator.log",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/fed4/mkl-single-pass/sliceline_dataset-ADULT_coordinator_mkl-single-pass_g009policy_final805_49_sliceline_ADULT_mkl-single-pass_20260921_lan_coordinator1.log",
+      "sha256": "99c278b4e9777019d3d333fd3b4359d32ca2b27d55adca042df273a63fbb6d92"
+    },
+    {
+      "path": "ADULT/mkl-single-pass/compile.xml",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_49_sliceline_ADULT_mkl-single-pass_20260921_lan_coordinator1/mkl-single-pass.compile.xml",
+      "sha256": "1cedf5ae786ee4a2247c88d15dc8c839357b123db6f2720a24a16fbe638df29b"
+    },
+    {
+      "path": "ADULT/mkl-heuristic-first/receipt.json",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_50_sliceline_ADULT_mkl-heuristic-first_20260921_lan_coordinator1/mkl-heuristic-first.json",
+      "sha256": "5ba502530e679852f0dc174ea8a59ea56dd5a9b9446d5e194b10c053b82a455f"
+    },
+    {
+      "path": "ADULT/mkl-heuristic-first/coordinator.log",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/fed4/mkl-heuristic-first/sliceline_dataset-ADULT_coordinator_mkl-heuristic-first_g009policy_final805_50_sliceline_ADULT_mkl-heuristic-first_20260921_lan_coordinator1.log",
+      "sha256": "16074a03682f747818c5ba90ab677c1bef8d77615a13bac73dc37ee387797302"
+    },
+    {
+      "path": "ADULT/mkl-heuristic-first/compile.xml",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_50_sliceline_ADULT_mkl-heuristic-first_20260921_lan_coordinator1/mkl-heuristic-first.compile.xml",
+      "sha256": "6f71370af37dfa19ea09613ee20981661ce1eb4c9ab4ab90d286c6ce6e2a7008"
+    },
+    {
+      "path": "ADULT/mkl-cost/receipt.json",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_51_sliceline_ADULT_mkl-cost_20260921_lan_coordinator1/mkl-cost.json",
+      "sha256": "b73ba8b0fc80da9222a4dc9f6e46e3cbcbe9ce652c725c4816b5bd4eb3788929"
+    },
+    {
+      "path": "ADULT/mkl-cost/coordinator.log",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/fed4/mkl-cost/sliceline_dataset-ADULT_coordinator_mkl-cost_g009policy_final805_51_sliceline_ADULT_mkl-cost_20260921_lan_coordinator1.log",
+      "sha256": "a38a616b21bd62a5de44da547536383b139db87f78d22d2873fd9fe20b483173"
+    },
+    {
+      "path": "ADULT/mkl-cost/compile.xml",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_51_sliceline_ADULT_mkl-cost_20260921_lan_coordinator1/mkl-cost.compile.xml",
+      "sha256": "e24c3b4a4e6675af6c6af0daa7e46ea79a1299dfb922c32594b17b35e89b40e7"
+    },
+    {
+      "path": "ADULT/mkl-exact/receipt.json",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_52_sliceline_ADULT_mkl-exact_20260921_lan_coordinator1/mkl-exact.json",
+      "sha256": "e132634086555416ee17bdf490c6144a4c8516875fd67c58f1c338f90fd1a8d0"
+    },
+    {
+      "path": "ADULT/mkl-exact/coordinator.log",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/fed4/mkl-exact/sliceline_dataset-ADULT_coordinator_mkl-exact_g009policy_final805_52_sliceline_ADULT_mkl-exact_20260921_lan_coordinator1.log",
+      "sha256": "430e08d66ca28b4a43d41774ace4ce6ddd68eda9836bb7452c015e5178d373fc"
+    },
+    {
+      "path": "ADULT/mkl-exact/compile.xml",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_52_sliceline_ADULT_mkl-exact_20260921_lan_coordinator1/mkl-exact.compile.xml",
+      "sha256": "7a6dc0ee2c6633c4fb952e80ab1ac5ebb695e530ff87cd92d07343250d9805c5"
+    },
+    {
+      "path": "COVTYPE/mkl-single-pass/receipt.json",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_53_sliceline_COVTYPE_mkl-single-pass_20260921_lan_coordinator1/mkl-single-pass.json",
+      "sha256": "44b3802d19d7037697091fb14657c7c5a79ebf7f10cad9fa731de655624b0062"
+    },
+    {
+      "path": "COVTYPE/mkl-single-pass/coordinator.log",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/fed4/mkl-single-pass/sliceline_dataset-COVTYPE_coordinator_mkl-single-pass_g009policy_final805_53_sliceline_COVTYPE_mkl-single-pass_20260921_lan_coordinator1.log",
+      "sha256": "2bf36c0f4f062d18bb858596979aca1786f8abc8d21cd6b66f7390314cba49e6"
+    },
+    {
+      "path": "COVTYPE/mkl-single-pass/compile.xml",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_53_sliceline_COVTYPE_mkl-single-pass_20260921_lan_coordinator1/mkl-single-pass.compile.xml",
+      "sha256": "1cedf5ae786ee4a2247c88d15dc8c839357b123db6f2720a24a16fbe638df29b"
+    },
+    {
+      "path": "COVTYPE/mkl-heuristic-first/receipt.json",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_54_sliceline_COVTYPE_mkl-heuristic-first_20260921_lan_coordinator1/mkl-heuristic-first.json",
+      "sha256": "f52b23c0d89d3e2346bdd0e680f9bd41c99c5e8ed5544ce5d3555012ad16abb1"
+    },
+    {
+      "path": "COVTYPE/mkl-heuristic-first/coordinator.log",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/fed4/mkl-heuristic-first/sliceline_dataset-COVTYPE_coordinator_mkl-heuristic-first_g009policy_final805_54_sliceline_COVTYPE_mkl-heuristic-first_20260921_lan_coordinator1.log",
+      "sha256": "a6c7ebab660b6ce550696bb14f69f7d6ee01c09a7a0f2fde882e5e304843af67"
+    },
+    {
+      "path": "COVTYPE/mkl-heuristic-first/compile.xml",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_54_sliceline_COVTYPE_mkl-heuristic-first_20260921_lan_coordinator1/mkl-heuristic-first.compile.xml",
+      "sha256": "6f71370af37dfa19ea09613ee20981661ce1eb4c9ab4ab90d286c6ce6e2a7008"
+    },
+    {
+      "path": "COVTYPE/mkl-cost/receipt.json",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_55_sliceline_COVTYPE_mkl-cost_20260921_lan_coordinator1/mkl-cost.json",
+      "sha256": "7a88e33030b3501a3c8b3f8f6d080485ae0134f384dfd22addfe65ae05c446a4"
+    },
+    {
+      "path": "COVTYPE/mkl-cost/coordinator.log",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/fed4/mkl-cost/sliceline_dataset-COVTYPE_coordinator_mkl-cost_g009policy_final805_55_sliceline_COVTYPE_mkl-cost_20260921_lan_coordinator1.log",
+      "sha256": "d169a234fa4ce365c6e459482b7543eb055370a6a7599a69adad26e411ab3163"
+    },
+    {
+      "path": "COVTYPE/mkl-cost/compile.xml",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_55_sliceline_COVTYPE_mkl-cost_20260921_lan_coordinator1/mkl-cost.compile.xml",
+      "sha256": "e24c3b4a4e6675af6c6af0daa7e46ea79a1299dfb922c32594b17b35e89b40e7"
+    },
+    {
+      "path": "COVTYPE/mkl-exact/receipt.json",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_56_sliceline_COVTYPE_mkl-exact_20260921_lan_coordinator1/mkl-exact.json",
+      "sha256": "5600266cad33ac9866f52ede30b9e9013f863819f55a3e54bb8e4821b7e66cec"
+    },
+    {
+      "path": "COVTYPE/mkl-exact/coordinator.log",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/fed4/mkl-exact/sliceline_dataset-COVTYPE_coordinator_mkl-exact_g009policy_final805_56_sliceline_COVTYPE_mkl-exact_20260921_lan_coordinator1.log",
+      "sha256": "21a7bec6ee4de44912ad6b1a4d0362331be9885bd836829f1eb11754fda77994"
+    },
+    {
+      "path": "COVTYPE/mkl-exact/compile.xml",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/results/planning/g009policy_final805_56_sliceline_COVTYPE_mkl-exact_20260921_lan_coordinator1/mkl-exact.compile.xml",
+      "sha256": "7a6dc0ee2c6633c4fb952e80ab1ac5ebb695e530ff87cd92d07343250d9805c5"
+    },
+    {
+      "path": "workload/slicefinder_core.dml",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/code/workloads/sliceline/slicefinder_core.dml",
+      "sha256": "07a1be572c5611eaff67dde0cbc23b17796b79dd6635df04584f482b470a348d"
+    },
+    {
+      "path": "workload/sliceline_fed.dml",
+      "source": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/code/exp/sliceline_fed.dml",
+      "sha256": "cc2cb0ed07af2e34d56a30ec53fc2fea9caaadd1e3988b98fbee7cc560a42501"
+    },
+    {
+      "path": "legacy-source/Hop.java.txt",
+      "source": "git:fe000959c48ffa1172399e49124d082fe42d0c6d:src/main/java/org/apache/sysds/hops/Hop.java",
+      "sha256": "51bd0d93b3b79dac98cf43901f665063179b39e0c6d83f86bd7a2a7ed30f05ba"
+    },
+    {
+      "path": "legacy-source/ParameterizedBuiltinOp.java.txt",
+      "source": "git:fe000959c48ffa1172399e49124d082fe42d0c6d:src/main/java/org/apache/sysds/hops/ParameterizedBuiltinOp.java",
+      "sha256": "533a8d3de4436b9e873e7fec06cd88bbed5e6a474541d63ac6b23b33cefa7d49"
+    },
+    {
+      "path": "legacy-source/ComputeCost.java.txt",
+      "source": "git:fe000959c48ffa1172399e49124d082fe42d0c6d:src/main/java/org/apache/sysds/hops/cost/ComputeCost.java",
+      "sha256": "35bf2dcba870f9be60944b3f17b6c0322ff7142114fd8854a8a8ed9703e74a99"
+    },
+    {
+      "path": "legacy-source/FederatedCostModel.java.txt",
+      "source": "git:fe000959c48ffa1172399e49124d082fe42d0c6d:src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel.java",
+      "sha256": "fd3974c012f8c88859e92440e11b80c091c78403b9a538fecfd690974f0c176e"
+    },
+    {
+      "path": "current-source/MemoCostModel.java.txt",
+      "source": "/home/mchoi/fedplanner-under3-20261014/src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoCostModel.java",
+      "sha256": "de14fa49112348d5dd708dd48eece73ac5dc59e6b47397894cee326da802f515"
+    },
+    {
+      "path": "current-source/BasicProgramBlock.java.txt",
+      "source": "/home/mchoi/fedplanner-under3-20261014/src/main/java/org/apache/sysds/runtime/controlprogram/BasicProgramBlock.java",
+      "sha256": "340cf90cafdafb85d778ce5c7b59b6dcad5bb1f92b93ecac27ce337d66718e66"
+    },
+    {
+      "path": "current-source/Recompiler.java.txt",
+      "source": "/home/mchoi/fedplanner-under3-20261014/src/main/java/org/apache/sysds/hops/recompile/Recompiler.java",
+      "sha256": "1d0475033d95d863fe983824d162791b8be794ee1ad89e5d64ecadf6c3f44846"
+    },
+    {
+      "path": "legacy-results.json",
+      "source": "parsed from copied official receipts/logs",
+      "sha256": "b5c2158e4ac120d3ce59d80349d97ba7129ad5baa8b02a987aba856e96466d85"
+    }
+  ],
+  "sourceExcerpts": [
+    {
+      "path": "legacy-source/Hop.java.txt",
+      "sourcePath": "src/main/java/org/apache/sysds/hops/Hop.java",
+      "commit": "fe000959c48ffa1172399e49124d082fe42d0c6d",
+      "sourceSha256": "18dea60870641a7632496c441968c10e8310487df41976a0ecf6881434d58415",
+      "ranges": [
+        [
+          930,
+          1005
+        ]
+      ]
+    },
+    {
+      "path": "legacy-source/ParameterizedBuiltinOp.java.txt",
+      "sourcePath": "src/main/java/org/apache/sysds/hops/ParameterizedBuiltinOp.java",
+      "commit": "fe000959c48ffa1172399e49124d082fe42d0c6d",
+      "sourceSha256": "9f8033e9d1fd6e080e52044b3651719872578e467ca68f147ab2d559f876328f",
+      "ranges": [
+        [
+          598,
+          657
+        ]
+      ]
+    },
+    {
+      "path": "legacy-source/ComputeCost.java.txt",
+      "sourcePath": "src/main/java/org/apache/sysds/hops/cost/ComputeCost.java",
+      "commit": "fe000959c48ffa1172399e49124d082fe42d0c6d",
+      "sourceSha256": "ce9c13bf0fe653bd7fa2f881c1e1878ba4941b4df54379008310467c6f14e703",
+      "ranges": [
+        [
+          244,
+          262
+        ]
+      ]
+    },
+    {
+      "path": "legacy-source/FederatedCostModel.java.txt",
+      "sourcePath": "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel.java",
+      "commit": "fe000959c48ffa1172399e49124d082fe42d0c6d",
+      "sourceSha256": "2edd21861f7096a21aa5fa9abccfd03507162ed5a63800ce81ea80d81da1ea69",
+      "ranges": [
+        [
+          152,
+          177
+        ],
+        [
+          1895,
+          1920
+        ]
+      ]
+    },
+    {
+      "path": "current-source/MemoCostModel.java.txt",
+      "sourcePath": "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoCostModel.java",
+      "commit": null,
+      "sourceSha256": "f2bc64e7e723bdc207730633b6e8e37d60fd75eacefa912ff599e915dd9fcd86",
+      "ranges": [
+        [
+          409,
+          420
+        ]
+      ]
+    },
+    {
+      "path": "current-source/BasicProgramBlock.java.txt",
+      "sourcePath": "src/main/java/org/apache/sysds/runtime/controlprogram/BasicProgramBlock.java",
+      "commit": null,
+      "sourceSha256": "7db7ab72f25129fc0af96d31d2ce11aa89a95332f9b646bf98c6d329f360d375",
+      "ranges": [
+        [
+          91,
+          106
+        ]
+      ]
+    },
+    {
+      "path": "current-source/Recompiler.java.txt",
+      "sourcePath": "src/main/java/org/apache/sysds/hops/recompile/Recompiler.java",
+      "commit": null,
+      "sourceSha256": "88ca607275ead87b7c4dd8bdcc7262e4fcc099c5ecc114e07f513ee28812eaa0",
+      "ranges": [
+        [
+          478,
+          508
+        ],
+        [
+          2175,
+          2200
+        ],
+        [
+          818,
+          834
+        ]
+      ]
+    }
+  ],
+  "coreIdentity": {
+    "legacy": "/home/mchoi/ml-p1p2-sliceline-fedplanning-w4-once-20260921/experiments/code/workloads/sliceline/slicefinder_core.dml",
+    "currentSealed": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z/harness/sigmod2021-exdra-p523/experiments/code/workloads/sliceline/slicefinder_core.dml",
+    "sha256": "07a1be572c5611eaff67dde0cbc23b17796b79dd6635df04584f482b470a348d",
+    "equal": true,
+    "limitation": "Does not assert all input artifacts, worker pools, privacy/config, or runtime environment are identical"
+  },
+  "productionDiffSha256Before": "bd874a82ed0c3a7a9e3bed4b8ef03cbe27ccd62c058872b72b69f1ee76d8b287"
+}

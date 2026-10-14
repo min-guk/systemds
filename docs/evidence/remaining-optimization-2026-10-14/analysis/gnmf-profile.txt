@@ -1,0 +1,94 @@
+{
+  "sourceEvents": "experiments/remaining-optimization-20261014/gnmf-events.jsonl",
+  "method": "startup profile JFR, main-thread execution sampling; phases by stack ancestry; inclusive counts overlap; weights estimate allocation not retained memory; no method-time inference",
+  "eventCounts": {
+    "jdk.ObjectAllocationSample": 247,
+    "jdk.CPULoad": 2,
+    "jdk.NativeMethodSample": 11,
+    "jdk.ExecutionSample": 51,
+    "jdk.GCHeapSummary": 12,
+    "jdk.GCPhasePause": 7,
+    "jdk.GarbageCollection": 6,
+    "jdk.CPUInformation": 1,
+    "jdk.ThreadAllocationStatistics": 35,
+    "jdk.PhysicalMemory": 2,
+    "jdk.ThreadCPULoad": 2
+  },
+  "mainExecutionSamples": 47,
+  "mainAllocationCounterWindow": null,
+  "allocationCounterLimitation": "Only one main ThreadAllocationStatistics event at JVM startup; no measured interval delta",
+  "mainThreadCpuLoadRaw": [
+    {
+      "type": "jdk.ThreadCPULoad",
+      "time": "2026-10-14T17:40:54.045153785Z",
+      "epoch": 1791999654.0451539,
+      "durationSeconds": 0.0,
+      "thread": "main",
+      "threadId": 1,
+      "user": 0.20901233,
+      "system": 0.023873623
+    }
+  ],
+  "processCpuScope": "All JVM threads including JIT/GC; launcher OS TID is NOT Java main thread; 100ms RSS samples not exact peak",
+  "gc": {
+    "collections": 6,
+    "pauseSeconds": 0.031938679,
+    "maxPauseSeconds": 0.008653174,
+    "maxObservedHeapBytes": 69496672,
+    "maxObservedAfterGcBytes": 26185872
+  },
+  "process": {
+    "samples": 25,
+    "pids": [
+      362498
+    ],
+    "maxObservedRssBytes": 198979584,
+    "lastObservedProcessCpuSeconds": 8.61,
+    "lastObservedLauncherThreadCpuSeconds": 0.0
+  },
+  "dataLoss": []
+}
+outside-planner 31 66.0% alloc-weight-MB 79.24
+memo inclusive []
+leaf [('java.util.zip.ZipFile$Source.checkAndAddEntry', 2), ('java.util.zip.ZipFile$Source.getEntryPos', 2), ('java.util.zip.ZipFile$Source.initCEN', 1), ('sun.net.util.IPAddressUtil.scan', 1), ('java.lang.String.indexOf', 1), ('jdk.internal.loader.URLClassPath$JarLoader.getResource', 1), ('jdk.internal.loader.URLClassPath$JarLoader.findResource', 1), ('java.lang.ClassLoader.preDefineClass', 1)]
+classes [('[B', 49917536), ('[Ljava.lang.Object;', 3826568), ('[C', 3294880), ('java.lang.String', 2463808), ('java.util.HashMap', 1590616), ('[Z', 1316752)]
+rule-building 9 19.1% alloc-weight-MB 11.51
+memo inclusive [('org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo.planWithLease', 9), ('org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo.plan', 9), ('org.apache.sysds.hops.fedplanner.memo.MemoRuleBuilder.build', 9), ('org.apache.sysds.hops.fedplanner.memo.MemoRuleBuilder.lambda$build$1', 5), ('org.apache.sysds.hops.fedplanner.memo.MemoRuleBuilder.visitShapeContexts', 5), ('org.apache.sysds.hops.fedplanner.memo.MemoRuleBuilder$$Lambda$260+0x00007055002c75d8.103118806.accept', 5), ('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts.visitRuleContext', 5), ('org.apache.sysds.hops.fedplanner.memo.MemoRuleBuilder$NativeRequests.rules', 4), ('org.apache.sysds.hops.fedplanner.memo.MemoRuleBuilder.lambda$build$0', 4), ('org.apache.sysds.hops.fedplanner.memo.MemoRuleBuilder$$Lambda$269+0x00007055002c9300.1055104416.accept', 4), ('org.apache.sysds.hops.fedplanner.memo.MemoShapes.drain', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoShapes.analyze', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoShapes.<init>', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoNativeRules.visitSupportedPatterns', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoNativeRules.enumerate', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoNativeRules.rules', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoShapes.evaluateBinding', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoShapes.occurrenceOutputShape', 1)]
+leaf [('java.net.URI$Parser.scan', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoShapes.evaluateOwner', 1), ('java.util.stream.IntPipeline.<init>', 1), ('java.lang.invoke.DirectMethodHandle$Holder.invokeStatic', 1), ('org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade$PreparedDecision$SupportedPatternState.snapshotValues', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoShapes$OccurrenceTransferKey.<init>', 1), ('java.util.Collections$UnmodifiableMap$UnmodifiableEntrySet$1.next', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoShapes.viewAt', 1)]
+classes [('[B', 2093920), ('jdk.internal.org.objectweb.asm.FieldWriter', 1094616), ('java.util.ImmutableCollections$Map1', 1047976), ('[Ljava.util.HashMap$Node;', 1047976), ('java.util.stream.IntPipeline$Head', 1047976), ('[Ljava.lang.Class;', 1047960)]
+model-construction 2 4.3% alloc-weight-MB 7.34
+memo inclusive [('org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo.planWithLease', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts.visitBindings', 2), ('org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo.plan', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.<init>', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.visitActive', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts.visitResolved', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts.visitAfterActivation', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts$$Lambda$265+0x00007055002c8240.225553858.visit', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.lambda$nativeCostTerms$55', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel$$Lambda$315+0x00007055002fe000.1678889928.visit', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts.visitActivation', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts.lambda$visitCallerPrerequisites$7', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.visitJoint', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts.visitPhases', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts$$Lambda$267+0x00007055002c8aa0.1495407511.visit', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts.lambda$visitBindings$3', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts.visitCallerPrerequisites', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoCostModel.knownOutputBytes', 1)]
+leaf [('org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel.getEffectiveUploadMemEstimate', 1), ('java.util.LinkedHashMap$LinkedEntrySet.iterator', 1)]
+classes [('jdk.internal.org.objectweb.asm.AnnotationWriter', 1048000), ('java.util.Formatter$FixedString', 1047976), ('java.util.ImmutableCollections$Map1', 1047976), ('org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver$EvaluationContext', 1047968), ('java.util.LinkedHashMap', 1047960), ('[Ljava.util.HashMap$Node;', 1047960)]
+elimination-solve 2 4.3% alloc-weight-MB 6.09
+memo inclusive [('org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$CostFactor.lambda$from$0', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.applyMovementPrimitive', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementGroupCostExpanded', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel$$Lambda$347+0x0000705500314248.843005078.applyAsDouble', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$EliminationPlan$EliminationFactor.cost', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.pricePreparedMovement', 2), ('org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo.planWithLease', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.evaluateCost', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.accumulateMovement', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.optimize', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$EliminationPlan.solve', 2), ('org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo.plan', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.optimize', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.tryEliminationSolve', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$CostFactor$$Lambda$355+0x0000705500316320.903195729.apply', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementUnit', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.lambda$registerMovementCosts$28', 2), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.movementGroupCost', 2)]
+leaf [('org.apache.sysds.hops.OptimizerUtils.estimateSizeExactSparsity', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.pricePreparedMovement', 1)]
+classes [('[I', 2094792), ('java.util.LinkedHashMap$Entry', 1725256), ('java.util.AbstractMap$1$1', 1354472), ('[Ljava.util.HashMap$Node;', 857192), ('java.util.HashMap$Node', 63064)]
+initial-propagation 1 2.1% alloc-weight-MB 4.19
+memo inclusive [('org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.optimize', 1), ('org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo.plan', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.support', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.propagate', 1), ('org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo.planWithLease', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.optimize', 1)]
+leaf [('java.util.HashMap.resize', 1)]
+classes [('org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver$LoopDecision', 2095992), ('java.util.ImmutableCollections$Set12$1', 1047984), ('java.util.LinkedHashMap', 1047976)]
+supply-reconstruction 1 2.1% alloc-weight-MB 0.68
+memo inclusive [('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts$$Lambda$263+0x00007055002c3400.292958927.test', 1), ('org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo.planWithLease', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts.visitBindings', 1), ('org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo.plan', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.optimize', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.visitActive', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts.lambda$visitResolved$4', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts.visitResolved', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.reconstructSupplies', 1)]
+leaf [('org.apache.sysds.hops.fedplanner.memo.MemoReachableContexts.lambda$visitResolved$4', 1)]
+classes [('[Ljava.lang.Object;', 677240)]
+memo-unattributed-stack 1 2.1% alloc-weight-MB 0.04
+memo inclusive [('org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry.verifyLowering', 1), ('org.apache.sysds.hops.fedplanner.memo.MemoPlanRegistry.validateSelectedHop', 1)]
+leaf [('java.util.stream.SpinedBuffer.asArray', 1)]
+classes [('java.util.stream.ReferencePipeline$Head', 44680)]
+facts 0 0.0% alloc-weight-MB 2.1
+memo inclusive []
+leaf []
+classes [('java.util.regex.Pattern$TreeInfo', 1047984), ('[B', 1047936)]
+projection-or-planner-other 0 0.0% alloc-weight-MB 12.11
+memo inclusive []
+leaf []
+classes [('[B', 6867032), ('jdk.internal.org.objectweb.asm.SymbolTable$Entry', 1725192), ('java.lang.invoke.MethodType', 740336), ('jdk.internal.org.objectweb.asm.Frame', 678736), ('java.lang.invoke.MethodHandles$Lookup$ClassFile', 677432), ('java.util.Formatter$FormatSpecifier', 677216)]
+normalization 0 0.0% alloc-weight-MB 2.1
+memo inclusive []
+leaf []
+classes [('java.lang.invoke.LambdaFormEditor', 1047992), ('org.apache.sysds.hops.fedplanner.memo.MemoShapes$CostGuardOutcome', 1047984)]
+elimination-prepare 0 0.0% alloc-weight-MB 1.05
+memo inclusive []
+leaf []
+classes [('java.util.ArrayList$Itr', 1047984)]

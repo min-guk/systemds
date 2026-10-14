@@ -232,6 +232,56 @@ public class MemoNativeRulesTest {
 	}
 
 	@Test
+	public void rdiagPublishesOnlyTheCanonicalRuntimeAxis() {
+		MemoNativeRules.Result square = new MemoNativeRules().rules(diag("square", 8, 8), 2,
+			shape(8, 1, 8, 8, -1, -1));
+		Assert.assertTrue(square.diagnostics().toString(), square.complete());
+		Assert.assertTrue(hasRule(square, MemoPartition.ROW, MemoPartition.ROW));
+		Assert.assertTrue("COL matrix partitions become canonical ROW vector partitions",
+			hasRule(square, MemoPartition.COL, MemoPartition.ROW));
+		Assert.assertTrue(hasRule(square, MemoPartition.REP, MemoPartition.REP));
+
+		MemoNativeRules.Result tall = new MemoNativeRules().rules(diag("tall", 8, 4), 2,
+			shape(4, 1, 8, 4, -1, -1));
+		Assert.assertTrue(tall.diagnostics().toString(), tall.complete());
+		Assert.assertFalse("ROW ranges do not equal the shorter diagonal output ranges",
+			hasRule(tall, MemoPartition.ROW, MemoPartition.ROW));
+		Assert.assertTrue(hasRule(tall, MemoPartition.COL, MemoPartition.ROW));
+
+		MemoNativeRules.Result wide = new MemoNativeRules().rules(diag("wide", 4, 8), 2,
+			shape(4, 1, 4, 8, -1, -1));
+		Assert.assertTrue(wide.diagnostics().toString(), wide.complete());
+		Assert.assertTrue(hasRule(wide, MemoPartition.ROW, MemoPartition.ROW));
+		Assert.assertFalse("COL ranges do not equal the shorter diagonal output ranges",
+			hasRule(wide, MemoPartition.COL, MemoPartition.ROW));
+	}
+
+	@Test
+	public void rdiagUnknownDimensionsRemainACoverageObligation() {
+		MemoNativeRules.Result result = new MemoNativeRules().rules(diag("unknown", -1, -1), 2,
+			shape(-1, 1, -1, -1, -1, -1));
+
+		Assert.assertFalse(result.complete());
+		Assert.assertTrue(result.diagnostics().stream().anyMatch(diagnostic ->
+			"CANONICAL_EFFECT_NOT_AUDITED".equals(diagnostic.code())));
+	}
+
+	@Test
+	public void solveIsACompleteCpOnlyRuntimeCapability() {
+		BinaryOp solve = new BinaryOp("solve", DataType.MATRIX, ValueType.FP64, OpOp2.SOLVE,
+			matrix("A", 8, 4), matrix("b", 8, 1));
+		solve.setDim1(4);
+		solve.setDim2(1);
+		MemoNativeRules.Result result = new MemoNativeRules().rules(solve, 2,
+			shape(4, 1, 8, 4, 8, 1));
+
+		Assert.assertTrue(result.diagnostics().toString(), result.complete());
+		Assert.assertEquals(List.of(new RuleMemo.Rule(ExecType.CP,
+			List.of(MemoPartition.LOCAL, MemoPartition.LOCAL),
+			List.of(MemoPartition.LOCAL), "cp/local")), result.rules());
+	}
+
+	@Test
 	public void cacheKeyKeepsAggregateDirectionAndInnerOuterSelectors() {
 		MemoNativeRules catalog = new MemoNativeRules();
 		Hop input = matrix("X", 8, 4);
@@ -329,6 +379,90 @@ public class MemoNativeRulesTest {
 		Assert.assertTrue(result.diagnostics().toString(), result.complete());
 		Assert.assertTrue("current origin/main Oracle advertises direct FED quaternary lowering",
 			result.rules().stream().anyMatch(rule -> rule.exec() == ExecType.FED));
+	}
+
+	@Test
+	public void wdivmmDerivesCanonicalPersistentRangesFromThePrimaryRuntimeMap() {
+		MemoNativeRules.Result basic = new MemoNativeRules().rules(
+			wdivmm("basic", 128, 50_000, 10, 0), 3,
+			shape(-1, -1, 128, 50_000, 128, 10));
+		Assert.assertTrue(basic.diagnostics().toString(), basic.complete());
+		Assert.assertTrue("BASIC copies canonical COL ranges from X",
+			basic.rules().stream().anyMatch(rule -> rule.exec() == ExecType.FED
+				&& rule.inputs().equals(List.of(MemoPartition.COL, MemoPartition.LOCAL,
+					MemoPartition.LOCAL, MemoPartition.LOCAL))
+				&& rule.output() == MemoPartition.COL));
+		Assert.assertTrue("the same supported runtime pattern retains forced-local materialization",
+			basic.rules().stream().anyMatch(rule -> rule.exec() == ExecType.FED
+				&& rule.inputs().equals(List.of(MemoPartition.COL, MemoPartition.LOCAL,
+					MemoPartition.LOCAL, MemoPartition.LOCAL))
+				&& rule.output() == MemoPartition.LOCAL));
+
+		MemoNativeRules.Result left = new MemoNativeRules().rules(
+			wdivmm("left", 8, 6, 2, 1), 3,
+			shape(-1, -1, 8, 6, 8, 2));
+		Assert.assertTrue(left.diagnostics().toString(), left.complete());
+		Assert.assertTrue("LEFT transposes canonical X COL ranges into output ROW ranges",
+			left.rules().stream().anyMatch(rule -> rule.exec() == ExecType.FED
+				&& rule.inputs().get(0) == MemoPartition.COL && rule.output() == MemoPartition.ROW));
+
+		MemoNativeRules.Result right = new MemoNativeRules().rules(
+			wdivmm("right", 8, 6, 2, 2), 3,
+			shape(-1, -1, 8, 6, 8, 2));
+		Assert.assertTrue(right.diagnostics().toString(), right.complete());
+		Assert.assertTrue("RIGHT preserves canonical X ROW ranges",
+			right.rules().stream().anyMatch(rule -> rule.exec() == ExecType.FED
+				&& rule.inputs().get(0) == MemoPartition.ROW && rule.output() == MemoPartition.ROW));
+	}
+
+	@Test
+	public void wdivmmDoesNotPublishContradictoryOrAggregatedRanges() {
+		MemoNativeRules.Result contradictory = new MemoNativeRules().rules(
+			wdivmm("contradictory", 8, 8, 2, 0), 3,
+			shape(8, 7, 8, 8, 8, 2));
+		Assert.assertTrue(contradictory.diagnostics().toString(), contradictory.complete());
+		Assert.assertFalse("a known output-axis mismatch cannot inherit X's canonical COL ranges",
+			contradictory.rules().stream().anyMatch(rule -> rule.exec() == ExecType.FED
+				&& rule.inputs().get(0) == MemoPartition.COL && rule.output() == MemoPartition.COL));
+		Assert.assertTrue(contradictory.diagnostics().stream().anyMatch(diagnostic ->
+			"NONCANONICAL_NATIVE_OUTPUT".equals(diagnostic.code())));
+		Assert.assertTrue("forced-local remains legal when persistent ranges are noncanonical",
+			contradictory.rules().stream().anyMatch(rule -> rule.exec() == ExecType.FED
+				&& rule.inputs().get(0) == MemoPartition.COL && rule.output() == MemoPartition.LOCAL));
+
+		MemoNativeRules.Result aggregated = new MemoNativeRules().rules(
+			wdivmm("aggregated-left", 8, 6, 2, 1), 3,
+			shape(6, 2, 8, 6, 8, 2));
+		Assert.assertTrue(aggregated.diagnostics().toString(), aggregated.complete());
+		Assert.assertTrue("LEFT over ROW X is a legitimate runtime aggregation into LOCAL",
+			aggregated.rules().stream().anyMatch(rule -> rule.exec() == ExecType.FED
+				&& rule.inputs().get(0) == MemoPartition.ROW && rule.output() == MemoPartition.LOCAL));
+		Assert.assertFalse(aggregated.rules().stream().anyMatch(rule -> rule.exec() == ExecType.FED
+			&& rule.inputs().get(0) == MemoPartition.ROW && rule.output() != MemoPartition.LOCAL));
+	}
+
+	@Test
+	public void oneWorkerWdivmmUsesTheSingleFullRange() {
+		MemoNativeRules.Result result = new MemoNativeRules().rules(
+			wdivmm("one-worker", 8, 4, 2, 0), 1,
+			shape(-1, -1, 8, 4, 8, 2));
+
+		Assert.assertTrue(result.diagnostics().toString(), result.complete());
+		Assert.assertTrue(result.rules().stream().anyMatch(rule -> rule.exec() == ExecType.FED
+			&& rule.inputs().get(0) == MemoPartition.REP && rule.output() == MemoPartition.REP));
+		Assert.assertTrue(result.rules().stream().flatMap(rule -> rule.inputs().stream())
+			.noneMatch(partition -> partition == MemoPartition.ROW || partition == MemoPartition.COL));
+	}
+
+	@Test
+	public void wdivmmUnknownPrimaryAxisRemainsACoverageObligation() {
+		MemoNativeRules.Result result = new MemoNativeRules().rules(
+			wdivmm("unknown-primary", -1, -1, 2, 0), 3,
+			shape(-1, -1, -1, -1, -1, 2));
+
+		Assert.assertFalse(result.complete());
+		Assert.assertTrue(result.diagnostics().stream().anyMatch(diagnostic ->
+			"CANONICAL_EFFECT_NOT_AUDITED".equals(diagnostic.code())));
 	}
 
 	@Test
@@ -443,6 +577,29 @@ public class MemoNativeRulesTest {
 		exp.setDim1(8);
 		exp.setDim2(4);
 		return exp;
+	}
+
+	private static ReorgOp diag(String name, long rows, long columns) {
+		ReorgOp diag = new ReorgOp(name, DataType.MATRIX, ValueType.FP64, ReOrgOp.DIAG,
+			matrix(name + "-input", rows, columns));
+		diag.setDim1(rows > 0 && columns > 0 ? Math.min(rows, columns) : -1);
+		diag.setDim2(1);
+		return diag;
+	}
+
+	private static QuaternaryOp wdivmm(String name, long rows, long columns, long rank, int baseType) {
+		QuaternaryOp result = new QuaternaryOp(name, DataType.MATRIX, ValueType.FP64,
+			OpOp4.WDIVMM, matrix(name + "-X", rows, columns), matrix(name + "-U", rows, rank),
+			matrix(name + "-V", columns, rank), new LiteralOp(-1L), baseType, false, false);
+		result.setDim1(-1);
+		result.setDim2(-1);
+		return result;
+	}
+
+	private static boolean hasRule(MemoNativeRules.Result result, MemoPartition input,
+		MemoPartition output) {
+		return result.rules().stream().anyMatch(rule -> rule.exec() == ExecType.FED
+			&& rule.inputs().equals(List.of(input)) && rule.output() == output);
 	}
 
 	private static String ruleSemantics(RuleMemo.Rule rule) {

@@ -1,0 +1,138 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+..................................OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+..................................26/10/14 22:18:02 ERROR controlprogram.ProgramBlock: Function output Y is missing.
+......................................................................................................................................................................................................................26/10/14 22:18:21 ERROR federated.FederatedWorkerHandler: Exception in FederatedWorkerHandler while processing requests:
+[FederatedRequest[GET_VAR;711873;9223372036854775800;t0]]
+org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandlerException: Failed to getVariable 
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.getVariable(FederatedWorkerHandler.java:716)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.executeCommand(FederatedWorkerHandler.java:443)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:333)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:286)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:273)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.response(FederatedWorkerHandler.java:188)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.lambda$channelRead$0(FederatedWorkerHandler.java:168)
+	at java.base/java.util.concurrent.CompletableFuture$UniCompose.tryFire(CompletableFuture.java:1150)
+	at java.base/java.util.concurrent.CompletableFuture$Completion.run(CompletableFuture.java:482)
+	at io.netty.util.concurrent.AbstractEventExecutor.runTask(AbstractEventExecutor.java:174)
+	at io.netty.util.concurrent.AbstractEventExecutor.safeExecute(AbstractEventExecutor.java:167)
+	at io.netty.util.concurrent.SingleThreadEventExecutor.runAllTasks(SingleThreadEventExecutor.java:470)
+	at io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:566)
+	at io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997)
+	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+Caused by: org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandlerException: Variable 9223372036854775800 does not exist at federated worker.
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.getVariable(FederatedWorkerHandler.java:697)
+	... 17 more
+26/10/14 22:18:21 ERROR federated.FederatedWorkerHandler: Exception in FederatedWorkerHandler while processing requests:
+[FederatedRequest[GET_VAR;711873;9223372036854775800;t0]]
+org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandlerException: Failed to getVariable 
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.getVariable(FederatedWorkerHandler.java:716)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.executeCommand(FederatedWorkerHandler.java:443)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:333)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:286)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:273)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.response(FederatedWorkerHandler.java:188)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.lambda$channelRead$0(FederatedWorkerHandler.java:168)
+	at java.base/java.util.concurrent.CompletableFuture$UniCompose.tryFire(CompletableFuture.java:1150)
+	at java.base/java.util.concurrent.CompletableFuture$Completion.run(CompletableFuture.java:482)
+	at io.netty.util.concurrent.AbstractEventExecutor.runTask(AbstractEventExecutor.java:174)
+	at io.netty.util.concurrent.AbstractEventExecutor.safeExecute(AbstractEventExecutor.java:167)
+	at io.netty.util.concurrent.SingleThreadEventExecutor.runAllTasks(SingleThreadEventExecutor.java:470)
+	at io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:566)
+	at io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997)
+	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+Caused by: org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandlerException: Variable 9223372036854775800 does not exist at federated worker.
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.getVariable(FederatedWorkerHandler.java:697)
+	... 17 more
+..MEMO_EXHAUSTIVE assignments=12 feasible=6 cost=0.5004990875720977783238488625547867039156102464403375051915645599365234375
+.MEMO_EXHAUSTIVE assignments=2352 feasible=584 cost=1.000339155942201614385668047529746871315836642679641954600811004638671875
+.MEMO_EXHAUSTIVE assignments=48 feasible=6 cost=1.00032151341438293457336181861011548122064596100244671106338500976562500
+.MEMO_EXHAUSTIVE assignments=144 feasible=48 cost=1.000336943417787551883702931092116894529198134478065185248851776123046875
+.MEMO_EXHAUSTIVE assignments=48 feasible=8 cost=1.000890621691942214968352941012290358013814284277032129466533660888671875
+..26/10/14 22:18:23 ERROR federated.FederatedData: Exception of type class org.apache.sysds.runtime.DMLRuntimeException thrown when processing privacy constraints request for /tmp/junit4662007822758720094/worker-malformed-fine-privacy
+org.apache.sysds.runtime.DMLRuntimeException: Malformed fine_grained_privacy metadata: privacy level 'Private' must contain an array of ranges
+	at org.apache.sysds.runtime.meta.MetaDataAll.malformedFineGrainedPrivacy(MetaDataAll.java:301)
+	at org.apache.sysds.runtime.meta.MetaDataAll.getPrivacyConstraintsFailClosed(MetaDataAll.java:268)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedData$GetPrivacyConstraints.execute(FederatedData.java:841)
+	at org.apache.sysds.test.component.federated.FederatedPrivacyConstraintResolverTest.malformedFineGrainedPrivacyFailsClosed(FederatedPrivacyConstraintResolverTest.java:159)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59)
+	at org.junit.internal.runners.model.ReflectiveCallable.run(ReflectiveCallable.java:12)
+	at org.junit.runners.model.FrameworkMethod.invokeExplosively(FrameworkMethod.java:56)
+	at org.junit.internal.runners.statements.InvokeMethod.evaluate(InvokeMethod.java:17)
+	at org.junit.rules.ExternalResource$1.evaluate(ExternalResource.java:54)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.BlockJUnit4ClassRunner$1.evaluate(BlockJUnit4ClassRunner.java:100)
+	at org.junit.runners.ParentRunner.runLeaf(ParentRunner.java:366)
+	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:103)
+	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:63)
+	at org.junit.runners.ParentRunner$4.run(ParentRunner.java:331)
+	at org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79)
+	at org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329)
+	at org.junit.runners.ParentRunner.access$100(ParentRunner.java:66)
+	at org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.ParentRunner.run(ParentRunner.java:413)
+	at org.junit.runners.Suite.runChild(Suite.java:128)
+	at org.junit.runners.Suite.runChild(Suite.java:27)
+	at org.junit.runners.ParentRunner$4.run(ParentRunner.java:331)
+	at org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79)
+	at org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329)
+	at org.junit.runners.ParentRunner.access$100(ParentRunner.java:66)
+	at org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.ParentRunner.run(ParentRunner.java:413)
+	at org.junit.runner.JUnitCore.run(JUnitCore.java:137)
+	at org.junit.runner.JUnitCore.run(JUnitCore.java:115)
+	at org.junit.runner.JUnitCore.runMain(JUnitCore.java:77)
+	at org.junit.runner.JUnitCore.main(JUnitCore.java:36)
+............................................................MEMO_SOURCE_PROJECTION ownersPerInput=2 contexts=1 primitives=1 bindingVisits=0
+MEMO_SOURCE_PROJECTION ownersPerInput=11 contexts=1 primitives=1 bindingVisits=0
+MEMO_SOURCE_PROJECTION ownersPerInput=101 contexts=1 primitives=1 bindingVisits=0
+MEMO_SOURCE_PROJECTION ownersPerInput=1001 contexts=1 primitives=1 bindingVisits=0
+......[NativeDescriptorProbe] prepared=12 reused=2 oracle=10 contextualViews=10
+............................................................................LOGREG_MEMO_OPTIMIZATION status=OPTIMAL statistics=Statistics[nodes=4359, checkEvaluations=64465, checkCacheHits=62318, supportQueries=53375, supportCacheHits=248, supportWitnessHits=20198, binarySupportHits=20198, binarySupportRows=2046, worklistVisits=8047, removedRules=2551, costEvaluations=1570, costCacheHits=22929, boundPrunes=159, conditionalBoundQueries=1915, conditionalBoundCacheHits=1237, wideBoundRelaxations=0, forestTailAttempts=54, forestTailApplicable=11, forestTailCompletions=11, forestTailCells=3669, annotatedChecks=3731, invariantCheckAxes=864, binaryChecksReduced=80, branchEdgesRemovedDuringNormalization=19, eliminationVariables=0, eliminationCells=0, eliminationRows=0, eliminationFactorHits=0] diagnostics=[shape owner=38 binding=69 SHARED_OCCURRENCE_SHAPE_MISMATCH Shape[dataType=MATRIX, valueType=FP64, rows=192, columns=1, nonZeros=-1, knowledge=EXACT] vs Shape[dataType=MATRIX, valueType=FP64, rows=192, columns=2, nonZeros=-1, knowledge=EXACT]]
+................FACTORIZED_GENERATION_WORK|explicitFacts=2401|generatedExplicitFedFacts=686|newRetainedExactFacts=0|generationFedFactsAvoided=686|familyHeaders=5|familyLogicalTuples=1715|fedRelationHeaders=2|fedRelationLogicalTuples=686|relocationWitnessRows=254|explicitCreated=ObjectCreationSnapshot[candidateRuleKeys=2401, candidateRuleFacts=2401, explicitSupportClauses=3087, indexedSupportHandles=0]|relationCreated=ObjectCreationSnapshot[candidateRuleKeys=0, candidateRuleFacts=0, explicitSupportClauses=9, indexedSupportHandles=0]|before=ExecutionRelationSnapshot[relations=0, regions=0, oracleCalls=0, logicalTuples=0]|after=ExecutionRelationSnapshot[relations=1, regions=7, oracleCalls=6, logicalTuples=2401]
+...............................BOUNDARY_CONFLICT_NODES=15
+..........................MEMO_ANALYSIS_WORK workload=logreg phase=build privacy=Statistics[evaluations=0, cacheHits=0, cacheEntries=0, loopBackedgeChecks=0, loopSummaryRounds=0, loopSummaryCacheHits=0, loopCandidateRemovals=0, invalidationVisits=0, invalidationEdges=0, dependencyEdges=1187, indexVisits=1642, indexEdges=2753] shapes=Statistics[bindingVisits=3117, ownerVisits=494, relevanceVisits=1711, relevanceEdges=649]
+MEMO_ANALYSIS_WORK workload=logreg phase=same-request-queries privacy=Statistics[evaluations=955, cacheHits=462, cacheEntries=934, loopBackedgeChecks=0, loopSummaryRounds=0, loopSummaryCacheHits=0, loopCandidateRemovals=0, invalidationVisits=0, invalidationEdges=0, dependencyEdges=1187, indexVisits=1642, indexEdges=2753] shapes=Statistics[bindingVisits=3117, ownerVisits=494, relevanceVisits=1711, relevanceEdges=649]
+.MEMO_ANALYSIS_WORK workload=glm phase=build privacy=Statistics[evaluations=0, cacheHits=0, cacheEntries=0, loopBackedgeChecks=0, loopSummaryRounds=0, loopSummaryCacheHits=0, loopCandidateRemovals=0, invalidationVisits=0, invalidationEdges=0, dependencyEdges=2328, indexVisits=7164, indexEdges=13668] shapes=Statistics[bindingVisits=4835, ownerVisits=990, relevanceVisits=4456, relevanceEdges=3545]
+MEMO_ANALYSIS_WORK workload=glm phase=same-request-queries privacy=Statistics[evaluations=1479, cacheHits=1006, cacheEntries=1436, loopBackedgeChecks=0, loopSummaryRounds=0, loopSummaryCacheHits=0, loopCandidateRemovals=0, invalidationVisits=0, invalidationEdges=0, dependencyEdges=2328, indexVisits=7164, indexEdges=13668] shapes=Statistics[bindingVisits=4835, ownerVisits=990, relevanceVisits=4456, relevanceEdges=3545]
+...whole-call-completion initialCandidates=2 outerChecks=3 invalidationVisits=41 invalidationEdges=58
+..loop-summary-checks full=6 incremental=4 invalidationVisits=20 invalidationEdges=20 indexVisits=77 indexEdges=81
+.......................................MEMO_PROJECTED_SHAPE_REUSE workload=logreg statistics=ReuseStatistics[bindingGuardRequests=0, bindingGuardCacheHits=0, repeatProofRequests=11156, repeatProofCacheHits=10852, phaseShapeRequests=123417, phaseShapeCacheHits=49067, phaseShapeCacheEntries=74061, guardRelevanceRequests=85733, guardRelevanceCacheHits=85719, guardRelevanceIndexEntries=14, occurrenceTransferRequests=82078, occurrenceTransferCacheHits=81516, occurrenceTransferBuilds=562, occurrenceTransferEntries=562, guardAtomRequests=61981, guardAtomHits=61968, guardAtomIdentities=7]
+MEMO_PROJECTED_SHAPE_REUSE workload=glm statistics=ReuseStatistics[bindingGuardRequests=0, bindingGuardCacheHits=0, repeatProofRequests=52648, repeatProofCacheHits=47168, phaseShapeRequests=1166690, phaseShapeCacheHits=350787, phaseShapeCacheEntries=811694, guardRelevanceRequests=4282317, guardRelevanceCacheHits=4282244, guardRelevanceIndexEntries=73, occurrenceTransferRequests=839908, occurrenceTransferCacheHits=838956, occurrenceTransferBuilds=952, occurrenceTransferEntries=914, guardAtomRequests=1831675, guardAtomHits=1831600, guardAtomIdentities=52]
+..................................................MOVEMENT_COST_STATES annotated=4 collapsedOwners=1
+.MOVEMENT_COST_STATES annotated=6 collapsedOwners=0
+.MOVEMENT_COST_STATES annotated=5 collapsedOwners=2
+.....MEMO_OCCURRENCE_TRANSFER workload=logreg reference=ReuseStatistics[bindingGuardRequests=5916, bindingGuardCacheHits=2554, repeatProofRequests=15668, repeatProofCacheHits=15364, phaseShapeRequests=160225, phaseShapeCacheHits=82008, phaseShapeCacheEntries=77860, guardRelevanceRequests=110005, guardRelevanceCacheHits=109989, guardRelevanceIndexEntries=16, occurrenceTransferRequests=93873, occurrenceTransferCacheHits=0, occurrenceTransferBuilds=93873, occurrenceTransferEntries=0, guardAtomRequests=81611, guardAtomHits=81596, guardAtomIdentities=8] cached=ReuseStatistics[bindingGuardRequests=5916, bindingGuardCacheHits=2554, repeatProofRequests=15668, repeatProofCacheHits=15364, phaseShapeRequests=160225, phaseShapeCacheHits=82008, phaseShapeCacheEntries=77860, guardRelevanceRequests=110005, guardRelevanceCacheHits=109989, guardRelevanceIndexEntries=16, occurrenceTransferRequests=93873, occurrenceTransferCacheHits=93311, occurrenceTransferBuilds=562, occurrenceTransferEntries=562, guardAtomRequests=81611, guardAtomHits=81596, guardAtomIdentities=8]
+MEMO_OCCURRENCE_TRANSFER workload=glm reference=ReuseStatistics[bindingGuardRequests=17170, bindingGuardCacheHits=6380, repeatProofRequests=70260, repeatProofCacheHits=64732, phaseShapeRequests=1301870, phaseShapeCacheHits=437969, phaseShapeCacheEntries=858928, guardRelevanceRequests=4629163, guardRelevanceCacheHits=4629089, guardRelevanceIndexEntries=74, occurrenceTransferRequests=905563, occurrenceTransferCacheHits=0, occurrenceTransferBuilds=905563, occurrenceTransferEntries=0, guardAtomRequests=2120324, guardAtomHits=2120249, guardAtomIdentities=52] cached=ReuseStatistics[bindingGuardRequests=17170, bindingGuardCacheHits=6380, repeatProofRequests=70260, repeatProofCacheHits=64732, phaseShapeRequests=1301870, phaseShapeCacheHits=437969, phaseShapeCacheEntries=858928, guardRelevanceRequests=4629163, guardRelevanceCacheHits=4629089, guardRelevanceIndexEntries=74, occurrenceTransferRequests=905563, occurrenceTransferCacheHits=904611, occurrenceTransferBuilds=952, occurrenceTransferEntries=914, guardAtomRequests=2120324, guardAtomHits=2120249, guardAtomIdentities=52]
+..................RESOLVER_COW_STATE_SHA256=3c146f552ac628e7cdc63de118cbb438a7c99b379887faf8a9fc78411d787210
+.RESOLVER_COW_ENV_SHA256=e8e4da3f6c67602b3ca3f7f032ec607f0835e38d0c60d2525b24d001b7c15f69
+...........................................................................EXACT_FAMILY_DESCRIPTOR_CONTEXT loop=true unknown=false
+.......................................................TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=3208406 collections=1 owners=1 status=SUCCESS
+TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=292958 collections=0 owners=0 status=FAILED
+MemoTransformMetadataFailure owner=2 source binding is not uniquely proved
+.TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=269614 collections=2 owners=2 status=SUCCESS
+TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=198431 collections=0 owners=0 status=FAILED
+MemoTransformMetadataFailure owner=58 source binding is not uniquely proved
+.TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=133479 collections=0 owners=0 status=FAILED
+MemoTransformMetadataFailure owner=24 source binding is not uniquely proved
+TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=106269 collections=0 owners=0 status=FAILED
+MemoTransformMetadataFailure owner=25 source binding is not uniquely proved
+.TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=153477 collections=1 owners=1 status=SUCCESS
+.TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=475518 collections=1 owners=1 status=SUCCESS
+...................
+Time: 114.758
+
+OK (779 tests)
+

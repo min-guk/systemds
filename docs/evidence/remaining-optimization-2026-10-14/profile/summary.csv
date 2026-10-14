@@ -1,0 +1,4 @@
+cellId,suite,workload,workers,executionPlanner,rendererAuthorityPlanner,status,failureCategory,memoPlanningSeconds,fullCompileSeconds,fullInitialPlanningSeconds,harnessWallSeconds
+ml|logreg|lan|w3|Memo,ml,logreg,3,COMPILE_MEMO,COMPILE_EXACT,passed,,2.045078336,3.340381,3.332380427,5.064267486333847
+ml|glm|lan|w3|Memo,ml,glm,3,COMPILE_MEMO,COMPILE_EXACT,passed,,6.958085988,8.681548,8.655489643,10.327791802585125
+ml|gnmf|lan|w3|Memo,ml,gnmf,3,COMPILE_MEMO,COMPILE_EXACT,passed,,0.792698919,1.624928,1.613800254,3.1033323630690575

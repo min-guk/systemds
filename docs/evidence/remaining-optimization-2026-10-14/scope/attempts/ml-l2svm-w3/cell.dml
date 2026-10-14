@@ -1,0 +1,5 @@
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/binary/ADULT_features_3_1.data","130.149.237.13:8002//workspace/experiments/data/binary/ADULT_features_3_2.data","130.149.237.14:8003//workspace/experiments/data/binary/ADULT_features_3_3.data"), ranges=list(list(0,0),list(16667,128),list(16667,0),list(33334,128),list(33334,0),list(50000,128)))
+Y = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/binary/ADULT_labels_3_1.data","130.149.237.13:8002//workspace/experiments/data/binary/ADULT_labels_3_2.data","130.149.237.14:8003//workspace/experiments/data/binary/ADULT_labels_3_3.data"), ranges=list(list(0,0),list(16667,1),list(16667,0),list(33334,1),list(33334,0),list(50000,1)))
+
+m = l2svm(X=X, Y=Y, verbose=FALSE, epsilon = 1e-22, maxIterations = 30)
+write(m, "tmp/w1357/19d943eda83440690a14/result", format= "csv")

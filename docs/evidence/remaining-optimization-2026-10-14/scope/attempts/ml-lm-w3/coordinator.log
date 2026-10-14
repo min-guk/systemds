@@ -1,0 +1,24 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/14 17:41:10 WARN utils.SettingsChecker: Low memory budget of total:    251 GB set to:      3 GB
+26/10/14 17:41:10 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[MemoPlannerPhase] phase=facts elapsedNs=41065916
+[MemoPlannerPhase] phase=rules elapsedNs=223107944
+[MemoNativeRequests] preparedRequests=21 reusedResults=0 oracleRequests=21 canonicalStringsCreated=5 canonicalStringsReused=0 uncacheableRequests=16 contextualViewBuilds=21
+[MemoNativeGeneration] cpPatterns=21 prefixRequests=0 prunedPrefixes=44 unknownPrefixes=0 visitedNativePatterns=31 determinantRegions=75 oracleEvaluations=75 evidenceReuses=0 publishedRules=70 coverageObligations=1
+[MemoPlannerPhase] phase=model elapsedNs=91072594
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=44 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=32 activationEnvironments=44 projectedContexts=44 primitiveVectors=44 primitiveValues=89 primitiveValueBytes=712
+[MemoPlannerPhase] phase=optimization elapsedNs=22496178
+[MemoSearch] status=UNRESOLVED nodes=0 checkEvaluations=0 checkCacheHits=0 supportQueries=0 supportCacheHits=0 supportWitnessHits=0 binarySupportHits=0 binarySupportRows=0 worklistVisits=0 removedRules=0 costEvaluations=0 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=0 bindingGuardCacheHits=0 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=0 phaseShapeCacheHits=0 phaseShapeCacheEntries=0 guardRelevanceRequests=0 guardRelevanceCacheHits=0 guardRelevanceIndexEntries=0 occurrenceTransferRequests=75 occurrenceTransferCacheHits=31 occurrenceTransferBuilds=44 occurrenceTransferEntries=44 guardAtomRequests=0 guardAtomHits=0 guardAtomIdentities=0
+[MemoMovementReuse] activationRows=11 activationReplays=0 postGateRequests=0 postGateBuilds=0 postGateHits=0 primitiveContexts=0 contextualViewBuilds=0 unionRequests=0 unionCacheHits=0 measurementRequests=0 measurementHits=0
+[MemoNativeCostReuse] requests=5 cacheHits=0 vectorBuilds=44 entries=5
+[MemoContextAnalysisReuse] requests=65 hits=64 entries=1
+[MemoDirectRoots] resolver=shapes requests=0 eligibleCalls=0 fastPathCalls=0 rootsResolved=0
+[MemoDirectRoots] resolver=modelPrivacy requests=60 eligibleCalls=15 fastPathCalls=15 rootsResolved=15
+[MemoCheckProjection] annotatedChecks=10 invariantCheckAxes=0 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=0
+[31m
+An Error Occurred : 
+    IllegalStateException -- Memo planner did not prove an optimum: UNRESOLVED [privacy-pruned owner=18 occurrence=18 variant=cp/local reason=protected input requires federated residency, privacy-pruned owner=18 occurrence=18 variant=fed/forced-local reason=protected output slot 0 may not be materialized locally, privacy-pruned owner=18 occurrence=18 variant=fed/forced-local reason=protected output slot 0 may not be materialized locally, privacy-pruned owner=18 occurrence=18 variant=fed/forced-local reason=protected output slot 0 may not be materialized locally, owner=26 occurrence=26 hop=802 op=r(rdiag) Diagnostic[kind=COVERAGE_GAP, code=CANONICAL_EFFECT_NOT_AUDITED, pattern=[COL], message=The native output has no proved canonical range effect for this family and shape], owner=38 occurrence=38 hop=814 op=b(solve) Diagnostic[kind=COVERAGE_GAP, code=NATIVE_CATALOG_NOT_IMPLEMENTED, pattern=[ROW, ROW], message=the selected oracle rule has no capability implementation]]
+[0m

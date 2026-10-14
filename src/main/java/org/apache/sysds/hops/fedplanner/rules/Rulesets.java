@@ -4952,7 +4952,7 @@ public final class Rulesets {
     }
   }
 
-  /** Solve op (explicit CP fallback). */
+  /** Solve op (the runtime has a CP kernel but no federated instruction). */
   public static final class SolveRule extends BaseRule {
     private static final Set<String> OPCODES = Set.of(Opcodes.SOLVE.toString());
 
@@ -4978,7 +4978,7 @@ public final class Rulesets {
 
     @Override
   public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
-      return cpCaps(sig, ReasonCode.NOT_IMPLEMENTED);
+      return cpCaps(sig, ReasonCode.MISSING_FED_INSTRUCTION);
     }
   }
 

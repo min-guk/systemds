@@ -1,0 +1,65 @@
+BASE COMMIT fe000959c48ffa1172399e49124d082fe42d0c6d
+SOURCE src/main/java/org/apache/sysds/hops/ParameterizedBuiltinOp.java
+NOTE: measured JAR also included uncommitted changes.
+
+LINES 598-657
+598: 	protected DataCharacteristics inferOutputCharacteristics( MemoTable memo )
+599: 	{
+600: 		//Notes: CDF, TOSTRING always known because scalar outputs
+601: 		
+602: 		DataCharacteristics ret = null;
+603: 	
+604: 		Hop input = getTargetHop();	
+605: 		DataCharacteristics dc = memo.getAllInputStats(input);
+606: 
+607: 		if( _op == ParamBuiltinOp.GROUPEDAGG ) 
+608: 		{
+609: 			// Get the number of groups provided as part of aggregate() invocation, whenever available.
+610: 			if ( _paramIndexMap.get(Statement.GAGG_NUM_GROUPS) != null ) {
+611: 				Hop ngroups = getParameterHop(Statement.GAGG_NUM_GROUPS);
+612: 				if(ngroups != null && ngroups instanceof LiteralOp) {
+613: 					long m = HopRewriteUtils.getIntValueSafe((LiteralOp)ngroups);
+614: 					long n = (dc.getRows()==1)?1:dc.getCols();
+615: 					return new MatrixCharacteristics(m, n, -1, m);
+616: 				}
+617: 			}
+618: 			
+619: 			// Output dimensions are completely data dependent. In the worst case, 
+620: 			// #groups = #rows in the grouping attribute (e.g., categorical attribute is an ID column, say EmployeeID).
+621: 			// In such a case, #rows in the output = #rows in the input. Also, output sparsity is 
+622: 			// likely to be 1.0 (e.g., groupedAgg(groups=<a ID column>, fn="count"))
+623: 			long m = dc.getRows();
+624: 			long n = (dc.getRows()==1)?1:dc.getCols();
+625: 			if ( m >= 1 ) {
+626: 				ret = new MatrixCharacteristics(m, n, -1, m);
+627: 			}
+628: 		}
+629: 		else if(   _op == ParamBuiltinOp.RMEMPTY ) 
+630: 		{ 
+631: 			// similar to groupedagg because in the worst-case ouputsize eq inputsize
+632: 			// #nnz is exactly the same as in the input but sparsity can be higher if dimensions.
+633: 			// change (denser output).
+634: 			if ( dc.dimsKnown() ) {
+635: 				String margin = "rows";
+636: 				Hop marginHop = getParameterHop("margin");
+637: 				if(    marginHop instanceof LiteralOp 
+638: 						&& "cols".equals(((LiteralOp)marginHop).getStringValue()) )
+639: 					margin = new String("cols");
+640: 				
+641: 				DataCharacteristics dcSelect = null;
+642: 				if (_paramIndexMap.get("select") != null) {
+643: 					Hop select = getParameterHop("select");
+644: 					dcSelect = memo.getAllInputStats(select);
+645: 				}
+646: 
+647: 				long lDim1 = 0, lDim2 = 0;
+648: 				if( margin.equals("rows") ) {
+649: 					lDim1 = (dcSelect == null ||  !dcSelect.nnzKnown() ) ? dc.getRows(): dcSelect.getNonZeros();
+650: 					lDim2 = dc.getCols();
+651: 				} else {
+652: 					lDim1 = dc.getRows();
+653: 					lDim2 = (dcSelect == null ||  !dcSelect.nnzKnown() ) ? dc.getCols(): dcSelect.getNonZeros();
+654: 				}
+655: 				ret = new MatrixCharacteristics(lDim1, lDim2, -1, dc.getNonZeros());
+656: 			}
+657: 		}

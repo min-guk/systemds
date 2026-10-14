@@ -1,0 +1,98 @@
+[
+  {
+    "dataset": "ADULT",
+    "conf": "mkl-single-pass",
+    "planner": "COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS",
+    "workers": 4,
+    "success": true,
+    "runtime_executed": false,
+    "totalCompilationSeconds": 7.501851,
+    "runtimeProgramSeconds": 0.060442,
+    "optimizerSeconds": 0.0,
+    "evidence": "ADULT/mkl-single-pass"
+  },
+  {
+    "dataset": "ADULT",
+    "conf": "mkl-heuristic-first",
+    "planner": "COMPILE_FED_HEURISTIC_SINGLE_PASS",
+    "workers": 4,
+    "success": true,
+    "runtime_executed": false,
+    "totalCompilationSeconds": 7.175817,
+    "runtimeProgramSeconds": 0.048334,
+    "optimizerSeconds": 0.0,
+    "evidence": "ADULT/mkl-heuristic-first"
+  },
+  {
+    "dataset": "ADULT",
+    "conf": "mkl-cost",
+    "planner": "COMPILE_COST_BASED",
+    "workers": 4,
+    "success": true,
+    "runtime_executed": false,
+    "totalCompilationSeconds": 7.721446,
+    "runtimeProgramSeconds": 0.061239,
+    "optimizerSeconds": 0.227558,
+    "evidence": "ADULT/mkl-cost"
+  },
+  {
+    "dataset": "ADULT",
+    "conf": "mkl-exact",
+    "planner": "COMPILE_EXACT",
+    "workers": 4,
+    "success": true,
+    "runtime_executed": false,
+    "totalCompilationSeconds": 7.871327,
+    "runtimeProgramSeconds": 0.050265,
+    "optimizerSeconds": 0.167904,
+    "evidence": "ADULT/mkl-exact"
+  },
+  {
+    "dataset": "COVTYPE",
+    "conf": "mkl-single-pass",
+    "planner": "COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS",
+    "workers": 4,
+    "success": true,
+    "runtime_executed": false,
+    "totalCompilationSeconds": 7.566769,
+    "runtimeProgramSeconds": 0.073689,
+    "optimizerSeconds": 0.0,
+    "evidence": "COVTYPE/mkl-single-pass"
+  },
+  {
+    "dataset": "COVTYPE",
+    "conf": "mkl-heuristic-first",
+    "planner": "COMPILE_FED_HEURISTIC_SINGLE_PASS",
+    "workers": 4,
+    "success": true,
+    "runtime_executed": false,
+    "totalCompilationSeconds": 7.435902,
+    "runtimeProgramSeconds": 0.047918,
+    "optimizerSeconds": 0.0,
+    "evidence": "COVTYPE/mkl-heuristic-first"
+  },
+  {
+    "dataset": "COVTYPE",
+    "conf": "mkl-cost",
+    "planner": "COMPILE_COST_BASED",
+    "workers": 4,
+    "success": true,
+    "runtime_executed": false,
+    "totalCompilationSeconds": 7.371283,
+    "runtimeProgramSeconds": 0.059147,
+    "optimizerSeconds": 0.22065,
+    "evidence": "COVTYPE/mkl-cost"
+  },
+  {
+    "dataset": "COVTYPE",
+    "conf": "mkl-exact",
+    "planner": "COMPILE_EXACT",
+    "workers": 4,
+    "success": true,
+    "runtime_executed": false,
+    "totalCompilationSeconds": 7.97054,
+    "runtimeProgramSeconds": 0.051161,
+    "optimizerSeconds": 0.157609,
+    "evidence": "COVTYPE/mkl-exact"
+  }
+]

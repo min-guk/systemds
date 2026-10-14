@@ -1,0 +1,183 @@
+{
+  "returncode": 0,
+  "wallSeconds": 3.059799909591675,
+  "clockTicksPerSecond": 100,
+  "sampleIntervalSeconds": 0.1,
+  "samples": [
+    {
+      "epoch": 1791999651.5969121,
+      "pid": 362498,
+      "processCpuSeconds": 0.21,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 44433408
+    },
+    {
+      "epoch": 1791999651.6975021,
+      "pid": 362498,
+      "processCpuSeconds": 0.53,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 59490304
+    },
+    {
+      "epoch": 1791999651.7984061,
+      "pid": 362498,
+      "processCpuSeconds": 0.92,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 77975552
+    },
+    {
+      "epoch": 1791999651.8992214,
+      "pid": 362498,
+      "processCpuSeconds": 1.29,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 83746816
+    },
+    {
+      "epoch": 1791999652.0000956,
+      "pid": 362498,
+      "processCpuSeconds": 1.53,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 90431488
+    },
+    {
+      "epoch": 1791999652.1015196,
+      "pid": 362498,
+      "processCpuSeconds": 1.82,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 103014400
+    },
+    {
+      "epoch": 1791999652.2026877,
+      "pid": 362498,
+      "processCpuSeconds": 2.22,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 107053056
+    },
+    {
+      "epoch": 1791999652.3040307,
+      "pid": 362498,
+      "processCpuSeconds": 2.57,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 109064192
+    },
+    {
+      "epoch": 1791999652.405098,
+      "pid": 362498,
+      "processCpuSeconds": 2.94,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 116928512
+    },
+    {
+      "epoch": 1791999652.5058646,
+      "pid": 362498,
+      "processCpuSeconds": 3.37,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 137768960
+    },
+    {
+      "epoch": 1791999652.6070344,
+      "pid": 362498,
+      "processCpuSeconds": 3.78,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 149958656
+    },
+    {
+      "epoch": 1791999652.7080698,
+      "pid": 362498,
+      "processCpuSeconds": 4.09,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 152317952
+    },
+    {
+      "epoch": 1791999652.8091435,
+      "pid": 362498,
+      "processCpuSeconds": 4.41,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 156250112
+    },
+    {
+      "epoch": 1791999652.910064,
+      "pid": 362498,
+      "processCpuSeconds": 4.76,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 168046592
+    },
+    {
+      "epoch": 1791999653.010904,
+      "pid": 362498,
+      "processCpuSeconds": 5.08,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 135127040
+    },
+    {
+      "epoch": 1791999653.1120906,
+      "pid": 362498,
+      "processCpuSeconds": 5.45,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 144171008
+    },
+    {
+      "epoch": 1791999653.213066,
+      "pid": 362498,
+      "processCpuSeconds": 5.76,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 150462464
+    },
+    {
+      "epoch": 1791999653.3138657,
+      "pid": 362498,
+      "processCpuSeconds": 6.11,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 158720000
+    },
+    {
+      "epoch": 1791999653.4146433,
+      "pid": 362498,
+      "processCpuSeconds": 6.46,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 167436288
+    },
+    {
+      "epoch": 1791999653.5155275,
+      "pid": 362498,
+      "processCpuSeconds": 6.85,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 172941312
+    },
+    {
+      "epoch": 1791999653.6164496,
+      "pid": 362498,
+      "processCpuSeconds": 7.15,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 178839552
+    },
+    {
+      "epoch": 1791999653.7173479,
+      "pid": 362498,
+      "processCpuSeconds": 7.52,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 185917440
+    },
+    {
+      "epoch": 1791999653.8181915,
+      "pid": 362498,
+      "processCpuSeconds": 7.89,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 194318336
+    },
+    {
+      "epoch": 1791999653.919056,
+      "pid": 362498,
+      "processCpuSeconds": 8.25,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 194260992
+    },
+    {
+      "epoch": 1791999654.0197499,
+      "pid": 362498,
+      "processCpuSeconds": 8.61,
+      "mainCpuSeconds": 0.0,
+      "rssBytes": 198979584
+    }
+  ]
+}

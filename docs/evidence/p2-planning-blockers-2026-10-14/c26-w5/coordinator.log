@@ -1,0 +1,11 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/14 15:32:39 WARN utils.SettingsChecker: Low memory budget of total:    251 GB set to:      3 GB
+26/10/14 15:32:39 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[MemoPlannerPhase] phase=facts elapsedNs=35704877
+[MemoPlannerPhase] phase=rules elapsedNs=211689629
+[MemoNativeRequests] preparedRequests=89 reusedResults=17 oracleRequests=72 canonicalStringsCreated=33 canonicalStringsReused=17 uncacheableRequests=39 contextualViewBuilds=72
+[MemoNativeGeneration] cpPatterns=74 prefixRequests=0 prunedPrefixes=66 unknownPrefixes=0 visitedNativePatterns=261 determinantRegions=303 oracleEvaluations=303 evidenceReuses=24 publishedRules=243 coverageObligations=88
+[31m
+An Error Occurred : 
+            CostException -- UNKNOWN_SIZE: unknown kernel input 0 for hop 6026 UnaryOp/u(nrow) SCALAR 0x0: hop 6027 DataOp/TRead X MATRIX -1x-1
+[0m

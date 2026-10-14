@@ -1,0 +1,20 @@
+CURRENT WORKTREE SOURCE src/main/java/org/apache/sysds/runtime/controlprogram/BasicProgramBlock.java
+NOTE: uncommitted support changes exist; not the measured legacy JAR.
+
+LINES 91-106
+91: 
+92: 	private void executeInScope(ExecutionContext ec) {
+93: 		ArrayList<Instruction> tmp = _inst;
+94: 
+95: 		//dynamically recompile instructions if enabled and required
+96: 		try
+97: 		{
+98: 			long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+99: 			if( ConfigurationManager.isDynamicRecompilation()
+100: 				&& _sb != null
+101: 				&& _sb.requiresRecompilation() )
+102: 			{
+103: 				tmp = Recompiler.recompileHopsDag(
+104: 					_sb, _sb.getHops(), ec, null, false, true, _tid);
+105: 			}
+106: 			if( DMLScript.STATISTICS ){

@@ -1,0 +1,25 @@
+{
+  "baseline_only_failure_ids": [],
+  "baseline_summary": {
+    "errors": 16,
+    "failures": 2,
+    "skipped": 1,
+    "tests": 661
+  },
+  "common_failure_ids": 18,
+  "conclusion": "The current tree introduces no Python failure ID. Its 18 failure IDs and terminal exception/assertion messages are identical to the same-parent detached HEAD baseline after normalizing only the repository path. The additional nine tests are the new harness suite and all pass.",
+  "current_only_failure_ids": [],
+  "current_summary": {
+    "errors": 16,
+    "failures": 2,
+    "skipped": 1,
+    "tests": 670
+  },
+  "head": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+  "new_harness_summary": {
+    "result": "OK",
+    "tests": 9
+  },
+  "normalized_traceback_body_difference_ids": [],
+  "terminal_message_differences_after_repo_path_normalization": {}
+}

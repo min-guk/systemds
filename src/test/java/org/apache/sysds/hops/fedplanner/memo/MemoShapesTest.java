@@ -23,6 +23,7 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.common.Types.ReOrgOp;
@@ -37,6 +38,7 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.FederatedSourceMetadata;
@@ -73,6 +75,55 @@ public class MemoShapesTest {
 			EvaluationContext.empty().withIterationPhase(0,IterationPhase.MIDDLE)),8,1);
 		assertShape(shapes.inputShape(abs.id(),0,
 			EvaluationContext.empty().withIterationPhase(0,IterationPhase.LAST)),8,1);
+	}
+
+	@Test
+	public void nestedLoopPhaseReusesAnExactAllPathHeadInvariant() throws Exception {
+		MemoProgramFacts facts=facts("V=matrix(0,rows=128,cols=10);flag=TRUE;"
+			+"for(i in 1:3){for(j in 1:3){if(flag){dummy=1;}else{V=V+1;}Z=t(V);}flag=!flag;}"
+			+"print(sum(Z));");
+		MemoShapes shapes=MemoShapes.analyze(facts,MemoSources.acquire(facts,null));
+		MemoProgramFacts.Occurrence transpose=facts.occurrences().stream()
+			.filter(value -> value.hop() instanceof ReorgOp reorg && reorg.getOp()==ReOrgOp.TRANS)
+			.findFirst().orElseThrow();
+		boolean[] sawNestedRepeat={false};
+		MemoBindingResolver.VisitResult visit=new MemoReachableContexts(facts,new MemoBindingResolver(facts))
+			.visit(transpose,EvaluationContext.empty(),context -> {
+				long repeats=context.iterationPhases().values().stream()
+					.filter(phase -> phase==IterationPhase.MIDDLE).count();
+				if(repeats==2) sawNestedRepeat[0]=true;
+				Assert.assertTrue("every reachable nested phase keeps the exact V invariant: "+context,
+					shapes.inputShape(transpose.id(),0,context).exact());
+				return true;
+			});
+		Assert.assertEquals(MemoBindingResolver.VisitStatus.COMPLETE,visit.status());
+		Assert.assertTrue("the fixture must exercise simultaneous nested repeat phases",sawNestedRepeat[0]);
+	}
+
+	@Test
+	public void exactLoopSeedDoesNotHideAnUnknownBackedgeArm() throws Exception {
+		Path data=Files.createTempFile("memo-unknown-loop-backedge", ".csv");
+		try {
+			Files.writeString(data,"1,2\n3,4\n");
+			String path=data.toString().replace("\\","\\\\").replace("\"","\\\"");
+			MemoProgramFacts facts=facts("X=read(\""+path+"\",data_type=\"matrix\",format=\"csv\");"
+				+"V=matrix(0,rows=8,cols=4);p=as.scalar(rand(rows=1,cols=1));"
+				+"for(i in 1:3){if(p>0.5){V=X;}Z=t(V);}print(sum(Z));");
+			MemoShapes shapes=MemoShapes.analyze(facts,MemoSources.acquire(facts,null));
+			MemoProgramFacts.Occurrence transpose=facts.occurrences().stream()
+				.filter(value -> value.hop() instanceof ReorgOp reorg && reorg.getOp()==ReOrgOp.TRANS)
+				.findFirst().orElseThrow();
+			boolean[] sawUnknown={false};
+			new MemoReachableContexts(facts,new MemoBindingResolver(facts))
+				.visit(transpose,EvaluationContext.empty(),context -> {
+					sawUnknown[0] |= !shapes.inputShape(transpose.id(),0,context).exact();
+					return true;
+				});
+			Assert.assertTrue("an unknown backedge arm must remain unknown",sawUnknown[0]);
+		}
+		finally {
+			Files.deleteIfExists(data);
+		}
 	}
 
 	@Test
@@ -274,6 +325,35 @@ public class MemoShapesTest {
 	}
 
 	@Test
+	public void ctableOfAOneBasedSequenceAndSortIndexesHasExactPermutationShape() throws Exception {
+		MemoProgramFacts facts=facts("X=matrix(0,rows=8,cols=1);"
+			+"I=order(target=X,by=1,decreasing=TRUE,index.return=TRUE);"
+			+"P=table(seq(1,8),I);print(sum(P));");
+		MemoProgramFacts.Occurrence table=facts.occurrences().stream()
+			.filter(value -> value.hop() instanceof TernaryOp ternary && ternary.getOp()==OpOp3.CTABLE)
+			.findFirst().orElseThrow();
+		table.hop().setDim1(-1);
+		table.hop().setDim2(-1);
+		table.hop().setNnz(-1);
+		MemoShapes shapes=MemoShapes.analyze(facts,MemoSources.acquire(facts,null));
+
+		assertShape(shapes.shapeAt(table.id(),EvaluationContext.empty()),8,8);
+	}
+
+	@Test
+	public void ctablePermutationProofDoesNotOverrideExplicitTargetDimensions() throws Exception {
+		MemoProgramFacts facts=facts("X=matrix(0,rows=8,cols=1);"
+			+"I=order(target=X,by=1,decreasing=TRUE,index.return=TRUE);"
+			+"P=table(seq(1,8),I,2,2);print(sum(P));");
+		MemoShapes shapes=MemoShapes.analyze(facts,MemoSources.acquire(facts,null));
+		MemoProgramFacts.Occurrence table=facts.occurrences().stream()
+			.filter(value -> value.hop() instanceof TernaryOp ternary && ternary.getOp()==OpOp3.CTABLE)
+			.findFirst().orElseThrow();
+
+		assertShape(shapes.shapeAt(table.id(),EvaluationContext.empty()),2,2);
+	}
+
+	@Test
 	public void branchMismatchBecomesUnknownInsteadOfChoosingOneArm() throws Exception {
 		MemoProgramFacts facts = facts("p=as.scalar(rand(rows=1,cols=1));"
 			+ "if(p>0.5){A=matrix(1,rows=8,cols=4);}else{A=matrix(1,rows=7,cols=4);}"
@@ -305,6 +385,30 @@ public class MemoShapesTest {
 			.filter(value -> "A".equals(value.variable())).findFirst().orElseThrow();
 		Assert.assertFalse(changing.bindingShape(changed.headBindingId()).exact());
 		Assert.assertTrue(changing.diagnostics().stream()
+			.anyMatch(d -> "LOOP_CARRIED_SHAPE_MISMATCH".equals(d.code())));
+	}
+
+	@Test
+	public void numericScalarWideningKeepsPhaseTypesWithoutReportingAShapeMismatch() throws Exception {
+		MemoProgramFacts facts=facts(
+			"step_sz=0;for(i in 1:3){step_sz=step_sz-0.5;}print(step_sz);");
+		MemoShapes shapes=MemoShapes.analyze(facts,MemoSources.acquire(facts,null));
+		MemoProgramFacts.CarriedValue carried=facts.loop(0).carriedValues().stream()
+			.filter(value -> "step_sz".equals(value.variable())).findFirst().orElseThrow();
+
+		MemoShapes.Shape entry=shapes.bindingShape(carried.entryBindingId());
+		MemoShapes.Shape repeat=shapes.bindingShape(carried.backedgeBindingId());
+		MemoShapes.Shape summary=shapes.bindingShape(carried.headBindingId());
+		Assert.assertTrue(entry.exact());
+		Assert.assertEquals(DataType.SCALAR,entry.dataType());
+		Assert.assertEquals(ValueType.INT64,entry.valueType());
+		Assert.assertTrue(repeat.exact());
+		Assert.assertEquals(DataType.SCALAR,repeat.dataType());
+		Assert.assertEquals(ValueType.FP64,repeat.valueType());
+		Assert.assertFalse(summary.exact());
+		Assert.assertEquals(DataType.SCALAR,summary.dataType());
+		Assert.assertEquals(ValueType.UNKNOWN,summary.valueType());
+		Assert.assertFalse(shapes.diagnostics().stream()
 			.anyMatch(d -> "LOOP_CARRIED_SHAPE_MISMATCH".equals(d.code())));
 	}
 

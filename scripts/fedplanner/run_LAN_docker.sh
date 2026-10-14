@@ -31,6 +31,11 @@ if [[ "${1:-}" == "--memo-planning-matrix" ]]; then
     exec python3 "$(dirname "$0")/run_memo_planning_matrix.py" "$@"
 fi
 
+if [[ "${1:-}" == "--memo-metadata-planning" ]]; then
+    shift
+    exec python3 "$(dirname "$0")/run_memo_metadata_planning.py" "$@"
+fi
+
 if [[ "${1:-}" == "--actual-ml-planning-performance" ]]; then
     shift
     exec python3 "$(dirname "$0")/run_actual_ml_planning_performance.py" "$@"

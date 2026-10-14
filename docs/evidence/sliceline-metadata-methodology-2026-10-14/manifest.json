@@ -1,0 +1,63 @@
+{
+  "source_repo": "https://github.com/damslab/reproducibility",
+  "local_revision": "17e6099c04666e9463e6f8b4adcbb2793219a71a",
+  "subtree": "sigmod2021-sliceline-p218",
+  "purpose": "read-only methodology evidence; no reproduction scripts executed",
+  "files": [
+    {
+      "path": "original/README.md",
+      "source": "/home/mchoi/reproducibility/sigmod2021-sliceline-p218/README.md",
+      "sha256": "973bd7167c1ae7c56c5e4f2058a9e4acfe5f74d9b8a5467a704cc7cd884e185d"
+    },
+    {
+      "path": "original/run4PrepareLocalData.sh",
+      "source": "/home/mchoi/reproducibility/sigmod2021-sliceline-p218/run4PrepareLocalData.sh",
+      "sha256": "f33e78fa7865368d149f48cde0015230d867d6c72c55f9ed4e8098c6045077a6"
+    },
+    {
+      "path": "original/run5LocalExperiments.sh",
+      "source": "/home/mchoi/reproducibility/sigmod2021-sliceline-p218/run5LocalExperiments.sh",
+      "sha256": "269ef93d56282e83547d67fff133835d523fae78301350152586997df4838044"
+    },
+    {
+      "path": "original/exp/dataprep/dataprepAdult.dml",
+      "source": "/home/mchoi/reproducibility/sigmod2021-sliceline-p218/exp/dataprep/dataprepAdult.dml",
+      "sha256": "b923cb138318e876477e794696c3b658448dc0ba49e2beb514977a8a3c6f1747"
+    },
+    {
+      "path": "original/exp/dataprep/dataprepCovtype.dml",
+      "source": "/home/mchoi/reproducibility/sigmod2021-sliceline-p218/exp/dataprep/dataprepCovtype.dml",
+      "sha256": "9d7839c728434e0c36c0f2038b2637ac49ad417b4bff55eedd779984c8fc6684"
+    },
+    {
+      "path": "original/exp/explocal/runExperiment2.sh",
+      "source": "/home/mchoi/reproducibility/sigmod2021-sliceline-p218/exp/explocal/runExperiment2.sh",
+      "sha256": "69b4f7582cb0083099d8e0c6bb6ff6bc821081a0995cdcfd694cfbee898fe009"
+    },
+    {
+      "path": "original/exp/explocal/SlicingExp2.dml",
+      "source": "/home/mchoi/reproducibility/sigmod2021-sliceline-p218/exp/explocal/SlicingExp2.dml",
+      "sha256": "c992f0609635c9e918985c56ed444cf932be239e8a099d0e9b834d502a7dc765"
+    },
+    {
+      "path": "original/exp/explocal/SlicingExp1_3.dml",
+      "source": "/home/mchoi/reproducibility/sigmod2021-sliceline-p218/exp/explocal/SlicingExp1_3.dml",
+      "sha256": "4d33e437d0f9d3e73a13647a16521deb11fcca6e7a5cf75f1a0542063dcd5b74"
+    },
+    {
+      "path": "adaptation/exp/P2_PREP.dml",
+      "source": "/home/mchoi/cofee-evaluation/planning_study/native/input_templates/common/code/exp/P2_PREP.dml",
+      "sha256": "7e02175cef078faf69551e5122c3e4a85000e8ab0000518b289a9cd7beeb9472"
+    },
+    {
+      "path": "adaptation/exp/sliceline_fed.dml",
+      "source": "/home/mchoi/cofee-evaluation/planning_study/native/input_templates/common/code/exp/sliceline_fed.dml",
+      "sha256": "cc2cb0ed07af2e34d56a30ec53fc2fea9caaadd1e3988b98fbee7cc560a42501"
+    },
+    {
+      "path": "adaptation/workloads/sliceline/slicefinder_core.dml",
+      "source": "/home/mchoi/cofee-evaluation/planning_study/native/input_templates/common/code/workloads/sliceline/slicefinder_core.dml",
+      "sha256": "07a1be572c5611eaff67dde0cbc23b17796b79dd6635df04584f482b470a348d"
+    }
+  ]
+}

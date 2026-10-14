@@ -162,69 +162,106 @@ public class MultiReturnParameterizedBuiltinFEDInstruction extends ComputationFE
 		FrameObject fin = ec.getFrameObject(input1.getName());
 		String spec = TransformEncodeMetadataPrivacy.validateAndStripReleaseRequest(
 			ec.getScalarInput(input2).getStringValue());
-
-		String[] colNames = new String[(int) fin.getNumColumns()];
-		Arrays.fill(colNames, "");
-
-		// the encoder in which the complete encoding information will be aggregated
-		MultiColumnEncoder globalEncoder = new MultiColumnEncoder(new ArrayList<>());
 		FederationMap fedMapping = fin.getFedMapping();
+		MultiColumnEncoder globalEncoder;
+		FrameBlock meta;
 
 		boolean containsEquiWidthEncoder = !fin.isFederated(FTypes.FType.ROW) && spec.toLowerCase().contains("equi-height");
 		if(containsEquiWidthEncoder) {
 			EncoderColnames ret = createGlobalEncoderWithEquiHeight(ec, fin, spec);
 			globalEncoder = ret._encoder;
-			colNames = ret._colnames;
+			meta = finishEncoderMetadata(fin, globalEncoder, ret._colnames);
 		} else {
-			// first create encoders at the federated workers, then collect them and aggregate them to a single large
-			// encoder
-			List<Pair<FederatedRange, FederatedData>> partitions = new ArrayList<>(fedMapping.getMap());
-			partitions.sort((left, right) -> {
-				int rowOrder = Long.compare(left.getKey().getBeginDims()[0], right.getKey().getBeginDims()[0]);
-				return rowOrder != 0 ? rowOrder :
-					Long.compare(left.getKey().getBeginDims()[1], right.getKey().getBeginDims()[1]);
-			});
-			List<Future<FederatedResponse>> responses = new ArrayList<>(partitions.size());
-			for(Pair<FederatedRange, FederatedData> partition : partitions) {
-				FederatedRange range = partition.getKey();
-				int columnOffset = (int) range.getBeginDims()[1];
-				responses.add(partition.getValue().executeFederatedOperation(new FederatedRequest(
-					RequestType.EXEC_UDF,
-					-1, new CreateFrameEncoder(partition.getValue().getVarID(), spec, columnOffset + 1))));
-			}
-			// RPCs are issued eagerly above, but their encoders are merged in logical
-			// range order. Recode IDs depend on first occurrence, so completion-order
-			// merging would make ROW-partitioned dummycoding nondeterministic.
-			for(int i = 0; i < partitions.size(); i++) {
-				FederatedRange range = partitions.get(i).getKey();
-				int columnOffset = (int) range.getBeginDims()[1];
-				try {
-					FederatedResponse response = responses.get(i).get();
-					MultiColumnEncoder encoder = (MultiColumnEncoder) response.getData()[0];
-					globalEncoder.mergeAt(encoder, columnOffset, (int) (range.getBeginDims()[0] + 1));
-					String[] subRangeColNames = (String[]) response.getData()[1];
-					System.arraycopy(subRangeColNames, 0, colNames, columnOffset, subRangeColNames.length);
-				}
-				catch(Exception e) {
-					throw new DMLRuntimeException("Federated encoder creation failed: ", e);
-				}
-			}
+			PublicRecodeMetadata built = buildEncoderMetadata(fin, spec);
+			globalEncoder = built.encoder();
+			meta = built.metadata();
 		}
-
-		// sort for consistent encoding in local and federated
-		if(ColumnEncoderRecode.SORT_RECODE_MAP) {
-			globalEncoder.applyToAll(ColumnEncoderRecode.class, ColumnEncoderRecode::sortCPRecodeMaps);
-		}
-
-		FrameBlock meta = new FrameBlock((int) fin.getNumColumns(), Types.ValueType.STRING);
-		meta.setColumnNames(colNames);
-		globalEncoder.getMetaData(meta);
-		globalEncoder.initMetaData(meta);
 
 		encodeFederatedFrames(fedMapping, globalEncoder, ec.getMatrixObject(getOutput(0)));
 
 		// release input and outputs
 		ec.setFrameOutput(getOutput(1).getName(), _metaReturn ? meta : new FrameBlock());
+	}
+
+	/**
+	 * Builds the exact, explicitly authorized public recode metadata for a federated frame without applying the
+	 * encoder. The returned encoder is the same globally merged encoder used by the ordinary FED transformencode
+	 * instruction and can therefore be reused by a caller that owns the subsequent apply operation.
+	 *
+	 * @param fin federated input frame
+	 * @param rawSpec transform specification including the public-metadata release declaration
+	 * @return globally merged encoder and its initialized metadata frame
+	 */
+	public static PublicRecodeMetadata buildPublicRecodeMetadata(FrameObject fin, String rawSpec) {
+		if(!TransformEncodeMetadataPrivacy.allowsPublicRecodeMetadata(rawSpec))
+			throw new DMLRuntimeException("Public transformencode recode metadata build is not authorized " +
+				"or the transform specification is not metadata-only");
+		String spec = TransformEncodeMetadataPrivacy.validateAndStripReleaseRequest(rawSpec);
+		return buildEncoderMetadata(fin, spec);
+	}
+
+	/** Immutable build result; the encoder and metadata retain the runtime objects' normal ownership semantics. */
+	public record PublicRecodeMetadata(MultiColumnEncoder encoder, FrameBlock metadata) {
+		public PublicRecodeMetadata {
+			if(encoder == null || metadata == null)
+				throw new IllegalArgumentException("Public recode metadata result must be complete");
+		}
+	}
+
+	private static PublicRecodeMetadata buildEncoderMetadata(FrameObject fin, String spec) {
+		String[] colNames = new String[(int) fin.getNumColumns()];
+		Arrays.fill(colNames, "");
+		MultiColumnEncoder globalEncoder = new MultiColumnEncoder(new ArrayList<>());
+		List<Pair<FederatedRange, FederatedData>> partitions = new ArrayList<>(fin.getFedMapping().getMap());
+		partitions.sort((left, right) -> {
+			int rowOrder = Long.compare(left.getKey().getBeginDims()[0], right.getKey().getBeginDims()[0]);
+			return rowOrder != 0 ? rowOrder :
+				Long.compare(left.getKey().getBeginDims()[1], right.getKey().getBeginDims()[1]);
+		});
+		List<Future<FederatedResponse>> responses = new ArrayList<>(partitions.size());
+		for(Pair<FederatedRange, FederatedData> partition : partitions) {
+			FederatedRange range = partition.getKey();
+			int columnOffset = (int) range.getBeginDims()[1];
+			responses.add(partition.getValue().executeFederatedOperation(new FederatedRequest(
+				RequestType.EXEC_UDF, -1,
+				new CreateFrameEncoder(partition.getValue().getVarID(), spec, columnOffset + 1))));
+		}
+		// RPCs are issued eagerly above, but their encoders are merged in logical range order. Recode IDs depend on
+		// first occurrence, so completion-order merging would make ROW-partitioned dummycoding nondeterministic.
+		DMLRuntimeException failure = null;
+		for(int i = 0; i < partitions.size(); i++) {
+			FederatedRange range = partitions.get(i).getKey();
+			int columnOffset = (int) range.getBeginDims()[1];
+			try {
+				FederatedResponse response = responses.get(i).get();
+				if(!response.isSuccessful())
+					response.throwExceptionFromResponse();
+				MultiColumnEncoder encoder = (MultiColumnEncoder) response.getData()[0];
+				globalEncoder.mergeAt(encoder, columnOffset, (int) (range.getBeginDims()[0] + 1));
+				String[] subRangeColNames = (String[]) response.getData()[1];
+				System.arraycopy(subRangeColNames, 0, colNames, columnOffset, subRangeColNames.length);
+			}
+			catch(Exception e) {
+				DMLRuntimeException current = new DMLRuntimeException("Federated encoder creation failed: ", e);
+				if(failure == null)
+					failure = current;
+				else
+					failure.addSuppressed(current);
+			}
+		}
+		if(failure != null)
+			throw failure;
+		return new PublicRecodeMetadata(globalEncoder, finishEncoderMetadata(fin, globalEncoder, colNames));
+	}
+
+	private static FrameBlock finishEncoderMetadata(FrameObject fin, MultiColumnEncoder encoder, String[] colNames) {
+		if(ColumnEncoderRecode.SORT_RECODE_MAP)
+			encoder.applyToAll(ColumnEncoderRecode.class, ColumnEncoderRecode::sortCPRecodeMaps);
+		FrameBlock meta = new FrameBlock((int) fin.getNumColumns(), Types.ValueType.STRING);
+		meta.setColumnNames(colNames);
+		encoder.getMetaData(meta);
+		encoder.initMetaData(meta);
+		return meta;
 	}
 
 	private class EncoderColnames {

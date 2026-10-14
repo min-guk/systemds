@@ -37,6 +37,17 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class MemoProgramModelTest {
+	@Test public void runtimeLoopContractCanonicalizesNnzButNotPhysicalShape() {
+		var dense=new MemoShapes.Shape(DataType.MATRIX,ValueType.FP64,128,1,128,
+			MemoShapes.Knowledge.EXACT);
+		var sparse=new MemoShapes.Shape(DataType.MATRIX,ValueType.FP64,128,1,7,
+			MemoShapes.Knowledge.EXACT);
+		Assert.assertSame(dense,MemoProgramModel.contractPhysicalShape(List.of(dense,sparse)));
+		Assert.assertNull(MemoProgramModel.contractPhysicalShape(List.of(dense,
+			new MemoShapes.Shape(DataType.MATRIX,ValueType.FP64,127,1,7,MemoShapes.Knowledge.EXACT))));
+		Assert.assertNull(MemoProgramModel.contractPhysicalShape(List.of(dense,
+			new MemoShapes.Shape(DataType.MATRIX,ValueType.FP64,128,1,-1,MemoShapes.Knowledge.UNKNOWN))));
+	}
 	@Test public void loopPhaseCostsPartitionAllIterationsExactly() {
 		Assert.assertEquals(0,MemoProgramModel.phaseIterations(0,MemoProgramFacts.IterationPhase.FIRST),0);
 		Assert.assertEquals(0,MemoProgramModel.phaseIterations(0,MemoProgramFacts.IterationPhase.LAST),0);
@@ -92,6 +103,54 @@ public class MemoProgramModelTest {
 		Assert.assertFalse(model.heads().isEmpty());
 		var result = model.optimize(MemoOptimizer.Limits.exactDefaults());
 		Assert.assertEquals(result.diagnostics().toString(),MemoOptimizer.Status.OPTIMAL,result.optimization().status());
+	}
+	@Test public void int64ScalarEntryMayBecomeFp64OnTheFirstLoopBackedge() throws Exception {
+		MemoProgramModel model=model("step_sz=0;g=1.0;h=2.0;"
+			+"for(i in 1:3){step_sz=step_sz-g/h;}print(step_sz);");
+		var result=model.optimize(MemoOptimizer.Limits.exactDefaults());
+		Assert.assertEquals(result.diagnostics().toString(),MemoOptimizer.Status.OPTIMAL,
+			result.optimization().status());
+		var carried=model.loopContracts(result.optimization().selectedRules()).values().stream()
+			.flatMap(List::stream).filter(contract -> contract.variable().equals("step_sz"))
+			.findFirst().orElseThrow();
+		Assert.assertEquals(DataType.SCALAR,carried.dataType());
+		Assert.assertEquals(ValueType.INT64,carried.entryValueType());
+		Assert.assertEquals(ValueType.FP64,carried.valueType());
+		Assert.assertEquals(MemoPartition.LOCAL,carried.target());
+		Assert.assertEquals(List.of(new org.apache.sysds.lops.compile.MemoSupplyRegistry.Recipe(
+			MemoPartition.LOCAL,org.apache.sysds.lops.compile.MemoSupplyRegistry.Movement.DIRECT,null)),
+			carried.entryRecipes());
+	}
+	@Test public void scalarEntryTypeTransitionIsIdenticalWithBoundaryProjectionOnAndOff() throws Exception {
+		DMLProgram program=ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			"step_sz=0;g=1.0;h=2.0;for(i in 1:3){step_sz=step_sz-g/h;}print(step_sz);",new HashMap<>());
+		DMLTranslator translator=new DMLTranslator(program);
+		translator.liveVariableAnalysis(program); translator.validateParseTree(program); translator.constructHops(program);
+		MemoProgramFacts facts=MemoProgramFacts.analyze(program);
+		MemoSources sources=MemoSources.acquire(facts,null);
+		MemoRuleBuilder.Result universe=MemoRuleBuilder.build(facts,sources,new MemoNativeRules());
+		var projected=new MemoProgramModel(facts,sources,universe,MemoProgramModel.Profile.defaults(),true)
+			.optimize(MemoOptimizer.Limits.exactDefaults()).optimization();
+		var expanded=new MemoProgramModel(facts,sources,universe,MemoProgramModel.Profile.defaults(),false)
+			.optimize(MemoOptimizer.Limits.exactDefaults()).optimization();
+		Assert.assertEquals(MemoOptimizer.Status.OPTIMAL,projected.status());
+		Assert.assertEquals(projected.status(),expanded.status());
+		Assert.assertEquals(0,projected.cost().compareTo(expanded.cost()));
+		Assert.assertArrayEquals(projected.selectedRules(),expanded.selectedRules());
+	}
+	@Test public void loopContractIgnoresOnlyPhaseNnzDifferences() throws Exception {
+		MemoProgramModel model=model("A=matrix(0,rows=2,cols=1);for(i in 1:3){print(sum(A));"
+			+ "if(i==1){A=matrix(1,rows=2,cols=1);}else{A=matrix(0,rows=2,cols=1);}}print(sum(A));");
+		var result=model.optimize(MemoOptimizer.Limits.exactDefaults());
+		Assert.assertEquals(result.diagnostics().toString(),MemoOptimizer.Status.OPTIMAL,
+			result.optimization().status());
+		var carried=model.loopContracts(result.optimization().selectedRules()).values().stream()
+			.flatMap(List::stream).filter(contract -> contract.variable().equals("A"))
+			.findFirst().orElseThrow();
+		Assert.assertEquals(DataType.MATRIX,carried.dataType());
+		Assert.assertEquals(ValueType.FP64,carried.valueType());
+		Assert.assertEquals(2,carried.repeatRows());
+		Assert.assertEquals(1,carried.repeatColumns());
 	}
 	@Test public void zeroIterationLoopCostsNoBodyAndKeepsInitialExit() throws Exception {
 		MemoProgramModel model=model("A=matrix(0,2,2);for(i in seq(1,0,1)){A=matrix(1,4,2);}print(sum(A));");

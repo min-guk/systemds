@@ -1,0 +1,24 @@
+BASE COMMIT fe000959c48ffa1172399e49124d082fe42d0c6d
+SOURCE src/main/java/org/apache/sysds/hops/cost/ComputeCost.java
+NOTE: measured JAR also included uncommitted changes.
+
+LINES 244-262
+244: 		}
+245: 
+246: 		//scale by current output size in order to correctly reflect
+247: 		//a mix of row and cell operations in the same fused operator
+248: 		//(e.g., row template with fused column vector operations)
+249: 		costs *= getSize(currentHop);
+250: 		return costs;
+251: 	}
+252: 
+253: 	/**
+254: 	 * Get number of output cells of given hop.
+255: 	 * @param hop for which the number of output cells are found
+256: 	 * @return number of output cells of given hop
+257: 	 */
+258: 	private static long getSize(Hop hop) {
+259: 		return Math.max(hop.getDim1(),1)
+260: 			* Math.max(hop.getDim2(),1);
+261: 	}
+262: }

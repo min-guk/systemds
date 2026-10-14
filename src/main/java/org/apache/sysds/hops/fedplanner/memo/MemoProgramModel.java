@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.EvaluationContext;
@@ -170,7 +171,7 @@ public final class MemoProgramModel {
 	}
 	record ContextAnalysisReuseStatistics(long requests,long hits,int entries) { }
 	private record BoundaryRow(int binding,boolean entry,ResolvedOrigin origin,Context context,
-		MemoShapes.Shape shape) { }
+		MemoShapes.Shape shape,boolean entryTypeTransition) { }
 	private final Map<EntryUse,Boolean> entryUses=new LinkedHashMap<>();
 	private final MemoProgramFacts facts;
 	private final MemoSources sources;
@@ -815,12 +816,13 @@ public final class MemoProgramModel {
 					List.of(binding),context,environment -> {
 					Context exact=context.withEnvironment(environment);
 					MemoShapes.Shape actual=shapes.bindingShape(binding,exact.evaluation());
-					if(!actual.exact() || actual.dataType()!=repeat.dataType() || actual.valueType()!=repeat.valueType()
+					if(!actual.exact() || !loopBoundaryTypeCompatible(entry,actual,repeat)
 						|| !entry && (actual.rows()!=repeat.rows() || actual.columns()!=repeat.columns())
 						|| entry && contractEntry[0]!=null && !samePhysicalShape(contractEntry[0],actual)
 						|| rows.size()>=limit) { complete[0]=false; return false; }
 					if(entry) contractEntry[0]=actual;
-					rows.add(new BoundaryRow(binding,entry,environment.origins().get(0),exact,actual));
+					rows.add(new BoundaryRow(binding,entry,environment.origins().get(0),exact,actual,
+						actual.valueType()!=repeat.valueType()));
 					return true;
 				});
 				if(!complete[0] || visit.status()!=MemoBindingResolver.VisitStatus.COMPLETE) return null;
@@ -856,10 +858,12 @@ public final class MemoProgramModel {
 			Truth known=legality[from.ordinal()][target.ordinal()];
 			if(known!=null) return known;
 			Truth result=Truth.YES;
+			if(row.entryTypeTransition() && (from!=MemoPartition.LOCAL || target!=MemoPartition.LOCAL
+				|| MemoMovement.kind(from,target,false)!=MemoMovement.Kind.DIRECT)) result=Truth.NO;
 			if(target==MemoPartition.LOCAL) {
 				var residency=privacy.localResidencyAt(row.binding(),privacyContext(row.context(),List.of(row.binding())));
 				if(residency.legality()==MemoPrivacy.Legality.ILLEGAL) result=Truth.NO;
-				else if(residency.legality()==MemoPrivacy.Legality.DEFER) result=Truth.UNKNOWN;
+				else if(residency.legality()==MemoPrivacy.Legality.DEFER && result==Truth.YES) result=Truth.UNKNOWN;
 			}
 			if(result==Truth.YES) result=row.entry() ? MemoMovement.legal(from,target,row.shape().dataType(),
 				Privacy.PUBLIC,row.shape().rows(),row.shape().columns(),sources.workers(),false)
@@ -933,7 +937,7 @@ public final class MemoProgramModel {
 					Context exact=context.withEnvironment(environment);
 					MemoShapes.Shape actual=shapes.bindingShape(binding,exact.evaluation());
 					if(!actual.exact()) { result[0]=Truth.UNKNOWN; return true; }
-					if(actual.dataType()!=repeat.dataType() || actual.valueType()!=repeat.valueType()
+					if(!loopBoundaryTypeCompatible(entry,actual,repeat)
 						|| !entry && (actual.rows()!=repeat.rows() || actual.columns()!=repeat.columns())) {
 						result[0]=Truth.NO; return false;
 					}
@@ -944,6 +948,11 @@ public final class MemoProgramModel {
 					ResolvedOrigin origin=environment.origins().get(0);
 					MemoPartition from=layout(origin,selected);
 					if(from==null) { result[0]=Truth.UNKNOWN; return true; }
+					boolean entryTypeTransition=actual.valueType()!=repeat.valueType();
+					if(entryTypeTransition && (from!=MemoPartition.LOCAL || target!=MemoPartition.LOCAL
+						|| MemoMovement.kind(from,target,false)!=MemoMovement.Kind.DIRECT)) {
+						result[0]=Truth.NO; return false;
+					}
 					if(target==MemoPartition.LOCAL) {
 						var residency=privacy.localResidencyAt(binding,privacyContext(exact,List.of(binding)));
 						if(residency.legality()==MemoPrivacy.Legality.ILLEGAL) {
@@ -968,6 +977,14 @@ public final class MemoProgramModel {
 	private static boolean samePhysicalShape(MemoShapes.Shape left,MemoShapes.Shape right) {
 		return left.dataType()==right.dataType() && left.valueType()==right.valueType()
 			&& left.rows()==right.rows() && left.columns()==right.columns();
+	}
+	private static boolean loopBoundaryTypeCompatible(boolean entry,MemoShapes.Shape actual,
+		MemoShapes.Shape repeat) {
+		if(actual.dataType()!=repeat.dataType()) return false;
+		if(actual.valueType()==repeat.valueType()) return true;
+		// BinaryScalarScalarCPInstruction promotes this exact arithmetic case at the first body execution.
+		return entry && actual.dataType()==DataType.SCALAR
+			&& actual.valueType()==ValueType.INT64 && repeat.valueType()==ValueType.FP64;
 	}
 
 	private void registerMovementCosts() {
@@ -1733,16 +1750,18 @@ public final class MemoProgramModel {
 	public Set<MemoPartition> selectedLayouts(int owner,int[] selected) {
 		if(!memo.rules(owner).isEmpty()) return Set.copyOf(memo.rule(owner,selected[owner]).outputs());
 		Set<MemoPartition> layouts = new LinkedHashSet<>();
-		for(Occurrence occurrence : occurrencesByOwner.get(owner))
-		for(List<Integer> frame : framesFor(occurrence.regionId())) {
-			Context context = context(selected,occurrence.regionId(),frame);
-			var visit = visitActive(occurrence,List.of(facts.valueBinding(occurrence.id())),context,environment -> {
-				MemoPartition partition = layout(environment.origins().get(0),selected);
-				if(partition != null) layouts.add(partition);
-				return true;
-			});
-			if(visit.status() == MemoBindingResolver.VisitStatus.UNRESOLVED)
-				throw new IllegalStateException("Unresolved selected alias owner " + owner);
+		for(Occurrence occurrence : occurrencesByOwner.get(owner)) {
+			if(facts.occurrenceContexts(occurrence.id()).isEmpty()) continue;
+			for(List<Integer> frame : framesFor(occurrence.regionId())) {
+				Context context = context(selected,occurrence.regionId(),frame);
+				var visit = visitActive(occurrence,List.of(facts.valueBinding(occurrence.id())),context,environment -> {
+					MemoPartition partition = layout(environment.origins().get(0),selected);
+					if(partition != null) layouts.add(partition);
+					return true;
+				});
+				if(visit.status() == MemoBindingResolver.VisitStatus.UNRESOLVED)
+					throw new IllegalStateException("Unresolved selected alias owner " + owner);
+			}
 		}
 		return Set.copyOf(layouts);
 	}
@@ -1851,7 +1870,7 @@ public final class MemoProgramModel {
 		double[] values=new double[sizes[owner]];
 		Hop view=shapes.viewAt(occurrence.id(),evaluation);
 		for(int rule=0;rule<values.length;rule++) values[rule]=MemoCostModel.nativeCost(view,
-			memo.rule(owner,rule),Math.max(1,sources.workers()),weight);
+			memo.rule(owner,rule),Math.max(1,sources.workers()),weight,owner,shapes.transformProof(owner));
 		nativeVectorBuilds++;
 		if(key!=null) nativeVectorCache.put(key,values.clone());
 		return values;
@@ -1970,7 +1989,7 @@ public final class MemoProgramModel {
 			if(contexts.isEmpty()) continue;
 			MemoPartition target=headLayout(head,selected);
 			Set<MemoPartition> layouts=new LinkedHashSet<>();
-			Set<MemoShapes.Shape> entries=new LinkedHashSet<>(), repeats=new LinkedHashSet<>();
+			List<MemoShapes.Shape> entries=new ArrayList<>(), repeats=new ArrayList<>();
 			boolean[] iterator={false}; boolean required=false;
 			for(List<Integer> frame : contexts) {
 				LoopExecutionCase bodyCase=firstBodyCase(loop.id());
@@ -2014,24 +2033,43 @@ public final class MemoProgramModel {
 			}
 			if(iterator[0]) continue;
 			if(required && layouts.isEmpty()) continue;
-			if(repeats.size()!=1 || !repeats.iterator().next().exact()
-				|| layouts.contains(null) || required && (entries.size()!=1 || !entries.iterator().next().exact()))
-				throw new IllegalStateException("Selected loop contract has unresolved phase shape/source: "+head.value().variable());
-			var repeat=repeats.iterator().next();
-			var entry=required ? entries.iterator().next() : repeat;
+			MemoShapes.Shape repeat=contractPhysicalShape(repeats);
+			MemoShapes.Shape entry=required ? contractPhysicalShape(entries) : repeat;
+			if(repeat==null || entry==null || layouts.contains(null))
+				throw new IllegalStateException("Selected loop contract has unresolved phase shape/source: "
+					+head.value().variable()+" entries="+entries+" repeats="+repeats+" layouts="+layouts);
+			if(!loopBoundaryTypeCompatible(required,entry,repeat))
+				throw new IllegalStateException("Selected loop contract has an unsupported entry/repeat type transition: "
+					+head.value().variable()+" "+entry.valueType()+" -> "+repeat.valueType());
+			boolean entryTypeTransition=entry.valueType()!=repeat.valueType();
+			if(entryTypeTransition && (target!=MemoPartition.LOCAL
+				|| layouts.stream().anyMatch(source -> source!=MemoPartition.LOCAL
+					|| MemoMovement.kind(source,target,false)!=MemoMovement.Kind.DIRECT)))
+				throw new IllegalStateException("Selected scalar type transition is not LOCAL/DIRECT: "
+					+head.value().variable());
 			List<MemoSupplyRegistry.Recipe> recipes=new ArrayList<>();
 			for(MemoPartition source : layouts) recipes.add(new MemoSupplyRegistry.Recipe(source,
 				MemoSupplyRegistry.Movement.valueOf(MemoMovement.kind(source,target,false).name()),
 				source.federated() || target.federated() ? sources.pool().encode() : null));
 			boolean scalar=repeat.dataType().isScalar();
 			MemoLoopRuntime.Contract contract=new MemoLoopRuntime.Contract(head.value().variable(),repeat.dataType(),
-				repeat.valueType(),target,scalar ? -1 : entry.rows(),scalar ? -1 : entry.columns(),
+				entry.valueType(),repeat.valueType(),target,scalar ? -1 : entry.rows(),scalar ? -1 : entry.columns(),
 				scalar ? -1 : repeat.rows(),scalar ? -1 : repeat.columns(),required,
 				true,recipes,sources.pool());
 			result.computeIfAbsent(facts.statementBlock(loop.statementBlockId()),ignored -> new ArrayList<>()).add(contract);
 		}
 		result.replaceAll((block,contracts) -> List.copyOf(contracts));
 		return java.util.Collections.unmodifiableMap(result);
+	}
+
+	static MemoShapes.Shape contractPhysicalShape(List<MemoShapes.Shape> candidates) {
+		MemoShapes.Shape result=null;
+		for(MemoShapes.Shape candidate:candidates) {
+			if(candidate==null || !candidate.exact()) return null;
+			if(result==null) result=candidate;
+			else if(!samePhysicalShape(result,candidate)) return null;
+		}
+		return result;
 	}
 
 	private int[] scope(List<Integer> bindings,List<Integer> required,List<List<Integer>> frames) {

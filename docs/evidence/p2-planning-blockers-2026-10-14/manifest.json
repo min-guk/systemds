@@ -1,0 +1,330 @@
+{
+  "purpose": "P2 report evidence only; no new workload execution or dataset row reads",
+  "publishedHead": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+  "versionWarning": "C26 historical runs and uncommitted frozen candidate06 are different versions; source excerpts are current working tree, not new run evidence",
+  "files": [
+    {
+      "path": "c26-w1/coordinator.log",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w1/coordinator.log",
+      "sha256": "00c6a21c1f914437f24e1be0ec1292c5b18ad9fd27e12582b721a3063f226f11"
+    },
+    {
+      "path": "c26-w1/result.json",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w1/result.json",
+      "sha256": "c9ec97d137929fb3a0a5a39d6f4f8e62dea1e57d5936684b75971af2c822975c"
+    },
+    {
+      "path": "c26-w1/cell.dml",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w1/cell.dml",
+      "sha256": "c53daa16a5a72fddf07fe1d1fcf65f91d2a092c51dbe9139d4607f5bcfe29347"
+    },
+    {
+      "path": "c26-w1/render-receipt.json",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w1/render-receipt.json",
+      "sha256": "3d07996daddbe6da2c48ff25e858886620095e5bd536d7cd678fe1aeb889f00b"
+    },
+    {
+      "path": "c26-w3/coordinator.log",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w3/coordinator.log",
+      "sha256": "d8ecca4267c48ffd4f8c4445b3aa28171432931b3e374b56244bb62cdcf0b656"
+    },
+    {
+      "path": "c26-w3/result.json",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w3/result.json",
+      "sha256": "751a872c355c60c741da8bc56db94e4054bc3cc386ca82ba81f9ef89e03d6033"
+    },
+    {
+      "path": "c26-w3/cell.dml",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w3/cell.dml",
+      "sha256": "d4a4e842bdd730304996ccfc2e6d83e6d237d54b18f9947958c59e4d93e7f308"
+    },
+    {
+      "path": "c26-w3/render-receipt.json",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w3/render-receipt.json",
+      "sha256": "520b21fcddeafbcad4cfb95712d0d9718ddfa95897c2bd61dfe0733e916b85d2"
+    },
+    {
+      "path": "c26-w5/coordinator.log",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w5/coordinator.log",
+      "sha256": "20489a7f529d61c35b55f64a0873a7b6122395959f3daa9ea1d8c6c02f1e43c8"
+    },
+    {
+      "path": "c26-w5/result.json",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w5/result.json",
+      "sha256": "74e252928bd23d8ec815e988ae6cf798e1752c017934155dd92e27bf738935db"
+    },
+    {
+      "path": "c26-w5/cell.dml",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w5/cell.dml",
+      "sha256": "3e0486e74d2fe61d2492079547507bde41c3f13ebbd82dec893619e65e386090"
+    },
+    {
+      "path": "c26-w5/render-receipt.json",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w5/render-receipt.json",
+      "sha256": "442960e13d25d944a1e96619601d916df6dd354f0068c24f4b7aca6d30b4b353"
+    },
+    {
+      "path": "c26-w7/coordinator.log",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w7/coordinator.log",
+      "sha256": "5cd3433fcc7da4569f5c488bc07983d0d94d43c832b95a38dd64b96d051f9101"
+    },
+    {
+      "path": "c26-w7/result.json",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w7/result.json",
+      "sha256": "94680def39635859c5fcebe3616dba3af568d3edad54b3cf90ec8e958e987c6c"
+    },
+    {
+      "path": "c26-w7/cell.dml",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w7/cell.dml",
+      "sha256": "3fe0993579e6ccec526a357b0cd0c923adb3dd086c3cde531993c2402837af2c"
+    },
+    {
+      "path": "c26-w7/render-receipt.json",
+      "source": "/home/mchoi/fedplanner-under3-20261014/docs/evidence/memo-w1357-planning-2026-10-14/initial56/attempts/p2-P2_PREP-w7/render-receipt.json",
+      "sha256": "fc13c930d8a14979faac84e7950c5f8fbadf1b3212ed728080ba1b4e52990770"
+    },
+    {
+      "path": "candidate06-w3/coordinator.log",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/p2-P2_PREP-w3/coordinator.log",
+      "sha256": "f22fbfa6038b34fdd9763bf81c0221a79ca9597531b270ec3c9987fb163ac96c"
+    },
+    {
+      "path": "candidate06-w3/result.json",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/p2-P2_PREP-w3/result.json",
+      "sha256": "6e92e1adf99fbf4bc55f779228aa2f7d4a2c91ba750a2683bf432f8fb0a0a727"
+    },
+    {
+      "path": "candidate06-w3/cell.dml",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/p2-P2_PREP-w3/cell.dml",
+      "sha256": "d4a4e842bdd730304996ccfc2e6d83e6d237d54b18f9947958c59e4d93e7f308"
+    },
+    {
+      "path": "candidate06-w3/render-receipt.json",
+      "source": "/home/mchoi/actual-support-candidate06-w3-20261014/attempts/p2-P2_PREP-w3/render-receipt.json",
+      "sha256": "520b21fcddeafbcad4cfb95712d0d9718ddfa95897c2bd61dfe0733e916b85d2"
+    },
+    {
+      "path": "input-metadata/P2_features.data.mtd",
+      "source": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z/data/P2_features.data.mtd",
+      "sha256": "c1d77e07b5dbdefab0bb794f244b2a7957f01fd173bc9ef000446dfa302702f6"
+    },
+    {
+      "path": "input-metadata/P2_features_3_1.data.mtd",
+      "source": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z/data/P2_features_3_1.data.mtd",
+      "sha256": "1bf29779eb0b4b8a06bce7805fcec85473c40f1e550abcb586af34a864a4823a"
+    },
+    {
+      "path": "input-metadata/P2_features_3_2.data.mtd",
+      "source": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z/data/P2_features_3_2.data.mtd",
+      "sha256": "1bf29779eb0b4b8a06bce7805fcec85473c40f1e550abcb586af34a864a4823a"
+    },
+    {
+      "path": "input-metadata/P2_features_3_3.data.mtd",
+      "source": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z/data/P2_features_3_3.data.mtd",
+      "sha256": "0cedfbb99a276aa2a6a40691b2a114daaff7062264d7d250570e35b7b0f95e0a"
+    },
+    {
+      "path": "input-metadata/P2_labels.data.mtd",
+      "source": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z/data/P2_labels.data.mtd",
+      "sha256": "d222dc885d6a070d7db35782c807f877ba4c1de3c99640b88832734381f8a650"
+    },
+    {
+      "path": "input-metadata/P2_labels_3_1.data.mtd",
+      "source": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z/data/P2_labels_3_1.data.mtd",
+      "sha256": "6b435a34677a7018edd48d714e17d0376af4b1947f56303872e279d8cff6a480"
+    },
+    {
+      "path": "input-metadata/P2_labels_3_2.data.mtd",
+      "source": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z/data/P2_labels_3_2.data.mtd",
+      "sha256": "145dcb1c29061b8c1a4e634cb978b454e3d765ac0bba58f33270bf302f1eff0a"
+    },
+    {
+      "path": "input-metadata/P2_labels_3_3.data.mtd",
+      "source": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z/data/P2_labels_3_3.data.mtd",
+      "sha256": "750c7e9a292ad7fe450a9c4975325fe6765a15b3221291e0cd7533a3555b9784"
+    },
+    {
+      "path": "source-excerpts.txt",
+      "source": "numbered current source/spec excerpts; full source hashes recorded separately",
+      "sha256": "9a4650531de992f34adff30ae91743041abcc801db684a4d3a6b9b195c8fef8c"
+    },
+    {
+      "path": "verify_p2_evidence.py",
+      "source": "report static verification; not workload benchmark",
+      "sha256": "3432829171d3f8b63fc52c83bcbe82f3e83c088948900da6ac7ec6900474d225"
+    },
+    {
+      "path": "analysis.json",
+      "source": "report static verification; not workload benchmark",
+      "sha256": "d78b5c29b9773b4c66100d993f1d030ef7ac0b083d968ac5f047fc5ffb5d4496"
+    }
+  ],
+  "sourceFiles": [
+    {
+      "path": "docs/FEDPLANNER_IMPLEMENTATION_SPEC_2026-10-13_KO.md",
+      "sha256": "5ce851acd5b2f4eb0905b78eb7c3bab226071aa7ada329fbf8d34511ba1f01bd",
+      "ranges": [
+        [
+          103,
+          120
+        ],
+        [
+          279,
+          285
+        ]
+      ]
+    },
+    {
+      "path": "docs/FEDPLANNER_SIMPLE_MEMO_REDESIGN_2026-10-13_KO.md",
+      "sha256": "df958f94568f98b636b58e39ab84e0d36a164e63d03cbb441a4bbd4d05237b91",
+      "ranges": [
+        [
+          726,
+          740
+        ]
+      ]
+    },
+    {
+      "path": "src/main/java/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.java",
+      "sha256": "b2519f4691543de1cf7cdd34c91af4d016c3334d2796d42d4c6be5b3abcf55a6",
+      "ranges": [
+        [
+          70,
+          89
+        ]
+      ],
+      "sameWholeFileAsCandidate06": true
+    },
+    {
+      "path": "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoSources.java",
+      "sha256": "a0a32fdf191d926283874a96e6a0c98b9e52b12eedaaf9225da1029775d4313e",
+      "ranges": [
+        [
+          31,
+          40
+        ],
+        [
+          77,
+          95
+        ]
+      ],
+      "sameWholeFileAsCandidate06": true
+    },
+    {
+      "path": "src/main/java/org/apache/sysds/runtime/controlprogram/federated/CanonicalWorkerPool.java",
+      "sha256": "b6928c608628affdeed177fcd2c7d650b3c2e3fd839d44b49da163ef680764c4",
+      "ranges": [
+        [
+          140,
+          164
+        ],
+        [
+          190,
+          206
+        ]
+      ],
+      "sameWholeFileAsCandidate06": true
+    },
+    {
+      "path": "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoShapes.java",
+      "sha256": "b3b71bf000d803341beb80ee9efd9215ff20e3a0796891ace7a3fe6582ddffb9",
+      "ranges": [
+        [
+          2064,
+          2095
+        ]
+      ],
+      "sameWholeFileAsCandidate06": false
+    },
+    {
+      "path": "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoCostModel.java",
+      "sha256": "f2bc64e7e723bdc207730633b6e8e37d60fd75eacefa912ff599e915dd9fcd86",
+      "ranges": [
+        [
+          83,
+          104
+        ],
+        [
+          140,
+          192
+        ],
+        [
+          409,
+          424
+        ]
+      ],
+      "sameWholeFileAsCandidate06": true
+    },
+    {
+      "path": "src/main/java/org/apache/sysds/runtime/instructions/fed/MultiReturnParameterizedBuiltinFEDInstruction.java",
+      "sha256": "4fedae26273b2795ded50bc820aa4af0182d121e714dd82d9c6d0b3397fdef60",
+      "ranges": [
+        [
+          159,
+          227
+        ],
+        [
+          360,
+          389
+        ]
+      ],
+      "sameWholeFileAsCandidate06": true
+    },
+    {
+      "path": "src/main/java/org/apache/sysds/runtime/transform/TransformEncodeMetadataPrivacy.java",
+      "sha256": "5a4c1c2716ebb12fa6c329ba95709d46705c33b7a713d5e4d101c7475d296486",
+      "ranges": [
+        [
+          35,
+          40
+        ],
+        [
+          53,
+          77
+        ],
+        [
+          88,
+          115
+        ]
+      ],
+      "sameWholeFileAsCandidate06": true
+    },
+    {
+      "path": "src/main/java/org/apache/sysds/runtime/transform/encode/ColumnEncoderRecode.java",
+      "sha256": "371bf282038c56c9a35bd5acebb140b615f9b787ebf8948ff147a17bf16cc00a",
+      "ranges": [
+        [
+          264,
+          317
+        ],
+        [
+          340,
+          363
+        ]
+      ],
+      "sameWholeFileAsCandidate06": true
+    },
+    {
+      "path": "src/main/java/org/apache/sysds/runtime/transform/encode/ColumnEncoderDummycode.java",
+      "sha256": "3bcd7912a7cb06d39da86d05815260c03914cdb484137e5647c5d84846352e6a",
+      "ranges": [
+        [
+          201,
+          248
+        ]
+      ],
+      "sameWholeFileAsCandidate06": true
+    },
+    {
+      "path": "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoPrivacy.java",
+      "sha256": "fdb8e6c7b6c3ad75563f9df040b78bdfe7366414ba7aae2f03ca89e63dca7ea9",
+      "ranges": [
+        [
+          1082,
+          1095
+        ]
+      ],
+      "sameWholeFileAsCandidate06": true
+    }
+  ]
+}

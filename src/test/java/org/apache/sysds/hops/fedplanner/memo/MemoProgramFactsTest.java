@@ -225,6 +225,15 @@ public class MemoProgramFactsTest {
 	}
 
 	@Test
+	public void nonAffineCarriedCounterRemainsUnknownWithoutCrashing() throws Exception {
+		MemoProgramFacts facts = analyze("i=1;X=0;while(i<4){if(i>1){X=2;}else{X=1;}i=i*2;}print(X);");
+		facts.requireComplete();
+		Assert.assertFalse("multiplicative updates are not positive affine proofs",
+			facts.guardPhases(facts.loops().get(0).id()).stream()
+				.anyMatch(phase -> phase.proof().contains("carried-positive-affine-counter:i")));
+	}
+
+	@Test
 	public void phaseProvenOuterGuardPropagatesUnconditionalScalarAssignment() throws Exception {
 		MemoProgramFacts facts=analyze("A=matrix(1,rows=4,cols=1);W=matrix(0,rows=1,cols=1);i=0;"
 			+ "while(i<3){accept=1;if(i>0){accept=0;}if(accept==1){W=A;}i=i+1;}print(sum(W));");
@@ -367,12 +376,124 @@ public class MemoProgramFactsTest {
 	}
 
 	@Test
-	public void parforIsRejectedByTheSequentialLoopContract() throws Exception {
-		MemoProgramFacts facts = analyze("A=matrix(0,3,1);parfor(i in 1:3){A[i,1]=i;}print(sum(A));");
+	public void literalOneIterationParforUsesTheExactSequentialLoopContract() throws Exception {
+		MemoProgramFacts facts = analyze("A=matrix(0,1,1);parfor(i in 1:1,check=0){A[i,1]=i;}print(sum(A));");
+		facts.requireComplete();
+		Assert.assertEquals(1,facts.loops().size());
+		Assert.assertEquals(List.of(new MemoProgramFacts.LoopExecutionCase(
+			MemoProgramFacts.LoopCardinality.ONE,1D,List.of(MemoProgramFacts.IterationPhase.FIRST))),
+			facts.loopExecutionCases(0));
+	}
+
+	@Test
+	public void literalZeroIterationParforUsesTheExactSequentialLoopContract() throws Exception {
+		MemoProgramFacts facts = analyze(
+			"A=matrix(0,1,1);parfor(i in seq(1,0,1),check=0){A[1,1]=i;}print(sum(A));");
+		facts.requireComplete();
+		Assert.assertEquals(1,facts.loops().size());
+		Assert.assertEquals(List.of(new MemoProgramFacts.LoopExecutionCase(
+			MemoProgramFacts.LoopCardinality.ZERO,0D,List.of())),facts.loopExecutionCases(0));
+	}
+
+	@Test
+	public void literalManyIterationParforIsRejectedByTheSequentialLoopContract() throws Exception {
+		MemoProgramFacts facts = analyze("A=matrix(0,3,1);parfor(i in 1:3,check=0){A[i,1]=i;}print(sum(A));");
 		Assert.assertEquals(Status.UNSUPPORTED,facts.status());
 		Assert.assertTrue(facts.diagnostics().stream()
 			.anyMatch(diagnostic -> "UNSUPPORTED_PARFOR".equals(diagnostic.code())));
-		Assert.assertTrue("a PARFOR must not be published as a sequential LoopRecord",facts.loops().isEmpty());
+	}
+
+	@Test
+	public void callDependentParforAcceptsOneWhenEveryReachableCallFrameProvesOne() throws Exception {
+		MemoProgramFacts facts = analyze(
+			"f=function(double n) return(matrix[double] Y){Y=matrix(0,1,1);"
+				+ "parfor(i in 1:n,check=0){Y[1,1]=i;}}A=f(1);B=f(1);print(sum(A)+sum(B));");
+		facts.requireComplete();
+		Assert.assertEquals(MemoProgramFacts.LoopCardinality.ONE,
+			facts.loopExecutionCases(0).get(0).cardinality());
+	}
+
+	@Test
+	public void callDependentParforRejectsMixedOneAndManyCallFrames() throws Exception {
+		MemoProgramFacts facts = analyze(
+			"f=function(double n) return(matrix[double] Y){Y=matrix(0,1,1);"
+				+ "parfor(i in 1:n,check=0){Y[1,1]=i;}}A=f(1);B=f(2);print(sum(A)+sum(B));");
+		Assert.assertEquals(Status.UNSUPPORTED,facts.status());
+		Assert.assertTrue(facts.diagnostics().stream()
+			.anyMatch(diagnostic -> "UNSUPPORTED_PARFOR".equals(diagnostic.code())));
+	}
+
+	@Test
+	public void callDependentParforRejectsUnknownReachableCallFrame() throws Exception {
+		MemoProgramFacts facts = analyze(
+			"f=function(double n) return(matrix[double] Y){Y=matrix(0,1,1);"
+				+ "parfor(i in 1:n,check=0){Y[1,1]=i;}}n=as.integer(as.scalar(rand(rows=1,cols=1))*2);"
+				+ "A=f(n);print(sum(A));");
+		Assert.assertEquals(Status.UNSUPPORTED,facts.status());
+		Assert.assertTrue(facts.diagnostics().stream()
+			.anyMatch(diagnostic -> "UNSUPPORTED_PARFOR".equals(diagnostic.code())));
+	}
+
+	@Test
+	public void loopCarriedActualIsNotReducedToItsOneIterationEntryValue() throws Exception {
+		MemoProgramFacts facts = analyze(
+			"f=function(double n) return(matrix[double] Y){Y=matrix(0,1,1);"
+				+ "parfor(i in 1:n,check=0){Y[1,1]=i;}}n=1;A=matrix(0,1,1);"
+				+ "for(j in 1:2){A=f(n);n=n+1;}print(sum(A));");
+		Assert.assertEquals(Status.UNSUPPORTED,facts.status());
+		Assert.assertTrue(facts.diagnostics().stream()
+			.anyMatch(diagnostic -> "UNSUPPORTED_PARFOR".equals(diagnostic.code())));
+	}
+
+	@Test
+	public void scalarCastsUseRuntimeValuesWhenProvingParforCardinality() throws Exception {
+		MemoProgramFacts facts = analyze(
+			"f=function(double n) return(matrix[double] Y){Y=matrix(0,1,1);"
+				+ "parfor(i in 1:n,check=0){Y[1,1]=i;}}A=f(as.integer(as.boolean(2)));print(sum(A));");
+		facts.requireComplete();
+		Assert.assertEquals(MemoProgramFacts.LoopCardinality.ONE,
+			facts.loopExecutionCases(0).get(0).cardinality());
+	}
+
+	@Test
+	public void defaultParforStepUsesRuntimeLongComparison() throws Exception {
+		MemoProgramFacts facts = analyze(
+			"f=function(double a,double b) return(matrix[double] Y){Y=matrix(0,1,1);"
+				+ "parfor(i in a:b,check=0){Y[1,1]=i;}}A=f(1.8,1.2);print(sum(A));");
+		facts.requireComplete();
+		Assert.assertEquals(MemoProgramFacts.LoopCardinality.ZERO,
+			facts.loopExecutionCases(0).get(0).cardinality());
+	}
+
+	@Test
+	public void unusedFunctionParforDoesNotRequireAReachableCardinalityProof() throws Exception {
+		MemoProgramFacts facts = analyze(
+			"f=function(double n) return(matrix[double] Y){Y=matrix(0,1,1);"
+				+ "parfor(i in 1:n,check=0){Y[1,1]=i;}}print(1);");
+		facts.requireComplete();
+		Assert.assertTrue(facts.callFramesForRegion(facts.loop(0).regionId()).isEmpty());
+	}
+
+	@Test
+	public void lossyNegativeInt64SubtractionCannotProveParforCardinality() throws Exception {
+		MemoProgramFacts facts=analyze(
+			"f=function(integer a,integer b) return(matrix[double] Y){Y=matrix(0,1,1);"
+				+ "parfor(i in 1:((b-a)*2),check=0){Y[1,1]=i;}}"
+				+ "A=f(-9007199254740993,-9007199254740992);print(sum(A));");
+		Assert.assertEquals(Status.UNSUPPORTED,facts.status());
+		Assert.assertTrue(facts.diagnostics().stream()
+			.anyMatch(diagnostic -> "UNSUPPORTED_PARFOR".equals(diagnostic.code())));
+	}
+
+	@Test
+	public void exactDoubleIntegerBoundaryMayStillProveOneIteration() throws Exception {
+		MemoProgramFacts facts=analyze(
+			"f=function(integer n) return(matrix[double] Y){Y=matrix(0,1,1);"
+				+ "parfor(i in n:n,check=0){Y[1,1]=i;}}"
+				+ "A=f(-9007199254740992);print(sum(A));");
+		facts.requireComplete();
+		Assert.assertEquals(MemoProgramFacts.LoopCardinality.ONE,
+			facts.loopExecutionCases(0).get(0).cardinality());
 	}
 
 	@Test

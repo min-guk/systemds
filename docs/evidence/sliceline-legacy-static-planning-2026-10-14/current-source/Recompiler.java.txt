@@ -1,0 +1,82 @@
+CURRENT WORKTREE SOURCE src/main/java/org/apache/sysds/hops/recompile/Recompiler.java
+NOTE: uncommitted support changes exist; not the measured legacy JAR.
+
+LINES 478-508
+478: 		
+479: 		// update statistics, rewrites, and mem estimates
+480: 		if( updateStats ) {
+481: 			// refresh matrix characteristics (update stats)
+482: 			Hop.resetVisitStatus(hops);
+483: 			for( Hop hopRoot : hops )
+484: 				rUpdateStatistics( hopRoot, ec.getVariables() );
+485: 			
+486: 			// dynamic hop rewrites
+487: 			if( memoScope == null && !inplace ) {
+488: 				_rewriter.get().rewriteHopDAG( hops, null );
+489: 				
+490: 				//update stats after rewrites
+491: 				Hop.resetVisitStatus(hops);
+492: 				for( Hop hopRoot : hops )
+493: 					rUpdateStatistics( hopRoot, ec.getVariables() );
+494: 				rewrittenHops = true;
+495: 			}
+496: 			
+497: 			// refresh memory estimates (based on updated stats,
+498: 			// before: init memo table with propagated worst-case estimates,
+499: 			// after: extract worst-case estimates from memo table 
+500: 			Hop.resetVisitStatus(hops);
+501: 			MemoTable memo = new MemoTable();
+502: 			memo.init(hops, status);
+503: 			Hop.resetVisitStatus(hops);
+504: 			for( Hop hopRoot : hops )
+505: 				hopRoot.refreshMemEstimates(memo);
+506: 			memo.extract(hops, status);
+507: 		}
+508: 		
+
+LINES 2175-2200
+2175: 		
+2176: 		//update statistics for transient reads according to current statistics
+2177: 		//(with awareness not to override persistent reads to an existing name)
+2178: 		if( HopRewriteUtils.isData(hop, OpOpData.TRANSIENTREAD) ) {
+2179: 			DataOp d = (DataOp) hop;
+2180: 			String varName = d.getName();
+2181: 			if( vars.keySet().contains( varName ) ) {
+2182: 				Data dat = vars.get(varName);
+2183: 				if( dat instanceof MatrixObject ) {
+2184: 					MatrixObject mo = (MatrixObject) dat;
+2185: 					d.setDim1(mo.getNumRows());
+2186: 					d.setDim2(mo.getNumColumns());
+2187: 					d.setNnz(mo.getNnz());
+2188: 					if(mo.isCompressed()){
+2189: 						d.setCompressedSize(mo.getCompressedSize());
+2190: 						d.setCompressedOutput(true);	
+2191: 					}
+2192: 				}
+2193: 				else if( dat instanceof FrameObject ) {
+2194: 					FrameObject fo = (FrameObject) dat;
+2195: 					d.setDim1(fo.getNumRows());
+2196: 					d.setDim2(fo.getNumColumns());
+2197: 				}
+2198: 				else if( dat instanceof ListObject ) {
+2199: 					ListObject lo = (ListObject) dat;
+2200: 					d.setDim1(lo.getLength());
+
+LINES 818-834
+818: 				if (state.plannerPlacementSelected) {
+819: 					// Restore an exact selected placement, including a null forced type.  Retaining a
+820: 					// stale forced type here would silently mutate the planner's physical decision.
+821: 					hop.setExecType(state.execType);
+822: 					hop.setForcedExecType(state.forcedExecType);
+823: 				}
+824: 				else {
+825: 					if (state.execType != null && hop.getForcedExecType() == null)
+826: 						hop.setExecType(state.execType);
+827: 					if (state.forcedExecType != null)
+828: 						hop.setForcedExecType(state.forcedExecType);
+829: 				}
+830: 				if (state.fedOut != null)
+831: 					hop.setFederatedOutput(state.fedOut);
+832: 				hop.setFederatedOutputDerived(state.fedOutDerived);
+833: 				hop.setPlannerPlacementSelected(state.plannerPlacementSelected);
+834: 				if (LOG_RECOMPILE_NEW_HOPS && plannerState != null) {

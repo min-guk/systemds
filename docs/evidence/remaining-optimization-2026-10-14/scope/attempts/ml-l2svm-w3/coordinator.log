@@ -1,0 +1,24 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/14 17:41:13 WARN utils.SettingsChecker: Low memory budget of total:    251 GB set to:      3 GB
+26/10/14 17:41:13 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[MemoPlannerPhase] phase=facts elapsedNs=59549114
+[MemoPlannerPhase] phase=rules elapsedNs=552927321
+[MemoNativeRequests] preparedRequests=1299 reusedResults=1237 oracleRequests=62 canonicalStringsCreated=46 canonicalStringsReused=1237 uncacheableRequests=16 contextualViewBuilds=62
+[MemoNativeGeneration] cpPatterns=62 prefixRequests=76 prunedPrefixes=119 unknownPrefixes=18 visitedNativePatterns=204 determinantRegions=265 oracleEvaluations=303 evidenceReuses=0 publishedRules=257 coverageObligations=20
+[MemoPlannerPhase] phase=model elapsedNs=382602536
+[MemoCostProjection] bindingDagVisits=17296 projectionCacheHits=2408 relevantGuardDecisions=468 supportPrefixChecks=1971 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=4997 activationEnvironments=1035 projectedContexts=973 primitiveVectors=973 primitiveValues=5912 primitiveValueBytes=47296
+[MemoPlannerPhase] phase=optimization elapsedNs=81812206
+[MemoSearch] status=INFEASIBLE nodes=0 checkEvaluations=942 checkCacheHits=161 supportQueries=749 supportCacheHits=0 supportWitnessHits=20 binarySupportHits=20 binarySupportRows=152 worklistVisits=226 removedRules=27 costEvaluations=0 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=0 bindingGuardCacheHits=0 repeatProofRequests=6352 repeatProofCacheHits=6208 phaseShapeRequests=10386 phaseShapeCacheHits=6648 phaseShapeCacheEntries=3694 guardRelevanceRequests=12511 guardRelevanceCacheHits=12503 guardRelevanceIndexEntries=8 occurrenceTransferRequests=6332 occurrenceTransferCacheHits=6113 occurrenceTransferBuilds=219 occurrenceTransferEntries=219 guardAtomRequests=5928 guardAtomHits=5926 guardAtomIdentities=1
+[MemoMovementReuse] activationRows=1167 activationReplays=0 postGateRequests=0 postGateBuilds=0 postGateHits=0 primitiveContexts=0 contextualViewBuilds=0 unionRequests=0 unionCacheHits=0 measurementRequests=0 measurementHits=0
+[MemoNativeCostReuse] requests=814 cacheHits=538 vectorBuilds=435 entries=276
+[MemoContextAnalysisReuse] requests=669 hits=657 entries=12
+[MemoDirectRoots] resolver=shapes requests=3738 eligibleCalls=3738 fastPathCalls=3738 rootsResolved=3738
+[MemoDirectRoots] resolver=modelPrivacy requests=2168 eligibleCalls=603 fastPathCalls=603 rootsResolved=603
+[MemoCheckProjection] annotatedChecks=1191 invariantCheckAxes=0 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=0
+[31m
+An Error Occurred : 
+    IllegalStateException -- Memo planner did not prove an optimum: INFEASIBLE [shape owner=-1 binding=121 LOOP_CARRIED_SHAPE_MISMATCH Shape[dataType=SCALAR, valueType=INT64, rows=-1, columns=-1, nonZeros=-1, knowledge=EXACT] vs Shape[dataType=SCALAR, valueType=FP64, rows=-1, columns=-1, nonZeros=-1, knowledge=EXACT], MOVEMENT_FACTOR_WIDTH origin=276 width=11]
+[0m

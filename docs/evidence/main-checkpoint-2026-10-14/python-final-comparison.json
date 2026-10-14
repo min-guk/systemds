@@ -1,0 +1,33 @@
+{
+  "baseline": "b95989bdddd7f4547ba6d77c4659b5ab9f056815",
+  "baselineTests": 661,
+  "currentTests": 676,
+  "newHarnessTests": 15,
+  "newHarnessResult": "PASS",
+  "baselineFailures": 18,
+  "currentFailures": 18,
+  "baselineOnly": [],
+  "currentOnly": [],
+  "tracebackDifferences": [],
+  "normalization": "repository root path only",
+  "knownFailureIds": [
+    "ERROR: setUpClass (test_audit_current_scope_applicability.CurrentScopeApplicabilityAuditTest)",
+    "ERROR: setUpClass (test_audit_current_scope_harness_alias_resolution.ScopeHarnessAliasResolutionTest)",
+    "ERROR: setUpClass (test_audit_current_scope_library_resolution.CurrentScopeLibraryResolutionTest)",
+    "ERROR: setUpClass (test_audit_current_scope_template_resolution.ScopeTemplateResolutionTest)",
+    "ERROR: setUpClass (test_build_plan_space_inventory.PlanSpaceInventoryTest)",
+    "ERROR: setUpClass (test_certify_scope_harness_alias_rows.ScopeHarnessAliasRowsTest)",
+    "ERROR: setUpClass (test_certify_scope_template_rows.ScopeTemplateRowsTest)",
+    "ERROR: test_collector_failure_cannot_prevent_strict_cleanup (test_matrix_overhead.NodeEvidenceTest.test_collector_failure_cannot_prevent_strict_cleanup)",
+    "ERROR: test_complete_discovered_denominator_is_retained (test_build_closed_comparison_cases.ClosedComparisonCasesTest.test_complete_discovered_denominator_is_retained)",
+    "ERROR: test_complete_success_bypasses_profiler_compares_numerics_and_cleans_up_then_bad_receipt_fails (test_pinned_runtime_contract.CompleteExecutionTest.test_complete_success_bypasses_profiler_compares_numerics_and_cleans_up_then_bad_receipt_fails) (bad_receipt=False)",
+    "ERROR: test_complete_success_bypasses_profiler_compares_numerics_and_cleans_up_then_bad_receipt_fails (test_pinned_runtime_contract.CompleteExecutionTest.test_complete_success_bypasses_profiler_compares_numerics_and_cleans_up_then_bad_receipt_fails) (bad_receipt=True)",
+    "ERROR: test_default_execution_hands_manifest_image_to_lifecycle (test_pinned_runtime_contract.FreezeAndDefaultsTest.test_default_execution_hands_manifest_image_to_lifecycle)",
+    "ERROR: test_historical_decision_requires_pinned_evidence_and_exact_pair (test_build_closed_comparison_cases.ClosedComparisonCasesTest.test_historical_decision_requires_pinned_evidence_and_exact_pair)",
+    "ERROR: test_proof_multiplicity_and_exact_physical_set (test_verify_compact_physical_shard.CompactShardTest.test_proof_multiplicity_and_exact_physical_set)",
+    "ERROR: test_result_is_marked_unlimited_and_timings_are_not_exported (test_matrix_runtime_diagnostic.RuntimeDiagnosticEvidenceTest.test_result_is_marked_unlimited_and_timings_are_not_exported)",
+    "ERROR: test_valid_contract_runs_exact_selected_cell_without_compile_gate (test_matrix_runtime_diagnostic.RuntimeDiagnosticCliTest.test_valid_contract_runs_exact_selected_cell_without_compile_gate)",
+    "FAIL: test_current_public_ignores_are_explicit (test_build_plan_space_exclusion_ledger.ExclusionLedgerTest.test_current_public_ignores_are_explicit)",
+    "FAIL: test_missing_reference_and_dictionary_mutations_fail (test_verify_compact_physical_shard.CompactShardTest.test_missing_reference_and_dictionary_mutations_fail)"
+  ]
+}

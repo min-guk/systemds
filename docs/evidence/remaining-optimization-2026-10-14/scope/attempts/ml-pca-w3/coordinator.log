@@ -1,0 +1,11 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/14 17:41:03 WARN utils.SettingsChecker: Low memory budget of total:    251 GB set to:      3 GB
+26/10/14 17:41:03 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[MemoPlannerPhase] phase=facts elapsedNs=32877251
+[MemoPlannerPhase] phase=rules elapsedNs=170976154
+[MemoNativeRequests] preparedRequests=65 reusedResults=18 oracleRequests=47 canonicalStringsCreated=16 canonicalStringsReused=18 uncacheableRequests=31 contextualViewBuilds=47
+[MemoNativeGeneration] cpPatterns=49 prefixRequests=0 prunedPrefixes=116 unknownPrefixes=0 visitedNativePatterns=125 determinantRegions=241 oracleEvaluations=241 evidenceReuses=0 publishedRules=207 coverageObligations=0
+[31m
+An Error Occurred : 
+            CostException -- UNKNOWN_SIZE: unknown multi-return output for hop 4184 FunctionOp/fcall _internal EIGEN UNKNOWN -1x-1
+[0m
