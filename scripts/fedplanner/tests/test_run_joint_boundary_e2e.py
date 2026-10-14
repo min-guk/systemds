@@ -37,6 +37,42 @@ def matrix_rank(values):
 
 
 class JointBoundaryE2ETest(unittest.TestCase):
+    def test_memo_planning_time_is_not_full_compilation_time(self):
+        trace = ("[MemoPlanner] status=OPTIMAL epoch=1 workers=3 nativeRules=920 "
+                 "nodes=12 factsNs=100000000 rulesNs=200000000 modelNs=300000000 "
+                 "optimizationNs=400000000 projectionNs=500000000 cost=0.10000000000000001\n"
+                 "Total compilation time: 2.750 sec.\n")
+        plans = runner.memo_planning_statistics(trace)
+        self.assertEqual(1, len(plans))
+        self.assertEqual(1500000000, plans[0]["totalNanos"])
+        self.assertEqual(1.5, plans[0]["totalSeconds"])
+        self.assertEqual(0.4, plans[0]["phaseSeconds"]["optimization"])
+        self.assertEqual("0.10000000000000001", plans[0]["estimatedCost"])
+        self.assertEqual(12, plans[0]["nodes"])
+
+    def test_incomplete_memo_phase_trace_is_not_a_completed_plan_time(self):
+        trace = ("[MemoPlannerPhase] phase=facts elapsedNs=100\n"
+                 "[MemoPlannerPhase] phase=model elapsedNs=200\n")
+        self.assertEqual([], runner.memo_planning_statistics(trace))
+        self.assertEqual([], runner.memo_planning_statistics(
+            "[MemoPlanner] status=OPTIMAL factsNs=100 cost=1\n"))
+
+    def test_memo_uses_native_proof_and_independent_cp_reference(self):
+        args = runner.parse_args(["--planner", "memo", "--case", "ml_glm"])
+        self.assertEqual(runner.MEMO_MODEL_PROOF_CLASS, args.model_proof_class)
+        case = next(case for case in runner.cases() if case.name == "ml_glm")
+        cp = runner.java_command(case, "cp", planner="memo")
+        fed = runner.java_command(case, "fed", planner="memo")
+        self.assertIn("-config /evidence/config-cp.xml", cp)
+        self.assertIn("-config /evidence/config.xml", fed)
+        self.assertIn("-Dsysds.fedplanner.memo.trace=true", fed)
+        self.assertNotIn(runner.CANONICAL_PROBE_CLASS, fed)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runner.write_fixtures(root, (case,), "memo")
+            self.assertIn("compile_memo", (root / "config.xml").read_text())
+            self.assertIn(">NONE<", (root / "config-cp.xml").read_text())
+
     def test_cases_cover_true_false_privacy_and_joint_shapes(self):
         by_name = {case.name: case for case in runner.cases()}
         self.assertEqual({"l2svm_true_01", "l2svm_false_m11", "joint_correlated_aa",

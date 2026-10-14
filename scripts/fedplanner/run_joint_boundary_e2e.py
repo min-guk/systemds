@@ -42,12 +42,17 @@ SAFE_JAVA_CLASS = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-
 DEFAULT_MODEL_PROOF_CLASS = (
     "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact."
     "JointBoundaryPhysicalModelProofTest")
+MEMO_MODEL_PROOF_CLASS = "org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemoTest"
+MEMO_PREFLIGHT_MAIN = tuple("org/apache/sysds/hops/fedplanner/memo/" + name + ".class"
+                            for name in ("FederatedPlanMemo", "MemoProgramFacts", "RuleMemo",
+                                         "MemoOptimizer", "MemoPlanRegistry", "MemoProgramModel"))
 CANONICAL_PROBE_CLASS = (
     "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact."
     "AutomaticSupplySharingDockerProbe")
 PLANNERS = {
     "local": {"config": "compile_cost_based", "normalized": "DP-LocalConflict"},
     "global": {"config": "compile_exact", "normalized": "Exact"},
+    "memo": {"config": "compile_memo", "normalized": "Memo-Exact"},
 }
 MARKER = re.compile(
     r"^JOINT_E2E_(SUM|NORM2|ROWS|COLS|CALL_C|CALL_D|WEIGHTED|LOSS_INITIAL|LOSS_FINAL)="
@@ -175,7 +180,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="physical planner used by the frozen configuration")
     parser.add_argument("--canonical-proof", action="store_true",
                         help="require canonical selected-plan reconstruction (automatic for global)")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.planner == "memo" and args.model_proof_class == DEFAULT_MODEL_PROOF_CLASS:
+        args.model_proof_class = MEMO_MODEL_PROOF_CLASS
+    if args.planner == "memo" and args.canonical_proof:
+        parser.error("memo uses its native selected-plan evidence; the legacy canonical probe is incompatible")
+    return args
 
 
 def canonical_proof_required(planner: str, requested: bool) -> bool:
@@ -204,8 +214,10 @@ def class_preflight_expectations(classes: Path, test_classes: Path,
                                  model_proof_class: str,
                                  canonical_proof: bool = False) -> dict[str, dict[str, object]]:
     proof_relative = str(Path(*model_proof_class.split(".")).with_suffix(".class"))
+    required_main = (MEMO_PREFLIGHT_MAIN if model_proof_class == MEMO_MODEL_PROOF_CLASS
+                     else CLASS_PREFLIGHT_MAIN)
     entries = [("main", classes, Path(relative), Path("/engine/classes") / relative)
-               for relative in CLASS_PREFLIGHT_MAIN]
+               for relative in required_main]
     entries.append(("test", test_classes, Path(proof_relative),
                     Path("/engine/test-classes") / proof_relative))
     if canonical_proof:
@@ -608,6 +620,10 @@ def write_fixtures(run: Path, selected: tuple[Case, ...] | None = None,
         "<sysds.codegen.enabled>false</sysds.codegen.enabled>"
         "<sysds.localtmpdir>/evidence/tmp/local</sysds.localtmpdir>"
         "<sysds.scratch>/evidence/tmp/scratch</sysds.scratch></root>\n", encoding="utf-8")
+    if planner == "memo":
+        (run / "config-cp.xml").write_text(config.read_text(encoding="utf-8").replace(
+            "<sysds.federated.planner>compile_memo</sysds.federated.planner>",
+            "<sysds.federated.planner>NONE</sysds.federated.planner>"), encoding="utf-8")
     fixture_hashes: dict[str, dict[str, str]] = {}
     for case in selected if selected is not None else default_cases():
         case_dir = run / "cases" / case.name
@@ -618,6 +634,8 @@ def write_fixtures(run: Path, selected: tuple[Case, ...] | None = None,
         fed.write_text(program(case, True), encoding="utf-8")
         fixture_hashes[case.name] = {"cp": sha256(cp), "fed": sha256(fed)}
     fixture_hashes["config"] = {"sha256": sha256(config)}
+    if planner == "memo":
+        fixture_hashes["config-cp"] = {"sha256": sha256(run / "config-cp.xml")}
     return fixture_hashes
 
 
@@ -636,6 +654,8 @@ def java_command(case: Case, mode: str, case_timeout_seconds: int = 300,
         "-Dsysds.fedplanner.capability.audit=true",
         f"-Dsysds.fedplanner.capability.audit.dir={audit}",
     ))
+    if planner == "memo":
+        properties += " -Dsysds.fedplanner.memo.trace=true"
     if case.training:
         properties += " -Dsysds.fedplanner.trace=true -Dsysds.fedplanner.trace.details=false"
     if use_probe:
@@ -649,11 +669,12 @@ def java_command(case: Case, mode: str, case_timeout_seconds: int = 300,
     if is_steplm(case):
         output_argument += (f' SELECTION_OUTPUT=/evidence/cases/{case.name}/'
                             f'{mode}-selection.csv')
+    config_path = "/evidence/config-cp.xml" if planner == "memo" and mode == "cp" else "/evidence/config.xml"
     invocation = (f'{CANONICAL_PROBE_CLASS} /evidence/cases/{case.name}/{mode}.dml '
                   f'/evidence/config.xml /evidence/cases/{case.name}/fed-canonical-proof.json'
                   if use_probe else
                   f'org.apache.sysds.api.DMLScript -f /evidence/cases/{case.name}/{mode}.dml '
-                  '-config /evidence/config.xml -exec singlenode -seed 7 '
+                  f'-config {config_path} -exec singlenode -seed 7 '
                   '-noFedRuntimeConversion -stats 100 -explain runtime')
     return (f'timeout {case_timeout_seconds} java --add-modules jdk.incubator.vector -Xmx3g '
             f'-XX:ActiveProcessorCount=4 {jfr}{properties} -cp "$CP" {invocation}'
@@ -936,6 +957,32 @@ def runtime_statistics(text: str) -> dict[str, float]:
     return {names[name]: float(value) for name, value in STATISTIC.findall(text)}
 
 
+def memo_planning_statistics(text: str) -> list[dict]:
+    """Report complete planner invocations, separately from full compilation/runtime.
+
+    The exact estimated objective stays a decimal string. Partial phase records
+    from a timed-out/failed invocation are not mislabeled as total planning time.
+    """
+    phases = ("facts", "rules", "model", "optimization", "projection")
+    plans = []
+    for line in re.findall(r"(?m)^\[MemoPlanner\] (.*)$", text):
+        fields = dict(re.findall(r"(\w+)=([^\s]+)", line))
+        if fields.get("status") != "OPTIMAL" or not all(
+                re.fullmatch(r"\d+", fields.get(phase + "Ns", "")) for phase in phases):
+            continue
+        nanos = {phase: int(fields[phase + "Ns"]) for phase in phases}
+        total = sum(nanos.values())
+        plan = {"status": fields["status"], "phaseNanos": nanos,
+                "phaseSeconds": {phase: value / 1e9 for phase, value in nanos.items()},
+                "totalNanos": total, "totalSeconds": total / 1e9,
+                "estimatedCost": fields.get("cost")}
+        for name, value in fields.items():
+            if name not in {"status", "cost"} and not name.endswith("Ns") and value.isdigit():
+                plan[name] = int(value)
+        plans.append(plan)
+    return plans
+
+
 def weighted_kernel_evidence(text: str, audit_rows: list[dict],
                              opcodes: tuple[str, ...]) -> dict[str, dict[str, bool]]:
     evidence: dict[str, dict[str, bool]] = {}
@@ -1138,7 +1185,13 @@ def evaluate(run: Path, container_returncode: int,
                               and math.isfinite(reference["LOSS_FINAL"])
                               and reference["LOSS_FINAL"] < reference["LOSS_INITIAL"]),
             })
+            memo_evidence = None if planner != "memo" else {
+                "selectedOptimal": bool(re.search(r"(?m)^\[MemoPlanner\] status=OPTIMAL .*workers=[1-9]", text)),
+                "nativeFedExecution": bool(re.search(r"(?m)^\s*\d+\s+fed_", text)),
+                "loweringVerified": "[MemoLowering] status=MATCH" in text,
+            }
             passed = (cp_rc == 0 and fed_rc == 0 and close_markers(reference, actual)
+                      and (memo_evidence is None or all(memo_evidence.values()))
                       and dynamic_native
                       and (case.kind != "function_calls"
                            or {"CALL_C", "CALL_D"}.issubset(reference))
@@ -1172,6 +1225,8 @@ def evaluate(run: Path, container_returncode: int,
                       "plannerTraceRequired": trace_required,
                       "plannerTraceComplete": trace_complete,
                       "canonicalProof": proof_evidence,
+                      "memoEvidence": memo_evidence,
+                      "memoPlanning": memo_planning_statistics(text) if planner == "memo" else [],
                       "lossProgress": loss_progress,
                       "cpStatistics": runtime_statistics(cp_text),
                       "fedStatistics": runtime_statistics(text),
