@@ -36,3 +36,7 @@ MemoFacts/Rules/Model/Optimization/Projection의완전한합과각phase시간을
 ## 환경 계약
 
 새행렬은게시된C26의pinnedimage4CPU/8GiB,coordinatorheap3GiB/ActiveProcessorCount4,nativeBLASnone/codegenfalse,추가SYSDS_FED_COSTenv없는productiondefault비용계약을사용한다. 과거전체campaign의동적MKL/LANcalibration성능비교로주장하지않는다. workload/ranges/metadata/privacy계약과engine환경계약을별도hash로기록한다.
+
+## 실제 Docker staging과 라이브러리 경로
+
+SnapDocker는/grid직접bind를볼수없으므로실행artifact는/home staging에서생성한뒤/grid로복사한다. sealedrelative source() 라이브러리가있는P1/SliceLine만원 `/workspace/experiments/harness/sigmod2021-exdra-p523/experiments`에서실행하며metadata주소는원absolute경로를유지한다. 환경실패시도는별도보존하며Memo에진입한조건의성능재시도는없다.

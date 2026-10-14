@@ -62,6 +62,12 @@ class MemoPlanningMatrixTest(unittest.TestCase):
         self.assertNotIn("allowPublicRecodeMetadata", runner.container_script(False))
         self.assertIn("-Dsysds.privacy.allowPublicRecodeMetadata=true", runner.container_script(True))
 
+    def test_sealed_source_library_uses_original_experiment_working_directory(self):
+        self.assertIn("cd /workspace/experiments\n", runner.container_script(False))
+        self.assertIn("cd /workspace/experiments/harness/sigmod2021-exdra-p523/experiments\n",
+                      runner.container_script(False, True))
+        self.assertIn("-f /evidence/cell.dml", runner.container_script(False, True))
+
     def test_failure_categories_do_not_call_setup_or_timeout_a_planner_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             attempt = Path(directory)

@@ -211,10 +211,13 @@ def validate_engine(engine: Path) -> dict[str, Any]:
             "verifiedFiles": len(actual)}
 
 
-def container_script(p2: bool) -> str:
+def container_script(p2: bool, has_dependencies: bool = False) -> str:
     p2_property = " -Dsysds.privacy.allowPublicRecodeMetadata=true" if p2 else ""
+    # Sealed source() literals use code/... relative to the original experiment directory.
+    workdir = ("/workspace/experiments/harness/sigmod2021-exdra-p523/experiments"
+               if has_dependencies else "/workspace/experiments")
     return "\n".join([
-        "#!/usr/bin/env bash", "set -euo pipefail", "cd /workspace/experiments",
+        "#!/usr/bin/env bash", "set -euo pipefail", "cd " + workdir,
         "mkdir -p /evidence/tmp/local /evidence/tmp/scratch", "CP=/engine/classes:/deps/*",
         "touch /evidence/setup-complete", "set +e",
         "timeout --signal=TERM --kill-after=15 300 java --add-modules jdk.incubator.vector "
@@ -348,7 +351,7 @@ def run_cell(value: dict[str, Any], output: Path, engine: Path, stage: Path,
     (attempt / "execution.xml").write_text(config, encoding="utf-8")
     atomic_json(attempt / "render-receipt.json", {key: item for key, item in rendered.items() if key != "source"})
     atomic_json(attempt / "adaptation-receipt.json", adaptation)
-    (attempt / "container-run.sh").write_text(container_script(value["suite"] == "p2"), encoding="utf-8")
+    (attempt / "container-run.sh").write_text(container_script(value["suite"] == "p2", bool(rendered.get("dependencies"))), encoding="utf-8")
     (attempt / "container-run.sh").chmod(0o755)
     name = "sysds-memo-plan-" + hashlib.sha256(value["id"].encode()).hexdigest()[:16]
     command = docker_command(attempt, engine, stage, rendered, name)
