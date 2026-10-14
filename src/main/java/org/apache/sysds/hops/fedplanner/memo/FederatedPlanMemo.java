@@ -238,6 +238,10 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 				+ " applicable=" + statistics.forestTailApplicable()
 				+ " completions=" + statistics.forestTailCompletions()
 				+ " cells=" + statistics.forestTailCells());
+		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+			System.err.println("[MemoElimination] variables=" + statistics.eliminationVariables()
+				+ " cells=" + statistics.eliminationCells() + " rows=" + statistics.eliminationRows()
+				+ " factorHits=" + statistics.eliminationFactorHits());
 	}
 	private static void traceShapeReuse(MemoShapes.ReuseStatistics statistics) {
 		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))

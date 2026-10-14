@@ -43,9 +43,10 @@ public class MemoOptimizerDomainCacheTest {
 			new CostTerm(new int[] {0,1},values -> 0,0),
 			new CostTerm(new int[] {1,2},values -> 0,0),
 			new CostTerm(new int[] {2,0},values -> 0,0));
-		Result uncached=solve(new int[] {2,2,2},checks,terms,3,0);
-		Result singleEntry=solve(new int[] {2,2,2},checks,terms,3,1);
-		Result cached=solve(new int[] {2,2,2},checks,terms,3,4096);
+		// A finite limit deliberately retains direct coverage of the legacy caches.
+		Result uncached=solve(new int[] {2,2,2},checks,terms,3,0,Long.MAX_VALUE-1);
+		Result singleEntry=solve(new int[] {2,2,2},checks,terms,3,1,Long.MAX_VALUE-1);
+		Result cached=solve(new int[] {2,2,2},checks,terms,3,4096,Long.MAX_VALUE-1);
 		assertSameSolve(uncached,singleEntry);
 		assertSameSolve(uncached,cached);
 		Assert.assertArrayEquals(new int[] {0,0,0},cached.selectedRules());
@@ -55,6 +56,7 @@ public class MemoOptimizerDomainCacheTest {
 			cached.statistics().conditionalBoundCacheHits()>0);
 		Assert.assertEquals("exact cache hits must not add wide relaxations",
 			uncached.statistics().wideBoundRelaxations(),cached.statistics().wideBoundRelaxations());
+		assertSameSolve(cached,solve(new int[] {2,2,2},checks,terms,3,4096,Long.MAX_VALUE));
 	}
 
 	@Test
@@ -118,11 +120,16 @@ public class MemoOptimizerDomainCacheTest {
 	}
 
 	private static Result solve(int[] sizes,List<Check> checks,List<CostTerm> terms,int supportBudget,int cache) {
+		return solve(sizes,checks,terms,supportBudget,cache,Long.MAX_VALUE);
+	}
+
+	private static Result solve(int[] sizes,List<Check> checks,List<CostTerm> terms,int supportBudget,
+		int cache,long nodes) {
 		double[][] costs=new double[sizes.length][];
 		for(int owner=0;owner<sizes.length;owner++) costs[owner]=new double[sizes[owner]];
 		boolean[] coverage=new boolean[sizes.length]; Arrays.fill(coverage,true);
 		return new MemoOptimizer(sizes,coverage,costs,checks,terms,
-			new Limits(Long.MAX_VALUE,supportBudget,cache)).optimize();
+			new Limits(nodes,supportBudget,cache)).optimize();
 	}
 
 	private static void assertSameSolve(Result expected,Result actual) {

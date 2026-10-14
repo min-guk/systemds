@@ -33,10 +33,14 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class MemoOptimizerPseudoforestTest {
+	// Any finite limit deliberately selects the legacy search path. These tests
+	// directly validate its forest-tail optimization rather than default elimination.
+	private static final long LEGACY_NODE_LIMIT=Long.MAX_VALUE-1;
+
 	@Test public void leafHeavyHubDoesNotDelayBreakingTheOnlyCycle() {
 		List<Check> checks=List.of(edge(0,1),edge(0,2),edge(0,3),edge(0,4),edge(0,5),
 			edge(5,6),edge(6,7),edge(7,5),edge(7,8));
-		Result result=solve(new double[9][2],checks,List.of(),Long.MAX_VALUE,64,4096);
+		Result result=solve(new double[9][2],checks,List.of(),LEGACY_NODE_LIMIT,64,4096);
 		Assert.assertEquals(Status.OPTIMAL,result.status());
 		Assert.assertArrayEquals(new int[9],result.selectedRules());
 		Assert.assertTrue(result.statistics().forestTailCompletions()>0);
@@ -47,7 +51,7 @@ public class MemoOptimizerPseudoforestTest {
 		// in the final global tie break after both independent cycles are conditioned.
 		List<Check> checks=List.of(edge(0,1),edge(1,3),edge(3,5),edge(5,1),
 			edge(2,4),edge(4,6),edge(6,2),edge(6,7));
-		Result result=solve(new double[8][2],checks,List.of(),Long.MAX_VALUE,64,4096);
+		Result result=solve(new double[8][2],checks,List.of(),LEGACY_NODE_LIMIT,64,4096);
 		Assert.assertEquals(Status.OPTIMAL,result.status());
 		Assert.assertArrayEquals(new int[8],result.selectedRules());
 		Assert.assertEquals(BigDecimal.ZERO,result.cost());
@@ -63,7 +67,7 @@ public class MemoOptimizerPseudoforestTest {
 		double[][] costs={{0,0},{1,0},{0,1},{0,1},{0,0}};
 		Result expected=exhaustiveProjectedFixture(costs,terms);
 		for(int cache:new int[] {0,1,4096}) {
-			Result actual=solve(costs,checks,terms,Long.MAX_VALUE,64,cache);
+			Result actual=solve(costs,checks,terms,LEGACY_NODE_LIMIT,64,cache);
 			assertSame(expected,actual);
 			Assert.assertTrue(actual.statistics().forestTailCompletions()>0);
 		}
@@ -82,7 +86,7 @@ public class MemoOptimizerPseudoforestTest {
 		List<Check> checks=new ArrayList<>();
 		for(int owner=0;owner<7;owner++) checks.add(edge(owner,(owner+1)%7));
 		checks.add(edge(0,7)); checks.add(edge(7,8));
-		Result exact=solve(new double[9][2],checks,List.of(),Long.MAX_VALUE,64,4096);
+		Result exact=solve(new double[9][2],checks,List.of(),LEGACY_NODE_LIMIT,64,4096);
 		Assert.assertEquals(Status.OPTIMAL,exact.status());
 		Assert.assertTrue(exact.statistics().forestTailCells()>0);
 		assertSame(exact,solve(new double[9][2],checks,List.of(),exact.statistics().nodes(),64,4096));

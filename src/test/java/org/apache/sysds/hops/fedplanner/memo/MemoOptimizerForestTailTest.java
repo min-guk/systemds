@@ -32,6 +32,10 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class MemoOptimizerForestTailTest {
+	// Any finite limit deliberately selects the legacy search path. These tests
+	// directly validate its forest-tail optimization rather than default elimination.
+	private static final long LEGACY_NODE_LIMIT=Long.MAX_VALUE-1;
+
 	@Test
 	public void projectedTailPreservesOriginalFactorTupleOrder() {
 		Check orderedCheck=new Check(4,new int[] {2,0,1},r -> partial(r) ? Truth.UNKNOWN
@@ -40,7 +44,7 @@ public class MemoOptimizerForestTailTest {
 			r -> 100*r[0]+10*r[1]+r[2],0);
 		List<Check> checks=List.of(yes(0,0,1),yes(1,1,2),yes(2,2,0),yes(3,0,3),orderedCheck);
 		double[][] nativeCosts=new double[4][2]; nativeCosts[2][1]=-150;
-		Result result=solve(nativeCosts,checks,List.of(orderedCost),Long.MAX_VALUE,4096);
+		Result result=solve(nativeCosts,checks,List.of(orderedCost),LEGACY_NODE_LIMIT,4096);
 		Assert.assertEquals(Status.OPTIMAL,result.status());
 		Assert.assertArrayEquals(new int[] {0,0,1,0},result.selectedRules());
 		Assert.assertEquals(0,BigDecimal.valueOf(-50).compareTo(result.cost()));
@@ -59,7 +63,7 @@ public class MemoOptimizerForestTailTest {
 			terms.add(new CostTerm(new int[] {left,right},r -> r[0]==1 && r[1]==1 ? 0 : 1,0));
 		}
 		checks.add(yes(core,0,core));
-		Result result=solve(nativeCosts,checks,terms,Long.MAX_VALUE,4096);
+		Result result=solve(nativeCosts,checks,terms,LEGACY_NODE_LIMIT,4096);
 		Assert.assertEquals(Status.OPTIMAL,result.status());
 		Assert.assertArrayEquals(new int[] {1,1,1,1,1,1,1,1,0},result.selectedRules());
 		Assert.assertTrue("frozen candidate02 visits 75 nodes on this exact fixture",
@@ -78,7 +82,7 @@ public class MemoOptimizerForestTailTest {
 		double[][] nativeCosts={{1,0},{0,2},{1,0},{0,1}};
 		Result expected=exhaustive(nativeCosts,terms);
 		for(int cache:new int[] {0,1,4096}) {
-			Result result=solve(nativeCosts,checks,terms,Long.MAX_VALUE,cache);
+			Result result=solve(nativeCosts,checks,terms,LEGACY_NODE_LIMIT,cache);
 			assertSameSolve(expected,result);
 			Assert.assertTrue(result.statistics().forestTailApplicable()>0);
 			Assert.assertTrue(result.statistics().forestTailCompletions()>0);
@@ -91,7 +95,7 @@ public class MemoOptimizerForestTailTest {
 		Check inverseLeaf=new Check(0,new int[] {0,1},r -> partial(r) ? Truth.UNKNOWN
 			: r[0]!=r[1] ? Truth.YES : Truth.NO);
 		List<Check> checks=List.of(inverseLeaf,yes(1,1,2),yes(2,2,3),yes(3,3,1));
-		Result result=solve(new double[4][2],checks,List.of(),Long.MAX_VALUE,4096);
+		Result result=solve(new double[4][2],checks,List.of(),LEGACY_NODE_LIMIT,4096);
 		Assert.assertEquals(Status.OPTIMAL,result.status());
 		Assert.assertArrayEquals(new int[] {0,1,0,0},result.selectedRules());
 		Assert.assertTrue(result.statistics().forestTailCompletions()>0);
@@ -101,7 +105,7 @@ public class MemoOptimizerForestTailTest {
 	public void unknownTailFallsBackWithoutPublishingAProof() {
 		Check unknown=new Check(4,new int[] {0,1,2},r -> partial(r) ? Truth.UNKNOWN : Truth.UNKNOWN);
 		List<Check> checks=List.of(yes(0,0,1),yes(1,1,2),yes(2,2,0),yes(3,0,3),unknown);
-		Result result=solve(new double[4][2],checks,List.of(),Long.MAX_VALUE,4096);
+		Result result=solve(new double[4][2],checks,List.of(),LEGACY_NODE_LIMIT,4096);
 		Assert.assertEquals(Status.UNRESOLVED,result.status());
 		Assert.assertNull(result.selectedRules());
 		Assert.assertTrue(result.statistics().forestTailApplicable()>0);
@@ -113,7 +117,7 @@ public class MemoOptimizerForestTailTest {
 		Check noCompleteTuple=new Check(4,new int[] {0,1,2},r -> partial(r) ? Truth.UNKNOWN : Truth.NO);
 		Result result=solve(new double[4][2],
 			List.of(yes(0,0,1),yes(1,1,2),yes(2,2,0),yes(3,0,3),noCompleteTuple),
-			List.of(),Long.MAX_VALUE,1,4096);
+			List.of(),LEGACY_NODE_LIMIT,1,4096);
 		Assert.assertEquals(Status.INFEASIBLE,result.status());
 		Assert.assertNull(result.selectedRules());
 		Assert.assertTrue(result.statistics().forestTailCompletions()>0);
@@ -122,7 +126,7 @@ public class MemoOptimizerForestTailTest {
 	@Test
 	public void forestCellsShareTheGlobalFiniteNodeBudget() {
 		List<Check> checks=List.of(yes(0,0,1),yes(1,1,2),yes(2,2,0),yes(3,0,3));
-		Result exact=solve(new double[4][2],checks,List.of(),Long.MAX_VALUE,4096);
+		Result exact=solve(new double[4][2],checks,List.of(),LEGACY_NODE_LIMIT,4096);
 		Assert.assertEquals(Status.OPTIMAL,exact.status());
 		Assert.assertTrue(exact.statistics().forestTailCells()>0);
 		Result exactBudget=solve(new double[4][2],checks,List.of(),exact.statistics().nodes(),4096);

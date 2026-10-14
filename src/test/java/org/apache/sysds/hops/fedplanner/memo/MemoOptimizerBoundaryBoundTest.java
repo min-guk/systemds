@@ -34,15 +34,17 @@ import org.junit.Test;
 public class MemoOptimizerBoundaryBoundTest {
 	@Test
 	public void conflictingNativeAndLeafMinimaKeepTheExactOptimum() {
-		Result reference=solve(conflictingTerms(),alwaysYesCycle(),0,Long.MAX_VALUE,1);
+		// A finite limit deliberately exercises the legacy correlated-bound counters.
+		Result reference=solve(conflictingTerms(),alwaysYesCycle(),0,Long.MAX_VALUE-1,1);
 		Assert.assertEquals(Status.OPTIMAL,reference.status());
 		Assert.assertEquals(0,new BigDecimal("0.5").compareTo(reference.cost()));
 		Assert.assertArrayEquals(new int[] {0,0,0,0,0},reference.selectedRules());
 		for(int capacity:new int[] {1,4096}) assertSameSolve(reference,
-			solve(conflictingTerms(),alwaysYesCycle(),capacity,Long.MAX_VALUE,1));
+			solve(conflictingTerms(),alwaysYesCycle(),capacity,Long.MAX_VALUE-1,1));
 		Assert.assertTrue("correlated messages must prune the impossible independent minima",
 			reference.statistics().nodes()<23);
 		System.out.println("BOUNDARY_CONFLICT_NODES="+reference.statistics().nodes());
+		assertSameSolve(reference,solve(conflictingTerms(),alwaysYesCycle(),4096,Long.MAX_VALUE,1));
 	}
 
 	@Test
