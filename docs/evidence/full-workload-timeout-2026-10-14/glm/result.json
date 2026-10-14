@@ -1,0 +1,123 @@
+{
+  "cell": {
+    "id": "ml|glm|lan|w3|Memo",
+    "planner": "Memo",
+    "planner_enum": "COMPILE_MEMO",
+    "profile": "lan",
+    "suite": "ml",
+    "workers": 3,
+    "workload": "glm"
+  },
+  "compileOnly": true,
+  "compileOnlyVerified": false,
+  "containerResources": {
+    "coordinatorHeap": "3g",
+    "cpus": 4,
+    "memory": "8g",
+    "workerProcesses": 0,
+    "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+  },
+  "costContract": {
+    "codegen": false,
+    "costEnvironment": {},
+    "nativeBlas": "none",
+    "semantics": "published-C26-production-default-costs-no-overrides",
+    "sources": {
+      "config": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-logreg/config.xml",
+        "sha256": "ce35c4d5baca3ce572581c1966120c614f9bef67f7cda57023e360fa610224c8"
+      },
+      "containerScript": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-logreg/container-run.sh",
+        "sha256": "e54fd1b00b9f2fe4f3a958c64fa0f329e94ae6d02bbe4d5440be2ea0f4542d10"
+      },
+      "manifest": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-logreg/manifest.json",
+        "sha256": "a290c393564426b8255a5d4135a9821b849ed81b79c0d0b881ed14076a1f089f"
+      }
+    }
+  },
+  "executionPlanner": "COMPILE_MEMO",
+  "failureCategory": "timeout_not_proven",
+  "harnessTimeout": false,
+  "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "memoConstruction": {
+    "costProjection": [
+      {
+        "activationEnvironments": 7545,
+        "bindingDagVisits": 366951,
+        "invariantProjectionStops": 133713,
+        "noRegionsSkipped": 64516,
+        "primitiveValueBytes": 398888,
+        "primitiveValues": 49861,
+        "primitiveVectors": 9500,
+        "projectedContexts": 9500,
+        "projectionCacheHits": 42138,
+        "relevantGuardDecisions": 6152,
+        "supportPrefixChecks": 19849,
+        "unknownObligations": 0
+      }
+    ],
+    "nativeGeneration": [
+      {
+        "coverageObligations": 50,
+        "cpPatterns": 457,
+        "determinantRegions": 3025,
+        "evidenceReuses": 0,
+        "oracleEvaluations": 3101,
+        "prefixRequests": 153,
+        "prunedPrefixes": 2171,
+        "publishedRules": 1289,
+        "unknownPrefixes": 36,
+        "visitedNativePatterns": 971
+      }
+    ],
+    "nativeRequests": [
+      {
+        "canonicalStringsCreated": 121,
+        "canonicalStringsReused": 11239,
+        "contextualViewBuilds": 454,
+        "oracleRequests": 454,
+        "preparedRequests": 11693,
+        "reusedResults": 11239,
+        "uncacheableRequests": 333
+      }
+    ]
+  },
+  "memoPlanning": [],
+  "memoSearch": [],
+  "p2PublicRecodeMetadataJvmProperty": false,
+  "provenance": {
+    "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+    "dmlSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+    "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/memo-under3-20261014/candidate26-engine",
+    "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+    "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+    "repositoryCommit": "f7ca28d75134b62d1cf1eb4eaa7e82371d82f98f",
+    "scriptSha256": "19a3ba535f58e774fa724fbf4c4ef9c5911a8c29e095ef0c5a833c8f74c3cb8b",
+    "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+    "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+  },
+  "renderCell": {
+    "id": "ml|glm|lan|w3|DP-global",
+    "planner": "DP-global",
+    "planner_enum": "COMPILE_EXACT",
+    "profile": "lan",
+    "suite": "ml",
+    "workers": 3,
+    "workload": "glm"
+  },
+  "rendererAuthorityPlanner": "COMPILE_EXACT",
+  "reportedWorkerCountVerified": false,
+  "returncode": 124,
+  "schema": "systemds-memo-planning-attempt/v1",
+  "status": "failed",
+  "timing": {
+    "executionSeconds": null,
+    "fullCompileSeconds": null,
+    "fullInitialPlanningSeconds": null,
+    "harnessWallSeconds": 300.7971271947026,
+    "memoPlanningSeconds": null,
+    "runtimeProgramSeconds": null
+  }
+}

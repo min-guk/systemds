@@ -1,0 +1,34 @@
+{
+  "schema": "fedplanner-full-workload-timeout-diagnostic/v1",
+  "repositoryHead": "f7ca28d75134b62d1cf1eb4eaa7e82371d82f98f",
+  "productionCodeChanged": false,
+  "inputDmlConfigEqualToPublishedW3": true,
+  "diagnosticRunsEachWorkload": 1,
+  "profileWindowSeconds": 60,
+  "rawArtifacts": [
+    {
+      "path": "/home/mchoi/full-workload-timeout-diagnostic-logreg-20261014/attempts/ml-logreg-w3/logreg-live.jfr",
+      "sizeBytes": 6323547,
+      "sha256": "c82872d175143ec38930f370e943c1440388fafc333a5a0990fe075e03ada9f0"
+    },
+    {
+      "path": "/home/mchoi/fedplanner-under3-20261014/experiments/full-workload-timeout-20261014/logreg-jfr-events.jsonl",
+      "sizeBytes": 60830999,
+      "sha256": "682368005bcdd70c68f68a7bf45a2e86d9f427ea4e319d5035b1f92805a75e5d"
+    },
+    {
+      "path": "/home/mchoi/full-workload-timeout-diagnostic-glm-20261014/attempts/ml-glm-w3/glm-live.jfr",
+      "sizeBytes": 6614110,
+      "sha256": "b4283685a0761e4d7246e08435036c5fc06e72bb0609be42855b7e3bed717989"
+    },
+    {
+      "path": "/home/mchoi/fedplanner-under3-20261014/experiments/full-workload-timeout-20261014/glm-jfr-events.jsonl",
+      "sizeBytes": 116838682,
+      "sha256": "81782ed69029a00b0a08f2d1bbf81ecb7be34b55590ad2de2807439e11102d1c"
+    }
+  ],
+  "sourceHashes": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java": "87c9836081a93d1f33e1956cad0c98f73475d109a6327b6f01805670495e5ebb",
+    "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.java": "629fae1d240d1680708262bfbbab70e49bb6113c1d645f57b85d9b4225cb1b10"
+  }
+}

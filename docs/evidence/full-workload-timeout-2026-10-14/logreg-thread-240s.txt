@@ -1,0 +1,157 @@
+228962:
+2026-10-14 16:04:39
+Full thread dump OpenJDK 64-Bit Server VM (17.0.19+10-1-22.04.2-Ubuntu mixed mode, sharing):
+
+Threads class SMR info:
+_java_thread_list=0x00007488a4644ea0, length=16, elements={
+0x000074897001a660, 0x000074897010da00, 0x000074897010ede0, 0x00007489701136e0,
+0x0000748970114a90, 0x0000748970115ea0, 0x0000748970117850, 0x0000748970118d80,
+0x00007489701221e0, 0x000074897012dd20, 0x000074897015ab90, 0x00007488b410cd20,
+0x00007488e0000ea0, 0x00007488a0fa2640, 0x00007488a103c2c0, 0x00007488900013b0
+}
+
+"main" #1 prio=5 os_prio=0 cpu=257044.05ms elapsed=258.77s tid=0x000074897001a660 nid=0xb runnable  [0x00007489757a0000]
+   java.lang.Thread.State: RUNNABLE
+	at java.math.BigDecimal.compareTo(java.base@17.0.19/BigDecimal.java:3136)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.tryForestTail(MemoOptimizer.java:1384)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1208)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore(MemoOptimizer.java:1231)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.run(MemoOptimizer.java:1191)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.tryLeafRegionSolve(MemoOptimizer.java:997)
+	at org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.optimize(MemoOptimizer.java:300)
+	at org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.optimize(MemoProgramModel.java:435)
+	at org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo.planWithLease(FederatedPlanMemo.java:88)
+	at org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo.plan(FederatedPlanMemo.java:64)
+	at org.apache.sysds.parser.DMLTranslator.runMemoPlannerAtFinalHopBoundary(DMLTranslator.java:516)
+	- locked <0x0000000741235800> (a org.apache.sysds.parser.DMLProgram)
+	at org.apache.sysds.parser.DMLTranslator.runFederatedPlannerAtFinalHopBoundary(DMLTranslator.java:379)
+	at org.apache.sysds.parser.DMLTranslator.constructLops(DMLTranslator.java:985)
+	at org.apache.sysds.parser.DMLTranslator.constructLops(DMLTranslator.java:975)
+	at org.apache.sysds.api.DMLScript.execute(DMLScript.java:509)
+	at org.apache.sysds.api.DMLScript.executeScript(DMLScript.java:359)
+	at org.apache.sysds.api.DMLScript.main(DMLScript.java:234)
+
+"Reference Handler" #2 daemon prio=10 os_prio=0 cpu=1.41ms elapsed=258.75s tid=0x000074897010da00 nid=0x12 waiting on condition  [0x00007489506a6000]
+   java.lang.Thread.State: RUNNABLE
+	at java.lang.ref.Reference.waitForReferencePendingList(java.base@17.0.19/Native Method)
+	at java.lang.ref.Reference.processPendingReferences(java.base@17.0.19/Reference.java:253)
+	at java.lang.ref.Reference$ReferenceHandler.run(java.base@17.0.19/Reference.java:215)
+
+"Finalizer" #3 daemon prio=8 os_prio=0 cpu=0.45ms elapsed=258.75s tid=0x000074897010ede0 nid=0x13 in Object.wait()  [0x00007489505a6000]
+   java.lang.Thread.State: WAITING (on object monitor)
+	at java.lang.Object.wait(java.base@17.0.19/Native Method)
+	- waiting on <0x0000000740579b98> (a java.lang.ref.ReferenceQueue$Lock)
+	at java.lang.ref.ReferenceQueue.remove(java.base@17.0.19/ReferenceQueue.java:155)
+	- locked <0x0000000740579b98> (a java.lang.ref.ReferenceQueue$Lock)
+	at java.lang.ref.ReferenceQueue.remove(java.base@17.0.19/ReferenceQueue.java:176)
+	at java.lang.ref.Finalizer$FinalizerThread.run(java.base@17.0.19/Finalizer.java:172)
+
+"Signal Dispatcher" #4 daemon prio=9 os_prio=0 cpu=0.32ms elapsed=258.74s tid=0x00007489701136e0 nid=0x14 waiting on condition  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"Service Thread" #5 daemon prio=9 os_prio=0 cpu=3.89ms elapsed=258.74s tid=0x0000748970114a90 nid=0x15 runnable  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"Monitor Deflation Thread" #6 daemon prio=9 os_prio=0 cpu=21.21ms elapsed=258.74s tid=0x0000748970115ea0 nid=0x16 runnable  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"C2 CompilerThread0" #7 daemon prio=9 os_prio=0 cpu=10097.82ms elapsed=258.74s tid=0x0000748970117850 nid=0x17 waiting on condition  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+   No compile task
+
+"C1 CompilerThread0" #9 daemon prio=9 os_prio=0 cpu=2556.78ms elapsed=258.74s tid=0x0000748970118d80 nid=0x18 waiting on condition  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+   No compile task
+
+"Sweeper thread" #10 daemon prio=9 os_prio=0 cpu=90.49ms elapsed=258.74s tid=0x00007489701221e0 nid=0x19 runnable  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"Common-Cleaner" #11 daemon prio=8 os_prio=0 cpu=1.80ms elapsed=258.71s tid=0x000074897012dd20 nid=0x1a in Object.wait()  [0x00007488f6dfe000]
+   java.lang.Thread.State: TIMED_WAITING (on object monitor)
+	at java.lang.Object.wait(java.base@17.0.19/Native Method)
+	- waiting on <0x000000074056e550> (a java.lang.ref.ReferenceQueue$Lock)
+	at java.lang.ref.ReferenceQueue.remove(java.base@17.0.19/ReferenceQueue.java:155)
+	- locked <0x000000074056e550> (a java.lang.ref.ReferenceQueue$Lock)
+	at jdk.internal.ref.CleanerImpl.run(java.base@17.0.19/CleanerImpl.java:140)
+	at java.lang.Thread.run(java.base@17.0.19/Thread.java:840)
+	at jdk.internal.misc.InnocuousThread.run(java.base@17.0.19/InnocuousThread.java:162)
+
+"Notification Thread" #12 daemon prio=9 os_prio=0 cpu=0.11ms elapsed=258.69s tid=0x000074897015ab90 nid=0x1b runnable  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"org.apache.hadoop.fs.FileSystem$Statistics$StatisticsDataReferenceCleaner" #17 daemon prio=5 os_prio=0 cpu=0.15ms elapsed=257.88s tid=0x00007488b410cd20 nid=0x25 in Object.wait()  [0x00007488f65fa000]
+   java.lang.Thread.State: WAITING (on object monitor)
+	at java.lang.Object.wait(java.base@17.0.19/Native Method)
+	- waiting on <0x00000007411fb6f8> (a java.lang.ref.ReferenceQueue$Lock)
+	at java.lang.ref.ReferenceQueue.remove(java.base@17.0.19/ReferenceQueue.java:155)
+	- locked <0x00000007411fb6f8> (a java.lang.ref.ReferenceQueue$Lock)
+	at java.lang.ref.ReferenceQueue.remove(java.base@17.0.19/ReferenceQueue.java:176)
+	at org.apache.hadoop.fs.FileSystem$Statistics$StatisticsDataReferenceCleaner.run(FileSystem.java:4159)
+	at java.lang.Thread.run(java.base@17.0.19/Thread.java:840)
+
+"Attach Listener" #21 daemon prio=9 os_prio=0 cpu=237.56ms elapsed=95.35s tid=0x00007488e0000ea0 nid=0x2b waiting on condition  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"JFR Recorder Thread" #22 daemon prio=5 os_prio=0 cpu=19.67ms elapsed=88.89s tid=0x00007488a0fa2640 nid=0x2d waiting on condition  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"JFR Periodic Tasks" #23 daemon prio=9 os_prio=0 cpu=131.92ms elapsed=88.70s tid=0x00007488a103c2c0 nid=0x2e in Object.wait()  [0x00007488f61f9000]
+   java.lang.Thread.State: TIMED_WAITING (on object monitor)
+	at java.lang.Object.wait(java.base@17.0.19/Native Method)
+	- waiting on <no object reference available>
+	at jdk.jfr.internal.PlatformRecorder.takeNap(jdk.jfr@17.0.19/PlatformRecorder.java:544)
+	- locked <0x0000000742d3c210> (a jdk.jfr.internal.JVM$ChunkRotationMonitor)
+	at jdk.jfr.internal.PlatformRecorder.periodicTask(jdk.jfr@17.0.19/PlatformRecorder.java:524)
+	at jdk.jfr.internal.PlatformRecorder.lambda$startDiskMonitor$1(jdk.jfr@17.0.19/PlatformRecorder.java:449)
+	at jdk.jfr.internal.PlatformRecorder$$Lambda$419/0x00007488fc1d80c8.run(jdk.jfr@17.0.19/Unknown Source)
+	at java.lang.Thread.run(java.base@17.0.19/Thread.java:840)
+
+"JFR Recording Scheduler" #26 daemon prio=9 os_prio=0 cpu=14.16ms elapsed=88.60s tid=0x00007488900013b0 nid=0x31 in Object.wait()  [0x00007488f5ef8000]
+   java.lang.Thread.State: WAITING (on object monitor)
+	at java.lang.Object.wait(java.base@17.0.19/Native Method)
+	- waiting on <0x0000000742e44ab0> (a java.util.TaskQueue)
+	at java.lang.Object.wait(java.base@17.0.19/Object.java:338)
+	at java.util.TimerThread.mainLoop(java.base@17.0.19/Timer.java:537)
+	- locked <0x0000000742e44ab0> (a java.util.TaskQueue)
+	at java.util.TimerThread.run(java.base@17.0.19/Timer.java:516)
+
+os_prio=0 cpu=297.66ms elapsed=88.63s tid=0x00007488a0fca400 nid=0x2f runnable  
+"G1 Refine#1" os_prio=0 cpu=0.52ms elapsed=254.75s tid=0x000074893c008ee0 nid=0x28 runnable  
+
+"GC Thread#3" os_prio=0 cpu=632.35ms elapsed=258.15s tid=0x00007488f0009e40 nid=0x20 runnable  
+
+"GC Thread#2" os_prio=0 cpu=666.89ms elapsed=258.51s tid=0x00007488f00058d0 nid=0x1f runnable  
+
+"GC Thread#1" os_prio=0 cpu=655.87ms elapsed=258.51s tid=0x00007488f0004e90 nid=0x1e runnable  
+
+"VM Periodic Task Thread" os_prio=0 cpu=91.38ms elapsed=258.69s tid=0x000074897015c500 nid=0x1c waiting on condition  
+
+"VM Thread" os_prio=0 cpu=557.16ms elapsed=258.75s tid=0x0000748970109900 nid=0x11 runnable  
+
+"G1 Service" os_prio=0 cpu=39.59ms elapsed=258.77s tid=0x00007489700df5c0 nid=0x10 runnable  
+
+"G1 Refine#0" os_prio=0 cpu=11.17ms elapsed=258.77s tid=0x00007489700de6c0 nid=0xf runnable  
+
+"G1 Conc#0" os_prio=0 cpu=8.29ms elapsed=258.77s tid=0x0000748970081d40 nid=0xe runnable  
+
+"G1 Main Marker" os_prio=0 cpu=0.36ms elapsed=258.77s tid=0x0000748970080dd0 nid=0xd runnable  
+
+"GC Thread#0" os_prio=0 cpu=657.75ms elapsed=258.77s tid=0x00007489700737e0 nid=0xc runnable  
+
+JNI global refs: 32, weak refs: 3
+

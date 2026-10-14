@@ -1,0 +1,60 @@
+{
+  "costContract": {
+    "codegen": false,
+    "costEnvironment": {},
+    "nativeBlas": "none",
+    "semantics": "published-C26-production-default-costs-no-overrides",
+    "sources": {
+      "config": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-logreg/config.xml",
+        "sha256": "ce35c4d5baca3ce572581c1966120c614f9bef67f7cda57023e360fa610224c8"
+      },
+      "containerScript": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-logreg/container-run.sh",
+        "sha256": "e54fd1b00b9f2fe4f3a958c64fa0f329e94ae6d02bbe4d5440be2ea0f4542d10"
+      },
+      "manifest": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-logreg/manifest.json",
+        "sha256": "a290c393564426b8255a5d4135a9821b849ed81b79c0d0b881ed14076a1f089f"
+      }
+    }
+  },
+  "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/memo-under3-20261014/candidate26-engine",
+  "enginePreflight": {
+    "manifest": "/home/mchoi/fedplanner-under3-20261014/experiments/memo-under3-20261014/candidate26-engine-sha256.json",
+    "manifestSha256": "40f4b2f1044b38851df23c176e7bc75e204d431082ab65566b8927c295dd84fa",
+    "verifiedFiles": 12707
+  },
+  "executionCells": [
+    {
+      "id": "ml|logreg|lan|w3|Memo",
+      "planner": "Memo",
+      "planner_enum": "COMPILE_MEMO",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 3,
+      "workload": "logreg"
+    }
+  ],
+  "executionPlanner": "COMPILE_MEMO",
+  "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "renderCells": [
+    {
+      "id": "ml|logreg|lan|w3|DP-global",
+      "planner": "DP-global",
+      "planner_enum": "COMPILE_EXACT",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 3,
+      "workload": "logreg"
+    }
+  ],
+  "renderOnly": false,
+  "rendererAuthorityPlanner": "COMPILE_EXACT",
+  "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+  "repositoryCommit": "f7ca28d75134b62d1cf1eb4eaa7e82371d82f98f",
+  "runnerSha256": "19a3ba535f58e774fa724fbf4c4ef9c5911a8c29e095ef0c5a833c8f74c3cb8b",
+  "schema": "systemds-memo-planning-matrix/v1",
+  "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+  "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+}

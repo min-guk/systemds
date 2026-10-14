@@ -1,0 +1,386 @@
+{
+  "input": "experiments/full-workload-timeout-20261014/logreg-jfr-events.jsonl",
+  "method": "60-second live-attach JFR profile; inclusive samples overlap, not exact method timers; allocation total from main thread counter delta, not ObjectAllocationSample weights",
+  "mainSamples": 4925,
+  "mainFrameCounts": {
+    "java.util.LinkedHashMap.get": 722,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cached": 960,
+    "java.util.HashMap.getNode": 727,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$TupleProbe.equals": 447,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.tryForestTail": 4804,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.enumerateCore": 4925,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.evaluate": 851,
+    "java.math.BigDecimal.signum": 2,
+    "java.math.BigDecimal.compareTo": 465,
+    "java.math.BigDecimal.compareMagnitude": 404,
+    "java.math.BigDecimal.bigDigitLength": 1,
+    "java.math.BigDecimal.precision": 1,
+    "java.math.BigDecimal.add": 1149,
+    "java.math.BigDecimal.compactValFor": 1,
+    "java.math.BigDecimal.valueOf": 1,
+    "java.util.ArrayList$Itr.hasNext": 119,
+    "java.math.BigInteger.<init>": 415,
+    "java.math.BigInteger.add": 546,
+    "java.util.ImmutableCollections$ListN.get": 5,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$TupleIdentity.sameTuple": 440,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.evaluateCost": 811,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.costClassTuple": 230,
+    "java.util.ArrayList.iterator": 119,
+    "java.lang.Long.signum": 1,
+    "java.util.ArrayList.get": 16,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.classifyTail": 54,
+    "java.util.ArrayList$Itr.<init>": 13,
+    "java.util.Objects.checkIndex": 10,
+    "java.util.Arrays.stream": 9,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.tupleHash": 301,
+    "java.lang.Long.hashCode": 2,
+    "java.util.HashMap.hash": 34,
+    "java.util.HashMap.computeIfAbsent": 37,
+    "java.util.ArrayList.elementData": 2,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.enqueue": 3,
+    "java.util.ArrayDeque.addLast": 20,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.undo": 18,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.truthClassTuple": 418,
+    "jdk.internal.util.ArraysSupport.mismatch": 429,
+    "java.util.Arrays.equals": 429,
+    "java.math.BigInteger.multiply": 857,
+    "java.math.BigDecimal.bigMultiplyPowerTen": 991,
+    "jdk.internal.util.Preconditions.checkIndex": 1,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.edgeKey": 1,
+    "java.lang.invoke.Invokers$Holder.linkToTargetMethod": 2,
+    "java.util.stream.IntPipeline.toArray": 56,
+    "java.lang.invoke.LambdaForm$MH+0x00007488fc000400.452968124.invoke": 1,
+    "java.util.ArrayList.add": 162,
+    "java.util.Arrays.copyOf": 165,
+    "java.util.ArrayList.grow": 162,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.lists": 164,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$TupleKey.<init>": 48,
+    "java.util.Arrays.hashCode": 297,
+    "java.math.BigInteger.multiplyByInt": 88,
+    "java.util.BitSet.nextSetBit": 64,
+    "java.util.ArrayList$Itr.next": 93,
+    "org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo.planWithLease": 4721,
+    "org.apache.sysds.api.DMLScript.execute": 4721,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.optimize": 4721,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.run": 4721,
+    "org.apache.sysds.parser.DMLTranslator.constructLops": 4721,
+    "org.apache.sysds.parser.DMLTranslator.runFederatedPlannerAtFinalHopBoundary": 4721,
+    "org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo.plan": 4721,
+    "org.apache.sysds.api.DMLScript.executeScript": 4721,
+    "org.apache.sysds.api.DMLScript.main": 4721,
+    "org.apache.sysds.hops.fedplanner.memo.MemoProgramModel.optimize": 4721,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.tryLeafRegionSolve": 4721,
+    "org.apache.sysds.parser.DMLTranslator.runMemoPlannerAtFinalHopBoundary": 4721,
+    "java.util.stream.AbstractPipeline.evaluate": 46,
+    "java.util.stream.AbstractPipeline.evaluateToArrayNode": 46,
+    "java.util.stream.AbstractPipeline.wrapAndCopyInto": 35,
+    "java.util.HashMap$TreeNode.getTreeNode": 19,
+    "java.util.ArrayDeque.add": 19,
+    "java.util.ArrayDeque.grow": 19,
+    "java.util.ImmutableCollections$AbstractImmutableList.iterator": 12,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch$TailFactor.tuple": 82,
+    "java.util.stream.AbstractPipeline.wrapSink": 10,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.choosePseudoforestBranch": 17,
+    "java.lang.Integer.valueOf": 8,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.propagate": 50,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.currentTermBound": 19,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.coreLowerBound": 39,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.computeConditionalCostBound": 19,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.refreshTermBound": 19,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cachedDomains": 31,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.ownerMessageBound": 7,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.minimum": 7,
+    "java.util.stream.StreamSupport.intStream": 8,
+    "java.util.stream.StreamOpFlag.fromCharacteristics": 8,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.reconstructTree": 24,
+    "java.util.stream.AbstractPipeline.copyInto": 14,
+    "java.util.Spliterator$OfInt.forEachRemaining": 11,
+    "java.util.HashMap.resize": 5,
+    "java.math.BigDecimal.subtract": 9,
+    "java.lang.invoke.LambdaForm$DMH+0x00007488fc2c8400.1177072083.newInvokeSpecial": 1,
+    "java.lang.invoke.DirectMethodHandle.allocateInstance": 1,
+    "java.math.BigInteger.subtract": 5,
+    "java.util.Spliterators$IntArraySpliterator.forEachRemaining": 10,
+    "java.util.stream.IntPipeline$10$1.accept": 10,
+    "java.math.BigInteger.compareMagnitude": 10,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ScopedDomainProbe.equals": 7,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ScopedDomainIdentity.sameDomains": 7,
+    "java.util.stream.IntPipeline$10.opWrapSink": 2,
+    "java.util.stream.Sink$ChainedInt.<init>": 2,
+    "java.util.stream.IntPipeline$10$1.<init>": 2,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch$TailFactor.<init>": 4,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.remove": 18,
+    "java.util.BitSet.set": 18,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.invalidateCostBounds": 24,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.scopedDomainHash": 8,
+    "java.util.Arrays.fill": 6,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.support": 24,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cachedWitness": 12,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$SupportWitnessProbe.equals": 12,
+    "java.util.HashMap.getOrDefault": 5,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.stamp": 8,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.invalidate": 4,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.lambda$tryForestTail$5": 5,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch$$Lambda$371+0x00007488fc3220e0.929962393.test": 5,
+    "java.lang.Long.equals": 1,
+    "java.util.stream.IntPipeline.filter": 5,
+    "java.math.BigInteger.trustedStripLeadingZeroInts": 4,
+    "java.lang.Long.valueOf": 4,
+    "java.util.Spliterator.getExactSizeIfKnown": 1,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch$$Lambda$370+0x00007488fc3218a0.15497553.apply": 5,
+    "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.lambda$classifyTail$6": 5,
+    "java.util.BitSet.clear": 1,
+    "java.util.stream.DistinctOps$1$2.end": 1,
+    "java.util.stream.Sink$ChainedInt.end": 1,
+    "java.util.stream.AbstractPipeline.exactOutputSizeIfKnown": 1
+  },
+  "mainLeafFrames": [
+    [
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch.tryForestTail",
+      676
+    ],
+    [
+      "java.math.BigInteger.add",
+      534
+    ],
+    [
+      "jdk.internal.util.ArraysSupport.mismatch",
+      429
+    ],
+    [
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.truthClassTuple",
+      418
+    ],
+    [
+      "java.math.BigInteger.<init>",
+      415
+    ],
+    [
+      "java.math.BigInteger.multiply",
+      357
+    ],
+    [
+      "java.util.Arrays.hashCode",
+      297
+    ],
+    [
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.costClassTuple",
+      230
+    ],
+    [
+      "java.util.HashMap.getNode",
+      212
+    ],
+    [
+      "java.util.Arrays.copyOf",
+      165
+    ],
+    [
+      "java.math.BigDecimal.bigMultiplyPowerTen",
+      134
+    ],
+    [
+      "java.util.ArrayList$Itr.hasNext",
+      119
+    ],
+    [
+      "java.util.ArrayList.iterator",
+      106
+    ],
+    [
+      "java.util.ArrayList$Itr.next",
+      93
+    ],
+    [
+      "java.math.BigInteger.multiplyByInt",
+      88
+    ],
+    [
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch$TailFactor.tuple",
+      82
+    ],
+    [
+      "java.util.BitSet.nextSetBit",
+      64
+    ],
+    [
+      "java.math.BigDecimal.compareTo",
+      59
+    ],
+    [
+      "java.util.HashMap.hash",
+      32
+    ],
+    [
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.reconstructTree",
+      24
+    ],
+    [
+      "java.util.HashMap.computeIfAbsent",
+      22
+    ],
+    [
+      "java.util.HashMap$TreeNode.getTreeNode",
+      19
+    ],
+    [
+      "java.util.ArrayDeque.grow",
+      19
+    ],
+    [
+      "java.util.BitSet.set",
+      18
+    ],
+    [
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.cached",
+      16
+    ],
+    [
+      "java.util.ArrayList$Itr.<init>",
+      13
+    ],
+    [
+      "java.util.ImmutableCollections$AbstractImmutableList.iterator",
+      12
+    ],
+    [
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$SupportWitnessProbe.equals",
+      12
+    ],
+    [
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$TupleIdentity.sameTuple",
+      11
+    ],
+    [
+      "java.util.stream.AbstractPipeline.wrapAndCopyInto",
+      11
+    ]
+  ],
+  "enumerateCoreFrameDepth": {
+    "4": 12,
+    "5": 14,
+    "6": 41,
+    "7": 137,
+    "17": 4637,
+    "15": 21,
+    "16": 49,
+    "12": 4,
+    "14": 9,
+    "11": 1
+  },
+  "sampleSpanSeconds": 59.96283721923828,
+  "mainAllocation": {
+    "counterStartBytes": 364026883408,
+    "counterEndBytes": 494995881512,
+    "deltaBytes": 130968998104,
+    "intervalSeconds": 59.97320580482483,
+    "bytesPerSecond": 2183791850.817879
+  },
+  "allocationClassWeightEstimatesExcludingFirstPerThread": [
+    [
+      "[I",
+      55122948944
+    ],
+    [
+      "java.math.BigInteger",
+      24790332832
+    ],
+    [
+      "java.util.ArrayList$Itr",
+      16964569240
+    ],
+    [
+      "java.math.BigDecimal",
+      15290778520
+    ],
+    [
+      "java.util.ArrayList",
+      5038619896
+    ],
+    [
+      "java.util.ImmutableCollections$ListItr",
+      2607322584
+    ],
+    [
+      "[Ljava.lang.Object;",
+      2209003496
+    ],
+    [
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch$TailFactor",
+      1544698512
+    ],
+    [
+      "org.apache.sysds.hops.fedplanner.memo.MemoOptimizer$TreeCell",
+      1094076040
+    ],
+    [
+      "java.util.stream.IntPipeline$10",
+      864576696
+    ],
+    [
+      "java.lang.Long",
+      557519880
+    ],
+    [
+      "java.util.stream.Nodes$IntSpinedNodeBuilder",
+      553327904
+    ],
+    [
+      "[[Lorg.apache.sysds.hops.fedplanner.memo.MemoOptimizer$TreeCell;",
+      545941624
+    ],
+    [
+      "[Ljava.util.HashMap$Node;",
+      463193160
+    ],
+    [
+      "[Z",
+      428607600
+    ],
+    [
+      "[[I",
+      424376752
+    ],
+    [
+      "java.util.stream.IntPipeline$10$1",
+      382503376
+    ],
+    [
+      "java.util.stream.IntPipeline$Head",
+      309151816
+    ],
+    [
+      "java.lang.Integer",
+      248365032
+    ],
+    [
+      "[[Lorg.apache.sysds.hops.fedplanner.memo.MemoOptimizer$ReducedSearch$TailEdge;",
+      216886008
+    ]
+  ],
+  "excludedInitialAllocationSamples": [
+    {
+      "thread": "Attach Listener",
+      "weight": 17564520,
+      "reason": "first attach-time sample can include pre-recording allocation; omit from distribution"
+    },
+    {
+      "thread": "main",
+      "weight": 364026944952,
+      "reason": "first attach-time sample can include pre-recording allocation; omit from distribution"
+    },
+    {
+      "thread": "JFR Periodic Tasks",
+      "weight": 176,
+      "reason": "first attach-time sample can include pre-recording allocation; omit from distribution"
+    }
+  ],
+  "gc": {
+    "collections": 504,
+    "pauseSeconds": 0.262345248,
+    "maxPauseSeconds": 0.001373487,
+    "maxSampledHeapBytes": 309558032,
+    "maxAfterGcBytes": 49511184
+  },
+  "dataLoss": []
+}
