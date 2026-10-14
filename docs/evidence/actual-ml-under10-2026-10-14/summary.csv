@@ -1,0 +1,9 @@
+cellId,suite,workload,workers,executionPlanner,rendererAuthorityPlanner,status,failureCategory,memoPlanningSeconds,fullCompileSeconds,fullInitialPlanningSeconds,harnessWallSeconds
+ml|logreg|lan|w1|Memo,ml,logreg,1,COMPILE_MEMO,COMPILE_EXACT,passed,,2.553181899,3.602665,3.58828102,4.705237075686455
+ml|logreg|lan|w3|Memo,ml,logreg,3,COMPILE_MEMO,COMPILE_EXACT,passed,,2.336598495,3.545233,3.537060235,4.721292652189732
+ml|logreg|lan|w5|Memo,ml,logreg,5,COMPILE_MEMO,COMPILE_EXACT,passed,,2.606762623,3.982456,3.964220586,5.210451357066631
+ml|logreg|lan|w7|Memo,ml,logreg,7,COMPILE_MEMO,COMPILE_EXACT,passed,,2.38232957,3.428583,3.414508382,4.556526862084866
+ml|glm|lan|w1|Memo,ml,glm,1,COMPILE_MEMO,COMPILE_EXACT,passed,,4.675176459,6.238675,6.223617742,7.413668714463711
+ml|glm|lan|w3|Memo,ml,glm,3,COMPILE_MEMO,COMPILE_EXACT,passed,,6.716365236,8.499098,8.480969256,9.532363682985306
+ml|glm|lan|w5|Memo,ml,glm,5,COMPILE_MEMO,COMPILE_EXACT,passed,,5.831210629,7.603589,7.589684572,8.732560470700264
+ml|glm|lan|w7|Memo,ml,glm,7,COMPILE_MEMO,COMPILE_EXACT,passed,,5.074403926,6.864629,6.843516872,8.14662580192089

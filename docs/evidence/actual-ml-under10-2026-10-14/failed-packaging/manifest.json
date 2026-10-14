@@ -1,0 +1,186 @@
+{
+  "costContract": {
+    "codegen": false,
+    "costEnvironment": {},
+    "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+    "nativeBlas": "none",
+    "productionDefaults": {
+      "aggregateBinaryFlopsPerSecond": 32000000000,
+      "flopsPerSecond": 2147483648,
+      "memoryBandwidthMiBPerSecond": 25000.0,
+      "networkBandwidthC2WMiBPerSecond": 125.0,
+      "networkBandwidthW2CMiBPerSecond": 125.0,
+      "networkLatencyC2WSeconds": 0.0005,
+      "networkLatencyW2CSeconds": 0.0005,
+      "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+      "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+      "unknownDimensionTransferFallbackMiB": 256.0,
+      "uploadEstimateClampRatio": 4.0
+    },
+    "semantics": "production-default-costs-no-overrides/v1"
+  },
+  "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/full-ml-under10-20261014/evaluation-engine",
+  "enginePreflight": {
+    "manifest": "/home/mchoi/fedplanner-under3-20261014/experiments/full-ml-under10-20261014/evaluation-engine-sha256.json",
+    "manifestSha256": "3b786932bdd46a09f410fbc7b8d82df4ec030a3f5dd83c21bf9a176f89f6e068",
+    "verifiedFiles": 4987
+  },
+  "executionCells": [
+    {
+      "id": "ml|logreg|lan|w1|Memo",
+      "planner": "Memo",
+      "planner_enum": "COMPILE_MEMO",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 1,
+      "workload": "logreg"
+    },
+    {
+      "id": "ml|logreg|lan|w3|Memo",
+      "planner": "Memo",
+      "planner_enum": "COMPILE_MEMO",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 3,
+      "workload": "logreg"
+    },
+    {
+      "id": "ml|logreg|lan|w5|Memo",
+      "planner": "Memo",
+      "planner_enum": "COMPILE_MEMO",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 5,
+      "workload": "logreg"
+    },
+    {
+      "id": "ml|logreg|lan|w7|Memo",
+      "planner": "Memo",
+      "planner_enum": "COMPILE_MEMO",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 7,
+      "workload": "logreg"
+    },
+    {
+      "id": "ml|glm|lan|w1|Memo",
+      "planner": "Memo",
+      "planner_enum": "COMPILE_MEMO",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 1,
+      "workload": "glm"
+    },
+    {
+      "id": "ml|glm|lan|w3|Memo",
+      "planner": "Memo",
+      "planner_enum": "COMPILE_MEMO",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 3,
+      "workload": "glm"
+    },
+    {
+      "id": "ml|glm|lan|w5|Memo",
+      "planner": "Memo",
+      "planner_enum": "COMPILE_MEMO",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 5,
+      "workload": "glm"
+    },
+    {
+      "id": "ml|glm|lan|w7|Memo",
+      "planner": "Memo",
+      "planner_enum": "COMPILE_MEMO",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 7,
+      "workload": "glm"
+    }
+  ],
+  "executionPlanner": "COMPILE_MEMO",
+  "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "renderCells": [
+    {
+      "id": "ml|logreg|lan|w1|DP-global",
+      "planner": "DP-global",
+      "planner_enum": "COMPILE_EXACT",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 1,
+      "workload": "logreg"
+    },
+    {
+      "id": "ml|logreg|lan|w3|DP-global",
+      "planner": "DP-global",
+      "planner_enum": "COMPILE_EXACT",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 3,
+      "workload": "logreg"
+    },
+    {
+      "id": "ml|logreg|lan|w5|DP-global",
+      "planner": "DP-global",
+      "planner_enum": "COMPILE_EXACT",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 5,
+      "workload": "logreg"
+    },
+    {
+      "id": "ml|logreg|lan|w7|DP-global",
+      "planner": "DP-global",
+      "planner_enum": "COMPILE_EXACT",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 7,
+      "workload": "logreg"
+    },
+    {
+      "id": "ml|glm|lan|w1|DP-global",
+      "planner": "DP-global",
+      "planner_enum": "COMPILE_EXACT",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 1,
+      "workload": "glm"
+    },
+    {
+      "id": "ml|glm|lan|w3|DP-global",
+      "planner": "DP-global",
+      "planner_enum": "COMPILE_EXACT",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 3,
+      "workload": "glm"
+    },
+    {
+      "id": "ml|glm|lan|w5|DP-global",
+      "planner": "DP-global",
+      "planner_enum": "COMPILE_EXACT",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 5,
+      "workload": "glm"
+    },
+    {
+      "id": "ml|glm|lan|w7|DP-global",
+      "planner": "DP-global",
+      "planner_enum": "COMPILE_EXACT",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 7,
+      "workload": "glm"
+    }
+  ],
+  "renderOnly": false,
+  "rendererAuthorityPlanner": "COMPILE_EXACT",
+  "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+  "repositoryCommit": "f7ca28d75134b62d1cf1eb4eaa7e82371d82f98f",
+  "runnerSha256": "b61d829088082ad5a24b73ecfea2a162fdcfca46c39a5b50ac29177b92ab4e7e",
+  "schema": "systemds-memo-planning-matrix/v1",
+  "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+  "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+}

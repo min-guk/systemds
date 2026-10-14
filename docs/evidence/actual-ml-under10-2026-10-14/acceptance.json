@@ -1,0 +1,12 @@
+{
+  "acceptedCells": 8,
+  "expectedCells": 8,
+  "manifestErrors": [],
+  "maximumFullCompileSeconds": 8.499098,
+  "maximumFullInitialPlanningSeconds": 8.480969256,
+  "passed": true,
+  "rejected": [],
+  "root": "/home/mchoi/full-ml-under10-final-r2-20261014",
+  "schema": "systemds-actual-ml-planning-performance/v1",
+  "targetSecondsInclusive": 10.0
+}

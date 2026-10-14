@@ -1,0 +1,187 @@
+{
+  "cell": {
+    "id": "ml|glm|lan|w7|Memo",
+    "planner": "Memo",
+    "planner_enum": "COMPILE_MEMO",
+    "profile": "lan",
+    "suite": "ml",
+    "workers": 7,
+    "workload": "glm"
+  },
+  "compileOnly": true,
+  "compileOnlyVerified": true,
+  "containerResources": {
+    "coordinatorHeap": "3g",
+    "cpus": 4,
+    "memory": "8g",
+    "workerProcesses": 0,
+    "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+  },
+  "costContract": {
+    "codegen": false,
+    "costEnvironment": {},
+    "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+    "nativeBlas": "none",
+    "productionDefaults": {
+      "aggregateBinaryFlopsPerSecond": 32000000000,
+      "flopsPerSecond": 2147483648,
+      "memoryBandwidthMiBPerSecond": 25000.0,
+      "networkBandwidthC2WMiBPerSecond": 125.0,
+      "networkBandwidthW2CMiBPerSecond": 125.0,
+      "networkLatencyC2WSeconds": 0.0005,
+      "networkLatencyW2CSeconds": 0.0005,
+      "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+      "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+      "unknownDimensionTransferFallbackMiB": 256.0,
+      "uploadEstimateClampRatio": 4.0
+    },
+    "semantics": "production-default-costs-no-overrides/v1"
+  },
+  "executionPlanner": "COMPILE_MEMO",
+  "failureCategory": null,
+  "harnessTimeout": false,
+  "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "memoConstruction": {
+    "costProjection": [
+      {
+        "activationEnvironments": 7569,
+        "bindingDagVisits": 366951,
+        "invariantProjectionStops": 133737,
+        "noRegionsSkipped": 64516,
+        "primitiveValueBytes": 399080,
+        "primitiveValues": 49885,
+        "primitiveVectors": 9524,
+        "projectedContexts": 9524,
+        "projectionCacheHits": 42138,
+        "relevantGuardDecisions": 6152,
+        "supportPrefixChecks": 19873,
+        "unknownObligations": 0
+      }
+    ],
+    "nativeGeneration": [
+      {
+        "coverageObligations": 50,
+        "cpPatterns": 469,
+        "determinantRegions": 3037,
+        "evidenceReuses": 0,
+        "oracleEvaluations": 3113,
+        "prefixRequests": 153,
+        "prunedPrefixes": 2183,
+        "publishedRules": 1301,
+        "unknownPrefixes": 36,
+        "visitedNativePatterns": 971
+      }
+    ],
+    "nativeRequests": [
+      {
+        "canonicalStringsCreated": 121,
+        "canonicalStringsReused": 11239,
+        "contextualViewBuilds": 466,
+        "oracleRequests": 466,
+        "preparedRequests": 11705,
+        "reusedResults": 11239,
+        "uncacheableRequests": 345
+      }
+    ]
+  },
+  "memoPlanning": [
+    {
+      "binarySupportHits": 2027,
+      "binarySupportRows": 4090,
+      "boundPrunes": 0,
+      "cacheHits": 54704,
+      "checks": 94450,
+      "conditionalBoundCacheHits": 0,
+      "conditionalBoundQueries": 0,
+      "costCacheHits": 0,
+      "costEvaluations": 11556,
+      "epoch": 1,
+      "estimatedCost": "330.907012850008913625428728492891506871020901314750517485663294792175292968750000",
+      "fedOwners": 23,
+      "nativeRules": 2054,
+      "nodes": 1360977,
+      "oracleHits": 0,
+      "oracleMisses": 466,
+      "phaseNanos": {
+        "facts": 90464284,
+        "model": 955013421,
+        "optimization": 1983014658,
+        "projection": 97084086,
+        "rules": 1948827477
+      },
+      "phaseSeconds": {
+        "facts": 0.090464284,
+        "model": 0.955013421,
+        "optimization": 1.983014658,
+        "projection": 0.097084086,
+        "rules": 1.948827477
+      },
+      "pruned": 481,
+      "status": "OPTIMAL",
+      "supplies": 6,
+      "supportCacheHits": 0,
+      "supportQueries": 73377,
+      "supportWitnessHits": 2027,
+      "totalNanos": 5074403926,
+      "totalSeconds": 5.074403926,
+      "wideBoundRelaxations": 0,
+      "workers": 7,
+      "worklistVisits": 8289
+    }
+  ],
+  "memoSearch": [
+    {
+      "binarySupportHits": 2027,
+      "binarySupportRows": 4090,
+      "boundPrunes": 0,
+      "checkCacheHits": 54704,
+      "checkEvaluations": 94450,
+      "conditionalBoundCacheHits": 0,
+      "conditionalBoundQueries": 0,
+      "costCacheHits": 0,
+      "costEvaluations": 11556,
+      "nodes": 1360977,
+      "removedRules": 481,
+      "status": "OPTIMAL",
+      "supportCacheHits": 0,
+      "supportQueries": 73377,
+      "supportWitnessHits": 2027,
+      "wideBoundRelaxations": 0,
+      "worklistVisits": 8289
+    }
+  ],
+  "p2PublicRecodeMetadataJvmProperty": false,
+  "provenance": {
+    "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+    "dmlSha256": "7a41fa3f4b42c0cdb8cd6934cc1e039d7fcfaa8df35dcb0a61845ccad483d88f",
+    "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/full-ml-under10-20261014/evaluation-engine-v2",
+    "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+    "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+    "repositoryCommit": "f7ca28d75134b62d1cf1eb4eaa7e82371d82f98f",
+    "scriptSha256": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+    "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+    "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+  },
+  "renderCell": {
+    "id": "ml|glm|lan|w7|DP-global",
+    "planner": "DP-global",
+    "planner_enum": "COMPILE_EXACT",
+    "profile": "lan",
+    "suite": "ml",
+    "workers": 7,
+    "workload": "glm"
+  },
+  "rendererAuthorityPlanner": "COMPILE_EXACT",
+  "reportedWorkerCountVerified": true,
+  "returncode": 0,
+  "schema": "systemds-memo-planning-attempt/v1",
+  "status": "passed",
+  "timing": {
+    "executionSeconds": 0.0,
+    "fullCompileSeconds": 6.864629,
+    "fullInitialPlanningSeconds": 6.843516872,
+    "harnessWallSeconds": 8.14662580192089,
+    "memoPlanningSeconds": 5.074403926,
+    "runtimeProgramSeconds": 0.061027
+  }
+}

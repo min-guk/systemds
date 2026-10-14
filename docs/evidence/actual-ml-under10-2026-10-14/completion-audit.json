@@ -1,0 +1,92 @@
+{
+  "passed": true,
+  "independentVerifier": "PASS / CLEAR",
+  "rawCoordinatorRows": [
+    {
+      "cell": "ml|logreg|lan|w1|Memo",
+      "rawReceiptParity": true,
+      "singlePlanningInvocation": true,
+      "fullCompileSeconds": 3.602665,
+      "fullInitialPlanningSeconds": 3.58828102,
+      "runtimeProgramSeconds": 0.05435,
+      "executionSeconds": 0.0
+    },
+    {
+      "cell": "ml|logreg|lan|w3|Memo",
+      "rawReceiptParity": true,
+      "singlePlanningInvocation": true,
+      "fullCompileSeconds": 3.545233,
+      "fullInitialPlanningSeconds": 3.537060235,
+      "runtimeProgramSeconds": 0.05364,
+      "executionSeconds": 0.0
+    },
+    {
+      "cell": "ml|logreg|lan|w5|Memo",
+      "rawReceiptParity": true,
+      "singlePlanningInvocation": true,
+      "fullCompileSeconds": 3.982456,
+      "fullInitialPlanningSeconds": 3.964220586,
+      "runtimeProgramSeconds": 0.056684,
+      "executionSeconds": 0.0
+    },
+    {
+      "cell": "ml|logreg|lan|w7|Memo",
+      "rawReceiptParity": true,
+      "singlePlanningInvocation": true,
+      "fullCompileSeconds": 3.428583,
+      "fullInitialPlanningSeconds": 3.414508382,
+      "runtimeProgramSeconds": 0.054251,
+      "executionSeconds": 0.0
+    },
+    {
+      "cell": "ml|glm|lan|w1|Memo",
+      "rawReceiptParity": true,
+      "singlePlanningInvocation": true,
+      "fullCompileSeconds": 6.238675,
+      "fullInitialPlanningSeconds": 6.223617742,
+      "runtimeProgramSeconds": 0.060196,
+      "executionSeconds": 0.0
+    },
+    {
+      "cell": "ml|glm|lan|w3|Memo",
+      "rawReceiptParity": true,
+      "singlePlanningInvocation": true,
+      "fullCompileSeconds": 8.499098,
+      "fullInitialPlanningSeconds": 8.480969256,
+      "runtimeProgramSeconds": 0.055858,
+      "executionSeconds": 0.0
+    },
+    {
+      "cell": "ml|glm|lan|w5|Memo",
+      "rawReceiptParity": true,
+      "singlePlanningInvocation": true,
+      "fullCompileSeconds": 7.603589,
+      "fullInitialPlanningSeconds": 7.589684572,
+      "runtimeProgramSeconds": 0.059819,
+      "executionSeconds": 0.0
+    },
+    {
+      "cell": "ml|glm|lan|w7|Memo",
+      "rawReceiptParity": true,
+      "singlePlanningInvocation": true,
+      "fullCompileSeconds": 6.864629,
+      "fullInitialPlanningSeconds": 6.843516872,
+      "runtimeProgramSeconds": 0.061027,
+      "executionSeconds": 0.0
+    }
+  ],
+  "engineVerifiedFiles": 5303,
+  "testedCandidate02ClassFilesIdentical": 4987,
+  "currentSourceHashesMatch": true,
+  "noDiagnosticClass": true,
+  "javaTestsPassed": 700,
+  "focusedPythonTestsPassed": 70,
+  "separateFullPythonDiscovery": {
+    "tests": 661,
+    "failures": 2,
+    "errors": 16,
+    "skipped": 1,
+    "allPassed": false,
+    "scope": "external legacy campaign/fixture contracts, separately disclosed; baseline full-discovery parity not verified"
+  }
+}

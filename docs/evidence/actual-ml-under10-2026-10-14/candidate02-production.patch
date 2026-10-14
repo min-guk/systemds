@@ -1,0 +1,379 @@
+diff --git a/src/main/java/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.java b/src/main/java/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.java
+index 65827e37b4..5a47241497 100644
+--- a/src/main/java/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.java
++++ b/src/main/java/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.java
+@@ -238,6 +238,10 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
+ 				+ " applicable=" + statistics.forestTailApplicable()
+ 				+ " completions=" + statistics.forestTailCompletions()
+ 				+ " cells=" + statistics.forestTailCells());
++		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
++			System.err.println("[MemoElimination] variables=" + statistics.eliminationVariables()
++				+ " cells=" + statistics.eliminationCells() + " rows=" + statistics.eliminationRows()
++				+ " factorHits=" + statistics.eliminationFactorHits());
+ 	}
+ 	private static void traceShapeReuse(MemoShapes.ReuseStatistics statistics) {
+ 		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+diff --git a/src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java b/src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java
+index 55e8cb973c..fed5751707 100644
+--- a/src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java
++++ b/src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java
+@@ -118,7 +118,8 @@ public final class MemoOptimizer {
+ 		long costCacheHits, long boundPrunes, long conditionalBoundQueries, long conditionalBoundCacheHits,
+ 		long wideBoundRelaxations,long forestTailAttempts,long forestTailApplicable,long forestTailCompletions,
+ 		long forestTailCells,long annotatedChecks,long invariantCheckAxes,long binaryChecksReduced,
+-		long branchEdgesRemovedDuringNormalization) {}
++		long branchEdgesRemovedDuringNormalization,long eliminationVariables,long eliminationCells,
++		long eliminationRows,long eliminationFactorHits) {}
+ 	public record Result(Status status, BigDecimal cost, int[] selectedRules, Statistics statistics) {
+ 		public Result { selectedRules = selectedRules == null ? null : selectedRules.clone(); }
+ 		@Override public int[] selectedRules() { return selectedRules == null ? null : selectedRules.clone(); }
+@@ -174,7 +175,7 @@ public final class MemoOptimizer {
+ 		removedRules, costEvaluations, costCacheHits, boundPrunes, conditionalBoundQueries,
+ 		conditionalBoundCacheHits, wideBoundRelaxations,forestTailAttempts,forestTailApplicable,
+ 		forestTailCompletions,forestTailCells,annotatedChecks,invariantCheckAxes,binaryChecksReduced,
+-		branchEdgesRemovedDuringNormalization;
++		branchEdgesRemovedDuringNormalization,eliminationVariables,eliminationCells,eliminationRows,eliminationFactorHits;
+ 
+ 	public MemoOptimizer(RuleMemo memo, double[][] nativeCosts, List<Check> checks,
+ 		List<CostTerm> terms, Limits limits) {
+@@ -297,7 +298,7 @@ public final class MemoOptimizer {
+ 			for(int id=0;id<checks.size();id++)
+ 				if(checks.get(id).owners.length==0 && evaluate(id,new int[0])==Truth.UNKNOWN)
+ 					return new Result(Status.UNRESOLVED,null,null,statistics());
+-		if(feasible && !tryTreeSolve() && !tryLeafRegionSolve()) search();
++		if(feasible && !tryTreeSolve() && !tryEliminationSolve() && !tryLeafRegionSolve()) search();
+ 		Status status = exhausted ? Status.RESOURCE_EXHAUSTED
+ 			: !complete() || unresolvedLowerBound != null &&
+ 				(incumbent == null || unresolvedLowerBound.compareTo(incumbent) <= 0) ? Status.UNRESOLVED
+@@ -305,6 +306,261 @@ public final class MemoOptimizer {
+ 		return new Result(status, incumbent, selected, statistics());
+ 	}
+ 
++	/** Exact bucket elimination over certified factor classes, not native-rule identities.
++	 * A message's separator partition refines only its consumed factors. Future native
++	 * costs remain outside the message. This preserves both its cost and lexicographic
++	 * witness for every actual separator ordinal in the same certified class. */
++	private boolean tryEliminationSolve() {
++		// Keep the existing finite-node budget traversal and its resource semantics.
++		if(limits.searchNodes()!=Long.MAX_VALUE) return false;
++		EliminationPlan plan=new EliminationPlan();
++		return plan.prepare() && plan.solve();
++	}
++
++	private final class EliminationPlan {
++		private static final long MAX_CELLS=2_000_000,MAX_ROWS=500_000;
++		private final int[][] live=Arrays.stream(domains).map(bits -> bits.stream().toArray()).toArray(int[][]::new);
++		private final List<EliminationFactor> originals=new ArrayList<>();
++		private final List<EliminationBucket> order=new ArrayList<>(),roots=new ArrayList<>();
++		private final int[] assignment=currentAssignment();
++		private final int[] tieLeft=new int[domains.length],tieRight=new int[domains.length];
++		private long plannedRows;
++
++		private final class EliminationFactor {
++			private final int[] owners;
++			private final int[][] classes;
++			private final int[] strides;
++			private final int check,term;
++			private final EliminationBucket message;
++			private final int rows;
++			private Truth[] truths;
++			private BigDecimal[] costs;
++			private EliminationFactor(int[] owners,int[][] proof,int check,int term,EliminationBucket message) {
++				this.owners=owners; this.check=check; this.term=term; this.message=message;
++				classes=new int[owners.length][]; strides=new int[owners.length];
++				long size=1;
++				for(int axis=owners.length-1;axis>=0;axis--) {
++					int owner=owners[axis];
++					classes[axis]=new int[domainSizes[owner]]; Arrays.fill(classes[axis],-1);
++					Map<Integer,Integer> labels=new LinkedHashMap<>();
++					for(int rule:live[owner]) {
++						int label=proof==null ? rule : proof[axis][rule];
++						classes[axis][rule]=labels.computeIfAbsent(label,ignored -> labels.size());
++					}
++					strides[axis]=(int)Math.min(size,MAX_ROWS+1);
++					size=boundedProduct(size,labels.size());
++				}
++				rows=(int)Math.min(size,MAX_ROWS+1);
++			}
++			private int index(int[] selected) {
++				int index=0;
++				for(int axis=0;axis<owners.length;axis++) index+=classes[axis][selected[owners[axis]]]*strides[axis];
++				return index;
++			}
++			private Truth truth() {
++				int index=index(assignment);
++				if(truths[index]!=null) { eliminationFactorHits++; return truths[index]; }
++				return truths[index]=evaluate(check,project(owners,assignment));
++			}
++			private BigDecimal cost() {
++				int index=index(assignment);
++				if(message!=null) return message.values[index];
++				if(costs[index]!=null) { eliminationFactorHits++; return costs[index]; }
++				return costs[index]=evaluateCost(term,project(owners,assignment));
++			}
++		}
++
++		private final class EliminationBucket {
++			private final int owner;
++			private final List<EliminationFactor> inputs;
++			private final int[] separator;
++			private final int[][] classes,representatives;
++			private final int ownerClasses;
++			private final long rowCount,score;
++			private final int[] witnessOwners;
++			private BigDecimal[] values;
++			private int[] choices;
++			private EliminationFactor output;
++			private EliminationBucket(int owner,List<EliminationFactor> inputs,BitSet[] graph) {
++				this.owner=owner; this.inputs=List.copyOf(inputs);
++				BitSet scope=new BitSet(),witness=new BitSet(); witness.set(owner);
++				for(EliminationFactor factor:inputs) {
++					for(int axis:factor.owners) scope.set(axis);
++					if(factor.message!=null) for(int axis:factor.message.witnessOwners) witness.set(axis);
++				}
++				witnessOwners=witness.stream().toArray();
++				scope.clear(owner); separator=scope.stream().toArray();
++				classes=new int[separator.length][]; representatives=new int[separator.length][];
++				long rows=1;
++				for(int axis=0;axis<separator.length;axis++) {
++					classes[axis]=refine(separator[axis],inputs);
++					representatives[axis]=representatives(separator[axis],classes[axis]);
++					rows=boundedProduct(rows,representatives[axis].length);
++				}
++				rowCount=rows;
++				ownerClasses=representatives(owner,refine(owner,inputs)).length;
++				long missing=0;
++				for(int a=0;a<separator.length;a++) for(int b=a+1;b<separator.length;b++)
++					if(!graph[separator[a]].get(separator[b]))
++						missing+=(long)representatives[a].length*representatives[b].length;
++				score=missing;
++			}
++			private void selectRow(int row) {
++				for(int axis=separator.length-1;axis>=0;axis--) {
++					int[] reps=representatives[axis];
++					assignment[separator[axis]]=reps[row%reps.length]; row/=reps.length;
++				}
++			}
++			private void restore(int row,int[] selected) {
++				selected[owner]=choices[row];
++				for(EliminationFactor factor:inputs) if(factor.message!=null)
++					factor.message.restore(factor.index(selected),selected);
++			}
++			private boolean lexLess(int candidate,int retained) {
++				for(int axis:separator) tieLeft[axis]=tieRight[axis]=assignment[axis];
++				tieLeft[owner]=candidate; tieRight[owner]=retained;
++				for(EliminationFactor factor:inputs) if(factor.message!=null) {
++					factor.message.restore(factor.index(tieLeft),tieLeft);
++					factor.message.restore(factor.index(tieRight),tieRight);
++				}
++				for(int axis:witnessOwners) if(tieLeft[axis]!=tieRight[axis]) return tieLeft[axis]<tieRight[axis];
++				return false;
++			}
++		}
++
++		private long boundedProduct(long left,int right) {
++			return right==0 ? 0 : left>(MAX_CELLS+1)/right ? MAX_CELLS+1 : left*right;
++		}
++		private int[] refine(int owner,List<EliminationFactor> factors) {
++			List<int[]> mappings=new ArrayList<>();
++			for(EliminationFactor factor:factors) for(int axis=0;axis<factor.owners.length;axis++)
++				if(factor.owners[axis]==owner) mappings.add(factor.classes[axis]);
++			int[] result=new int[domainSizes[owner]]; Arrays.fill(result,-1);
++			List<Integer> leaders=new ArrayList<>();
++			for(int rule:live[owner]) {
++				int found=-1;
++				for(int label=0;label<leaders.size() && found<0;label++) {
++					int prior=leaders.get(label); boolean same=true;
++					for(int[] mapping:mappings) if(mapping[rule]!=mapping[prior]) { same=false; break; }
++					if(same) found=label;
++				}
++				if(found<0) { found=leaders.size(); leaders.add(rule); }
++				result[rule]=found;
++			}
++			return result;
++		}
++		private int[] representatives(int owner,int[] classes) {
++			int count=0; for(int rule:live[owner]) count=Math.max(count,classes[rule]+1);
++			int[] reps=new int[count]; Arrays.fill(reps,-1);
++			for(int rule:live[owner]) if(reps[classes[rule]]<0) reps[classes[rule]]=rule;
++			return reps;
++		}
++		private boolean better(EliminationBucket candidate,EliminationBucket best) {
++			if(best==null || candidate.score!=best.score) return best==null || candidate.score<best.score;
++			long left=boundedProduct(candidate.rowCount,candidate.ownerClasses);
++			long right=boundedProduct(best.rowCount,best.ownerClasses);
++			if(left!=right) return left<right;
++			if(candidate.separator.length!=best.separator.length)
++				return candidate.separator.length<best.separator.length;
++			return candidate.owner<best.owner;
++		}
++		private boolean prepare() {
++			long factorRows=0;
++			for(int id=0;id<checks.size();id++) {
++				Check check=checks.get(id);
++				originals.add(new EliminationFactor(check.owners,check.truthClasses,id,-1,null));
++			}
++			for(int id=0;id<terms.size();id++) {
++				CostFactor term=terms.get(id);
++				originals.add(new EliminationFactor(term.owners,term.costClasses,-1,id,null));
++			}
++			List<List<EliminationFactor>> incidentFactors=lists(domains.length);
++			for(EliminationFactor factor:originals) {
++				factorRows+=factor.rows;
++				if(factorRows>MAX_ROWS) return false;
++				for(int owner:factor.owners) incidentFactors.get(owner).add(factor);
++			}
++			BitSet remaining=new BitSet(); BitSet[] graph=new BitSet[domains.length];
++			for(int owner=0;owner<domains.length;owner++) {
++				graph[owner]=new BitSet();
++				if(live[owner].length>1) remaining.set(owner);
++				for(int next:branchAdjacent[owner]) graph[owner].set(next);
++			}
++			long cells=0;
++			while(!remaining.isEmpty()) {
++				EliminationBucket best=null;
++				for(int owner=remaining.nextSetBit(0);owner>=0;owner=remaining.nextSetBit(owner+1)) {
++					EliminationBucket candidate=new EliminationBucket(owner,incidentFactors.get(owner),graph);
++					if(better(candidate,best)) best=candidate;
++				}
++				cells+=boundedProduct(best.rowCount,live[best.owner].length); plannedRows+=best.rowCount;
++				if(cells>MAX_CELLS || plannedRows+factorRows>MAX_ROWS) return false;
++				best.output=new EliminationFactor(best.separator,best.classes,-1,-1,best);
++				for(EliminationFactor factor:best.inputs) for(int axis:factor.owners)
++					incidentFactors.get(axis).remove(factor);
++				for(int axis:best.separator) {
++					incidentFactors.get(axis).add(best.output); graph[axis].clear(best.owner);
++					for(int other:best.separator) if(axis!=other) graph[axis].set(other);
++				}
++				if(best.separator.length==0) roots.add(best);
++				remaining.clear(best.owner); order.add(best);
++			}
++			return true;
++		}
++		private boolean solve() {
++			for(EliminationFactor factor:originals) {
++				if(factor.check>=0) factor.truths=new Truth[factor.rows];
++				else factor.costs=new BigDecimal[factor.rows];
++			}
++			BigDecimal total=fixedCost;
++			for(int owner=0;owner<domains.length;owner++) if(live[owner].length==1)
++				total=total.add(nativeCosts[owner][live[owner][0]]);
++			for(EliminationFactor factor:originals) if(factor.owners.length==0) {
++				if(factor.check>=0) {
++					Truth truth=factor.truth();
++					if(truth==Truth.UNKNOWN) return false;
++					if(truth==Truth.NO) return true;
++				}
++				else total=total.add(factor.cost());
++			}
++			for(EliminationBucket bucket:order) {
++				int rows=(int)bucket.rowCount;
++				bucket.values=new BigDecimal[rows]; bucket.choices=new int[rows]; Arrays.fill(bucket.choices,-1);
++				for(int row=0;row<rows;row++) {
++					bucket.selectRow(row);
++					for(int rule:live[bucket.owner]) {
++						nodes++; eliminationCells++; assignment[bucket.owner]=rule;
++						boolean feasible=true;
++						for(EliminationFactor factor:bucket.inputs) {
++							if(factor.message!=null && factor.cost()==null) { feasible=false; break; }
++							if(factor.check>=0) {
++								Truth truth=factor.truth();
++								if(truth==Truth.UNKNOWN) return false;
++								if(truth==Truth.NO) { feasible=false; break; }
++							}
++						}
++						if(!feasible) continue;
++						BigDecimal cost=nativeCosts[bucket.owner][rule];
++						for(EliminationFactor factor:bucket.inputs) if(factor.check<0) cost=cost.add(factor.cost());
++						BigDecimal best=bucket.values[row];
++						int comparison=best==null ? -1 : cost.compareTo(best);
++						if(comparison<0 || comparison==0 && bucket.lexLess(rule,bucket.choices[row])) {
++							bucket.values[row]=cost; bucket.choices[row]=rule;
++						}
++					}
++				}
++				eliminationVariables++; eliminationRows+=rows;
++			}
++			int[] solution=currentAssignment();
++			for(EliminationBucket root:roots) {
++				if(root.values[0]==null) return true;
++				total=total.add(root.values[0]); root.restore(0,solution);
++			}
++			incumbent=total; selected=solution;
++			return true;
++		}
++	}
++
+ 	/** Fold ordinals proven singleton by the initial feasibility fixed point exactly once. */
+ 	private void normalizeAfterPropagation() {
+ 		long branchEdgesBefore=branchEdgeCount();
+@@ -1690,7 +1946,7 @@ public final class MemoOptimizer {
+ 			removedRules,costEvaluations,costCacheHits,boundPrunes,conditionalBoundQueries,
+ 			conditionalBoundCacheHits,wideBoundRelaxations,forestTailAttempts,forestTailApplicable,
+ 			forestTailCompletions,forestTailCells,annotatedChecks,invariantCheckAxes,binaryChecksReduced,
+-			branchEdgesRemovedDuringNormalization);
++			branchEdgesRemovedDuringNormalization,eliminationVariables,eliminationCells,eliminationRows,eliminationFactorHits);
+ 	}
+ 	private static int[] uniqueScope(int[] owners) {
+ 		int[] copy=owners.clone();
+diff --git a/src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.java b/src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.java
+index 80d7cb7cdd..436f4d1ef2 100644
+--- a/src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.java
++++ b/src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.java
+@@ -1591,7 +1591,8 @@ public final class MemoProgramModel {
+ 	}
+ 
+ 	private Map<Long,List<MemoSupplyRegistry.Supply>> reconstructSupplies(int[] selected) {
+-		Map<Long,List<MemoSupplyRegistry.Supply>> byBlock = new LinkedHashMap<>();
++		Map<SupplyEdge,MemoPartition> targets = new LinkedHashMap<>();
++		Map<SupplyEdge,Map<MemoPartition,MemoSupplyRegistry.Recipe>> recipesByEdge = new LinkedHashMap<>();
+ 		for(int useIndex=0;useIndex<uses.size();useIndex++) {
+ 			Use use=uses.get(useIndex);
+ 			if(compatible(use,useIndex,selected) != Truth.YES) throw new IllegalStateException("Selected use lost legality");
+@@ -1609,15 +1610,39 @@ public final class MemoProgramModel {
+ 				}
+ 				MemoPartition target = rule.inputs().get(position);
+ 				if(layouts.isEmpty()) continue; // the consumer follows an always-throwing function call
+-				if(layouts.size() == 1 && layouts.contains(target)) continue;
+-				List<MemoSupplyRegistry.Recipe> recipes = new ArrayList<>();
+-				for(MemoPartition source : layouts) recipes.add(new MemoSupplyRegistry.Recipe(source,
+-					MemoSupplyRegistry.Movement.valueOf(MemoMovement.kind(source,target,false).name()),
+-					source.federated() || target.federated() ? sources.pool().encode() : null));
+-				byBlock.computeIfAbsent(use.consumer().statementBlockId(),ignored -> new ArrayList<>()).add(
+-					new MemoSupplyRegistry.Supply(input.getHopID(),use.consumer().hop().getHopID(),position,target,recipes));
++				SupplyEdge edge=new SupplyEdge(use.consumer().statementBlockId(),input.getHopID(),
++					use.consumer().hop().getHopID(),position);
++				MemoPartition priorTarget=targets.putIfAbsent(edge,target);
++				if(priorTarget!=null && priorTarget!=target)
++					throw new IllegalStateException("Selected physical supply has conflicting targets at "+edge
++						+": "+priorTarget+" and "+target);
++				Map<MemoPartition,MemoSupplyRegistry.Recipe> recipes=recipesByEdge.computeIfAbsent(edge,
++					ignored -> new LinkedHashMap<>());
++				for(MemoPartition source : layouts) {
++					MemoMovement.Kind movement=MemoMovement.kind(source,target,false);
++					if(movement==MemoMovement.Kind.IMPOSSIBLE)
++						throw new IllegalStateException("Selected physical supply became impossible at "+edge
++							+": "+source+" -> "+target);
++					MemoSupplyRegistry.Recipe recipe=new MemoSupplyRegistry.Recipe(source,
++						MemoSupplyRegistry.Movement.valueOf(movement.name()),
++						source.federated() || target.federated() ? sources.pool().encode() : null);
++					MemoSupplyRegistry.Recipe prior=recipes.putIfAbsent(source,recipe);
++					if(prior!=null && !prior.equals(recipe))
++						throw new IllegalStateException("Selected physical supply has conflicting recipes at "+edge
++							+" for "+source+": "+prior+" and "+recipe);
++				}
+ 			}
+ 		}
++		Map<Long,List<MemoSupplyRegistry.Supply>> byBlock = new LinkedHashMap<>();
++		for(var entry : recipesByEdge.entrySet()) {
++			SupplyEdge edge=entry.getKey(); MemoPartition target=targets.get(edge);
++			Map<MemoPartition,MemoSupplyRegistry.Recipe> recipes=entry.getValue();
++			// Omit a DIRECT-only edge only after every occurrence has contributed its exact source layout.
++			if(recipes.size()==1 && recipes.containsKey(target)) continue;
++			byBlock.computeIfAbsent(edge.statementBlockId(),ignored -> new ArrayList<>()).add(
++				new MemoSupplyRegistry.Supply(edge.producerHopId(),edge.consumerHopId(),edge.inputPosition(),
++					target,List.copyOf(recipes.values())));
++		}
+ 		byBlock.replaceAll((block,supplies) -> List.copyOf(supplies));
+ 		return byBlock;
+ 	}

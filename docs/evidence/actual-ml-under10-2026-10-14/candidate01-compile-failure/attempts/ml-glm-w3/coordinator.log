@@ -1,0 +1,24 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/14 16:53:27 WARN utils.SettingsChecker: Low memory budget of total:    251 GB set to:      3 GB
+26/10/14 16:53:28 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[MemoPlannerPhase] phase=facts elapsedNs=63531047
+[MemoPlannerPhase] phase=rules elapsedNs=2536521101
+[MemoNativeRequests] preparedRequests=11693 reusedResults=11239 oracleRequests=454 canonicalStringsCreated=121 canonicalStringsReused=11239 uncacheableRequests=333 contextualViewBuilds=454
+[MemoNativeGeneration] cpPatterns=457 prefixRequests=153 prunedPrefixes=2171 unknownPrefixes=36 visitedNativePatterns=971 determinantRegions=3025 oracleEvaluations=3101 evidenceReuses=0 publishedRules=1289 coverageObligations=50
+[MemoPlannerPhase] phase=model elapsedNs=1101846057
+[MemoCostProjection] bindingDagVisits=366951 projectionCacheHits=42138 relevantGuardDecisions=6152 supportPrefixChecks=19849 noRegionsSkipped=64516 unknownObligations=0 invariantProjectionStops=133713 activationEnvironments=7545 projectedContexts=9500 primitiveVectors=9500 primitiveValues=49861 primitiveValueBytes=398888
+[MemoPlannerPhase] phase=optimization elapsedNs=2070154729
+[MemoSearch] status=OPTIMAL nodes=1360977 checkEvaluations=94306 checkCacheHits=54704 supportQueries=73377 supportCacheHits=0 supportWitnessHits=2027 binarySupportHits=2027 binarySupportRows=4090 worklistVisits=8217 removedRules=481 costEvaluations=11556 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=166 cells=1360977 rows=229309 factorHits=3180349
+[MemoShapeReuse] bindingGuardRequests=16194 bindingGuardCacheHits=5964 repeatProofRequests=67552 repeatProofCacheHits=62252 phaseShapeRequests=389618 phaseShapeCacheHits=162922 phaseShapeCacheEntries=225123 guardRelevanceRequests=2417576 guardRelevanceCacheHits=2417356 guardRelevanceIndexEntries=220 occurrenceTransferRequests=267289 occurrenceTransferCacheHits=265485 occurrenceTransferBuilds=1804 occurrenceTransferEntries=893 guardAtomRequests=1180589 guardAtomHits=1180545 guardAtomIdentities=35
+[MemoMovementReuse] activationRows=4919 activationReplays=93258 postGateRequests=530779 postGateBuilds=3676 postGateHits=527103 primitiveContexts=9776 contextualViewBuilds=4311 unionRequests=15167 unionCacheHits=14150 measurementRequests=28050 measurementHits=10835
+[MemoNativeCostReuse] requests=7851 cacheHits=6033 vectorBuilds=3467 entries=1818
+[MemoContextAnalysisReuse] requests=125638 hits=125477 entries=161
+[MemoDirectRoots] resolver=shapes requests=226702 eligibleCalls=226696 fastPathCalls=226696 rootsResolved=226696
+[MemoDirectRoots] resolver=modelPrivacy requests=37440 eligibleCalls=19908 fastPathCalls=19908 rootsResolved=19908
+[MemoCheckProjection] annotatedChecks=5253 invariantCheckAxes=1140 binaryChecksReduced=108 branchEdgesRemovedDuringNormalization=36
+[31m
+An Error Occurred : 
+    IllegalStateException -- Duplicate selected supply edge SupplyEdge[statementBlockId=43, producerHopId=2389, consumerHopId=2399, inputPosition=1]
+[0m

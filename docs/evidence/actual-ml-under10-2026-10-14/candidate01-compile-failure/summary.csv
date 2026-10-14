@@ -1,0 +1,3 @@
+cellId,suite,workload,workers,executionPlanner,rendererAuthorityPlanner,status,failureCategory,memoPlanningSeconds,fullCompileSeconds,fullInitialPlanningSeconds,harnessWallSeconds
+ml|logreg|lan|w3|Memo,ml,logreg,3,COMPILE_MEMO,COMPILE_EXACT,failed,evidence_validation_failure,,,,5.741511203348637
+ml|glm|lan|w3|Memo,ml,glm,3,COMPILE_MEMO,COMPILE_EXACT,failed,evidence_validation_failure,,,,8.18630214035511

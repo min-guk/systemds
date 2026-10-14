@@ -1,0 +1,20 @@
+MEMO_MATRIX cell=ml|logreg|lan|w1|Memo rendererCell=ml|logreg|lan|w1|DP-global status=passed resume=no memoSeconds=2.553181899 compileSeconds=3.602665
+MEMO_MATRIX cell=ml|logreg|lan|w3|Memo rendererCell=ml|logreg|lan|w3|DP-global status=passed resume=no memoSeconds=2.336598495 compileSeconds=3.545233
+MEMO_MATRIX cell=ml|logreg|lan|w5|Memo rendererCell=ml|logreg|lan|w5|DP-global status=passed resume=no memoSeconds=2.606762623 compileSeconds=3.982456
+MEMO_MATRIX cell=ml|logreg|lan|w7|Memo rendererCell=ml|logreg|lan|w7|DP-global status=passed resume=no memoSeconds=2.38232957 compileSeconds=3.428583
+MEMO_MATRIX cell=ml|glm|lan|w1|Memo rendererCell=ml|glm|lan|w1|DP-global status=passed resume=no memoSeconds=4.675176459 compileSeconds=6.238675
+MEMO_MATRIX cell=ml|glm|lan|w3|Memo rendererCell=ml|glm|lan|w3|DP-global status=passed resume=no memoSeconds=6.716365236 compileSeconds=8.499098
+MEMO_MATRIX cell=ml|glm|lan|w5|Memo rendererCell=ml|glm|lan|w5|DP-global status=passed resume=no memoSeconds=5.831210629 compileSeconds=7.603589
+MEMO_MATRIX cell=ml|glm|lan|w7|Memo rendererCell=ml|glm|lan|w7|DP-global status=passed resume=no memoSeconds=5.074403926 compileSeconds=6.864629
+{
+  "acceptedCells": 8,
+  "expectedCells": 8,
+  "manifestErrors": [],
+  "maximumFullCompileSeconds": 8.499098,
+  "maximumFullInitialPlanningSeconds": 8.480969256,
+  "passed": true,
+  "rejected": [],
+  "root": "/home/mchoi/full-ml-under10-final-r2-20261014",
+  "schema": "systemds-actual-ml-planning-performance/v1",
+  "targetSecondsInclusive": 10.0
+}

@@ -1,0 +1,9 @@
+cellId,suite,workload,workers,executionPlanner,rendererAuthorityPlanner,status,failureCategory,memoPlanningSeconds,fullCompileSeconds,fullInitialPlanningSeconds,harnessWallSeconds
+ml|logreg|lan|w1|Memo,ml,logreg,1,COMPILE_MEMO,COMPILE_EXACT,failed,setup_failure,,,,0.29811374098062515
+ml|logreg|lan|w3|Memo,ml,logreg,3,COMPILE_MEMO,COMPILE_EXACT,failed,setup_failure,,,,0.21059925854206085
+ml|logreg|lan|w5|Memo,ml,logreg,5,COMPILE_MEMO,COMPILE_EXACT,failed,setup_failure,,,,0.2183077409863472
+ml|logreg|lan|w7|Memo,ml,logreg,7,COMPILE_MEMO,COMPILE_EXACT,failed,setup_failure,,,,0.23004880547523499
+ml|glm|lan|w1|Memo,ml,glm,1,COMPILE_MEMO,COMPILE_EXACT,failed,setup_failure,,,,0.2201838716864586
+ml|glm|lan|w3|Memo,ml,glm,3,COMPILE_MEMO,COMPILE_EXACT,failed,setup_failure,,,,0.28999508917331696
+ml|glm|lan|w5|Memo,ml,glm,5,COMPILE_MEMO,COMPILE_EXACT,failed,setup_failure,,,,0.254002220928669
+ml|glm|lan|w7|Memo,ml,glm,7,COMPILE_MEMO,COMPILE_EXACT,failed,setup_failure,,,,0.276805117726326

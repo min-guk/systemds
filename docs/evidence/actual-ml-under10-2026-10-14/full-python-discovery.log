@@ -1,0 +1,279 @@
+.EEEE....................EE..F.E................E........E......................................................................................................................................................................................................................................................................E.............E.E.................s.............EE..E..........................{
+  "compile_gate": false,
+  "compile": {
+    "passed": 0,
+    "failed": 0,
+    "pending": 896
+  },
+  "runtime": {
+    "passed": 896,
+    "failed": 0,
+    "pending": 0
+  }
+}
+{
+  "runtime": {
+    "passed": 2,
+    "failed": 0,
+    "pending": 894
+  },
+  "runtime_selection": {
+    "selected": 2,
+    "passed": 2,
+    "failed": 0,
+    "pending": 0,
+    "excluded": 894
+  }
+}
+{"event": "start", "key": "ml|l2svm|wan_mid|w3|DP-local|local_only|r1", "attempt": "attempts/01791998168906895608-d26a99"}
+{"key": "ml|l2svm|wan_mid|w3|DP-local|local_only|r1", "status": "failed", "full_initial_planning_seconds": null, "compile_seconds": null, "optimizer_seconds": null, "analysis_seconds": null, "selection_adapter_seconds": null, "errors": ["bad metadata"]}
+.......................................................................................................................................................................................................................FE.....................................................
+======================================================================
+ERROR: setUpClass (test_audit_current_scope_applicability.CurrentScopeApplicabilityAuditTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_audit_current_scope_applicability.py", line 19, in setUpClass
+    cls.ledger = MOD.build()
+                 ^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/audit_current_scope_applicability.py", line 236, in build
+    pinned_files = resolve_pinned_files(inventory, evaluation, legacy)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/audit_current_scope_applicability.py", line 79, in resolve_pinned_files
+    raise ValueError(f"pinned launcher/config source changed: {path}")
+ValueError: pinned launcher/config source changed: /home/mchoi/cofee-evaluation/campaign/run_ml10_campaign.py
+
+======================================================================
+ERROR: setUpClass (test_audit_current_scope_harness_alias_resolution.ScopeHarnessAliasResolutionTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_audit_current_scope_harness_alias_resolution.py", line 23, in setUpClass
+    cls.receipt = CLOSURE.build()
+                  ^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/certify_scope_harness_alias_rows.py", line 248, in build
+    raise ValueError("source manifest bytes differ")
+ValueError: source manifest bytes differ
+
+======================================================================
+ERROR: setUpClass (test_audit_current_scope_library_resolution.CurrentScopeLibraryResolutionTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_audit_current_scope_library_resolution.py", line 19, in setUpClass
+    cls.ledger = MOD.build()
+                 ^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/audit_current_scope_library_resolution.py", line 63, in build
+    v1 = v1_module.build(catalog_path, inventory_path, evaluation, legacy,
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/audit_current_scope_applicability.py", line 236, in build
+    pinned_files = resolve_pinned_files(inventory, evaluation, legacy)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/audit_current_scope_applicability.py", line 79, in resolve_pinned_files
+    raise ValueError(f"pinned launcher/config source changed: {path}")
+ValueError: pinned launcher/config source changed: /home/mchoi/cofee-evaluation/campaign/run_ml10_campaign.py
+
+======================================================================
+ERROR: setUpClass (test_audit_current_scope_template_resolution.ScopeTemplateResolutionTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_audit_current_scope_template_resolution.py", line 22, in setUpClass
+    cls.receipt = CLOSURE.build()
+                  ^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/certify_scope_template_rows.py", line 355, in build
+    raise ValueError(f"harness alias byte identity differs: {discovery}")
+ValueError: harness alias byte identity differs: unclassified:evaluation:harness/sigmod2021-exdra-p523/experiments/code/exp/steplm_fed.dml
+
+======================================================================
+ERROR: test_complete_discovered_denominator_is_retained (test_build_closed_comparison_cases.ClosedComparisonCasesTest.test_complete_discovered_denominator_is_retained)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_build_closed_comparison_cases.py", line 15, in test_complete_discovered_denominator_is_retained
+    result = mod.build()
+             ^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/build_closed_comparison_cases.py", line 24, in build
+    backlog = json.loads(source.read_text())
+                         ^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/pathlib.py", line 1029, in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/pathlib.py", line 1015, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/home/mchoi/cofee-evaluation/plan-space-cells.json'
+
+======================================================================
+ERROR: test_historical_decision_requires_pinned_evidence_and_exact_pair (test_build_closed_comparison_cases.ClosedComparisonCasesTest.test_historical_decision_requires_pinned_evidence_and_exact_pair)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_build_closed_comparison_cases.py", line 30, in test_historical_decision_requires_pinned_evidence_and_exact_pair
+    original = mod.build(source, Path('/nonexistent/closed-decisions.json'))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/build_closed_comparison_cases.py", line 24, in build
+    backlog = json.loads(source.read_text())
+                         ^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/pathlib.py", line 1029, in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/pathlib.py", line 1015, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/home/mchoi/cofee-evaluation/plan-space-cells.json'
+
+======================================================================
+ERROR: setUpClass (test_build_plan_space_inventory.PlanSpaceInventoryTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_build_plan_space_inventory.py", line 20, in setUpClass
+    cls.inventory = build(DEFAULT_EVALUATION, DEFAULT_LEGACY)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/build_plan_space_inventory.py", line 50, in build
+    raise FileNotFoundError(path)
+FileNotFoundError: /home/mchoi/COFEE-Experiment/experiments/parameters.sh
+
+======================================================================
+ERROR: setUpClass (test_certify_scope_harness_alias_rows.ScopeHarnessAliasRowsTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_certify_scope_harness_alias_rows.py", line 19, in setUpClass
+    cls.receipt = MOD.build()
+                  ^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/certify_scope_harness_alias_rows.py", line 248, in build
+    raise ValueError("source manifest bytes differ")
+ValueError: source manifest bytes differ
+
+======================================================================
+ERROR: setUpClass (test_certify_scope_template_rows.ScopeTemplateRowsTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_certify_scope_template_rows.py", line 19, in setUpClass
+    cls.receipt = MOD.build()
+                  ^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/certify_scope_template_rows.py", line 355, in build
+    raise ValueError(f"harness alias byte identity differs: {discovery}")
+ValueError: harness alias byte identity differs: unclassified:evaluation:harness/sigmod2021-exdra-p523/experiments/code/exp/steplm_fed.dml
+
+======================================================================
+ERROR: test_collector_failure_cannot_prevent_strict_cleanup (test_matrix_overhead.NodeEvidenceTest.test_collector_failure_cannot_prevent_strict_cleanup)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_matrix_overhead.py", line 105, in test_collector_failure_cannot_prevent_strict_cleanup
+    result = CAMPAIGN.execute_cell(root, {"remote_root": "/remote",
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/run_matrix_campaign.py", line 861, in execute_cell
+    workload_timeout = frozen_timeout_policy(manifest)[phase]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/run_matrix_campaign.py", line 407, in frozen_timeout_policy
+    raise RuntimeError('campaign timeout policy is missing, unsupported, or inconsistent')
+RuntimeError: campaign timeout policy is missing, unsupported, or inconsistent
+
+======================================================================
+ERROR: test_valid_contract_runs_exact_selected_cell_without_compile_gate (test_matrix_runtime_diagnostic.RuntimeDiagnosticCliTest.test_valid_contract_runs_exact_selected_cell_without_compile_gate)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_matrix_runtime_diagnostic.py", line 73, in test_valid_contract_runs_exact_selected_cell_without_compile_gate
+    self.assertEqual(0, CAMPAIGN.main([
+                        ^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/run_matrix_campaign.py", line 1269, in main
+    reference = prepare_runtime_reference(args.root, args.stage, manifest, cell,
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/run_matrix_campaign.py", line 1104, in prepare_runtime_reference
+    if sha(stage / 'systemds/target/SystemDS.jar') != manifest['identity']['jar_sha256']:
+                                                      ~~~~~~~~^^^^^^^^^^^^
+KeyError: 'identity'
+
+======================================================================
+ERROR: test_result_is_marked_unlimited_and_timings_are_not_exported (test_matrix_runtime_diagnostic.RuntimeDiagnosticEvidenceTest.test_result_is_marked_unlimited_and_timings_are_not_exported)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_matrix_runtime_diagnostic.py", line 140, in test_result_is_marked_unlimited_and_timings_are_not_exported
+    result = CAMPAIGN.execute_cell(root, {"remote_root": "/remote",
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/run_matrix_campaign.py", line 861, in execute_cell
+    workload_timeout = frozen_timeout_policy(manifest)[phase]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/run_matrix_campaign.py", line 407, in frozen_timeout_policy
+    raise RuntimeError('campaign timeout policy is missing, unsupported, or inconsistent')
+RuntimeError: campaign timeout policy is missing, unsupported, or inconsistent
+
+======================================================================
+ERROR: test_complete_success_bypasses_profiler_compares_numerics_and_cleans_up_then_bad_receipt_fails (test_pinned_runtime_contract.CompleteExecutionTest.test_complete_success_bypasses_profiler_compares_numerics_and_cleans_up_then_bad_receipt_fails) (bad_receipt=False)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_pinned_runtime_contract.py", line 508, in test_complete_success_bypasses_profiler_compares_numerics_and_cleans_up_then_bad_receipt_fails
+    result, base, cleanup, compare = self._execute(root, contract, digest, bad)
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_pinned_runtime_contract.py", line 493, in _execute
+    result = CAMPAIGN.execute_cell(root, manifest, cell, "runtime", SimpleNamespace(stage=Path("/stage")),
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/run_matrix_campaign.py", line 861, in execute_cell
+    workload_timeout = frozen_timeout_policy(manifest)[phase]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/run_matrix_campaign.py", line 407, in frozen_timeout_policy
+    raise RuntimeError('campaign timeout policy is missing, unsupported, or inconsistent')
+RuntimeError: campaign timeout policy is missing, unsupported, or inconsistent
+
+======================================================================
+ERROR: test_complete_success_bypasses_profiler_compares_numerics_and_cleans_up_then_bad_receipt_fails (test_pinned_runtime_contract.CompleteExecutionTest.test_complete_success_bypasses_profiler_compares_numerics_and_cleans_up_then_bad_receipt_fails) (bad_receipt=True)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_pinned_runtime_contract.py", line 508, in test_complete_success_bypasses_profiler_compares_numerics_and_cleans_up_then_bad_receipt_fails
+    result, base, cleanup, compare = self._execute(root, contract, digest, bad)
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_pinned_runtime_contract.py", line 493, in _execute
+    result = CAMPAIGN.execute_cell(root, manifest, cell, "runtime", SimpleNamespace(stage=Path("/stage")),
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/run_matrix_campaign.py", line 861, in execute_cell
+    workload_timeout = frozen_timeout_policy(manifest)[phase]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/run_matrix_campaign.py", line 407, in frozen_timeout_policy
+    raise RuntimeError('campaign timeout policy is missing, unsupported, or inconsistent')
+RuntimeError: campaign timeout policy is missing, unsupported, or inconsistent
+
+======================================================================
+ERROR: test_default_execution_hands_manifest_image_to_lifecycle (test_pinned_runtime_contract.FreezeAndDefaultsTest.test_default_execution_hands_manifest_image_to_lifecycle)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_pinned_runtime_contract.py", line 338, in test_default_execution_hands_manifest_image_to_lifecycle
+    result = CAMPAIGN.execute_cell(root, {"remote_root": "/remote", "image": selected_image,
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/run_matrix_campaign.py", line 861, in execute_cell
+    workload_timeout = frozen_timeout_policy(manifest)[phase]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/run_matrix_campaign.py", line 407, in frozen_timeout_policy
+    raise RuntimeError('campaign timeout policy is missing, unsupported, or inconsistent')
+RuntimeError: campaign timeout policy is missing, unsupported, or inconsistent
+
+======================================================================
+ERROR: test_proof_multiplicity_and_exact_physical_set (test_verify_compact_physical_shard.CompactShardTest.test_proof_multiplicity_and_exact_physical_set)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_verify_compact_physical_shard.py", line 61, in test_proof_multiplicity_and_exact_physical_set
+    result = verify(self.receipt, CALIBRATION_ROOT)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/verify_compact_physical_shard.py", line 32, in verify
+    raise ValueError("frozen compact physical identity verifier missing")
+ValueError: frozen compact physical identity verifier missing
+
+======================================================================
+FAIL: test_current_public_ignores_are_explicit (test_build_plan_space_exclusion_ledger.ExclusionLedgerTest.test_current_public_ignores_are_explicit)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_build_plan_space_exclusion_ledger.py", line 16, in test_current_public_ignores_are_explicit
+    self.assertEqual(14, len(rows))
+AssertionError: 14 != 16
+
+======================================================================
+FAIL: test_missing_reference_and_dictionary_mutations_fail (test_verify_compact_physical_shard.CompactShardTest.test_missing_reference_and_dictionary_mutations_fail)
+----------------------------------------------------------------------
+ValueError: frozen compact physical identity verifier missing
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_verify_compact_physical_shard.py", line 68, in test_missing_reference_and_dictionary_mutations_fail
+    with self.assertRaisesRegex(ValueError, 'proof coverage'):
+AssertionError: "proof coverage" does not match "frozen compact physical identity verifier missing"
+
+----------------------------------------------------------------------
+Ran 661 tests in 20.272s
+
+FAILED (failures=2, errors=16, skipped=1)
+{"attestation": "/tmp/tmpcnxr_hkw/results/parallel-verification.json", "auditorSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "boundRunnerSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "counts": {"CAPTURED_EQUAL": 1}, "status": "INCOMPLETE"}

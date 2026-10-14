@@ -1,0 +1,13 @@
+.......F......
+======================================================================
+FAIL: test_frozen_engine_rejects_external_dependency_symlink (test_run_memo_planning_matrix.MemoPlanningMatrixTest.test_frozen_engine_rejects_external_dependency_symlink)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/mchoi/fedplanner-under3-20261014/scripts/fedplanner/tests/test_run_memo_planning_matrix.py", line 155, in test_frozen_engine_rejects_external_dependency_symlink
+    with self.assertRaisesRegex(ValueError, "symlink"):
+AssertionError: ValueError not raised
+
+----------------------------------------------------------------------
+Ran 14 tests in 0.029s
+
+FAILED (failures=1)

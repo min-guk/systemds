@@ -1,0 +1,31 @@
+{
+  "baseGitCommit": "f7ca28d75134b62d1cf1eb4eaa7e82371d82f98f",
+  "productionDiffSha256": "84a760c087105e02bef1cbe663354b952c4d00e39a43aafee5d26b6d2b0d60cd",
+  "actualRunRoot": "/home/mchoi/full-ml-under10-final-r2-20261014",
+  "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/full-ml-under10-20261014/evaluation-engine-v2",
+  "sourceFiles": {
+    "scripts/fedplanner/evaluate_actual_ml_planning.py": "2daff133ef41f8aba9d9c5beeb768d5dd5f8210f734bf3fede910ab45f93ffea",
+    "scripts/fedplanner/run_LAN_docker.sh": "095ccf690083f930cdc6ea742db448a963cb77a968e2c132fe9999eb17c89051",
+    "scripts/fedplanner/run_actual_ml_planning_performance.py": "b89816dc473e1b838e12509b444890b5c9151b17433b1cbce36c5ccb185f5273",
+    "scripts/fedplanner/run_joint_boundary_e2e.py": "32bab208205d8b9a8546e09ddfca0b8b46689d5b3032fcd053c5df30060d4f37",
+    "scripts/fedplanner/run_memo_planning_matrix.py": "9c10e31748cc41bc2d9ce2665a04810b3c18f4db940e33999e31c2a7fd0380f5",
+    "scripts/fedplanner/tests/test_evaluate_actual_ml_planning.py": "d4bceded5c53e2e8e6c4c8ec25411fbe78ca5b565aa4e6b4635eaa2c34a05ab3",
+    "scripts/fedplanner/tests/test_run_joint_boundary_e2e.py": "9559e6a99211f2fabb59e1bb7ba4dc3277071ad471bf64e6dc1a9109d5dc70ab",
+    "scripts/fedplanner/tests/test_run_memo_planning_matrix.py": "96b434627b154321be59c942b21044ca92b3fadcb69aa233565ba40895b6cf8d",
+    "src/main/java/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.java": "b2519f4691543de1cf7cdd34c91af4d016c3334d2796d42d4c6be5b3abcf55a6",
+    "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.java": "2c4c2532c0ba6a686991fb2ec95b74f50536791c16359290ae6d2733af6513f4",
+    "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.java": "cd0d6b0c0f6e77e348843be7439e22c5a2d5ddb7d8e8f249fe3ba135216824cf",
+    "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoControlFlowParityTest.java": "272807e58a8bd335952f68978ff280f3df9aea86b1cc739cf7a5174d7abb95a1",
+    "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerBoundaryBoundTest.java": "9c341d1631904bcd8e75144a0d9f50fd401782897cb8c9866c02211f804e4479",
+    "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerDomainCacheTest.java": "594fa92188d5a93c73246022f8103ab0f947f2e73d6c9571df658f78607f0c0b",
+    "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerEliminationTest.java": "5eeede5f53f8de72a3723c6e13f64da115e9a63fa848b0b0e71f6246554fade9",
+    "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerForestTailTest.java": "2340b9a2f5368aa334232e6fd848747745196157d16ef487cb089514799bb2de",
+    "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoOptimizerPseudoforestTest.java": "fc0455951105e8df7d012d152153a47f9fe578b808849b12b38d15d4a428fbdd"
+  },
+  "unitTests": 700,
+  "pythonFocusedTests": 70,
+  "officialWorkloadInvocations": 8,
+  "originalFinalPackagingAttempts": 8,
+  "originalFinalJvmInvocations": 0,
+  "candidate01DiagnosticWorkloadInvocations": 2
+}

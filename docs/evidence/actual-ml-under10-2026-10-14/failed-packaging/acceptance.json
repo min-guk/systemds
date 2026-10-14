@@ -1,0 +1,133 @@
+{
+  "acceptedCells": 0,
+  "expectedCells": 8,
+  "manifestErrors": [],
+  "maximumFullCompileSeconds": null,
+  "maximumFullInitialPlanningSeconds": null,
+  "passed": false,
+  "rejected": [
+    {
+      "cell": "ml|logreg|lan|w1|Memo",
+      "reasons": [
+        "compile did not pass",
+        "failure or timeout",
+        "missing compile-only receipt",
+        "worker binding was not verified",
+        "missing OPTIMAL Memo planning receipt",
+        "missing OPTIMAL exact-search receipt",
+        "full initial planning is missing or exceeds 10 seconds",
+        "full compile is missing or exceeds 10 seconds",
+        "missing RuntimeProgram construction receipt",
+        "runtime execution was not proven to be zero"
+      ]
+    },
+    {
+      "cell": "ml|logreg|lan|w3|Memo",
+      "reasons": [
+        "compile did not pass",
+        "failure or timeout",
+        "missing compile-only receipt",
+        "worker binding was not verified",
+        "missing OPTIMAL Memo planning receipt",
+        "missing OPTIMAL exact-search receipt",
+        "full initial planning is missing or exceeds 10 seconds",
+        "full compile is missing or exceeds 10 seconds",
+        "missing RuntimeProgram construction receipt",
+        "runtime execution was not proven to be zero"
+      ]
+    },
+    {
+      "cell": "ml|logreg|lan|w5|Memo",
+      "reasons": [
+        "compile did not pass",
+        "failure or timeout",
+        "missing compile-only receipt",
+        "worker binding was not verified",
+        "missing OPTIMAL Memo planning receipt",
+        "missing OPTIMAL exact-search receipt",
+        "full initial planning is missing or exceeds 10 seconds",
+        "full compile is missing or exceeds 10 seconds",
+        "missing RuntimeProgram construction receipt",
+        "runtime execution was not proven to be zero"
+      ]
+    },
+    {
+      "cell": "ml|logreg|lan|w7|Memo",
+      "reasons": [
+        "compile did not pass",
+        "failure or timeout",
+        "missing compile-only receipt",
+        "worker binding was not verified",
+        "missing OPTIMAL Memo planning receipt",
+        "missing OPTIMAL exact-search receipt",
+        "full initial planning is missing or exceeds 10 seconds",
+        "full compile is missing or exceeds 10 seconds",
+        "missing RuntimeProgram construction receipt",
+        "runtime execution was not proven to be zero"
+      ]
+    },
+    {
+      "cell": "ml|glm|lan|w1|Memo",
+      "reasons": [
+        "compile did not pass",
+        "failure or timeout",
+        "missing compile-only receipt",
+        "worker binding was not verified",
+        "missing OPTIMAL Memo planning receipt",
+        "missing OPTIMAL exact-search receipt",
+        "full initial planning is missing or exceeds 10 seconds",
+        "full compile is missing or exceeds 10 seconds",
+        "missing RuntimeProgram construction receipt",
+        "runtime execution was not proven to be zero"
+      ]
+    },
+    {
+      "cell": "ml|glm|lan|w3|Memo",
+      "reasons": [
+        "compile did not pass",
+        "failure or timeout",
+        "missing compile-only receipt",
+        "worker binding was not verified",
+        "missing OPTIMAL Memo planning receipt",
+        "missing OPTIMAL exact-search receipt",
+        "full initial planning is missing or exceeds 10 seconds",
+        "full compile is missing or exceeds 10 seconds",
+        "missing RuntimeProgram construction receipt",
+        "runtime execution was not proven to be zero"
+      ]
+    },
+    {
+      "cell": "ml|glm|lan|w5|Memo",
+      "reasons": [
+        "compile did not pass",
+        "failure or timeout",
+        "missing compile-only receipt",
+        "worker binding was not verified",
+        "missing OPTIMAL Memo planning receipt",
+        "missing OPTIMAL exact-search receipt",
+        "full initial planning is missing or exceeds 10 seconds",
+        "full compile is missing or exceeds 10 seconds",
+        "missing RuntimeProgram construction receipt",
+        "runtime execution was not proven to be zero"
+      ]
+    },
+    {
+      "cell": "ml|glm|lan|w7|Memo",
+      "reasons": [
+        "compile did not pass",
+        "failure or timeout",
+        "missing compile-only receipt",
+        "worker binding was not verified",
+        "missing OPTIMAL Memo planning receipt",
+        "missing OPTIMAL exact-search receipt",
+        "full initial planning is missing or exceeds 10 seconds",
+        "full compile is missing or exceeds 10 seconds",
+        "missing RuntimeProgram construction receipt",
+        "runtime execution was not proven to be zero"
+      ]
+    }
+  ],
+  "root": "/home/mchoi/full-ml-under10-final-20261014",
+  "schema": "systemds-actual-ml-planning-performance/v1",
+  "targetSecondsInclusive": 10.0
+}

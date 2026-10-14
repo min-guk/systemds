@@ -1,0 +1,17 @@
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_1_1.data"), ranges=list(list(0,0),list(50000,128)))
+Y = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_labels_1_1.data"), ranges=list(list(0,0),list(50000,1)))
+
+# The frozen synthetic response is continuous.  A mean threshold yields a
+# deterministic, approximately balanced binary target via a privacy-permitted
+# aggregate instead of treating only the single maximum row as positive.
+threshold = mean(Y)
+Y = (Y > threshold) * 1
+
+beta = glm(
+  X=X, Y=Y,
+  dfam=2, vpow=0.0, link=2, lpow=1.0, yneg=0.0,
+  icpt=0, disp=0.0, reg=0.0, tol=1e-6, moi=20, mii=5,
+  verbose=FALSE
+)
+
+write(beta, "tmp/w1357/877a2f0968b14d300e23/result", format="csv")

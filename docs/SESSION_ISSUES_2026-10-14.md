@@ -425,3 +425,63 @@
 - **56조건후처리/상대라이브러리환경복구 — 상태:44조건완료/12조건Memo미진입:** home실행56조건에서GNMF4만OPTIMAL/fullcompile/실행0으로성공했고LogReg/GLM8은optimizer300초timeout이다. P1/SliceLine12는source(./code/...)의CWD가봉인원실험디렉터리와달라ParseException으로Memo단계0회였다. 이를Memo미지원으로분류하지않는다. 원artifact를보존하고dependency가있는12조건만원experiments디렉터리에서실행하도록CWD1행을수정했다. 44나머지조건의컨테이너script는byte동일,Java/config/DML/metadata/비용/자원은불변이다. adminDockerpreflight에서두라이브러리sealedhash일치,unit12/12/syntax/diffcheckPASS,독립reviewCLEAR. **잔여:** 이12조건의첫Memo실제시도및통합최종표. **위험/감지:** 이전환경실패와12복구시도도모두공개하고44기측정조건은재실행하지않는다.
 
 - **W1/3/5/7全workload검증 완료 — 상태:56조건평가완료/기능성4성공52실패:** authoritative행렬은44원조건+12라이브러리CWD복구조건이며GNMF만각worker에서OPTIMAL/fullcompile/RuntimeProgram완료,execution0이다. Memo시간W1 .570333045/W3 .848987902/W5 .726946754/W7 .735119537초;fullcompile1.243021/1.636963/1.385830/1.409474초. LogReg/GLM8은model완료후optimizer에서coordinator300초timeout. PARFOR미지원16(KMeans/P1/SliceLine),UNKNOWN_SIZE7(PCA4/ALS W1/P2 W1·5),ALS executionlayout모호3,P2 canonicalingress위반2,LMUNRESOLVED4,L2SVM보고INFEASIBLE4,StepLMcostcontext4,GMM위치미확정NPE4다. 성공하지못한행의Memo/compile완료시간은null이고실패wall과구분했다. rc0만으로성공을주장하지않는다. **검증:** 352주소/range위치,187distinctmetadata/1721실제binaryblock sealedhash일치,engine12707파일불변,하네스12testsPASS/독립reviewPASS/잔여ownedcontainer·Java없음. 앞선payload없음이라는해석은.data가디렉터리임을확인해정정했다(존재하지만compile-onlyruntime읽기없음). grid환경56/JVM0와12relative-parse실패도보존·공개한다. **잔여/위험:** 전체workloadplanning지원은미달;timeout을불가능으로단정하지않고GMM발생위치및L2SVM상태원인을추가추측하지않는다. Java/Oracle/privacy/feasibility수정은없다. 결과FEDPLANNER_MEMO_W1357_PLANNING_MATRIX_RESULT_2026-10-14_KO.md/evidence평가JSON·CSV·원로그.
+
+## 실제 full ML timeout 원인 진단 — 원인 확인, 성능 미해결
+
+- **문제 정의/상태:** 앞선 tiny E2E의 LogReg3.028s/GLM5.072s를 full50000×128 ML workload의 성능으로 일반화할 수 없다. 실제56조건 평가에서 두 workload W1/3/5/7 모두300초 timeout. 이번은 원인 분석 요청이며 production 수정 작업이 아니다.
+- **환경/재현:** C26동결 engine, pinned Docker4CPU/8GiB/heap3GiB, sealed fullDML/config/default costs 유지. `run_LAN_docker.sh --memo-planning-matrix`로 W3 LogReg/GLM 진단 각각1회, 순차 실행. 별도 root `/home/mchoi/full-workload-timeout-diagnostic-{logreg,glm}-20261014`; 두rc124/300초, optimizer 완료receipt 없음. 원56조건 시간을 덮어쓰지 않았다.
+- **확인된 원인:** 메인JFR samples LogReg4925중4804(97.54%), GLM5099중4741(92.98%)가 `ReducedSearch.tryForestTail` 포함. cyclic core exact 탐색 중 residual forest DP의 구조/TreeCell/정확 비용합을 매번 재계산한다. 스택은 각각17/51 enumerateCore frames(16/50재귀호출)이며 방문노드 수가 아니다. primitive tuple 캐시는 subtree 최적 비용 message를 재사용하지 않는다.
+- **CPU/메모리:** LogReg mainCPU162.498s/elapsed163.53s; GLM mainCPU278.718s/elapsed280.37s. 실제 main allocation counter delta 약130.969GB/59.973s 및112.691GB/59.979s. GC pause 합0.262s/0.196s, GC후sampledheap47.22MiB/95.40MiB. OOM/GC정지가 주원인이라는 해석을 배제한다. attach첫allocationweight가 기록전누적값을 포함해 weight합을60초할당으로 쓰면 안 된다.
+- **해결 방법/변경:** production 구현은 하지 않았다. 문서·프로파일링근거·읽기전용수집/요약스크립트만 작성. 다음 개선은 완전한 separator assignment/live-domain identity 기반 exact component-message 재사용, 불변 factor 구조 사전계산, bounded factor-local truth/cost table 우선. UNKNOWN/DEFER/privacy/workerbinding/exactcost/lexicographic optimum 유지; 후보축소/근사화/fallback 없음.
+- **수정 파일/검증:** `docs/FEDPLANNER_FULL_WORKLOAD_TIMEOUT_ROOT_CAUSE_2026-10-14_KO.md`, `docs/evidence/full-workload-timeout-2026-10-14/`, 이session누적문서. 원matrixW3와DML/config byte동일, source/하네스diff0, profilerDataLoss0, 증거hash확인. 분석-only이므로 새로운production회귀테스트통과나timeout해결을주장하지 않는다.
+- **잔여 버그/위험:** full성능미해결. 방문노드/forestDP회수/prune비율/cutset·separator폭 미계측; 정확한입력차이별인과는ablation없어 미확정. profiler는W3만이고W1/5/7내부분포로일반화하지않는다. memoizedmessage key가factor/domain/UNKNOWN/tie-break를빠뜨리면잘못된최적해위험; cacheOFF/ON전선택·원cost audit·최적해동등성으로검증해야 한다.
+- **의사결정 근거:** Oracle/런타임/플래너정확성규칙을수정하지않았다. 실제CPU증거가 가리키는optimizer의반복DP계산을후속수정대상으로특정했다.
+
+## 실제 ML compile 10초 목표 — 진행중 (후보01)
+
+- **요청/평가계약:** tiny E2E가 아니라 sealed actual LogReg/GLM×W1/3/5/7 총8조건에서 fullinitial+fullcompile10초이하, RuntimeProgram완료/execution0/OPTIMAL/정확cost audit. `.omx/goals/performance/actual-full-ml-under10`과strict actualML evaluator를먼저고정했다. 이전tiny실측을성능기준으로재사용하지않는다.
+- **구현 전 검증:** 독립brute-force회귀7개를C26에먼저실행. 최초1실패는BigDecimal scale-only차이였으며반올림없이compareTo==0으로정확수치를비교해7/7PASS로행동고정했다. 최초실패로그도보존했다.
+- **구조수정:** `MemoOptimizer`에bounded exact class-compressed bucket elimination을추가. factor별truth/cost인증class의교집합을해당bucket의separator에만적용하고, 미래owner nativecost는아직포함하지않는다. 제거owner의모든liveordinal을평가,childmessagebackpointer로globallex보존. UNKNOWN/폭예산초과는기존exact경로,finite-nodebudget도기존경로다. cost단위변경/후보삭제/feasibility·privacy·workerbinding완화없음.
+- **실측:** candidate01 actualW3각1회 LogRegoptimization0.798584초, GLM2.070155초. OPTIMAL/원cost auditPASS, eliminationcells14744/1360977, messagerows2378/229309. 하지만후속supplySchedule의Duplicate selected supply edge로compile실패했다. 외부wall5.74/8.19초는완료compile시간이아니므로목표성공으로세지않는다.
+- **검증:** 새path+기존legacycache/forest/nodebudget를분리해optimizer98testsPASS. independentarchitectCLEAR. sourcefactor/tableinduction과UNKNOWN중간종료·lex·sparseordinal68·예산fallback회귀포함. 전체Memo/build와최종8조건은대기.
+- **평가경로삭제:** runnable tiny ml_logreg/ml_glm case/DML생성/Y_ML_LOGREG fixture와tiny실험receipt cost-authority의존삭제. 기존이름요청은실제평가route로명시적오류안내. 과거증거와일반unit-graph정확성테스트는보존. Python하네스64testsPASS.
+- **잔여/회귀위험:** 실제compile완료미달. 동일compilededge의여러occurrence를별도Supply로만드는기존재구성문제를정확recipe합집합으로수정중; DIRECT-onlycontext도포함해야하며target/worker/동일source recipe충돌을숨기면안된다. context별합법성과retainedorigin분석은계속실행한다. 모델변경후soundness/regression/실제8조건검증필수.
+
+### 실제 ML 10초 목표 — 물리 supply occurrence 중복 수정 / 전체 회귀 통과
+
+- **상태:** production 수정 및 회귀 완료, 실제 8조건 최종 평가 대기.
+- **증상:** 후보01은 실제 W3 LogReg/GLM의 optimizer를 각각 0.799/2.070초에 OPTIMAL로 끝냈지만, 같은 compiled Hop input에 occurrence별 Supply를 생성해 `Duplicate selected supply edge`에서 compile이 중단됐다. 부분 planning 성공을 목표 달성으로 처리하지 않았다.
+- **원인/해결:** `MemoProgramModel.reconstructSupplies()`에서 physical edge별로 모든 occurrence의 source recipe를 합친 뒤 한 Supply만 emit한다. DIRECT-only 생략은 전체 occurrence 합산 후 수행하여 LOCAL/UPLOAD와 ROW/DIRECT가 함께 보존된다. target·same-source recipe·worker pool 충돌과 IMPOSSIBLE은 예외로 차단한다. use별 legality 및 origin/retention별 schedule 순회는 그대로 유지했다.
+- **수정 파일:** `MemoProgramModel.java`, `MemoControlFlowParityTest.java`.
+- **의사결정 근거:** lowering/runtime은 physical input 하나에 완전한 guarded recipe 집합 하나를 요구한다. 서로 다른 동적 origin의 비용·activation을 합치는 변경이 아니다.
+- **검증:** 새 LOCAL/LOCAL/protected-ROW shared input fixture가 수정 전 Supply 2개로 실패했고, 수정 후 DIRECT+UPLOAD를 가진 Supply 1개와 schedule 재구성에 성공. 독립 architect review CLEAR. 전체 Maven test-compile 성공, 106개 class / 700개 테스트 통과 (`experiments/full-ml-under10-20261014/candidate02-{compile,unit}.log`).
+- **잔여 이슈:** sealed 8조건의 full compile 측정 및 평가기의 artifact/engine provenance 강화 검증이 남음.
+- **잠재 회귀 위험/감지:** context별 recipe 유실은 mixed DIRECT/movement 회귀로, 동적 origin action 합침은 retained-supply/runtime 회귀로 검출한다. 성능 성공 판정은 전체 compile/RuntimeProgram receipt와 execution=0을 요구한다.
+
+### 실제 ML 최종 평가 패키징 오류 — 측정 전 Docker mount 실패
+
+- **상태:** packaging 수정, 동일 기준 fresh root 재평가 진행.
+- **증상/원인:** 원 final root의 8조건 모두 Docker rc125/setup_failure. `cp -a target/lib`가 실제 JAR 대신 `/grid`로 연결되는 symlink를 복사했고 Snap Docker가 mount를 만들지 못했다. coordinator JVM/성능 측정은 한 번도 시작되지 않았다.
+- **해결:** 실패 engine/root를 보존하고 `evaluation-engine-v2`에 dependency를 `cp -aL`로 실제 파일로 동결, 전체 해시 inventory에 포함했다. production class는 700-test 검증 후보와 동일하다. `validate_engine()`은 symlink가 있으면 preflight 실패하도록 강화했다.
+- **검증:** valid class manifest + 외부 lib symlink가 기존 preflight를 통과하는 회귀를 먼저 재현했고, 새 검사가 이를 거부한다. 성능 판정/한계/입력/자원은 변경하지 않고 `/home/mchoi/full-ml-under10-final-r2-20261014`에서 조건당 한 번 측정한다.
+- **잔여/회귀 위험:** 실제 compile 측정은 여전히 필요하다. mutable 외부 dependency가 snapshot으로 오인되지 않도록 hash 및 symlink 검사를 유지한다.
+
+### 실제 ML 전체 compile 10초 목표 — 최종 통과
+
+- **상태:** 해결. `/home/mchoi/full-ml-under10-final-r2-20261014/acceptance.json` PASS, 8/8.
+- **환경/조건:** actual sealed LogReg/GLM 50000×128, worker 1/3/5/7, pinned Docker 4CPU/8GiB/heap3GiB, production 비용, 각 조건 1회.
+- **결과:** full compile LogReg 3.429–3.982초, GLM 6.239–8.499초. full initial 최대8.480969256초. 모두 OPTIMAL, RuntimeProgram 완료, runtime execution0. Docker 호출 wall도 최대9.532초.
+- **해결 요약:** exact factor-class bucket elimination으로 cyclic core별 반복 forest-tail 계산을 제거하고, occurrence별 source 조건을 보존하며 physical supply를 단일화했다. tiny builtin ML 성능 case/생성기를 삭제하고 actual-only 엄격 evaluator로 전환했다.
+- **검증:** 106 Java classes/700 tests, 변경 하네스 Python70tests, compiler/syntax/diff check PASS. 원비용 audit와 feasibility/privacy/UNKNOWN/worker/exact/globallex 계약 유지. 독립 architect 및 evaluator 리뷰 통과.
+- **수정 파일/재현/증거:** `docs/FEDPLANNER_ACTUAL_ML_UNDER10_RESULT_2026-10-14_KO.md` 및 `docs/evidence/actual-ml-under10-2026-10-14/` 참조.
+- **잔여 이슈:** 임의의 다른 넓은 cyclic graph까지 10초를 보장하지 않는다. actual training runtime 전체 실행은 이번 범위 밖이다.
+- **잠재 회귀 위험/감지:** GLM W3 compile 여유는 약1.50초. 이후 성능 판단은 actual8 evaluator로만 하고 tiny 결과를 다시 성능 권위로 사용하지 않는다.
+
+### 범위 밖 Python 전체 discovery 실패 — 명시적 검증 한계
+
+- **상태:** 미해결, 실제 ML 성능 gate 및 관련 soundness 회귀와 별도.
+- **검증:** 전체 `python3 -m unittest discover -s scripts/fedplanner/tests -p 'test_*.py'`는 661 tests, failures2/errors16/skipped1. 변경 하네스 70tests와 Java700tests는 PASS.
+- **관측 원인 범주:** 외부 plan-space fixture 누락, pinned launcher/source manifest drift, campaign timeout contract fixture 불일치, frozen compact verifier 누락, public-ignore expected14/actual16.
+- **실패 파일:** `test_build_plan_space_exclusion_ledger`, `test_verify_compact_physical_shard`, scope audit/certify, closed comparison/inventory, matrix overhead/runtime diagnostic, pinned runtime contract 테스트.
+- **조치/잔여:** 실제 성능을 좋게 보이기 위해 이 실패를 skip하거나 assertion을 완화하지 않았다. 변경 전 동일 환경 전체 discovery 비교는 수행하지 않아 전부 기존 실패라고 단정하지 않는다. raw log는 `experiments/full-ml-under10-20261014/full-python-discovery.log`, 문서 evidence에도 복사했다.
+- **회귀 위험/감지:** 이 범위의 campaign/tooling을 수정하거나 사용하는 후속 작업에서 fixture/manifest 계약을 별도로 복원하고 전체 discovery를 재검증해야 한다.
