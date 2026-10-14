@@ -26,6 +26,11 @@ if [[ "${1:-}" == "--function-boundary-compare" ]]; then
     exec python3 "$(dirname "$0")/check_function_boundary_plans.py" "$@"
 fi
 
+if [[ "${1:-}" == "--memo-planning-matrix" ]]; then
+    shift
+    exec python3 "$(dirname "$0")/run_memo_planning_matrix.py" "$@"
+fi
+
 if [[ "${1:-}" == "--joint-boundary-e2e" ]]; then
     shift
     exec python3 "$(dirname "$0")/run_joint_boundary_e2e.py" "$@"
