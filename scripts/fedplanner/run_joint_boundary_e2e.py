@@ -43,6 +43,8 @@ DEFAULT_MODEL_PROOF_CLASS = (
     "org.apache.sysds.hops.fedplanner.fedCostBased.fedExact."
     "JointBoundaryPhysicalModelProofTest")
 MEMO_MODEL_PROOF_CLASS = "org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemoTest"
+RETIRED_ACTUAL_ML_CASES = {"ml_logreg", "ml_glm"}
+ACTUAL_ML_PERFORMANCE_ROUTE = "run_LAN_docker.sh --actual-ml-planning-performance"
 MEMO_PREFLIGHT_MAIN = tuple("org/apache/sysds/hops/fedplanner/memo/" + name + ".class"
                             for name in ("FederatedPlanMemo", "MemoProgramFacts", "RuleMemo",
                                          "MemoOptimizer", "MemoPlanRegistry", "MemoProgramModel"))
@@ -120,8 +122,6 @@ def cases() -> tuple[Case, ...]:
              requires_branch_upload=True),
         Case("l2svm_protected_y_negative", "l2svm", (0, 1, 0, 1, 0, 1, 0, 1),
              y_privacy="private", expected_success=False),
-        Case("ml_logreg", "ml_logreg", training=True, default_selected=False),
-        Case("ml_glm", "ml_glm", training=True, default_selected=False),
         Case("ml_l2svm", "ml_l2svm", training=True, default_selected=False),
         Case("ml_lm", "ml_lm", training=True, default_selected=False),
         Case("ml_steplm", "ml_steplm", training=True, default_selected=False),
@@ -392,16 +392,7 @@ def program(case: Case, federated: bool) -> str:
                   if case.kind == "ml_steplm_local_matrix"
                   else steplm_read(federated, "X", 5) if case.kind == "ml_steplm"
                   else training_x_read(federated))
-        if case.kind == "ml_logreg":
-            body = (local_read("Y_ML_LOGREG") + "Y=Y_ML_LOGREG;\n"
-                    "m=multiLogReg(X=X,Y=Y,icpt=0,tol=1e-7,reg=1e-4,maxi=10,maxii=5,"
-                    "verbose=FALSE,numclasses=3,numrows=192,numcols=8);\n")
-        elif case.kind == "ml_glm":
-            body = (local_read("Y_ML_SVM") + "Y=(Y_ML_SVM+1)/2;\n"
-                    "m=glm(X=X,Y=Y,dfam=2,vpow=0,link=2,lpow=1,yneg=0,"
-                    "icpt=0,disp=0,reg=1e-4,tol=1e-6,moi=5,mii=5,"
-                    "verbose=FALSE);\n")
-        elif case.kind == "ml_l2svm":
+        if case.kind == "ml_l2svm":
             body = (local_read("Y_ML_SVM") + "Y=Y_ML_SVM;\n"
                     "m=l2svm(X=X,Y=Y,intercept=FALSE,epsilon=1e-8,reg=1e-3,"
                     "maxIterations=10,maxii=5,verbose=FALSE);\n")
@@ -564,11 +555,10 @@ def write_inputs(run: Path, selected: tuple[Case, ...] | None = None) -> dict[st
             values = ml_x[shard * 64:(shard + 1) * 64]
             payload = "\n".join(",".join(f"{value:.17g}" for value in row) for row in values) + "\n"
             texts[f"X_ML_{shard}"] = (payload, 64, 8, "private-aggregate")
-        logreg = tuple(1 + ((row * 7 + row // 11) % 3) for row in range(192))
         svm = tuple(-1 if (row * 5 + row // 7) % 2 == 0 else 1 for row in range(192))
         lm = tuple(sum(ml_x[row][col] * (col + 1) / 9.0 for col in range(8))
                    + ((row % 7) - 3) / 50.0 for row in range(192))
-        for name, values in (("Y_ML_LOGREG", logreg), ("Y_ML_SVM", svm), ("Y_ML_LM", lm)):
+        for name, values in (("Y_ML_SVM", svm), ("Y_ML_LM", lm)):
             texts[name] = ("\n".join(f"{value:.17g}" for value in values) + "\n",
                            192, 1, "public")
     if any(case.kind == "ml_steplm" for case in selected_cases):
@@ -1356,6 +1346,10 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("--case-timeout-seconds must be between 30 and 900")
     available = {case.name: case for case in cases()}
     requested = args.selected_cases or [case.name for case in default_cases()]
+    retired = sorted(set(requested) & RETIRED_ACTUAL_ML_CASES)
+    if retired:
+        raise ValueError("retired tiny --case " + ", ".join(retired)
+                         + "; use " + ACTUAL_ML_PERFORMANCE_ROUTE)
     unknown = sorted(set(requested) - set(available))
     if unknown:
         raise ValueError("unknown --case: " + ", ".join(unknown))

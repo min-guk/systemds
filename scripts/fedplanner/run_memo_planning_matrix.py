@@ -28,17 +28,43 @@ RENDERER_PATH = Path("/home/mchoi/cofee-evaluation/campaign/render_w1357_workloa
 PINNED_IMAGE = "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434"
 PINNED_RENDERER_SHA256 = "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70"
 PINNED_STAGE_MANIFEST_SHA256 = "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
-C26_RUNTIME_PROVENANCE = {
-    "manifest": ("/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/"
-                 "memo-under3-candidate26-logreg/manifest.json",
-                 "a290c393564426b8255a5d4135a9821b849ed81b79c0d0b881ed14076a1f089f"),
-    "config": ("/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/"
-               "memo-under3-candidate26-logreg/config.xml",
-               "ce35c4d5baca3ce572581c1966120c614f9bef67f7cda57023e360fa610224c8"),
-    "containerScript": ("/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/"
-                         "memo-under3-candidate26-logreg/container-run.sh",
-                         "e54fd1b00b9f2fe4f3a958c64fa0f329e94ae6d02bbe4d5440be2ea0f4542d10"),
+COST_MODEL_SOURCE = REPO / "src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel.java"
+PINNED_COST_MODEL_SOURCE_SHA256 = "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c"
+COST_MODEL_CLASS = "classes/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel.class"
+PINNED_RUNTIME_COST_CLASSES = {
+    COST_MODEL_CLASS: "81795f85bbd7ca6ddbe65354928557050270cc129b67f1039b5d4cef2b88de05",
+    "classes/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel$1.class":
+        "1c9cb9c46ee960b355495e5bbb6f4e20e8fdf638b0addbc243ed583cff43d34f",
+    "classes/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel$MixedFedLocalCost.class":
+        "d4e878c0d1db6aff4af44438114db63868d229be9c1fbb7b670629201e81ac52",
+    "classes/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel$SparseAssignmentShape.class":
+        "2c7658c8e373f26c97d0201b757131a14c759cf6eb6062555b8552450fa81102",
+    "classes/org/apache/sysds/conf/FederatedPlannerConfiguration.class":
+        "f475cca6d91b9ca9c634b031834a27f4af59daca776251b1c1bd9995d9a2e86e",
 }
+REQUIRED_ENGINE_CLASSES = (
+    "classes/org/apache/sysds/api/DMLScript.class",
+    *PINNED_RUNTIME_COST_CLASSES,
+    "classes/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.class",
+    "classes/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.class",
+    "classes/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.class",
+)
+PRODUCTION_DEFAULT_COSTS = {
+    "memoryBandwidthMiBPerSecond": 25000.0,
+    "networkBandwidthC2WMiBPerSecond": 125.0,
+    "networkBandwidthW2CMiBPerSecond": 125.0,
+    "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+    "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+    "networkLatencyC2WSeconds": 0.0005,
+    "networkLatencyW2CSeconds": 0.0005,
+    "uploadEstimateClampRatio": 4.0,
+    "unknownDimensionTransferFallbackMiB": 256.0,
+    "flopsPerSecond": 2 * 1024 * 1024 * 1024,
+    "aggregateBinaryFlopsPerSecond": 32_000_000_000,
+}
+CONTAINER_RESOURCES = {"cpus": 4, "memory": "8g", "coordinatorHeap": "3g",
+    "workerProcesses": 0,
+    "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"}
 
 WORKERS = (1, 3, 5, 7)
 WORKLOADS = (
@@ -85,6 +111,14 @@ def renderer_module():
     if sha256_file(RENDERER_PATH) != PINNED_RENDERER_SHA256:
         raise ValueError("sealed renderer hash mismatch")
     return load_module("sealed_w1357_renderer", RENDERER_PATH)
+
+
+def validate_sealed_stage(stage: Path) -> Path:
+    stage = stage.resolve()
+    manifest = stage / "W1357_STAGE.json"
+    if not manifest.is_file() or sha256_file(manifest) != PINNED_STAGE_MANIFEST_SHA256:
+        raise ValueError("sealed stage manifest hash mismatch")
+    return stage
 
 
 def statistics_module():
@@ -157,6 +191,15 @@ def adapt_rendered(rendered: dict[str, Any], independent_source: str) -> tuple[s
     }
 
 
+def render_artifacts(renderer: Any, value: dict[str, Any]) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
+    """Render one canonical cell and return the exact persisted input artifacts."""
+    rendered = renderer.render(value)
+    comparison = renderer.render(cell(value["suite"], value["workload"], value["workers"], "DP-local"))
+    source, adaptation = adapt_rendered(rendered, planner_neutral_source(comparison))
+    receipt = {key: item for key, item in rendered.items() if key != "source"}
+    return source, configuration(value["suite"]), receipt, adaptation
+
+
 def configuration(suite: str) -> str:
     values = {
         "sysds.native.blas": "none", "sysds.local.spark": "true",
@@ -171,21 +214,21 @@ def configuration(suite: str) -> str:
 
 
 def validate_cost_contract() -> dict[str, Any]:
-    sources = {}
-    for name, (raw_path, expected) in C26_RUNTIME_PROVENANCE.items():
-        path = Path(raw_path)
-        if not path.is_file() or sha256_file(path) != expected:
-            raise ValueError(f"published C26 runtime provenance mismatch: {name}")
-        sources[name] = {"path": str(path), "sha256": expected}
     ambient = sorted(name for name in os.environ if name.startswith("SYSDS_FED_COST_"))
     if ambient:
         raise ValueError("ambient federated cost override is forbidden: " + ",".join(ambient))
-    return {"semantics": "published-C26-production-default-costs-no-overrides",
+    if not COST_MODEL_SOURCE.is_file() or sha256_file(COST_MODEL_SOURCE) != PINNED_COST_MODEL_SOURCE_SHA256:
+        raise ValueError("production default cost model source mismatch")
+    return {"semantics": "production-default-costs-no-overrides/v1",
             "nativeBlas": "none", "codegen": False, "costEnvironment": {},
-            "sources": sources}
+            "productionDefaults": PRODUCTION_DEFAULT_COSTS,
+            "costModelSourceSha256": PINNED_COST_MODEL_SOURCE_SHA256}
 
 
 def validate_engine(engine: Path) -> dict[str, Any]:
+    # Directory symlinks evade rglob's file inventory and may be inaccessible to Docker.
+    if engine.is_symlink() or any(path.is_symlink() for path in engine.rglob("*")):
+        raise ValueError("frozen engine must contain materialized files, not symlinks")
     manifest = engine.parent / (engine.name + "-sha256.json")
     if not manifest.is_file():
         raise ValueError(f"frozen engine manifest is missing: {manifest}")
@@ -204,9 +247,10 @@ def validate_engine(engine: Path) -> dict[str, Any]:
     actual_files = {path.relative_to(engine).as_posix() for path in engine.rglob("*") if path.is_file()}
     if actual_files != set(actual):
         raise ValueError("frozen engine actual file set differs from manifest")
-    required = ("classes/org/apache/sysds/api/DMLScript.class",)
-    if any(name not in actual for name in required):
+    if any(name not in actual for name in REQUIRED_ENGINE_CLASSES):
         raise ValueError("frozen engine manifest lacks required production classes")
+    if any(actual[name] != expected for name, expected in PINNED_RUNTIME_COST_CLASSES.items()):
+        raise ValueError("frozen engine cost configuration bytecode differs from trusted C26")
     return {"manifest": str(manifest), "manifestSha256": sha256_file(manifest),
             "verifiedFiles": len(actual)}
 
@@ -343,13 +387,11 @@ def run_cell(value: dict[str, Any], output: Path, engine: Path, stage: Path,
              renderer: Any, stats: Any, render_only: bool) -> dict[str, Any]:
     attempt = output / "attempts" / safe_id(value)
     attempt.mkdir(parents=True, exist_ok=False)
-    rendered = renderer.render(value)
-    comparison = renderer.render(cell(value["suite"], value["workload"], value["workers"], "DP-local"))
-    source, adaptation = adapt_rendered(rendered, planner_neutral_source(comparison))
-    config = configuration(value["suite"])
+    source, config, render_receipt, adaptation = render_artifacts(renderer, value)
+    rendered = {**render_receipt, "source": source}
     (attempt / "cell.dml").write_text(source, encoding="utf-8")
     (attempt / "execution.xml").write_text(config, encoding="utf-8")
-    atomic_json(attempt / "render-receipt.json", {key: item for key, item in rendered.items() if key != "source"})
+    atomic_json(attempt / "render-receipt.json", render_receipt)
     atomic_json(attempt / "adaptation-receipt.json", adaptation)
     (attempt / "container-run.sh").write_text(container_script(value["suite"] == "p2", bool(rendered.get("dependencies"))), encoding="utf-8")
     (attempt / "container-run.sh").chmod(0o755)
@@ -361,9 +403,7 @@ def run_cell(value: dict[str, Any], output: Path, engine: Path, stage: Path,
             "rendererAuthorityPlanner": "COMPILE_EXACT", "compileOnly": True,
             "p2PublicRecodeMetadataJvmProperty": value["suite"] == "p2",
             "costContract": validate_cost_contract(),
-            "image": PINNED_IMAGE, "containerResources": {"cpus": 4, "memory": "8g",
-                "coordinatorHeap": "3g", "workerProcesses": 0,
-                "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"},
+            "image": PINNED_IMAGE, "containerResources": CONTAINER_RESOURCES,
             "status": "rendered" if render_only else "failed", "failureCategory": None,
             "provenance": {"rendererPath": str(RENDERER_PATH), "rendererSha256": sha256_file(RENDERER_PATH),
                 "stage": str(stage), "stageManifestSha256": rendered["content_verification"]["stage_manifest_sha256"],
@@ -438,10 +478,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    engine, stage, output = args.engine.resolve(), args.sealed_stage.resolve(), args.output_root.resolve()
+    engine, stage, output = args.engine.resolve(), validate_sealed_stage(args.sealed_stage), args.output_root.resolve()
     stage_manifest = stage / "W1357_STAGE.json"
-    if not stage_manifest.is_file() or sha256_file(stage_manifest) != PINNED_STAGE_MANIFEST_SHA256:
-        raise ValueError("sealed stage manifest hash mismatch")
     engine_preflight = validate_engine(engine)
     cost_contract = validate_cost_contract()
     workloads, workers = parse_filters(args)

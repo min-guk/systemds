@@ -31,6 +31,11 @@ if [[ "${1:-}" == "--memo-planning-matrix" ]]; then
     exec python3 "$(dirname "$0")/run_memo_planning_matrix.py" "$@"
 fi
 
+if [[ "${1:-}" == "--actual-ml-planning-performance" ]]; then
+    shift
+    exec python3 "$(dirname "$0")/run_actual_ml_planning_performance.py" "$@"
+fi
+
 if [[ "${1:-}" == "--joint-boundary-e2e" ]]; then
     shift
     exec python3 "$(dirname "$0")/run_joint_boundary_e2e.py" "$@"

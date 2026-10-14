@@ -106,9 +106,9 @@ class JointBoundaryE2ETest(unittest.TestCase):
             "[MemoPlanner] status=OPTIMAL factsNs=100 cost=1\n"))
 
     def test_memo_uses_native_proof_and_independent_cp_reference(self):
-        args = runner.parse_args(["--planner", "memo", "--case", "ml_glm"])
+        args = runner.parse_args(["--planner", "memo", "--case", "ml_l2svm"])
         self.assertEqual(runner.MEMO_MODEL_PROOF_CLASS, args.model_proof_class)
-        case = next(case for case in runner.cases() if case.name == "ml_glm")
+        case = next(case for case in runner.cases() if case.name == "ml_l2svm")
         cp = runner.java_command(case, "cp", planner="memo")
         fed = runner.java_command(case, "fed", planner="memo")
         self.assertIn("-config /evidence/config-cp.xml", cp)
@@ -130,7 +130,7 @@ class JointBoundaryE2ETest(unittest.TestCase):
                           "joint_dynamic_reverse",
                           "joint_function_private_mix_negative",
                           "joint_branch_upload",
-                          "l2svm_protected_y_negative", "ml_logreg", "ml_glm", "ml_l2svm",
+                          "l2svm_protected_y_negative", "ml_l2svm",
                           "ml_lm", "ml_steplm", "ml_steplm_local_matrix",
                           "ml_logreg_gd", "ml_l2svm_gd",
                           "ml_lm_gd", "weighted_quaternary_with_private_aggregate",
@@ -140,14 +140,14 @@ class JointBoundaryE2ETest(unittest.TestCase):
         self.assertFalse(by_name["l2svm_protected_y_negative"].expected_success)
         self.assertTrue(by_name["l2svm_true_01"].requires_action_evidence)
         self.assertTrue(by_name["joint_branch_upload"].requires_branch_upload)
-        self.assertEqual({"ml_logreg", "ml_glm", "ml_l2svm", "ml_lm", "ml_steplm",
+        self.assertEqual({"ml_l2svm", "ml_lm", "ml_steplm",
                           "ml_steplm_local_matrix"},
                          {case.name for case in runner.cases()
                           if case.training and not case.requires_loss_progress})
         self.assertEqual({"ml_logreg_gd", "ml_l2svm_gd", "ml_lm_gd"},
                          {case.name for case in runner.cases()
                           if case.requires_loss_progress})
-        self.assertFalse({"ml_logreg", "ml_glm", "ml_l2svm", "ml_lm", "ml_steplm",
+        self.assertFalse({"ml_l2svm", "ml_lm", "ml_steplm",
                           "ml_steplm_local_matrix",
                           "ml_logreg_gd", "ml_l2svm_gd", "ml_lm_gd"}
                          & {case.name for case in runner.default_cases()})
@@ -213,8 +213,7 @@ class JointBoundaryE2ETest(unittest.TestCase):
 
     def test_ml_training_programs_use_three_protected_shards_and_write_full_model(self):
         by_name = {case.name: case for case in runner.cases()}
-        for name, builtin in (("ml_logreg", "multiLogReg"), ("ml_glm", "glm"),
-                              ("ml_l2svm", "l2svm"), ("ml_lm", "lmCG")):
+        for name, builtin in (("ml_l2svm", "l2svm"), ("ml_lm", "lmCG")):
             script = runner.program(by_name[name], True)
             self.assertIn(f"m={builtin}(", script)
             self.assertIn("localhost:13000//evidence/data/X_ML_0.csv", script)
@@ -225,8 +224,7 @@ class JointBoundaryE2ETest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            runner.write_inputs(root, tuple(by_name[name] for name in
-                                            ("ml_logreg", "ml_glm", "ml_l2svm", "ml_lm")))
+            runner.write_inputs(root, tuple(by_name[name] for name in ("ml_l2svm", "ml_lm")))
             public = (root / "data/X_ML_PUBLIC.csv").read_text()
             shards = "".join((root / f"data/X_ML_{index}.csv").read_text()
                              for index in range(3))
@@ -236,17 +234,13 @@ class JointBoundaryE2ETest(unittest.TestCase):
                 self.assertEqual((64, 8, "private-aggregate"),
                                  (metadata["rows"], metadata["cols"], metadata["privacy"]))
 
-    def test_glm_program_pins_binomial_logit_parameters_and_binary_response(self):
-        case = next(case for case in runner.cases() if case.name == "ml_glm")
-        self.assertTrue(case.training)
-        self.assertFalse(case.default_selected)
-        for federated in (False, True):
-            script = runner.program(case, federated)
-            self.assertIn('Y=(Y_ML_SVM+1)/2;', script)
-            self.assertIn('m=glm(X=X,Y=Y,dfam=2,vpow=0,link=2,lpow=1,yneg=0,', script)
-            self.assertIn('icpt=0,disp=0,reg=1e-4,tol=1e-6,moi=5,mii=5,', script)
-            self.assertIn('verbose=FALSE);', script)
-            self.assertIn('write(m,$MODEL_OUTPUT,format="csv")', script)
+    def test_retired_tiny_logreg_glm_cases_redirect_to_actual_workload_gate(self):
+        self.assertTrue(runner.RETIRED_ACTUAL_ML_CASES.isdisjoint(
+            {case.name for case in runner.cases()}))
+        for name in sorted(runner.RETIRED_ACTUAL_ML_CASES):
+            with self.subTest(name=name), self.assertRaisesRegex(
+                    ValueError, "actual-ml-planning-performance"):
+                runner.main(["--case", name])
 
     def test_steplm_fixture_is_public_nondegenerate_and_uses_one_full_worker(self):
         case = next(case for case in runner.cases() if case.name == "ml_steplm")
@@ -772,7 +766,7 @@ class JointBoundaryE2ETest(unittest.TestCase):
         self.assertIn("JAVA_TOOL_OPTIONS=-Dsysds.debug.fedreq=true", script)
 
     def test_jfr_profile_is_opt_in_and_fed_coordinator_only(self):
-        case = next(case for case in runner.cases() if case.name == "ml_logreg")
+        case = next(case for case in runner.cases() if case.name == "ml_l2svm")
         self.assertTrue(runner.parse_args(["--profile-jfr"]).profile_jfr)
         cp_command = runner.java_command(case, "cp", 120, profile_jfr=True)
         fed_command = runner.java_command(case, "fed", 120, profile_jfr=True)
@@ -793,10 +787,10 @@ class JointBoundaryE2ETest(unittest.TestCase):
         self.assertTrue(manifest["recordProfile"])
         self.assertEqual("fed-coordinator-only", manifest["scope"])
         self.assertEqual(256, manifest["stackDepth"])
-        self.assertEqual("cases/ml_logreg/fed.jfr", manifest["files"]["ml_logreg"]["path"])
+        self.assertEqual("cases/ml_l2svm/fed.jfr", manifest["files"]["ml_l2svm"]["path"])
 
     def test_enabled_jfr_profile_requires_nonempty_dump(self):
-        case = next(case for case in runner.cases() if case.name == "ml_logreg")
+        case = next(case for case in runner.cases() if case.name == "ml_l2svm")
         fingerprint = ("JOINT_E2E_SUM=1\nJOINT_E2E_NORM2=1\n"
                        "JOINT_E2E_ROWS=8\nJOINT_E2E_COLS=1\n")
         trace = ("[PlannerTrace][DP-IncrementalRegional] phase=INITIAL_BOUND merges=0 "

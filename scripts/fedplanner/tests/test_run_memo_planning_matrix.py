@@ -1,7 +1,9 @@
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 
 PATH = Path(__file__).resolve().parents[1] / "run_memo_planning_matrix.py"
@@ -88,6 +90,11 @@ class MemoPlanningMatrixTest(unittest.TestCase):
         contract = runner.validate_cost_contract()
         self.assertEqual({}, contract["costEnvironment"])
         self.assertEqual("none", contract["nativeBlas"])
+        self.assertEqual(125.0,
+                         contract["productionDefaults"]["networkBandwidthC2WMiBPerSecond"])
+        self.assertNotIn("sources", contract)
+        self.assertEqual(runner.PINNED_COST_MODEL_SOURCE_SHA256,
+                         contract["costModelSourceSha256"])
         rendered = self.rendered()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -101,6 +108,52 @@ class MemoPlanningMatrixTest(unittest.TestCase):
         self.assertEqual(runner.PINNED_RENDERER_SHA256, runner.sha256_file(runner.RENDERER_PATH))
         stage = Path("/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z/W1357_STAGE.json")
         self.assertEqual(runner.PINNED_STAGE_MANIFEST_SHA256, runner.sha256_file(stage))
+
+    def test_engine_requires_memo_classes_and_trusted_runtime_cost_bytecode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            engine = root / "engine"
+            required = {name: ("trusted-" + name).encode() for name in runner.REQUIRED_ENGINE_CLASSES}
+            for name, content in required.items():
+                path = engine / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            entries = {name: runner.sha256_file(engine / name) for name in required}
+            manifest = root / "engine-sha256.json"
+            manifest.write_text(json.dumps({"files": entries}), encoding="utf-8")
+            trusted = {name: entries[name] for name in runner.PINNED_RUNTIME_COST_CLASSES}
+            with mock.patch.object(runner, "PINNED_RUNTIME_COST_CLASSES", trusted):
+                self.assertEqual(len(required), runner.validate_engine(engine)["verifiedFiles"])
+                (engine / runner.COST_MODEL_CLASS).write_bytes(b"tampered")
+                entries[runner.COST_MODEL_CLASS] = runner.sha256_file(engine / runner.COST_MODEL_CLASS)
+                manifest.write_text(json.dumps({"files": entries}), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "trusted C26"):
+                    runner.validate_engine(engine)
+            (engine / "classes/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.class").unlink()
+            entries.pop("classes/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.class")
+            manifest.write_text(json.dumps({"files": entries}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "required production classes"):
+                runner.validate_engine(engine)
+
+    def test_frozen_engine_rejects_external_dependency_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            engine = root / "engine"
+            engine.mkdir()
+            external = root / "external-dependencies"
+            external.mkdir()
+            (engine / "lib").symlink_to(external, target_is_directory=True)
+            entries = {}
+            for name in runner.REQUIRED_ENGINE_CLASSES:
+                path = engine / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(name.encode())
+                entries[name] = runner.sha256_file(path)
+            (root / "engine-sha256.json").write_text(json.dumps({"files": entries}))
+            trusted = {name: entries[name] for name in runner.PINNED_RUNTIME_COST_CLASSES}
+            with mock.patch.object(runner, "PINNED_RUNTIME_COST_CLASSES", trusted):
+                with self.assertRaisesRegex(ValueError, "symlink"):
+                    runner.validate_engine(engine)
 
     def test_failure_result_keeps_execution_and_render_identities_separate(self):
         rendered = runner.cell("p1", "P1_FULL", 3)
