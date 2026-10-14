@@ -1,0 +1,66 @@
+{
+  "shape-validation.json": {
+    "source": "experiments/memo-migration-20261013/normal-return-shape-20261014/validation.json",
+    "sha256": "57ea35a6cde9038ac290f17f5a3168d59c94b4654222ff49943c85445529fb2b"
+  },
+  "build.log": {
+    "source": "experiments/memo-migration-20261013/normal-return-shape-20261014/final-build-v2.log",
+    "sha256": "225fa5428c1298de2407e354bcbdd0e1f4ac51205e1026a1c15413a5fc92c175"
+  },
+  "shape-component-tests.log": {
+    "source": "experiments/memo-migration-20261013/normal-return-shape-20261014/final-component-tests-v3.log",
+    "sha256": "3beef4d5cf0f71f69ade1462d56cdc60e517918694fbac724d6a600f9abbf50f"
+  },
+  "return-shape-tests.log": {
+    "source": "experiments/memo-migration-20261013/normal-return-shape-20261014/final-cache-regression-tests-v2.log",
+    "sha256": "995917d4838a6c7ccb6775a6afa69a14be2329c0cf1a7334b3524f4b9ef03506"
+  },
+  "exhaustive-parity.json": {
+    "source": "experiments/memo-migration-20261013/normal-return-shape-20261014/exhaustive-parity.json",
+    "sha256": "8e793d21558f5cf24a8072a0a6256d8b97ce54333be522f93bc3098060ef2bee"
+  },
+  "glm-coverage-probe.log": {
+    "source": "experiments/memo-migration-20261013/normal-return-shape-20261014/glm-coverage-probe.log",
+    "sha256": "79b10ca811ce50133b84bdc4f3d432a0d34be7218fead937513c9aff4bef7aa3"
+  },
+  "preexisting-loop-shape-convergence.md": {
+    "source": "experiments/memo-migration-20261013/normal-return-shape-20261014/preexisting-loop-shape-convergence.md",
+    "sha256": "1c6583465c98cb1983c841b327d0a23dab097e6042a71080f8fb90c75cd69fad"
+  },
+  "baseline-loop-regression.log": {
+    "source": "experiments/memo-migration-20261013/normal-return-shape-20261014/baseline-loop-regression.log",
+    "sha256": "a09b04b53afeb01cb08c13c72fce39b7628c3cb2fd3529d50d82748c87d16693"
+  },
+  "preexisting-loop-current-stack.txt": {
+    "source": "experiments/memo-migration-20261013/normal-return-shape-20261014/regression-v2-stack.txt",
+    "sha256": "0ac89d63cad1d3662a997361b17991bb87391f4ba968dfb8032c47e66c08d959"
+  },
+  "docker-result.json": {
+    "source": "experiments/memo-migration-20261013/normal-return-shape-20261014/docker/normal-return-shape-20261014/result.json",
+    "sha256": "10554feec54b75af5973751552b3cdb22d919e91628c550fdd21771aa1c9dbdb"
+  },
+  "docker-model-proof.log": {
+    "source": "experiments/memo-migration-20261013/normal-return-shape-20261014/docker/normal-return-shape-20261014/model-proof.log",
+    "sha256": "1d7a1b5f00011ef9f7351bd2cf8c53f2e392959fc7a16e368a8f810bda6f7b9d"
+  },
+  "docker-glm-fed.log": {
+    "source": "experiments/memo-migration-20261013/normal-return-shape-20261014/docker/normal-return-shape-20261014/cases/ml_glm/fed.log",
+    "sha256": "a5d7979b5667f8304d8d13d527573936b708be39a01996b52e256c4e675e4ec6"
+  },
+  "docker-logreg-fed.log": {
+    "source": "experiments/memo-migration-20261013/normal-return-shape-20261014/docker/normal-return-shape-20261014/cases/ml_logreg/fed.log",
+    "sha256": "3aa05339f556728a0163409013dc4f486a51520b5a79ea2683e82ffb7b13c3d1"
+  },
+  "publication-component-tests.log": {
+    "source": "experiments/memo-migration-20261013/publication-20261014/component-tests.log",
+    "sha256": "1bfb91cc8c5077b6c2afef0fc137f0ccc7f893add88156dad862d5429235fcfd"
+  },
+  "harness-tests.log": {
+    "source": "experiments/memo-migration-20261013/publication-20261014/harness-tests.log",
+    "sha256": "b1cc44fcec5ecb80f12b1be4a8284ed4b9f81195c6ed4ae6d324c6463adfbc06"
+  },
+  "known-ledger-generator-gap.log": {
+    "source": "experiments/memo-migration-20261013/publication-20261014/ledger-before.log",
+    "sha256": "973b8ea8963146757901050d12c5cc4bf03e542d34d14d3b307d23ee9c8fc9ec"
+  }
+}

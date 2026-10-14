@@ -1,0 +1,5 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+COVERAGE_COMPLETE=true
+STATUS=RESOURCE_EXHAUSTED INCUMBENT=true
+Statistics[nodes=10000, checkEvaluations=42181, checkCacheHits=320765, supportQueries=191866, worklistVisits=51593, removedRules=66158, costEvaluations=3988, costCacheHits=1791, boundPrunes=7458, conditionalBoundQueries=28557, conditionalBoundCacheHits=26726, wideBoundRelaxations=77]
+DIAGNOSTICS=[shape owner=-1 binding=1131 BRANCH_SHAPE_MISMATCH Shape[dataType=MATRIX, valueType=FP64, rows=192, columns=1, nonZeros=-1, knowledge=EXACT] vs Shape[dataType=MATRIX, valueType=FP64, rows=1, columns=1, nonZeros=-1, knowledge=EXACT], shape owner=546 binding=855 SHARED_OCCURRENCE_SHAPE_MISMATCH Shape[dataType=MATRIX, valueType=FP64, rows=192, columns=1, nonZeros=-1, knowledge=EXACT] vs Shape[dataType=MATRIX, valueType=FP64, rows=192, columns=2, nonZeros=-1, knowledge=EXACT], MOVEMENT_FACTOR_WIDTH origin=196 width=10]

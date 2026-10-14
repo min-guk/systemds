@@ -1,0 +1,20 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+...........................................OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+...................................MEMO_EXHAUSTIVE assignments=12 feasible=6 cost=0.5004990875720977783238488625547867039156102464403375051915645599365234375
+.MEMO_EXHAUSTIVE assignments=2352 feasible=584 cost=1.000339155942201614385668047529746871315836642679641954600811004638671875
+.MEMO_EXHAUSTIVE assignments=48 feasible=6 cost=1.00032151341438293457336181861011548122064596100244671106338500976562500
+.MEMO_EXHAUSTIVE assignments=144 feasible=48 cost=1.000336943417787551883702931092116894529198134478065185248851776123046875
+.MEMO_EXHAUSTIVE assignments=48 feasible=8 cost=1.000890621691942214968352941012290358013814284277032129466533660888671875
+.26/10/14 02:49:45 ERROR controlprogram.ProgramBlock: Function output Y is missing.
+...................................................................................................................................................................whole-call-completion initialCandidates=2 outerChecks=3 invalidationVisits=41 invalidationEdges=58
+..loop-summary-checks full=6 incremental=4 invalidationVisits=20 invalidationEdges=20 indexVisits=77 indexEdges=81
+......MEMO_ANALYSIS_WORK workload=logreg phase=build privacy=Statistics[evaluations=0, cacheHits=0, cacheEntries=0, loopBackedgeChecks=0, loopSummaryRounds=0, loopSummaryCacheHits=0, loopCandidateRemovals=0, invalidationVisits=0, invalidationEdges=0, dependencyEdges=1187, indexVisits=1642, indexEdges=2753] shapes=Statistics[bindingVisits=3117, ownerVisits=494, relevanceVisits=1711, relevanceEdges=649]
+MEMO_ANALYSIS_WORK workload=logreg phase=same-request-queries privacy=Statistics[evaluations=955, cacheHits=462, cacheEntries=934, loopBackedgeChecks=0, loopSummaryRounds=0, loopSummaryCacheHits=0, loopCandidateRemovals=0, invalidationVisits=0, invalidationEdges=0, dependencyEdges=1187, indexVisits=1642, indexEdges=2753] shapes=Statistics[bindingVisits=3117, ownerVisits=494, relevanceVisits=1711, relevanceEdges=649]
+.MEMO_ANALYSIS_WORK workload=glm phase=build privacy=Statistics[evaluations=0, cacheHits=0, cacheEntries=0, loopBackedgeChecks=0, loopSummaryRounds=0, loopSummaryCacheHits=0, loopCandidateRemovals=0, invalidationVisits=0, invalidationEdges=0, dependencyEdges=2328, indexVisits=7164, indexEdges=13668] shapes=Statistics[bindingVisits=4835, ownerVisits=990, relevanceVisits=4456, relevanceEdges=3545]
+MEMO_ANALYSIS_WORK workload=glm phase=same-request-queries privacy=Statistics[evaluations=1479, cacheHits=1006, cacheEntries=1436, loopBackedgeChecks=0, loopSummaryRounds=0, loopSummaryCacheHits=0, loopCandidateRemovals=0, invalidationVisits=0, invalidationEdges=0, dependencyEdges=2328, indexVisits=7164, indexEdges=13668] shapes=Statistics[bindingVisits=4835, ownerVisits=990, relevanceVisits=4456, relevanceEdges=3545]
+...........
+Time: 14.479
+
+OK (266 tests)
+

@@ -1,0 +1,7 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/14 00:44:21 WARN utils.SettingsChecker: Low memory budget of total:    251 GB set to:      3 GB
+26/10/14 00:44:21 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[PlannerTrace][Planner-Invoke] planner=COMPILE_MEMO impl=org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemo boundary=final-hop analysis=none
+[MemoPlannerPhase] phase=facts elapsedNs=53507376
+[MemoPlannerPhase] phase=rules elapsedNs=397432298
+[MemoPlannerPhase] phase=model elapsedNs=9438471098

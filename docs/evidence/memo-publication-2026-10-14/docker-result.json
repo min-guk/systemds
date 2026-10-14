@@ -1,0 +1,346 @@
+{
+  "actionDiagnostics": [
+    "ml_logreg: Federated prefetch count:\t0.",
+    "ml_logreg: plannerSyntheticActionKey=\"memo-definition|sb=16|producer=1150|origin=32\"",
+    "ml_logreg: plannerSyntheticActionKey=\"memo-supply|sb=152|producer=202|target=LOCAL|recipes=ROW@COLLECT@POOLv1:bG9jYWxob3N0.13000,bG9jYWxob3N0.13001,bG9jYWxob3N0.13002|origins=0:32\"",
+    "ml_logreg: plannerSyntheticActionKey=memo-definition|sb=16|producer=1150|origin=32",
+    "ml_logreg: plannerSyntheticActionKey=memo-supply|sb=152|producer=202|target=LOCAL|recipes=ROW@COLLECT@POOLv1:bG9jYWxob3N0.13000,bG9jYWxob3N0.13001,bG9jYWxob3N0.13002|origins=0:32"
+  ],
+  "actionEvidencePresent": true,
+  "canonicalProofRequested": false,
+  "canonicalProofRequired": false,
+  "cases": [
+    {
+      "actionDiagnostics": [
+        "Federated prefetch count:\t0.",
+        "plannerSyntheticActionKey=\"memo-definition|sb=16|producer=1150|origin=32\"",
+        "plannerSyntheticActionKey=\"memo-supply|sb=152|producer=202|target=LOCAL|recipes=ROW@COLLECT@POOLv1:bG9jYWxob3N0.13000,bG9jYWxob3N0.13001,bG9jYWxob3N0.13002|origins=0:32\"",
+        "plannerSyntheticActionKey=memo-definition|sb=16|producer=1150|origin=32",
+        "plannerSyntheticActionKey=memo-supply|sb=152|producer=202|target=LOCAL|recipes=ROW@COLLECT@POOLv1:bG9jYWxob3N0.13000,bG9jYWxob3N0.13001,bG9jYWxob3N0.13002|origins=0:32"
+      ],
+      "auditErrors": [],
+      "auditRows": 33,
+      "auditSchemas": [
+        "fed-runtime-capability-v1",
+        "fed-runtime-conversion-frontier-v1"
+      ],
+      "branchUploadLoweredAndExecuted": false,
+      "canonicalProof": {
+        "errors": [],
+        "exists": false,
+        "passed": true,
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-memo-20261013/experiments/memo-migration-20261013/normal-return-shape-20261014/docker/normal-return-shape-20261014/cases/ml_logreg/fed-canonical-proof.json",
+        "required": false
+      },
+      "case": "ml_logreg",
+      "cpFingerprint": {
+        "COLS": 2.0,
+        "NORM2": 0.18221965264382198,
+        "ROWS": 8.0,
+        "SUM": -0.8322576710419777
+      },
+      "cpReturncode": 0,
+      "cpStatistics": {
+        "compilationSeconds": 0.908054,
+        "executionSeconds": 0.498
+      },
+      "dynamicNativeExecution": null,
+      "expected": "success",
+      "fedFingerprint": {
+        "COLS": 2.0,
+        "NORM2": 0.182219652643822,
+        "ROWS": 8.0,
+        "SUM": -0.8322576710419771
+      },
+      "fedNoRelocation": false,
+      "fedReturncode": 0,
+      "fedStatistics": {
+        "compilationSeconds": 24.329887,
+        "executionSeconds": 2.63
+      },
+      "jfrProfile": null,
+      "jfrProfilePassed": true,
+      "lossProgress": null,
+      "memoEvidence": {
+        "loweringVerified": true,
+        "nativeFedExecution": true,
+        "selectedOptimal": true
+      },
+      "memoPlanning": [
+        {
+          "boundPrunes": 2466239,
+          "cacheHits": 82050731,
+          "checks": 60690,
+          "conditionalBoundCacheHits": 11132120,
+          "conditionalBoundQueries": 11135047,
+          "costCacheHits": 3407,
+          "costEvaluations": 4828,
+          "epoch": 1,
+          "estimatedCost": "1301.1526531142989790221751587629165844428591469750244868919253349304199218750",
+          "fedOwners": 20,
+          "nativeRules": 920,
+          "nodes": 2933891,
+          "oracleHits": 75,
+          "oracleMisses": 113,
+          "phaseNanos": {
+            "facts": 61333351,
+            "model": 1458555853,
+            "optimization": 21325129019,
+            "projection": 41580807,
+            "rules": 364351135
+          },
+          "phaseSeconds": {
+            "facts": 0.061333351,
+            "model": 1.458555853,
+            "optimization": 21.325129019,
+            "projection": 0.041580807,
+            "rules": 0.364351135
+          },
+          "pruned": 21182609,
+          "status": "OPTIMAL",
+          "supplies": 1,
+          "supportQueries": 38286830,
+          "totalNanos": 23250950165,
+          "totalSeconds": 23.250950165,
+          "wideBoundRelaxations": 844,
+          "workers": 3,
+          "worklistVisits": 13616123
+        }
+      ],
+      "modelComparison": {
+        "actualEntries": 16,
+        "actualShape": [
+          8,
+          2
+        ],
+        "entries": 16,
+        "errors": [],
+        "expectedShape": null,
+        "finite": true,
+        "matched": true,
+        "maxAbsDifference": 1.6653345369377348e-16,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          2
+        ],
+        "shapeMatched": true
+      },
+      "passed": true,
+      "plannerCheckpointSummary": null,
+      "plannerCheckpoints": [],
+      "plannerTraceComplete": true,
+      "plannerTraceRequired": false,
+      "requiredWeightedKernels": {},
+      "requiresBranchUpload": false,
+      "requiresFedNoRelocation": false,
+      "runtimeAuditViolations": [],
+      "selectionComparison": null
+    },
+    {
+      "actionDiagnostics": [],
+      "auditErrors": [],
+      "auditRows": 0,
+      "auditSchemas": [],
+      "branchUploadLoweredAndExecuted": false,
+      "canonicalProof": {
+        "errors": [],
+        "exists": false,
+        "passed": true,
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-memo-20261013/experiments/memo-migration-20261013/normal-return-shape-20261014/docker/normal-return-shape-20261014/cases/ml_glm/fed-canonical-proof.json",
+        "required": false
+      },
+      "case": "ml_glm",
+      "cpFingerprint": {
+        "COLS": 1.0,
+        "NORM2": 0.00864800670840208,
+        "ROWS": 8.0,
+        "SUM": -0.15178545305844848
+      },
+      "cpReturncode": 0,
+      "cpStatistics": {
+        "compilationSeconds": 1.746336,
+        "executionSeconds": 0.577
+      },
+      "dynamicNativeExecution": null,
+      "expected": "success",
+      "fedFingerprint": {},
+      "fedNoRelocation": false,
+      "fedReturncode": 124,
+      "fedStatistics": {},
+      "jfrProfile": null,
+      "jfrProfilePassed": true,
+      "lossProgress": null,
+      "memoEvidence": {
+        "loweringVerified": false,
+        "nativeFedExecution": false,
+        "selectedOptimal": false
+      },
+      "memoPlanning": [],
+      "modelComparison": {
+        "actualEntries": 0,
+        "actualShape": [
+          0,
+          0
+        ],
+        "entries": 8,
+        "errors": [
+          "[Errno 2] No such file or directory: '/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-memo-20261013/experiments/memo-migration-20261013/normal-return-shape-20261014/docker/normal-return-shape-20261014/cases/ml_glm/fed-model.csv'"
+        ],
+        "expectedShape": null,
+        "finite": false,
+        "matched": false,
+        "maxAbsDifference": null,
+        "nonzero": true,
+        "referenceShape": [
+          8,
+          1
+        ],
+        "shapeMatched": false
+      },
+      "passed": false,
+      "plannerCheckpointSummary": null,
+      "plannerCheckpoints": [],
+      "plannerTraceComplete": true,
+      "plannerTraceRequired": false,
+      "requiredWeightedKernels": {},
+      "requiresBranchUpload": false,
+      "requiresFedNoRelocation": false,
+      "runtimeAuditViolations": [],
+      "selectionComparison": null
+    }
+  ],
+  "classPreflight": {
+    "actual": {
+      "/engine/classes/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.class": {
+        "actualSha256": "f14fad361bb0747bcf5fdb6a22feae1736fe99cfe0b430655973bea6912a4d8e",
+        "exists": true,
+        "expectedSha256": "f14fad361bb0747bcf5fdb6a22feae1736fe99cfe0b430655973bea6912a4d8e",
+        "matched": true,
+        "size": 20346
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.class": {
+        "actualSha256": "72faf5ebf55a495d89d5c1edfcc2d4ee348b24cfbfc84ef1c5b1f8861ddf501f",
+        "exists": true,
+        "expectedSha256": "72faf5ebf55a495d89d5c1edfcc2d4ee348b24cfbfc84ef1c5b1f8861ddf501f",
+        "matched": true,
+        "size": 51146
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/memo/MemoPlanRegistry.class": {
+        "actualSha256": "b3b1ff1cfd161f5278949858d125803bf6ad893ae796259ea13a6f15529912aa",
+        "exists": true,
+        "expectedSha256": "b3b1ff1cfd161f5278949858d125803bf6ad893ae796259ea13a6f15529912aa",
+        "matched": true,
+        "size": 43947
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/memo/MemoProgramFacts.class": {
+        "actualSha256": "34d48bd92310d2850da741ab0ce1e3c9e799f72989fdf3a1004116ed69a210fe",
+        "exists": true,
+        "expectedSha256": "34d48bd92310d2850da741ab0ce1e3c9e799f72989fdf3a1004116ed69a210fe",
+        "matched": true,
+        "size": 37493
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.class": {
+        "actualSha256": "64500c1722aea4dce579fabffbc1b6c1dcfe6a5225e91fe31c9ae4ba54e49f78",
+        "exists": true,
+        "expectedSha256": "64500c1722aea4dce579fabffbc1b6c1dcfe6a5225e91fe31c9ae4ba54e49f78",
+        "matched": true,
+        "size": 129953
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/memo/RuleMemo.class": {
+        "actualSha256": "dc934529871b1efbec5b627eef650e66f20e845c7c9fe393cc9fbb130ac23818",
+        "exists": true,
+        "expectedSha256": "dc934529871b1efbec5b627eef650e66f20e845c7c9fe393cc9fbb130ac23818",
+        "matched": true,
+        "size": 3035
+      },
+      "/engine/test-classes/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemoTest.class": {
+        "actualSha256": "accc66db06cfc2bb6de9d143265ab7b2b6a640266ad6499f6fa2bf8553e6760e",
+        "exists": true,
+        "expectedSha256": "accc66db06cfc2bb6de9d143265ab7b2b6a640266ad6499f6fa2bf8553e6760e",
+        "matched": true,
+        "size": 13150
+      }
+    },
+    "expectedCount": 7,
+    "schema": "systemds-joint-boundary-class-preflight-v1",
+    "status": "PASSED"
+  },
+  "classPreflightPassed": true,
+  "configuredPlanner": "compile_memo",
+  "containerReturncode": 0,
+  "expectedNormalizedPlanner": "Memo-Exact",
+  "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "jfrProfilePassed": true,
+  "modelProofPassed": true,
+  "modelProofReturncode": 0,
+  "noFedRuntimeConversion": true,
+  "overlayPreflight": {
+    "actual": {
+      "/engine/classes/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemo.class": {
+        "actualSha256": "f14fad361bb0747bcf5fdb6a22feae1736fe99cfe0b430655973bea6912a4d8e",
+        "exists": true,
+        "expectedSha256": "f14fad361bb0747bcf5fdb6a22feae1736fe99cfe0b430655973bea6912a4d8e",
+        "matched": true,
+        "size": 20346
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/memo/MemoOptimizer.class": {
+        "actualSha256": "72faf5ebf55a495d89d5c1edfcc2d4ee348b24cfbfc84ef1c5b1f8861ddf501f",
+        "exists": true,
+        "expectedSha256": "72faf5ebf55a495d89d5c1edfcc2d4ee348b24cfbfc84ef1c5b1f8861ddf501f",
+        "matched": true,
+        "size": 51146
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/memo/MemoPlanRegistry.class": {
+        "actualSha256": "b3b1ff1cfd161f5278949858d125803bf6ad893ae796259ea13a6f15529912aa",
+        "exists": true,
+        "expectedSha256": "b3b1ff1cfd161f5278949858d125803bf6ad893ae796259ea13a6f15529912aa",
+        "matched": true,
+        "size": 43947
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/memo/MemoProgramFacts.class": {
+        "actualSha256": "34d48bd92310d2850da741ab0ce1e3c9e799f72989fdf3a1004116ed69a210fe",
+        "exists": true,
+        "expectedSha256": "34d48bd92310d2850da741ab0ce1e3c9e799f72989fdf3a1004116ed69a210fe",
+        "matched": true,
+        "size": 37493
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/memo/MemoProgramModel.class": {
+        "actualSha256": "64500c1722aea4dce579fabffbc1b6c1dcfe6a5225e91fe31c9ae4ba54e49f78",
+        "exists": true,
+        "expectedSha256": "64500c1722aea4dce579fabffbc1b6c1dcfe6a5225e91fe31c9ae4ba54e49f78",
+        "matched": true,
+        "size": 129953
+      },
+      "/engine/classes/org/apache/sysds/hops/fedplanner/memo/RuleMemo.class": {
+        "actualSha256": "dc934529871b1efbec5b627eef650e66f20e845c7c9fe393cc9fbb130ac23818",
+        "exists": true,
+        "expectedSha256": "dc934529871b1efbec5b627eef650e66f20e845c7c9fe393cc9fbb130ac23818",
+        "matched": true,
+        "size": 3035
+      },
+      "/engine/test-classes/org/apache/sysds/hops/fedplanner/memo/FederatedPlanMemoTest.class": {
+        "actualSha256": "accc66db06cfc2bb6de9d143265ab7b2b6a640266ad6499f6fa2bf8553e6760e",
+        "exists": true,
+        "expectedSha256": "accc66db06cfc2bb6de9d143265ab7b2b6a640266ad6499f6fa2bf8553e6760e",
+        "matched": true,
+        "size": 13150
+      }
+    },
+    "expectedCount": 7,
+    "schema": "systemds-joint-boundary-class-preflight-v1",
+    "status": "PASSED"
+  },
+  "overlayPreflightPassed": true,
+  "planner": "memo",
+  "recordProfile": false,
+  "requestedCases": [
+    "ml_logreg",
+    "ml_glm"
+  ],
+  "requiredActionCases": {},
+  "run": "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-memo-20261013/experiments/memo-migration-20261013/normal-return-shape-20261014/docker/normal-return-shape-20261014",
+  "runtimeConversionViolations": [],
+  "schema": "systemds-joint-boundary-e2e-v1",
+  "status": "FAILED"
+}

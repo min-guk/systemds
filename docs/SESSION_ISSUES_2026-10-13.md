@@ -669,3 +669,302 @@
 - **배포/보존**: 최신origin/main 확인 후 검증된 소스와 보고서를 커밋·푸시하고 V65 JAR/소스hash/test reports를 `R/candidate-v65`에 봉인한다. JAR SHA256 `2e8ed671e02013ec2a19078c5dcd3425920bd9f88e1ac8eb9760b4534f1bd585`.
 - **잔여/위험**: V65 workload 성능은 미측정. 마지막V64 네trial은watchdog60이며20초 목표와전체ML압축coverage는미완료다. 실제 workload에서 containment 적용률·기존불필요한flatten 감소·memory 상한은 재개 후 동일Docker로 검증해야 한다. 단위테스트 통과를 전체성능승인으로 대신하지 않는다.
 - **재개 지점**: 새코드 변경보다 V65 sealed artifact의 기존네trial 및NATIVE_CONTAINMENT terminalconservation부터 수행한다. 외부planner/session은 건드리지 않고 현재자체build/test는 모두 종료됐다.
+
+
+## Fresh origin/main Memo migration — in progress
+
+- Status: implementation started in isolated codex/fedplanner-memo-20261013 worktree; original workspace preserved.
+- Problem: replacing legacy source/product/proof/closure architecture while retaining runtime and global cost semantics.
+- Decision: integrated ADRs including DIRECT-only loop backedge and RD-driven joint checks are authoritative. See PRINCIPLE_REBUTTAL_MEMO_2026-10-13.md for historical local-policy conflicts.
+- Changes: copied five design documents and wrote baseline manifest/progress log. Independent lanes own facts and replica collect; parent owns core/integration.
+- Verification: compile/tests/workloads pending; legacy deletion gated by replacement parity.
+- Risks: incomplete native catalog, movement lifetime/recompile lowering, omitted dependencies and unsound shared-cost optimization. Track stages and evidence in FEDPLANNER_IMPLEMENTATION_PROGRESS_2026-10-13.md.
+
+## Memo migration: grounding, shape and actual emission (진행중)
+
+- 증상/원인: source-free native rules cannot rely on mutable live-HOP dimensions, and a Hop template alone is insufficient for statement/call occurrence identity. Component feasibility also does not prove that recompilation emits the same chosen plan.
+- 해결: private `MemoShapes` views propagate exact source ranges and boundary shapes once; separate compiled-owner choice from occurrence-specific reaching bindings; add direct-loop and transitive-privacy dependency queries; integrate `COMPILE_MEMO` before legacy PlacementAnalysis construction and add exact projection/recompile authority.
+- 적용 원칙: 사용자 확정 canonical W/partition과 DIRECT-only loop backedge, all-reachable branch semantics, no runtime fallback. Unknown metadata/capability is not PUBLIC/feasible by default.
+- 검증: `experiments/memo-migration-20261013/supply-audit-loop.log` 87/87; final loop tests 5/5; binding resolver 10/10. Integrated compiler tests are pending. No GLM/LogReg result yet.
+- 잔여 이슈/회귀 위험: branch-shaped aliases, recompile identity, cross-scope materialization lifetime/cost, and native capability gaps must be validated before legacy deletion. Production worker values do not expose derived privacy labels; planner-derived exact privacy remains authoritative, and stale backing-file privacy must not be substituted for an aggregate result's privacy.
+
+## Memo compile epoch and post-selection dynamic rewrites (진행중)
+
+- 증상: W2 branch/loop/MM tests select an OPTIMAL Memo plan, but recompilation eliminates or replaces selected DataGen/TRead kernels and the exact clone validator rejects missing origins.
+- 원인: ordinary Recompiler scalar replacement and algebraic rewrites run after global physical selection; these can emit a different native variant/input pattern without re-costing it.
+- 해결 결정: Memo epochs keep the selected kernel DAG through recompile. Preserve runtime statistics/memory refresh and exact deep copies; bypass post-selection literal/algebraic rewrite and legacy signature-based state restoration for this path. Normal pre-planning `rewriteHopsDAG` remains enabled. A genuinely new physical plan requires a new planning epoch, not an unpriced runtime conversion.
+- correctness: this implements the existing specification's fixed native variant/input pattern within an epoch and keeps each loop HOP's ExecType/native output fixed. It does not remove DML computation or loop exit semantics. Codegen after selection is outside the declared scope and must be rejected explicitly.
+- 검증 예정: exact clone/recompile tests, W2 guarded branch entry, transfer-free loop backedge, native MM, and final numeric parity. Legacy planners keep their current rewrite policy during differential rollout.
+
+## Memo occurrence shape와 guarded function completion (진행중)
+
+- 증상: 실제 rewritten LogReg의 같은 TRead owner가 Y의 192x1/192x2 값을 가리켜 REXPAND/cost가 UNKNOWN_SIZE로 중단됐다. GLM의 일부 오류 분기는 `betas`를 반환하지 않는다.
+- 원인: compiled owner의 단일 shape/cost와 occurrence별 value binding을 혼동했다. 함수의 정상 반환과 기존 runtime 종료 오류도 구별하지 않았다.
+- 해결: `MemoShapes.viewAt/shapeAt/inputShape/hintAt`의 occurrence별 shape와 native rule 교집합을 사용한다. Native execution 선택은 owner 하나로 유지하고, 비용은 실제 occurrence/call context별 binary64 term을 exact 합산한다. 알려진 공통 dimension 축은 보존하며 추정 크기를 exact shape로 위장하지 않는다.
+- 함수 오류 계약: `FunctionCallCPInstruction`의 기존 missing-return 예외를 보존한다. Guarded UNBOUND는 데이터/LOCAL source가 아니다. 모든 실제 bound return slot을 검사한 completion token과 구조적 순서에 따른 continuation binding으로 정상 실행과 TERMINATED_AT_RETURN을 구분한다. 오류 이전 body/caller 작업은 유지하고 오류 이후 consumer와 독립 statement는 activation하지 않는다. Loop entry와 정상 backedge completion도 구분한다.
+- 비용: 같은 공급을 요구하는 consumer들의 activation을 target별 guard union으로 계산한다. 첫 consumer의 activation을 모든 demand에 대신 적용하지 않는다. Branch frequency/unknown loop count는 기존 profile 추정 목적함수이며 실제 runtime 확률을 증명한 값이 아니다.
+- 적용 원칙: 정확한 occurrence/value version, all-reachable branch semantics, no fallback, 정적 공유 native choice. Missing metadata를 PUBLIC/zero-cost로 바꾸거나 누락된 값을 발명하지 않는다.
+- 검증: Facts/Resolver의 함수 전체-return·호출 전후 순서·sibling branch·loop entry·backedge tests 통과. LogReg의 전체 model construction이 처음 통과했으나 이는 exact optimization/emission/실제 ML 완주 증거가 아니다. 새로운 compiler/runtime/Model bundle과 실제 GLM/LogReg 실행은 계속 검증 중이다.
+- 잠재 회귀: completion의 function frame 혼동, false branch/오류 경로의 불필요한 공급, occurrence별 비용 중복, stale shape 승인. 작은 runtime 예외/값 결과와 다중 occurrence 비용 fixture로 검증한다.
+
+## Selected supply store와 빌드 직렬화 (진행중)
+
+- 해결: invocation-scoped `PlannedSupplyStore`에 선택된 action만 등록하고 first demand에서 생성한다. Action slot 갱신 시 이전 source/output lease를 해제하고 scope 간 source pin refcount를 공유한다. Native definition marker와 exact epoch/source identity로 재사용을 검증한다. Same-SB 연결부터 활성화하고 더 넓은 scope는 대응 비용과 runtime 테스트가 갖춰진 뒤 켠다.
+- 검증: `planned-store-compiler-w2.log`의 20개 tests 통과. 100번 source 갱신 fixture에서 live source pin은 1개, scope 종료 후 0개다. 이 기록은 후속 schedule/lowering 변경 전체를 자동 승인하지 않는다.
+- 빌드 문제: 동시 Maven 재컴파일이 target/classes를 교체하면서 unrelated missing-symbol 오류가 발생했다. Legacy 삭제 때문이라는 중간 추론은 철회했다. 현재 legacy source 삭제는 없으며 parity gate 이전에 삭제하지 않는다.
+- 해결/재현 방지: 모든 Maven은 `/tmp/fedplanner-memo-20261013-build.lock`의 exclusive `flock`, target을 읽는 standalone 검사는 shared lock을 사용한다. Source freeze와 로그 기록도 별도로 지킨다.
+- 잔여 이슈: loop-invariant/cross-call retention, full ML optimization/emission/numeric parity, legacy semantic-test 전환과 삭제 gate. Runtime scope의 메모리 비용을 임의의 pruning 근거로 사용하지 않는다.
+
+## Memo residual core enumeration and over-wide consumer conditions — implemented, verification in progress
+
+- **Problem:** leaf-tree DP previously left a residual solver that enumerated all core assignments without incremental propagation or cost bounds. Every consumer also registered one condition containing all producer choices even though fixed native pattern supply legality decomposes by input.
+- **Fix:** `MemoOptimizer.ReducedSearch` reuses the ordinary reversible domains and dependency queue restricted to core checks; exact tree messages supply certified lower bounds and reconstruction. `MemoProgramModel` registers one rule/privacy condition and separate exact-binding input conditions. Correlated privacy environments remain in ProgramFacts; shared producer choices and genuinely shared cost scopes remain joint.
+- **Correctness basis:** universal legality of a conjunction distributes over exact guarded projections; privacy transfer depends on semantic values, not producer execution choices. Tree messages own each removed term once; equal-cost branches remain searchable for the full-plan tie. UNKNOWN is never a pruning proof.
+- **Verification:** latest `root-function-runtime.log` has optimizer 11/11 and Model 6/6 passing. New 24-variable cycle plus 2-node tree solves within 128 nodes instead of enumerating 2^24 full assignments. Small exhaustive fixture and cache-off parity remain enabled. The combined bundle is NOT green: 69 total with 7 failures/errors in independent runtime/shape/control-flow fixtures.
+- **Remaining issues:** GLM initializes a carried `w` as 1x1 and conditionally replaces it with 192x1; current shape lattice loses the phase correlation. No fake exact dimensions or unknown-cost-zero workaround applied. Function normal-return and shape-context cases are still under regression.
+- **Regression risk:** condition decomposition would be invalid if future native/shape legality depends jointly on producer choices. Such a capability must explicitly register its nonseparable scope. Test that changing an unrelated owner does not re-evaluate a local supply condition.
+
+## Memo Docker diagnostic 01/02 — workload gates remain open
+
+- **Environment:** frozen `experiments/memo-migration-20261013/docker-engine-01`; pinned image `sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434`; only `run_LAN_docker.sh --joint-boundary-e2e --planner memo --case ml_logreg --case ml_glm` used.
+- **01 infrastructure failure:** Snap Docker cannot bind the repository's physical `/grid` stage; `/evidence/container-run.sh` was absent before any DML execution. This is not planner evidence.
+- **02 corrected invocation:** added `--stage-root /home/mchoi/fedplanner-memo-docker-stage-20261013`. Class preflight and model proof passed. CP LogReg produced an 8x2 nonzero model; CP GLM produced an 8x1 nonzero model. Memo failed before emission: LogReg `UNKNOWN_SIZE` on local label `Y` reaching a `minRC` input; GLM `UNKNOWN_SIZE` on loop-carried `w` reaching a multiply.
+- **Evidence:** `/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-memo-docker-20261013/memo-diagnostic-02/result.json` and case CP/FED logs. Both failed runs are retained; no numeric parity/performance success claimed.
+- **Fix direction:** exact local read/occurrence shape facts and grounded loop-phase reasoning, preserving actual builtin workloads. Unknown dimensions are not replaced by invented values. Re-run from a fresh frozen engine after corrections.
+
+## Open native coverage was wasting global search — fixed, test pending
+
+- **Observation:** synthetic LogReg 100k-node diagnostic returned RESOURCE_EXHAUSTED, 119,409,888 check-cache hits and 54,152,185 cost-cache hits, zero bound prunes. Its native universe was already incomplete, so no search could certify OPTIMAL.
+- **Fix:** `MemoOptimizer.optimize` returns typed UNRESOLVED before assignment search when native coverage is open. It neither drops unknown candidates nor emits an approximate fallback. Rule coverage itself must be repaired before the optimizer can establish a global optimum.
+- **Remaining:** known fixed-worker facts such as `fullSinglePartition=false` at W>1 must reach the Oracle instead of being reported as missing; scalar logical shape sentinels must be normalized. Native lane owns those fixes.
+
+## Loop phase grounding and dead entry — implementation under verification
+
+- **Problem:** a static ExecType/native layout does not imply one matrix shape before and after the first body. GLM initializes `w` as 1x1, overwrites it on the first iteration before use, and subsequently uses a 192x1 value. Joining all versions loses this fact. A final-only branch must also not be treated as a taken backedge.
+- **Fix in progress:** ProgramFacts records proven FIRST/MIDDLE/LAST guard facts for structured loop counters; unknown guards remain unknown. Resolver carries phases with guards/call frames and rejects contradictory explicit branch assumptions. Model checks entry only when a real first-iteration use or forwarding backedge needs it, validates FIRST/MIDDLE direct backedges, and allows ordinary LAST exit supplies. Runtime contract distinguishes required entry shape and repeated shape, with no transfer at the backedge.
+- **Cost:** phase-specific execution terms use weights 1, T-2, 1 and proven branch activation, rather than charging every phase T times. Source/shape/guard information remains value-specific; a dead initializer is never relabeled as the produced repeated value.
+- **Evidence:** `phase-runtime-native-targeted.log`: 128 tests, 1 failure and 3 errors. Function-return runtime/export, Store, lowering, compiler tests passed. Subsequent `phase-native-targeted-v2.log` has Facts 18, Resolver 16, native rules 13, cost 16, privacy 10, optimizer 11, loop runtime 9 passing. Shapes and Model still fail on phase shape grounding; the workload-model test exposes excessive recursive phase shape evaluation. This is not a completed gate.
+- **Remaining risk:** shape recursion must be dependency-indexed and grounded, context/cache keys must include phase and exact call frame, and phase-dependent Oracle intersection must include only reachable environments. No unknown dimension is silently replaced by a guessed value.
+- **Original workspace audit:** source-only dirty diff SHA-256 still equals baseline `7c4657652de1de5f59d769fd98347d67cd61a8afccc90640dd2b1ace760041b1`; comparison of the full diff was inappropriate because the baseline explicitly hashes only source paths. No original source edits were made.
+
+## Small conditional cost bounds and exact action origins — component gates passed
+
+- **Problem:** residual search used zero for unassigned movement terms even when a small projected domain could certify a positive minimum. Function return action IDs also needed to distinguish two invocations of one compiled body, and guarded origins with identical layouts needed explicit runtime dispatch.
+- **Changes:** `MemoOptimizer` lazily minimizes a cost term only when its current projected domain fits the support budget; wider terms keep the certified bound. Cache keys contain actual domain contents, not mutable revision identity. `MemoDefinition`/function return metadata exports callee source IDs to exact caller target IDs. Supply instructions carry multiple explicitly selected origin actions per recipe and require exactly one current definition/source match.
+- **Verification:** optimizer `optimizer-bound-unit.log` 12/12; store/lowering isolated suite 26/26. These are isolated source builds, pending central integration. Same-layout different branch origins, alias ambiguity, stale epoch, zero match, old singleton codec, exhaustive optimum and cache/backtracking parity are covered.
+- **Remaining:** Model action reconstruction and shared costs must use the same exact origin/action relation; component dispatch success alone is not full schedule parity. Shape/native coverage still blocks actual ML planning.
+- **Regression risk:** partial term enumeration must never be used as a certified lower bound; ambiguous identity must fail rather than pick one candidate. Wide per-origin cost terms remain lazy and may still make global search exponential.
+
+## Native forced-local capability decoupling — verified
+
+- **Problem:** Memo native enumeration called a legacy placement-policy class solely for a pure native capability predicate.
+- **Change:** moved the unchanged predicate into existing `OracleFacade.supportsForcedLocalFederatedOutput`; the old policy delegates while differential migration is active. No new abstraction or capability restriction was introduced.
+- **Verification:** isolated compilation and `ExecPlacementPolicyForcedLocalTest` 2/2, `native-capability-extraction-unit.log`.
+- **Remaining:** other cost/source legacy adapters still need extraction before legacy deletion; no deletion gate has passed.
+
+## Shared movement guard cost profile — explicit estimator contract
+
+- **Problem:** summing two independent guard demands of probability 0.5 and capping at 1 charges 1 instead of the modeled union 0.75. Repeated loop evaluations also require an explicit correlation assumption before a one-time retained transfer has a defined estimated cost. Guard object identity alone is not evidence about actual runtime probabilities.
+- **Decision:** the current frozen cost profile models distinct unknown `GuardDecision(guardId, callFrame)` variables independently, and models repeated evaluations of the same decision as correlated within the invocation. Proven phase outcomes override this estimate. Exact guarded unions are evaluated for the selected materialization's relevant guards only. Thus an invariant source demanded under one repeated unknown guard has estimated activation p, while its repeated native consumer still has estimated execution count p*T.
+- **Status:** this is an explicit COST ESTIMATE assumption, not a runtime fact or a feasibility restriction. An independent-trials model would instead use 1-(1-p)^T; adopting it later changes the frozen objective and requires separate validation. No runtime branch can be dropped using either estimate.
+- **Correctness:** global optimality refers only to the declared frozen estimated objective; numeric execution and all-reachable-path legality remain separate obligations. Exact arithmetic summation does not make probability estimates measured facts.
+- **Remaining:** empirical profile calibration and cross-iteration stochastic cost fidelity are unverified. Current changes must pass guard-union/phase and emitted action ownership tests before cost parity is claimed.
+
+## User-approved zero/one iteration support — in progress
+
+- **New authority:** user explicitly selected “0~1회 경로도 정확하게 지원”. Prior T>1 rejection tests are being replaced by numeric zero/one exit tests. DIRECT-only taken backedges and fixed body rules remain mandatory.
+- **Implementation lanes:** Facts/Resolver owns one correlated cardinality environment for all carried values; Model/runtime owns conditional entry, single-iteration cost, zero/one exit, and no fictitious backedge. Shapes must account for the same contexts. The new policy has not yet passed integration tests.
+- **Prior checkpoint:** integration-v3 main/test compile PASS; unit bundle 169 tests with 4 failures (3 shape-grounding failures and a stale loop-registry reset assertion); actual W2 planner suite 5/5 PASS. The stale reset fix makes MemoPlanRegistry.clear revoke loop contracts along with supplies; a new lifecycle regression was added.
+- **Risk:** FIRST/LAST double-count for ONE, zero-path values spuriously replaced by backedge values, per-variable independent exit choices, and entry upload executed even when body is skipped. These require dedicated assertions, not merely removing the old T>1 guard.
+
+## Privacy check ownership and earliest safe residency checks — in progress
+
+- **Symptom:** bounded LogReg global planning spent >60s traversing conditional privacy before meaningful search progress. Captured stacks are `logreg-global-v4-jstack.txt`, `logreg-global-fastcompat-jstack.txt`, and `logreg-global-fastprivacy-jstack.txt`.
+- **Cause:** every producer-choice edge tuple repeated a consumer-local privacy condition. DIRECT/UPLOAD/IMPOSSIBLE also paid conditional privacy cost despite privacy-independent legality. All-FED residency rules demanded exact privacy even though every privacy level admits that residency.
+- **Change:** `MemoProgramModel.inputCompatible` checks structural movement; its COLLECT privacy predicate is owned once by the already-existing unary consumer rule check. `MemoPrivacy.unconditionalRuleLegalityAt` evaluates only LOCAL input/output residency. FED residency remains subject to exact source/shape/availability checks elsewhere. No unknown fact is treated as PUBLIC.
+- **Verification:** focused Model/Privacy/Optimizer 37/37, then new privacy-evaluation avoidance regression 14/14. This does not establish workload speedup; bounded workload still exposes loop-summary work.
+- **Risk:** factoring is valid only while LOCAL-input rule legality and COLLECT privacy policy coincide. Tests must preserve PRIVATE/PRIVATE_AGGREGATE collect rejection, including guarded sources. If policies diverge, the shared predicate must be updated once at the owner boundary.
+- **Checkpoint v4:** central 179/179 and W2 5/5 PASS before latest factoring; next integrated checkpoint is required.
+
+## Fine-grained privacy ingress is explicitly unsupported and fail-closed
+
+- **Confirmed defect:** `fine_grained_privacy` remained a valid metadata key, but `MetaDataAll`, local source acquisition, the coordinator privacy resolver, and the worker privacy RPC read only the coarse `privacy` field. A valid sidecar with overall `None` (no coarse field) and a non-empty `Private` range was therefore reported as `PUBLIC`; an overall `PrivateAggregation` label could also hide a stronger fine-grained `Private` range. The Memo planner could then admit CP/LOCAL materialization or COLLECT. The runtime fine-grained enforcement package was removed in upstream commit `d9822ce9c7`, so no runtime monitor could repair this classification.
+- **Decision:** do not project fine-grained ranges onto a coarse label and claim semantic support. `MetaDataAll` now owns one fail-closed decoder. Recognized empty fine-grained objects/arrays preserve the existing coarse or absent/public behavior. Every valid non-empty fine-grained range throws typed `UNSUPPORTED_FINE_GRAINED_PRIVACY`; malformed fine-grained structures also fail before any public default. Local persistent reads inspect an existing sidecar even when the HOP carries an explicit coarse label. Coordinator-local lookup, worker lookup, and federated source acquisition share this decoder; remote worker failures retain a typed resolver failure.
+- **Scope:** this is an explicit unsupported boundary required for security correctness, not operator pruning. Full support remains open and requires range-aware privacy propagation, range-sensitive native/movement legality, and runtime enforcement. Ordinary coarse `public`, `private`, and `private-aggregate` semantics are unchanged.
+- **Regression coverage:** empty ranges remain public; non-empty ranges fail with the typed state; malformed structures fail closed; an explicit coarse-public HOP cannot hide a fine-grained sidecar; a remote unsupported worker response remains distinguishable from transport failures. Central build/test verification remains pending.
+
+
+## Positive residency and lazy privacy context — integration in progress
+
+- **Problem:** all-FED and already-released local uses repeatedly evaluated exact privacy through unrelated loop/call contexts. A proposed generic lazy loop-head summary could instead recursively justify a rejected invariant.
+- **Resolution:** `MemoResidency` stores a positive-only released-residency proof over immutable reaching bindings; failed/unknown proofs never eliminate a rule. Ordinary nodes require grounded inputs. Exact guarded privacy is evaluated only for unresolved LOCAL demands. `MemoProgramModel` creates loop privacy assumptions only at those demand sites. Loop induction remains entry-grounded and checks backedges; generic recursive missing-head resummarization was removed.
+- **Ownership:** MemoPrivacy owns privacy meaning, Model owns context projection, Facts owns exact binding/guard/call identities. Structural supply/availability/shape checks are not bypassed by a residency proof.
+- **Risk and validation:** invocation-qualified loop-head assumptions must prevent a public call from authorizing a private sibling call. Focused nested-loop and private/public call-order regression is under review. Central verification after these changes is pending; v5 component passes predate the final induction correction.
+
+## Incremental cost bounds and post-propagation fixed scopes — component verified
+
+- **Problem:** LogReg repeatedly queried every conditional bound at each search node even when most scoped domains were unchanged. Fixed variables also remained in scopes after initial feasibility propagation, obscuring separable subproblems.
+- **Resolution:** `MemoOptimizer` updates cached owner/term minima through dependency indexes on removal and undo, maintains exact BigDecimal sum deltas, and projects proven fixed ordinals out of Check/CostTerm adapters once. Rule identities/domains are not regenerated. Equal-bound pruning uses a conservative full-plan lexicographic floor. Resource exhaustion retains a diagnostic incumbent while preserving RESOURCE_EXHAUSTED status.
+- **Evidence:** isolated optimizer suite 16/16. In matched million-node host model diagnostics, conditional-bound queries fell from 1,199,455,200 to 48,194,423; both still exhausted the budget. This is measured duplicate solver work, not a Docker workload performance claim or proof of an optimum.
+- **Remaining:** inspect the residual coupled core and strengthen exact decomposition/bounds where justified, then recompile and run Docker ML workloads. Do not accept an incumbent as an exact result or restrict candidates to force completion.
+
+
+## Immutable cost view and shared movement end-to-end ownership — component verified
+
+- **Failure:** original selected movement cost was 1.00048828125 before lowering and 32769 after lowering despite unchanged selected rules. Contextual MemoShapes cloned mutable live compiler HOP memory estimates.
+- **Fix:** clone occurrence views from the retained private shape snapshot, not live Facts HOPs. Add original-cost re-evaluation before emitting an OPTIMAL solution; grouped solver factors must equal exact original primitive sums. Runtime retained-store counters measure creations, reuses and remaining leases without storing per-event objects.
+- **Evidence:** new MemoSharedSupplyRuntimeTest observes one upload cost/action, one real creation, one reuse across two calls, numeric -72, and zero live leases/pins after scope exit. Shared/shape suite13/13 and selected-cost audit bundle54/54 passed isolated. Full v7 pending.
+- **Risk:** frozen shape copies must still apply exact occurrence/call/phase dimensions, not collapse to owner-wide dimensions. Existing shape tests and GLM contextual fixtures remain required.
+
+## GLM native cost environment-product explosion — OPEN
+
+- **Evidence:** 180s bounded JFR, every sampled stack through MemoBindingResolver.enumerate beneath MemoProgramModel.nativeCostTerms; registerMovementCosts not reached. At70s >352k unary CostTerms/double[] retained. This is not Oracle cost arithmetic or a solver bottleneck.
+- **Cause:** nativeCostTerms resolves every input source jointly with activation/caller continuation/guard/cardinality, then creates one unary vector per full environment even when native physical cost is identical.
+- **Required resolution:** derive native cost only from normal activation and shape-relevant contexts, preserving all guard/call/phase/cardinality correlations that affect either; do not enumerate exact producer realizations merely to price a native kernel. Keep feasibility and shared movement identity obligations separate. Exact primitive cost preservation requires tests when coalescing weights/terms.
+- **Status:** implementation lane active. Candidate omission, unknown-cost zeroing, and fixed arbitrary combination limits are not accepted fixes.
+
+## Resume R0 — semantic tests independent of legacy representation (verified locally)
+
+- **Problem:** deleting legacy placement packages would otherwise delete privacy acquisition behavior tests together with source-scanner/reflection assertions. Synthetic solver tests alone also do not lock actual parsed ProgramFacts/Memo constraint construction.
+- **Change:** extracted 14 privacy acquisition methods into `component/federated/FederatedPrivacyConstraintResolverTest` with direct typed runtime API, no conditional skip or source scanning. Added `MemoExhaustiveParityTest`: five parsed DML fixtures for shared producer, branch join, loop entry/direct backedge, shared compiled function, transient overwrite.
+- **Evidence:** `privacy-runtime-extracted-tests.log` 14/14 PASS. `exhaustive-controlflow-tests.log` 5/5 PASS, 2,604 full assignments, 652 feasible assignments, cache 0/4096 both agree on original exact cost and lexicographic optimum. No solver propagation/pruning is used by the reference enumeration.
+- **Limitation:** exhaustive reference reuses the model's full-assignment predicates, so it validates solver preservation, not an independent proof that each predicate matches runtime. W2 numeric/edge tests provide separate execution evidence. Old workload/multireturn-builtin coverage remains to be transferred before deletion.
+- **Regression risk:** test fixtures can grow exponentially; the fixed 500,000-assignment ceiling makes accidental enlargement explicit. Test-only reflection accesses sizes/predicates, not runtime state. No new production test hook is introduced.
+
+## Docker v8 LogReg — unmodeled post-selection fusion erases a selected kernel (in progress)
+
+- **Evidence:** `fedplanner-memo-docker-20261013/memo-v8-logreg-diagnostic03/cases/ml_logreg/fed.log`: W=3 exact search OPTIMAL, 2,934,107 nodes; facts 0.0596s + rules 0.2784s + model 0.4456s + optimization/reconstruction 21.1387s + projection 0.0457s = 21.968s. Emission then rejects selected `BinaryOp b(*) hop=453` with `lop=null`; no model output exists. Docker harness correctly reports FAILED despite DMLScript process exit 0.
+- **Cause:** HOP-to-LOP aggregate fusion can erase a multiply whose native execution, output and input supplies were independently selected and costed. Matching CP/FED labels does not certify elimination of that owner. The strict Memo lowering assertion is correct and must not be weakened to accept missing owners.
+- **Repair policy:** preserve independently selected Memo kernels during post-selection fusion, using the committed Memo selection authority; ordinary/unselected and legacy lowering remain unchanged. If fusion is desired later, it must be an explicitly selected joint native variant with matching ownership/cost, not an implicit repair. This is not a removal of an Oracle-supported native rule or a runtime fallback.
+- **Regression gate:** minimal sum(product) must keep both selected kernel Lops and lower successfully; unplanned identical expression retains normal fusion. Audit adjacent transpose/MM/outer-aggregate fusion boundaries. Re-run Docker before acceptance.
+- **Remaining:** actual numeric/emission parity is still absent; v8 is diagnostic evidence only. GLM and residual emission atomicity fixes remain independent pending work.
+
+## Resume R1 — native-cost projection and remaining GLM privacy work
+
+- **Status:** native-cost source-product construction removed and component verified; full GLM planning/runtime still pending.
+- **Change:** native cost now projects exact activation/call/loop phase and shape-sensitive guard decisions, not concrete source realizations. Continuation fast paths require an all-path, entry-grounded availability proof. Internal path/remap-dependent availability results are deliberately not cached; only completed public `(binding, callFrame)` proofs use the cache.
+- **Evidence:** Resolver/ProgramModel 37/37; exhaustive 5/5 (2,604 assignments). Host model-only diagnostics complete LogReg ~2.72s and GLM ~2.96s/~408MB. These are not Docker planning times. `native-projection-nolocal-exhaustive.log` and lane logs record verification.
+- **Remaining bottleneck:** `glm-global-postprojection-jstack.txt` captures initial optimizer propagation spending time in conditional privacy projection / recursive privacy evaluation. The cost model now completes (~2.8s in that diagnostic), but an optimum has not yet been obtained. Preserve exact privacy and grounded loop/call contexts while removing duplicate checks; unknown is never public or evidence for pruning.
+- **Risk:** projection can omit shape/termination correlations; independent review and negative fixtures are required before acceptance. Per-source binary64 roundoff artifacts are intentionally normalized under ADR25; semantic frequency/shape costs remain explicit original primitives in the new frozen objective.
+
+## Resume R2 — builtins and cost-estimator semantic locks
+
+- **Status:** isolated component/numeric tests verified; central compile pending lifecycle repair.
+- **Multi-output change:** one builtin execution owner, exact output slots and distinct reaching definitions, slot-aware shape/privacy/movement/emission contracts. QR CP and canonical transformencode heterogeneous `[ROW,LOCAL]` native outputs are modeled. CP BIASADD/BIASMULT use the existing supported runtime/cost primitives; unmodeled convolution remains typed unsupported.
+- **Evidence:** builtin/native/model regression 109/109; `builtin-runtime-second.log` 2/2 executes QR and CP bias kernels with numerical assertions. Native SystemDS `LibCommonsMath.computeQR` returns Householder H and R (both input-shaped), **not** explicit Q and R; the first test draft's Q*R assumption failed in parsing and was corrected against actual native semantics. The failing diagnostic is preserved.
+- **Loop cost contract:** `MemoRepeatedLoopCostTest` checks exact union activation for opposite/duplicate arms and explicitly documents the frozen guard estimator. For independent guard evaluations over T=10, actual ever-used probability would be `1-(1-p)^10`; the current declared estimate is p for one retained invariant copy. This differs from legacy's conservative one-copy activation. It does not remove any execution path or authorize old/new objective parity.
+- **Risk:** output slots must survive actual Lop lowering, not merely RuleMemo construction. Numeric QR confirms CP slots; federated transformencode still requires its own runtime fixture before full runtime coverage is claimed.
+
+## Resume R3 — Memo authority lifecycle (in progress)
+
+- **Review finding:** static strong program map and Plan.owner retain every historical program; kernel preservation scans historical plans and can keep stale Memo authority after a same-program planner switch.
+- **Repair plan:** owner-lifetime weak identity storage without value-to-owner retention; constant-time weak native-hop authority index; owner-scoped invalidation restores pre-Memo compiler state and removes only that owner's supplies/loop contracts. Non-Memo final compilation revokes Memo authority. Preserve original state through replanning and verify ordinary fusion returns.
+- **Validation gate:** same-program Memo-to-ordinary compilation, original force/output state restoration, exact recompile clone authority, unrelated live-program isolation, and fresh central/runtime tests. No global clearing may destroy unrelated reusable compiled programs.
+
+## Resume R4 — correlated guard identity and frozen cost-statistic projection
+
+- **Problem:** a caller predicate and its exact formal/alias could be treated as independent guards; nested execution was charged 0.25 instead of 0.5. A syntactic-guard cache key could also drop the caller decision while evaluating a callee's private/public return. Separately, equal dimensions were incorrectly sufficient to omit NNZ-sensitive and scalar-dimension-sensitive cost contexts.
+- **Fix:** canonical guard identity follows exact boolean value provenance, including direct NOT polarity, without crossing SELECT/loop value-version boundaries. Model activation deduplicates the canonical decision and rejects contradictory guard cubes. Privacy and shape context keys project canonical provenance, not just syntactic guard IDs. MemoShapes cost dependencies retain sparsity and scalar shape parameters; private HOP clones refresh frozen memory statistics, and bounded DAG cloning expands a shared clone if later reached at a shallower depth.
+- **Evidence:** fresh central `integration-v10-compile.log` PASS (39.384s); `integration-v10-unit.log` **283/283 PASS**. This includes 7 guard-provenance regressions, 2 cost-shape regressions, five exhaustive fixtures (2,604 assignments), lifecycle and native/compiler/runtime unit tests. The intentionally failed fine-grained privacy requests in the log are asserted negative cases, not test failures.
+- **Remaining:** an independent MemoShapes proof review is in progress. No claim of full dynamic-shape or measured stochastic branch-frequency support is added. Current GLM privacy performance remains open.
+- **Regression risk:** a positive invariance proof or cache projection must never forget NNZ, controlling scalar values, invocation identity or guard polarity. Different guard queries in both orders and same-dimension/different-NNZ fixtures detect these mistakes.
+
+## Resume R5 — owner-scoped lifecycle repaired and reviewed
+
+- **Problem:** an old Plan could be activated after replacement; global rollback could clobber another owner; weak owners plus a separate strong supply aggregate retained orphaned supplies.
+- **Fix:** exact per-program planning/recompilation leases, Plan identity revalidation before clone mutation, owner-only rollback, thread-local recompile supplies, and weak-owner immutable supply maps without value-to-owner retention. Ordinary compilation restores pre-Memo state and revokes stale native-kernel authority.
+- **Evidence:** isolated 24/24 lifecycle/compiler/supply and fresh central core 283/283; independent read-only follow-up APPROVE with all three previous findings closed. Actual W2 integration is running separately.
+- **Remaining:** exception paths and unrelated-owner state isolation stay in the regression suite; source review is not a substitute for runtime acceptance. Legacy deletion still awaits GLM and remaining runtime/semantic gates.
+
+## Resume R6 — fixed UNKNOWN obligations were expanded by global search
+
+- **Symptom:** after privacy source-product factoring, GLM reached one million search nodes in a host diagnostic (73.316s including model), but had no incumbent. This is not a completed planning time.
+- **Diagnosis:** `glm-constant-unknown-diagnostic.log` inspects the initial fixed point without choosing unrelated variables. It finds **215 fixed original checks returning UNKNOWN** in that snapshot, including unary privacy and scalar loop-boundary checks. More search cannot resolve immutable singleton-scope analysis gaps.
+- **Change:** after singleton scope folding, `MemoOptimizer` returns `UNRESOLVED` immediately if any empty-scope obligation is UNKNOWN. It does not remove rules, equate UNKNOWN with NO, invent PUBLIC, or emit a fallback. This relies on the existing pure scoped-predicate contract: all dependencies must appear in the scope.
+- **Regression:** `constant-unknown-red.log` demonstrates the prior pointless resource exhaustion; `constant-unknown-green.log` **26/26 PASS**, including exhaustive assignment parity. The new fixture requires zero unrelated search nodes and no selected plan.
+- **Remaining:** actual GLM privacy/loop facts must be resolved before an optimum is possible. This change improves diagnosis/work avoidance, not workload support by itself.
+
+### R6 diagnosis refinement — logical bindings present; privacy abstraction stalls
+
+- Exact formal resolution for `binomial_probability_two_column.linear_terms` through `glm_log_likelihood_part` reaches the single `all_linear_terms` matrix-multiplication occurrence with `COMPLETE`, one environment, and `alwaysAvailable=true`. This examined chain does not demonstrate a missing ProgramFacts def-use edge.
+- The matrix multiplication has exact `PRIVATE_AGGREGATE` for `X`, but unresolved privacy for `ssX_newbeta`; the latter reaches outer loop-carried `newbeta`, whose entry is PUBLIC and backedge is unresolved. `deriveOccurrence` propagates UNKNOWN because its input is unresolved, not because its operator transfer handler is absent.
+- `MemoResidency` globally joins function actuals at the shared formal. GLM calls `glm_dist` both inside and after its loop, so this conservative summary contains a formal → post-loop LAST → carried update → callee return → in-loop `glm_dist` → formal cycle. Exact call bindings remain in Facts/Resolver, but the auxiliary proof must not interpret the summary cycle as a concrete future-value dependency.
+- Proposed minimal repair under review: standard may-privacy least fixed point with BOTTOM for no discovered payload, max joins at alternatives/formals, strict operator transfer on BOTTOM, and TOP for absent/unbound/unknown external privacy. A positive released-payload property must remain separate from exact runtime availability. Component-wide ad hoc grounding assumptions were discarded rather than introduced as a new Proof layer.
+- Persistent diagnostic evidence: `glm-diagnosis-callresolve2.log`, `glm-diagnosis-privacychain3.log`, `glm-diagnosis-residency-cycleall.log` under `experiments/memo-migration-20261013/`. Full GLM and fresh integrated verification remain pending.
+
+### R6 planning checkpoint — minimum fixed point improves 215 UNKNOWNs to 1
+
+- **Current source:** structural may-privacy joins treat BOTTOM as identity; native transfer never derives RELEASED from an unresolved input; missing/unbound/unknown source remains TOP. Removed the redundant grounding array/pass and discarded component-wide assumptions. Only `MemoResidency.java` and its tests changed in this bounded repair lane.
+- **Evidence:** `glm-residency-final-unit.log` **11/11 PASS**; `glm-fixed-unknown-after-residency.log` records **FIXED_UNKNOWN=1**, 170 live variables, search nodes 0, `UNRESOLVED`, no cost or selection. This is not full GLM planning or runtime success.
+- **Residual:** main `PWrite beta` sees `CALL_RETURN(m_glm) → SELECT guard21 → SELECT guard22 → UNBOUND else`. Completion/activation must determine whether this caller environment is normally reachable. No missing-return arm is discarded or relabeled PUBLIC. Evidence: `glm-last-unknown-return.log`, `glm-last-unknown-private-path.log`.
+- **Independent review:** approves the minimal may-FP direction, requires exhaustive `available && provesReleased => concrete privacy released` checks, and flags the obsolete `joinLoopHead` grounding comment for later cleanup. No new Proof/grounding structure is needed.
+- **User-requested plan:** `.omx/plans/glm-privacy-fixed-point-and-activation-2026-10-13.md`. All production lanes are frozen while problem definition and acceptance gates are consolidated. The precise location of the remaining return-guard loss is OPEN.
+
+## Resume R7 — multi-output privacy and frozen movement authority
+
+- **Review finding:** model-side early privacy checks/cache looked only at the first native output. A FED primary output plus LOCAL metadata output could skip privacy, despite the authoritative rule gate correctly inspecting all outputs.
+- **Change:** both demand-key and early proof predicates now use `rule.outputs().contains(LOCAL)`. Protected-secondary-output regression is being added by the builtin lane.
+- **Movement finding:** a multi-return consumer's exact frozen input shape was replaced by the original mutable FunctionOp slot HOP in cost evaluation. This could make a supported recode-only transformencode fail UNKNOWN_SIZE and leak mutable compiler state into costs.
+- **Change:** ordinary edge movement pricing uses the contextual input view. Native definition HOP identity stays separate for emission markers; it is never replaced with a consumer transient identity merely to recover shape. Loop-entry slot views remain under integration.
+- **Gate:** actual two-worker transformencode numeric/multi-output test, privacy regression, cost/shape regressions, and fresh central build. No runtime/coverage completion claim yet.
+
+## Resume R8 — nested-loop entry transfer omitted from the cost objective
+
+- **Status:** implementation and isolated regression passed; independent review and central integration pending.
+- **Symptom/cause:** `MemoProgramModel.entryCost` priced only origins with a compiled producer owner. An inner loop can instead enter from an outer `LOOP_HEAD_CONTRACT`; a legal entry COLLECT/UPLOAD was therefore priced as zero. DIRECT-only backedges do not justify omitting entry cost.
+- **Change:** price non-DIRECT entry supplies from both concrete output slots and outer head contracts. `MemoShapes.outputViewAt` and `bindingViewAt` provide private, contextual cost views; emission continues to use exact definition identities. Entry frequency is the enclosing region frequency, not the inner iteration count.
+- **Files:** `MemoProgramModel.java`, `MemoShapes.java`, `MemoLoopEntryCostTest.java`.
+- **Evidence:** `experiments/memo-migration-20261013/memo-loop-entry-cost-isolated.log`, **47/47 PASS**. The new cost regression requires positive ROW-to-LOCAL entry cost and exactly three times that cost for three outer invocations.
+- **Remaining/risk:** independently review resolved guard/shape context and nested frequency before accepting the objective. The cost-only fixture does not by itself prove that every manually assigned boundary combination is a feasible complete plan. Actual runtime and full model checks remain separate gates.
+- **Decision:** repair cost ownership; do not narrow native capability or relax the backedge transfer ban.
+
+
+## v9a 설계 적합성 감사 — 보고서 완료, 구현 수정 없음
+
+- **상태/문제 정의:** `docker-engine-v9a/snapshot.json`의 동결 소스가 통합 설계대로 구현되었는지 감사했다. 현재 작업 트리는 후속 수정 중이므로 v9a와 분리했다.
+- **환경/조건:** 기반 HEAD `4314a345c16c20752421ce6251bbc2f366c85825`; 동결 main/test sources와 classes/lib 사용. 설계 기준은 감사 시작 2026-10-13 20:24:12 UTC 사본으로 보존했다.
+- **관측/원인:** ROW/COL guarded metadata 접근이 singleton layout 검사로 INFEASIBLE; caller/formal 동일 boolean을 독립 guard로 세어 native 비용이 기대의 0.5; Memo→ordinary compile 뒤 strong global registry의 선택 권위 잔존. 세 사례를 작은 model/compiler probe로 재현했다.
+- **해결 방법/변경 요약:** 구현은 수정하지 않고 `FEDPLANNER_V9A_DESIGN_CONFORMANCE_REPORT_2026-10-13_KO.md`에 설계/실제 구현/영향/근거/우선순위를 작성했다. 승인된 ADR22/26과 미반영 ADR25, recompile replay·retention 고정 정책, multi-output/legacy 미완료를 구분했다.
+- **수정 파일:** 새 보고서와 `docs/evidence/memo-v9a-design-audit-2026-10-13/`의 기준 문서·manifest·로그·재현 probe; 이 세션 문서에는 본 항목만 추가했다. Production/test 및 기존 frozen artifact는 수정하지 않았다.
+- **검증 방법/결과:** frozen component 20 classes 225 tests PASS. 별도 `MemoFederatedModelTest.protectedRepresentativeAbsLoopMultiplyAndSumHasAnExactPlan`은 초기 privacy-pruning assertion에서 1 FAIL; OPTIMAL 앞선 assertion은 통과하므로 privacy 유출로 해석하지 않았다. 초기 넓은 suite는 GLM model 진단에서 중단했으며 통과로 계산하지 않았다. 기존 Docker LogReg PASSED의 16-entry numeric parity와 동결 source 전체 일치 확인; Docker를 새로 실행하지 않았다.
+- **재현:** evidence 폴더의 `focused-test-command.txt`, `protected-model-command.txt`, `reproduce-probes.txt`; 상세 로그와 코드 경로/행은 보고서 참조.
+- **잔여 버그/이슈:** 세 재현 결함, 재컴파일 epoch 계약 차이, source-product 비용 생성과 multi-output/scope 완료 gate, 별도 early-pruning 실패의 원인 분리. 후속 v10 결과는 v9a 성공으로 간주하지 않았다.
+- **수정으로 인한 버그 가능성/회귀 위험:** 문서·근거만 추가해 실행 동작 회귀는 없다. 후속 구현을 v9a로 오인하거나 내부 predicate를 재사용한 exhaustive test를 독립 completeness 증명으로 오인할 위험은 스냅샷 hash와 명시적 증거 범위로 감지한다.
+- **의사결정 근거/적용 원칙:** no runtime fallback, unsupported/unknown/optimal 상태 구분, DIRECT-only taken backedge, 명시적 source/owner/epoch 권위와 frozen Docker 증거 원칙. 이번 감사는 Oracle/runtime/planner 규칙을 변경하지 않았다.
+
+
+## v9a 설계 감사 누적 이력 보완 — 초기 구현부터 v9a까지 반영
+
+- **상태/문제 정의:** 사용자가 v1부터 v9a까지 구현하면서 누적 작성한 문서도 보고서에 반영하도록 요청했다. 최초 감사는 현재 v9a 코드와 통합 설계 대조에 비해 누적 결정·실패·수정의 연결이 부족했다.
+- **원인/해결:** IMPLEMENTATION_PROGRESS, SESSION_ISSUES의 Memo migration 이후 기록, PRINCIPLE_REBUTTAL_MEMO, checkpoint manifests와 과거 검증 로그28개를 재검토했다. 보고서 §1.4에 초기→v3~v8→v9a 연혁, §1.5에 채택·철회한 결정, §1.6에 기존 판정 변경을 추가했다. 독립 v1/v2/v9 증거는 없으므로 diagnostic 번호를 임의 version으로 바꾸지 않았다.
+- **판정 정정:** 같은 epoch에서 선택 kernel을 보존하는 recompile replay와 private shape/cost HOP clone은 문서화된 repair로 재분류했다. Caller/formal 비용0.5→0.25 관측은 유지하되, 당시 syntactic guard 독립 estimator를 구현과 모순된다고 단정하지 않고 후속 provenance 보강과 구분했다. Metadata false-INFEASIBLE와 stale authority 반례는 유지한다.
+- **누적 해결 범위:** v5의 generic recursive privacy summary 철회, v6~v7의 shared upload cost/action/runtime/cleanup 연결, v8 fusion 실패→v9a kernel 보존·preflight·중복 output cleanup 및 Docker LogReg 성공을 반영했다. 이미 고친 atomicity 사례와 추가 미검증 예외 보장을 분리했다.
+- **수정 파일:** docs/FEDPLANNER_V9A_DESIGN_CONFORMANCE_REPORT_2026-10-13_KO.md, docs/evidence/memo-v9a-design-audit-2026-10-13/history-review/, validation JSON, 본 항목. Production/test 및 frozen source는 변경하지 않았다.
+- **검증:** 과거 unit/build/runtime 로그를 다시 읽고 원본 hash와 사본을 보존했다. v3 169개/4 FAIL, v4 179 PASS, v5 187 PASS, v6 217 PASS와 별도 scanner 실패/교정, v7 222 PASS, v8 245 PASS, v9a delta53 PASS를 구분했다. 이 개정에서 테스트나 Docker workload를 새로 실행하지 않았으며 기존 audit의225 PASS/별도1 FAIL도 그대로 보존했다. 링크·행 범위 및 frozen Java hash는 재검사한다.
+- **잔여 이슈/버그:** Metadata/lifecycle 반례, GLM·multi-output·새 planning epoch·전체 retention 선택 및 legacy 완료 gate. 후속 v10/v11 수정은 v9a 성과로 소급하지 않는다.
+- **잠재 회귀 위험/감지:** 실행 코드 변경 없음. 기록상 구현 결정만으로 완료를 승인하거나 서로 다른 suite 수를 합산할 위험을 version별 근거와 판정표로 제한한다.
+- **의사결정 근거:** 단일 snapshot 소스와 누적된 사용자 정책·설계 결정·실측 결과를 함께 읽고, 의도된 scope/estimator 변화와 실제 결함을 구분한다. 앞선 감사 요약 중 더 강했던 guard/recompile/clone 평가는 이 항목과 보고서 개정판이 대체한다.
+
+
+## Memo 비용 조합 폭발 상세 설계 — Oracle 기반 생성과 비용 선투영 문서화
+
+- **상태/문제 정의:** 문서 작성 완료. 사용자가 v9a native 비용의 source 환경 조합 증가를 상세히 설명하고, 전체 조합 생성 후 삭제가 아닌 Oracle 기반 합법 조합 생성 방안을 요청했다. 구현 적용과 전체 GLM 성능 완료는 이번 작업 범위 밖이다.
+- **환경/근거:** v9a frozen source와 snapshot purpose, 누적 GLM 180초/35.2만 이상 unary term 기록, 후속 R1/R4 기록, 2026-10-13 20:52:42 UTC 중심으로 보존한 후속 source 사본을 대조했다. 추가 사본의 읽기 시각은 evidence manifest에 별도 기록했다.
+- **관측 증상/원인:** v9a nativeCostTerms가 모든 input binding을 visitJoint로 공동 해석한 뒤 환경마다 비용 배열을 만든다. 후속 source에는 ADR25 source-only projection이 존재하지만, 별도 native layout product 및 relevant shape guard false/true 재귀가 남는다. 이 세 조합과 각각의 합법성/비용 의존성을 구분했다.
+- **해결 방법/변경 요약:** 새 상세 문서에 supported native region/allowedValues 기반 생성, 기존 concrete RuleMemo로의 streaming publication, binding DAG에서 join 이전 비용 의존성 projection, 정확한 activation/weight/NNZ/공유 owner/UNKNOWN 계약, 구현 순서와 회귀·Docker 성능 기준을 작성했다. 기존 v9a 감사 §3.5에는 상세 문서 링크를 추가했다.
+- **의사결정 근거/적용 원칙:** 이미 불가능한 prefix를 만들지 않고 비용과 무관한 source를 비용 primitive 생성 전에 제거한다. Exact binding/privacy/movement identity는 해당 검사에 보존한다. Oracle 미확정·자원 초과를 후보 삭제 또는 0 비용으로 바꾸지 않으며 runtime fallback을 추가하지 않는다.
+- **수정 파일:** docs/FEDPLANNER_ORACLE_GUIDED_COST_PROJECTION_DESIGN_2026-10-13_KO.md, 기존 v9a 감사의 연결 문단, docs/evidence/memo-cost-projection-design-2026-10-13/ 근거·검증 파일, 본 누적 항목. Production/test/frozen 원본 수정 없음.
+- **검증 방법/결과:** 코드·누적 문서 대조와 독립 읽기 검토를 수행했다. 검토에서 지적한 지원 mask와 concrete RuleMemo 사이 연결 계약을 §6.3에 보완했다. 로컬 링크/행 범위/사본 및 v9a 참조 hash/Markdown 기본 검사 결과는 evidence/verification.json에 기록한다. 새 unit test나 Docker workload를 실행하지 않았으며 과거 진단 시간을 새 성능 결과로 주장하지 않는다.
+- **잔여 이슈/버그:** 제안 API와 generation/projection의 최신 통합 구현·검증, privacy/availability로의 병목 이동 여부, 전체 GLM planning/runtime 완료는 별도 후속 과제다. Native capability의 local support만으로 global feasibility가 성립한다고 가정하지 않는다.
+- **수정으로 인한 버그 가능성/감지:** 문서만 변경해 실행 동작 회귀는 없다. 설계 구현 시 source/guard 축약으로 shape·NNZ·정상 return·정책 상관을 잃거나, symbolic 영역을 concrete rule로 내릴 때 불법 product를 복원할 위험이 있다. 문서 §12의 독립 의미 회귀와 §13의 방문/할당 counter로 감지한다.
+
+## 고정점 분석 분리와 공통 계산 재사용 검토 문서화
+
+- **상태/문제 정의:** 문서 작성 완료, 구현 미적용. Privacy 외의 shape/guard/feasibility 고정점을 함께 실행하면 더 효율적인지 검토한 직전 답변을 문서로 보존했다.
+- **환경/원인:** 현재 Memo workspace의 작업 트리 기준이다. Semantic 분석의 여러 고정점과 search-domain propagation은 의미·수명·rollback 경계가 다르다. RuleBuilder와 ProgramModel의 별도 MemoPrivacy 생성에는 residency solve와 dependency index 구축의 중복이 있다.
+- **해결 방법/변경 요약:** [상세 문서](FEDPLANNER_FIXED_POINT_ANALYSIS_REUSE_2026-10-13_KO.md)에 request 단위 분석 재사용, 공통 binding/index 재사용, loop-carried 국소 재평가, 분석별 dirty scheduling 및 semantic/search 분리 권고를 기록했다. 새로운 범용 분석 그래프는 권고하지 않는다.
+- **의사결정 근거/적용 원칙:** 동일 계산부터 제거하되 privacy, availability, shape, exact call/guard/loop context와 NO-only pruning 의미를 보존한다. 0/1/many loop 지원과 backedge DIRECT 정책을 유지한다.
+- **수정 파일:** 위 신규 분석 문서와 본 누적 항목만 변경한다. 기존 production/test 및 실험 결과는 수정하지 않는다.
+- **검증 방법/결과:** 소스 함수/라인을 재확인했다. 신규 문서의 로컬 링크·라인 anchor 22개, code fence 및 공백 검사를 통과했다. 문서 작성 전후 `src`/`scripts` 9,058개 파일의 통합 SHA-256이 동일하다. Build/test/benchmark는 실행하지 않았으며, 문서 권고를 구현 검증이나 성능 향상 결과로 주장하지 않는다.
+- **잔여 이슈/버그:** Loop-carried 국소화의 분석 동등성, shape 수렴 계약, 공동 scheduling의 실제 이득 및 전체 GLM 완료 여부는 별도 검증 대상이다.
+- **수정으로 인한 버그 가능성/감지:** 문서 작성 자체로 실행 로직은 바뀌지 않는다. 후속 구현의 dependency 누락, 불완전한 cache key, 중간 privacy 상태 기반 pruning, search 상태의 semantic cache 오염을 상세 문서 §8의 회귀 fixture와 측정 항목으로 감지한다.

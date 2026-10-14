@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-memo-20261013/scripts/fedplanner/build_plan_space_rule_ledger.py", line 73, in <module>
+    main()
+  File "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-memo-20261013/scripts/fedplanner/build_plan_space_rule_ledger.py", line 61, in main
+    content = json.dumps(build(), indent=2, ensure_ascii=False) + "\n"
+                         ^^^^^^^
+  File "/grid/3/cofee-lm-sweep-mchoi-20260914/fedplanner-memo-20261013/scripts/fedplanner/build_plan_space_rule_ledger.py", line 34, in build
+    raise ValueError(f"expected audited 48 families; found {len(rules)}; review registry drift")
+ValueError: expected audited 48 families; found 51; review registry drift
