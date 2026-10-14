@@ -25,6 +25,7 @@ import java.util.function.Function;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
@@ -38,6 +39,7 @@ import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
 import org.apache.sysds.runtime.meta.MetaDataAll;
+import org.apache.sysds.runtime.meta.InputColumnMetadata;
 import org.apache.sysds.runtime.util.HDFSTool;
 
 /** One acquisition of exact ingress metadata, independent of candidate selection. */
@@ -66,12 +68,17 @@ public final class MemoSources {
 	private final Map<Integer,Source> sources;
 	private final Map<Integer,Privacy> privacyFacts;
 	private final Map<Integer,SourceMetadataSnapshot> sourceMetadata;
+	private final Map<Integer,InputColumnMetadata.Dataset> inputMetadata;
+	private final List<String> inputMetadataDiagnostics;
 	private MemoSources(CanonicalWorkerPool pool, Map<Integer,Source> sources,
-		Map<Integer,Privacy> privacyFacts,Map<Integer,SourceMetadataSnapshot> sourceMetadata) {
+		Map<Integer,Privacy> privacyFacts,Map<Integer,SourceMetadataSnapshot> sourceMetadata,
+		Map<Integer,InputColumnMetadata.Dataset> inputMetadata,List<String> inputMetadataDiagnostics) {
 		this.pool = pool;
 		this.sources = Map.copyOf(sources);
 		this.privacyFacts = Map.copyOf(privacyFacts);
 		this.sourceMetadata=Map.copyOf(sourceMetadata);
+		this.inputMetadata=Map.copyOf(inputMetadata);
+		this.inputMetadataDiagnostics=List.copyOf(inputMetadataDiagnostics);
 	}
 	public static MemoSources acquire(MemoProgramFacts facts, CanonicalWorkerPool configuredPool) {
 		return acquire(facts,configuredPool,FederatedPlannerUtils::resolveFederatedSourceMetadata);
@@ -144,8 +151,59 @@ public final class MemoSources {
 				sourceMetadata.put(source.owner(),snapshot(source.resolved()));
 			}
 		}
-		return new MemoSources(fixed,sources,privacyFacts,sourceMetadata);
+		Map<Integer,InputColumnMetadata.Dataset> inputMetadata = new LinkedHashMap<>();
+		List<String> inputMetadataDiagnostics = new ArrayList<>();
+		if(Boolean.getBoolean(InputColumnMetadata.RELEASE_PROPERTY)) {
+			Map<String,Optional<MetaDataAll>> sidecars = new LinkedHashMap<>();
+			for(Pending source : pending) {
+				// A local_matrix source is not the on-disk source described by worker paths.
+				if(source.data().hasParameter(DataExpression.FED_LOCAL_OBJECT)) continue;
+				try {
+					InputColumnMetadata.Dataset columnFacts = readInputMetadata(source,sidecars);
+					if(columnFacts != null) inputMetadata.put(source.owner(),columnFacts);
+				}
+				catch(RuntimeException ex) {
+					inputMetadataDiagnostics.add("owner="+source.owner()+" INPUT_COLUMN_METADATA_REJECTED: "+ex.getMessage());
+				}
+			}
+		}
+		return new MemoSources(fixed,sources,privacyFacts,sourceMetadata,inputMetadata,inputMetadataDiagnostics);
 	}
+	/** Original source facts only; no propagation to derived HOPs or exact dimensions. */
+	public InputColumnMetadata.Dataset inputMetadata(int owner) { return inputMetadata.get(owner); }
+	public List<String> inputMetadataDiagnostics() { return inputMetadataDiagnostics; }
+
+	private static InputColumnMetadata.Dataset readInputMetadata(Pending source,
+		Map<String,Optional<MetaDataAll>> sidecars) {
+		InputColumnMetadata.Dataset agreed = null;
+		int present=0;
+		for(Pair<FederatedRange,FederatedData> part : source.resolved().partitions()) {
+			FederatedData data = part.getValue();
+			MetaDataAll mtd = sidecars.computeIfAbsent(data.getFilepath(),
+				path -> Optional.ofNullable(InputColumnMetadata.readLocal(path))).orElse(null);
+			if(mtd == null) continue;
+			String privacy = mtd.getPrivacyConstraintsFailClosed();
+			InputColumnMetadata artifact = mtd.getInputColumnMetadata();
+			if(artifact == null) continue;
+			present++;
+			InputColumnMetadata.Binding binding = artifact.binding();
+			long[] begin=part.getKey().getBeginDims(), end=part.getKey().getEndDims();
+			if(data.getDataType()!=DataType.MATRIX || source.data().getValueType()!=ValueType.FP64
+				|| !binding.host().equalsIgnoreCase(data.getAddress().getHostString())
+				|| binding.port()!=data.getAddress().getPort() || !binding.path().equals(data.getFilepath())
+				|| !binding.begin().equals(List.of(begin[0],begin[1])) || !binding.end().equals(List.of(end[0],end[1]))
+				|| !(privacy==null ? "public" : privacy).equals(source.resolved().privacy().name().toLowerCase(java.util.Locale.ROOT).replace('_','-'))
+				|| artifact.dataset().rows()!=source.rows() || artifact.dataset().cols()!=source.columns())
+				throw new IllegalArgumentException("source endpoint/path/range/type/privacy/global shape mismatch");
+			if(agreed != null && !agreed.equals(artifact.dataset()))
+				throw new IllegalArgumentException("global input facts differ between shards");
+			agreed=artifact.dataset();
+		}
+		if(present!=0 && present!=source.resolved().partitions().size())
+			throw new IllegalArgumentException("input metadata is present on only some shards");
+		return agreed;
+	}
+
 	public CanonicalWorkerPool pool() { return pool; }
 	public Source source(int owner) { return sources.get(owner); }
 	public Map<Integer,Source> sources() { return sources; }

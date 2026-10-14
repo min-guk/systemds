@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: org.apache.sysds.runtime.meta.InputColumnMetadataTest
+-------------------------------------------------------------------------------
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.408 s - in org.apache.sysds.runtime.meta.InputColumnMetadataTest

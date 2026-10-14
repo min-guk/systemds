@@ -630,3 +630,26 @@
 - **검증:** Maven test-compile PASS, Java **114 classes / 779 tests PASS**. 최초 Python 현재670개 vs 부모 baseline661개는 **동일한 2 failures+16 errors, 1 skipped**였고 저장소 경로만 정규화한 traceback도 같았다. 신규 harness9개는 PASS. 리뷰 후 최종 harness **15 tests PASS**, Python 전체 **676 tests / 동일 기존18개 실패**를 재확인했다. 독립 최종 review APPROVE. 실행 인자·원본 로그는 `docs/evidence/main-checkpoint-2026-10-14/` 및 체크포인트 §5에 보존한다.
 - **잔여 이슈:** 실제 P2 Docker workers1/3/5/7 fullcompile/시간/runtime 동등성은 아직 검증하지 않았다. 현재 새 lane은 so007/cpuset/netem 조건이라 기존 local CPU-quota no-RPC lane과 동일하지 않다. 입력 column statistics의 저장/reader는 미구현이며 exact K 수집은 기본 OFF 대안이다. 일반 PARFOR·SliceLine 동적 중간 shape·ALS 및 candidate06 GLM under10 회귀는 해결 완료로 표시하지 않는다. 기존 Python18개 실패는 남아 있다.
 - **잠재 회귀 위험/감지:** opt-in metadata RPC의 정보 공개 범위, stale input identity, context 혼합, cleanup 실패를 계속 검사해야 한다. 이번 publication은 작은 fixture 성능으로 actual 완료를 주장하지 않으며, 실제 workload acceptance는 별도 조건별1회 receipt와 runtime 결과 검증으로 수행해야 한다.
+
+### 입력 column metadata 최초 생성·보관 — 완료 (중간 shape/cost 소비는 후속)
+
+- **문제 정의/증상:** 기존 `.mtd`에는 shape/format/privacy만 있고 SliceLine X의 exact fdom, encoding/결측 의미, X/e row alignment 및 producer/input revision이 없다. Planner 중 payload scan으로 보충하면 실행 전 planning과 dataset 준비 경계가 무너진다.
+- **환경/기준:** 실제 GitHub engine `origin/main=78951e9796a53d52038389ef9a4f89ff77b1f56e`, evaluation `origin/main=66b9383acfcf5a3ebe901032b7149ddf0e4e5c3b`에서 각각 독립 `feature/input-column-metadata-20261014` worktree를 생성했다. 다른 작업 트리의 미커밋 optimizer/P2 변경은 포함하지 않았다.
+- **원인:** 전처리는 이미 fdom을 계산하지만 보존하지 않았고, MetaDataAll에는 별도 typed input facts extension/reader가 없었다. exact source fact와 후속 shape estimate 사이의 경계를 먼저 만들어야 한다.
+- **해결 요약:** `cofee_input_metadata` v1 typed immutable schema, MTD-only parser, local mirror reader, MemoSources original-owner별 snapshot/diagnostics를 추가했다. endpoint/path/range/type/privacy/base metadata/global shard agreement를 검증한다. exact 관측 최대와 보장 상한을 분리하고, 부동소수 JSON token의 반올림을 exact 정수로 받아들이지 않는다. ADULT/COVTYPE 최초 전처리는 기존 `colMaxs(X)` 결과를 CSV로 보존하고, 별도 opt-in setup producer가 새 sidecar mirror와 receipt를 만든다.
+- **사용자 결정:** 기존 실제 dataset을 재스캔하지 않는다. 최초 생성·세팅 attempt에서 저장한다. 따라서 이전 sealed dataset에 metadata가 자동 생성된 것으로 보고하지 않는다.
+- **의사결정 근거/제약:** Oracle/runtime/후보군/비용식을 변경하지 않는다. `sysds.privacy.allowInputColumnMetadata=true`와 artifact release 선언 모두 필요하며 PRIVATE_AGGREGATE 자체를 공개 권한으로 보지 않는다. bounds/통계는 HOP exact dimensions나 feasibility/privacy/worker binding 근거로 승격하지 않는다. 새 reader는 추가 payload read/RPC가 없다. 기존 source privacy resolver의 RPC 동작까지 제거한 것은 아니다.
+- **수정 파일:** `runtime/meta/InputColumnMetadata.java`, `runtime/meta/MetaDataAll.java`, `parser/DataExpression.java`, `hops/fedplanner/memo/MemoSources.java`, 신규 parser/source 테스트 2개. Evaluation producer·초기 DML·setup 문서·manifest/provenance는 별도 evaluation worktree에 있다.
+- **검증:** Java 신규15+관련기존20 = **35 distinct tests PASS**. Python 생성 artifact→Java local reader→MemoSources cross-language smoke PASS (matrix payload 없음, exact max100와 bound1000 분리, privacy/HOP shape 불변). 실제 성능/학습 실행은 하지 않았다. [구현 계약·재현 명령 및 증거](FEDPLANNER_INPUT_COLUMN_METADATA_IMPLEMENTATION_2026-10-14_KO.md).
+- **검증 중 수정:** JSON4J checked accessor 컴파일 오류는 `opt`+명시적 타입 검증으로 수정했다. parser 테스트가 초기화 안 된 MetaDataAll을 사용한 NPE는 실제 metadata를 전달하도록 고쳤다. 최종 검증은 수정 후 순차 실행했다. cross-language fixture는 2×1이며 초기 smoke의 4×1 가정은 검사 코드 오류여서 수정 후 재실행했다.
+- **잔여 이슈:** 실제 dataset의 신규 생성/배포는 미실행. fdom export는 자동이지만 partition 이후 packaging/install은 명시적 opt-in setup 단계다. remote-only sidecar와 같은 path를 공유하는 서로 다른 worker는 이 path-local mirror 계약으로 표현할 수 없다. X/e identity는 trusted producer assertion이며 payload 외부 변경을 compile마다 검출하지 않는다. dynamic 중간 shape/bound/estimate propagation 및 SliceLine fullcompile/runtime 지원은 후속이다.
+- **잠재 회귀 위험/감지:** 잘못된 bound의 EXACT 승격, shard 혼합, stale revision, release 무단 허용을 parser/source negative 테스트로 감지한다. 이후 통계를 cache/비용/shape에 소비하면 revision/facts identity를 cache key에 반영하고 별도 soundness·실제 workload 검증을 추가해야 한다. 이번에는 Git commit/push 및 기존 dirty workspace 변경을 하지 않았다.
+
+### 입력 column metadata main 게시 — 후속 요청의 게시 전 검증
+
+- **문제 정의/상태:** 사용자가 구현 완료된 두 저장소의 변경을 `origin/main`에 게시하도록 요청했다. 앞선 “commit/push하지 않음”은 구현 완료 당시의 상태이며 이번 요청으로 게시 범위를 확정한다.
+- **원인/주의점:** worktree의 feature branch와 원격 main을 혼동하면 다른 작업 트리 변경이나 관련 없는 이력을 포함할 수 있다. evaluation manifest 재생성 diff에는 기존 `source_commit` 7개와 `packaging_note` 1개가 의도치 않게 빠져 있었다.
+- **해결/변경 파일:** 실제 GitHub origin URL과 fetch 후 두 main SHA가 구현 부모와 같음을 확인했다. metadata source/test/docs/evidence만 선택해 커밋한다. `cofee-evaluation/source-manifest.json`의 기존 출처 필드 8개는 원본 main 값으로 복원했다. 원본 dirty workspace 및 기존 sealed artifact는 변경하지 않는다.
+- **검증:** 게시 직전 Java metadata/private·aggregate·UNKNOWN 및 release 회귀 **26 tests PASS**, evaluation producer/package/provenance **12 tests PASS**. `py_compile`, native `SHA256SUMS`, `git diff --check` PASS. 기존 구현 시의 Java35 및 cross-language smoke 증거는 그대로 보존한다. 게시 작업 때문에 workload/데이터 스캔을 추가하지 않았다.
+- **의사결정 근거:** 사용자 요청 범위인 metadata 구현만 일반 fast-forward push로 게시하며 force push하지 않는다. 실제 원격 main SHA와 local commit SHA 일치는 push 후 별도로 확인한다.
+- **잔여 이슈/회귀 위험:** 앞선 metadata 계약의 원격 mirror·초기 setup opt-in·동적 shape 미해결 범위는 동일하다. 두 repository push는 하나의 원자적 transaction이 아니므로 각각의 결과를 검증한다. 전체 workload/runtime 성공이나 전체 test suite PASS를 새로 주장하지 않는다.

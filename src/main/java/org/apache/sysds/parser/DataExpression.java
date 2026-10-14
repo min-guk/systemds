@@ -100,6 +100,7 @@ public class DataExpression extends DataIdentifier
 
 	public static final String PRIVACY = "privacy";
 	public static final String FINE_GRAINED_PRIVACY = "fine_grained_privacy";
+	public static final String INPUT_COLUMN_METADATA = "cofee_input_metadata";
 
 	// Parameter names relevant to reading/writing delimited/csv files
 	public static final String DELIM_DELIMITER = "sep";
@@ -145,7 +146,7 @@ public class DataExpression extends DataIdentifier
 			//Parameters related to dataset name/HDF4 files.
 			HDF5_DATASET_NAME,
 			// Parameters related to privacy
-			PRIVACY, FINE_GRAINED_PRIVACY));
+			PRIVACY, FINE_GRAINED_PRIVACY, INPUT_COLUMN_METADATA));
 
 	/** Valid parameter names in arguments to read instruction */
 	public static final Set<String> READ_VALID_PARAM_NAMES = new HashSet<>(

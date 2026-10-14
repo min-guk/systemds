@@ -1,0 +1,27 @@
+{
+  "status": "PASS",
+  "scope": "Python producer -> Java MetaDataAll/readLocal -> MemoSources original source owner",
+  "metadataSha256": "83d335b6d43c30b3ff3553b3b38e829101ab599421dd9ba6f2512efe9aeb2142",
+  "globalShape": [
+    2,
+    1
+  ],
+  "exactFdom": [
+    100
+  ],
+  "codeUpperBound": [
+    1000
+  ],
+  "privacy": "private-aggregate",
+  "payloadExists": false,
+  "workerContact": false,
+  "hopShapeBefore": [
+    -1,
+    -1
+  ],
+  "hopShapeAfter": [
+    -1,
+    -1
+  ],
+  "actualWorkloadPlanning": false
+}

@@ -1,0 +1,60 @@
+{
+  "engineBase": "78951e9796a53d52038389ef9a4f89ff77b1f56e",
+  "evaluationBase": "66b9383acfcf5a3ebe901032b7149ddf0e4e5c3b",
+  "tests": [
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolverMapSnapshotTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "1.099"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoInputColumnMetadataTest",
+      "tests": "8",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.543"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoPrivacyTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "1.064"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoSourceGeometryTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.475"
+    },
+    {
+      "name": "org.apache.sysds.runtime.meta.InputColumnMetadataTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.408"
+    },
+    {
+      "name": "org.apache.sysds.runtime.transform.TransformEncodeMetadataPrivacyTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.802"
+    }
+  ],
+  "distinctTests": 35,
+  "actualDatasetScan": false,
+  "actualWorkloadRun": false,
+  "newMetadataTests": 15,
+  "scope": "source metadata only; no derived shape or cost changes",
+  "reproduction": "mvn -q '-Dtest=InputColumnMetadataTest,MemoInputColumnMetadataTest,MemoSourceGeometryTest,MemoBindingResolverMapSnapshotTest,TransformEncodeMetadataPrivacyTest,MemoPrivacyTest#strictPrivateUnaryAndAggregateRemainPrivate+privateAggregateFullSumIsReleasedByExistingTransferSemantics+protectedMetadataCanBeReadRemotelyButNotCollected+absentExternalSourceAuthorityIsUnknownRatherThanPublic' -DargLine='-Xmx1g' test"
+}

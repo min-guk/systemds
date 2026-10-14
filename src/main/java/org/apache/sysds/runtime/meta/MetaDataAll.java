@@ -176,9 +176,18 @@ public class MetaDataAll extends DataIdentifier {
 			setFormatTypeString(null);
 	}
 
+	/** Typed source facts; never returned as DML read parameters or matrix dimensions. */
+	public InputColumnMetadata getInputColumnMetadata() {
+		return _metaObj == null ? null : InputColumnMetadata.parse(_metaObj);
+	}
+
 	private void parseMetaDataParam(Object key, Object val)
 	{
 		switch(key.toString()) {
+			case DataExpression.INPUT_COLUMN_METADATA:
+				if(!(val instanceof JSONObject))
+					throw new DMLRuntimeException("Input column metadata must be an object");
+				break;
 			case DataExpression.READROWPARAM: _dim1 = val instanceof Long ? (Long) val : (Integer) val; break;
 			case DataExpression.READCOLPARAM: _dim2 = val instanceof Long ? (Long) val : (Integer) val; break;
 			case DataExpression.ROWBLOCKCOUNTPARAM: setBlocksize((Integer) val); break;
@@ -363,6 +372,8 @@ public class MetaDataAll extends DataIdentifier {
 			}
 
 			parseMetaDataParam(key, val);
+			if(DataExpression.INPUT_COLUMN_METADATA.equals(key))
+				continue; // MTD-only extension, not a read() parameter.
 
 			// if the read method parameter is a constant, then verify value matches MTD metadata file
 			if (varParams.get(key.toString()) != null && (varParams.get(key.toString()) instanceof ConstIdentifier)
