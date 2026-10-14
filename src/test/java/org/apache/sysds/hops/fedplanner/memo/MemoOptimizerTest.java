@@ -29,6 +29,23 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class MemoOptimizerTest {
+	@Test public void collidingPartialAndCompleteTuplesKeepTheirExactIdentity() {
+		Assert.assertEquals(Arrays.hashCode(new int[] {0,31}),Arrays.hashCode(new int[] {1,0}));
+		Assert.assertEquals(Arrays.hashCode(new int[] {-1,31}),Arrays.hashCode(new int[] {0,0}));
+		Check check=new Check(0,new int[] {0,1},r -> r[0]<0 || r[1]<0 ? Truth.UNKNOWN
+			: r[0]==0 && r[1]==0 ? Truth.NO : Truth.YES);
+		CostTerm term=new CostTerm(new int[] {0,1},r -> r[0]==1 && r[1]==0 ? -1
+			: r[0]==0 && r[1]==31 ? 100 : 2, -1);
+		for(int cache : new int[] {0,1,4096}) {
+			var result=new MemoOptimizer(new int[] {2,32},new boolean[] {true,true},
+				new double[][] {new double[2],new double[32]},List.of(check),List.of(term),
+				new Limits(Long.MAX_VALUE,256,cache)).optimize();
+			Assert.assertEquals(Status.OPTIMAL,result.status());
+			Assert.assertArrayEquals(new int[] {1,0},result.selectedRules());
+			Assert.assertEquals(0,BigDecimal.valueOf(-1).compareTo(result.cost()));
+		}
+	}
+
 	@Test public void constantScopeReductionKeepsCostsAndConstraintsExactly() {
 		int[] sizes = {2,1,2}; boolean[] coverage = {true,true,true};
 		Check equality = new Check(0,new int[] {0,1,2}, r -> r[0] < 0 || r[2] < 0

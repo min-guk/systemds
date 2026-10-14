@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +60,7 @@ import org.apache.wink.json4j.JSONObject;
  */
 public final class MemoShapes {
 	private static final int COST_VIEW_DESCENT_DEPTH = 6;
+	private static final int DEFAULT_PROOF_CACHE_ENTRIES = 4096;
 	public enum Knowledge { EXACT, UNKNOWN }
 	public enum DiagnosticKind { MISMATCH, UNRESOLVED, REFRESH_FAILURE }
 
@@ -117,8 +119,18 @@ public final class MemoShapes {
 	private final List<Set<Integer>> phaseSensitiveByBinding;
 	private final List<Set<Integer>> dimensionPhaseSensitiveByBinding;
 	private final List<Set<Integer>> guardSensitiveByBinding;
+	private final List<Set<Integer>> phaseSensitiveByOccurrence;
+	private final List<Set<Integer>> guardSensitiveByOccurrence;
+	private final List<LoopSlotIdentity> selectionSensitiveHeads;
+	private final Map<BindingGuardKey,CostGuardOutcome> bindingGuardCache;
+	private final Map<RepeatProofKey,Boolean> repeatProofCache;
+	private long bindingGuardRequests;
+	private long bindingGuardCacheHits;
+	private long repeatProofRequests;
+	private long repeatProofCacheHits;
 
-	private MemoShapes(MemoProgramFacts facts, MemoSources sources) {
+	private MemoShapes(MemoProgramFacts facts, MemoSources sources,int bindingGuardCacheEntries,
+		int repeatProofCacheEntries) {
 		this.facts = Objects.requireNonNull(facts, "program facts");
 		this.sources = Objects.requireNonNull(sources, "sources");
 		resolver = new MemoBindingResolver(facts);
@@ -153,16 +165,53 @@ public final class MemoShapes {
 		dimensionPhaseSensitiveByBinding=computeBindingDependencies(false).loops();
 		phaseSensitiveByBinding=dependencies.loops();
 		guardSensitiveByBinding=dependencies.guards();
+		List<Set<Integer>> occurrenceLoops=new ArrayList<>(),occurrenceGuards=new ArrayList<>();
+		for(MemoProgramFacts.Occurrence occurrence:facts.occurrences()) {
+			Set<Integer> loops=new LinkedHashSet<>(),guards=new LinkedHashSet<>();
+			for(int position=0;position<occurrence.hop().getInput().size();position++) {
+				int binding=facts.inputBinding(occurrence.id(),position);
+				if(binding>=0) {
+					loops.addAll(phaseSensitiveByBinding.get(binding));
+					guards.addAll(guardSensitiveByBinding.get(binding));
+				}
+			}
+			occurrenceLoops.add(java.util.Collections.unmodifiableSet(loops));
+			occurrenceGuards.add(java.util.Collections.unmodifiableSet(guards));
+		}
+		phaseSensitiveByOccurrence=List.copyOf(occurrenceLoops);
+		guardSensitiveByOccurrence=List.copyOf(occurrenceGuards);
+		List<LoopSlotIdentity> heads=new ArrayList<>();
+		for(MemoProgramFacts.LoopRecord loop:facts.loops())
+			for(MemoProgramFacts.CarriedValue carried:loop.carriedValues())
+				heads.add(new LoopSlotIdentity(loop.id(),carried.slot()));
+		selectionSensitiveHeads=List.copyOf(heads);
+		bindingGuardCache=boundedCache(bindingGuardCacheEntries);
+		repeatProofCache=boundedCache(repeatProofCacheEntries);
 	}
 
 	public static MemoShapes analyze(MemoProgramFacts facts, MemoSources sources) {
-		return new MemoShapes(facts, sources);
+		return new MemoShapes(facts,sources,DEFAULT_PROOF_CACHE_ENTRIES,DEFAULT_PROOF_CACHE_ENTRIES);
 	}
 
 	void requireRequest(MemoProgramFacts facts,MemoSources sources) {
 		if(this.facts!=facts || this.sources!=sources)
 			throw new IllegalArgumentException("Shape authority belongs to another planning request");
 	}
+
+	static MemoShapes analyze(MemoProgramFacts facts,MemoSources sources,int bindingGuardCacheEntries,
+		int repeatProofCacheEntries) {
+		if(bindingGuardCacheEntries<0 || repeatProofCacheEntries<0)
+			throw new IllegalArgumentException("proof cache sizes must be nonnegative");
+		return new MemoShapes(facts,sources,bindingGuardCacheEntries,repeatProofCacheEntries);
+	}
+
+	ReuseStatistics reuseStatistics() {
+		return new ReuseStatistics(bindingGuardRequests,bindingGuardCacheHits,
+			repeatProofRequests,repeatProofCacheHits);
+	}
+
+	record ReuseStatistics(long bindingGuardRequests,long bindingGuardCacheHits,
+		long repeatProofRequests,long repeatProofCacheHits) { }
 
 	public Hop view(int owner) {
 		return views[owner];
@@ -256,14 +305,24 @@ public final class MemoShapes {
 
 	CostGuardSearch firstUnfixedCostGuardForBinding(int binding,EvaluationContext context) {
 		EvaluationContext normalized=normalizeLoopPhases(context);
+		bindingGuardRequests++;
+		BindingGuardKey key=new BindingGuardKey(binding,new SemanticContext(normalized,selectionSensitiveHeads));
+		CostGuardOutcome cached=bindingGuardCache.get(key);
+		if(cached!=null) {
+			bindingGuardCacheHits++;
+			return new CostGuardSearch(cached.guard(),cached.unresolved(),0,0,0,0);
+		}
 		CostGuardAccumulator counters=new CostGuardAccumulator();
 		CostGuardSearch search=firstUnfixedCostGuard(binding,normalized,new HashMap<>(),
 			new LinkedHashSet<>(),counters);
-		return counters.result(search.guard(),search.unresolved());
+		CostGuardSearch result=counters.result(search.guard(),search.unresolved());
+		bindingGuardCache.put(key,new CostGuardOutcome(result.guard(),result.unresolved()));
+		return result;
 	}
 
 	record CostGuardSearch(MemoBindingResolver.GuardDecision guard,boolean unresolved,long bindingVisits,
 		long cacheHits,long invariantProjectionStops,long noRegionsSkipped) { }
+	private record CostGuardOutcome(MemoBindingResolver.GuardDecision guard,boolean unresolved) { }
 
 	private static final class CostGuardAccumulator {
 		private long bindingVisits;
@@ -408,6 +467,23 @@ public final class MemoShapes {
 
 	private boolean provesRepeatHeadCostStats(MemoProgramFacts.BindingNode node,LoopDecision loop,
 		EvaluationContext context) {
+		repeatProofRequests++;
+		RepeatProofKey key=new RepeatProofKey(node.id(),loop,
+			new SemanticContext(context,selectionSensitiveHeads));
+		Boolean cached=repeatProofCache.get(key);
+		if(cached!=null) {
+			repeatProofCacheHits++;
+			return cached;
+		}
+		boolean result=computeRepeatHeadCostStats(node,loop,context);
+		// Publish only after the complete first-to-middle proof. Recursive paths
+		// therefore never observe an in-progress optimistic value.
+		repeatProofCache.put(key,result);
+		return result;
+	}
+
+	private boolean computeRepeatHeadCostStats(MemoProgramFacts.BindingNode node,LoopDecision loop,
+		EvaluationContext context) {
 		// The frozen estimator assigns one symbolic outcome to an unproved canonical
 		// GuardDecision in this call frame. withPhase replaces that value only when
 		// ProgramFacts proves a phase-specific iterator outcome.
@@ -422,6 +498,14 @@ public final class MemoShapes {
 		EvaluationContext middle=withPhase(context,loop,IterationPhase.MIDDLE,LoopPhase.BACKEDGE);
 		Shape repeat=resolvedBindingShape(carried.backedgeBindingId(),middle,evaluation,new LinkedHashSet<>());
 		return sameCostStats(seed,repeat);
+	}
+
+	private static <K,V> Map<K,V> boundedCache(int entries) {
+		return new LinkedHashMap<>(Math.max(1,Math.min(entries,64)),0.75f,true) {
+			@Override protected boolean removeEldestEntry(Map.Entry<K,V> eldest) {
+				return size()>entries;
+			}
+		};
 	}
 
 	private static boolean knownCostStats(Shape shape) {
@@ -665,6 +749,50 @@ public final class MemoShapes {
 	}
 
 	private record LoopSlotKey(LoopDecision loop,int slot) { }
+	private record LoopSlotIdentity(int loopId,int slot) { }
+	private record HeadBinding(int loopId,int slot,boolean bound) { }
+	private record ExactGuardAssignment(int guardId,List<Integer> callFrame,int valueBindingId,
+		List<Integer> valueFrame,boolean value) {
+		private ExactGuardAssignment {
+			callFrame=List.copyOf(callFrame);
+			valueFrame=List.copyOf(valueFrame);
+		}
+	}
+	private record SemanticContext(Set<ExactGuardAssignment> guards,
+		Map<LoopDecision,LoopPhase> loops,Map<LoopDecision,IterationPhase> iterations,
+		Map<LoopCardinalityDecision,LoopCardinality> cardinalities,List<Integer> callFrame,
+		int maxDepth,List<HeadBinding> headBindings) {
+		private SemanticContext(EvaluationContext context,List<LoopSlotIdentity> heads) {
+			this(exactGuards(context.guards()),Map.copyOf(context.loops()),
+				Map.copyOf(context.iterationPhases()),Map.copyOf(context.cardinalities()),
+				List.copyOf(context.callFrame()),context.maxDepth(),headBindings(context.selections(),heads));
+		}
+
+		private static Set<ExactGuardAssignment> exactGuards(
+			Map<MemoBindingResolver.GuardDecision,Boolean> guards) {
+			Set<ExactGuardAssignment> result=new LinkedHashSet<>();
+			for(var entry:guards.entrySet()) {
+				MemoBindingResolver.GuardDecision decision=entry.getKey();
+				result.add(new ExactGuardAssignment(decision.guardId(),decision.callFrame(),
+					decision.valueBindingId(),decision.valueFrame(),entry.getValue()));
+			}
+			return Set.copyOf(result);
+		}
+
+		private static List<HeadBinding> headBindings(MemoBindingResolver.SelectionLookup selections,
+			List<LoopSlotIdentity> heads) {
+			// Resolver rule/layout selections are carried only in ResolvedOrigin metadata;
+			// this class derives shapes from the owner and ignores those payload fields.
+			// headIsBound is different: it changes loop-head traversal and must be keyed.
+			List<HeadBinding> result=new ArrayList<>(heads.size());
+			for(LoopSlotIdentity head:heads)
+				result.add(new HeadBinding(head.loopId(),head.slot(),
+					selections.headIsBound(head.loopId(),head.slot())));
+			return List.copyOf(result);
+		}
+	}
+	private record BindingGuardKey(int binding,SemanticContext context) { }
+	private record RepeatProofKey(int binding,LoopDecision loop,SemanticContext context) { }
 	private record PhaseVisit(boolean occurrence,int id,List<Integer> callFrame) {
 		private PhaseVisit { callFrame=List.copyOf(callFrame); }
 	}
@@ -705,6 +833,10 @@ public final class MemoShapes {
 	}
 
 	private EvaluationContext normalizeLoopPhases(EvaluationContext context) {
+		boolean complete=true;
+		for(LoopDecision loop:context.iterationPhases().keySet())
+			if(!context.loops().containsKey(loop)) { complete=false; break; }
+		if(complete) return context;
 		Map<LoopDecision,LoopPhase> loops = new HashMap<>(context.loops());
 		for(var entry : context.iterationPhases().entrySet())
 			loops.putIfAbsent(entry.getKey(),entry.getValue()==IterationPhase.FIRST
@@ -789,13 +921,14 @@ public final class MemoShapes {
 
 	private boolean phaseProvesGuard(LoopDecision loop,IterationPhase iteration,
 		MemoBindingResolver.GuardDecision decision) {
-		for(MemoProgramFacts.Guard guard:facts.guards()) {
-			if(facts.guardValue(loop.loopId(),guard.id(),iteration)==null) continue;
+		for(MemoProgramFacts.GuardPhase phase:facts.guardPhases(loop.loopId())) {
+			int guard=phase.guardId();
+			if(facts.guardValue(loop.loopId(),guard,iteration)==null) continue;
 			for(int length=loop.callFrame().size();length>=0;length--)
-				if(facts.guardDecisionMatches(decision,guard.id(),loop.callFrame().subList(0,length)))
+				if(facts.guardDecisionMatches(decision,guard,loop.callFrame().subList(0,length)))
 					return true;
 			for(int length=decision.callFrame().size();length>=0;length--)
-				if(facts.guardDecisionMatches(decision,guard.id(),decision.callFrame().subList(0,length)))
+				if(facts.guardDecisionMatches(decision,guard,decision.callFrame().subList(0,length)))
 					return true;
 		}
 		return false;

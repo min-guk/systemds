@@ -18,6 +18,7 @@
 package org.apache.sysds.hops.fedplanner.memo;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.IdentityHashMap;
@@ -229,6 +230,8 @@ public final class MemoProgramFacts {
 	private final List<Guard> guards;
 	private final List<LoopRecord> loops;
 	private final List<GuardPhase> guardPhases;
+	private final List<List<GuardPhase>> guardPhasesByLoop;
+	private final List<GuardPhaseIndex> guardPhaseByLoopAndGuard;
 	private final List<FunctionSummary> functions;
 	private final List<CallBinding> calls;
 	private final List<List<CallBinding>> callsByFunction;
@@ -241,7 +244,8 @@ public final class MemoProgramFacts {
 	private final Map<Long, StatementBlock> statementBlocks;
 	private final List<Hop> compiledOwnerHops;
 	private final Map<Integer,List<List<Integer>>> callFramesByRegion;
-	private final Map<GuardFrame,GuardValueProvenance> guardValueProvenance = new ConcurrentHashMap<>();
+	private final List<Map<List<Integer>,CanonicalGuard>> canonicalGuards;
+	private final Map<Integer,List<OccurrenceContext>> occurrenceContextsByOccurrence = new ConcurrentHashMap<>();
 
 	private MemoProgramFacts(Builder b) {
 		regions = List.copyOf(b.regions);
@@ -255,6 +259,15 @@ public final class MemoProgramFacts {
 		guards = List.copyOf(b.guards);
 		loops = b.loops.stream().sorted(Comparator.comparingInt(LoopRecord::id)).toList();
 		guardPhases = List.copyOf(b.guardPhases);
+		List<List<GuardPhase>> phasesByLoop=new ArrayList<>(loops.size());
+		for(int loop=0;loop<loops.size();loop++) phasesByLoop.add(new ArrayList<>());
+		for(GuardPhase phase : guardPhases)
+			phasesByLoop.get(phase.loopId()).add(phase);
+		guardPhasesByLoop=phasesByLoop.stream().map(List::copyOf).toList();
+		guardPhaseByLoopAndGuard=guardPhasesByLoop.stream().map(GuardPhaseIndex::new).toList();
+		List<Map<List<Integer>,CanonicalGuard>> guardCache=new ArrayList<>(guards.size());
+		for(int guard=0;guard<guards.size();guard++) guardCache.add(new ConcurrentHashMap<>());
+		canonicalGuards=List.copyOf(guardCache);
 		functions = List.copyOf(b.functionSummaries);
 		calls = List.copyOf(b.calls);
 		List<List<CallBinding>> indexedCalls = new ArrayList<>(functions.size());
@@ -303,11 +316,12 @@ public final class MemoProgramFacts {
 	public List<LoopRecord> loops() { return loops; }
 	public List<GuardPhase> guardPhases() { return guardPhases; }
 	public List<GuardPhase> guardPhases(int loopId) {
-		return guardPhases.stream().filter(fact -> fact.loopId() == loopId).toList();
+		return loopId<0 || loopId>=guardPhasesByLoop.size() ? List.of() : guardPhasesByLoop.get(loopId);
 	}
 	public Boolean guardValue(int loopId,int guardId,IterationPhase phase) {
-		return guardPhases.stream().filter(fact -> fact.loopId() == loopId && fact.guardId() == guardId)
-			.findFirst().map(fact -> fact.value(phase)).orElse(null);
+		if(loopId<0 || loopId>=guardPhaseByLoopAndGuard.size() || guardId<0) return null;
+		GuardPhase fact=guardPhaseByLoopAndGuard.get(loopId).get(guardId);
+		return fact==null ? null : fact.value(phase);
 	}
 	public List<FunctionSummary> functions() { return functions; }
 	public List<CallBinding> calls() { return calls; }
@@ -326,18 +340,27 @@ public final class MemoProgramFacts {
 	 * and LAST deliberately remain version/correlation barriers.
 	 */
 	public GuardValueProvenance guardValueProvenance(int guardId,List<Integer> callFrame) {
-		GuardFrame key=new GuardFrame(guardId,List.copyOf(callFrame));
-		GuardValueProvenance cached=guardValueProvenance.get(key);
-		if(cached!=null) return cached;
-		int binding=valueBinding(guard(guardId).predicateOccurrenceId());
-		GuardValueProvenance value=traceGuardValue(binding,key.callFrame(),false,new LinkedHashSet<>(),0);
-		guardValueProvenance.put(key,value);
-		return value;
+		return canonicalGuard(guardId,callFrame).provenance();
 	}
 
 	public MemoBindingResolver.GuardDecision guardDecision(int guardId,List<Integer> callFrame) {
-		GuardValueProvenance value=guardValueProvenance(guardId,callFrame);
-		return new MemoBindingResolver.GuardDecision(guardId,callFrame,value.bindingId(),value.callFrame());
+		return canonicalGuard(guardId,callFrame).decision();
+	}
+
+	private CanonicalGuard canonicalGuard(int guardId,List<Integer> callFrame) {
+		Map<List<Integer>,CanonicalGuard> cache=canonicalGuards.get(guardId);
+		CanonicalGuard cached=cache.get(callFrame);
+		if(cached!=null) return cached;
+		List<Integer> frame=List.copyOf(callFrame);
+		cached=cache.get(frame);
+		if(cached!=null) return cached;
+		int binding=valueBinding(guard(guardId).predicateOccurrenceId());
+		GuardValueProvenance provenance=traceGuardValue(binding,frame,false,new LinkedHashSet<>(),0);
+		MemoBindingResolver.GuardDecision decision=new MemoBindingResolver.GuardDecision(guardId,frame,
+			provenance.bindingId(),provenance.callFrame());
+		CanonicalGuard value=new CanonicalGuard(provenance,decision);
+		CanonicalGuard prior=cache.putIfAbsent(frame,value);
+		return prior==null ? value : prior;
 	}
 
 	/** True when a dependency guard reads the same exact boolean value in this frame. */
@@ -439,6 +462,11 @@ public final class MemoProgramFacts {
 	}
 	/** Compact reachable contexts; phase alternatives remain lazy and are never tuple-materialized here. */
 	public List<OccurrenceContext> occurrenceContexts(int occurrenceId) {
+		occurrence(occurrenceId);
+		return occurrenceContextsByOccurrence.computeIfAbsent(occurrenceId,this::buildOccurrenceContexts);
+	}
+
+	private List<OccurrenceContext> buildOccurrenceContexts(int occurrenceId) {
 		Occurrence occurrence=occurrence(occurrenceId);
 		List<OccurrenceContext> result=new ArrayList<>();
 		for(List<Integer> frame : callFramesForRegion(occurrence.regionId())) {
@@ -569,8 +597,24 @@ public final class MemoProgramFacts {
 		return List.copyOf(result);
 	}
 
-	private record GuardFrame(int guardId,List<Integer> callFrame) {
-		private GuardFrame { callFrame=List.copyOf(callFrame); }
+	private record CanonicalGuard(GuardValueProvenance provenance,
+		MemoBindingResolver.GuardDecision decision) { }
+	private static final class GuardPhaseIndex {
+		private final int[] guardIds;
+		private final GuardPhase[] phases;
+		private GuardPhaseIndex(List<GuardPhase> registered) {
+			Map<Integer,GuardPhase> first=new TreeMap<>();
+			for(GuardPhase phase : registered) first.putIfAbsent(phase.guardId(),phase);
+			guardIds=new int[first.size()]; phases=new GuardPhase[first.size()];
+			int index=0;
+			for(var entry : first.entrySet()) {
+				guardIds[index]=entry.getKey(); phases[index]=entry.getValue(); index++;
+			}
+		}
+		private GuardPhase get(int guardId) {
+			int index=Arrays.binarySearch(guardIds,guardId);
+			return index<0 ? null : phases[index];
+		}
 	}
 	private record GuardBindingFrame(int bindingId,List<Integer> callFrame) {
 		private GuardBindingFrame { callFrame=List.copyOf(callFrame); }

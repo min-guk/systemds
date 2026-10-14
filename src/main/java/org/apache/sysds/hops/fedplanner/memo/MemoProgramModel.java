@@ -85,6 +85,40 @@ public final class MemoProgramModel {
 	private record PrivacyDemand(int occurrence,List<Integer> localInputs,boolean localOutput) { }
 	private final Map<PrivacyDemand,Truth> privacyLegality=new LinkedHashMap<>();
 	private record MovementEdge(int use,int position) { }
+	private record MovementProjectionKey(MovementEdge edge,List<Integer> frame) {
+		private MovementProjectionKey { frame=List.copyOf(frame); }
+	}
+	private static final class ActivationRow {
+		private final ResolvedOrigin origin;
+		private final MemoBindingResolver.OriginIdentity identity;
+		private final ResolvedEnvironment environment;
+		private List<MovementPrimitive> costRows;
+		private ActivationRow(ResolvedOrigin origin,MemoBindingResolver.OriginIdentity identity,
+			ResolvedEnvironment environment) {
+			this.origin=origin; this.identity=identity; this.environment=environment;
+		}
+		private ResolvedOrigin origin() { return origin; }
+		private MemoBindingResolver.OriginIdentity identity() { return identity; }
+		private ResolvedEnvironment environment() { return environment; }
+	}
+	private record MovementInputProjection(List<ActivationRow> rows,MemoBindingResolver.VisitStatus status) {
+		private MovementInputProjection { rows=List.copyOf(rows); }
+	}
+	private record UnitKey(MemoPartition from,MemoPartition target) { }
+	private static final class MovementPrimitive {
+		private final ResolvedEnvironment environment;
+		private final double weight;
+		private final Map<GuardDecision,Boolean> guards;
+		private final Map<LoopDecision,IterationPhase> phases;
+		private final Map<UnitKey,Long> units=new LinkedHashMap<>();
+		private MovementPrimitive(ResolvedEnvironment environment,double weight,
+			Map<GuardDecision,Boolean> guards,Map<LoopDecision,IterationPhase> phases) {
+			this.environment=environment; this.weight=weight;
+			this.guards=Map.copyOf(guards); this.phases=Map.copyOf(phases);
+		}
+	}
+	public record MovementReuseStatistics(long activationRows,long activationReplays,long postGateRequests,
+		long postGateBuilds,long postGateHits,long primitiveContexts,long contextualViewBuilds) { }
 	private record MovementGroup(MemoBindingResolver.OriginIdentity identity,MovementEdge isolated) { }
 	private record RetentionScope(MemoPlanRegistry.ScopeKind kind,long statementBlockId) { }
 	private record SupplyEdge(long statementBlockId,long producerHopId,long consumerHopId,int inputPosition) { }
@@ -92,6 +126,8 @@ public final class MemoProgramModel {
 		SupplyEdge edge,MemoSupplyRegistry.Recipe recipe,MemoPartition target) { }
 	private static final int MOVEMENT_FACTOR_WIDTH_DIAGNOSTIC = 8;
 	private static final int MOVEMENT_GUARD_STATE_LIMIT = 100_000;
+	private static final int MOVEMENT_ACTIVATION_CACHE_LIMIT = 100_000;
+	private static final int MOVEMENT_PRIMITIVE_CACHE_LIMIT = 100_000;
 	private record EntryUse(LoopSlot head,List<Integer> frame) {
 		private EntryUse { frame=List.copyOf(frame); }
 	}
@@ -114,6 +150,11 @@ public final class MemoProgramModel {
 	private final List<Use> uses = new ArrayList<>();
 	private final List<String> diagnostics = new ArrayList<>();
 	private final Map<Integer,List<Occurrence>> occurrencesByOwner = new LinkedHashMap<>();
+	private final boolean movementReuse;
+	private final Map<MovementProjectionKey,MovementInputProjection> movementProjections=new LinkedHashMap<>();
+	private long movementActivationRows,movementActivationReplays,movementPostGateRequests;
+	private long movementPostGateBuilds,movementPostGateHits,movementPrimitiveContexts,movementContextualViewBuilds;
+	private int cachedMovementActivationRows,cachedMovementPrimitives;
 	private final int[] sizes;
 	private final boolean[] coverage;
 	private final double[][] nativeCosts;
@@ -141,9 +182,14 @@ public final class MemoProgramModel {
 
 	public MemoProgramModel(MemoProgramFacts facts,MemoSources sources,
 		MemoRuleBuilder.Result universe,Profile profile) {
+		this(facts,sources,universe,profile,true);
+	}
+	MemoProgramModel(MemoProgramFacts facts,MemoSources sources,
+		MemoRuleBuilder.Result universe,Profile profile,boolean movementReuse) {
 		this.facts = facts; this.sources = sources; this.universe = universe; this.memo = universe.memo();
 		this.shapes = universe.shapes();
-		this.profile = profile; privacy = universe.privacy(); resolver = privacy.resolverFor(facts,sources);
+		this.profile = profile; this.movementReuse=movementReuse;
+		privacy = universe.privacy(); resolver = privacy.resolverFor(facts,sources);
 		reachableContexts = new MemoReachableContexts(facts,resolver);
 		shapes.requireRequest(facts,sources);
 		facts.requireComplete(); diagnostics.addAll(universe.diagnostics());
@@ -187,6 +233,7 @@ public final class MemoProgramModel {
 				List<Integer> bindings = new ArrayList<>();
 				for(int i = 0; i < hop.getInput().size(); i++) bindings.add(facts.inputBinding(occurrence.id(),i));
 				Use use = new Use(occurrence,List.copyOf(bindings),contexts); uses.add(use);
+				int useIndex=uses.size()-1;
 				// Native pattern/shape is already frozen. Privacy transfer observes semantic
 				// values, not producer placement choices, so it needs only this rule choice.
 				checks.add(new Check(occurrence.id(),new int[] {owner},choices ->
@@ -195,7 +242,7 @@ public final class MemoProgramModel {
 					final int input=position;
 					int[] scope=scope(List.of(bindings.get(position)),List.of(owner),contexts);
 					checks.add(new Check(occurrence.id(),scope,choices ->
-						inputCompatible(use,input,expand(scope,choices))));
+						inputCompatible(use,new MovementEdge(useIndex,input),expand(scope,choices))));
 				}
 			}
 		}
@@ -222,6 +269,10 @@ public final class MemoProgramModel {
 	public RuleMemo memo() { return memo; }
 	public List<Head> heads() { return List.copyOf(heads); }
 	public List<Check> checks() { return List.copyOf(checks); }
+	public MovementReuseStatistics movementReuseStatistics() {
+		return new MovementReuseStatistics(movementActivationRows,movementActivationReplays,movementPostGateRequests,
+			movementPostGateBuilds,movementPostGateHits,movementPrimitiveContexts,movementContextualViewBuilds);
+	}
 	public CostProjectionStatistics costProjectionStatistics(int owner) {
 		MutableCostProjectionStatistics statistics=costProjectionStatistics.get(owner);
 		return statistics==null ? emptyCostProjectionStatistics()
@@ -278,8 +329,9 @@ public final class MemoProgramModel {
 	private Truth compatible(Use use,int[] selected) {
 		Truth result=privacyCompatible(use,selected);
 		if(result==Truth.NO) return result;
+		int useIndex=uses.indexOf(use);
 		for(int position=0; position<use.bindings().size(); position++) {
-			Truth edge=inputCompatible(use,position,selected);
+			Truth edge=inputCompatible(use,new MovementEdge(useIndex,position),selected);
 			if(edge==Truth.NO) return edge;
 			if(edge==Truth.UNKNOWN) result=Truth.UNKNOWN;
 		}
@@ -341,7 +393,8 @@ public final class MemoProgramModel {
 	}
 
 	/** Universal conjunction distributes over exact guarded input projections. */
-	private Truth inputCompatible(Use use,int position,int[] selected) {
+	private Truth inputCompatible(Use use,MovementEdge edge,int[] selected) {
+		int position=edge.position();
 		int owner=use.consumer().compiledOwnerId(), choice=selected[owner];
 		if(choice<0) return Truth.UNKNOWN;
 		RuleMemo.Rule rule=memo.rule(owner,choice);
@@ -349,30 +402,24 @@ public final class MemoProgramModel {
 		Truth[] result={Truth.YES};
 		for(List<Integer> frame : use.frames()) {
 			Context context=context(selected,use.consumer().regionId(),frame);
+			MovementInputProjection projection=movementReuse ? cachedMovementProjection(edge,frame) : null;
+			if(projection!=null) {
+				movementActivationReplays++;
+				for(ActivationRow row:projection.rows()) {
+					ResolvedEnvironment environment=row.environment();
+					ResolvedOrigin origin=row.origin();
+					MemoPartition layout=layout(origin,selected);
+					Truth compatible=inputCompatibility(use,position,rule,layout,context,environment);
+					if(compatible==Truth.NO) return Truth.NO;
+					if(compatible==Truth.UNKNOWN) result[0]=Truth.UNKNOWN;
+				}
+				if(projection.status()==MemoBindingResolver.VisitStatus.UNRESOLVED) result[0]=Truth.UNKNOWN;
+				continue;
+			}
 			var visit=visitActive(use.consumer(),List.of(binding),context,environment -> {
 				ResolvedOrigin origin=environment.origins().get(0);
 				MemoPartition layout=layout(origin,selected);
-				Truth compatible;
-				if(universe.inputRoles().get(owner).get(position)==InputRole.METADATA)
-					compatible=layout==null ? Truth.UNKNOWN : layout==rule.inputs().get(position) ? Truth.YES : Truth.NO;
-				else if(layout==null)
-					compatible=Truth.UNKNOWN;
-				else if(MemoMovement.kind(layout,rule.inputs().get(position),false)!=MemoMovement.Kind.COLLECT) {
-					// DIRECT/IMPOSSIBLE do not depend on payload privacy; uploads only need
-					// canonical shape/type/pool legality. Native execution privacy is a separate check.
-					Hop source=use.consumer().hop().getInput(position);
-					var shape=MemoMovement.kind(layout,rule.inputs().get(position),false)==MemoMovement.Kind.UPLOAD
-						? shapes.inputShape(use.consumer().id(),position,context.withEnvironment(environment).evaluation()) : null;
-					compatible=MemoMovement.legal(layout,rule.inputs().get(position),source.getDataType(),null,
-						shape==null ? -1 : shape.rows(),shape==null ? -1 : shape.columns(),sources.workers(),false);
-				}
-				else {
-					// COLLECT's privacy condition is exactly the consumer's LOCAL-input
-					// privacy condition. The unary privacyCompatible check owns it once,
-					// independently of all producer rule choices; do not repeat it per edge tuple.
-					DataType type=use.consumer().hop().getInput(position).getDataType();
-					compatible=type==DataType.MATRIX || type==DataType.FRAME ? Truth.YES : Truth.NO;
-				}
+				Truth compatible=inputCompatibility(use,position,rule,layout,context,environment);
 				if(compatible==Truth.NO) { result[0]=Truth.NO; return false; }
 				if(compatible==Truth.UNKNOWN) result[0]=Truth.UNKNOWN;
 				return true;
@@ -381,6 +428,23 @@ public final class MemoProgramModel {
 			if(visit.status()==MemoBindingResolver.VisitStatus.UNRESOLVED) result[0]=Truth.UNKNOWN;
 		}
 		return result[0];
+	}
+	private Truth inputCompatibility(Use use,int position,RuleMemo.Rule rule,MemoPartition layout,
+		Context context,ResolvedEnvironment environment) {
+		int owner=use.consumer().compiledOwnerId();
+		if(universe.inputRoles().get(owner).get(position)==InputRole.METADATA)
+			return layout==null ? Truth.UNKNOWN : layout==rule.inputs().get(position) ? Truth.YES : Truth.NO;
+		if(layout==null) return Truth.UNKNOWN;
+		MemoMovement.Kind kind=MemoMovement.kind(layout,rule.inputs().get(position),false);
+		if(kind!=MemoMovement.Kind.COLLECT) {
+			Hop source=use.consumer().hop().getInput(position);
+			var shape=kind==MemoMovement.Kind.UPLOAD
+				? shapes.inputShape(use.consumer().id(),position,context.withEnvironment(environment).evaluation()) : null;
+			return MemoMovement.legal(layout,rule.inputs().get(position),source.getDataType(),null,
+				shape==null ? -1 : shape.rows(),shape==null ? -1 : shape.columns(),sources.workers(),false);
+		}
+		DataType type=use.consumer().hop().getInput(position).getDataType();
+		return type==DataType.MATRIX || type==DataType.FRAME ? Truth.YES : Truth.NO;
 	}
 
 	private Context withPhase(Context context,int loop,List<Integer> frame,IterationPhase phase) {
@@ -528,24 +592,20 @@ public final class MemoProgramModel {
 
 	private void registerMovementCosts() {
 		Map<MovementGroup,Set<MovementEdge>> groups = new LinkedHashMap<>();
-		int[] none=new int[sizes.length]; Arrays.fill(none,-1);
 		for(int u = 0; u < uses.size(); u++) {
 			Use use = uses.get(u);
 			for(int i = 0; i < use.bindings().size(); i++) {
-				final int position=i;
 				Hop input = use.consumer().hop().getInput(i);
 				if(!input.getDataType().isMatrix() && !input.getDataType().isFrame()
 					|| universe.inputRoles().get(use.consumer().compiledOwnerId()).get(i) == InputRole.METADATA) continue;
 				MovementEdge edge=new MovementEdge(u,i);
 				for(List<Integer> frame : use.frames()) {
-					Context base=context(none,use.consumer().regionId(),frame);
-					visitActive(use.consumer(),List.of(use.bindings().get(i)),base,environment -> {
-						var identity=resolver.resolveOriginIdentity(use.bindings().get(position),base.evaluation(),environment);
+					for(ActivationRow row:movementProjection(edge,frame).rows()) {
+						var identity=row.identity();
 						if(retentionScope(identity)!=null)
 							groups.computeIfAbsent(new MovementGroup(identity,null),ignored -> new LinkedHashSet<>()).add(edge);
 						else groups.computeIfAbsent(new MovementGroup(null,edge),ignored -> new LinkedHashSet<>()).add(edge);
-						return true;
-					});
+					}
 				}
 			}
 		}
@@ -568,6 +628,34 @@ public final class MemoProgramModel {
 				framesFor(facts.loop(head.slot().loopId()).regionId()));
 			costs.add(new CostTerm(scope,choices -> entryCost(head,expand(scope,choices)),0));
 		}
+	}
+	private MovementInputProjection movementProjection(MovementEdge edge,List<Integer> frame) {
+		MovementProjectionKey key=new MovementProjectionKey(edge,frame);
+		MovementInputProjection cached=movementProjections.get(key);
+		if(cached!=null) return cached;
+		Use use=uses.get(edge.use());
+		int binding=use.bindings().get(edge.position());
+		int[] none=new int[sizes.length]; Arrays.fill(none,-1);
+		Context base=context(none,use.consumer().regionId(),frame);
+		List<ActivationRow> rows=new ArrayList<>();
+		var visit=visitActive(use.consumer(),List.of(binding),base,environment -> {
+			ResolvedOrigin origin=environment.origins().get(0);
+			var identity=resolver.resolveOriginIdentity(binding,base.evaluation(),environment);
+			rows.add(new ActivationRow(origin,identity,environment));
+			return true;
+		});
+		MovementInputProjection result=new MovementInputProjection(rows,visit.status());
+		movementActivationRows+=rows.size();
+		int cacheCharge=Math.max(1,rows.size());
+		if(visit.status()==MemoBindingResolver.VisitStatus.COMPLETE
+			&& cachedMovementActivationRows+cacheCharge<=MOVEMENT_ACTIVATION_CACHE_LIMIT) {
+			movementProjections.put(key,result);
+			cachedMovementActivationRows+=cacheCharge;
+		}
+		return result;
+	}
+	private MovementInputProjection cachedMovementProjection(MovementEdge edge,List<Integer> frame) {
+		return movementProjections.get(new MovementProjectionKey(edge,frame));
 	}
 	record Activation(Map<GuardDecision,Boolean> guards,Map<LoopDecision,IterationPhase> phases,double weight) {
 		Activation(Map<GuardDecision,Boolean> guards,double weight) { this(guards,Map.of(),weight); }
@@ -649,6 +737,16 @@ public final class MemoProgramModel {
 				.inputs().get(position);
 			for(List<Integer> frame : use.frames()) {
 				Context context = context(selected,use.consumer().regionId(),frame);
+				MovementInputProjection projection=movementReuse ? cachedMovementProjection(edge,frame) : null;
+				if(projection!=null) {
+					movementActivationReplays++;
+					for(ActivationRow row:projection.rows())
+						accumulateMovement(group,use,position,frame,context,row,selected,events,unretainedCost);
+					if(projection.status()==MemoBindingResolver.VisitStatus.UNRESOLVED)
+						throw new IllegalStateException("UNRESOLVED_MOVEMENT_ACTIVATION: occurrence "
+							+use.consumer().id());
+					continue;
+				}
 				var visit = visitActive(use.consumer(),List.of(use.bindings().get(position)),context,environment -> {
 					ResolvedOrigin origin = environment.origins().get(0); MemoPartition from = layout(origin,selected);
 					if(from == null) throw new IllegalStateException("Unresolved source in selected movement cost");
@@ -697,15 +795,95 @@ public final class MemoProgramModel {
 		}
 		return total;
 	}
+	private void accumulateMovement(MovementGroup group,Use use,int position,List<Integer> frame,Context context,
+		ActivationRow row,int[] selected,Map<MovementActivation,List<Activation>> events,double[] unretainedCost) {
+		ResolvedOrigin origin=row.origin();
+		MemoPartition from=layout(origin,selected);
+		if(from==null) throw new IllegalStateException("Unresolved source in selected movement cost");
+		var identity=row.identity();
+		if(group.identity()!=null ? !group.identity().equals(identity) : retentionScope(identity)!=null) return;
+		MemoPartition target=memo.rule(use.consumer().compiledOwnerId(),selected[use.consumer().compiledOwnerId()])
+			.inputs().get(position);
+		MemoMovement.Kind kind=MemoMovement.kind(from,target,false);
+		if(kind==MemoMovement.Kind.DIRECT || kind==MemoMovement.Kind.IMPOSSIBLE) return;
+		movementPostGateRequests++;
+		if(row.costRows!=null) {
+			movementPostGateHits++;
+			for(MovementPrimitive primitive:row.costRows)
+				applyMovementPrimitive(group,identity,use,position,context,primitive,from,target,events,unretainedCost);
+			return;
+		}
+		List<MovementPrimitive> built=new ArrayList<>();
+		ResolvedEnvironment environment=row.environment();
+		Context supplied=context.withEnvironment(environment);
+		visitBindingCostContexts(use.bindings().get(position),supplied,exact -> {
+			ResolvedEnvironment refined=new ResolvedEnvironment(environment.origins(),exact.evaluation().guards(),
+				exact.evaluation().loops(),exact.evaluation().iterationPhases(),exact.evaluation().cardinalities());
+			boolean retained=group.identity()!=null;
+			double weight=retained ? definitionActivationWeight(identity,refined)
+				: frequency(use.consumer().regionId(),frame,exact.evaluation())
+					*environmentProbability(refined,context.evaluation());
+			MovementPrimitive primitive=new MovementPrimitive(refined,weight,Map.of(),Map.of());
+			double unit=movementUnit(use,position,context,primitive,from,target);
+			if(retained) {
+				MovementPrimitive completed=new MovementPrimitive(refined,weight,activeGuards(refined),
+					definitionPhases(identity,refined));
+				completed.units.put(new UnitKey(from,target),Double.doubleToLongBits(unit));
+				primitive=completed;
+			}
+			accumulateMovementPrimitive(group,identity,primitive,target,unit,events,unretainedCost);
+			built.add(primitive);
+		});
+		movementPostGateBuilds++;
+		movementPrimitiveContexts+=built.size();
+		if(cachedMovementPrimitives+built.size()<=MOVEMENT_PRIMITIVE_CACHE_LIMIT) {
+			row.costRows=List.copyOf(built);
+			cachedMovementPrimitives+=built.size();
+		}
+	}
+	private void applyMovementPrimitive(MovementGroup group,MemoBindingResolver.OriginIdentity identity,
+		Use use,int position,Context context,MovementPrimitive primitive,MemoPartition from,MemoPartition target,
+		Map<MovementActivation,List<Activation>> events,double[] unretainedCost) {
+		double unit=movementUnit(use,position,context,primitive,from,target);
+		accumulateMovementPrimitive(group,identity,primitive,target,unit,events,unretainedCost);
+	}
+	private void accumulateMovementPrimitive(MovementGroup group,MemoBindingResolver.OriginIdentity identity,
+		MovementPrimitive primitive,MemoPartition target,double unit,
+		Map<MovementActivation,List<Activation>> events,double[] unretainedCost) {
+		if(group.identity()==null) unretainedCost[0]+=unit*primitive.weight;
+		else {
+			MovementActivation key=new MovementActivation(identity,target,Double.doubleToLongBits(unit));
+			events.computeIfAbsent(key,ignored -> new ArrayList<>()).add(new Activation(
+				primitive.guards,primitive.phases,primitive.weight));
+		}
+	}
+	private double movementUnit(Use use,int position,Context context,MovementPrimitive primitive,
+		MemoPartition from,MemoPartition target) {
+		UnitKey key=new UnitKey(from,target);
+		Long cached=primitive.units.get(key);
+		if(cached!=null) return Double.longBitsToDouble(cached);
+		Context exact=context.withEnvironment(primitive.environment);
+		Hop view=shapes.viewAt(use.consumer().id(),exact.evaluation());
+		movementContextualViewBuilds++;
+		double unit=MemoCostModel.movementCost(view.getInput(position),from,target,
+			Math.max(1,sources.workers()),1);
+		primitive.units.put(key,Double.doubleToLongBits(unit));
+		return unit;
+	}
 	private double definitionActivationWeight(MemoBindingResolver.OriginIdentity identity,
 		ResolvedEnvironment environment,int[] selected) {
+		return definitionActivationWeight(identity,environment);
+	}
+	private double definitionActivationWeight(MemoBindingResolver.OriginIdentity identity,
+		ResolvedEnvironment environment) {
 		Occurrence definition=facts.occurrence(identity.nativeDefinitionOccurrenceId());
+		int[] none=new int[sizes.length]; Arrays.fill(none,-1);
 		EvaluationContext evaluation=new EvaluationContext(environment.guards(),environment.loops(),
-			context(selected,definition.regionId(),identity.callFrame()).evaluation().selections(),4096,
+			context(none,definition.regionId(),identity.callFrame()).evaluation().selections(),4096,
 			identity.callFrame(),environment.iterationPhases(),environment.cardinalities());
 		Map<GuardDecision,Boolean> all=activeGuards(environment);
 		Map<GuardDecision,Boolean> defining=new LinkedHashMap<>(
-			context(selected,definition.regionId(),identity.callFrame()).evaluation().guards());
+			context(none,definition.regionId(),identity.callFrame()).evaluation().guards());
 		defining.entrySet().removeIf(entry -> phaseGuard(entry.getKey().guardId(),entry.getKey().callFrame(),
 			environment.iterationPhases())!=null);
 		if(!all.entrySet().containsAll(defining.entrySet()))

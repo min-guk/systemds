@@ -89,6 +89,9 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 		long optimizationFinished = System.nanoTime();
 		tracePhase("optimization",optimizationFinished-modelFinished);
 		traceSearch(solution.optimization());
+		traceForestTail(solution.optimization().statistics());
+		traceShapeReuse(universe.shapes().reuseStatistics());
+		traceMovementReuse(model.movementReuseStatistics());
 		if(solution.optimization().status() != MemoOptimizer.Status.OPTIMAL)
 			throw new IllegalStateException("Memo planner did not prove an optimum: "
 				+ solution.optimization().status() + " " + solution.diagnostics());
@@ -161,7 +164,8 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 				+ " supplies=" + solution.supplies().values().stream().mapToInt(List::size).sum()
 				+ " nodes=" + stats.nodes() + " checks=" + stats.checkEvaluations()
 				+ " cacheHits=" + stats.checkCacheHits() + " pruned=" + stats.removedRules()
-				+ " supportQueries=" + stats.supportQueries() + " worklistVisits=" + stats.worklistVisits()
+				+ " supportQueries=" + stats.supportQueries() + " supportCacheHits=" + stats.supportCacheHits()
+				+ " worklistVisits=" + stats.worklistVisits()
 				+ " costEvaluations=" + stats.costEvaluations() + " costCacheHits=" + stats.costCacheHits()
 				+ " boundPrunes=" + stats.boundPrunes()
 				+ " conditionalBoundQueries=" + stats.conditionalBoundQueries()
@@ -206,6 +210,7 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 			+ " checkEvaluations=" + statistics.checkEvaluations()
 			+ " checkCacheHits=" + statistics.checkCacheHits()
 			+ " supportQueries=" + statistics.supportQueries()
+			+ " supportCacheHits=" + statistics.supportCacheHits()
 			+ " worklistVisits=" + statistics.worklistVisits()
 			+ " removedRules=" + statistics.removedRules()
 			+ " costEvaluations=" + statistics.costEvaluations()
@@ -214,6 +219,30 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 			+ " conditionalBoundQueries=" + statistics.conditionalBoundQueries()
 			+ " conditionalBoundCacheHits=" + statistics.conditionalBoundCacheHits()
 			+ " wideBoundRelaxations=" + statistics.wideBoundRelaxations());
+	}
+	private static void traceForestTail(MemoOptimizer.Statistics statistics) {
+		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+			System.err.println("[MemoForestTail] attempts=" + statistics.forestTailAttempts()
+				+ " applicable=" + statistics.forestTailApplicable()
+				+ " completions=" + statistics.forestTailCompletions()
+				+ " cells=" + statistics.forestTailCells());
+	}
+	private static void traceShapeReuse(MemoShapes.ReuseStatistics statistics) {
+		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+			System.err.println("[MemoShapeReuse] bindingGuardRequests=" + statistics.bindingGuardRequests()
+				+ " bindingGuardCacheHits=" + statistics.bindingGuardCacheHits()
+				+ " repeatProofRequests=" + statistics.repeatProofRequests()
+				+ " repeatProofCacheHits=" + statistics.repeatProofCacheHits());
+	}
+	private static void traceMovementReuse(MemoProgramModel.MovementReuseStatistics statistics) {
+		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+			System.err.println("[MemoMovementReuse] activationRows=" + statistics.activationRows()
+				+ " activationReplays=" + statistics.activationReplays()
+				+ " postGateRequests=" + statistics.postGateRequests()
+				+ " postGateBuilds=" + statistics.postGateBuilds()
+				+ " postGateHits=" + statistics.postGateHits()
+				+ " primitiveContexts=" + statistics.primitiveContexts()
+				+ " contextualViewBuilds=" + statistics.contextualViewBuilds());
 	}
 	private static void traceCostProjection(MemoProgramModel.CostProjectionStatistics statistics) {
 		// Emit construction evidence even when the later exact search cannot prove an optimum.
