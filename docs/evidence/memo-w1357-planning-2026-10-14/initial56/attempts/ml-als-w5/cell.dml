@@ -1,0 +1,15 @@
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_5_1.data","130.149.237.13:8002//workspace/experiments/data/continuous/ADULT_features_5_2.data","130.149.237.14:8003//workspace/experiments/data/continuous/ADULT_features_5_3.data","130.149.237.15:8004//workspace/experiments/data/continuous/ADULT_features_5_4.data","130.149.237.16:8005//workspace/experiments/data/continuous/ADULT_features_5_5.data"), ranges=list(list(0,0),list(10000,128),list(10000,0),list(20000,128),list(20000,0),list(30000,128),list(30000,0),list(40000,128),list(40000,0),list(50000,128)))
+
+[U, V] = als(
+  X=X,
+  rank=10,
+  regType="L2",
+  reg=0.000001,
+  maxi=10,
+  check=FALSE,
+  thr=0.0001,
+  seed=1389632218,
+  verbose=FALSE
+)
+
+write(V, "tmp/w1357/bd773949a6cf14d7d36f/result", format="csv")

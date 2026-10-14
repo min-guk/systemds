@@ -1,0 +1,345 @@
+{
+  "cell": {
+    "id": "ml|kmeans|lan|w5|DP-global",
+    "planner": "DP-global",
+    "planner_enum": "COMPILE_EXACT",
+    "profile": "lan",
+    "suite": "ml",
+    "workers": 5,
+    "workload": "kmeans"
+  },
+  "content_verification": {
+    "cache_contract": "hash reused only while dev/inode/size/mtime_ns/ctime_ns are unchanged",
+    "execution_note": "pure render only; re-render immediately before any separately qualified run",
+    "selected_template_metadata_and_data_blocks": "sha256-verified-at-render",
+    "stage_manifest_sha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+  },
+  "dependencies": [],
+  "execution_authorized": false,
+  "inputs": [
+    {
+      "cols": 128,
+      "metadata_path": "data/continuous/ADULT_features.data.mtd",
+      "metadata_sha256": "4a31620520bde98be28db26f0bf4b237bdf403b9428c7af8240be2c36ed50ab5",
+      "nnz": 6400000,
+      "privacy": "private-aggregate",
+      "role": "X",
+      "rows": 50000,
+      "shards": [
+        {
+          "address": "130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_5_1.data",
+          "blocks": [
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_1.data/0-m-00000",
+              "sha256": "eb5425cb9e135ef196c97dad18d2452f503f6ff9cfee1df88476e4467210053d"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_1.data/0-m-00001",
+              "sha256": "6e5d777769eb5b1ec141f7f66714c31087a4b39df606047914434a787fe49fc2"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_1.data/0-m-00002",
+              "sha256": "22d24fe65121a940c1303adf02bdb7a834205efd255b443fd9dfb702f45df981"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_1.data/0-m-00003",
+              "sha256": "d7b36b3234327870e07c5ccdc1f07140dcbf4a590ef909b1f5cdc3f397396628"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_1.data/0-m-00004",
+              "sha256": "cbe6f2b03ee58b5f9dbf599f31c6be40ad0990a2d9c6b7f04f190e37d5cfae11"
+            }
+          ],
+          "cols": 128,
+          "endpoint": "130.149.237.12:8001",
+          "metadata_path": "data/continuous/ADULT_features_5_1.data.mtd",
+          "metadata_sha256": "da39ce222f0ebe689e400095bcb154b29969d3e127968a6458333f1697c9bb97",
+          "nnz": 1280000,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              0,
+              0
+            ],
+            [
+              10000,
+              128
+            ]
+          ],
+          "rows": 10000,
+          "stage_path": "data/continuous/ADULT_features_5_1.data",
+          "worker": {
+            "host": "so002",
+            "index": 1,
+            "ip": "130.149.237.12",
+            "port": 8001
+          }
+        },
+        {
+          "address": "130.149.237.13:8002//workspace/experiments/data/continuous/ADULT_features_5_2.data",
+          "blocks": [
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_2.data/0-m-00000",
+              "sha256": "95d27f805809a08189d47a44c74132ee3e173b1bac664bbd768fa40bcd2db61c"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_2.data/0-m-00001",
+              "sha256": "8c829a03b75081e1c802e4be09e1395c48bfa15462dc2f4c80d6e40cf48a01fc"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_2.data/0-m-00002",
+              "sha256": "8bde213b4addf3ac2c6c3d7f5cdcf0e7c21ccb3ce1e1cd5f843031c22199b818"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_2.data/0-m-00003",
+              "sha256": "abe9c2c0da0f55544f21f98d7fadfb9e131ab0581710cc07b49c938478897659"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_2.data/0-m-00004",
+              "sha256": "e9c1b2204d6d9de150e7f7ec6af84dd6b6d146484d7e8976b295802bddc0fa0c"
+            }
+          ],
+          "cols": 128,
+          "endpoint": "130.149.237.13:8002",
+          "metadata_path": "data/continuous/ADULT_features_5_2.data.mtd",
+          "metadata_sha256": "da39ce222f0ebe689e400095bcb154b29969d3e127968a6458333f1697c9bb97",
+          "nnz": 1280000,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              10000,
+              0
+            ],
+            [
+              20000,
+              128
+            ]
+          ],
+          "rows": 10000,
+          "stage_path": "data/continuous/ADULT_features_5_2.data",
+          "worker": {
+            "host": "so003",
+            "index": 2,
+            "ip": "130.149.237.13",
+            "port": 8002
+          }
+        },
+        {
+          "address": "130.149.237.14:8003//workspace/experiments/data/continuous/ADULT_features_5_3.data",
+          "blocks": [
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_3.data/0-m-00000",
+              "sha256": "63258057c0fcdfd0a8055a6536ba691638506cd79be056cf6b42dd85a151f40a"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_3.data/0-m-00001",
+              "sha256": "ef5642331fbe33095d6adee3072bc48603e0fc8bdaacb5dc44318ee4c6b7348f"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_3.data/0-m-00002",
+              "sha256": "09343043eca2da9ac3431a7d71317ff9ab5171004338fa83cade48b6be35f648"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_3.data/0-m-00003",
+              "sha256": "d0f96af5b1d459ef8b982ac299da99712102c69b569a07f528d28f0f90e6caf4"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_3.data/0-m-00004",
+              "sha256": "31b2b68a4c2d3c1c073e306d537d948a6e1e46b423316023ad70c7339ffaf772"
+            }
+          ],
+          "cols": 128,
+          "endpoint": "130.149.237.14:8003",
+          "metadata_path": "data/continuous/ADULT_features_5_3.data.mtd",
+          "metadata_sha256": "da39ce222f0ebe689e400095bcb154b29969d3e127968a6458333f1697c9bb97",
+          "nnz": 1280000,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              20000,
+              0
+            ],
+            [
+              30000,
+              128
+            ]
+          ],
+          "rows": 10000,
+          "stage_path": "data/continuous/ADULT_features_5_3.data",
+          "worker": {
+            "host": "so004",
+            "index": 3,
+            "ip": "130.149.237.14",
+            "port": 8003
+          }
+        },
+        {
+          "address": "130.149.237.15:8004//workspace/experiments/data/continuous/ADULT_features_5_4.data",
+          "blocks": [
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_4.data/0-m-00000",
+              "sha256": "dfd38e379519f8ae4299e13cb654feb4affab105d4e2f0f65f28f35d3d8377b8"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_4.data/0-m-00001",
+              "sha256": "8399d2c7d90b3a44237a3a6368f73bed46fa178df8a93d555bb11f75977f088d"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_4.data/0-m-00002",
+              "sha256": "24dacb11c2e4aa1eed464758dac215c7b1ecf5ef6a06803bcb87ddd79d022c46"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_4.data/0-m-00003",
+              "sha256": "3592417a132c2c9e3fec19208b9ab8907822c4163389edfa6f44b9d305424baf"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_4.data/0-m-00004",
+              "sha256": "373c4c9351c68b948d3eeb92af6a16b973817c19e806b6be3c24615f5c7a66b4"
+            }
+          ],
+          "cols": 128,
+          "endpoint": "130.149.237.15:8004",
+          "metadata_path": "data/continuous/ADULT_features_5_4.data.mtd",
+          "metadata_sha256": "da39ce222f0ebe689e400095bcb154b29969d3e127968a6458333f1697c9bb97",
+          "nnz": 1280000,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              30000,
+              0
+            ],
+            [
+              40000,
+              128
+            ]
+          ],
+          "rows": 10000,
+          "stage_path": "data/continuous/ADULT_features_5_4.data",
+          "worker": {
+            "host": "so005",
+            "index": 4,
+            "ip": "130.149.237.15",
+            "port": 8004
+          }
+        },
+        {
+          "address": "130.149.237.16:8005//workspace/experiments/data/continuous/ADULT_features_5_5.data",
+          "blocks": [
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_5.data/0-m-00000",
+              "sha256": "309b942eb6a00f78357d7f27732028d6eeb1432389e7c2836fe5dfe1f80ea453"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_5.data/0-m-00001",
+              "sha256": "fcce0d14ce455de1ef31eb14c42675e297f6f9056664a92391fdcca78808b41b"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_5.data/0-m-00002",
+              "sha256": "7fe56b2416d3cc5bdfe2bc69cf0cc9cf8413224b86c8d4304efa1e88ef1428aa"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_5.data/0-m-00003",
+              "sha256": "0b97afbd547ef13303cab3d40a59759227a30be43f7a632b7fd45ccc46b9de4c"
+            },
+            {
+              "bytes": 2048212,
+              "path": "data/continuous/ADULT_features_5_5.data/0-m-00004",
+              "sha256": "eaa5896dd14b4f476a533beb71fa9b2996906c7a5243a0d7bab5943cdf0d78a5"
+            }
+          ],
+          "cols": 128,
+          "endpoint": "130.149.237.16:8005",
+          "metadata_path": "data/continuous/ADULT_features_5_5.data.mtd",
+          "metadata_sha256": "da39ce222f0ebe689e400095bcb154b29969d3e127968a6458333f1697c9bb97",
+          "nnz": 1280000,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              40000,
+              0
+            ],
+            [
+              50000,
+              128
+            ]
+          ],
+          "rows": 10000,
+          "stage_path": "data/continuous/ADULT_features_5_5.data",
+          "worker": {
+            "host": "so006",
+            "index": 5,
+            "ip": "130.149.237.16",
+            "port": 8005
+          }
+        }
+      ],
+      "stem": "continuous/ADULT_features"
+    }
+  ],
+  "ml_view": "continuous",
+  "outputs": [
+    {
+      "data_type": "matrix",
+      "format": "csv",
+      "path": "tmp/w1357/9c16511e1d10fd0cd4b5/result",
+      "role": "result"
+    }
+  ],
+  "qualification": "PURE_RENDER_ONLY",
+  "schema": "cofee-w1357-render/v1",
+  "seeds": {
+    "ALS_SEED": 1389632218,
+    "GMM_DML_SEED": 20260904,
+    "GNMF_SEED": 1011081480,
+    "KMEANS_SEED": 133815928,
+    "ORDER_SEED": 20260922,
+    "PYTHONHASHSEED": 20260922,
+    "SYSTEMDS_SEED": 1011081480
+  },
+  "template": {
+    "canonical_for_execution": false,
+    "canonical_source_bytes": true,
+    "contract_status": "CANONICAL_SOURCE_PURE_RENDER_ONLY",
+    "future_variant_policy": "corrected/canonical templates require an explicit repo-tracked hash and contract revision; recognized variants remain pure-render-only and no variant is auto-authorized",
+    "id": "CANONICAL_TRACKED_STAGE_V2",
+    "known_limitation": null,
+    "path": "harness/sigmod2021-exdra-p523/experiments/code/exp/kmeans_fed.dml",
+    "provenance": "sealed-canonical-stage-template",
+    "sha256": "82e76633ff718d4cd127c5f08af103c7f126428bf163c3a259c6871cec7cd9a6"
+  },
+  "topology": {
+    "path": "/home/mchoi/cofee-evaluation/config/multihost_topology.json",
+    "sha256": "30c741dbc300bacc7180c04196b7c764ea4c5e2a7c96ce91113005c5f4fb7cc8",
+    "workers": [
+      "so002",
+      "so003",
+      "so004",
+      "so005",
+      "so006"
+    ]
+  }
+}

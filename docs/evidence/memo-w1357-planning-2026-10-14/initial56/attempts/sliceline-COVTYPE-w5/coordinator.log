@@ -1,0 +1,14 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/14 15:32:53 WARN utils.SettingsChecker: Low memory budget of total:    251 GB set to:      3 GB
+26/10/14 15:32:53 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/10/14 15:32:53 ERROR api.DMLScript: Failed to read from the file system ('./code/workloads/sliceline/slicefinder_core.dml') or SystemDS jar file ('/code/workloads/sliceline/slicefinder_core.dml' or '/scripts/code/workloads/sliceline/slicefinder_core.dml')
+26/10/14 15:32:53 ERROR api.DMLScript: /evidence/cell.dml line 8:0 Cannot find file/resource: ./code/workloads/sliceline/slicefinder_core.dml
+[31m
+An Error Occurred : 
+           ParseException -- 
+--------------------------------------------------------------
+The following parse issue was encountered:
+/evidence/cell.dml [line 8:0] [Validation error] -> source("code/workloads/sliceline/slicefinder_core.dml") as SL
+   Cannot find file/resource: ./code/workloads/sliceline/slicefinder_core.dml
+--------------------------------------------------------------
+[0m

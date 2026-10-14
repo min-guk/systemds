@@ -1,0 +1,9 @@
+{
+  "gridAttemptCount": 56,
+  "gridError": "bash: /evidence/container-run.sh: No such file or directory\n",
+  "gridJvmCount": 0,
+  "gridRoot": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-w1357-planning-20261014-c26-once",
+  "gridSummarySha256": "be4972f50839ac56a3edfd36a5386f69acb3d8e7e5db33b3e1bd7783b683eff6",
+  "preservedIn": "initial56/attempts; original full grid root also remains",
+  "relativeLibraryParseCount": 12
+}

@@ -1,0 +1,11 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/14 14:51:14 WARN utils.SettingsChecker: Low memory budget of total:    251 GB set to:      3 GB
+26/10/14 14:51:14 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[MemoPlannerPhase] phase=facts elapsedNs=40206965
+[MemoPlannerPhase] phase=rules elapsedNs=557922159
+[MemoNativeRequests] preparedRequests=1251 reusedResults=1183 oracleRequests=68 canonicalStringsCreated=45 canonicalStringsReused=1183 uncacheableRequests=23 contextualViewBuilds=68
+[MemoNativeGeneration] cpPatterns=68 prefixRequests=0 prunedPrefixes=137 unknownPrefixes=0 visitedNativePatterns=411 determinantRegions=368 oracleEvaluations=368 evidenceReuses=180 publishedRules=683 coverageObligations=16
+[31m
+An Error Occurred : 
+            CostException -- AMBIGUOUS_FED_EXECUTION_LAYOUT: FED/LOCAL rule does not prove one execution layout for hop 10575 QuaternaryOp/q(wdivmm) MATRIX 50000x10: [ROW, LOCAL, COL, LOCAL] variant=oracle/wdivmm/ok
+[0m

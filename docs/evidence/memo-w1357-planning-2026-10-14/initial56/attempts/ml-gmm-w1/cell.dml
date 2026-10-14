@@ -1,0 +1,22 @@
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_1_1.data"), ranges=list(list(0,0),list(50000,128)))
+
+# VVI keeps one diagonal covariance per component.  Four components expose
+# genuine responsibility/model placement choices without the D x D covariance
+# materialization of VVV.  Random initialization isolates the EM workload from
+# a nested KMeans initialization phase.
+[labels, probability, df, bic, mu, precision, weight] = gmm(
+  X=X,
+  n_components=4,
+  model="VVI",
+  init_params="random",
+  iter=10,
+  reg_covar=1e-6,
+  tol=1e-12,
+  seed=20260904,
+  verbose=FALSE
+)
+
+# PrivateAggregation forbids exporting row-level labels/probabilities.  The
+# learned aggregate model is sufficient for cross-planner semantic parity.
+model = cbind(mu, precision, t(weight))
+write(model, "tmp/w1357/28852df0947f307987f9/result", format="csv")

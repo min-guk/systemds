@@ -1,0 +1,6 @@
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_1_1.data"), ranges=list(list(0,0),list(50000,128)))
+Y = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_labels_1_1.data"), ranges=list(list(0,0),list(50000,1)))
+
+m = lm(X=X, y=Y, verbose=FALSE, tol= 1e-9)
+
+write(m, "tmp/w1357/b32442838d3feeb3b6da/result", format= "csv")

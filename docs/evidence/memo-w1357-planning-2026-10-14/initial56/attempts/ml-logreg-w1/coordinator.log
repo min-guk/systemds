@@ -1,0 +1,9 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/14 14:51:38 WARN utils.SettingsChecker: Low memory budget of total:    251 GB set to:      3 GB
+26/10/14 14:51:38 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[MemoPlannerPhase] phase=facts elapsedNs=49132796
+[MemoPlannerPhase] phase=rules elapsedNs=865836137
+[MemoNativeRequests] preparedRequests=5989 reusedResults=5840 oracleRequests=149 canonicalStringsCreated=83 canonicalStringsReused=5840 uncacheableRequests=66 contextualViewBuilds=149
+[MemoNativeGeneration] cpPatterns=149 prefixRequests=9 prunedPrefixes=115 unknownPrefixes=2 visitedNativePatterns=161 determinantRegions=272 oracleEvaluations=275 evidenceReuses=0 publishedRules=362 coverageObligations=36
+[MemoPlannerPhase] phase=model elapsedNs=595252064
+[MemoCostProjection] bindingDagVisits=133308 projectionCacheHits=21700 relevantGuardDecisions=3400 supportPrefixChecks=9840 noRegionsSkipped=10868 unknownObligations=0 invariantProjectionStops=43305 activationEnvironments=3040 projectedContexts=4443 primitiveVectors=4443 primitiveValues=17768 primitiveValueBytes=142144

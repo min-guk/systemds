@@ -1,0 +1,6 @@
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_1_1.data"), ranges=list(list(0,0),list(50000,128)))
+Y = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_labels_1_1.data"), ranges=list(list(0,0),list(50000,1)))
+
+[B, S] = steplm(X=X, y=Y, icpt=0, reg=1e-7, tol=1e-7, maxi=10, max_features=2, verbose=FALSE)
+
+write(B, "tmp/w1357/67709be94c9581fef5cc/result", format="csv")

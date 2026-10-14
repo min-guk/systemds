@@ -1,0 +1,140 @@
+{
+  "cell": {
+    "id": "ml|gmm|lan|w1|DP-global",
+    "planner": "DP-global",
+    "planner_enum": "COMPILE_EXACT",
+    "profile": "lan",
+    "suite": "ml",
+    "workers": 1,
+    "workload": "gmm"
+  },
+  "content_verification": {
+    "cache_contract": "hash reused only while dev/inode/size/mtime_ns/ctime_ns are unchanged",
+    "execution_note": "pure render only; re-render immediately before any separately qualified run",
+    "selected_template_metadata_and_data_blocks": "sha256-verified-at-render",
+    "stage_manifest_sha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+  },
+  "dependencies": [],
+  "execution_authorized": false,
+  "inputs": [
+    {
+      "cols": 128,
+      "metadata_path": "data/continuous/ADULT_features.data.mtd",
+      "metadata_sha256": "4a31620520bde98be28db26f0bf4b237bdf403b9428c7af8240be2c36ed50ab5",
+      "nnz": 6400000,
+      "privacy": "private-aggregate",
+      "role": "X",
+      "rows": 50000,
+      "shards": [
+        {
+          "address": "130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_1_1.data",
+          "blocks": [
+            {
+              "bytes": 7168477,
+              "path": "data/continuous/ADULT_features_1_1.data/0-m-00000",
+              "sha256": "05f29e5f4b2598cf124f365c50fc1990764198f54a378fa51e7e0ca68e99deee"
+            },
+            {
+              "bytes": 7168477,
+              "path": "data/continuous/ADULT_features_1_1.data/0-m-00001",
+              "sha256": "65210cbbe32d9ccf3e05e9c15c1b9d835e4b35a14ff827e1f4739b3447b1fbe8"
+            },
+            {
+              "bytes": 7168477,
+              "path": "data/continuous/ADULT_features_1_1.data/0-m-00002",
+              "sha256": "2bdd820ee764b0a05435a7ced4f9ae9e5ecc2e2f78eefbef2675bdec4f968ed9"
+            },
+            {
+              "bytes": 7168477,
+              "path": "data/continuous/ADULT_features_1_1.data/0-m-00003",
+              "sha256": "90e8886e0f7cde80fe4af6db06136220aeb35d1d856d075d4f07a573f5b32966"
+            },
+            {
+              "bytes": 7168477,
+              "path": "data/continuous/ADULT_features_1_1.data/0-m-00004",
+              "sha256": "5f2e075d543ac9dbcda266d8357af8cfbb0e8a8c95b942d11c941fbe6ddae5af"
+            },
+            {
+              "bytes": 7168477,
+              "path": "data/continuous/ADULT_features_1_1.data/0-m-00005",
+              "sha256": "ed4f8c88cb375f52be098f7a1dce8c6d4d21eb8a0bb10e2ec19cdf7dfda92a67"
+            },
+            {
+              "bytes": 7168477,
+              "path": "data/continuous/ADULT_features_1_1.data/0-m-00006",
+              "sha256": "f67755e3311763da61b60d687164c89a97d4563877bfb81f715a223a5c76a2e5"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_1_1.data/0-m-00007",
+              "sha256": "fd1b021cabbc397b316a93666c81f29255d27aefe30c99f438b9e999355e7127"
+            }
+          ],
+          "cols": 128,
+          "endpoint": "130.149.237.12:8001",
+          "metadata_path": "data/continuous/ADULT_features_1_1.data.mtd",
+          "metadata_sha256": "4a31620520bde98be28db26f0bf4b237bdf403b9428c7af8240be2c36ed50ab5",
+          "nnz": 6400000,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              0,
+              0
+            ],
+            [
+              50000,
+              128
+            ]
+          ],
+          "rows": 50000,
+          "stage_path": "data/continuous/ADULT_features_1_1.data",
+          "worker": {
+            "host": "so002",
+            "index": 1,
+            "ip": "130.149.237.12",
+            "port": 8001
+          }
+        }
+      ],
+      "stem": "continuous/ADULT_features"
+    }
+  ],
+  "ml_view": "continuous",
+  "outputs": [
+    {
+      "data_type": "matrix",
+      "format": "csv",
+      "path": "tmp/w1357/28852df0947f307987f9/result",
+      "role": "result"
+    }
+  ],
+  "qualification": "PURE_RENDER_ONLY",
+  "schema": "cofee-w1357-render/v1",
+  "seeds": {
+    "ALS_SEED": 1389632218,
+    "GMM_DML_SEED": 20260904,
+    "GNMF_SEED": 1011081480,
+    "KMEANS_SEED": 133815928,
+    "ORDER_SEED": 20260922,
+    "PYTHONHASHSEED": 20260922,
+    "SYSTEMDS_SEED": 1011081480
+  },
+  "template": {
+    "canonical_for_execution": false,
+    "canonical_source_bytes": true,
+    "contract_status": "CANONICAL_SOURCE_PURE_RENDER_ONLY",
+    "future_variant_policy": "corrected/canonical templates require an explicit repo-tracked hash and contract revision; recognized variants remain pure-render-only and no variant is auto-authorized",
+    "id": "CANONICAL_TRACKED_STAGE_V2",
+    "known_limitation": null,
+    "path": "harness/sigmod2021-exdra-p523/experiments/code/exp/gmm_fed.dml",
+    "provenance": "sealed-canonical-stage-template",
+    "sha256": "bc467f5f6ae18bb63c97921893451c6b3dde2a35f541060764a0010a32826ffe"
+  },
+  "topology": {
+    "path": "/home/mchoi/cofee-evaluation/config/multihost_topology.json",
+    "sha256": "30c741dbc300bacc7180c04196b7c764ea4c5e2a7c96ce91113005c5f4fb7cc8",
+    "workers": [
+      "so002"
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "cell": {
+    "id": "sliceline|ADULT|lan|w7|Memo",
+    "planner": "Memo",
+    "planner_enum": "COMPILE_MEMO",
+    "profile": "lan",
+    "suite": "sliceline",
+    "workers": 7,
+    "workload": "ADULT"
+  },
+  "compileOnly": true,
+  "compileOnlyVerified": false,
+  "containerResources": {
+    "coordinatorHeap": "3g",
+    "cpus": 4,
+    "memory": "8g",
+    "workerProcesses": 0,
+    "workerRationale": "sealed local sidecars satisfy planning metadata; compile_only performs no RPC"
+  },
+  "costContract": {
+    "codegen": false,
+    "costEnvironment": {},
+    "nativeBlas": "none",
+    "semantics": "published-C26-production-default-costs-no-overrides",
+    "sources": {
+      "config": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-logreg/config.xml",
+        "sha256": "ce35c4d5baca3ce572581c1966120c614f9bef67f7cda57023e360fa610224c8"
+      },
+      "containerScript": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-logreg/container-run.sh",
+        "sha256": "e54fd1b00b9f2fe4f3a958c64fa0f329e94ae6d02bbe4d5440be2ea0f4542d10"
+      },
+      "manifest": {
+        "path": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-under3-20261014/memo-under3-candidate26-logreg/manifest.json",
+        "sha256": "a290c393564426b8255a5d4135a9821b849ed81b79c0d0b881ed14076a1f089f"
+      }
+    }
+  },
+  "executionPlanner": "COMPILE_MEMO",
+  "failureCategory": "evidence_validation_failure",
+  "harnessTimeout": false,
+  "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "memoConstruction": {
+    "costProjection": [],
+    "nativeGeneration": [],
+    "nativeRequests": []
+  },
+  "memoPlanning": [],
+  "memoSearch": [],
+  "p2PublicRecodeMetadataJvmProperty": false,
+  "provenance": {
+    "configSha256": "ffbe30729a0d3ec099ea3bc84b5833268f34743838d5a27e5e9da62225f42947",
+    "dmlSha256": "345b87f0f243f42771b1312144fd021e5e989933a2755132f6be26a5a77e3021",
+    "engine": "/home/mchoi/fedplanner-under3-20261014/experiments/memo-under3-20261014/candidate26-engine",
+    "rendererPath": "/home/mchoi/cofee-evaluation/campaign/render_w1357_workload.py",
+    "rendererSha256": "145d6295b0d0471630328bfcba2d20dfeefdd93767953f89c4bd7fbd41de1c70",
+    "repositoryCommit": "1a8c478775638ca6800906eb26ce6f83072f6432",
+    "scriptSha256": "39c111b29e880282bf4a6cc31f2e30f65a2bb986331f4b69bd74fd3b86d86809",
+    "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+    "stageManifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+  },
+  "renderCell": {
+    "id": "sliceline|ADULT|lan|w7|DP-global",
+    "planner": "DP-global",
+    "planner_enum": "COMPILE_EXACT",
+    "profile": "lan",
+    "suite": "sliceline",
+    "workers": 7,
+    "workload": "ADULT"
+  },
+  "rendererAuthorityPlanner": "COMPILE_EXACT",
+  "reportedWorkerCountVerified": false,
+  "returncode": 0,
+  "schema": "systemds-memo-planning-attempt/v1",
+  "status": "failed",
+  "timing": {
+    "executionSeconds": null,
+    "fullCompileSeconds": null,
+    "fullInitialPlanningSeconds": null,
+    "harnessWallSeconds": 1.3410352766513824,
+    "memoPlanningSeconds": null,
+    "runtimeProgramSeconds": null
+  }
+}

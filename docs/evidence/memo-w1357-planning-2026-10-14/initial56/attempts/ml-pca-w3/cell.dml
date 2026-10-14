@@ -1,0 +1,4 @@
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_3_1.data","130.149.237.13:8002//workspace/experiments/data/continuous/ADULT_features_3_2.data","130.149.237.14:8003//workspace/experiments/data/continuous/ADULT_features_3_3.data"), ranges=list(list(0,0),list(16667,128),list(16667,0),list(33334,128),list(33334,0),list(50000,128)))
+
+[Xout, Mout] = pca(X=X, K=10)
+write(Mout, "tmp/w1357/f27f1fb771072c9842bc/result", format= "csv")

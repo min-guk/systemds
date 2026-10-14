@@ -1,0 +1,31 @@
+##################################################
+# PIPELINE P2_PREP: paper-production preprocessing
+##################################################
+# This stops at the original P2 preprocessing boundary.  The large row-level
+# train/test matrices remain protected; aggregate checksums force their complete
+# execution, while the small transform metadata is retained as pipeline output.
+
+Xraw = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/P2_features_7_1.data","130.149.237.13:8002//workspace/experiments/data/P2_features_7_2.data","130.149.237.14:8003//workspace/experiments/data/P2_features_7_3.data","130.149.237.15:8004//workspace/experiments/data/P2_features_7_4.data","130.149.237.16:8005//workspace/experiments/data/P2_features_7_5.data","130.149.237.18:8006//workspace/experiments/data/P2_features_7_6.data","130.149.237.19:8007//workspace/experiments/data/P2_features_7_7.data"), ranges=list(list(0,0),list(14286,1001),list(14286,0),list(28572,1001),list(28572,0),list(42858,1001),list(42858,0),list(57144,1001),list(57144,0),list(71430,1001),list(71430,0),list(85716,1001),list(85716,0),list(100000,1001)));
+Fall = as.frame(Xraw);
+jspec = "{ ids:true, dummycode:[1], cofeePublicRecodeMetadata:true }";
+[X0, M] = transformencode(target=Fall, spec=jspec);
+y = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/P2_labels_7_1.data","130.149.237.13:8002//workspace/experiments/data/P2_labels_7_2.data","130.149.237.14:8003//workspace/experiments/data/P2_labels_7_3.data","130.149.237.15:8004//workspace/experiments/data/P2_labels_7_4.data","130.149.237.16:8005//workspace/experiments/data/P2_labels_7_5.data","130.149.237.18:8006//workspace/experiments/data/P2_labels_7_6.data","130.149.237.19:8007//workspace/experiments/data/P2_labels_7_7.data"), ranges=list(list(0,0),list(14286,1),list(14286,0),list(28572,1),list(28572,0),list(42858,1),list(42858,0),list(57144,1),list(57144,0),list(71430,1),list(71430,0),list(85716,1),list(85716,0),list(100000,1)));
+
+colSD = colSds(X0);
+colMean = colMeans(X0);
+upperBound = colMean + 1.5 * colSD;
+lowerBound = colMean - 1.5 * colSD;
+outFilter = (X0 < lowerBound) | (X0 > upperBound);
+X = X0 - outFilter * X0 + outFilter * colMean;
+
+X = scale(X=X, center=TRUE, scale=TRUE);
+[Xtrain, Xtest, ytrain, ytest] = split(X=X, Y=y, f=0.7,
+  cont=FALSE, seed=2026072701);
+
+# A scalar aggregate is legal for PrivateAggregation and prevents dead-code
+# elimination without forcing the protected preprocessed rows onto the coordinator.
+checksum = sum(Xtrain) + sum(Xtest) + sum(ytrain) + sum(ytest);
+result = matrix(checksum, rows=1, cols=1);
+print("PIPELINE_RESULT,P2_PREP_AGGREGATE=" + checksum);
+write(result, "tmp/w1357/ddc5757eafab6290181e/result", format="binary");
+write(M, "tmp/w1357/ddc5757eafab6290181e/metadata", format="binary");

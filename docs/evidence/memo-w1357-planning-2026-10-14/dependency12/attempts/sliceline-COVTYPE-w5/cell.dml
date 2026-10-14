@@ -1,0 +1,26 @@
+# Global sizes for compile-time stamping in the experiment harness.
+N = 581012
+D = 54
+
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/COVTYPE_features_5_1.data","130.149.237.13:8002//workspace/experiments/data/COVTYPE_features_5_2.data","130.149.237.14:8003//workspace/experiments/data/COVTYPE_features_5_3.data","130.149.237.15:8004//workspace/experiments/data/COVTYPE_features_5_4.data","130.149.237.16:8005//workspace/experiments/data/COVTYPE_features_5_5.data"), ranges=list(list(0,0),list(116203,54),list(116203,0),list(232406,54),list(232406,0),list(348609,54),list(348609,0),list(464812,54),list(464812,0),list(581012,54)))
+e = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/COVTYPE_labels_5_1.data","130.149.237.13:8002//workspace/experiments/data/COVTYPE_labels_5_2.data","130.149.237.14:8003//workspace/experiments/data/COVTYPE_labels_5_3.data","130.149.237.15:8004//workspace/experiments/data/COVTYPE_labels_5_4.data","130.149.237.16:8005//workspace/experiments/data/COVTYPE_labels_5_5.data"), ranges=list(list(0,0),list(116203,1),list(116203,0),list(232406,1),list(232406,0),list(348609,1),list(348609,0),list(464812,1),list(464812,0),list(581012,1)))
+
+source("code/workloads/sliceline/slicefinder_core.dml") as SL
+
+sigma = max(ceil(0.01 * N), 8)
+
+[TK, TKC, dbg] = SL::slicefinderX(
+  X=X,
+  e=e,
+  k=10,
+  alpha=0.95,
+  maxL=3,
+  minSup=sigma,
+  tpEval=TRUE,
+  tpBlksz=16,
+  selFeat=TRUE,
+  verbose=FALSE,
+  ltype="for"
+)
+
+write(TKC, "tmp/w1357/c17e531246c159c2074c/result", format="csv")

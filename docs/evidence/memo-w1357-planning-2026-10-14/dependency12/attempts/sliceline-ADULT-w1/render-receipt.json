@@ -1,0 +1,286 @@
+{
+  "cell": {
+    "id": "sliceline|ADULT|lan|w1|DP-global",
+    "planner": "DP-global",
+    "planner_enum": "COMPILE_EXACT",
+    "profile": "lan",
+    "suite": "sliceline",
+    "workers": 1,
+    "workload": "ADULT"
+  },
+  "content_verification": {
+    "cache_contract": "hash reused only while dev/inode/size/mtime_ns/ctime_ns are unchanged",
+    "execution_note": "pure render only; re-render immediately before any separately qualified run",
+    "selected_template_metadata_and_data_blocks": "sha256-verified-at-render",
+    "stage_manifest_sha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+  },
+  "dependencies": [
+    {
+      "path": "harness/sigmod2021-exdra-p523/experiments/code/workloads/sliceline/slicefinder_core.dml",
+      "sha256": "07a1be572c5611eaff67dde0cbc23b17796b79dd6635df04584f482b470a348d"
+    }
+  ],
+  "execution_authorized": false,
+  "inputs": [
+    {
+      "cols": 13,
+      "metadata_path": "data/ADULT_features.data.mtd",
+      "metadata_sha256": "4d70f6f670f88da55213dea4160378c75756eb5f8a7fbeb1b0d42d496fb6279b",
+      "nnz": 423293,
+      "privacy": "private-aggregate",
+      "role": "X",
+      "rows": 32561,
+      "shards": [
+        {
+          "address": "130.149.237.12:8001//workspace/experiments/data/ADULT_features_1_1.data",
+          "blocks": [
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00000",
+              "sha256": "e118f938cf085662ab79fc3ccd9c125520e32dac2a09b8d4ee754c0d5bf094f2"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00001",
+              "sha256": "3902f04bb2ebb76a1863ad2138b13938d375fd8ea4a4ac014cb16f017e720855"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00002",
+              "sha256": "0623d250f9b7897a5e40f1f472989193ae55513b51f5459e5e482297688df142"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00003",
+              "sha256": "7e251f0caea54409e6e0bac53bbe65326a8fce0e113f476fbb15a2c4e831e9c4"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00004",
+              "sha256": "5530b185f29b2aa48db42b815045d07bea57847710190f381c292f79f54fc6ca"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00005",
+              "sha256": "614aaf444a7300bf7b17e910b06610ca08e671e30baf787af7011756d8db6ed8"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00006",
+              "sha256": "da4aacae18fe713e01ac3e5188651f54d39f501d17ea757c6fa302c4bf4150fe"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00007",
+              "sha256": "3dbdc2c8d7c7b040a81419984f9660366c8a88102a4c0c3bd1bc922bc3e73e1c"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00008",
+              "sha256": "a32cc28e63e27f4a0e1a4864d90548a309653204801d8b59e62e2c851b18a255"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00009",
+              "sha256": "09e22e710ea7bb3318a813e388d9b9a9d9d72b7d10174c08e568a4ccb24d8e10"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00010",
+              "sha256": "f81226d184a8fe253c6ad24bb03cf3dbbaeefc79a909d40bef478a6a02a2b29b"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00011",
+              "sha256": "c21844b8173108e04919a4c384e217b79d41a934b18f2a383d4e7f3554c9d60c"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00012",
+              "sha256": "935989623b6e0154fb97e9de2892efe22352879b10bd7d4a1b498dac600d9865"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00013",
+              "sha256": "59bf59df90f35c20854ee950545e1cd4062f73889ecee6c1c92078a8a9344579"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00014",
+              "sha256": "5b2d7cfb0824fa21ec88043383c8601c1581f926e85aafd0eaad7f8716d688f3"
+            },
+            {
+              "bytes": 208212,
+              "path": "data/ADULT_features_1_1.data/0-m-00015",
+              "sha256": "b11ced83dd82b0f461d1ca04e36246f0879b706e35a7a0df7e55549bf2d732c4"
+            },
+            {
+              "bytes": 58503,
+              "path": "data/ADULT_features_1_1.data/0-m-00016",
+              "sha256": "c8a001fecd92671adbb25a78e6c6bffbcc99f701ca3d63c7c9f5d9a530c61335"
+            }
+          ],
+          "cols": 13,
+          "endpoint": "130.149.237.12:8001",
+          "metadata_path": "data/ADULT_features_1_1.data.mtd",
+          "metadata_sha256": "4d70f6f670f88da55213dea4160378c75756eb5f8a7fbeb1b0d42d496fb6279b",
+          "nnz": 423293,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              0,
+              0
+            ],
+            [
+              32561,
+              13
+            ]
+          ],
+          "rows": 32561,
+          "stage_path": "data/ADULT_features_1_1.data",
+          "worker": {
+            "host": "so002",
+            "index": 1,
+            "ip": "130.149.237.12",
+            "port": 8001
+          }
+        }
+      ],
+      "stem": "ADULT_features"
+    },
+    {
+      "cols": 1,
+      "metadata_path": "data/ADULT_labels.data.mtd",
+      "metadata_sha256": "39008f25241f47d5094e6f3002fc6e9ea335fb9e0ddfb628e8894cf0514f7afa",
+      "nnz": 4967,
+      "privacy": "private-aggregate",
+      "role": "Y",
+      "rows": 32561,
+      "shards": [
+        {
+          "address": "130.149.237.12:8001//workspace/experiments/data/ADULT_labels_1_1.data",
+          "blocks": [
+            {
+              "bytes": 5973,
+              "path": "data/ADULT_labels_1_1.data/0-m-00000",
+              "sha256": "12f1a01a0698ae2c96819ac062ce624bb9012b8129581d7c12d4433fd2148dbb"
+            },
+            {
+              "bytes": 5985,
+              "path": "data/ADULT_labels_1_1.data/0-m-00001",
+              "sha256": "23afc8264dc3a0533a8aa42d46f93bbc785d9231607a61bf6a06fae0d994e0bb"
+            },
+            {
+              "bytes": 5361,
+              "path": "data/ADULT_labels_1_1.data/0-m-00002",
+              "sha256": "dab141e7b064442653fb1391303acad53e417c280e06bbe59814a9831ab05a00"
+            },
+            {
+              "bytes": 6009,
+              "path": "data/ADULT_labels_1_1.data/0-m-00003",
+              "sha256": "b8af3efa1cbe85082bede2f0f1bc49c4491e132272d2e91ab0eaa54c15f86752"
+            },
+            {
+              "bytes": 5685,
+              "path": "data/ADULT_labels_1_1.data/0-m-00004",
+              "sha256": "b82156d2f7205576864cce4a5ee0483445a98090db8d47f719d203aaa9c2537b"
+            },
+            {
+              "bytes": 5733,
+              "path": "data/ADULT_labels_1_1.data/0-m-00005",
+              "sha256": "8676717350683133daa700d47435c89fe64b5d1ae156a1a007e1a82a65377f24"
+            },
+            {
+              "bytes": 5697,
+              "path": "data/ADULT_labels_1_1.data/0-m-00006",
+              "sha256": "7aa5fb7fa8c77389b563e9ca776d4c9f29cb91d666aba4f7db9cfbbfdf42d76b"
+            },
+            {
+              "bytes": 5529,
+              "path": "data/ADULT_labels_1_1.data/0-m-00007",
+              "sha256": "610e124e697d449229c99b4739f2fcda8953e4fde5f307590b02279494ea2605"
+            },
+            {
+              "bytes": 5625,
+              "path": "data/ADULT_labels_1_1.data/0-m-00008",
+              "sha256": "c7fc286197a56520b2ebf804ddae1fa70c41cc3ab6573b983e18b535d70b80ba"
+            },
+            {
+              "bytes": 5721,
+              "path": "data/ADULT_labels_1_1.data/0-m-00009",
+              "sha256": "ca76c85730af4219229ee769e16068f2fc12849ca3f3f087fbbb9dd75062fc41"
+            },
+            {
+              "bytes": 4893,
+              "path": "data/ADULT_labels_1_1.data/0-m-00010",
+              "sha256": "539c9992fc965ce60aef41545fb3a134bac3047f4dee7961c9127b94ba7b42b2"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.12:8001",
+          "metadata_path": "data/ADULT_labels_1_1.data.mtd",
+          "metadata_sha256": "39008f25241f47d5094e6f3002fc6e9ea335fb9e0ddfb628e8894cf0514f7afa",
+          "nnz": 4967,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              0,
+              0
+            ],
+            [
+              32561,
+              1
+            ]
+          ],
+          "rows": 32561,
+          "stage_path": "data/ADULT_labels_1_1.data",
+          "worker": {
+            "host": "so002",
+            "index": 1,
+            "ip": "130.149.237.12",
+            "port": 8001
+          }
+        }
+      ],
+      "stem": "ADULT_labels"
+    }
+  ],
+  "ml_view": null,
+  "outputs": [
+    {
+      "data_type": "matrix",
+      "format": "csv",
+      "path": "tmp/w1357/2f0b417da72018b508bf/result",
+      "role": "result"
+    }
+  ],
+  "qualification": "PURE_RENDER_ONLY",
+  "schema": "cofee-w1357-render/v1",
+  "seeds": {
+    "ALS_SEED": 1389632218,
+    "GMM_DML_SEED": 20260904,
+    "GNMF_SEED": 1011081480,
+    "KMEANS_SEED": 133815928,
+    "ORDER_SEED": 20260922,
+    "PYTHONHASHSEED": 20260922,
+    "SYSTEMDS_SEED": 1011081480
+  },
+  "template": {
+    "canonical_for_execution": false,
+    "canonical_source_bytes": true,
+    "contract_status": "CANONICAL_SOURCE_PURE_RENDER_ONLY",
+    "future_variant_policy": "corrected/canonical templates require an explicit repo-tracked hash and contract revision; recognized variants remain pure-render-only and no variant is auto-authorized",
+    "id": "CANONICAL_TRACKED_STAGE_V2",
+    "known_limitation": null,
+    "path": "harness/sigmod2021-exdra-p523/experiments/code/exp/sliceline_fed.dml",
+    "provenance": "sealed-canonical-stage-template",
+    "sha256": "cc2cb0ed07af2e34d56a30ec53fc2fea9caaadd1e3988b98fbee7cc560a42501"
+  },
+  "topology": {
+    "path": "/home/mchoi/cofee-evaluation/config/multihost_topology.json",
+    "sha256": "30c741dbc300bacc7180c04196b7c764ea4c5e2a7c96ce91113005c5f4fb7cc8",
+    "workers": [
+      "so002"
+    ]
+  }
+}

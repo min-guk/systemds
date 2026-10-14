@@ -1,0 +1,14 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/14 15:32:28 WARN utils.SettingsChecker: Low memory budget of total:    251 GB set to:      3 GB
+26/10/14 15:32:28 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/10/14 15:32:28 ERROR api.DMLScript: Failed to read from the file system ('./code/exp/gmm_p1_compat.dml') or SystemDS jar file ('/code/exp/gmm_p1_compat.dml' or '/scripts/code/exp/gmm_p1_compat.dml')
+26/10/14 15:32:28 ERROR api.DMLScript: /evidence/cell.dml line 4:0 Cannot find file/resource: ./code/exp/gmm_p1_compat.dml
+[31m
+An Error Occurred : 
+           ParseException -- 
+--------------------------------------------------------------
+The following parse issue was encountered:
+/evidence/cell.dml [line 4:0] [Validation error] -> source("code/exp/gmm_p1_compat.dml") as GMMCompat
+   Cannot find file/resource: ./code/exp/gmm_p1_compat.dml
+--------------------------------------------------------------
+[0m

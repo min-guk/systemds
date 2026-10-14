@@ -1,0 +1,15 @@
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_1_1.data"), ranges=list(list(0,0),list(50000,128)))
+
+[U, V] = als(
+  X=X,
+  rank=10,
+  regType="L2",
+  reg=0.000001,
+  maxi=10,
+  check=FALSE,
+  thr=0.0001,
+  seed=1389632218,
+  verbose=FALSE
+)
+
+write(V, "tmp/w1357/b78f253128caf26b77d0/result", format="csv")

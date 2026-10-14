@@ -1,0 +1,13 @@
+{
+  "adaptedSha256": "f8736e224ae06f3432de2a8f3aa457cc626e663e661d05aa48c9a19b09c8e528",
+  "dmlPlannerIndependenceVerifiedAgainst": "DP-local",
+  "executionPlanner": "COMPILE_MEMO",
+  "originalSha256": "f8736e224ae06f3432de2a8f3aa457cc626e663e661d05aa48c9a19b09c8e528",
+  "plannerInput": "DP-global",
+  "plannerInputEnum": "COMPILE_EXACT",
+  "plannerNeutralSha256": "cf6872be55dc266d5a6b5d9f6c5b63152363e11503b0d88383027844b4a35822",
+  "reason": "compile_only uses sealed local metadata and performs no worker RPC",
+  "schema": "systemds-memo-planning-input-adaptation/v1",
+  "sealedEndpointsPreserved": true,
+  "transformations": []
+}

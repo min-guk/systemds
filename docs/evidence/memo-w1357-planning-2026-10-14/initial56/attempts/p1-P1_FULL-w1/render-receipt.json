@@ -1,0 +1,145 @@
+{
+  "cell": {
+    "id": "p1|P1_FULL|lan|w1|DP-global",
+    "planner": "DP-global",
+    "planner_enum": "COMPILE_EXACT",
+    "profile": "lan",
+    "suite": "p1",
+    "workers": 1,
+    "workload": "P1_FULL"
+  },
+  "content_verification": {
+    "cache_contract": "hash reused only while dev/inode/size/mtime_ns/ctime_ns are unchanged",
+    "execution_note": "pure render only; re-render immediately before any separately qualified run",
+    "selected_template_metadata_and_data_blocks": "sha256-verified-at-render",
+    "stage_manifest_sha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+  },
+  "dependencies": [
+    {
+      "path": "harness/sigmod2021-exdra-p523/experiments/code/exp/gmm_p1_compat.dml",
+      "sha256": "a543657456d5a199d7b90ab2bcaeccc039cae540492ca12f5fe7bda42f151a6d"
+    }
+  ],
+  "execution_authorized": false,
+  "inputs": [
+    {
+      "cols": 68,
+      "metadata_path": "data/P1_features.data.mtd",
+      "metadata_sha256": "959d9081c8d61a75b1b3a7890a8e9a6f61b4b443204eac7883cd29cf0cd78929",
+      "nnz": 6800000,
+      "privacy": "private-aggregate",
+      "role": "X",
+      "rows": 100000,
+      "shards": [
+        {
+          "address": "130.149.237.12:8001//workspace/experiments/data/P1_features_1_1.data",
+          "blocks": [
+            {
+              "bytes": 7072795,
+              "path": "data/P1_features_1_1.data/0-m-00000",
+              "sha256": "fe6ac7abdca275582bbea19c50d96bdb603858e3db92fec1e4ce3272ec0c3b41"
+            },
+            {
+              "bytes": 7072795,
+              "path": "data/P1_features_1_1.data/0-m-00001",
+              "sha256": "b36aff053b60dbbf8fa1f39a21c0e64fd6a8c43d8689b9356ff926f249ea9a93"
+            },
+            {
+              "bytes": 7072795,
+              "path": "data/P1_features_1_1.data/0-m-00002",
+              "sha256": "9ec2d0499402309db1460dc26dd677af0fe43735bb3ebef7153b85d39d1f28dc"
+            },
+            {
+              "bytes": 7072795,
+              "path": "data/P1_features_1_1.data/0-m-00003",
+              "sha256": "27e2a272f15428f1d1c0fa8481f5fc8e1bb8213fc4754c8680a73c8b5014ca05"
+            },
+            {
+              "bytes": 7072795,
+              "path": "data/P1_features_1_1.data/0-m-00004",
+              "sha256": "16d5d74d1e83348c7b94abd37036cc87b998f827d6b9f176dd3b4d0361657a8a"
+            },
+            {
+              "bytes": 7072795,
+              "path": "data/P1_features_1_1.data/0-m-00005",
+              "sha256": "75d75172cac637d8a48189dc0bfb4992cfb9f25097138419304b1b71b3607ca8"
+            },
+            {
+              "bytes": 7072795,
+              "path": "data/P1_features_1_1.data/0-m-00006",
+              "sha256": "8b13fe25228e96fb834b4482a5d1ab6a8eea9f5f9d07b593e1d2d42946cf89e5"
+            },
+            {
+              "bytes": 4896583,
+              "path": "data/P1_features_1_1.data/0-m-00007",
+              "sha256": "8d22dbe0e296e8956d6127a08a71dd7a42f577f214233690954d6d4e713e9db1"
+            }
+          ],
+          "cols": 68,
+          "endpoint": "130.149.237.12:8001",
+          "metadata_path": "data/P1_features_1_1.data.mtd",
+          "metadata_sha256": "959d9081c8d61a75b1b3a7890a8e9a6f61b4b443204eac7883cd29cf0cd78929",
+          "nnz": 6800000,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              0,
+              0
+            ],
+            [
+              100000,
+              68
+            ]
+          ],
+          "rows": 100000,
+          "stage_path": "data/P1_features_1_1.data",
+          "worker": {
+            "host": "so002",
+            "index": 1,
+            "ip": "130.149.237.12",
+            "port": 8001
+          }
+        }
+      ],
+      "stem": "P1_features"
+    }
+  ],
+  "ml_view": null,
+  "outputs": [
+    {
+      "data_type": "matrix",
+      "format": "binary",
+      "path": "tmp/w1357/4332b76fdd6656b0c7db/result",
+      "role": "result"
+    }
+  ],
+  "qualification": "PURE_RENDER_ONLY",
+  "schema": "cofee-w1357-render/v1",
+  "seeds": {
+    "ALS_SEED": 1389632218,
+    "GMM_DML_SEED": 20260904,
+    "GNMF_SEED": 1011081480,
+    "KMEANS_SEED": 133815928,
+    "ORDER_SEED": 20260922,
+    "PYTHONHASHSEED": 20260922,
+    "SYSTEMDS_SEED": 1011081480
+  },
+  "template": {
+    "canonical_for_execution": false,
+    "canonical_source_bytes": true,
+    "contract_status": "CANONICAL_SOURCE_PURE_RENDER_ONLY",
+    "future_variant_policy": "corrected/canonical templates require an explicit repo-tracked hash and contract revision; recognized variants remain pure-render-only and no variant is auto-authorized",
+    "id": "CANONICAL_TRACKED_STAGE_V2",
+    "known_limitation": null,
+    "path": "harness/sigmod2021-exdra-p523/experiments/code/exp/P1_FULL.dml",
+    "provenance": "sealed-canonical-stage-template",
+    "sha256": "13a5274c0a51ecc7ca337c3f36a15a2c59ef49bee131cfcad8c997599de548d9"
+  },
+  "topology": {
+    "path": "/home/mchoi/cofee-evaluation/config/multihost_topology.json",
+    "sha256": "30c741dbc300bacc7180c04196b7c764ea4c5e2a7c96ce91113005c5f4fb7cc8",
+    "workers": [
+      "so002"
+    ]
+  }
+}

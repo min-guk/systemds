@@ -1,0 +1,880 @@
+{
+  "cell": {
+    "id": "ml|steplm|lan|w7|DP-global",
+    "planner": "DP-global",
+    "planner_enum": "COMPILE_EXACT",
+    "profile": "lan",
+    "suite": "ml",
+    "workers": 7,
+    "workload": "steplm"
+  },
+  "content_verification": {
+    "cache_contract": "hash reused only while dev/inode/size/mtime_ns/ctime_ns are unchanged",
+    "execution_note": "pure render only; re-render immediately before any separately qualified run",
+    "selected_template_metadata_and_data_blocks": "sha256-verified-at-render",
+    "stage_manifest_sha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+  },
+  "dependencies": [],
+  "execution_authorized": false,
+  "inputs": [
+    {
+      "cols": 128,
+      "metadata_path": "data/continuous/ADULT_features.data.mtd",
+      "metadata_sha256": "4a31620520bde98be28db26f0bf4b237bdf403b9428c7af8240be2c36ed50ab5",
+      "nnz": 6400000,
+      "privacy": "private-aggregate",
+      "role": "X",
+      "rows": 50000,
+      "shards": [
+        {
+          "address": "130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_7_1.data",
+          "blocks": [
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_1.data/0-m-00000",
+              "sha256": "8cf35d393bdb0b0be6aeb13e992e4377b7f27ae2c7bda4c35e1752bea45e1cc5"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_1.data/0-m-00001",
+              "sha256": "4926491dcfb0c1690bd5b5585a6ed6eff4a48fe9577b49184c4c0ef44839526a"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_1.data/0-m-00002",
+              "sha256": "3c0f38ce0b98dcba4e3b76905ea6ce200c9fa2636556904912a5fd65b9772a03"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_1.data/0-m-00003",
+              "sha256": "eeca5ede874aa8059a816c93e4286416120a8773daff6e5212da488277f4cd1d"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_1.data/0-m-00004",
+              "sha256": "540d9a55744f406cf4554438580a7fd273c8357e8798e7c0956481a32bb65d0b"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_1.data/0-m-00005",
+              "sha256": "681b21e708599bfdefd7eda94a35009ad1107a5d3a003564281d8c9c1e049405"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_1.data/0-m-00006",
+              "sha256": "13fe0fbd7380c125216604076333835f34171f2f73411ad558a84662ebbf9ffd"
+            },
+            {
+              "bytes": 146591,
+              "path": "data/continuous/ADULT_features_7_1.data/0-m-00007",
+              "sha256": "52eac9cdee8452e20710f3da0d14c1bbe64855011b96553a7fd42a02fedcbf09"
+            }
+          ],
+          "cols": 128,
+          "endpoint": "130.149.237.12:8001",
+          "metadata_path": "data/continuous/ADULT_features_7_1.data.mtd",
+          "metadata_sha256": "0ab9fb577884d202738f57165b2ce7b16e90fc11ea525206d9afa7964bdc1d91",
+          "nnz": 914304,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              0,
+              0
+            ],
+            [
+              7143,
+              128
+            ]
+          ],
+          "rows": 7143,
+          "stage_path": "data/continuous/ADULT_features_7_1.data",
+          "worker": {
+            "host": "so002",
+            "index": 1,
+            "ip": "130.149.237.12",
+            "port": 8001
+          }
+        },
+        {
+          "address": "130.149.237.13:8002//workspace/experiments/data/continuous/ADULT_features_7_2.data",
+          "blocks": [
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_2.data/0-m-00000",
+              "sha256": "278a51fd2239ebfabdc0725d2d2e89c2bac9bcbcde3e17c95681403264d2cb5a"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_2.data/0-m-00001",
+              "sha256": "340e0de9f7c8c7395f3132316e6683c4d58654c07bcb05befcafe8127c5c2047"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_2.data/0-m-00002",
+              "sha256": "f0d4363fb56467f6dc0ace786846c0eb7c0524583d6cde6b77b5f57582ae6cd6"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_2.data/0-m-00003",
+              "sha256": "f582143787d1eb2dddfc4b7b16da5ecd18142c1d25ee93405fafe90ce2d4800a"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_2.data/0-m-00004",
+              "sha256": "d5d8c87715e81ba80697a23a847d7a2e698e33f959e6e98ac32c44dc58feea50"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_2.data/0-m-00005",
+              "sha256": "3a9a98687e7fd1a4041603bd5b0451cdd73001e7bafc800e017ce93883d8f0c5"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_2.data/0-m-00006",
+              "sha256": "124e19183af78ce56f8c56f2b5993f70db5d4ddf7d26140688eaa0d995c2a2f5"
+            },
+            {
+              "bytes": 146591,
+              "path": "data/continuous/ADULT_features_7_2.data/0-m-00007",
+              "sha256": "2e829aeba1a7636bd46fcd83c5a050e1c09296b2d0a5573020d0d56a65459f63"
+            }
+          ],
+          "cols": 128,
+          "endpoint": "130.149.237.13:8002",
+          "metadata_path": "data/continuous/ADULT_features_7_2.data.mtd",
+          "metadata_sha256": "0ab9fb577884d202738f57165b2ce7b16e90fc11ea525206d9afa7964bdc1d91",
+          "nnz": 914304,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              7143,
+              0
+            ],
+            [
+              14286,
+              128
+            ]
+          ],
+          "rows": 7143,
+          "stage_path": "data/continuous/ADULT_features_7_2.data",
+          "worker": {
+            "host": "so003",
+            "index": 2,
+            "ip": "130.149.237.13",
+            "port": 8002
+          }
+        },
+        {
+          "address": "130.149.237.14:8003//workspace/experiments/data/continuous/ADULT_features_7_3.data",
+          "blocks": [
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_3.data/0-m-00000",
+              "sha256": "84df7c1b006f7d7c5be15540e29e7fe8fee506cbf9a0414cd1da169c78731652"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_3.data/0-m-00001",
+              "sha256": "f30370cc1547c552a519ebb4d4512a1ab805460436ada5da5e9b730fefc83ebe"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_3.data/0-m-00002",
+              "sha256": "debe027db072d1ee8120f1c5b462584a1db57cf0e4d87fcc62567cf861c0da7d"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_3.data/0-m-00003",
+              "sha256": "b460900747c5a5536f3082125c2ac245ea24c4672258ef806521d082b037d5e3"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_3.data/0-m-00004",
+              "sha256": "5fa40c25e18a863fe936c94cb8e1e1eeabbe5f1ac440856a6210313eb69adf14"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_3.data/0-m-00005",
+              "sha256": "7b901dc161faaf2f0ecf5f0f2ff8ac74d8e40907cb5753c87ef66b184aaf9b07"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_3.data/0-m-00006",
+              "sha256": "495563223a3990aa7dcf425f1b8045eade23219f055af79825593d02d1f1a237"
+            },
+            {
+              "bytes": 146591,
+              "path": "data/continuous/ADULT_features_7_3.data/0-m-00007",
+              "sha256": "e6603b4efed34cf000fbfe9537135ae11c86e9309cd4423d30304c1cd3e838b9"
+            }
+          ],
+          "cols": 128,
+          "endpoint": "130.149.237.14:8003",
+          "metadata_path": "data/continuous/ADULT_features_7_3.data.mtd",
+          "metadata_sha256": "0ab9fb577884d202738f57165b2ce7b16e90fc11ea525206d9afa7964bdc1d91",
+          "nnz": 914304,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              14286,
+              0
+            ],
+            [
+              21429,
+              128
+            ]
+          ],
+          "rows": 7143,
+          "stage_path": "data/continuous/ADULT_features_7_3.data",
+          "worker": {
+            "host": "so004",
+            "index": 3,
+            "ip": "130.149.237.14",
+            "port": 8003
+          }
+        },
+        {
+          "address": "130.149.237.15:8004//workspace/experiments/data/continuous/ADULT_features_7_4.data",
+          "blocks": [
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_4.data/0-m-00000",
+              "sha256": "342909105379cb94dcf02f7a0c751492530afb2d35406a395a5f86897a3226a2"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_4.data/0-m-00001",
+              "sha256": "b9f95c102dc23fdc647ffc9ac489a4feef22424ad7e914d2cbbc701ad26a1872"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_4.data/0-m-00002",
+              "sha256": "ffb7c5c6b9934190f21baf2e593a896410d6710416ec7bbe15cba2a3fb53cc98"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_4.data/0-m-00003",
+              "sha256": "d6c10dd5978a7c25d1030ff6b2113643abb16fcd5e554c3a873d802220052454"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_4.data/0-m-00004",
+              "sha256": "0606e7880b182b5befce80e32b7e0a3892e78576752e9b67cda1753b6c278ba3"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_4.data/0-m-00005",
+              "sha256": "66db26d68fbe0fce362278cd831562beafc684e43b38ed778b29387faf5bffce"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_4.data/0-m-00006",
+              "sha256": "5ad15dba3a40da34648149fdc08c4f51149bc9d0105950695cba0b63205aaeba"
+            },
+            {
+              "bytes": 146591,
+              "path": "data/continuous/ADULT_features_7_4.data/0-m-00007",
+              "sha256": "f701f8303027f10a4447de66ae65dfdaa655f57ce625c291f258650bb326d783"
+            }
+          ],
+          "cols": 128,
+          "endpoint": "130.149.237.15:8004",
+          "metadata_path": "data/continuous/ADULT_features_7_4.data.mtd",
+          "metadata_sha256": "0ab9fb577884d202738f57165b2ce7b16e90fc11ea525206d9afa7964bdc1d91",
+          "nnz": 914304,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              21429,
+              0
+            ],
+            [
+              28572,
+              128
+            ]
+          ],
+          "rows": 7143,
+          "stage_path": "data/continuous/ADULT_features_7_4.data",
+          "worker": {
+            "host": "so005",
+            "index": 4,
+            "ip": "130.149.237.15",
+            "port": 8004
+          }
+        },
+        {
+          "address": "130.149.237.16:8005//workspace/experiments/data/continuous/ADULT_features_7_5.data",
+          "blocks": [
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_5.data/0-m-00000",
+              "sha256": "b419a66612eed4fa822350fb5f91778430961c64bf6488ba9cb759d31b1fc140"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_5.data/0-m-00001",
+              "sha256": "d959038fb9d04e52c7901c7e6b52953c74f55fdef5c7c446f51295b7fa003cee"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_5.data/0-m-00002",
+              "sha256": "720347237e66e8b224e6ae646b03c4e8c39b82062f48bab79bb8d6e3261b2159"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_5.data/0-m-00003",
+              "sha256": "13b76453ec11a25bcf28f7f36e4d1457606faa8578cb347b4a711e3a13eccc45"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_5.data/0-m-00004",
+              "sha256": "375ccf341902de55eecc6d69819c4b0a7de2279b360e6655159750f92444814f"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_5.data/0-m-00005",
+              "sha256": "6814a334a3ddd201265d617703c284f5e0521b140778c4d819c131ebe9da8436"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_5.data/0-m-00006",
+              "sha256": "353c877e648898682fdd2f16a551e5150d0e16f3e5a13196b72d508ea056d458"
+            },
+            {
+              "bytes": 146591,
+              "path": "data/continuous/ADULT_features_7_5.data/0-m-00007",
+              "sha256": "7feb96108ee0a13d230e9da9c33801e5d0e3cc7106cecbf9fe6ff23686c53227"
+            }
+          ],
+          "cols": 128,
+          "endpoint": "130.149.237.16:8005",
+          "metadata_path": "data/continuous/ADULT_features_7_5.data.mtd",
+          "metadata_sha256": "0ab9fb577884d202738f57165b2ce7b16e90fc11ea525206d9afa7964bdc1d91",
+          "nnz": 914304,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              28572,
+              0
+            ],
+            [
+              35715,
+              128
+            ]
+          ],
+          "rows": 7143,
+          "stage_path": "data/continuous/ADULT_features_7_5.data",
+          "worker": {
+            "host": "so006",
+            "index": 5,
+            "ip": "130.149.237.16",
+            "port": 8005
+          }
+        },
+        {
+          "address": "130.149.237.18:8006//workspace/experiments/data/continuous/ADULT_features_7_6.data",
+          "blocks": [
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_6.data/0-m-00000",
+              "sha256": "7c9854488dd1a00d07bd055beb0ef58b061c60d812f0655a38ea686dc0071961"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_6.data/0-m-00001",
+              "sha256": "2989557f01246685066191f131dad31e262989644b1efd8e0112390dc55681d2"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_6.data/0-m-00002",
+              "sha256": "cb988a61f244d07126d8105b6ff0b88ee7fef681a382ec5795cf4adbcb53100b"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_6.data/0-m-00003",
+              "sha256": "7b65abc0f12cbddafba2871ac6f1c0407b314ef36514958454cf3f7fb3ae20ef"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_6.data/0-m-00004",
+              "sha256": "c449d62d438631ea30fe753f62a3af1be8dd6c08074afb1af799492d7a3b61e7"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_6.data/0-m-00005",
+              "sha256": "a8d8c849ab39661662cb9d8cfd907d6337742d3f8a7ddb7a7fab3d48c4813248"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_6.data/0-m-00006",
+              "sha256": "612ba5a71f923e7ad90f51bfdc23ba016ff4e8fcabe81ffb748338aec80870ca"
+            },
+            {
+              "bytes": 146591,
+              "path": "data/continuous/ADULT_features_7_6.data/0-m-00007",
+              "sha256": "06fcb8a7bbb088dac46978095fef6543e8e08f27a02e744a843fe42453de5890"
+            }
+          ],
+          "cols": 128,
+          "endpoint": "130.149.237.18:8006",
+          "metadata_path": "data/continuous/ADULT_features_7_6.data.mtd",
+          "metadata_sha256": "0ab9fb577884d202738f57165b2ce7b16e90fc11ea525206d9afa7964bdc1d91",
+          "nnz": 914304,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              35715,
+              0
+            ],
+            [
+              42858,
+              128
+            ]
+          ],
+          "rows": 7143,
+          "stage_path": "data/continuous/ADULT_features_7_6.data",
+          "worker": {
+            "host": "so008",
+            "index": 6,
+            "ip": "130.149.237.18",
+            "port": 8006
+          }
+        },
+        {
+          "address": "130.149.237.19:8007//workspace/experiments/data/continuous/ADULT_features_7_7.data",
+          "blocks": [
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_7.data/0-m-00000",
+              "sha256": "31b8882994cdb1a63937e3d04c4a153ea1ca6779c68a6e45a00995f0ee0ef363"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_7.data/0-m-00001",
+              "sha256": "6785c79e9c455e947cb9b762defd2cbeda01544c395397b146215847724e1caa"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_7.data/0-m-00002",
+              "sha256": "ce8ef181fd4b8e5c019448b06e08a2cb47fd63ae25ce4848aab679826e9b680f"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_7.data/0-m-00003",
+              "sha256": "2f9bc7bf61144745cf453c94081df44068b8ebf14f316b6d48729abec80aba40"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_7.data/0-m-00004",
+              "sha256": "83f142d4fbb296f7eb20ce1b6240b257212c48ab42e4bc498efec4ae2d300bc5"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_7.data/0-m-00005",
+              "sha256": "bdbdefe88dbac2d9de737d64a8ba6bec76777cc7bb6edce8c6bc185b39015220"
+            },
+            {
+              "bytes": 1024159,
+              "path": "data/continuous/ADULT_features_7_7.data/0-m-00006",
+              "sha256": "01036aa781278818121405432aa2d9502a07c4303e0a03a85bebc29cc8f5a3fe"
+            },
+            {
+              "bytes": 145567,
+              "path": "data/continuous/ADULT_features_7_7.data/0-m-00007",
+              "sha256": "50c8d4d942b93de51d5ba5b3a06944649c7f005609f5e384a994507aeca9ee59"
+            }
+          ],
+          "cols": 128,
+          "endpoint": "130.149.237.19:8007",
+          "metadata_path": "data/continuous/ADULT_features_7_7.data.mtd",
+          "metadata_sha256": "e3ee2223c7f2c5a75f70ee6a27673a11c5b4217a5f784b611a36e73878c44b0e",
+          "nnz": 914176,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              42858,
+              0
+            ],
+            [
+              50000,
+              128
+            ]
+          ],
+          "rows": 7142,
+          "stage_path": "data/continuous/ADULT_features_7_7.data",
+          "worker": {
+            "host": "so009",
+            "index": 7,
+            "ip": "130.149.237.19",
+            "port": 8007
+          }
+        }
+      ],
+      "stem": "continuous/ADULT_features"
+    },
+    {
+      "cols": 1,
+      "metadata_path": "data/continuous/ADULT_labels.data.mtd",
+      "metadata_sha256": "79a62017e393cae638464fd1dbb71e25e717e053aa2510b1e507b42fe83c0e61",
+      "nnz": 50000,
+      "privacy": "public",
+      "role": "Y",
+      "rows": 50000,
+      "shards": [
+        {
+          "address": "130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_labels_7_1.data",
+          "blocks": [
+            {
+              "bytes": 24225,
+              "path": "data/continuous/ADULT_labels_7_1.data/0-m-00000",
+              "sha256": "c7d93bd072b231fd2e58c933832bf21c6bf4b0a32f88d5569ae5996f1021a60c"
+            },
+            {
+              "bytes": 24225,
+              "path": "data/continuous/ADULT_labels_7_1.data/0-m-00001",
+              "sha256": "00e3fc7501909899bd958d2db382bb561599b56e11cd4433bbd7d95e5050c8ca"
+            },
+            {
+              "bytes": 9336,
+              "path": "data/continuous/ADULT_labels_7_1.data/0-m-00002",
+              "sha256": "d8365eb5128ff9489aa0c275936c7ccf84ebe40915e8e8a168750688ba709ef7"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.12:8001",
+          "metadata_path": "data/continuous/ADULT_labels_7_1.data.mtd",
+          "metadata_sha256": "e3698059151c5e3e90ba196ecc12660c9542b225647c27f0e4fb1f20de326dd0",
+          "nnz": 7143,
+          "privacy": "public",
+          "range": [
+            [
+              0,
+              0
+            ],
+            [
+              7143,
+              1
+            ]
+          ],
+          "rows": 7143,
+          "stage_path": "data/continuous/ADULT_labels_7_1.data",
+          "worker": {
+            "host": "so002",
+            "index": 1,
+            "ip": "130.149.237.12",
+            "port": 8001
+          }
+        },
+        {
+          "address": "130.149.237.13:8002//workspace/experiments/data/continuous/ADULT_labels_7_2.data",
+          "blocks": [
+            {
+              "bytes": 24225,
+              "path": "data/continuous/ADULT_labels_7_2.data/0-m-00000",
+              "sha256": "ecf9e39722bb8d8379575e6362b37c35fbcbe018c62848bcfa72400c6b39b7d9"
+            },
+            {
+              "bytes": 24225,
+              "path": "data/continuous/ADULT_labels_7_2.data/0-m-00001",
+              "sha256": "b8cfc4b7dd27703ccb0b284c0557d813a8e6e3496a02239abecb1102e2e8c5d6"
+            },
+            {
+              "bytes": 9336,
+              "path": "data/continuous/ADULT_labels_7_2.data/0-m-00002",
+              "sha256": "59ce316a9e2aea3461a660d56a4c3d280655404d8d31bd1f04368e56cd149c2c"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.13:8002",
+          "metadata_path": "data/continuous/ADULT_labels_7_2.data.mtd",
+          "metadata_sha256": "e3698059151c5e3e90ba196ecc12660c9542b225647c27f0e4fb1f20de326dd0",
+          "nnz": 7143,
+          "privacy": "public",
+          "range": [
+            [
+              7143,
+              0
+            ],
+            [
+              14286,
+              1
+            ]
+          ],
+          "rows": 7143,
+          "stage_path": "data/continuous/ADULT_labels_7_2.data",
+          "worker": {
+            "host": "so003",
+            "index": 2,
+            "ip": "130.149.237.13",
+            "port": 8002
+          }
+        },
+        {
+          "address": "130.149.237.14:8003//workspace/experiments/data/continuous/ADULT_labels_7_3.data",
+          "blocks": [
+            {
+              "bytes": 24225,
+              "path": "data/continuous/ADULT_labels_7_3.data/0-m-00000",
+              "sha256": "3ad98d236a44018c45e096fcb2f99af709e93fb3158143e4d1593b7b3659c754"
+            },
+            {
+              "bytes": 24225,
+              "path": "data/continuous/ADULT_labels_7_3.data/0-m-00001",
+              "sha256": "30a0009f98b4a55fca514c7fd365becd9b82c9852f88edea56f9356177a67e43"
+            },
+            {
+              "bytes": 9336,
+              "path": "data/continuous/ADULT_labels_7_3.data/0-m-00002",
+              "sha256": "cba81755902f02c8b65123dee10530285e6a8b944a54515a23cfc9ea255f44d7"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.14:8003",
+          "metadata_path": "data/continuous/ADULT_labels_7_3.data.mtd",
+          "metadata_sha256": "e3698059151c5e3e90ba196ecc12660c9542b225647c27f0e4fb1f20de326dd0",
+          "nnz": 7143,
+          "privacy": "public",
+          "range": [
+            [
+              14286,
+              0
+            ],
+            [
+              21429,
+              1
+            ]
+          ],
+          "rows": 7143,
+          "stage_path": "data/continuous/ADULT_labels_7_3.data",
+          "worker": {
+            "host": "so004",
+            "index": 3,
+            "ip": "130.149.237.14",
+            "port": 8003
+          }
+        },
+        {
+          "address": "130.149.237.15:8004//workspace/experiments/data/continuous/ADULT_labels_7_4.data",
+          "blocks": [
+            {
+              "bytes": 24225,
+              "path": "data/continuous/ADULT_labels_7_4.data/0-m-00000",
+              "sha256": "56e0fcec9793b35322737a2728d20347f45fdf91b3c1cd0feeb4486a8e64bf59"
+            },
+            {
+              "bytes": 24225,
+              "path": "data/continuous/ADULT_labels_7_4.data/0-m-00001",
+              "sha256": "ca29883c3b1b0e0577b099c9dbca9ac6b4979c0072946e691a27be4cb2700f25"
+            },
+            {
+              "bytes": 9336,
+              "path": "data/continuous/ADULT_labels_7_4.data/0-m-00002",
+              "sha256": "421ef40329ea0e68ba23d47eef968260864cf4b3540211a4fff7f72218de910b"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.15:8004",
+          "metadata_path": "data/continuous/ADULT_labels_7_4.data.mtd",
+          "metadata_sha256": "e3698059151c5e3e90ba196ecc12660c9542b225647c27f0e4fb1f20de326dd0",
+          "nnz": 7143,
+          "privacy": "public",
+          "range": [
+            [
+              21429,
+              0
+            ],
+            [
+              28572,
+              1
+            ]
+          ],
+          "rows": 7143,
+          "stage_path": "data/continuous/ADULT_labels_7_4.data",
+          "worker": {
+            "host": "so005",
+            "index": 4,
+            "ip": "130.149.237.15",
+            "port": 8004
+          }
+        },
+        {
+          "address": "130.149.237.16:8005//workspace/experiments/data/continuous/ADULT_labels_7_5.data",
+          "blocks": [
+            {
+              "bytes": 24225,
+              "path": "data/continuous/ADULT_labels_7_5.data/0-m-00000",
+              "sha256": "63b4339cea89e1349a23da59c3815c2e674f0307e41f766f325e073619db849d"
+            },
+            {
+              "bytes": 24225,
+              "path": "data/continuous/ADULT_labels_7_5.data/0-m-00001",
+              "sha256": "fc08f412a2271e57f5537c40659676d3ac40f2372bda6cc27858c0b6c1e6aafa"
+            },
+            {
+              "bytes": 9336,
+              "path": "data/continuous/ADULT_labels_7_5.data/0-m-00002",
+              "sha256": "0b6232ef213081c936209bd4f70546e91601fdac0fcaa7add84e8b7b64b0e4ca"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.16:8005",
+          "metadata_path": "data/continuous/ADULT_labels_7_5.data.mtd",
+          "metadata_sha256": "e3698059151c5e3e90ba196ecc12660c9542b225647c27f0e4fb1f20de326dd0",
+          "nnz": 7143,
+          "privacy": "public",
+          "range": [
+            [
+              28572,
+              0
+            ],
+            [
+              35715,
+              1
+            ]
+          ],
+          "rows": 7143,
+          "stage_path": "data/continuous/ADULT_labels_7_5.data",
+          "worker": {
+            "host": "so006",
+            "index": 5,
+            "ip": "130.149.237.16",
+            "port": 8005
+          }
+        },
+        {
+          "address": "130.149.237.18:8006//workspace/experiments/data/continuous/ADULT_labels_7_6.data",
+          "blocks": [
+            {
+              "bytes": 24225,
+              "path": "data/continuous/ADULT_labels_7_6.data/0-m-00000",
+              "sha256": "44d0500f76016adcbeaaebb270e3d3c9abe2f1d3cb6f4dd2c89c261fa77883d4"
+            },
+            {
+              "bytes": 24225,
+              "path": "data/continuous/ADULT_labels_7_6.data/0-m-00001",
+              "sha256": "de69306dea5197c9904e6dcf5417c0c8ddd00306ce9cc17f5fe4cac674312acc"
+            },
+            {
+              "bytes": 9336,
+              "path": "data/continuous/ADULT_labels_7_6.data/0-m-00002",
+              "sha256": "9f4d7f4dbcddb12ca77ac3df5b2d9c22932545de975f237e3cc842fbbf4bb119"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.18:8006",
+          "metadata_path": "data/continuous/ADULT_labels_7_6.data.mtd",
+          "metadata_sha256": "e3698059151c5e3e90ba196ecc12660c9542b225647c27f0e4fb1f20de326dd0",
+          "nnz": 7143,
+          "privacy": "public",
+          "range": [
+            [
+              35715,
+              0
+            ],
+            [
+              42858,
+              1
+            ]
+          ],
+          "rows": 7143,
+          "stage_path": "data/continuous/ADULT_labels_7_6.data",
+          "worker": {
+            "host": "so008",
+            "index": 6,
+            "ip": "130.149.237.18",
+            "port": 8006
+          }
+        },
+        {
+          "address": "130.149.237.19:8007//workspace/experiments/data/continuous/ADULT_labels_7_7.data",
+          "blocks": [
+            {
+              "bytes": 24225,
+              "path": "data/continuous/ADULT_labels_7_7.data/0-m-00000",
+              "sha256": "73732c2cf9d02b0b4ea0cdcff6551a1a6c99ab0a6d667f581daaccd4b556ec23"
+            },
+            {
+              "bytes": 24225,
+              "path": "data/continuous/ADULT_labels_7_7.data/0-m-00001",
+              "sha256": "cda40d0f9ba00ef587b1466054a240ac4136bddc7eadb7b137961272cc12a8e5"
+            },
+            {
+              "bytes": 9328,
+              "path": "data/continuous/ADULT_labels_7_7.data/0-m-00002",
+              "sha256": "11551edbb9380de5fcb74dff89965c9debadf09f3601a67b5397b3f829aac136"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.19:8007",
+          "metadata_path": "data/continuous/ADULT_labels_7_7.data.mtd",
+          "metadata_sha256": "1a2fcca5e3eb3c4646c5ee4635f77946d471f4641703410e723da978cd0d6502",
+          "nnz": 7142,
+          "privacy": "public",
+          "range": [
+            [
+              42858,
+              0
+            ],
+            [
+              50000,
+              1
+            ]
+          ],
+          "rows": 7142,
+          "stage_path": "data/continuous/ADULT_labels_7_7.data",
+          "worker": {
+            "host": "so009",
+            "index": 7,
+            "ip": "130.149.237.19",
+            "port": 8007
+          }
+        }
+      ],
+      "stem": "continuous/ADULT_labels"
+    }
+  ],
+  "ml_view": "continuous",
+  "outputs": [
+    {
+      "data_type": "matrix",
+      "format": "csv",
+      "path": "tmp/w1357/843f12d48d6c3e2a12e5/result",
+      "role": "result"
+    }
+  ],
+  "qualification": "PURE_RENDER_ONLY",
+  "schema": "cofee-w1357-render/v1",
+  "seeds": {
+    "ALS_SEED": 1389632218,
+    "GMM_DML_SEED": 20260904,
+    "GNMF_SEED": 1011081480,
+    "KMEANS_SEED": 133815928,
+    "ORDER_SEED": 20260922,
+    "PYTHONHASHSEED": 20260922,
+    "SYSTEMDS_SEED": 1011081480
+  },
+  "template": {
+    "canonical_for_execution": false,
+    "canonical_source_bytes": true,
+    "contract_status": "CANONICAL_SOURCE_PURE_RENDER_ONLY",
+    "future_variant_policy": "corrected/canonical templates require an explicit repo-tracked hash and contract revision; recognized variants remain pure-render-only and no variant is auto-authorized",
+    "id": "CANONICAL_TRACKED_STAGE_V2",
+    "known_limitation": null,
+    "path": "harness/sigmod2021-exdra-p523/experiments/code/exp/steplm_fed.dml",
+    "provenance": "sealed-canonical-stage-template",
+    "sha256": "b7649e8f18937226ad63d13e7d48ec05b327930813171acfe87de608a63cb6e1"
+  },
+  "topology": {
+    "path": "/home/mchoi/cofee-evaluation/config/multihost_topology.json",
+    "sha256": "30c741dbc300bacc7180c04196b7c764ea4c5e2a7c96ce91113005c5f4fb7cc8",
+    "workers": [
+      "so002",
+      "so003",
+      "so004",
+      "so005",
+      "so006",
+      "so008",
+      "so009"
+    ]
+  }
+}

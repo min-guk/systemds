@@ -1,0 +1,26 @@
+# Global sizes for compile-time stamping in the experiment harness.
+N = 581012
+D = 54
+
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/COVTYPE_features_3_1.data","130.149.237.13:8002//workspace/experiments/data/COVTYPE_features_3_2.data","130.149.237.14:8003//workspace/experiments/data/COVTYPE_features_3_3.data"), ranges=list(list(0,0),list(193671,54),list(193671,0),list(387342,54),list(387342,0),list(581012,54)))
+e = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/COVTYPE_labels_3_1.data","130.149.237.13:8002//workspace/experiments/data/COVTYPE_labels_3_2.data","130.149.237.14:8003//workspace/experiments/data/COVTYPE_labels_3_3.data"), ranges=list(list(0,0),list(193671,1),list(193671,0),list(387342,1),list(387342,0),list(581012,1)))
+
+source("code/workloads/sliceline/slicefinder_core.dml") as SL
+
+sigma = max(ceil(0.01 * N), 8)
+
+[TK, TKC, dbg] = SL::slicefinderX(
+  X=X,
+  e=e,
+  k=10,
+  alpha=0.95,
+  maxL=3,
+  minSup=sigma,
+  tpEval=TRUE,
+  tpBlksz=16,
+  selFeat=TRUE,
+  verbose=FALSE,
+  ltype="for"
+)
+
+write(TKC, "tmp/w1357/d15917c36cc43421a5c8/result", format="csv")

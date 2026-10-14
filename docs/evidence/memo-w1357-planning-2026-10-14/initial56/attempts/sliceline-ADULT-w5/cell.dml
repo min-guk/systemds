@@ -1,0 +1,26 @@
+# Global sizes for compile-time stamping in the experiment harness.
+N = 32561
+D = 13
+
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/ADULT_features_5_1.data","130.149.237.13:8002//workspace/experiments/data/ADULT_features_5_2.data","130.149.237.14:8003//workspace/experiments/data/ADULT_features_5_3.data","130.149.237.15:8004//workspace/experiments/data/ADULT_features_5_4.data","130.149.237.16:8005//workspace/experiments/data/ADULT_features_5_5.data"), ranges=list(list(0,0),list(6513,13),list(6513,0),list(13026,13),list(13026,0),list(19539,13),list(19539,0),list(26052,13),list(26052,0),list(32561,13)))
+e = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/ADULT_labels_5_1.data","130.149.237.13:8002//workspace/experiments/data/ADULT_labels_5_2.data","130.149.237.14:8003//workspace/experiments/data/ADULT_labels_5_3.data","130.149.237.15:8004//workspace/experiments/data/ADULT_labels_5_4.data","130.149.237.16:8005//workspace/experiments/data/ADULT_labels_5_5.data"), ranges=list(list(0,0),list(6513,1),list(6513,0),list(13026,1),list(13026,0),list(19539,1),list(19539,0),list(26052,1),list(26052,0),list(32561,1)))
+
+source("code/workloads/sliceline/slicefinder_core.dml") as SL
+
+sigma = max(ceil(0.01 * N), 8)
+
+[TK, TKC, dbg] = SL::slicefinderX(
+  X=X,
+  e=e,
+  k=10,
+  alpha=0.95,
+  maxL=3,
+  minSup=sigma,
+  tpEval=TRUE,
+  tpBlksz=16,
+  selFeat=TRUE,
+  verbose=FALSE,
+  ltype="for"
+)
+
+write(TKC, "tmp/w1357/a83e88cd3486a1e3ce44/result", format="csv")

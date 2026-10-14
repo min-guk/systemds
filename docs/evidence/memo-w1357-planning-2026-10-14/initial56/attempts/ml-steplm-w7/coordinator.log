@@ -1,0 +1,11 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/14 15:12:01 WARN utils.SettingsChecker: Low memory budget of total:    251 GB set to:      3 GB
+26/10/14 15:12:01 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[MemoPlannerPhase] phase=facts elapsedNs=61010922
+[MemoPlannerPhase] phase=rules elapsedNs=1280619510
+[MemoNativeRequests] preparedRequests=4657 reusedResults=4364 oracleRequests=293 canonicalStringsCreated=80 canonicalStringsReused=4364 uncacheableRequests=213 contextualViewBuilds=293
+[MemoNativeGeneration] cpPatterns=317 prefixRequests=0 prunedPrefixes=704 unknownPrefixes=0 visitedNativePatterns=567 determinantRegions=1271 oracleEvaluations=1271 evidenceReuses=0 publishedRules=846 coverageObligations=60
+[31m
+An Error Occurred : 
+    IllegalStateException -- UNRESOLVED_COST_CONTEXT: occurrence 5 frame=[5, 2, 0] phases={LoopDecision[loopId=3, callFrame=[5]]=FIRST, LoopDecision[loopId=2, callFrame=[5]]=MIDDLE} cardinalities={LoopCardinalityDecision[loopId=3, callFrame=[5]]=ONE, LoopCardinalityDecision[loopId=2, callFrame=[5]]=MANY} guards={GuardDecision[guardId=9, callFrame=[5], valueBindingId=490, valueFrame=[5]]=false, GuardDecision[guardId=7, callFrame=[5], valueBindingId=411, valueFrame=[5]]=true, GuardDecision[guardId=8, callFrame=[5], valueBindingId=478, valueFrame=[5]]=true, GuardDecision[guardId=4, callFrame=[5], valueBindingId=336, valueFrame=[5]]=false}
+[0m

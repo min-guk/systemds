@@ -15,7 +15,7 @@
 
 ## 실행과 판정
 
-기존 `run_LAN_docker.sh`의명시적Memo planning-only lane에서실행한다. 기존sealedrenderer는Memo enum을받지않으므로DP-global렌더결과는입력생성용receipt로만사용하고실행config에는COMPILE_MEMO를명시한다. 원renderer/validator자체를완화하지않는다. 현재 renderer와검증된봉인stage `/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z`를사용한다(manifestSHA e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e). 원 IP endpoint를변경하지않는다. 동일workerpath의봉인된local sidecar를읽는production메타데이터경로를사용하므로실제workerJVM/RPC/학습데이터읽기는필요없다. 데이터파일이없는metadata-only compile상태를명시하고training성공으로주장하지않는다.
+기존 `run_LAN_docker.sh`의명시적Memo planning-only lane에서실행한다. 기존sealedrenderer는Memo enum을받지않으므로DP-global렌더결과는입력생성용receipt로만사용하고실행config에는COMPILE_MEMO를명시한다. 원renderer/validator자체를완화하지않는다. 현재 renderer와검증된봉인stage `/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z`를사용한다(manifestSHA e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e). 원 IP endpoint를변경하지않는다. 동일workerpath의봉인된local sidecar를읽는production메타데이터경로를사용하므로실제workerJVM/RPC/학습데이터읽기는필요없다. 봉인된binary .data 디렉터리와실제data block은존재하지만compile-only에서runtime payload는실행/읽지않는다. 이를training성공으로주장하지않는다.
 
 `sysds.benchmark.compile_only=true`와`-stats`로production DMLScript의기존분기를사용한다. RuntimeProgram구성까지수행하지만training/runtime명령은실행하지않는다. worker구성/ranges는실제Memo입력에서검증한다.
 

@@ -1,0 +1,745 @@
+{
+  "cell": {
+    "id": "sliceline|ADULT|lan|w7|DP-global",
+    "planner": "DP-global",
+    "planner_enum": "COMPILE_EXACT",
+    "profile": "lan",
+    "suite": "sliceline",
+    "workers": 7,
+    "workload": "ADULT"
+  },
+  "content_verification": {
+    "cache_contract": "hash reused only while dev/inode/size/mtime_ns/ctime_ns are unchanged",
+    "execution_note": "pure render only; re-render immediately before any separately qualified run",
+    "selected_template_metadata_and_data_blocks": "sha256-verified-at-render",
+    "stage_manifest_sha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+  },
+  "dependencies": [
+    {
+      "path": "harness/sigmod2021-exdra-p523/experiments/code/workloads/sliceline/slicefinder_core.dml",
+      "sha256": "07a1be572c5611eaff67dde0cbc23b17796b79dd6635df04584f482b470a348d"
+    }
+  ],
+  "execution_authorized": false,
+  "inputs": [
+    {
+      "cols": 13,
+      "metadata_path": "data/ADULT_features.data.mtd",
+      "metadata_sha256": "4d70f6f670f88da55213dea4160378c75756eb5f8a7fbeb1b0d42d496fb6279b",
+      "nnz": 423293,
+      "privacy": "private-aggregate",
+      "role": "X",
+      "rows": 32561,
+      "shards": [
+        {
+          "address": "130.149.237.12:8001//workspace/experiments/data/ADULT_features_7_1.data",
+          "blocks": [
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_1.data/0-m-00000",
+              "sha256": "77045ab3b4c32b0b7965d1287d9dc80b38d472260a271d4ef59dfbc66d236921"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_1.data/0-m-00001",
+              "sha256": "8c732da19d2f2ccf68d320d561665a08c4884f4648a4e636e20ecc9c837aaf74"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_1.data/0-m-00002",
+              "sha256": "5de5448f04c11854e9ebb393b5fa2fcdaf45734879ee974f422ae069be61737b"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_1.data/0-m-00003",
+              "sha256": "4a24ada293bb9e48a63a54c26cf87d6c132c1ddf186399664c3c1ea520735623"
+            },
+            {
+              "bytes": 67967,
+              "path": "data/ADULT_features_7_1.data/0-m-00004",
+              "sha256": "fb3fb60e1dd26160865848491d5752be9e0b170209521d999b6cdb3b8c44afbb"
+            }
+          ],
+          "cols": 13,
+          "endpoint": "130.149.237.12:8001",
+          "metadata_path": "data/ADULT_features_7_1.data.mtd",
+          "metadata_sha256": "daa13d62eb0a2dbbdc03175afd166adc61355d9270a94bfd533699bc698b27b3",
+          "nnz": 60476,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              0,
+              0
+            ],
+            [
+              4652,
+              13
+            ]
+          ],
+          "rows": 4652,
+          "stage_path": "data/ADULT_features_7_1.data",
+          "worker": {
+            "host": "so002",
+            "index": 1,
+            "ip": "130.149.237.12",
+            "port": 8001
+          }
+        },
+        {
+          "address": "130.149.237.13:8002//workspace/experiments/data/ADULT_features_7_2.data",
+          "blocks": [
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_2.data/0-m-00000",
+              "sha256": "5dea3e0771058235822f076c3d38ca5e491def93ac3362683af8a20f29305f48"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_2.data/0-m-00001",
+              "sha256": "91eba645f85496f406492f8e54745084b5887ac43bb226a6aa40f1b71b85dfe9"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_2.data/0-m-00002",
+              "sha256": "1e2ddc5ecfd96535a5b8d8646e280e2e88a956752be8290863068a88a9f16f51"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_2.data/0-m-00003",
+              "sha256": "baa0fcc8048383295ef69a2d9fe3a4f5ca0902a363e99f04245cf2e07fc90c59"
+            },
+            {
+              "bytes": 67967,
+              "path": "data/ADULT_features_7_2.data/0-m-00004",
+              "sha256": "3ffa649bab06440550f382db4e52b8cfdc5d3a05e972a2941c74bd6b18a62bd6"
+            }
+          ],
+          "cols": 13,
+          "endpoint": "130.149.237.13:8002",
+          "metadata_path": "data/ADULT_features_7_2.data.mtd",
+          "metadata_sha256": "daa13d62eb0a2dbbdc03175afd166adc61355d9270a94bfd533699bc698b27b3",
+          "nnz": 60476,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              4652,
+              0
+            ],
+            [
+              9304,
+              13
+            ]
+          ],
+          "rows": 4652,
+          "stage_path": "data/ADULT_features_7_2.data",
+          "worker": {
+            "host": "so003",
+            "index": 2,
+            "ip": "130.149.237.13",
+            "port": 8002
+          }
+        },
+        {
+          "address": "130.149.237.14:8003//workspace/experiments/data/ADULT_features_7_3.data",
+          "blocks": [
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_3.data/0-m-00000",
+              "sha256": "4c9cc21d28857d8205d610cdc542ea5467ca96630b77cab2ab9f209e94a134b5"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_3.data/0-m-00001",
+              "sha256": "20da9a67aa13ce9c2ea9cbf04a6b8fcc21b5763c56cdaf451dbe9c56117fcbb5"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_3.data/0-m-00002",
+              "sha256": "531d9d7add6640d930dcfa5ea767ac8a404e41c8086fdadd737f0e711abb0de2"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_3.data/0-m-00003",
+              "sha256": "c44a4e81f730863d873e1a997b676c02b496227878cb5de63dff79e981982c17"
+            },
+            {
+              "bytes": 67967,
+              "path": "data/ADULT_features_7_3.data/0-m-00004",
+              "sha256": "6d31d8620835eba19495e6da158c162e45f12dcc20d8f2b5d5baa9952f08eb58"
+            }
+          ],
+          "cols": 13,
+          "endpoint": "130.149.237.14:8003",
+          "metadata_path": "data/ADULT_features_7_3.data.mtd",
+          "metadata_sha256": "daa13d62eb0a2dbbdc03175afd166adc61355d9270a94bfd533699bc698b27b3",
+          "nnz": 60476,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              9304,
+              0
+            ],
+            [
+              13956,
+              13
+            ]
+          ],
+          "rows": 4652,
+          "stage_path": "data/ADULT_features_7_3.data",
+          "worker": {
+            "host": "so004",
+            "index": 3,
+            "ip": "130.149.237.14",
+            "port": 8003
+          }
+        },
+        {
+          "address": "130.149.237.15:8004//workspace/experiments/data/ADULT_features_7_4.data",
+          "blocks": [
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_4.data/0-m-00000",
+              "sha256": "c479b0bea19b821816e51607cff22ba924fa1bf87ef981ef3156c4e989cadca8"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_4.data/0-m-00001",
+              "sha256": "6a77cb74699739bc9c715dfc0a268a13362487bec020113bb14afa54b7f4064e"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_4.data/0-m-00002",
+              "sha256": "38a396968385103e60c48bfa3006dcdba7fc90497de616e89b100fcd51a296d6"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_4.data/0-m-00003",
+              "sha256": "681d5c4e966a677c6c39662e1c382cd85d3985e8f241c619480de9b7806ca18a"
+            },
+            {
+              "bytes": 67967,
+              "path": "data/ADULT_features_7_4.data/0-m-00004",
+              "sha256": "6eb9ea8b0ec38c716873c27d321ad0b6c0ddbe25b3b6870138d894843a4e7406"
+            }
+          ],
+          "cols": 13,
+          "endpoint": "130.149.237.15:8004",
+          "metadata_path": "data/ADULT_features_7_4.data.mtd",
+          "metadata_sha256": "daa13d62eb0a2dbbdc03175afd166adc61355d9270a94bfd533699bc698b27b3",
+          "nnz": 60476,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              13956,
+              0
+            ],
+            [
+              18608,
+              13
+            ]
+          ],
+          "rows": 4652,
+          "stage_path": "data/ADULT_features_7_4.data",
+          "worker": {
+            "host": "so005",
+            "index": 4,
+            "ip": "130.149.237.15",
+            "port": 8004
+          }
+        },
+        {
+          "address": "130.149.237.16:8005//workspace/experiments/data/ADULT_features_7_5.data",
+          "blocks": [
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_5.data/0-m-00000",
+              "sha256": "dcbb300130a2c41bc50e4708b35b84a4cf34df3c9c408a5410f337743ab3c175"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_5.data/0-m-00001",
+              "sha256": "c1802c67cd98ef1eea2b9a7693dc4d4e9d142a4c9ce58896d60523ef5287e179"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_5.data/0-m-00002",
+              "sha256": "3982f007896a0eb838de37ea7b70f12d2c1db25bc1d33b175a1741159596700b"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_5.data/0-m-00003",
+              "sha256": "a907ace2351c534f3d154750bd6022341e73917518b08fdf8c7860bc7ffa4df9"
+            },
+            {
+              "bytes": 67967,
+              "path": "data/ADULT_features_7_5.data/0-m-00004",
+              "sha256": "ce4840421fa193c8d4271ad5eb0d527905a11f72e64b286d7b6428b13df0bd32"
+            }
+          ],
+          "cols": 13,
+          "endpoint": "130.149.237.16:8005",
+          "metadata_path": "data/ADULT_features_7_5.data.mtd",
+          "metadata_sha256": "daa13d62eb0a2dbbdc03175afd166adc61355d9270a94bfd533699bc698b27b3",
+          "nnz": 60476,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              18608,
+              0
+            ],
+            [
+              23260,
+              13
+            ]
+          ],
+          "rows": 4652,
+          "stage_path": "data/ADULT_features_7_5.data",
+          "worker": {
+            "host": "so006",
+            "index": 5,
+            "ip": "130.149.237.16",
+            "port": 8005
+          }
+        },
+        {
+          "address": "130.149.237.18:8006//workspace/experiments/data/ADULT_features_7_6.data",
+          "blocks": [
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_6.data/0-m-00000",
+              "sha256": "f7dee1d4bd684c23ad6345b10feaf6236f82160c3f3928b1fc1a27918984f055"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_6.data/0-m-00001",
+              "sha256": "3921c85fa3fdbcbdc253d3b01cf1bcb3d348f4fbc3959cf0dd12bb2be3220908"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_6.data/0-m-00002",
+              "sha256": "7d4e69e9c6ca99c2a10df34e7763621734814f83d9c14d1b185b3fe862e1092f"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_6.data/0-m-00003",
+              "sha256": "d45469b5ed2e7ef9f6c22190111e9b8032329ebd737afa08d5d61aa5cb2417aa"
+            },
+            {
+              "bytes": 67967,
+              "path": "data/ADULT_features_7_6.data/0-m-00004",
+              "sha256": "c980cbf1f80d75dd6da5aa3daa48057f2a4c858e45ad939b033739231c259858"
+            }
+          ],
+          "cols": 13,
+          "endpoint": "130.149.237.18:8006",
+          "metadata_path": "data/ADULT_features_7_6.data.mtd",
+          "metadata_sha256": "daa13d62eb0a2dbbdc03175afd166adc61355d9270a94bfd533699bc698b27b3",
+          "nnz": 60476,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              23260,
+              0
+            ],
+            [
+              27912,
+              13
+            ]
+          ],
+          "rows": 4652,
+          "stage_path": "data/ADULT_features_7_6.data",
+          "worker": {
+            "host": "so008",
+            "index": 6,
+            "ip": "130.149.237.18",
+            "port": 8006
+          }
+        },
+        {
+          "address": "130.149.237.19:8007//workspace/experiments/data/ADULT_features_7_7.data",
+          "blocks": [
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_7.data/0-m-00000",
+              "sha256": "29147cdc6c8b9636d484ec202a1759c6d457b5e48d69e2b8120b27b66a209fd7"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_7.data/0-m-00001",
+              "sha256": "6b30605f0476c5b346ed8bcdcc0c9f6bba170864635638d6727b3e6e639f7334"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_7.data/0-m-00002",
+              "sha256": "b842ac809b99c27d01b1db8e2b7dbfa90c01e099f8b237fb81e59a93e89969e2"
+            },
+            {
+              "bytes": 104159,
+              "path": "data/ADULT_features_7_7.data/0-m-00003",
+              "sha256": "4ae790bbad44f4ae6975df77c904c4a15408474c011c3366550f437a089a7f6c"
+            },
+            {
+              "bytes": 67655,
+              "path": "data/ADULT_features_7_7.data/0-m-00004",
+              "sha256": "ea768352937548742bbd4b9f00494563c87f890c68204443dfdd2de361ab6d82"
+            }
+          ],
+          "cols": 13,
+          "endpoint": "130.149.237.19:8007",
+          "metadata_path": "data/ADULT_features_7_7.data.mtd",
+          "metadata_sha256": "4a5d31823c2c2cdfcafb5a8df2dae8aab207693d4da69246590cec0c2fea1d63",
+          "nnz": 60437,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              27912,
+              0
+            ],
+            [
+              32561,
+              13
+            ]
+          ],
+          "rows": 4649,
+          "stage_path": "data/ADULT_features_7_7.data",
+          "worker": {
+            "host": "so009",
+            "index": 7,
+            "ip": "130.149.237.19",
+            "port": 8007
+          }
+        }
+      ],
+      "stem": "ADULT_features"
+    },
+    {
+      "cols": 1,
+      "metadata_path": "data/ADULT_labels.data.mtd",
+      "metadata_sha256": "39008f25241f47d5094e6f3002fc6e9ea335fb9e0ddfb628e8894cf0514f7afa",
+      "nnz": 4967,
+      "privacy": "private-aggregate",
+      "role": "Y",
+      "rows": 32561,
+      "shards": [
+        {
+          "address": "130.149.237.12:8001//workspace/experiments/data/ADULT_labels_7_1.data",
+          "blocks": [
+            {
+              "bytes": 5973,
+              "path": "data/ADULT_labels_7_1.data/0-m-00000",
+              "sha256": "13674fd31a997f19b33d0f317583295f3f889df7e3d075aeb98befbd299d7981"
+            },
+            {
+              "bytes": 3152,
+              "path": "data/ADULT_labels_7_1.data/0-m-00001",
+              "sha256": "b732628aa0c942830fc53e5fd7f42f30448ea53646fba8e0813c44dae358eb88"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.12:8001",
+          "metadata_path": "data/ADULT_labels_7_1.data.mtd",
+          "metadata_sha256": "2c97b969b3ca044e5f39e4d57a3fb012e2ba25256fb3363d1d3b48793cb7c2f2",
+          "nnz": 724,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              0,
+              0
+            ],
+            [
+              4652,
+              1
+            ]
+          ],
+          "rows": 4652,
+          "stage_path": "data/ADULT_labels_7_1.data",
+          "worker": {
+            "host": "so002",
+            "index": 1,
+            "ip": "130.149.237.12",
+            "port": 8001
+          }
+        },
+        {
+          "address": "130.149.237.13:8002//workspace/experiments/data/ADULT_labels_7_2.data",
+          "blocks": [
+            {
+              "bytes": 5865,
+              "path": "data/ADULT_labels_7_2.data/0-m-00000",
+              "sha256": "9ebfe5e1b1e7fce27e4046b1472a7f6c225f79d696671c8aa5f2bb580ac3bf6e"
+            },
+            {
+              "bytes": 3104,
+              "path": "data/ADULT_labels_7_2.data/0-m-00001",
+              "sha256": "b788d520886bf1918f81500ee36675b348034c53fc3c3212496c9aa74dbf2367"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.13:8002",
+          "metadata_path": "data/ADULT_labels_7_2.data.mtd",
+          "metadata_sha256": "408f8f468fb4c016e48caef8d2db19379ad0eb8cbcc2cd67ecba54f07b89e190",
+          "nnz": 711,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              4652,
+              0
+            ],
+            [
+              9304,
+              1
+            ]
+          ],
+          "rows": 4652,
+          "stage_path": "data/ADULT_labels_7_2.data",
+          "worker": {
+            "host": "so003",
+            "index": 2,
+            "ip": "130.149.237.13",
+            "port": 8002
+          }
+        },
+        {
+          "address": "130.149.237.14:8003//workspace/experiments/data/ADULT_labels_7_3.data",
+          "blocks": [
+            {
+              "bytes": 6009,
+              "path": "data/ADULT_labels_7_3.data/0-m-00000",
+              "sha256": "3eb2fe674d65c66fe87bdade3d277fcab0119c6e9daa75d2740b305127518a5d"
+            },
+            {
+              "bytes": 3188,
+              "path": "data/ADULT_labels_7_3.data/0-m-00001",
+              "sha256": "abe0f12632dfbbda43b35e234f47e87bf21a1fa7260aa38d9b76a3e85f7807ac"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.14:8003",
+          "metadata_path": "data/ADULT_labels_7_3.data.mtd",
+          "metadata_sha256": "f1b796cc0a83278de4530f1c924e53f87325fa4df0906a4c74fedf738c4df124",
+          "nnz": 730,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              9304,
+              0
+            ],
+            [
+              13956,
+              1
+            ]
+          ],
+          "rows": 4652,
+          "stage_path": "data/ADULT_labels_7_3.data",
+          "worker": {
+            "host": "so004",
+            "index": 3,
+            "ip": "130.149.237.14",
+            "port": 8003
+          }
+        },
+        {
+          "address": "130.149.237.15:8004//workspace/experiments/data/ADULT_labels_7_4.data",
+          "blocks": [
+            {
+              "bytes": 5661,
+              "path": "data/ADULT_labels_7_4.data/0-m-00000",
+              "sha256": "5a2d3cf8ba5b051e41c0eecaf7e4bffdc13af0226003ac6f63734a27713dc480"
+            },
+            {
+              "bytes": 3284,
+              "path": "data/ADULT_labels_7_4.data/0-m-00001",
+              "sha256": "cc8bbf7a60274297fbc90e637691bdb376733a1534f94c1f03af3e2aaf9ad1da"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.15:8004",
+          "metadata_path": "data/ADULT_labels_7_4.data.mtd",
+          "metadata_sha256": "65bc270146c053d9ce4aa0220c44ec974b51d074bd6dae26079264585dce5a68",
+          "nnz": 709,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              13956,
+              0
+            ],
+            [
+              18608,
+              1
+            ]
+          ],
+          "rows": 4652,
+          "stage_path": "data/ADULT_labels_7_4.data",
+          "worker": {
+            "host": "so005",
+            "index": 4,
+            "ip": "130.149.237.15",
+            "port": 8004
+          }
+        },
+        {
+          "address": "130.149.237.16:8005//workspace/experiments/data/ADULT_labels_7_5.data",
+          "blocks": [
+            {
+              "bytes": 5601,
+              "path": "data/ADULT_labels_7_5.data/0-m-00000",
+              "sha256": "01b739a1cb80721ac7de5fb977aac9afb86bb7a61349ff9ad01bed3b9f8a61f9"
+            },
+            {
+              "bytes": 2924,
+              "path": "data/ADULT_labels_7_5.data/0-m-00001",
+              "sha256": "94181fc0314c631ae8fc66b01f800e3a4cd45e37e2e2e1c473b576e4acb6e2f3"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.16:8005",
+          "metadata_path": "data/ADULT_labels_7_5.data.mtd",
+          "metadata_sha256": "f75edede3b75e1da2c3cc212d76ccb38767fd32f246b47cd9524023b4553c1ce",
+          "nnz": 674,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              18608,
+              0
+            ],
+            [
+              23260,
+              1
+            ]
+          ],
+          "rows": 4652,
+          "stage_path": "data/ADULT_labels_7_5.data",
+          "worker": {
+            "host": "so006",
+            "index": 5,
+            "ip": "130.149.237.16",
+            "port": 8005
+          }
+        },
+        {
+          "address": "130.149.237.18:8006//workspace/experiments/data/ADULT_labels_7_6.data",
+          "blocks": [
+            {
+              "bytes": 5793,
+              "path": "data/ADULT_labels_7_6.data/0-m-00000",
+              "sha256": "513b2851fb696ca67a85e3e8d85b48fa9de6fe1f71bc797800339ffd778d0398"
+            },
+            {
+              "bytes": 3056,
+              "path": "data/ADULT_labels_7_6.data/0-m-00001",
+              "sha256": "3fd39434edd7f305890c37be2f1dcfe87be405f2d6e650623df0d03244dbb42b"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.18:8006",
+          "metadata_path": "data/ADULT_labels_7_6.data.mtd",
+          "metadata_sha256": "b56e701f864af0113a704686035c88d968db088058761e094da7b05c68c24f45",
+          "nnz": 701,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              23260,
+              0
+            ],
+            [
+              27912,
+              1
+            ]
+          ],
+          "rows": 4652,
+          "stage_path": "data/ADULT_labels_7_6.data",
+          "worker": {
+            "host": "so008",
+            "index": 6,
+            "ip": "130.149.237.18",
+            "port": 8006
+          }
+        },
+        {
+          "address": "130.149.237.19:8007//workspace/experiments/data/ADULT_labels_7_7.data",
+          "blocks": [
+            {
+              "bytes": 5685,
+              "path": "data/ADULT_labels_7_7.data/0-m-00000",
+              "sha256": "0a4a64adea22a8ef12d79de605238422771dc5651771902023f8ed7fe647b151"
+            },
+            {
+              "bytes": 3368,
+              "path": "data/ADULT_labels_7_7.data/0-m-00001",
+              "sha256": "a3069434151387c3fd95a324b77316e0e4f517633434e86d4db2ca48f38c572c"
+            }
+          ],
+          "cols": 1,
+          "endpoint": "130.149.237.19:8007",
+          "metadata_path": "data/ADULT_labels_7_7.data.mtd",
+          "metadata_sha256": "970cc982b09b16fd324da60358ceace883331e3ae61c8a519c28de6b292d167e",
+          "nnz": 718,
+          "privacy": "private-aggregate",
+          "range": [
+            [
+              27912,
+              0
+            ],
+            [
+              32561,
+              1
+            ]
+          ],
+          "rows": 4649,
+          "stage_path": "data/ADULT_labels_7_7.data",
+          "worker": {
+            "host": "so009",
+            "index": 7,
+            "ip": "130.149.237.19",
+            "port": 8007
+          }
+        }
+      ],
+      "stem": "ADULT_labels"
+    }
+  ],
+  "ml_view": null,
+  "outputs": [
+    {
+      "data_type": "matrix",
+      "format": "csv",
+      "path": "tmp/w1357/eb620899bd64ca3b59a0/result",
+      "role": "result"
+    }
+  ],
+  "qualification": "PURE_RENDER_ONLY",
+  "schema": "cofee-w1357-render/v1",
+  "seeds": {
+    "ALS_SEED": 1389632218,
+    "GMM_DML_SEED": 20260904,
+    "GNMF_SEED": 1011081480,
+    "KMEANS_SEED": 133815928,
+    "ORDER_SEED": 20260922,
+    "PYTHONHASHSEED": 20260922,
+    "SYSTEMDS_SEED": 1011081480
+  },
+  "template": {
+    "canonical_for_execution": false,
+    "canonical_source_bytes": true,
+    "contract_status": "CANONICAL_SOURCE_PURE_RENDER_ONLY",
+    "future_variant_policy": "corrected/canonical templates require an explicit repo-tracked hash and contract revision; recognized variants remain pure-render-only and no variant is auto-authorized",
+    "id": "CANONICAL_TRACKED_STAGE_V2",
+    "known_limitation": null,
+    "path": "harness/sigmod2021-exdra-p523/experiments/code/exp/sliceline_fed.dml",
+    "provenance": "sealed-canonical-stage-template",
+    "sha256": "cc2cb0ed07af2e34d56a30ec53fc2fea9caaadd1e3988b98fbee7cc560a42501"
+  },
+  "topology": {
+    "path": "/home/mchoi/cofee-evaluation/config/multihost_topology.json",
+    "sha256": "30c741dbc300bacc7180c04196b7c764ea4c5e2a7c96ce91113005c5f4fb7cc8",
+    "workers": [
+      "so002",
+      "so003",
+      "so004",
+      "so005",
+      "so006",
+      "so008",
+      "so009"
+    ]
+  }
+}

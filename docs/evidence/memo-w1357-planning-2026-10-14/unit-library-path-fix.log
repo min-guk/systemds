@@ -1,0 +1,17 @@
+test_compile_evidence_requires_complete_non_runtime_receipt (test_run_memo_planning_matrix.MemoPlanningMatrixTest.test_compile_evidence_requires_complete_non_runtime_receipt) ... ok
+test_config_is_memo_compile_only_and_p2_property_is_a_jvm_flag (test_run_memo_planning_matrix.MemoPlanningMatrixTest.test_config_is_memo_compile_only_and_p2_property_is_a_jvm_flag) ... ok
+test_default_matrix_is_exactly_56_unique_cells (test_run_memo_planning_matrix.MemoPlanningMatrixTest.test_default_matrix_is_exactly_56_unique_cells) ... ok
+test_failure_categories_do_not_call_setup_or_timeout_a_planner_failure (test_run_memo_planning_matrix.MemoPlanningMatrixTest.test_failure_categories_do_not_call_setup_or_timeout_a_planner_failure) ... ok
+test_failure_result_keeps_execution_and_render_identities_separate (test_run_memo_planning_matrix.MemoPlanningMatrixTest.test_failure_result_keeps_execution_and_render_identities_separate) ... ok
+test_filters_are_closed_to_the_frozen_matrix (test_run_memo_planning_matrix.MemoPlanningMatrixTest.test_filters_are_closed_to_the_frozen_matrix) ... ok
+test_planner_dependent_renderer_output_is_rejected (test_run_memo_planning_matrix.MemoPlanningMatrixTest.test_planner_dependent_renderer_output_is_rejected) ... ok
+test_planner_specific_output_path_is_normalized_for_independence_proof (test_run_memo_planning_matrix.MemoPlanningMatrixTest.test_planner_specific_output_path_is_normalized_for_independence_proof) ... ok
+test_published_c26_cost_contract_has_no_injected_override (test_run_memo_planning_matrix.MemoPlanningMatrixTest.test_published_c26_cost_contract_has_no_injected_override) ... ok
+test_renderer_and_stage_contracts_are_explicitly_pinned (test_run_memo_planning_matrix.MemoPlanningMatrixTest.test_renderer_and_stage_contracts_are_explicitly_pinned) ... ok
+test_sealed_endpoints_are_preserved_and_receipted (test_run_memo_planning_matrix.MemoPlanningMatrixTest.test_sealed_endpoints_are_preserved_and_receipted) ... ok
+test_sealed_source_library_uses_original_experiment_working_directory (test_run_memo_planning_matrix.MemoPlanningMatrixTest.test_sealed_source_library_uses_original_experiment_working_directory) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 0.007s
+
+OK

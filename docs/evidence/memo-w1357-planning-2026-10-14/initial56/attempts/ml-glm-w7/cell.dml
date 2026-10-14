@@ -1,0 +1,17 @@
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_7_1.data","130.149.237.13:8002//workspace/experiments/data/continuous/ADULT_features_7_2.data","130.149.237.14:8003//workspace/experiments/data/continuous/ADULT_features_7_3.data","130.149.237.15:8004//workspace/experiments/data/continuous/ADULT_features_7_4.data","130.149.237.16:8005//workspace/experiments/data/continuous/ADULT_features_7_5.data","130.149.237.18:8006//workspace/experiments/data/continuous/ADULT_features_7_6.data","130.149.237.19:8007//workspace/experiments/data/continuous/ADULT_features_7_7.data"), ranges=list(list(0,0),list(7143,128),list(7143,0),list(14286,128),list(14286,0),list(21429,128),list(21429,0),list(28572,128),list(28572,0),list(35715,128),list(35715,0),list(42858,128),list(42858,0),list(50000,128)))
+Y = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_labels_7_1.data","130.149.237.13:8002//workspace/experiments/data/continuous/ADULT_labels_7_2.data","130.149.237.14:8003//workspace/experiments/data/continuous/ADULT_labels_7_3.data","130.149.237.15:8004//workspace/experiments/data/continuous/ADULT_labels_7_4.data","130.149.237.16:8005//workspace/experiments/data/continuous/ADULT_labels_7_5.data","130.149.237.18:8006//workspace/experiments/data/continuous/ADULT_labels_7_6.data","130.149.237.19:8007//workspace/experiments/data/continuous/ADULT_labels_7_7.data"), ranges=list(list(0,0),list(7143,1),list(7143,0),list(14286,1),list(14286,0),list(21429,1),list(21429,0),list(28572,1),list(28572,0),list(35715,1),list(35715,0),list(42858,1),list(42858,0),list(50000,1)))
+
+# The frozen synthetic response is continuous.  A mean threshold yields a
+# deterministic, approximately balanced binary target via a privacy-permitted
+# aggregate instead of treating only the single maximum row as positive.
+threshold = mean(Y)
+Y = (Y > threshold) * 1
+
+beta = glm(
+  X=X, Y=Y,
+  dfam=2, vpow=0.0, link=2, lpow=1.0, yneg=0.0,
+  icpt=0, disp=0.0, reg=0.0, tol=1e-6, moi=20, mii=5,
+  verbose=FALSE
+)
+
+write(beta, "tmp/w1357/32af1fad25840c90d6f0/result", format="csv")

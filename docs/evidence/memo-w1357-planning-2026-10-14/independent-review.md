@@ -1,0 +1,9 @@
+# Independent validation verdict
+
+Evidence integrity PASS; functional matrix PARTIAL (only4/56 PASS). Read-only verifier confirmed full engine12707files, all352sourceendpoint/range positions,187distinctmetadatafiles and1721actualbinaryblocks againstsealedreceipts. Binarypayloaddirectories exist; compile-only doesnotexecute/readruntimepayload.
+
+GNMF4 each exactlyone OPTIMAL Memo/Search receipt,correctworkers,RuntimeProgram/compilecompleted,execution0. EightLogReg/GLMtimeouts completedfacts/rules/model andendedatmodel.optimize(), withnocertifiedoptimum/totalplanningtime. LM4 UNRESOLVED;L2SVM4reportedINFEASIBLE. Remaining36 compiled/Memoerrors havenosuccessfulcompile receipt evenwhereexitcode0.
+
+Twelvecorrecteddependencyconditions preserveDML/config/engine/resource/metadata/libraryhashes andchangeonlyCWD. Original12parsefailures occurredbeforeMemo; correctionloadslibraries andall12reachgenuineMemoUNSUPPORTED_PARFOR. Initialgrid56setup-onlyattempts havezeroJVM/coordinator. Allpreliminaryenvironmentfailuresarepreservedanddisclosed. No residualownedmatrixrunner/container/Java remained.
+
+GMMNullPointerException hasnostacklocalization;cannotprovewhichcompiler/Memophasecausedit. ReportedINFEASIBLEdoesnotprovephysicalruntimealgorithmimpossibility. Rootpostprocessingalsoseparates ALSW3/5/7execution-layoutambiguity andP2W3/7canonical-ingressviolations fromUNKNOWN_SIZE.

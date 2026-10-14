@@ -1,0 +1,7 @@
+{
+  "root": "/grid/3/cofee-lm-sweep-mchoi-20260914/memo-w1357-planning-20261014-c26-once",
+  "attempts": 56,
+  "planningInvocations": 0,
+  "reason": "Snap Docker /grid bind mount unavailable; container-run.sh missing before JVM start",
+  "preserved": true
+}

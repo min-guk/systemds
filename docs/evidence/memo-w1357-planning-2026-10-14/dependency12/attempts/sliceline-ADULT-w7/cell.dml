@@ -1,0 +1,26 @@
+# Global sizes for compile-time stamping in the experiment harness.
+N = 32561
+D = 13
+
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/ADULT_features_7_1.data","130.149.237.13:8002//workspace/experiments/data/ADULT_features_7_2.data","130.149.237.14:8003//workspace/experiments/data/ADULT_features_7_3.data","130.149.237.15:8004//workspace/experiments/data/ADULT_features_7_4.data","130.149.237.16:8005//workspace/experiments/data/ADULT_features_7_5.data","130.149.237.18:8006//workspace/experiments/data/ADULT_features_7_6.data","130.149.237.19:8007//workspace/experiments/data/ADULT_features_7_7.data"), ranges=list(list(0,0),list(4652,13),list(4652,0),list(9304,13),list(9304,0),list(13956,13),list(13956,0),list(18608,13),list(18608,0),list(23260,13),list(23260,0),list(27912,13),list(27912,0),list(32561,13)))
+e = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/ADULT_labels_7_1.data","130.149.237.13:8002//workspace/experiments/data/ADULT_labels_7_2.data","130.149.237.14:8003//workspace/experiments/data/ADULT_labels_7_3.data","130.149.237.15:8004//workspace/experiments/data/ADULT_labels_7_4.data","130.149.237.16:8005//workspace/experiments/data/ADULT_labels_7_5.data","130.149.237.18:8006//workspace/experiments/data/ADULT_labels_7_6.data","130.149.237.19:8007//workspace/experiments/data/ADULT_labels_7_7.data"), ranges=list(list(0,0),list(4652,1),list(4652,0),list(9304,1),list(9304,0),list(13956,1),list(13956,0),list(18608,1),list(18608,0),list(23260,1),list(23260,0),list(27912,1),list(27912,0),list(32561,1)))
+
+source("code/workloads/sliceline/slicefinder_core.dml") as SL
+
+sigma = max(ceil(0.01 * N), 8)
+
+[TK, TKC, dbg] = SL::slicefinderX(
+  X=X,
+  e=e,
+  k=10,
+  alpha=0.95,
+  maxL=3,
+  minSup=sigma,
+  tpEval=TRUE,
+  tpBlksz=16,
+  selFeat=TRUE,
+  verbose=FALSE,
+  ltype="for"
+)
+
+write(TKC, "tmp/w1357/eb620899bd64ca3b59a0/result", format="csv")

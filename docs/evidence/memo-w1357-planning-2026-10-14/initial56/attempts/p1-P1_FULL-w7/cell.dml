@@ -1,0 +1,58 @@
+##################################################
+# PIPELINE P1_FULL: fertilizer-production pipeline
+##################################################
+source("code/exp/gmm_p1_compat.dml") as GMMCompat
+
+# This preserves the archived ExDRa P1 semantics.  Its subsample1H call supplied
+# TRUE for the Integer nstep argument, whose effective value was one; with
+# means=FALSE the function is exactly the identity.  We eliminate that no-op so
+# the federated plan does not lower an unsupported reshape that changes no value.
+# Row-level GMM predictions are not exported under PrivateAggregation.  A final
+# aggregate sink forces the full pipeline instead.
+
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/P1_features_7_1.data","130.149.237.13:8002//workspace/experiments/data/P1_features_7_2.data","130.149.237.14:8003//workspace/experiments/data/P1_features_7_3.data","130.149.237.15:8004//workspace/experiments/data/P1_features_7_4.data","130.149.237.16:8005//workspace/experiments/data/P1_features_7_5.data","130.149.237.18:8006//workspace/experiments/data/P1_features_7_6.data","130.149.237.19:8007//workspace/experiments/data/P1_features_7_7.data"), ranges=list(list(0,0),list(14286,68),list(14286,0),list(28572,68),list(28572,0),list(42858,68),list(42858,0),list(57144,68),list(57144,0),list(71430,68),list(71430,0),list(85716,68),list(85716,0),list(100000,68)));
+
+# a) basic exploration
+X1H = X;
+X1H = replace(target=X1H, pattern=NaN, replacement=0);
+
+P = cor(X1H);
+P = P - diag(diag(P));
+corrMin = min(P);
+corrMax = max(P);
+
+[X1H2D, pcaComponents, pcaCentering, pcaScale] = pca(X=X1H, K=2);
+[C, clusterAssignment] = kmeans(X=X1H2D, k=4, runs=1, seed=2026072701);
+
+# b) anomaly models for the five production sub-components
+X = X1H;
+select = matrix(0, 5, ncol(X));
+select[1,] = t(table(as.matrix(list(1,3,5,7,9)), 1, nrow=ncol(X), 1));
+select[2,] = t(table(as.matrix(list(2,4,6,8,10)), 1, nrow=ncol(X), 1));
+select[3,] = t(table(seq(11,17), 1, nrow=ncol(X), 1));
+select[4,] = t(table(seq(18,25), 1, nrow=ncol(X), 1));
+select[5,] = t(table(seq(26,ncol(X)), 1, nrow=ncol(X), 1));
+
+B = matrix(0, nrow(select), nrow(X));
+for(i in 1:nrow(select)) {
+  tmp = runAnomalyPipeline(X, select[i,]);
+  B[i,1:nrow(tmp)] = t(tmp);
+}
+
+# PrivateAggregation permits aggregate release, not row-level prediction export.
+checksum = corrMin + corrMax + sum(C) + sum(B);
+result = matrix(checksum, rows=1, cols=1);
+print("PIPELINE_RESULT,P1_FULL_AGGREGATE=" + checksum);
+write(result, "tmp/w1357/12b84afa85c5308f057b/result", format="binary");
+
+runAnomalyPipeline = function(Matrix[Double] Xin, Matrix[Double] I)
+  return(Matrix[Double] yhat)
+{
+  Xselected = removeEmpty(target=Xin, margin="cols", select=t(I));
+  Xscaled = scale(X=Xselected, center=TRUE, scale=TRUE);
+  dummyY = seq(1,nrow(Xscaled));
+  [Xtrain,Xtest,ytrain,ytest] = split(X=Xscaled, Y=dummyY, f=0.7,
+    cont=FALSE, seed=2026072701);
+  [labels,yhat,df,bic,mu,precChol,weight] = GMMCompat::m_gmm(X=Xtrain,
+    n_components=1, seed=2026072701);
+}
