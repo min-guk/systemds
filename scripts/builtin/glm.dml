@@ -447,8 +447,8 @@ m_glm = function(Matrix[Double] X, Matrix[Double] Y, Integer dfam=1,
 
       #####  END OF THE MAIN PART  #####
 
-    } else { print ("Input matrices are out of range.  Terminating the DML."); termination_code = 3; }
-  } else { print ("Distribution/Link not supported.  Terminating the DML."); termination_code = 4; }
+    } else { stop ("Input matrices are out of range.  Terminating the DML."); }
+  } else { stop ("Distribution/Link not supported.  Terminating the DML."); }
 
   str = "TERMINATION_CODE," + termination_code;
   str = append (str, "BETA_MIN," + min_beta);
