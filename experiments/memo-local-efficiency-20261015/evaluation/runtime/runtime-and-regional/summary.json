@@ -1,0 +1,1485 @@
+{
+  "comparisonContract": "identical DML bytes, image, CPU, memory, cost defaults, and compile-only mode",
+  "compileRows": [
+    {
+      "algorithm": "EXACT",
+      "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": 0.0,
+        "fullCompileSeconds": 1.554648,
+        "fullInitialPlanningSeconds": 1.548126452,
+        "runtimeProgramSeconds": 0.027012,
+        "verified": true
+      },
+      "compileHeapMiB": 3072,
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "dualCertificates": [],
+      "dualOptions": {
+        "clusterCells": 4096,
+        "diagnosticNodes": 9223372036854775807,
+        "diagnostics": false,
+        "directCells": 2000000,
+        "directExact": true,
+        "factorCells": 256,
+        "factorDiagnostics": false,
+        "factorDiagnosticsMaxFactors": 10000,
+        "improveSeed": false,
+        "localImproveSeed": false,
+        "localMessages": true,
+        "memoryBytes": 9223372036854775807,
+        "seedWork": 100000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": null,
+      "memoPlans": [
+        {
+          "algorithm": "EXACT",
+          "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "phaseNanos": {
+            "facts": 48420018,
+            "model": 152311211,
+            "optimization": 168369882,
+            "projection": 65641182,
+            "rules": 306342127
+          },
+          "planningNanos": 741084420,
+          "status": "OPTIMAL"
+        }
+      ],
+      "peakContainerMemoryUsageBytes": 186646528,
+      "phase": "source-fullcompile",
+      "returncode": 0,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "status": "passed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 2.823458284139633,
+      "workers": 3,
+      "workload": "gnmf"
+    },
+    {
+      "algorithm": "MEMO_GLOBAL",
+      "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": 0.0,
+        "fullCompileSeconds": 1.404208,
+        "fullInitialPlanningSeconds": 1.398375255,
+        "runtimeProgramSeconds": 0.026858,
+        "verified": true
+      },
+      "compileHeapMiB": 3072,
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "dualCertificates": [
+        {
+          "certified": true,
+          "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "progression": [
+            {
+              "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "nodes": 0,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            }
+          ],
+          "reason": "elimination",
+          "relativeGap": "0.0",
+          "route": "DIRECT",
+          "statistics": {
+            "bestUpperNanos": 157441289,
+            "boundCacheHits": 0,
+            "boundNanos": 0,
+            "cacheBytes": 0,
+            "certificateNanos": 160889733,
+            "clusterBuildNanos": 0,
+            "clusterBytes": 0,
+            "clusterCacheHits": 0,
+            "clusterCells": 0,
+            "clusterGroups": 0,
+            "clusterQueries": 0,
+            "clusterQueryNanos": 0,
+            "directAttempts": 1,
+            "directExactSolves": 1,
+            "exactCells": 3308,
+            "firstUpperNanos": 157440928,
+            "kernelNanos": 149054124,
+            "maxPending": 0,
+            "nodes": 0,
+            "peakEstimatedBytes": 1231072,
+            "pruned": 0,
+            "relaxationCalls": 0,
+            "repairCalls": 0,
+            "searchNanos": 0,
+            "seedAttempts": 0,
+            "seedEvaluations": 0,
+            "seedNanos": 0,
+            "setupNanos": 0,
+            "validationNanos": 5701375
+          },
+          "statisticsRaw": "Statistics[directExactSolves=1, directAttempts=1, seedAttempts=0, seedEvaluations=0, repairCalls=0, nodes=0, relaxationCalls=0, boundCacheHits=0, exactCells=3308, pruned=0, maxPending=0, peakEstimatedBytes=1231072, cacheBytes=0, kernelNanos=149054124, seedNanos=0, boundNanos=0, searchNanos=0, setupNanos=0, validationNanos=5701375, firstUpperNanos=157440928, bestUpperNanos=157441289, certificateNanos=160889733, clusterGroups=0, clusterCells=0, clusterQueries=0, clusterCacheHits=0, clusterBytes=0, clusterBuildNanos=0, clusterQueryNanos=0, route=DIRECT]",
+          "status": "OPTIMAL",
+          "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+        }
+      ],
+      "dualOptions": {
+        "clusterCells": 4096,
+        "diagnosticNodes": 9223372036854775807,
+        "diagnostics": false,
+        "directCells": 2000000,
+        "directExact": true,
+        "factorCells": 256,
+        "factorDiagnostics": false,
+        "factorDiagnosticsMaxFactors": 10000,
+        "improveSeed": false,
+        "localImproveSeed": false,
+        "localMessages": true,
+        "memoryBytes": 9223372036854775807,
+        "seedWork": 100000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": null,
+      "memoPlans": [
+        {
+          "algorithm": "MEMO_GLOBAL",
+          "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "phaseNanos": {
+            "facts": 38286881,
+            "model": 137218006,
+            "optimization": 181461658,
+            "projection": 76003727,
+            "rules": 252438230
+          },
+          "planningNanos": 685408502,
+          "status": "OPTIMAL"
+        }
+      ],
+      "peakContainerMemoryUsageBytes": 162424422,
+      "phase": "source-fullcompile",
+      "returncode": 0,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "status": "passed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 2.6506967321038246,
+      "workers": 3,
+      "workload": "gnmf"
+    },
+    {
+      "algorithm": "MEMO_LOCAL",
+      "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": 0.0,
+        "fullCompileSeconds": 1.67081,
+        "fullInitialPlanningSeconds": 1.663719253,
+        "runtimeProgramSeconds": 0.030482,
+        "verified": true
+      },
+      "compileHeapMiB": 3072,
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "dualCertificates": [
+        {
+          "certified": true,
+          "lowerBound": "217.001402574278923762021458636947007780904073115380015224218368530273437500",
+          "progression": [
+            {
+              "lowerBound": "8.802694036962588960708103806270322100324676739546703174710273742675781250",
+              "nodes": 0,
+              "upperBound": "null"
+            },
+            {
+              "lowerBound": "8.802694036962588960708103806270322100324676739546703174710273742675781250",
+              "nodes": 0,
+              "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "8.843129217626651558407729973284097657604263531538890674710273742675781250",
+              "nodes": 0,
+              "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "8.843260956408580574521909078208187215963675953389611095190048217773437500",
+              "nodes": 0,
+              "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "8.862117882372936044425500189732763933747605733515229076147079467773437500",
+              "nodes": 0,
+              "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "12.523649042250712764338600767929227108865575246454682201147079467773437500",
+              "nodes": 0,
+              "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "16.942039087416728009642326346125690283983544759394135326147079467773437500",
+              "nodes": 0,
+              "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "21.290959222914774800265376474613793211787537984491791576147079467773437500",
+              "nodes": 0,
+              "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "68.990608997148276520298622348833367246001557759882416576147079467773437500",
+              "nodes": 0,
+              "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "72.660493074856202094017816638712309318393067769648041576147079467773437500",
+              "nodes": 0,
+              "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "79.983555394611755533844017795105235668629006795526947826147079467773437500",
+              "nodes": 0,
+              "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "85.921745397053162079163342345396875421315030507685150951147079467773437500",
+              "nodes": 0,
+              "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "191.692174874744825224030449239195211807995633535028900951147079467773437500",
+              "nodes": 0,
+              "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "191.692174874744825224030449239195211807995633535028900951147079467773437500",
+              "nodes": 0,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "191.955609055958204135692786484242849942560837916971649974584579467773437500",
+              "nodes": 0,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "191.965037518940381870644582040005138301452802807034458965063095092773437500",
+              "nodes": 0,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "191.972982520161084995349592312915282255048055048973765224218368530273437500",
+              "nodes": 0,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "217.001402574278923762021458636947007780904073115380015224218368530273437500",
+              "nodes": 0,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            }
+          ],
+          "reason": "Incremental message certificate",
+          "relativeGap": "0.00021162447934948894",
+          "route": "LOCAL_CERTIFICATE_FIRST",
+          "statistics": {
+            "bestUpperNanos": 343452008,
+            "boundCacheHits": 0,
+            "boundNanos": 2007552,
+            "cacheBytes": 0,
+            "certificateNanos": 383306439,
+            "clusterBuildNanos": 200965313,
+            "clusterBytes": 357664,
+            "clusterCacheHits": 0,
+            "clusterCells": 2885,
+            "clusterGroups": 83,
+            "clusterQueries": 83,
+            "clusterQueryNanos": 0,
+            "directAttempts": 0,
+            "directExactSolves": 0,
+            "exactCells": 2885,
+            "firstUpperNanos": 120519158,
+            "kernelNanos": 200965313,
+            "maxPending": 0,
+            "nodes": 0,
+            "peakEstimatedBytes": 5210400,
+            "pruned": 0,
+            "relaxationCalls": 85,
+            "repairCalls": 1,
+            "searchNanos": 0,
+            "seedAttempts": 1,
+            "seedEvaluations": 319,
+            "seedNanos": 101829301,
+            "setupNanos": 9285983,
+            "validationNanos": 9723191
+          },
+          "statisticsRaw": "Statistics[directExactSolves=0, directAttempts=0, seedAttempts=1, seedEvaluations=319, repairCalls=1, nodes=0, relaxationCalls=85, boundCacheHits=0, exactCells=2885, pruned=0, maxPending=0, peakEstimatedBytes=5210400, cacheBytes=0, kernelNanos=200965313, seedNanos=101829301, boundNanos=2007552, searchNanos=0, setupNanos=9285983, validationNanos=9723191, firstUpperNanos=120519158, bestUpperNanos=343452008, certificateNanos=383306439, clusterGroups=83, clusterCells=2885, clusterQueries=83, clusterCacheHits=0, clusterBytes=357664, clusterBuildNanos=200965313, clusterQueryNanos=0, route=LOCAL_CERTIFICATE_FIRST]",
+          "status": "EPSILON_OPTIMAL",
+          "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+        }
+      ],
+      "dualOptions": {
+        "clusterCells": 4096,
+        "diagnosticNodes": 9223372036854775807,
+        "diagnostics": false,
+        "directCells": 2000000,
+        "directExact": true,
+        "factorCells": 256,
+        "factorDiagnostics": false,
+        "factorDiagnosticsMaxFactors": 10000,
+        "improveSeed": false,
+        "localImproveSeed": false,
+        "localMessages": true,
+        "memoryBytes": 9223372036854775807,
+        "seedWork": 100000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": null,
+      "memoPlans": [
+        {
+          "algorithm": "MEMO_LOCAL",
+          "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "phaseNanos": {
+            "facts": 46141510,
+            "model": 170581796,
+            "optimization": 416047094,
+            "projection": 71167709,
+            "rules": 294196148
+          },
+          "planningNanos": 998134257,
+          "status": "EPSILON_OPTIMAL"
+        }
+      ],
+      "peakContainerMemoryUsageBytes": 175636480,
+      "phase": "source-fullcompile",
+      "returncode": 0,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "status": "passed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 2.827369026839733,
+      "workers": 3,
+      "workload": "gnmf"
+    }
+  ],
+  "complete": true,
+  "groups": {
+    "ml:gnmf:w3:source-fullcompile": {
+      "exactComparison": {
+        "independentOptimumSource": "Memo EXACT on identical frozen model",
+        "reason": null,
+        "requestedGuaranteeEstablished": true,
+        "status": "passed",
+        "validBounds": true
+      },
+      "rows": [
+        {
+          "algorithm": "EXACT",
+          "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": 0.0,
+            "fullCompileSeconds": 1.554648,
+            "fullInitialPlanningSeconds": 1.548126452,
+            "runtimeProgramSeconds": 0.027012,
+            "verified": true
+          },
+          "compileHeapMiB": 3072,
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "dualCertificates": [],
+          "dualOptions": {
+            "clusterCells": 4096,
+            "diagnosticNodes": 9223372036854775807,
+            "diagnostics": false,
+            "directCells": 2000000,
+            "directExact": true,
+            "factorCells": 256,
+            "factorDiagnostics": false,
+            "factorDiagnosticsMaxFactors": 10000,
+            "improveSeed": false,
+            "localImproveSeed": false,
+            "localMessages": true,
+            "memoryBytes": 9223372036854775807,
+            "seedWork": 100000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": null,
+          "memoPlans": [
+            {
+              "algorithm": "EXACT",
+              "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "phaseNanos": {
+                "facts": 48420018,
+                "model": 152311211,
+                "optimization": 168369882,
+                "projection": 65641182,
+                "rules": 306342127
+              },
+              "planningNanos": 741084420,
+              "status": "OPTIMAL"
+            }
+          ],
+          "peakContainerMemoryUsageBytes": 186646528,
+          "phase": "source-fullcompile",
+          "returncode": 0,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 2.823458284139633,
+          "workers": 3,
+          "workload": "gnmf"
+        },
+        {
+          "algorithm": "MEMO_GLOBAL",
+          "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": 0.0,
+            "fullCompileSeconds": 1.404208,
+            "fullInitialPlanningSeconds": 1.398375255,
+            "runtimeProgramSeconds": 0.026858,
+            "verified": true
+          },
+          "compileHeapMiB": 3072,
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "dualCertificates": [
+            {
+              "certified": true,
+              "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "progression": [
+                {
+                  "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+                  "nodes": 0,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                }
+              ],
+              "reason": "elimination",
+              "relativeGap": "0.0",
+              "route": "DIRECT",
+              "statistics": {
+                "bestUpperNanos": 157441289,
+                "boundCacheHits": 0,
+                "boundNanos": 0,
+                "cacheBytes": 0,
+                "certificateNanos": 160889733,
+                "clusterBuildNanos": 0,
+                "clusterBytes": 0,
+                "clusterCacheHits": 0,
+                "clusterCells": 0,
+                "clusterGroups": 0,
+                "clusterQueries": 0,
+                "clusterQueryNanos": 0,
+                "directAttempts": 1,
+                "directExactSolves": 1,
+                "exactCells": 3308,
+                "firstUpperNanos": 157440928,
+                "kernelNanos": 149054124,
+                "maxPending": 0,
+                "nodes": 0,
+                "peakEstimatedBytes": 1231072,
+                "pruned": 0,
+                "relaxationCalls": 0,
+                "repairCalls": 0,
+                "searchNanos": 0,
+                "seedAttempts": 0,
+                "seedEvaluations": 0,
+                "seedNanos": 0,
+                "setupNanos": 0,
+                "validationNanos": 5701375
+              },
+              "statisticsRaw": "Statistics[directExactSolves=1, directAttempts=1, seedAttempts=0, seedEvaluations=0, repairCalls=0, nodes=0, relaxationCalls=0, boundCacheHits=0, exactCells=3308, pruned=0, maxPending=0, peakEstimatedBytes=1231072, cacheBytes=0, kernelNanos=149054124, seedNanos=0, boundNanos=0, searchNanos=0, setupNanos=0, validationNanos=5701375, firstUpperNanos=157440928, bestUpperNanos=157441289, certificateNanos=160889733, clusterGroups=0, clusterCells=0, clusterQueries=0, clusterCacheHits=0, clusterBytes=0, clusterBuildNanos=0, clusterQueryNanos=0, route=DIRECT]",
+              "status": "OPTIMAL",
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            }
+          ],
+          "dualOptions": {
+            "clusterCells": 4096,
+            "diagnosticNodes": 9223372036854775807,
+            "diagnostics": false,
+            "directCells": 2000000,
+            "directExact": true,
+            "factorCells": 256,
+            "factorDiagnostics": false,
+            "factorDiagnosticsMaxFactors": 10000,
+            "improveSeed": false,
+            "localImproveSeed": false,
+            "localMessages": true,
+            "memoryBytes": 9223372036854775807,
+            "seedWork": 100000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": null,
+          "memoPlans": [
+            {
+              "algorithm": "MEMO_GLOBAL",
+              "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "phaseNanos": {
+                "facts": 38286881,
+                "model": 137218006,
+                "optimization": 181461658,
+                "projection": 76003727,
+                "rules": 252438230
+              },
+              "planningNanos": 685408502,
+              "status": "OPTIMAL"
+            }
+          ],
+          "peakContainerMemoryUsageBytes": 162424422,
+          "phase": "source-fullcompile",
+          "returncode": 0,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 2.6506967321038246,
+          "workers": 3,
+          "workload": "gnmf"
+        },
+        {
+          "algorithm": "MEMO_LOCAL",
+          "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": 0.0,
+            "fullCompileSeconds": 1.67081,
+            "fullInitialPlanningSeconds": 1.663719253,
+            "runtimeProgramSeconds": 0.030482,
+            "verified": true
+          },
+          "compileHeapMiB": 3072,
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "dualCertificates": [
+            {
+              "certified": true,
+              "lowerBound": "217.001402574278923762021458636947007780904073115380015224218368530273437500",
+              "progression": [
+                {
+                  "lowerBound": "8.802694036962588960708103806270322100324676739546703174710273742675781250",
+                  "nodes": 0,
+                  "upperBound": "null"
+                },
+                {
+                  "lowerBound": "8.802694036962588960708103806270322100324676739546703174710273742675781250",
+                  "nodes": 0,
+                  "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "8.843129217626651558407729973284097657604263531538890674710273742675781250",
+                  "nodes": 0,
+                  "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "8.843260956408580574521909078208187215963675953389611095190048217773437500",
+                  "nodes": 0,
+                  "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "8.862117882372936044425500189732763933747605733515229076147079467773437500",
+                  "nodes": 0,
+                  "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "12.523649042250712764338600767929227108865575246454682201147079467773437500",
+                  "nodes": 0,
+                  "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "16.942039087416728009642326346125690283983544759394135326147079467773437500",
+                  "nodes": 0,
+                  "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "21.290959222914774800265376474613793211787537984491791576147079467773437500",
+                  "nodes": 0,
+                  "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "68.990608997148276520298622348833367246001557759882416576147079467773437500",
+                  "nodes": 0,
+                  "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "72.660493074856202094017816638712309318393067769648041576147079467773437500",
+                  "nodes": 0,
+                  "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "79.983555394611755533844017795105235668629006795526947826147079467773437500",
+                  "nodes": 0,
+                  "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "85.921745397053162079163342345396875421315030507685150951147079467773437500",
+                  "nodes": 0,
+                  "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "191.692174874744825224030449239195211807995633535028900951147079467773437500",
+                  "nodes": 0,
+                  "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "191.692174874744825224030449239195211807995633535028900951147079467773437500",
+                  "nodes": 0,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "191.955609055958204135692786484242849942560837916971649974584579467773437500",
+                  "nodes": 0,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "191.965037518940381870644582040005138301452802807034458965063095092773437500",
+                  "nodes": 0,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "191.972982520161084995349592312915282255048055048973765224218368530273437500",
+                  "nodes": 0,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "217.001402574278923762021458636947007780904073115380015224218368530273437500",
+                  "nodes": 0,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                }
+              ],
+              "reason": "Incremental message certificate",
+              "relativeGap": "0.00021162447934948894",
+              "route": "LOCAL_CERTIFICATE_FIRST",
+              "statistics": {
+                "bestUpperNanos": 343452008,
+                "boundCacheHits": 0,
+                "boundNanos": 2007552,
+                "cacheBytes": 0,
+                "certificateNanos": 383306439,
+                "clusterBuildNanos": 200965313,
+                "clusterBytes": 357664,
+                "clusterCacheHits": 0,
+                "clusterCells": 2885,
+                "clusterGroups": 83,
+                "clusterQueries": 83,
+                "clusterQueryNanos": 0,
+                "directAttempts": 0,
+                "directExactSolves": 0,
+                "exactCells": 2885,
+                "firstUpperNanos": 120519158,
+                "kernelNanos": 200965313,
+                "maxPending": 0,
+                "nodes": 0,
+                "peakEstimatedBytes": 5210400,
+                "pruned": 0,
+                "relaxationCalls": 85,
+                "repairCalls": 1,
+                "searchNanos": 0,
+                "seedAttempts": 1,
+                "seedEvaluations": 319,
+                "seedNanos": 101829301,
+                "setupNanos": 9285983,
+                "validationNanos": 9723191
+              },
+              "statisticsRaw": "Statistics[directExactSolves=0, directAttempts=0, seedAttempts=1, seedEvaluations=319, repairCalls=1, nodes=0, relaxationCalls=85, boundCacheHits=0, exactCells=2885, pruned=0, maxPending=0, peakEstimatedBytes=5210400, cacheBytes=0, kernelNanos=200965313, seedNanos=101829301, boundNanos=2007552, searchNanos=0, setupNanos=9285983, validationNanos=9723191, firstUpperNanos=120519158, bestUpperNanos=343452008, certificateNanos=383306439, clusterGroups=83, clusterCells=2885, clusterQueries=83, clusterCacheHits=0, clusterBytes=357664, clusterBuildNanos=200965313, clusterQueryNanos=0, route=LOCAL_CERTIFICATE_FIRST]",
+              "status": "EPSILON_OPTIMAL",
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            }
+          ],
+          "dualOptions": {
+            "clusterCells": 4096,
+            "diagnosticNodes": 9223372036854775807,
+            "diagnostics": false,
+            "directCells": 2000000,
+            "directExact": true,
+            "factorCells": 256,
+            "factorDiagnostics": false,
+            "factorDiagnosticsMaxFactors": 10000,
+            "improveSeed": false,
+            "localImproveSeed": false,
+            "localMessages": true,
+            "memoryBytes": 9223372036854775807,
+            "seedWork": 100000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": null,
+          "memoPlans": [
+            {
+              "algorithm": "MEMO_LOCAL",
+              "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "phaseNanos": {
+                "facts": 46141510,
+                "model": 170581796,
+                "optimization": 416047094,
+                "projection": 71167709,
+                "rules": 294196148
+              },
+              "planningNanos": 998134257,
+              "status": "EPSILON_OPTIMAL"
+            }
+          ],
+          "peakContainerMemoryUsageBytes": 175636480,
+          "phase": "source-fullcompile",
+          "returncode": 0,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 2.827369026839733,
+          "workers": 3,
+          "workload": "gnmf"
+        }
+      ],
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a"
+    }
+  },
+  "regionalComparison": {
+    "performed": false,
+    "reason": "real-workload Regional model is not proven equivalent; equal-factor synthetic comparison is in synthetic"
+  },
+  "runtimeRows": [
+    {
+      "algorithm": "ALL_ALGORITHMS",
+      "compileOnly": false,
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "failureCategory": null,
+      "network": "bridge",
+      "peakContainerMemoryUsageBytes": 331769446,
+      "phase": "federated-runtime-smoke",
+      "returncode": 0,
+      "schema": "systemds-memo-tree-dp-runtime/v1",
+      "status": "passed",
+      "tests": 18,
+      "wallSeconds": 11.54309430718422
+    }
+  ],
+  "schema": "systemds-memo-tree-dp-benchmark/v1",
+  "synthetic": {
+    "failureCategory": null,
+    "legacyRegional": [
+      {
+        "case": "adversarial-shared-wide",
+        "categoricalCost": "1.4375",
+        "dualGlobalCost": "1.4375",
+        "dualLocalCost": "1.4375",
+        "memoCost": "1.4375",
+        "regionalBlockAssignments": "198",
+        "regionalCost": "1.4375",
+        "regionalNanos": "52335936",
+        "treeCost": "1.4375"
+      }
+    ],
+    "legacyRegionalCompared": true,
+    "memorySemantics": {
+      "peakContainerMemoryUsageBytes": "high-water of Docker MemUsage samples; includes charged cache and is not RSS",
+      "peakPoolBytes": "per-process JVM pool high-water; sequential algorithms retain prior heap state"
+    },
+    "peakContainerMemoryUsageBytes": 23194501,
+    "phase": "synthetic-same-model",
+    "returncode": 0,
+    "rows": [
+      {
+        "algorithm": "EXACT",
+        "case": "adversarial-shared-wide",
+        "lowerBound": "1.1875",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "0",
+        "meanNanos": "2211937",
+        "meanNodes": "207",
+        "oracle": "enumeration",
+        "owners": "6",
+        "peakPoolBytes": "13152448",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.1875"
+      },
+      {
+        "algorithm": "TREE_DP_GLOBAL",
+        "case": "adversarial-shared-wide",
+        "lowerBound": "1.1875",
+        "meanConflictNanos": "118398",
+        "meanConflicts": "7",
+        "meanDpNanos": "1910090",
+        "meanNanos": "2491383",
+        "meanNodes": "20",
+        "oracle": "enumeration",
+        "owners": "6",
+        "peakPoolBytes": "15876056",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.1875"
+      },
+      {
+        "algorithm": "TREE_DP_LOCAL",
+        "case": "adversarial-shared-wide",
+        "lowerBound": "1.1875",
+        "meanConflictNanos": "116259",
+        "meanConflicts": "7",
+        "meanDpNanos": "1048621",
+        "meanNanos": "1642209",
+        "meanNodes": "20",
+        "oracle": "enumeration",
+        "owners": "6",
+        "peakPoolBytes": "18147720",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.1875"
+      },
+      {
+        "algorithm": "MEMO_GLOBAL",
+        "case": "adversarial-shared-wide",
+        "lowerBound": "1.1875",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "2302491",
+        "meanNanos": "2897974",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "6",
+        "peakPoolBytes": "21785176",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.1875"
+      },
+      {
+        "algorithm": "MEMO_LOCAL",
+        "case": "adversarial-shared-wide",
+        "lowerBound": "1.1875",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "2971891",
+        "meanNanos": "4583806",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "6",
+        "peakPoolBytes": "14157248",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.1875"
+      },
+      {
+        "algorithm": "MEMO_GLOBAL_SEARCH",
+        "case": "adversarial-shared-wide",
+        "lowerBound": "1.1875",
+        "meanConflictNanos": "3981768",
+        "meanConflicts": "0",
+        "meanDpNanos": "0",
+        "meanNanos": "5817637",
+        "meanNodes": "6",
+        "oracle": "enumeration",
+        "owners": "6",
+        "peakPoolBytes": "23062752",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.1875"
+      },
+      {
+        "algorithm": "MEMO_LOCAL_SEARCH",
+        "case": "adversarial-shared-wide",
+        "lowerBound": "1.1875",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "1695312",
+        "meanNanos": "2760868",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "6",
+        "peakPoolBytes": "27484832",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.1875"
+      },
+      {
+        "algorithm": "MEMO_LOCAL_NO_SEED",
+        "case": "adversarial-shared-wide",
+        "lowerBound": "1.1875",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "1460560",
+        "meanNanos": "2389412",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "6",
+        "peakPoolBytes": "31821928",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.1875"
+      },
+      {
+        "algorithm": "EXACT",
+        "case": "tree-32",
+        "lowerBound": "7.96875",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "0",
+        "meanNanos": "1924857",
+        "meanNodes": "64",
+        "oracle": "memo-exact",
+        "owners": "32",
+        "peakPoolBytes": "13488480",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "7.96875"
+      },
+      {
+        "algorithm": "TREE_DP_GLOBAL",
+        "case": "tree-32",
+        "lowerBound": "7.96875",
+        "meanConflictNanos": "37262",
+        "meanConflicts": "0",
+        "meanDpNanos": "710577",
+        "meanNanos": "1259175",
+        "meanNodes": "1",
+        "oracle": "memo-exact",
+        "owners": "32",
+        "peakPoolBytes": "15709072",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "7.96875"
+      },
+      {
+        "algorithm": "TREE_DP_LOCAL",
+        "case": "tree-32",
+        "lowerBound": "7.96875",
+        "meanConflictNanos": "51371",
+        "meanConflicts": "0",
+        "meanDpNanos": "579828",
+        "meanNanos": "982503",
+        "meanNodes": "1",
+        "oracle": "memo-exact",
+        "owners": "32",
+        "peakPoolBytes": "19936200",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "7.96875"
+      },
+      {
+        "algorithm": "MEMO_GLOBAL",
+        "case": "tree-32",
+        "lowerBound": "7.96875",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "1676902",
+        "meanNanos": "1963414",
+        "meanNodes": "0",
+        "oracle": "memo-exact",
+        "owners": "32",
+        "peakPoolBytes": "22146800",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "7.96875"
+      },
+      {
+        "algorithm": "MEMO_LOCAL",
+        "case": "tree-32",
+        "lowerBound": "7.78125",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "3737374",
+        "meanNanos": "5837612",
+        "meanNodes": "0",
+        "oracle": "memo-exact",
+        "owners": "32",
+        "peakPoolBytes": "37038144",
+        "repetitions": "7",
+        "status": "EPSILON_OPTIMAL",
+        "upperBound": "8.15625"
+      },
+      {
+        "algorithm": "EXACT",
+        "case": "cycle-16",
+        "lowerBound": "3.84375",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "0",
+        "meanNanos": "896873",
+        "meanNodes": "118",
+        "oracle": "enumeration",
+        "owners": "16",
+        "peakPoolBytes": "74983000",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "3.84375"
+      },
+      {
+        "algorithm": "TREE_DP_GLOBAL",
+        "case": "cycle-16",
+        "lowerBound": "3.84375",
+        "meanConflictNanos": "14305",
+        "meanConflicts": "0",
+        "meanDpNanos": "140227",
+        "meanNanos": "277664",
+        "meanNodes": "1",
+        "oracle": "enumeration",
+        "owners": "16",
+        "peakPoolBytes": "74988032",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "3.84375"
+      },
+      {
+        "algorithm": "TREE_DP_LOCAL",
+        "case": "cycle-16",
+        "lowerBound": "3.84375",
+        "meanConflictNanos": "15457",
+        "meanConflicts": "0",
+        "meanDpNanos": "145347",
+        "meanNanos": "282626",
+        "meanNodes": "1",
+        "oracle": "enumeration",
+        "owners": "16",
+        "peakPoolBytes": "77093496",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "3.84375"
+      },
+      {
+        "algorithm": "MEMO_GLOBAL",
+        "case": "cycle-16",
+        "lowerBound": "3.84375",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "913377",
+        "meanNanos": "1065006",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "16",
+        "peakPoolBytes": "81309776",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "3.84375"
+      },
+      {
+        "algorithm": "MEMO_LOCAL",
+        "case": "cycle-16",
+        "lowerBound": "3.78125",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "1821455",
+        "meanNanos": "2603183",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "16",
+        "peakPoolBytes": "89781104",
+        "repetitions": "7",
+        "status": "EPSILON_OPTIMAL",
+        "upperBound": "3.96875"
+      },
+      {
+        "algorithm": "EXACT",
+        "case": "diamond-8",
+        "lowerBound": "1.84375",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "0",
+        "meanNanos": "339173",
+        "meanNodes": "38",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "14297160",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.84375"
+      },
+      {
+        "algorithm": "TREE_DP_GLOBAL",
+        "case": "diamond-8",
+        "lowerBound": "1.84375",
+        "meanConflictNanos": "15311",
+        "meanConflicts": "2",
+        "meanDpNanos": "112995",
+        "meanNanos": "229085",
+        "meanNodes": "5",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "14308512",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.84375"
+      },
+      {
+        "algorithm": "TREE_DP_LOCAL",
+        "case": "diamond-8",
+        "lowerBound": "1.84375",
+        "meanConflictNanos": "14318",
+        "meanConflicts": "2",
+        "meanDpNanos": "109419",
+        "meanNanos": "210483",
+        "meanNodes": "5",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "16405664",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.84375"
+      },
+      {
+        "algorithm": "MEMO_GLOBAL",
+        "case": "diamond-8",
+        "lowerBound": "1.84375",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "466785",
+        "meanNanos": "596076",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "18558104",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.84375"
+      },
+      {
+        "algorithm": "MEMO_LOCAL",
+        "case": "diamond-8",
+        "lowerBound": "1.78125",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "647083",
+        "meanNanos": "1152721",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "20693224",
+        "repetitions": "7",
+        "status": "EPSILON_OPTIMAL",
+        "upperBound": "1.84375"
+      },
+      {
+        "algorithm": "MEMO_GLOBAL_SEARCH",
+        "case": "diamond-8",
+        "lowerBound": "1.84375",
+        "meanConflictNanos": "2987777",
+        "meanConflicts": "0",
+        "meanDpNanos": "0",
+        "meanNanos": "4501750",
+        "meanNodes": "14",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "39658480",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.84375"
+      },
+      {
+        "algorithm": "MEMO_LOCAL_SEARCH",
+        "case": "diamond-8",
+        "lowerBound": "1.78125",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "687663",
+        "meanNanos": "1204950",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "43885640",
+        "repetitions": "7",
+        "status": "EPSILON_OPTIMAL",
+        "upperBound": "1.84375"
+      },
+      {
+        "algorithm": "MEMO_LOCAL_NO_SEED",
+        "case": "diamond-8",
+        "lowerBound": "1.78125",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "691037",
+        "meanNanos": "1128793",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "45998384",
+        "repetitions": "7",
+        "status": "EPSILON_OPTIMAL",
+        "upperBound": "1.84375"
+      },
+      {
+        "algorithm": "EXACT",
+        "case": "shared-wide-8",
+        "lowerBound": "1.90625",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "0",
+        "meanNanos": "540836",
+        "meanNodes": "198",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "50205936",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.90625"
+      },
+      {
+        "algorithm": "TREE_DP_GLOBAL",
+        "case": "shared-wide-8",
+        "lowerBound": "1.90625",
+        "meanConflictNanos": "28232",
+        "meanConflicts": "4",
+        "meanDpNanos": "254235",
+        "meanNanos": "391772",
+        "meanNodes": "9",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "52307128",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.90625"
+      },
+      {
+        "algorithm": "TREE_DP_LOCAL",
+        "case": "shared-wide-8",
+        "lowerBound": "1.90625",
+        "meanConflictNanos": "27807",
+        "meanConflicts": "4",
+        "meanDpNanos": "255337",
+        "meanNanos": "392113",
+        "meanNodes": "9",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "52309432",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.90625"
+      },
+      {
+        "algorithm": "MEMO_GLOBAL",
+        "case": "shared-wide-8",
+        "lowerBound": "1.90625",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "673019",
+        "meanNanos": "797709",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "54465800",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.90625"
+      },
+      {
+        "algorithm": "MEMO_LOCAL",
+        "case": "shared-wide-8",
+        "lowerBound": "1.90625",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "751770",
+        "meanNanos": "1287365",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "60773184",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.90625"
+      },
+      {
+        "algorithm": "MEMO_GLOBAL_SEARCH",
+        "case": "shared-wide-8",
+        "lowerBound": "1.90625",
+        "meanConflictNanos": "4595329",
+        "meanConflicts": "0",
+        "meanDpNanos": "0",
+        "meanNanos": "6034959",
+        "meanNodes": "21",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "82115640",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.90625"
+      },
+      {
+        "algorithm": "MEMO_LOCAL_SEARCH",
+        "case": "shared-wide-8",
+        "lowerBound": "1.90625",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "765237",
+        "meanNanos": "1291453",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "88419096",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.90625"
+      },
+      {
+        "algorithm": "MEMO_LOCAL_NO_SEED",
+        "case": "shared-wide-8",
+        "lowerBound": "1.90625",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "1065922",
+        "meanNanos": "2153769",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "8",
+        "peakPoolBytes": "90516248",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "1.90625"
+      },
+      {
+        "algorithm": "EXACT",
+        "case": "epsilon-boundary-3",
+        "lowerBound": "100",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "0",
+        "meanNanos": "147333",
+        "meanNodes": "14",
+        "oracle": "enumeration",
+        "owners": "3",
+        "peakPoolBytes": "17125184",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "100"
+      },
+      {
+        "algorithm": "TREE_DP_GLOBAL",
+        "case": "epsilon-boundary-3",
+        "lowerBound": "100",
+        "meanConflictNanos": "6411",
+        "meanConflicts": "2",
+        "meanDpNanos": "63329",
+        "meanNanos": "141534",
+        "meanNodes": "5",
+        "oracle": "enumeration",
+        "owners": "3",
+        "peakPoolBytes": "17142392",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "100"
+      },
+      {
+        "algorithm": "TREE_DP_LOCAL",
+        "case": "epsilon-boundary-3",
+        "lowerBound": "100",
+        "meanConflictNanos": "1993",
+        "meanConflicts": "0",
+        "meanDpNanos": "21385",
+        "meanNanos": "76210",
+        "meanNodes": "1",
+        "oracle": "enumeration",
+        "owners": "3",
+        "peakPoolBytes": "17150440",
+        "repetitions": "7",
+        "status": "EPSILON_OPTIMAL",
+        "upperBound": "105"
+      },
+      {
+        "algorithm": "MEMO_GLOBAL",
+        "case": "epsilon-boundary-3",
+        "lowerBound": "100",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "268205",
+        "meanNanos": "398085",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "3",
+        "peakPoolBytes": "17162344",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "100"
+      },
+      {
+        "algorithm": "MEMO_LOCAL",
+        "case": "epsilon-boundary-3",
+        "lowerBound": "100",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "0",
+        "meanNanos": "190049",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "3",
+        "peakPoolBytes": "19265880",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "100"
+      },
+      {
+        "algorithm": "MEMO_GLOBAL_SEARCH",
+        "case": "epsilon-boundary-3",
+        "lowerBound": "100",
+        "meanConflictNanos": "781454",
+        "meanConflicts": "0",
+        "meanDpNanos": "0",
+        "meanNanos": "1337380",
+        "meanNodes": "3",
+        "oracle": "enumeration",
+        "owners": "3",
+        "peakPoolBytes": "23511416",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "100"
+      },
+      {
+        "algorithm": "MEMO_LOCAL_SEARCH",
+        "case": "epsilon-boundary-3",
+        "lowerBound": "100",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "0",
+        "meanNanos": "190753",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "3",
+        "peakPoolBytes": "23511416",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "100"
+      },
+      {
+        "algorithm": "MEMO_LOCAL_NO_SEED",
+        "case": "epsilon-boundary-3",
+        "lowerBound": "100",
+        "meanConflictNanos": "0",
+        "meanConflicts": "0",
+        "meanDpNanos": "128438",
+        "meanNanos": "430711",
+        "meanNodes": "0",
+        "oracle": "enumeration",
+        "owners": "3",
+        "peakPoolBytes": "23516208",
+        "repetitions": "7",
+        "status": "OPTIMAL",
+        "upperBound": "100"
+      }
+    ],
+    "schema": "systemds-memo-tree-dp-synthetic/v1",
+    "status": "passed",
+    "wallSeconds": 2.081777848303318
+  }
+}

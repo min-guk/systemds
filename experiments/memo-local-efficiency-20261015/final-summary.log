@@ -1,0 +1,3 @@
+jobs=29 rows=165 certificates=104 newLocalRows=40 valid=True
+rows=165 groups=41
+paired rows=63; same-source/bounds/selected-structural-counter checks passed

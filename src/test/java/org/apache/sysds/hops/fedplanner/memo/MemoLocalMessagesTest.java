@@ -19,6 +19,56 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class MemoLocalMessagesTest {
+	@Test public void rootBoundIsReusedAfterEveryAtomicPublication() {
+		int[] sizes={2,2}; double[][] nativeValues={{-2,3},{1,-1}};
+		AtomicInteger evaluations=new AtomicInteger();
+		CostTerm cost=new CostTerm(new int[] {0,1},r -> {
+			evaluations.incrementAndGet(); return r[0]==r[1] ? -4 : 6;
+		},-4);
+		Check unknown=new Check(2,new int[] {0,1},r -> r[0]==0 && r[1]==1 ? Truth.UNKNOWN:Truth.YES);
+		MemoLocalMessages messages=new MemoLocalMessages(sizes,nativeValues,List.of(unknown),List.of(cost),domains(sizes),
+			new MemoResourcePolicy(Long.MAX_VALUE));
+		BigDecimal prior=messages.initialBound();
+		while(!messages.complete()) {
+			Assert.assertTrue(messages.refine(16).changed());
+			BigDecimal current=messages.initialBound();
+			Assert.assertTrue(current.compareTo(prior)>=0); prior=current;
+			int before=evaluations.get();
+			for(int repeat=0;repeat<10;repeat++) {
+				Assert.assertEquals(0,current.compareTo(messages.initialBound()));
+				Assert.assertEquals(0,current.compareTo(messages.lowerBound(domains(sizes))));
+			}
+			Assert.assertEquals("root queries must not reevaluate consumed factors",before,evaluations.get());
+		}
+		Assert.assertTrue(prior.compareTo(exhaustive(sizes,nativeValues,List.of(unknown),List.of(cost)))<=0);
+		Assert.assertTrue(messages.statistics().rootBoundQueries()>20);
+		Assert.assertEquals(0,messages.statistics().conditionalBoundQueries());
+	}
+
+	@Test public void conditionalRestrictionDoesNotReuseUnconditionalRootMinimum() {
+		int[] sizes={2,2}; double[][] nativeValues={{0,0},{0,0}};
+		CostTerm cost=new CostTerm(new int[] {0,1},r -> r[0]==0 ? (r[1]==0 ? 0:9):20,0);
+		MemoLocalMessages messages=new MemoLocalMessages(sizes,nativeValues,List.of(),List.of(cost),domains(sizes),
+			new MemoResourcePolicy(Long.MAX_VALUE));
+		Assert.assertTrue(messages.refine(8).changed());
+		Assert.assertEquals(0,BigDecimal.ZERO.compareTo(messages.initialBound()));
+		BitSet[] restricted=domains(sizes); restricted[1].clear(); restricted[1].set(1);
+		Assert.assertEquals(0,new BigDecimal("9").compareTo(messages.lowerBound(restricted)));
+		Assert.assertEquals(1,messages.statistics().conditionalBoundQueries());
+	}
+
+	@Test public void failedPublicationLeavesCachedRootBoundUnchanged() {
+		int[] sizes={2,2}; double[][] nativeValues={{-1,2},{0,3}};
+		CostTerm cost=new CostTerm(new int[] {0,1},r -> r[0]==r[1] ? -2:4,-2);
+		MemoLocalMessages messages=new MemoLocalMessages(sizes,nativeValues,List.of(),List.of(cost),domains(sizes),
+			new MemoResourcePolicy(Long.MAX_VALUE));
+		BigDecimal before=messages.initialBound();
+		MemoLocalMessages.Step rejected=messages.refine(16,new MemoResourcePolicy(0));
+		Assert.assertFalse(rejected.changed()); Assert.assertEquals("MEMORY_REJECTED",rejected.reason());
+		Assert.assertEquals(0,before.compareTo(messages.initialBound()));
+		Assert.assertEquals(0,messages.statistics().completedBuckets());
+	}
+
 	@Test public void invariantWideCheckAxesDoNotCreateArtificialJoin() {
 		int[] sizes={2,4,4,2,2};
 		double[][] nativeValues={{0,1},{0,0,0,0},{0,0,0,0},{0,1},{0,1}};

@@ -1,0 +1,3463 @@
+{
+  "note": "Positive speedup >1 means faster after. Same source, final bounds and selected Local structural counters checked; timings do not establish a certificate or statistical significance.",
+  "pairs": [
+    {
+      "repeat": 1,
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 2.13585368,
+        "after": 2.04676135,
+        "speedup": 1.0435284406753136
+      },
+      "compileSeconds": {
+        "before": 9.888567,
+        "after": 9.336278,
+        "speedup": 1.05915515797623
+      },
+      "containerMiB": {
+        "before": 832.0999994277954,
+        "after": 1019.0,
+        "speedup": 0.8165848865827237
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 1,
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 2.667771236,
+        "after": 2.702695699,
+        "speedup": 0.9870779152040972
+      },
+      "compileSeconds": {
+        "before": 11.559861,
+        "after": 11.693644,
+        "speedup": 0.9885593404416962
+      },
+      "containerMiB": {
+        "before": 903.3999996185303,
+        "after": 803.5,
+        "speedup": 1.1243310511742755
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 2.51969369,
+        "after": 2.552905392,
+        "speedup": 0.9869906256204891
+      },
+      "certificateSeconds": {
+        "before": 2.523713902,
+        "after": 2.557181963,
+        "speedup": 0.98691213160258
+      }
+    },
+    {
+      "repeat": 1,
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 5.077641287,
+        "after": 1.857446021,
+        "speedup": 2.733668289464655
+      },
+      "compileSeconds": {
+        "before": 12.798585,
+        "after": 8.984604,
+        "speedup": 1.4245018478276839
+      },
+      "containerMiB": {
+        "before": 987.3999996185303,
+        "after": 1110.0159997940063,
+        "speedup": 0.8895367272199403
+      },
+      "seedSeconds": {
+        "before": 2.057802674,
+        "after": 0.635705086,
+        "speedup": 3.2370398150314625
+      },
+      "messageSeconds": {
+        "before": 0.825076938,
+        "after": 0.475235578,
+        "speedup": 1.736143033466236
+      },
+      "propagationSeconds": {
+        "before": 0.270202353,
+        "after": 0.267153556,
+        "speedup": 1.0114121520433739
+      },
+      "firstUBSeconds": {
+        "before": 2.141896422,
+        "after": 0.708025323,
+        "speedup": 3.025169231129322
+      },
+      "certificateSeconds": {
+        "before": 4.950384199,
+        "after": 1.747301712,
+        "speedup": 2.8331593593722753
+      }
+    },
+    {
+      "repeat": 1,
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 0.169140937,
+        "after": 0.244290812,
+        "speedup": 0.6923753522093168
+      },
+      "compileSeconds": {
+        "before": 1.622892,
+        "after": 1.839866,
+        "speedup": 0.8820707595009637
+      },
+      "containerMiB": {
+        "before": 183.29999923706055,
+        "after": 170.79999923706055,
+        "speedup": 1.073185012036509
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 1,
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 0.217205487,
+        "after": 0.235111368,
+        "speedup": 0.9238408540075358
+      },
+      "compileSeconds": {
+        "before": 1.656882,
+        "after": 1.733526,
+        "speedup": 0.955787222112619
+      },
+      "containerMiB": {
+        "before": 188.89999961853027,
+        "after": 168.29999923706055,
+        "speedup": 1.1224004781631247
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.184908283,
+        "after": 0.203932402,
+        "speedup": 0.906713603069315
+      },
+      "certificateSeconds": {
+        "before": 0.189193321,
+        "after": 0.207673814,
+        "speedup": 0.9110119246907075
+      }
+    },
+    {
+      "repeat": 1,
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 0.449670289,
+        "after": 0.513504546,
+        "speedup": 0.8756890128875315
+      },
+      "compileSeconds": {
+        "before": 1.778245,
+        "after": 1.924867,
+        "speedup": 0.9238274644429979
+      },
+      "containerMiB": {
+        "before": 159.69999980926514,
+        "after": 164.39999961853027,
+        "speedup": 0.9714111933079629
+      },
+      "seedSeconds": {
+        "before": 0.127171769,
+        "after": 0.125186609,
+        "speedup": 1.0158576066230853
+      },
+      "messageSeconds": {
+        "before": 0.169236479,
+        "after": 0.245772874,
+        "speedup": 0.6885889245857132
+      },
+      "propagationSeconds": {
+        "before": 0.036320873,
+        "after": 0.043563328,
+        "speedup": 0.8337488127628816
+      },
+      "firstUBSeconds": {
+        "before": 0.144153182,
+        "after": 0.148587008,
+        "speedup": 0.9701600694456409
+      },
+      "certificateSeconds": {
+        "before": 0.418144056,
+        "after": 0.471376021,
+        "speedup": 0.8870711223556279
+      }
+    },
+    {
+      "repeat": 1,
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 0.767687226,
+        "after": 0.895121694,
+        "speedup": 0.8576344771284249
+      },
+      "compileSeconds": {
+        "before": 4.238868,
+        "after": 3.778686,
+        "speedup": 1.1217836041417573
+      },
+      "containerMiB": {
+        "before": 274.3999996185303,
+        "after": 329.29999923706055,
+        "speedup": 0.8332827216953372
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 1,
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 1.063000895,
+        "after": 0.876988467,
+        "speedup": 1.2121036193740504
+      },
+      "compileSeconds": {
+        "before": 4.650916,
+        "after": 4.23644,
+        "speedup": 1.0978359188375144
+      },
+      "containerMiB": {
+        "before": 351.69999980926514,
+        "after": 269.29999923706055,
+        "speedup": 1.3059784656726612
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 1.005800403,
+        "after": 0.824336286,
+        "speedup": 1.2201336033386745
+      },
+      "certificateSeconds": {
+        "before": 1.008646341,
+        "after": 0.827027726,
+        "speedup": 1.219604022078457
+      }
+    },
+    {
+      "repeat": 1,
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 2.849791514,
+        "after": 2.165918559,
+        "speedup": 1.315742691320648
+      },
+      "compileSeconds": {
+        "before": 6.007755,
+        "after": 5.378743,
+        "speedup": 1.1169440517979758
+      },
+      "containerMiB": {
+        "before": 452.3999996185303,
+        "after": 463.29999923706055,
+        "speedup": 0.9764731283477663
+      },
+      "seedSeconds": {
+        "before": 0.54171709,
+        "after": 0.400288528,
+        "speedup": 1.353316550705645
+      },
+      "messageSeconds": {
+        "before": 1.623731251,
+        "after": 1.360372497,
+        "speedup": 1.19359311848834
+      },
+      "propagationSeconds": {
+        "before": 0.132476482,
+        "after": 0.136208005,
+        "speedup": 0.9726042313005026
+      },
+      "firstUBSeconds": {
+        "before": 0.581002523,
+        "after": 0.444487994,
+        "speedup": 1.3071275958918251
+      },
+      "certificateSeconds": {
+        "before": 2.788037141,
+        "after": 2.10234597,
+        "speedup": 1.3261552478919538
+      }
+    },
+    {
+      "repeat": 2,
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 2.33275416,
+        "after": 2.324521469,
+        "speedup": 1.003541671311619
+      },
+      "compileSeconds": {
+        "before": 9.247399,
+        "after": 9.504287,
+        "speedup": 0.9729713549264664
+      },
+      "containerMiB": {
+        "before": 1028.0959997177124,
+        "after": 843.3999996185303,
+        "speedup": 1.2189898033942614
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 2,
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 2.535645729,
+        "after": 2.561736104,
+        "speedup": 0.9898153541423484
+      },
+      "compileSeconds": {
+        "before": 9.607185,
+        "after": 10.05738,
+        "speedup": 0.9552373480966215
+      },
+      "containerMiB": {
+        "before": 1045.503999710083,
+        "after": 936.8999996185303,
+        "speedup": 1.1159184546224485
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 2.427082242,
+        "after": 2.464111484,
+        "speedup": 0.9849725784566004
+      },
+      "certificateSeconds": {
+        "before": 2.430147501,
+        "after": 2.467354726,
+        "speedup": 0.9849201962701492
+      }
+    },
+    {
+      "repeat": 2,
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 3.566855867,
+        "after": 2.077071044,
+        "speedup": 1.7172527041400514
+      },
+      "compileSeconds": {
+        "before": 11.183126,
+        "after": 9.69024,
+        "speedup": 1.1540607869361337
+      },
+      "containerMiB": {
+        "before": 1164.2879991531372,
+        "after": 845.5,
+        "speedup": 1.3770408032562238
+      },
+      "seedSeconds": {
+        "before": 1.678235447,
+        "after": 0.681313689,
+        "speedup": 2.4632345923699765
+      },
+      "messageSeconds": {
+        "before": 0.522949703,
+        "after": 0.569287298,
+        "speedup": 0.9186042000887924
+      },
+      "propagationSeconds": {
+        "before": 0.215370262,
+        "after": 0.247078266,
+        "speedup": 0.8716681782120003
+      },
+      "firstUBSeconds": {
+        "before": 1.737155279,
+        "after": 0.756235347,
+        "speedup": 2.2971093402223635
+      },
+      "certificateSeconds": {
+        "before": 3.458724968,
+        "after": 1.930436407,
+        "speedup": 1.7916803451583474
+      }
+    },
+    {
+      "repeat": 2,
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 0.159453064,
+        "after": 0.153281121,
+        "speedup": 1.0402655131938918
+      },
+      "compileSeconds": {
+        "before": 1.270461,
+        "after": 1.207112,
+        "speedup": 1.0524798030340186
+      },
+      "containerMiB": {
+        "before": 157.39999961853027,
+        "after": 181.29999923706055,
+        "speedup": 0.8681742982950618
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 2,
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 0.256381165,
+        "after": 0.173602361,
+        "speedup": 1.4768299435743273
+      },
+      "compileSeconds": {
+        "before": 1.89722,
+        "after": 1.310028,
+        "speedup": 1.448228587480573
+      },
+      "containerMiB": {
+        "before": 164.69999980926514,
+        "after": 151.69999980926514,
+        "speedup": 1.0856954516568564
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.222710133,
+        "after": 0.150399024,
+        "speedup": 1.4807950681914002
+      },
+      "certificateSeconds": {
+        "before": 0.227255988,
+        "after": 0.153215568,
+        "speedup": 1.483243452127528
+      }
+    },
+    {
+      "repeat": 2,
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 0.658900513,
+        "after": 0.429050359,
+        "speedup": 1.5357183584130272
+      },
+      "compileSeconds": {
+        "before": 2.086295,
+        "after": 1.824153,
+        "speedup": 1.1437061474558328
+      },
+      "containerMiB": {
+        "before": 175.0,
+        "after": 137.29999923706055,
+        "speedup": 1.274581216113826
+      },
+      "seedSeconds": {
+        "before": 0.173795826,
+        "after": 0.105485641,
+        "speedup": 1.6475780433471507
+      },
+      "messageSeconds": {
+        "before": 0.264761972,
+        "after": 0.202199855,
+        "speedup": 1.3094073287045631
+      },
+      "propagationSeconds": {
+        "before": 0.055747858,
+        "after": 0.036974545,
+        "speedup": 1.507736146584089
+      },
+      "firstUBSeconds": {
+        "before": 0.19566292,
+        "after": 0.125041631,
+        "speedup": 1.56478221241372
+      },
+      "certificateSeconds": {
+        "before": 0.618509163,
+        "after": 0.391620363,
+        "speedup": 1.579359046250616
+      }
+    },
+    {
+      "repeat": 2,
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 0.787170641,
+        "after": 0.823693588,
+        "speedup": 0.9556595467876824
+      },
+      "compileSeconds": {
+        "before": 3.872214,
+        "after": 3.778888,
+        "speedup": 1.0246966832570852
+      },
+      "containerMiB": {
+        "before": 319.69999980926514,
+        "after": 294.19999980926514,
+        "speedup": 1.0866757308515707
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 2,
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 0.821931204,
+        "after": 0.970989193,
+        "speedup": 0.8464885190539911
+      },
+      "compileSeconds": {
+        "before": 4.097074,
+        "after": 4.18918,
+        "speedup": 0.9780133582228503
+      },
+      "containerMiB": {
+        "before": 293.79999923706055,
+        "after": 294.5,
+        "speedup": 0.9976230873923957
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.763893261,
+        "after": 0.907513237,
+        "speedup": 0.8417433816450217
+      },
+      "certificateSeconds": {
+        "before": 0.766272047,
+        "after": 0.910920766,
+        "speedup": 0.8412060363546481
+      }
+    },
+    {
+      "repeat": 2,
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 2.572239067,
+        "after": 2.24157675,
+        "speedup": 1.1475132702906559
+      },
+      "compileSeconds": {
+        "before": 6.099275,
+        "after": 5.492617,
+        "speedup": 1.1104497182308541
+      },
+      "containerMiB": {
+        "before": 481.19999980926514,
+        "after": 462.5,
+        "speedup": 1.0404324320200327
+      },
+      "seedSeconds": {
+        "before": 0.55330389,
+        "after": 0.348872936,
+        "speedup": 1.5859753878988194
+      },
+      "messageSeconds": {
+        "before": 1.311746767,
+        "after": 1.48906122,
+        "speedup": 0.8809219858670418
+      },
+      "propagationSeconds": {
+        "before": 0.146164102,
+        "after": 0.139162993,
+        "speedup": 1.0503086980890097
+      },
+      "firstUBSeconds": {
+        "before": 0.593416791,
+        "after": 0.38455267,
+        "speedup": 1.543135277152022
+      },
+      "certificateSeconds": {
+        "before": 2.523984218,
+        "after": 2.188872576,
+        "speedup": 1.1530978302137582
+      }
+    },
+    {
+      "repeat": 3,
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 2.359818058,
+        "after": 2.684453022,
+        "speedup": 0.8790684875691597
+      },
+      "compileSeconds": {
+        "before": 11.057621,
+        "after": 10.15881,
+        "speedup": 1.0884760124463395
+      },
+      "containerMiB": {
+        "before": 965.3999996185303,
+        "after": 1078.2719993591309,
+        "speedup": 0.8953214033122572
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 3,
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 2.417472961,
+        "after": 2.306907039,
+        "speedup": 1.0479282086927648
+      },
+      "compileSeconds": {
+        "before": 10.395893,
+        "after": 9.426888,
+        "speedup": 1.1027916105505866
+      },
+      "containerMiB": {
+        "before": 883.6999998092651,
+        "after": 1041.4079999923706,
+        "speedup": 0.8485627149164776
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 2.331642069,
+        "after": 2.216952468,
+        "speedup": 1.0517329995367315
+      },
+      "certificateSeconds": {
+        "before": 2.334792196,
+        "after": 2.219560973,
+        "speedup": 1.0519162232539399
+      }
+    },
+    {
+      "repeat": 3,
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 3.443746177,
+        "after": 1.990099709,
+        "speedup": 1.7304390133951826
+      },
+      "compileSeconds": {
+        "before": 10.66089,
+        "after": 9.484838,
+        "speedup": 1.1239928399409669
+      },
+      "containerMiB": {
+        "before": 967.3999996185303,
+        "after": 1127.423999786377,
+        "speedup": 0.8580622727579261
+      },
+      "seedSeconds": {
+        "before": 1.494665809,
+        "after": 0.600231269,
+        "speedup": 2.490149857554322
+      },
+      "messageSeconds": {
+        "before": 0.563290605,
+        "after": 0.616049374,
+        "speedup": 0.914359512034826
+      },
+      "propagationSeconds": {
+        "before": 0.17664646,
+        "after": 0.209620963,
+        "speedup": 0.8426946306892026
+      },
+      "firstUBSeconds": {
+        "before": 1.578996076,
+        "after": 0.711269315,
+        "speedup": 2.2199693459291154
+      },
+      "certificateSeconds": {
+        "before": 3.35324171,
+        "after": 1.84841173,
+        "speedup": 1.8141205531085869
+      }
+    },
+    {
+      "repeat": 3,
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 0.22056802,
+        "after": 0.217599418,
+        "speedup": 1.0136425089151664
+      },
+      "compileSeconds": {
+        "before": 1.437018,
+        "after": 1.65752,
+        "speedup": 0.8669687243592836
+      },
+      "containerMiB": {
+        "before": 188.39999961853027,
+        "after": 178.0,
+        "speedup": 1.0584269641490465
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 3,
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 0.20494454,
+        "after": 0.236079958,
+        "speedup": 0.8681149460387485
+      },
+      "compileSeconds": {
+        "before": 1.540782,
+        "after": 1.597184,
+        "speedup": 0.9646865984132074
+      },
+      "containerMiB": {
+        "before": 156.39999961853027,
+        "after": 149.79999923706055,
+        "speedup": 1.044058747764245
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.178094478,
+        "after": 0.205921392,
+        "speedup": 0.8648663272439416
+      },
+      "certificateSeconds": {
+        "before": 0.181913245,
+        "after": 0.209958337,
+        "speedup": 0.8664254423009647
+      }
+    },
+    {
+      "repeat": 3,
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 0.425520904,
+        "after": 0.448918036,
+        "speedup": 0.9478810604080963
+      },
+      "compileSeconds": {
+        "before": 1.701521,
+        "after": 1.82288,
+        "speedup": 0.9334245808829983
+      },
+      "containerMiB": {
+        "before": 172.0999994277954,
+        "after": 162.0999994277954,
+        "speedup": 1.061690314838368
+      },
+      "seedSeconds": {
+        "before": 0.10482415,
+        "after": 0.108349052,
+        "speedup": 0.9674671634413562
+      },
+      "messageSeconds": {
+        "before": 0.17742426,
+        "after": 0.224886482,
+        "speedup": 0.788950311384212
+      },
+      "propagationSeconds": {
+        "before": 0.036321623,
+        "after": 0.035326354,
+        "speedup": 1.0281735556406415
+      },
+      "firstUBSeconds": {
+        "before": 0.118306207,
+        "after": 0.126631771,
+        "speedup": 0.9342537505852303
+      },
+      "certificateSeconds": {
+        "before": 0.399088764,
+        "after": 0.413078393,
+        "speedup": 0.9661332346666701
+      }
+    },
+    {
+      "repeat": 3,
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 0.717150408,
+        "after": 0.846773835,
+        "speedup": 0.8469208404390529
+      },
+      "compileSeconds": {
+        "before": 3.952965,
+        "after": 3.772172,
+        "speedup": 1.047928090235546
+      },
+      "containerMiB": {
+        "before": 317.0,
+        "after": 334.69999980926514,
+        "speedup": 0.9471168215734933
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 3,
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 0.926998726,
+        "after": 1.048461759,
+        "speedup": 0.8841512034584372
+      },
+      "compileSeconds": {
+        "before": 3.959469,
+        "after": 4.767105,
+        "speedup": 0.8305814535236795
+      },
+      "containerMiB": {
+        "before": 326.29999923706055,
+        "after": 251.0,
+        "speedup": 1.2999999969604006
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.855445325,
+        "after": 0.982298914,
+        "speedup": 0.8708605016334162
+      },
+      "certificateSeconds": {
+        "before": 0.858622112,
+        "after": 0.985893733,
+        "speedup": 0.8709073638061152
+      }
+    },
+    {
+      "repeat": 3,
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 3.340558838,
+        "after": 2.161805736,
+        "speedup": 1.5452631947313884
+      },
+      "compileSeconds": {
+        "before": 6.903173,
+        "after": 5.456445,
+        "speedup": 1.2651411312677026
+      },
+      "containerMiB": {
+        "before": 570.3999996185303,
+        "after": 444.5999994277954,
+        "speedup": 1.2829509679546574
+      },
+      "seedSeconds": {
+        "before": 0.871215957,
+        "after": 0.410148719,
+        "speedup": 2.1241464781949007
+      },
+      "messageSeconds": {
+        "before": 1.507718628,
+        "after": 1.342595365,
+        "speedup": 1.1229881074406955
+      },
+      "propagationSeconds": {
+        "before": 0.236303549,
+        "after": 0.127551789,
+        "speedup": 1.8526086607848362
+      },
+      "firstUBSeconds": {
+        "before": 0.92347207,
+        "after": 0.451751012,
+        "speedup": 2.044205868873626
+      },
+      "certificateSeconds": {
+        "before": 3.286895554,
+        "after": 2.09850478,
+        "speedup": 1.5663035821152622
+      }
+    },
+    {
+      "repeat": 4,
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 2.447038414,
+        "after": 2.025034799,
+        "speedup": 1.2083932657396275
+      },
+      "compileSeconds": {
+        "before": 9.744207,
+        "after": 8.784138,
+        "speedup": 1.109295755599468
+      },
+      "containerMiB": {
+        "before": 1033.2159996032715,
+        "after": 1097.7279996871948,
+        "speedup": 0.9412313431903837
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 4,
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 2.731210145,
+        "after": 3.03229036,
+        "speedup": 0.9007086461865083
+      },
+      "compileSeconds": {
+        "before": 10.131243,
+        "after": 12.069789,
+        "speedup": 0.839388575889769
+      },
+      "containerMiB": {
+        "before": 921.1999998092651,
+        "after": 1065.9839992523193,
+        "speedup": 0.8641780743945447
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 2.616505353,
+        "after": 2.891645946,
+        "speedup": 0.9048498335764097
+      },
+      "certificateSeconds": {
+        "before": 2.619523163,
+        "after": 2.895411353,
+        "speedup": 0.9047153732701414
+      }
+    },
+    {
+      "repeat": 4,
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 2.945995598,
+        "after": 1.767640044,
+        "speedup": 1.666626419784819
+      },
+      "compileSeconds": {
+        "before": 10.153061,
+        "after": 9.13191,
+        "speedup": 1.111822280333468
+      },
+      "containerMiB": {
+        "before": 961.6999998092651,
+        "after": 819.2999992370605,
+        "speedup": 1.1738069091966419
+      },
+      "seedSeconds": {
+        "before": 1.1646286,
+        "after": 0.68904913,
+        "speedup": 1.6901967498311765
+      },
+      "messageSeconds": {
+        "before": 0.503482895,
+        "after": 0.423224252,
+        "speedup": 1.1896362096943347
+      },
+      "propagationSeconds": {
+        "before": 0.198825103,
+        "after": 0.214086692,
+        "speedup": 0.928713042097918
+      },
+      "firstUBSeconds": {
+        "before": 1.242554805,
+        "after": 0.79107572,
+        "speedup": 1.5707153861326952
+      },
+      "certificateSeconds": {
+        "before": 2.857566644,
+        "after": 1.675125782,
+        "speedup": 1.7058818356841454
+      }
+    },
+    {
+      "repeat": 4,
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 0.198960509,
+        "after": 0.18125516,
+        "speedup": 1.0976819032351963
+      },
+      "compileSeconds": {
+        "before": 1.602542,
+        "after": 1.572854,
+        "speedup": 1.0188752420758698
+      },
+      "containerMiB": {
+        "before": 165.79999923706055,
+        "after": 187.89999961853027,
+        "speedup": 0.882384244670907
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 4,
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 0.228841093,
+        "after": 0.196256196,
+        "speedup": 1.1660324497474719
+      },
+      "compileSeconds": {
+        "before": 1.570816,
+        "after": 1.77448,
+        "speedup": 0.8852260944051215
+      },
+      "containerMiB": {
+        "before": 149.39999961853027,
+        "after": 147.89999961853027,
+        "speedup": 1.0101419878557731
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.200147638,
+        "after": 0.171747361,
+        "speedup": 1.1653607766351648
+      },
+      "certificateSeconds": {
+        "before": 0.20399047,
+        "after": 0.17527271,
+        "speedup": 1.163846157225503
+      }
+    },
+    {
+      "repeat": 4,
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 0.395913717,
+        "after": 0.34888711,
+        "speedup": 1.1347903251570401
+      },
+      "compileSeconds": {
+        "before": 1.813079,
+        "after": 1.453042,
+        "speedup": 1.247781550705348
+      },
+      "containerMiB": {
+        "before": 173.19999980926514,
+        "after": 169.5999994277954,
+        "speedup": 1.0212264174151862
+      },
+      "seedSeconds": {
+        "before": 0.116753422,
+        "after": 0.078165394,
+        "speedup": 1.4936715089032877
+      },
+      "messageSeconds": {
+        "before": 0.134743232,
+        "after": 0.17525553,
+        "speedup": 0.7688386894268043
+      },
+      "propagationSeconds": {
+        "before": 0.030998925,
+        "after": 0.028555077,
+        "speedup": 1.0855836599565114
+      },
+      "firstUBSeconds": {
+        "before": 0.133931998,
+        "after": 0.092399747,
+        "speedup": 1.4494844666620137
+      },
+      "certificateSeconds": {
+        "before": 0.365493475,
+        "after": 0.318071989,
+        "speedup": 1.1490904186473334
+      }
+    },
+    {
+      "repeat": 4,
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 0.89584964,
+        "after": 0.837253356,
+        "speedup": 1.0699863232318894
+      },
+      "compileSeconds": {
+        "before": 3.95808,
+        "after": 3.728854,
+        "speedup": 1.0614735787456413
+      },
+      "containerMiB": {
+        "before": 307.69999980926514,
+        "after": 312.0,
+        "speedup": 0.986217948106619
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 4,
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 0.793888032,
+        "after": 0.929659458,
+        "speedup": 0.8539557417163393
+      },
+      "compileSeconds": {
+        "before": 4.109716,
+        "after": 4.575458,
+        "speedup": 0.8982086602040713
+      },
+      "containerMiB": {
+        "before": 310.5999994277954,
+        "after": 327.29999923706055,
+        "speedup": 0.9489764746465231
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.744320214,
+        "after": 0.86104369,
+        "speedup": 0.8644395431316615
+      },
+      "certificateSeconds": {
+        "before": 0.746667551,
+        "after": 0.864451018,
+        "speedup": 0.8637476681183109
+      }
+    },
+    {
+      "repeat": 4,
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 3.155805079,
+        "after": 2.11696451,
+        "speedup": 1.4907217688784022
+      },
+      "compileSeconds": {
+        "before": 6.36552,
+        "after": 5.323839,
+        "speedup": 1.19566350522621
+      },
+      "containerMiB": {
+        "before": 464.5,
+        "after": 498.69999980926514,
+        "speedup": 0.9314216967669031
+      },
+      "seedSeconds": {
+        "before": 0.745000595,
+        "after": 0.407577909,
+        "speedup": 1.8278728521569603
+      },
+      "messageSeconds": {
+        "before": 1.63381381,
+        "after": 1.300363247,
+        "speedup": 1.2564287815495296
+      },
+      "propagationSeconds": {
+        "before": 0.140034281,
+        "after": 0.134812754,
+        "speedup": 1.0387316989310966
+      },
+      "firstUBSeconds": {
+        "before": 0.791026984,
+        "after": 0.454330866,
+        "speedup": 1.7410813202376614
+      },
+      "certificateSeconds": {
+        "before": 3.088199741,
+        "after": 2.060471269,
+        "speedup": 1.4987832091921296
+      }
+    },
+    {
+      "repeat": 5,
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 2.026144166,
+        "after": 2.285410623,
+        "speedup": 0.886555853731148
+      },
+      "compileSeconds": {
+        "before": 9.263749,
+        "after": 8.981357,
+        "speedup": 1.0314420192850593
+      },
+      "containerMiB": {
+        "before": 877.3999996185303,
+        "after": 795.8999996185303,
+        "speedup": 1.1023997990187995
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 5,
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 2.923787322,
+        "after": 2.312021198,
+        "speedup": 1.264602298858334
+      },
+      "compileSeconds": {
+        "before": 10.913219,
+        "after": 9.708165,
+        "speedup": 1.1241278861659232
+      },
+      "containerMiB": {
+        "before": 1172.4799995422363,
+        "after": 1137.6639995574951,
+        "speedup": 1.0306030603045215
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 2.833671236,
+        "after": 2.19687288,
+        "speedup": 1.2898658187268441
+      },
+      "certificateSeconds": {
+        "before": 2.836065701,
+        "after": 2.199684334,
+        "speedup": 1.2893057686339824
+      }
+    },
+    {
+      "repeat": 5,
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 3.753405216,
+        "after": 1.86203922,
+        "speedup": 2.0157498164834573
+      },
+      "compileSeconds": {
+        "before": 11.307253,
+        "after": 10.005324,
+        "speedup": 1.1301236221835493
+      },
+      "containerMiB": {
+        "before": 1153.0239992141724,
+        "after": 1016.0,
+        "speedup": 1.134866140958831
+      },
+      "seedSeconds": {
+        "before": 1.643546414,
+        "after": 0.760721017,
+        "speedup": 2.160511379692826
+      },
+      "messageSeconds": {
+        "before": 0.530435942,
+        "after": 0.461098281,
+        "speedup": 1.1503750151694883
+      },
+      "propagationSeconds": {
+        "before": 0.208911439,
+        "after": 0.210319923,
+        "speedup": 0.993303135623533
+      },
+      "firstUBSeconds": {
+        "before": 1.732927896,
+        "after": 0.834487427,
+        "speedup": 2.07663751415634
+      },
+      "certificateSeconds": {
+        "before": 3.652291307,
+        "after": 1.76111259,
+        "speedup": 2.0738545211354147
+      }
+    },
+    {
+      "repeat": 5,
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 0.261197074,
+        "after": 0.16490006,
+        "speedup": 1.583971976723356
+      },
+      "compileSeconds": {
+        "before": 1.725278,
+        "after": 1.267117,
+        "speedup": 1.3615775023143089
+      },
+      "containerMiB": {
+        "before": 185.0,
+        "after": 165.0,
+        "speedup": 1.121212121212121
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 5,
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 0.227139615,
+        "after": 0.163271938,
+        "speedup": 1.3911736320542725
+      },
+      "compileSeconds": {
+        "before": 1.683876,
+        "after": 1.550752,
+        "speedup": 1.085844803037494
+      },
+      "containerMiB": {
+        "before": 154.0,
+        "after": 165.39999961853027,
+        "speedup": 0.9310761811074811
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.202069823,
+        "after": 0.141849131,
+        "speedup": 1.424540436557204
+      },
+      "certificateSeconds": {
+        "before": 0.205098984,
+        "after": 0.144668831,
+        "speedup": 1.4177137022694268
+      }
+    },
+    {
+      "repeat": 5,
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 0.481885381,
+        "after": 0.428781437,
+        "speedup": 1.1238485144588943
+      },
+      "compileSeconds": {
+        "before": 1.683887,
+        "after": 1.587497,
+        "speedup": 1.0607182249793228
+      },
+      "containerMiB": {
+        "before": 150.79999923706055,
+        "after": 163.5,
+        "speedup": 0.9223241543551104
+      },
+      "seedSeconds": {
+        "before": 0.126460298,
+        "after": 0.102540117,
+        "speedup": 1.2332763185749047
+      },
+      "messageSeconds": {
+        "before": 0.202831848,
+        "after": 0.21223664,
+        "speedup": 0.9556872366618695
+      },
+      "propagationSeconds": {
+        "before": 0.038153153,
+        "after": 0.034863706,
+        "speedup": 1.094351615975651
+      },
+      "firstUBSeconds": {
+        "before": 0.144726435,
+        "after": 0.12108762,
+        "speedup": 1.1952207418066354
+      },
+      "certificateSeconds": {
+        "before": 0.446100324,
+        "after": 0.394881521,
+        "speedup": 1.1297067608286486
+      }
+    },
+    {
+      "repeat": 5,
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 0.847997614,
+        "after": 1.215271901,
+        "speedup": 0.697784268114992
+      },
+      "compileSeconds": {
+        "before": 4.353993,
+        "after": 4.783403,
+        "speedup": 0.9102291820279412
+      },
+      "containerMiB": {
+        "before": 282.0999994277954,
+        "after": 386.3999996185303,
+        "speedup": 0.7300724630080123
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 5,
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 1.032151707,
+        "after": 0.891472084,
+        "speedup": 1.1578059767937725
+      },
+      "compileSeconds": {
+        "before": 4.41207,
+        "after": 3.428972,
+        "speedup": 1.2867034201504124
+      },
+      "containerMiB": {
+        "before": 268.69999980926514,
+        "after": 393.3999996185303,
+        "speedup": 0.6830198273254106
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.96215928,
+        "after": 0.825619802,
+        "speedup": 1.1653781530787461
+      },
+      "certificateSeconds": {
+        "before": 0.965314056,
+        "after": 0.829019266,
+        "speedup": 1.16440485232342
+      }
+    },
+    {
+      "repeat": 5,
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 2.773302366,
+        "after": 2.599138631,
+        "speedup": 1.0670082514732935
+      },
+      "compileSeconds": {
+        "before": 6.419978,
+        "after": 5.931214,
+        "speedup": 1.082405389520594
+      },
+      "containerMiB": {
+        "before": 407.0999994277954,
+        "after": 423.8999996185303,
+        "speedup": 0.9603680108378078
+      },
+      "seedSeconds": {
+        "before": 0.7192532,
+        "after": 0.404078498,
+        "speedup": 1.7799838485837967
+      },
+      "messageSeconds": {
+        "before": 1.370656287,
+        "after": 1.702549689,
+        "speedup": 0.8050609599565115
+      },
+      "propagationSeconds": {
+        "before": 0.133411728,
+        "after": 0.154831583,
+        "speedup": 0.8616570690231851
+      },
+      "firstUBSeconds": {
+        "before": 0.76577354,
+        "after": 0.445878508,
+        "speedup": 1.7174488706237439
+      },
+      "certificateSeconds": {
+        "before": 2.706013903,
+        "after": 2.516529053,
+        "speedup": 1.075296110638624
+      }
+    },
+    {
+      "repeat": 6,
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 2.263214996,
+        "after": 2.575431701,
+        "speedup": 0.8787711183027019
+      },
+      "compileSeconds": {
+        "before": 9.358254,
+        "after": 10.148193,
+        "speedup": 0.9221596396521037
+      },
+      "containerMiB": {
+        "before": 1105.9199991226196,
+        "after": 868.1999998092651,
+        "speedup": 1.2738078776383082
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 6,
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 2.438172221,
+        "after": 2.741007732,
+        "speedup": 0.8895167250115587
+      },
+      "compileSeconds": {
+        "before": 9.61717,
+        "after": 11.537008,
+        "speedup": 0.8335930771652408
+      },
+      "containerMiB": {
+        "before": 1007.0,
+        "after": 976.8999996185303,
+        "speedup": 1.0308117518612177
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 2.351924235,
+        "after": 2.602814761,
+        "speedup": 0.9036079978647393
+      },
+      "certificateSeconds": {
+        "before": 2.355101774,
+        "after": 2.605434697,
+        "speedup": 0.9039189417074075
+      }
+    },
+    {
+      "repeat": 6,
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 2.943777584,
+        "after": 1.761210078,
+        "speedup": 1.6714517028785705
+      },
+      "compileSeconds": {
+        "before": 10.03879,
+        "after": 9.145171,
+        "speedup": 1.0977148486343231
+      },
+      "containerMiB": {
+        "before": 1030.1439990997314,
+        "after": 978.7999992370605,
+        "speedup": 1.0524560685560806
+      },
+      "seedSeconds": {
+        "before": 1.177948095,
+        "after": 0.566695329,
+        "speedup": 2.07862679418697
+      },
+      "messageSeconds": {
+        "before": 0.533211276,
+        "after": 0.483109687,
+        "speedup": 1.1037064466894035
+      },
+      "propagationSeconds": {
+        "before": 0.171229032,
+        "after": 0.227379718,
+        "speedup": 0.7530532340619756
+      },
+      "firstUBSeconds": {
+        "before": 1.255518253,
+        "after": 0.670382154,
+        "speedup": 1.8728396117179456
+      },
+      "certificateSeconds": {
+        "before": 2.860458363,
+        "after": 1.662832966,
+        "speedup": 1.720231930378989
+      }
+    },
+    {
+      "repeat": 6,
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 0.185491598,
+        "after": 0.155727951,
+        "speedup": 1.1911259141912167
+      },
+      "compileSeconds": {
+        "before": 1.301413,
+        "after": 1.247087,
+        "speedup": 1.043562317624993
+      },
+      "containerMiB": {
+        "before": 156.5999994277954,
+        "after": 150.69999980926514,
+        "speedup": 1.0391506279097389
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 6,
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 0.175543697,
+        "after": 0.169771747,
+        "speedup": 1.033998295370077
+      },
+      "compileSeconds": {
+        "before": 1.272698,
+        "after": 1.291629,
+        "speedup": 0.9853433145276238
+      },
+      "containerMiB": {
+        "before": 162.29999923706055,
+        "after": 147.29999923706055,
+        "speedup": 1.1018329944174639
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.154460536,
+        "after": 0.146493513,
+        "speedup": 1.0543848177086177
+      },
+      "certificateSeconds": {
+        "before": 0.157196108,
+        "after": 0.149521272,
+        "speedup": 1.0513293921148557
+      }
+    },
+    {
+      "repeat": 6,
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 0.396115426,
+        "after": 0.342410873,
+        "speedup": 1.1568424288909773
+      },
+      "compileSeconds": {
+        "before": 1.782495,
+        "after": 1.408652,
+        "speedup": 1.2653906003753943
+      },
+      "containerMiB": {
+        "before": 185.0,
+        "after": 183.39999961853027,
+        "speedup": 1.0087241024252873
+      },
+      "seedSeconds": {
+        "before": 0.114490757,
+        "after": 0.083274076,
+        "speedup": 1.374866735237026
+      },
+      "messageSeconds": {
+        "before": 0.147430652,
+        "after": 0.16823721,
+        "speedup": 0.87632606365738
+      },
+      "propagationSeconds": {
+        "before": 0.031470504,
+        "after": 0.029668366,
+        "speedup": 1.060742745320049
+      },
+      "firstUBSeconds": {
+        "before": 0.131059503,
+        "after": 0.097541911,
+        "speedup": 1.3436224660392393
+      },
+      "certificateSeconds": {
+        "before": 0.365303814,
+        "after": 0.316247468,
+        "speedup": 1.1551201225743886
+      }
+    },
+    {
+      "repeat": 6,
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 1.046536584,
+        "after": 0.784144591,
+        "speedup": 1.3346219511192166
+      },
+      "compileSeconds": {
+        "before": 4.603457,
+        "after": 3.651132,
+        "speedup": 1.260830065853549
+      },
+      "containerMiB": {
+        "before": 395.29999923706055,
+        "after": 299.3999996185303,
+        "speedup": 1.3203072803631188
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 6,
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 0.792378237,
+        "after": 0.837872861,
+        "speedup": 0.9457022346496552
+      },
+      "compileSeconds": {
+        "before": 3.528342,
+        "after": 3.64053,
+        "speedup": 0.96918360788127
+      },
+      "containerMiB": {
+        "before": 355.0,
+        "after": 325.5999994277954,
+        "speedup": 1.0902948422109082
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.729285716,
+        "after": 0.788228131,
+        "speedup": 0.9252216297771286
+      },
+      "certificateSeconds": {
+        "before": 0.732120844,
+        "after": 0.790589494,
+        "speedup": 0.9260442360495117
+      }
+    },
+    {
+      "repeat": 6,
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 3.034941706,
+        "after": 2.424993769,
+        "speedup": 1.2515255687652862
+      },
+      "compileSeconds": {
+        "before": 6.626837,
+        "after": 5.65121,
+        "speedup": 1.1726403725927723
+      },
+      "containerMiB": {
+        "before": 458.8999996185303,
+        "after": 434.5999994277954,
+        "speedup": 1.0559134841756301
+      },
+      "seedSeconds": {
+        "before": 0.693623266,
+        "after": 0.428998025,
+        "speedup": 1.6168448934001503
+      },
+      "messageSeconds": {
+        "before": 1.562171119,
+        "after": 1.505129484,
+        "speedup": 1.0378981580032618
+      },
+      "propagationSeconds": {
+        "before": 0.148713205,
+        "after": 0.143188558,
+        "speedup": 1.0385830200203565
+      },
+      "firstUBSeconds": {
+        "before": 0.739618305,
+        "after": 0.481467412,
+        "speedup": 1.5361752146996817
+      },
+      "certificateSeconds": {
+        "before": 2.978705919,
+        "after": 2.333483649,
+        "speedup": 1.2765060172058653
+      }
+    },
+    {
+      "repeat": 7,
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 2.39120633,
+        "after": 2.676933193,
+        "speedup": 0.8932633568341727
+      },
+      "compileSeconds": {
+        "before": 9.83071,
+        "after": 11.929281,
+        "speedup": 0.8240823566818487
+      },
+      "containerMiB": {
+        "before": 959.0999994277954,
+        "after": 887.0,
+        "speedup": 1.0812852304710208
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 7,
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 2.720601738,
+        "after": 2.279627749,
+        "speedup": 1.193441227057111
+      },
+      "compileSeconds": {
+        "before": 10.21102,
+        "after": 9.259735,
+        "speedup": 1.1027335015526902
+      },
+      "containerMiB": {
+        "before": 1197.0559997558594,
+        "after": 1177.5999994277954,
+        "speedup": 1.0165217394170498
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 2.609108987,
+        "after": 2.181456923,
+        "speedup": 1.1960396556498953
+      },
+      "certificateSeconds": {
+        "before": 2.612034564,
+        "after": 2.183828104,
+        "speedup": 1.1960806618504807
+      }
+    },
+    {
+      "repeat": 7,
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 4.078593714,
+        "after": 1.977071667,
+        "speedup": 2.062946822857889
+      },
+      "compileSeconds": {
+        "before": 12.270656,
+        "after": 9.739089,
+        "speedup": 1.2599387889360083
+      },
+      "containerMiB": {
+        "before": 1121.2799997329712,
+        "after": 991.5999994277954,
+        "speedup": 1.1307785401169905
+      },
+      "seedSeconds": {
+        "before": 1.609690233,
+        "after": 0.695507094,
+        "speedup": 2.3144123861373584
+      },
+      "messageSeconds": {
+        "before": 0.798954659,
+        "after": 0.483568553,
+        "speedup": 1.6522055746664732
+      },
+      "propagationSeconds": {
+        "before": 0.188516646,
+        "after": 0.238064365,
+        "speedup": 0.7918725929435092
+      },
+      "firstUBSeconds": {
+        "before": 1.6753489,
+        "after": 0.834028087,
+        "speedup": 2.008743981304313
+      },
+      "certificateSeconds": {
+        "before": 3.947609877,
+        "after": 1.865498804,
+        "speedup": 2.1161149331940283
+      }
+    },
+    {
+      "repeat": 7,
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 0.160358302,
+        "after": 0.230449703,
+        "speedup": 0.6958494626482552
+      },
+      "compileSeconds": {
+        "before": 1.422417,
+        "after": 1.693806,
+        "speedup": 0.8397756295585209
+      },
+      "containerMiB": {
+        "before": 163.19999980926514,
+        "after": 180.79999923706055,
+        "speedup": 0.9026548700107088
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 7,
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 0.17141194,
+        "after": 0.253484832,
+        "speedup": 0.6762216841440044
+      },
+      "compileSeconds": {
+        "before": 1.28446,
+        "after": 1.71117,
+        "speedup": 0.7506326080985524
+      },
+      "containerMiB": {
+        "before": 166.19999980926514,
+        "after": 133.29999923706055,
+        "speedup": 1.24681170863096
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.149852679,
+        "after": 0.221605064,
+        "speedup": 0.676215048046014
+      },
+      "certificateSeconds": {
+        "before": 0.152645669,
+        "after": 0.225331668,
+        "speedup": 0.6774266145316068
+      }
+    },
+    {
+      "repeat": 7,
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 0.425707295,
+        "after": 0.443405783,
+        "speedup": 0.9600851213977062
+      },
+      "compileSeconds": {
+        "before": 1.762874,
+        "after": 1.801631,
+        "speedup": 0.9784878257534423
+      },
+      "containerMiB": {
+        "before": 142.79999923706055,
+        "after": 160.69999980926514,
+        "speedup": 0.8886123174023017
+      },
+      "seedSeconds": {
+        "before": 0.119728081,
+        "after": 0.109697557,
+        "speedup": 1.0914379889061705
+      },
+      "messageSeconds": {
+        "before": 0.160358129,
+        "after": 0.211929237,
+        "speedup": 0.7566588323063702
+      },
+      "propagationSeconds": {
+        "before": 0.034467904,
+        "after": 0.038900829,
+        "speedup": 0.8860454876167293
+      },
+      "firstUBSeconds": {
+        "before": 0.136225151,
+        "after": 0.126846024,
+        "speedup": 1.0739410405169656
+      },
+      "certificateSeconds": {
+        "before": 0.394826083,
+        "after": 0.409440227,
+        "speedup": 0.9643070147086451
+      }
+    },
+    {
+      "repeat": 7,
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "optimizerSeconds": {
+        "before": 0.872902354,
+        "after": 0.730860259,
+        "speedup": 1.194349184062011
+      },
+      "compileSeconds": {
+        "before": 3.759466,
+        "after": 3.593598,
+        "speedup": 1.0461565261334185
+      },
+      "containerMiB": {
+        "before": 318.3999996185303,
+        "after": 310.0,
+        "speedup": 1.027096772963001
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "certificateSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      }
+    },
+    {
+      "repeat": 7,
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "optimizerSeconds": {
+        "before": 1.248855717,
+        "after": 0.832379141,
+        "speedup": 1.5003448014082323
+      },
+      "compileSeconds": {
+        "before": 4.546624,
+        "after": 4.122859,
+        "speedup": 1.1027842572350885
+      },
+      "containerMiB": {
+        "before": 285.5999994277954,
+        "after": 325.5999994277954,
+        "speedup": 0.8771498769339822
+      },
+      "seedSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "messageSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "propagationSeconds": {
+        "before": 0.0,
+        "after": 0.0,
+        "speedup": null
+      },
+      "firstUBSeconds": {
+        "before": 1.165905477,
+        "after": 0.779467587,
+        "speedup": 1.4957715964653704
+      },
+      "certificateSeconds": {
+        "before": 1.169283009,
+        "after": 0.781782734,
+        "speedup": 1.495662360074583
+      }
+    },
+    {
+      "repeat": 7,
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "optimizerSeconds": {
+        "before": 2.568066267,
+        "after": 2.242279709,
+        "speedup": 1.1452925594841565
+      },
+      "compileSeconds": {
+        "before": 5.33454,
+        "after": 5.498475,
+        "speedup": 0.970185369579747
+      },
+      "containerMiB": {
+        "before": 510.8999996185303,
+        "after": 420.29999923706055,
+        "speedup": 1.2155603153602883
+      },
+      "seedSeconds": {
+        "before": 0.583910118,
+        "after": 0.381491886,
+        "speedup": 1.530596427940803
+      },
+      "messageSeconds": {
+        "before": 1.323746153,
+        "after": 1.388430494,
+        "speedup": 0.9534118983416681
+      },
+      "propagationSeconds": {
+        "before": 0.149757952,
+        "after": 0.159326606,
+        "speedup": 0.9399431504867429
+      },
+      "firstUBSeconds": {
+        "before": 0.621311245,
+        "after": 0.42949117,
+        "speedup": 1.4466216965531562
+      },
+      "certificateSeconds": {
+        "before": 2.516446418,
+        "after": 2.159558927,
+        "speedup": 1.1652594363311857
+      }
+    }
+  ],
+  "groups": [
+    {
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "pairs": 7,
+      "optimizerSeconds": {
+        "beforeMedian": 2.33275416,
+        "afterMedian": 2.324521469,
+        "ratioOfMedians": 1.003541671311619,
+        "pairedSpeedupMedian": 0.8932633568341727,
+        "pairedSpeedupMin": 0.8787711183027019,
+        "pairedSpeedupMax": 1.2083932657396275
+      },
+      "compileSeconds": {
+        "beforeMedian": 9.744207,
+        "afterMedian": 9.504287,
+        "ratioOfMedians": 1.0252433454503216,
+        "pairedSpeedupMedian": 1.0314420192850593,
+        "pairedSpeedupMin": 0.8240823566818487,
+        "pairedSpeedupMax": 1.109295755599468
+      },
+      "containerMiB": {
+        "beforeMedian": 965.3999996185303,
+        "afterMedian": 887.0,
+        "ratioOfMedians": 1.088387823696201,
+        "pairedSpeedupMedian": 1.0812852304710208,
+        "pairedSpeedupMin": 0.8165848865827237,
+        "pairedSpeedupMax": 1.2738078776383082
+      },
+      "seedSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "messageSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "propagationSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "firstUBSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "certificateSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      }
+    },
+    {
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "pairs": 7,
+      "optimizerSeconds": {
+        "beforeMedian": 2.667771236,
+        "afterMedian": 2.561736104,
+        "ratioOfMedians": 1.041391902871819,
+        "pairedSpeedupMedian": 0.9898153541423484,
+        "pairedSpeedupMin": 0.8895167250115587,
+        "pairedSpeedupMax": 1.264602298858334
+      },
+      "compileSeconds": {
+        "beforeMedian": 10.21102,
+        "afterMedian": 10.05738,
+        "ratioOfMedians": 1.0152763443361987,
+        "pairedSpeedupMedian": 0.9885593404416962,
+        "pairedSpeedupMin": 0.8335930771652408,
+        "pairedSpeedupMax": 1.1241278861659232
+      },
+      "containerMiB": {
+        "beforeMedian": 1007.0,
+        "afterMedian": 1041.4079999923706,
+        "ratioOfMedians": 0.9669601155429739,
+        "pairedSpeedupMedian": 1.0306030603045215,
+        "pairedSpeedupMin": 0.8485627149164776,
+        "pairedSpeedupMax": 1.1243310511742755
+      },
+      "seedSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "messageSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "propagationSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "firstUBSeconds": {
+        "beforeMedian": 2.51969369,
+        "afterMedian": 2.464111484,
+        "ratioOfMedians": 1.0225566928935266,
+        "pairedSpeedupMedian": 0.9869906256204891,
+        "pairedSpeedupMin": 0.9036079978647393,
+        "pairedSpeedupMax": 1.2898658187268441
+      },
+      "certificateSeconds": {
+        "beforeMedian": 2.523713902,
+        "afterMedian": 2.467354726,
+        "ratioOfMedians": 1.022841942995107,
+        "pairedSpeedupMedian": 0.98691213160258,
+        "pairedSpeedupMin": 0.9039189417074075,
+        "pairedSpeedupMax": 1.2893057686339824
+      }
+    },
+    {
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "pairs": 7,
+      "optimizerSeconds": {
+        "beforeMedian": 3.566855867,
+        "afterMedian": 1.86203922,
+        "ratioOfMedians": 1.9155643064274448,
+        "pairedSpeedupMedian": 1.7304390133951826,
+        "pairedSpeedupMin": 1.666626419784819,
+        "pairedSpeedupMax": 2.733668289464655
+      },
+      "compileSeconds": {
+        "beforeMedian": 11.183126,
+        "afterMedian": 9.484838,
+        "ratioOfMedians": 1.1790529263652156,
+        "pairedSpeedupMedian": 1.1301236221835493,
+        "pairedSpeedupMin": 1.0977148486343231,
+        "pairedSpeedupMax": 1.4245018478276839
+      },
+      "containerMiB": {
+        "beforeMedian": 1030.1439990997314,
+        "afterMedian": 991.5999994277954,
+        "ratioOfMedians": 1.0388705119949353,
+        "pairedSpeedupMedian": 1.1307785401169905,
+        "pairedSpeedupMin": 0.8580622727579261,
+        "pairedSpeedupMax": 1.3770408032562238
+      },
+      "seedSeconds": {
+        "beforeMedian": 1.609690233,
+        "afterMedian": 0.681313689,
+        "ratioOfMedians": 2.3626271701110646,
+        "pairedSpeedupMedian": 2.3144123861373584,
+        "pairedSpeedupMin": 1.6901967498311765,
+        "pairedSpeedupMax": 3.2370398150314625
+      },
+      "messageSeconds": {
+        "beforeMedian": 0.533211276,
+        "afterMedian": 0.483109687,
+        "ratioOfMedians": 1.1037064466894035,
+        "pairedSpeedupMedian": 1.1503750151694883,
+        "pairedSpeedupMin": 0.914359512034826,
+        "pairedSpeedupMax": 1.736143033466236
+      },
+      "propagationSeconds": {
+        "beforeMedian": 0.198825103,
+        "afterMedian": 0.227379718,
+        "ratioOfMedians": 0.8744188124993628,
+        "pairedSpeedupMedian": 0.8716681782120003,
+        "pairedSpeedupMin": 0.7530532340619756,
+        "pairedSpeedupMax": 1.0114121520433739
+      },
+      "firstUBSeconds": {
+        "beforeMedian": 1.6753489,
+        "afterMedian": 0.756235347,
+        "ratioOfMedians": 2.2153803133457606,
+        "pairedSpeedupMedian": 2.07663751415634,
+        "pairedSpeedupMin": 1.5707153861326952,
+        "pairedSpeedupMax": 3.025169231129322
+      },
+      "certificateSeconds": {
+        "beforeMedian": 3.458724968,
+        "afterMedian": 1.76111259,
+        "ratioOfMedians": 1.9639431275657395,
+        "pairedSpeedupMedian": 1.8141205531085869,
+        "pairedSpeedupMin": 1.7058818356841454,
+        "pairedSpeedupMax": 2.8331593593722753
+      }
+    },
+    {
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "pairs": 7,
+      "optimizerSeconds": {
+        "beforeMedian": 0.185491598,
+        "afterMedian": 0.18125516,
+        "ratioOfMedians": 1.0233727856354544,
+        "pairedSpeedupMedian": 1.0402655131938918,
+        "pairedSpeedupMin": 0.6923753522093168,
+        "pairedSpeedupMax": 1.583971976723356
+      },
+      "compileSeconds": {
+        "beforeMedian": 1.437018,
+        "afterMedian": 1.572854,
+        "ratioOfMedians": 0.9136372479581703,
+        "pairedSpeedupMedian": 1.0188752420758698,
+        "pairedSpeedupMin": 0.8397756295585209,
+        "pairedSpeedupMax": 1.3615775023143089
+      },
+      "containerMiB": {
+        "beforeMedian": 165.79999923706055,
+        "afterMedian": 178.0,
+        "ratioOfMedians": 0.9314606698711266,
+        "pairedSpeedupMedian": 1.0391506279097389,
+        "pairedSpeedupMin": 0.8681742982950618,
+        "pairedSpeedupMax": 1.121212121212121
+      },
+      "seedSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "messageSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "propagationSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "firstUBSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "certificateSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      }
+    },
+    {
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "pairs": 7,
+      "optimizerSeconds": {
+        "beforeMedian": 0.217205487,
+        "afterMedian": 0.196256196,
+        "ratioOfMedians": 1.1067446094797435,
+        "pairedSpeedupMedian": 1.033998295370077,
+        "pairedSpeedupMin": 0.6762216841440044,
+        "pairedSpeedupMax": 1.4768299435743273
+      },
+      "compileSeconds": {
+        "beforeMedian": 1.570816,
+        "afterMedian": 1.597184,
+        "ratioOfMedians": 0.9834909440615484,
+        "pairedSpeedupMedian": 0.9646865984132074,
+        "pairedSpeedupMin": 0.7506326080985524,
+        "pairedSpeedupMax": 1.448228587480573
+      },
+      "containerMiB": {
+        "beforeMedian": 162.29999923706055,
+        "afterMedian": 149.79999923706055,
+        "ratioOfMedians": 1.083444593215375,
+        "pairedSpeedupMedian": 1.0856954516568564,
+        "pairedSpeedupMin": 0.9310761811074811,
+        "pairedSpeedupMax": 1.24681170863096
+      },
+      "seedSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "messageSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "propagationSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "firstUBSeconds": {
+        "beforeMedian": 0.184908283,
+        "afterMedian": 0.171747361,
+        "ratioOfMedians": 1.0766295442525025,
+        "pairedSpeedupMedian": 1.0543848177086177,
+        "pairedSpeedupMin": 0.676215048046014,
+        "pairedSpeedupMax": 1.4807950681914002
+      },
+      "certificateSeconds": {
+        "beforeMedian": 0.189193321,
+        "afterMedian": 0.17527271,
+        "ratioOfMedians": 1.0794225809596942,
+        "pairedSpeedupMedian": 1.0513293921148557,
+        "pairedSpeedupMin": 0.6774266145316068,
+        "pairedSpeedupMax": 1.483243452127528
+      }
+    },
+    {
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "pairs": 7,
+      "optimizerSeconds": {
+        "beforeMedian": 0.425707295,
+        "afterMedian": 0.429050359,
+        "ratioOfMedians": 0.9922082246760222,
+        "pairedSpeedupMedian": 1.1238485144588943,
+        "pairedSpeedupMin": 0.8756890128875315,
+        "pairedSpeedupMax": 1.5357183584130272
+      },
+      "compileSeconds": {
+        "beforeMedian": 1.778245,
+        "afterMedian": 1.801631,
+        "ratioOfMedians": 0.9870195395172486,
+        "pairedSpeedupMedian": 1.0607182249793228,
+        "pairedSpeedupMin": 0.9238274644429979,
+        "pairedSpeedupMax": 1.2653906003753943
+      },
+      "containerMiB": {
+        "beforeMedian": 172.0999994277954,
+        "afterMedian": 163.5,
+        "ratioOfMedians": 1.0525993848794826,
+        "pairedSpeedupMedian": 1.0087241024252873,
+        "pairedSpeedupMin": 0.8886123174023017,
+        "pairedSpeedupMax": 1.274581216113826
+      },
+      "seedSeconds": {
+        "beforeMedian": 0.119728081,
+        "afterMedian": 0.105485641,
+        "ratioOfMedians": 1.1350178077791648,
+        "pairedSpeedupMedian": 1.2332763185749047,
+        "pairedSpeedupMin": 0.9674671634413562,
+        "pairedSpeedupMax": 1.6475780433471507
+      },
+      "messageSeconds": {
+        "beforeMedian": 0.169236479,
+        "afterMedian": 0.211929237,
+        "ratioOfMedians": 0.7985518251075476,
+        "pairedSpeedupMedian": 0.788950311384212,
+        "pairedSpeedupMin": 0.6885889245857132,
+        "pairedSpeedupMax": 1.3094073287045631
+      },
+      "propagationSeconds": {
+        "beforeMedian": 0.036320873,
+        "afterMedian": 0.035326354,
+        "ratioOfMedians": 1.0281523250319011,
+        "pairedSpeedupMedian": 1.060742745320049,
+        "pairedSpeedupMin": 0.8337488127628816,
+        "pairedSpeedupMax": 1.507736146584089
+      },
+      "firstUBSeconds": {
+        "beforeMedian": 0.136225151,
+        "afterMedian": 0.125041631,
+        "ratioOfMedians": 1.0894383727288395,
+        "pairedSpeedupMedian": 1.1952207418066354,
+        "pairedSpeedupMin": 0.9342537505852303,
+        "pairedSpeedupMax": 1.56478221241372
+      },
+      "certificateSeconds": {
+        "beforeMedian": 0.399088764,
+        "afterMedian": 0.394881521,
+        "ratioOfMedians": 1.0106544438679874,
+        "pairedSpeedupMedian": 1.1297067608286486,
+        "pairedSpeedupMin": 0.8870711223556279,
+        "pairedSpeedupMax": 1.579359046250616
+      }
+    },
+    {
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "pairs": 7,
+      "optimizerSeconds": {
+        "beforeMedian": 0.847997614,
+        "afterMedian": 0.837253356,
+        "ratioOfMedians": 1.012832744023065,
+        "pairedSpeedupMedian": 0.9556595467876824,
+        "pairedSpeedupMin": 0.697784268114992,
+        "pairedSpeedupMax": 1.3346219511192166
+      },
+      "compileSeconds": {
+        "beforeMedian": 3.95808,
+        "afterMedian": 3.772172,
+        "ratioOfMedians": 1.0492840729425912,
+        "pairedSpeedupMedian": 1.047928090235546,
+        "pairedSpeedupMin": 0.9102291820279412,
+        "pairedSpeedupMax": 1.260830065853549
+      },
+      "containerMiB": {
+        "beforeMedian": 317.0,
+        "afterMedian": 312.0,
+        "ratioOfMedians": 1.016025641025641,
+        "pairedSpeedupMedian": 0.986217948106619,
+        "pairedSpeedupMin": 0.7300724630080123,
+        "pairedSpeedupMax": 1.3203072803631188
+      },
+      "seedSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "messageSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "propagationSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "firstUBSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "certificateSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      }
+    },
+    {
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "pairs": 7,
+      "optimizerSeconds": {
+        "beforeMedian": 0.926998726,
+        "afterMedian": 0.891472084,
+        "ratioOfMedians": 1.039851659561333,
+        "pairedSpeedupMedian": 0.9457022346496552,
+        "pairedSpeedupMin": 0.8464885190539911,
+        "pairedSpeedupMax": 1.5003448014082323
+      },
+      "compileSeconds": {
+        "beforeMedian": 4.109716,
+        "afterMedian": 4.18918,
+        "ratioOfMedians": 0.9810311325844198,
+        "pairedSpeedupMedian": 0.9780133582228503,
+        "pairedSpeedupMin": 0.8305814535236795,
+        "pairedSpeedupMax": 1.2867034201504124
+      },
+      "containerMiB": {
+        "beforeMedian": 310.5999994277954,
+        "afterMedian": 325.5999994277954,
+        "ratioOfMedians": 0.9539312038502433,
+        "pairedSpeedupMedian": 0.9976230873923957,
+        "pairedSpeedupMin": 0.6830198273254106,
+        "pairedSpeedupMax": 1.3059784656726612
+      },
+      "seedSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "messageSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "propagationSeconds": {
+        "beforeMedian": 0.0,
+        "afterMedian": 0.0,
+        "ratioOfMedians": null,
+        "pairedSpeedupMedian": null,
+        "pairedSpeedupMin": null,
+        "pairedSpeedupMax": null
+      },
+      "firstUBSeconds": {
+        "beforeMedian": 0.855445325,
+        "afterMedian": 0.825619802,
+        "ratioOfMedians": 1.036125009269097,
+        "pairedSpeedupMedian": 0.9252216297771286,
+        "pairedSpeedupMin": 0.8417433816450217,
+        "pairedSpeedupMax": 1.4957715964653704
+      },
+      "certificateSeconds": {
+        "beforeMedian": 0.858622112,
+        "afterMedian": 0.829019266,
+        "ratioOfMedians": 1.0357082726711928,
+        "pairedSpeedupMedian": 0.9260442360495117,
+        "pairedSpeedupMin": 0.8412060363546481,
+        "pairedSpeedupMax": 1.495662360074583
+      }
+    },
+    {
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "pairs": 7,
+      "optimizerSeconds": {
+        "beforeMedian": 2.849791514,
+        "afterMedian": 2.24157675,
+        "ratioOfMedians": 1.2713334548995479,
+        "pairedSpeedupMedian": 1.2515255687652862,
+        "pairedSpeedupMin": 1.0670082514732935,
+        "pairedSpeedupMax": 1.5452631947313884
+      },
+      "compileSeconds": {
+        "beforeMedian": 6.36552,
+        "afterMedian": 5.492617,
+        "ratioOfMedians": 1.1589229687779068,
+        "pairedSpeedupMedian": 1.1169440517979758,
+        "pairedSpeedupMin": 0.970185369579747,
+        "pairedSpeedupMax": 1.2651411312677026
+      },
+      "containerMiB": {
+        "beforeMedian": 464.5,
+        "afterMedian": 444.5999994277954,
+        "ratioOfMedians": 1.0447593355776341,
+        "pairedSpeedupMedian": 1.0404324320200327,
+        "pairedSpeedupMin": 0.9314216967669031,
+        "pairedSpeedupMax": 1.2829509679546574
+      },
+      "seedSeconds": {
+        "beforeMedian": 0.693623266,
+        "afterMedian": 0.404078498,
+        "ratioOfMedians": 1.716555742097418,
+        "pairedSpeedupMedian": 1.6168448934001503,
+        "pairedSpeedupMin": 1.353316550705645,
+        "pairedSpeedupMax": 2.1241464781949007
+      },
+      "messageSeconds": {
+        "beforeMedian": 1.507718628,
+        "afterMedian": 1.388430494,
+        "ratioOfMedians": 1.0859158125059156,
+        "pairedSpeedupMedian": 1.0378981580032618,
+        "pairedSpeedupMin": 0.8050609599565115,
+        "pairedSpeedupMax": 1.2564287815495296
+      },
+      "propagationSeconds": {
+        "beforeMedian": 0.146164102,
+        "afterMedian": 0.139162993,
+        "ratioOfMedians": 1.0503086980890097,
+        "pairedSpeedupMedian": 1.0385830200203565,
+        "pairedSpeedupMin": 0.8616570690231851,
+        "pairedSpeedupMax": 1.8526086607848362
+      },
+      "firstUBSeconds": {
+        "beforeMedian": 0.739618305,
+        "afterMedian": 0.445878508,
+        "ratioOfMedians": 1.6587888667645763,
+        "pairedSpeedupMedian": 1.543135277152022,
+        "pairedSpeedupMin": 1.3071275958918251,
+        "pairedSpeedupMax": 2.044205868873626
+      },
+      "certificateSeconds": {
+        "beforeMedian": 2.788037141,
+        "afterMedian": 2.159558927,
+        "ratioOfMedians": 1.2910215628489772,
+        "pairedSpeedupMedian": 1.2765060172058653,
+        "pairedSpeedupMin": 1.075296110638624,
+        "pairedSpeedupMax": 1.5663035821152622
+      }
+    }
+  ]
+}

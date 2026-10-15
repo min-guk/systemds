@@ -1,0 +1,11 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+......MEMO_SOURCE_PROJECTION ownersPerInput=2 contexts=1 primitives=1 bindingVisits=0
+MEMO_SOURCE_PROJECTION ownersPerInput=11 contexts=1 primitives=1 bindingVisits=0
+MEMO_SOURCE_PROJECTION ownersPerInput=101 contexts=1 primitives=1 bindingVisits=0
+MEMO_SOURCE_PROJECTION ownersPerInput=1001 contexts=1 primitives=1 bindingVisits=0
+
+Time: 8.933
+
+OK (6 tests)
+

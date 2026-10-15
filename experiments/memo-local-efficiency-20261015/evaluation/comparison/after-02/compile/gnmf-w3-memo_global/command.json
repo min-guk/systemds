@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "docker",
+    "run",
+    "--rm",
+    "--pull",
+    "never",
+    "--network",
+    "none",
+    "--name",
+    "sysds-tree-dp-9492963138f2014a",
+    "--cpus",
+    "4",
+    "--memory",
+    "8g",
+    "--user",
+    "10041:5500",
+    "--volume",
+    "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/evaluation/comparison/after-02/compile/gnmf-w3-memo_global:/evidence:rw",
+    "--volume",
+    "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z:/workspace/experiments:ro",
+    "--volume",
+    "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/engine-v1/classes:/engine/classes:ro",
+    "--volume",
+    "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/engine-v1/lib:/deps:ro",
+    "--entrypoint",
+    "bash",
+    "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "/evidence/container-run.sh"
+  ],
+  "shell": "docker run --rm --pull never --network none --name sysds-tree-dp-9492963138f2014a --cpus 4 --memory 8g --user 10041:5500 --volume /home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/evaluation/comparison/after-02/compile/gnmf-w3-memo_global:/evidence:rw --volume /home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z:/workspace/experiments:ro --volume /home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/engine-v1/classes:/engine/classes:ro --volume /home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/engine-v1/lib:/deps:ro --entrypoint bash sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434 /evidence/container-run.sh"
+}

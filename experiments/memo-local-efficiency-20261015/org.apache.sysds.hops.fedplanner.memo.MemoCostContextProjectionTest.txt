@@ -1,0 +1,7 @@
+-------------------------------------------------------------------------------
+Test set: org.apache.sysds.hops.fedplanner.memo.MemoCostContextProjectionTest
+-------------------------------------------------------------------------------
+Tests run: 6, Failures: 0, Errors: 1, Skipped: 0, Time elapsed: 35.686 s <<< FAILURE! - in org.apache.sysds.hops.fedplanner.memo.MemoCostContextProjectionTest
+org.apache.sysds.hops.fedplanner.memo.MemoCostContextProjectionTest.sourceOnlyDefinitionScalingDoesNotExpandNativeCostContexts  Time elapsed: 9.216 s  <<< ERROR!
+java.lang.StackOverflowError
+

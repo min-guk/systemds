@@ -1,0 +1,8 @@
+{
+  "attempts": 0,
+  "beforeAfter": [],
+  "groups": [],
+  "schema": "memo-dual-improvement-aggregate/v1",
+  "summaryFiles": 0,
+  "timingContract": "independent cold JVM/process; optimization is sum(memoPlans.phaseNanos.optimization)/1e9"
+}

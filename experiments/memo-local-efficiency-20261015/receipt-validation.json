@@ -1,0 +1,27 @@
+{
+  "allRequestedCompileRowsPassed": true,
+  "compileRowsExpected": 9,
+  "compileRowsMatched": 9,
+  "errors": [],
+  "failedCompileRows": [],
+  "jobs": [
+    {
+      "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/engine-v1",
+      "expectedRows": 9,
+      "job": 0,
+      "name": "new-pilot",
+      "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/pilot/receipts.json",
+      "returncode": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/pilot/new-pilot/summary.json"
+    }
+  ],
+  "jobsExpected": 1,
+  "jobsMatched": 1,
+  "observedSuites": [
+    "pilot"
+  ],
+  "receiptFiles": 1,
+  "requiredSuites": [],
+  "schema": "memo-local-certificate-first-receipt-validation/v1",
+  "valid": true
+}

@@ -1,0 +1,1299 @@
+{
+  "rows": [
+    {
+      "suite": "pilot",
+      "run": "new-pilot",
+      "version": "after",
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "status": "passed",
+      "failure": null,
+      "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+      "nativeRules": 921,
+      "optimizerSeconds": 0.935077577,
+      "compileSeconds": 4.271293,
+      "containerMiB": 324.8999996185303,
+      "solverEstimatedMiB": 0.0,
+      "firstUBSeconds": 0.0,
+      "certificateSeconds": 0.0,
+      "seedSeconds": 0.0,
+      "messageSeconds": 0.0,
+      "propagationSeconds": 0.0,
+      "searchSeconds": 0.0,
+      "nodes": null,
+      "exactCells": null,
+      "messageCells": null,
+      "seedEvaluations": null,
+      "route": null,
+      "result": null,
+      "lowerBound": null,
+      "upperBound": null,
+      "certifiedGap": null,
+      "checkpoints": []
+    },
+    {
+      "suite": "pilot",
+      "run": "new-pilot",
+      "version": "after",
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "status": "passed",
+      "failure": null,
+      "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+      "nativeRules": 921,
+      "optimizerSeconds": 0.947557349,
+      "compileSeconds": 3.964027,
+      "containerMiB": 276.19999980926514,
+      "solverEstimatedMiB": 2.0709495544433594,
+      "firstUBSeconds": 0.877032647,
+      "certificateSeconds": 0.880393818,
+      "seedSeconds": 0.0,
+      "messageSeconds": 0.0,
+      "propagationSeconds": 0.0,
+      "searchSeconds": 0.0,
+      "nodes": 0,
+      "exactCells": 14744,
+      "messageCells": 0,
+      "seedEvaluations": 0,
+      "route": "DIRECT",
+      "result": "OPTIMAL",
+      "lowerBound": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "upperBound": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "certifiedGap": "0.0",
+      "checkpoints": []
+    },
+    {
+      "suite": "pilot",
+      "run": "new-pilot",
+      "version": "after",
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "status": "passed",
+      "failure": null,
+      "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+      "nativeRules": 921,
+      "optimizerSeconds": 2.631925599,
+      "compileSeconds": 5.676776,
+      "containerMiB": 474.29999923706055,
+      "solverEstimatedMiB": 10.399993896484375,
+      "firstUBSeconds": 0.457217551,
+      "certificateSeconds": 2.545779296,
+      "seedSeconds": 0.408706066,
+      "messageSeconds": 1.791642924,
+      "propagationSeconds": 0.122512983,
+      "searchSeconds": 0.0,
+      "nodes": 0,
+      "exactCells": 20699,
+      "messageCells": 20699,
+      "seedEvaluations": 1135,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "result": "EPSILON_OPTIMAL",
+      "lowerBound": "4027.6919033839307679491912296218004974068804813214228488504886627197265625000",
+      "upperBound": "4193.6771139917773391949515883144784800240500999279902316629886627197265625000",
+      "certifiedGap": "0.041210999895099076",
+      "variables": 489,
+      "originalFactors": 9595,
+      "completedMessages": 487,
+      "untouchedBuckets": 2,
+      "messageTouchedVariables": 92,
+      "messageTouchedFactors": 6237,
+      "candidatePreparations": 487,
+      "messageMemoryRejections": 0,
+      "memoryRejections": 0,
+      "activeRegions": 1,
+      "unknownRegions": 0,
+      "deferredRegions": 0,
+      "messageDecline": "NONE",
+      "propagationNanos": 122512983,
+      "propagatedRules": 255,
+      "propagationChecks": 56005,
+      "checkpoints": [
+        {
+          "kind": "INITIAL_BOUND",
+          "owner": -1,
+          "work": 0,
+          "completedMessages": 0,
+          "variables": 489,
+          "lowerBound": "16.7018876485029863248945822758770134164318932334936107508838176727294921875",
+          "upperBound": "null"
+        },
+        {
+          "kind": "FIRST_FEASIBLE",
+          "owner": -1,
+          "work": 1135,
+          "completedMessages": 0,
+          "variables": 489,
+          "lowerBound": "16.7018876485029863248945822758770134164318932334936107508838176727294921875",
+          "upperBound": "5847.2978795872134571317411101351070590315117669888422824442386627197265625000"
+        },
+        {
+          "kind": "LEGALITY_PROPAGATION",
+          "owner": -1,
+          "work": 56005,
+          "completedMessages": 0,
+          "variables": 489,
+          "lowerBound": "16.7133271626631424749745100596129247783050431053197826258838176727294921875",
+          "upperBound": "5847.2978795872134571317411101351070590315117669888422824442386627197265625000"
+        },
+        {
+          "kind": "MESSAGE",
+          "owner": 261,
+          "work": 1001,
+          "completedMessages": 487,
+          "variables": 489,
+          "lowerBound": "4027.6919033839307679491912296218004974068804813214228488504886627197265625000",
+          "upperBound": "4193.6771139917773391949515883144784800240500999279902316629886627197265625000"
+        }
+      ]
+    },
+    {
+      "suite": "pilot",
+      "run": "new-pilot",
+      "version": "after",
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "status": "passed",
+      "failure": null,
+      "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+      "nativeRules": 2030,
+      "optimizerSeconds": 2.368409533,
+      "compileSeconds": 9.240349,
+      "containerMiB": 991.2999992370605,
+      "solverEstimatedMiB": 0.0,
+      "firstUBSeconds": 0.0,
+      "certificateSeconds": 0.0,
+      "seedSeconds": 0.0,
+      "messageSeconds": 0.0,
+      "propagationSeconds": 0.0,
+      "searchSeconds": 0.0,
+      "nodes": null,
+      "exactCells": null,
+      "messageCells": null,
+      "seedEvaluations": null,
+      "route": null,
+      "result": null,
+      "lowerBound": null,
+      "upperBound": null,
+      "certifiedGap": null,
+      "checkpoints": []
+    },
+    {
+      "suite": "pilot",
+      "run": "new-pilot",
+      "version": "after",
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "status": "passed",
+      "failure": null,
+      "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+      "nativeRules": 2030,
+      "optimizerSeconds": 2.529603609,
+      "compileSeconds": 9.936926,
+      "containerMiB": 1047.551999092102,
+      "solverEstimatedMiB": 24.62757110595703,
+      "firstUBSeconds": 2.441988061,
+      "certificateSeconds": 2.445229869,
+      "seedSeconds": 0.0,
+      "messageSeconds": 0.0,
+      "propagationSeconds": 0.0,
+      "searchSeconds": 0.0,
+      "nodes": 0,
+      "exactCells": 1360977,
+      "messageCells": 0,
+      "seedEvaluations": 0,
+      "route": "DIRECT",
+      "result": "OPTIMAL",
+      "lowerBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "certifiedGap": "0.0",
+      "checkpoints": []
+    },
+    {
+      "suite": "pilot",
+      "run": "new-pilot",
+      "version": "after",
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "status": "passed",
+      "failure": null,
+      "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+      "nativeRules": 2030,
+      "optimizerSeconds": 1.93607429,
+      "compileSeconds": 8.920314,
+      "containerMiB": 1054.7199993133545,
+      "solverEstimatedMiB": 14.584693908691406,
+      "firstUBSeconds": 0.734241732,
+      "certificateSeconds": 1.823063585,
+      "seedSeconds": 0.659794672,
+      "messageSeconds": 0.578110819,
+      "propagationSeconds": 0.216557686,
+      "searchSeconds": 0.0,
+      "nodes": 0,
+      "exactCells": 5431,
+      "messageCells": 5431,
+      "seedEvaluations": 2436,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "result": "EPSILON_OPTIMAL",
+      "lowerBound": "407.816699368096911075070332417983427417129682623908593086525797843933105468750000",
+      "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "certifiedGap": "0.045133624575808634",
+      "variables": 1001,
+      "originalFactors": 17093,
+      "completedMessages": 929,
+      "untouchedBuckets": 72,
+      "messageTouchedVariables": 163,
+      "messageTouchedFactors": 3655,
+      "candidatePreparations": 929,
+      "messageMemoryRejections": 0,
+      "memoryRejections": 0,
+      "activeRegions": 1,
+      "unknownRegions": 0,
+      "deferredRegions": 0,
+      "messageDecline": "NONE",
+      "propagationNanos": 216557686,
+      "propagatedRules": 481,
+      "propagationChecks": 86737,
+      "checkpoints": [
+        {
+          "kind": "INITIAL_BOUND",
+          "owner": -1,
+          "work": 0,
+          "completedMessages": 0,
+          "variables": 1001,
+          "lowerBound": "14.28611186443731055829457018552851939492687183275165807572193443775177001953125",
+          "upperBound": "null"
+        },
+        {
+          "kind": "FIRST_FEASIBLE",
+          "owner": -1,
+          "work": 2436,
+          "completedMessages": 0,
+          "variables": 1001,
+          "lowerBound": "14.28611186443731055829457018552851939492687183275165807572193443775177001953125",
+          "upperBound": "509.530166072386029781271480769048272049803749439433886436745524406433105468750000"
+        },
+        {
+          "kind": "LEGALITY_PROPAGATION",
+          "owner": -1,
+          "work": 86737,
+          "completedMessages": 0,
+          "variables": 1001,
+          "lowerBound": "14.54509746014043551832654129902288393967613178148212682572193443775177001953125",
+          "upperBound": "509.530166072386029781271480769048272049803749439433886436745524406433105468750000"
+        },
+        {
+          "kind": "MESSAGE",
+          "owner": 87,
+          "work": 234,
+          "completedMessages": 929,
+          "variables": 1001,
+          "lowerBound": "407.816699368096911075070332417983427417129682623908593086525797843933105468750000",
+          "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+        }
+      ]
+    },
+    {
+      "suite": "pilot",
+      "run": "new-pilot",
+      "version": "after",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "status": "passed",
+      "failure": null,
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "nativeRules": 236,
+      "optimizerSeconds": 0.201907439,
+      "compileSeconds": 1.677137,
+      "containerMiB": 184.5999994277954,
+      "solverEstimatedMiB": 0.0,
+      "firstUBSeconds": 0.0,
+      "certificateSeconds": 0.0,
+      "seedSeconds": 0.0,
+      "messageSeconds": 0.0,
+      "propagationSeconds": 0.0,
+      "searchSeconds": 0.0,
+      "nodes": null,
+      "exactCells": null,
+      "messageCells": null,
+      "seedEvaluations": null,
+      "route": null,
+      "result": null,
+      "lowerBound": null,
+      "upperBound": null,
+      "certifiedGap": null,
+      "checkpoints": []
+    },
+    {
+      "suite": "pilot",
+      "run": "new-pilot",
+      "version": "after",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "status": "passed",
+      "failure": null,
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "nativeRules": 236,
+      "optimizerSeconds": 0.224673942,
+      "compileSeconds": 1.493228,
+      "containerMiB": 164.39999961853027,
+      "solverEstimatedMiB": 1.174041748046875,
+      "firstUBSeconds": 0.196584111,
+      "certificateSeconds": 0.200215838,
+      "seedSeconds": 0.0,
+      "messageSeconds": 0.0,
+      "propagationSeconds": 0.0,
+      "searchSeconds": 0.0,
+      "nodes": 0,
+      "exactCells": 3308,
+      "messageCells": 0,
+      "seedEvaluations": 0,
+      "route": "DIRECT",
+      "result": "OPTIMAL",
+      "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "certifiedGap": "0.0",
+      "checkpoints": []
+    },
+    {
+      "suite": "pilot",
+      "run": "new-pilot",
+      "version": "after",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "status": "passed",
+      "failure": null,
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "nativeRules": 236,
+      "optimizerSeconds": 0.553017094,
+      "compileSeconds": 2.039333,
+      "containerMiB": 159.5999994277954,
+      "solverEstimatedMiB": 4.969024658203125,
+      "firstUBSeconds": 0.153810148,
+      "certificateSeconds": 0.50885648,
+      "seedSeconds": 0.125907276,
+      "messageSeconds": 0.275839438,
+      "propagationSeconds": 0.043840836,
+      "searchSeconds": 0.0,
+      "nodes": 0,
+      "exactCells": 2885,
+      "messageCells": 2885,
+      "seedEvaluations": 319,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "result": "EPSILON_OPTIMAL",
+      "lowerBound": "217.001402574278923762021458636947007780904073115380015224218368530273437500",
+      "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "certifiedGap": "0.00021162447934948894",
+      "variables": 85,
+      "originalFactors": 614,
+      "completedMessages": 83,
+      "untouchedBuckets": 2,
+      "messageTouchedVariables": 18,
+      "messageTouchedFactors": 263,
+      "candidatePreparations": 83,
+      "messageMemoryRejections": 0,
+      "memoryRejections": 0,
+      "activeRegions": 1,
+      "unknownRegions": 0,
+      "deferredRegions": 0,
+      "messageDecline": "NONE",
+      "propagationNanos": 43840836,
+      "propagatedRules": 29,
+      "propagationChecks": 4209,
+      "checkpoints": [
+        {
+          "kind": "INITIAL_BOUND",
+          "owner": -1,
+          "work": 0,
+          "completedMessages": 0,
+          "variables": 85,
+          "lowerBound": "8.802694036962588960708103806270322100324676739546703174710273742675781250",
+          "upperBound": "null"
+        },
+        {
+          "kind": "FIRST_FEASIBLE",
+          "owner": -1,
+          "work": 319,
+          "completedMessages": 0,
+          "variables": 85,
+          "lowerBound": "8.802694036962588960708103806270322100324676739546703174710273742675781250",
+          "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+        },
+        {
+          "kind": "LEGALITY_PROPAGATION",
+          "owner": -1,
+          "work": 4209,
+          "completedMessages": 0,
+          "variables": 85,
+          "lowerBound": "8.843129217626651558407729973284097657604263531538890674710273742675781250",
+          "upperBound": "880.460326538970000916276089535702359389901516806276049464941024780273437500"
+        },
+        {
+          "kind": "MESSAGE",
+          "owner": 31,
+          "work": 240,
+          "completedMessages": 83,
+          "variables": 85,
+          "lowerBound": "217.001402574278923762021458636947007780904073115380015224218368530273437500",
+          "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+        }
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "attempts": 1,
+      "passed": 1,
+      "optimizerSeconds": {
+        "median": 2.368409533,
+        "min": 2.368409533,
+        "max": 2.368409533
+      },
+      "compileSeconds": {
+        "median": 9.240349,
+        "min": 9.240349,
+        "max": 9.240349
+      },
+      "containerMiB": {
+        "median": 991.2999992370605,
+        "min": 991.2999992370605,
+        "max": 991.2999992370605
+      },
+      "solverEstimatedMiB": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "firstUBSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "certificateSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "seedSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "messageSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "propagationSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "searchSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "nodes": null,
+      "exactCells": null,
+      "messageCells": null,
+      "seedEvaluations": null,
+      "variables": null,
+      "completedMessages": null,
+      "untouchedBuckets": null,
+      "messageTouchedFactors": null,
+      "originalFactors": null,
+      "candidatePreparations": null,
+      "memoryRejections": null,
+      "finalBounds": [
+        [
+          null,
+          null
+        ]
+      ]
+    },
+    {
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "attempts": 1,
+      "passed": 1,
+      "optimizerSeconds": {
+        "median": 2.529603609,
+        "min": 2.529603609,
+        "max": 2.529603609
+      },
+      "compileSeconds": {
+        "median": 9.936926,
+        "min": 9.936926,
+        "max": 9.936926
+      },
+      "containerMiB": {
+        "median": 1047.551999092102,
+        "min": 1047.551999092102,
+        "max": 1047.551999092102
+      },
+      "solverEstimatedMiB": {
+        "median": 24.62757110595703,
+        "min": 24.62757110595703,
+        "max": 24.62757110595703
+      },
+      "firstUBSeconds": {
+        "median": 2.441988061,
+        "min": 2.441988061,
+        "max": 2.441988061
+      },
+      "certificateSeconds": {
+        "median": 2.445229869,
+        "min": 2.445229869,
+        "max": 2.445229869
+      },
+      "seedSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "messageSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "propagationSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "searchSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "nodes": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "exactCells": {
+        "median": 1360977,
+        "min": 1360977,
+        "max": 1360977
+      },
+      "messageCells": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "seedEvaluations": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "variables": null,
+      "completedMessages": null,
+      "untouchedBuckets": null,
+      "messageTouchedFactors": null,
+      "originalFactors": null,
+      "candidatePreparations": null,
+      "memoryRejections": null,
+      "finalBounds": [
+        [
+          "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+          "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+        ]
+      ]
+    },
+    {
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "attempts": 1,
+      "passed": 1,
+      "optimizerSeconds": {
+        "median": 1.93607429,
+        "min": 1.93607429,
+        "max": 1.93607429
+      },
+      "compileSeconds": {
+        "median": 8.920314,
+        "min": 8.920314,
+        "max": 8.920314
+      },
+      "containerMiB": {
+        "median": 1054.7199993133545,
+        "min": 1054.7199993133545,
+        "max": 1054.7199993133545
+      },
+      "solverEstimatedMiB": {
+        "median": 14.584693908691406,
+        "min": 14.584693908691406,
+        "max": 14.584693908691406
+      },
+      "firstUBSeconds": {
+        "median": 0.734241732,
+        "min": 0.734241732,
+        "max": 0.734241732
+      },
+      "certificateSeconds": {
+        "median": 1.823063585,
+        "min": 1.823063585,
+        "max": 1.823063585
+      },
+      "seedSeconds": {
+        "median": 0.659794672,
+        "min": 0.659794672,
+        "max": 0.659794672
+      },
+      "messageSeconds": {
+        "median": 0.578110819,
+        "min": 0.578110819,
+        "max": 0.578110819
+      },
+      "propagationSeconds": {
+        "median": 0.216557686,
+        "min": 0.216557686,
+        "max": 0.216557686
+      },
+      "searchSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "nodes": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "exactCells": {
+        "median": 5431,
+        "min": 5431,
+        "max": 5431
+      },
+      "messageCells": {
+        "median": 5431,
+        "min": 5431,
+        "max": 5431
+      },
+      "seedEvaluations": {
+        "median": 2436,
+        "min": 2436,
+        "max": 2436
+      },
+      "variables": {
+        "median": 1001,
+        "min": 1001,
+        "max": 1001
+      },
+      "completedMessages": {
+        "median": 929,
+        "min": 929,
+        "max": 929
+      },
+      "untouchedBuckets": {
+        "median": 72,
+        "min": 72,
+        "max": 72
+      },
+      "messageTouchedFactors": {
+        "median": 3655,
+        "min": 3655,
+        "max": 3655
+      },
+      "originalFactors": {
+        "median": 17093,
+        "min": 17093,
+        "max": 17093
+      },
+      "candidatePreparations": {
+        "median": 929,
+        "min": 929,
+        "max": 929
+      },
+      "memoryRejections": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "finalBounds": [
+        [
+          "407.816699368096911075070332417983427417129682623908593086525797843933105468750000",
+          "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+        ]
+      ]
+    },
+    {
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "attempts": 1,
+      "passed": 1,
+      "optimizerSeconds": {
+        "median": 0.201907439,
+        "min": 0.201907439,
+        "max": 0.201907439
+      },
+      "compileSeconds": {
+        "median": 1.677137,
+        "min": 1.677137,
+        "max": 1.677137
+      },
+      "containerMiB": {
+        "median": 184.5999994277954,
+        "min": 184.5999994277954,
+        "max": 184.5999994277954
+      },
+      "solverEstimatedMiB": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "firstUBSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "certificateSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "seedSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "messageSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "propagationSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "searchSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "nodes": null,
+      "exactCells": null,
+      "messageCells": null,
+      "seedEvaluations": null,
+      "variables": null,
+      "completedMessages": null,
+      "untouchedBuckets": null,
+      "messageTouchedFactors": null,
+      "originalFactors": null,
+      "candidatePreparations": null,
+      "memoryRejections": null,
+      "finalBounds": [
+        [
+          null,
+          null
+        ]
+      ]
+    },
+    {
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "attempts": 1,
+      "passed": 1,
+      "optimizerSeconds": {
+        "median": 0.224673942,
+        "min": 0.224673942,
+        "max": 0.224673942
+      },
+      "compileSeconds": {
+        "median": 1.493228,
+        "min": 1.493228,
+        "max": 1.493228
+      },
+      "containerMiB": {
+        "median": 164.39999961853027,
+        "min": 164.39999961853027,
+        "max": 164.39999961853027
+      },
+      "solverEstimatedMiB": {
+        "median": 1.174041748046875,
+        "min": 1.174041748046875,
+        "max": 1.174041748046875
+      },
+      "firstUBSeconds": {
+        "median": 0.196584111,
+        "min": 0.196584111,
+        "max": 0.196584111
+      },
+      "certificateSeconds": {
+        "median": 0.200215838,
+        "min": 0.200215838,
+        "max": 0.200215838
+      },
+      "seedSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "messageSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "propagationSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "searchSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "nodes": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "exactCells": {
+        "median": 3308,
+        "min": 3308,
+        "max": 3308
+      },
+      "messageCells": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "seedEvaluations": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "variables": null,
+      "completedMessages": null,
+      "untouchedBuckets": null,
+      "messageTouchedFactors": null,
+      "originalFactors": null,
+      "candidatePreparations": null,
+      "memoryRejections": null,
+      "finalBounds": [
+        [
+          "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+        ]
+      ]
+    },
+    {
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "attempts": 1,
+      "passed": 1,
+      "optimizerSeconds": {
+        "median": 0.553017094,
+        "min": 0.553017094,
+        "max": 0.553017094
+      },
+      "compileSeconds": {
+        "median": 2.039333,
+        "min": 2.039333,
+        "max": 2.039333
+      },
+      "containerMiB": {
+        "median": 159.5999994277954,
+        "min": 159.5999994277954,
+        "max": 159.5999994277954
+      },
+      "solverEstimatedMiB": {
+        "median": 4.969024658203125,
+        "min": 4.969024658203125,
+        "max": 4.969024658203125
+      },
+      "firstUBSeconds": {
+        "median": 0.153810148,
+        "min": 0.153810148,
+        "max": 0.153810148
+      },
+      "certificateSeconds": {
+        "median": 0.50885648,
+        "min": 0.50885648,
+        "max": 0.50885648
+      },
+      "seedSeconds": {
+        "median": 0.125907276,
+        "min": 0.125907276,
+        "max": 0.125907276
+      },
+      "messageSeconds": {
+        "median": 0.275839438,
+        "min": 0.275839438,
+        "max": 0.275839438
+      },
+      "propagationSeconds": {
+        "median": 0.043840836,
+        "min": 0.043840836,
+        "max": 0.043840836
+      },
+      "searchSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "nodes": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "exactCells": {
+        "median": 2885,
+        "min": 2885,
+        "max": 2885
+      },
+      "messageCells": {
+        "median": 2885,
+        "min": 2885,
+        "max": 2885
+      },
+      "seedEvaluations": {
+        "median": 319,
+        "min": 319,
+        "max": 319
+      },
+      "variables": {
+        "median": 85,
+        "min": 85,
+        "max": 85
+      },
+      "completedMessages": {
+        "median": 83,
+        "min": 83,
+        "max": 83
+      },
+      "untouchedBuckets": {
+        "median": 2,
+        "min": 2,
+        "max": 2
+      },
+      "messageTouchedFactors": {
+        "median": 263,
+        "min": 263,
+        "max": 263
+      },
+      "originalFactors": {
+        "median": 614,
+        "min": 614,
+        "max": 614
+      },
+      "candidatePreparations": {
+        "median": 83,
+        "min": 83,
+        "max": 83
+      },
+      "memoryRejections": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "finalBounds": [
+        [
+          "217.001402574278923762021458636947007780904073115380015224218368530273437500",
+          "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+        ]
+      ]
+    },
+    {
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "attempts": 1,
+      "passed": 1,
+      "optimizerSeconds": {
+        "median": 0.935077577,
+        "min": 0.935077577,
+        "max": 0.935077577
+      },
+      "compileSeconds": {
+        "median": 4.271293,
+        "min": 4.271293,
+        "max": 4.271293
+      },
+      "containerMiB": {
+        "median": 324.8999996185303,
+        "min": 324.8999996185303,
+        "max": 324.8999996185303
+      },
+      "solverEstimatedMiB": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "firstUBSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "certificateSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "seedSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "messageSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "propagationSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "searchSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "nodes": null,
+      "exactCells": null,
+      "messageCells": null,
+      "seedEvaluations": null,
+      "variables": null,
+      "completedMessages": null,
+      "untouchedBuckets": null,
+      "messageTouchedFactors": null,
+      "originalFactors": null,
+      "candidatePreparations": null,
+      "memoryRejections": null,
+      "finalBounds": [
+        [
+          null,
+          null
+        ]
+      ]
+    },
+    {
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "attempts": 1,
+      "passed": 1,
+      "optimizerSeconds": {
+        "median": 0.947557349,
+        "min": 0.947557349,
+        "max": 0.947557349
+      },
+      "compileSeconds": {
+        "median": 3.964027,
+        "min": 3.964027,
+        "max": 3.964027
+      },
+      "containerMiB": {
+        "median": 276.19999980926514,
+        "min": 276.19999980926514,
+        "max": 276.19999980926514
+      },
+      "solverEstimatedMiB": {
+        "median": 2.0709495544433594,
+        "min": 2.0709495544433594,
+        "max": 2.0709495544433594
+      },
+      "firstUBSeconds": {
+        "median": 0.877032647,
+        "min": 0.877032647,
+        "max": 0.877032647
+      },
+      "certificateSeconds": {
+        "median": 0.880393818,
+        "min": 0.880393818,
+        "max": 0.880393818
+      },
+      "seedSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "messageSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "propagationSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "searchSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "nodes": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "exactCells": {
+        "median": 14744,
+        "min": 14744,
+        "max": 14744
+      },
+      "messageCells": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "seedEvaluations": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "variables": null,
+      "completedMessages": null,
+      "untouchedBuckets": null,
+      "messageTouchedFactors": null,
+      "originalFactors": null,
+      "candidatePreparations": null,
+      "memoryRejections": null,
+      "finalBounds": [
+        [
+          "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+          "4041.3312164761625187616576028123462072105809284039423801004886627197265625000"
+        ]
+      ]
+    },
+    {
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "attempts": 1,
+      "passed": 1,
+      "optimizerSeconds": {
+        "median": 2.631925599,
+        "min": 2.631925599,
+        "max": 2.631925599
+      },
+      "compileSeconds": {
+        "median": 5.676776,
+        "min": 5.676776,
+        "max": 5.676776
+      },
+      "containerMiB": {
+        "median": 474.29999923706055,
+        "min": 474.29999923706055,
+        "max": 474.29999923706055
+      },
+      "solverEstimatedMiB": {
+        "median": 10.399993896484375,
+        "min": 10.399993896484375,
+        "max": 10.399993896484375
+      },
+      "firstUBSeconds": {
+        "median": 0.457217551,
+        "min": 0.457217551,
+        "max": 0.457217551
+      },
+      "certificateSeconds": {
+        "median": 2.545779296,
+        "min": 2.545779296,
+        "max": 2.545779296
+      },
+      "seedSeconds": {
+        "median": 0.408706066,
+        "min": 0.408706066,
+        "max": 0.408706066
+      },
+      "messageSeconds": {
+        "median": 1.791642924,
+        "min": 1.791642924,
+        "max": 1.791642924
+      },
+      "propagationSeconds": {
+        "median": 0.122512983,
+        "min": 0.122512983,
+        "max": 0.122512983
+      },
+      "searchSeconds": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "nodes": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "exactCells": {
+        "median": 20699,
+        "min": 20699,
+        "max": 20699
+      },
+      "messageCells": {
+        "median": 20699,
+        "min": 20699,
+        "max": 20699
+      },
+      "seedEvaluations": {
+        "median": 1135,
+        "min": 1135,
+        "max": 1135
+      },
+      "variables": {
+        "median": 489,
+        "min": 489,
+        "max": 489
+      },
+      "completedMessages": {
+        "median": 487,
+        "min": 487,
+        "max": 487
+      },
+      "untouchedBuckets": {
+        "median": 2,
+        "min": 2,
+        "max": 2
+      },
+      "messageTouchedFactors": {
+        "median": 6237,
+        "min": 6237,
+        "max": 6237
+      },
+      "originalFactors": {
+        "median": 9595,
+        "min": 9595,
+        "max": 9595
+      },
+      "candidatePreparations": {
+        "median": 487,
+        "min": 487,
+        "max": 487
+      },
+      "memoryRejections": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+      },
+      "finalBounds": [
+        [
+          "4027.6919033839307679491912296218004974068804813214228488504886627197265625000",
+          "4193.6771139917773391949515883144784800240500999279902316629886627197265625000"
+        ]
+      ]
+    }
+  ]
+}

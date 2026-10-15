@@ -1,0 +1,47 @@
+{
+  "actionContract": {
+    "checks": [],
+    "errors": [],
+    "schema": "memo-local-action-contract-validation/v1",
+    "valid": true
+  },
+  "boundPointsCheckedIncludingFinal": 0,
+  "certificateAudits": [],
+  "certificatesChecked": 0,
+  "decimalPrecision": 300,
+  "errors": [
+    {
+      "message": "no experiment receipts found",
+      "receipt": null
+    }
+  ],
+  "exactBaselineKeys": 0,
+  "failedOomWithoutCertificatesRetained": [],
+  "localRouteChecks": [],
+  "localRouteChecksPassed": 0,
+  "receiptValidation": {
+    "allRequestedCompileRowsPassed": true,
+    "compileRowsExpected": 0,
+    "compileRowsMatched": 0,
+    "errors": [
+      {
+        "message": "no experiment receipts found",
+        "receipt": null
+      }
+    ],
+    "failedCompileRows": [],
+    "jobs": [],
+    "jobsExpected": 0,
+    "jobsMatched": 0,
+    "observedSuites": [],
+    "receiptFiles": 0,
+    "requiredSuites": [],
+    "schema": "memo-local-certificate-first-receipt-validation/v1",
+    "valid": false
+  },
+  "schema": "memo-local-certificate-first-result-validation/v1",
+  "summaries": [],
+  "summaryFiles": 0,
+  "unauditedCertificates": [],
+  "valid": false
+}

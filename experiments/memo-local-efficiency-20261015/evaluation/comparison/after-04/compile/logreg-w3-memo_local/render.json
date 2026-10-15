@@ -1,0 +1,454 @@
+{
+  "adaptationReceipt": {
+    "adaptedSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+    "dmlPlannerIndependenceVerifiedAgainst": "DP-local",
+    "executionPlanner": "COMPILE_MEMO",
+    "originalSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+    "plannerInput": "DP-global",
+    "plannerInputEnum": "COMPILE_EXACT",
+    "plannerNeutralSha256": "a067a27d65bb7dec2caa9a00e2816a9a302b071e01aa03e660ad7e36528153cb",
+    "reason": "compile_only uses sealed local metadata and performs no worker RPC",
+    "schema": "systemds-memo-planning-input-adaptation/v1",
+    "sealedEndpointsPreserved": true,
+    "transformations": []
+  },
+  "renderReceipt": {
+    "cell": {
+      "id": "ml|logreg|lan|w3|DP-global",
+      "planner": "DP-global",
+      "planner_enum": "COMPILE_EXACT",
+      "profile": "lan",
+      "suite": "ml",
+      "workers": 3,
+      "workload": "logreg"
+    },
+    "content_verification": {
+      "cache_contract": "hash reused only while dev/inode/size/mtime_ns/ctime_ns are unchanged",
+      "execution_note": "pure render only; re-render immediately before any separately qualified run",
+      "selected_template_metadata_and_data_blocks": "sha256-verified-at-render",
+      "stage_manifest_sha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+    },
+    "dependencies": [],
+    "execution_authorized": false,
+    "inputs": [
+      {
+        "cols": 128,
+        "metadata_path": "data/binary/ADULT_features.data.mtd",
+        "metadata_sha256": "4a31620520bde98be28db26f0bf4b237bdf403b9428c7af8240be2c36ed50ab5",
+        "nnz": 6400000,
+        "privacy": "private-aggregate",
+        "role": "X",
+        "rows": 50000,
+        "shards": [
+          {
+            "address": "130.149.237.12:8001//workspace/experiments/data/binary/ADULT_features_3_1.data",
+            "blocks": [
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_1.data/0-m-00000",
+                "sha256": "9a9a51aa59ba9280672f1c6e822363b3523a052ce4ffb3a692204983a842e7c1"
+              },
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_1.data/0-m-00001",
+                "sha256": "7c6bf6c7e3aa367ac591c096016453a89c9d7d976ea4b9be00cab60e226841d4"
+              },
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_1.data/0-m-00002",
+                "sha256": "0e7d459e6cf254ca693264536699c1612fa32961b54eac323d0bcf2ba0eb72c1"
+              },
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_1.data/0-m-00003",
+                "sha256": "531823dc21fc593973ec562e63b9fbce6b0cb2b880b4b588beaecaae7ba97c4e"
+              },
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_1.data/0-m-00004",
+                "sha256": "eaea97b5e2a50da9d9bbbf18e2f6cf4d41903a12c4aace717f05aadaa58c7d60"
+              },
+              {
+                "bytes": 1707220,
+                "path": "data/binary/ADULT_features_3_1.data/0-m-00005",
+                "sha256": "505e1a23d3e886397511f09e233da2523684c456ba214f092a46b6f6851f0a7d"
+              }
+            ],
+            "cols": 128,
+            "endpoint": "130.149.237.12:8001",
+            "metadata_path": "data/binary/ADULT_features_3_1.data.mtd",
+            "metadata_sha256": "3778f52cd1b168f40baa7067966dbeb26dd9d5682f6e1d9313aa3df2f7e5bf91",
+            "nnz": 2133376,
+            "privacy": "private-aggregate",
+            "range": [
+              [
+                0,
+                0
+              ],
+              [
+                16667,
+                128
+              ]
+            ],
+            "rows": 16667,
+            "stage_path": "data/binary/ADULT_features_3_1.data",
+            "worker": {
+              "host": "so002",
+              "index": 1,
+              "ip": "130.149.237.12",
+              "port": 8001
+            }
+          },
+          {
+            "address": "130.149.237.13:8002//workspace/experiments/data/binary/ADULT_features_3_2.data",
+            "blocks": [
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_2.data/0-m-00000",
+                "sha256": "adbe1d3bc521ad8f5aa89ecc9e8cb53a59e04aeaf45186a121e177767812bfec"
+              },
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_2.data/0-m-00001",
+                "sha256": "e1e4cf6f5ea3d4f8336f9c42e42193ec4387ccafba2c49d311878d7afa2d7926"
+              },
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_2.data/0-m-00002",
+                "sha256": "31438b89329de586c8335d2e6a02f13426f52c30c7e225255bd19ecb8cb53537"
+              },
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_2.data/0-m-00003",
+                "sha256": "6eafeb398e4b6c3500b57f31a83a39efaa454077ef9a1fa407cf08a0264d60ed"
+              },
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_2.data/0-m-00004",
+                "sha256": "a0a55f0a91a79bf224bfe53ba85bcdf762211ee1f527c066b9ba55b434c2f28e"
+              },
+              {
+                "bytes": 1707220,
+                "path": "data/binary/ADULT_features_3_2.data/0-m-00005",
+                "sha256": "0edc55c0a8cf62702491bea9f7fdf729429bf9d141d3e97331ef60e9989800df"
+              }
+            ],
+            "cols": 128,
+            "endpoint": "130.149.237.13:8002",
+            "metadata_path": "data/binary/ADULT_features_3_2.data.mtd",
+            "metadata_sha256": "0dde66e2b739030b4a0e7f84293f49c8d184af513351d5b906f5a507cd559064",
+            "nnz": 2133376,
+            "privacy": "private-aggregate",
+            "range": [
+              [
+                16667,
+                0
+              ],
+              [
+                33334,
+                128
+              ]
+            ],
+            "rows": 16667,
+            "stage_path": "data/binary/ADULT_features_3_2.data",
+            "worker": {
+              "host": "so003",
+              "index": 2,
+              "ip": "130.149.237.13",
+              "port": 8002
+            }
+          },
+          {
+            "address": "130.149.237.14:8003//workspace/experiments/data/binary/ADULT_features_3_3.data",
+            "blocks": [
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_3.data/0-m-00000",
+                "sha256": "ba5283bb6154aba523c97cc4efbdf5da07419d1394a2479f8b8dc0548c317211"
+              },
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_3.data/0-m-00001",
+                "sha256": "79b483f4aa8c6ea75adaf5a49b2477db1cdbbc41cfa3caed95edf0c7056b4f9a"
+              },
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_3.data/0-m-00002",
+                "sha256": "93838ea9d8d3c5ff21342faf1be7d302aa7b1b0513289a11f0fd86ae99eeb398"
+              },
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_3.data/0-m-00003",
+                "sha256": "ce1c5eba0f2fa2c2606ac1d61d80123658d2f8177020e2d1d615c4f93b42a9d4"
+              },
+              {
+                "bytes": 3072265,
+                "path": "data/binary/ADULT_features_3_3.data/0-m-00004",
+                "sha256": "05f8769bd44c51d661f76b3353752685ff72c7f46fc6883e1b7f7f7ac530d68d"
+              },
+              {
+                "bytes": 1706196,
+                "path": "data/binary/ADULT_features_3_3.data/0-m-00005",
+                "sha256": "039ee62a452c99acd51da7c4f7c30e61103b74149307862907a0e343fefda1c2"
+              }
+            ],
+            "cols": 128,
+            "endpoint": "130.149.237.14:8003",
+            "metadata_path": "data/binary/ADULT_features_3_3.data.mtd",
+            "metadata_sha256": "bae4a493c9812c29d0e43c7d9e094e446ec1922896c85951f984ea500389d970",
+            "nnz": 2133248,
+            "privacy": "private-aggregate",
+            "range": [
+              [
+                33334,
+                0
+              ],
+              [
+                50000,
+                128
+              ]
+            ],
+            "rows": 16666,
+            "stage_path": "data/binary/ADULT_features_3_3.data",
+            "worker": {
+              "host": "so004",
+              "index": 3,
+              "ip": "130.149.237.14",
+              "port": 8003
+            }
+          }
+        ],
+        "stem": "binary/ADULT_features"
+      },
+      {
+        "cols": 1,
+        "metadata_path": "data/binary/ADULT_labels.data.mtd",
+        "metadata_sha256": "79a62017e393cae638464fd1dbb71e25e717e053aa2510b1e507b42fe83c0e61",
+        "nnz": 50000,
+        "privacy": "public",
+        "role": "Y",
+        "rows": 50000,
+        "shards": [
+          {
+            "address": "130.149.237.12:8001//workspace/experiments/data/binary/ADULT_labels_3_1.data",
+            "blocks": [
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_1.data/0-m-00000",
+                "sha256": "67d9e1ac493f0d96b9959a04f30f3d6759f1a3cfbcf9057c13f84d87f5fda35e"
+              },
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_1.data/0-m-00001",
+                "sha256": "311aeac03b5a0d7abad1e7becad7dad411a30cfd06dd6a425dde161ae44a4860"
+              },
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_1.data/0-m-00002",
+                "sha256": "e7e2795b775940a5ff7f049c1daac21f1233509ae6c01fdbc2f12bb59f1dd464"
+              },
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_1.data/0-m-00003",
+                "sha256": "52378c051bcf66134164ccc1ba17d3154896ae7c6831c9998851398802be3b5c"
+              },
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_1.data/0-m-00004",
+                "sha256": "a8fd87f3f25b1a4ce6cf0da72724270c84a76b605cf9c037706cfe203c621128"
+              },
+              {
+                "bytes": 13528,
+                "path": "data/binary/ADULT_labels_3_1.data/0-m-00005",
+                "sha256": "b74dedbf69f12e87af5e1415510a4e953a482296244482baa08481aa3ea071ca"
+              }
+            ],
+            "cols": 1,
+            "endpoint": "130.149.237.12:8001",
+            "metadata_path": "data/binary/ADULT_labels_3_1.data.mtd",
+            "metadata_sha256": "0f955cce84a95de90b56c28b27c444aac887bf7d064667859d7919e27be01748",
+            "nnz": 16667,
+            "privacy": "public",
+            "range": [
+              [
+                0,
+                0
+              ],
+              [
+                16667,
+                1
+              ]
+            ],
+            "rows": 16667,
+            "stage_path": "data/binary/ADULT_labels_3_1.data",
+            "worker": {
+              "host": "so002",
+              "index": 1,
+              "ip": "130.149.237.12",
+              "port": 8001
+            }
+          },
+          {
+            "address": "130.149.237.13:8002//workspace/experiments/data/binary/ADULT_labels_3_2.data",
+            "blocks": [
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_2.data/0-m-00000",
+                "sha256": "72683870b26a4c968a5a0e41d540dc39bbc1c271f024f9298c3ee227538c8be0"
+              },
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_2.data/0-m-00001",
+                "sha256": "fbe70371ecf07b74de6242df0bd13ba13aac727bef7053ba4689e8ee6baa0d5e"
+              },
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_2.data/0-m-00002",
+                "sha256": "b15e9957f501cafa28a772837de15075d2b37ecfe36faa72d852e3d7f0ccce6d"
+              },
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_2.data/0-m-00003",
+                "sha256": "c81343d6d88b8cfcf077867226092c518e517d655de8ed5cf3635a1be0697ffe"
+              },
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_2.data/0-m-00004",
+                "sha256": "002605ca4537e7e7375d228108e4ee245423a95a5e1fddeb5c13f39ba2d2d291"
+              },
+              {
+                "bytes": 13528,
+                "path": "data/binary/ADULT_labels_3_2.data/0-m-00005",
+                "sha256": "7a54c4f996ac085e9c94d47e10d7b176c917a564e127df9a0bcdf44a1cee763f"
+              }
+            ],
+            "cols": 1,
+            "endpoint": "130.149.237.13:8002",
+            "metadata_path": "data/binary/ADULT_labels_3_2.data.mtd",
+            "metadata_sha256": "0f955cce84a95de90b56c28b27c444aac887bf7d064667859d7919e27be01748",
+            "nnz": 16667,
+            "privacy": "public",
+            "range": [
+              [
+                16667,
+                0
+              ],
+              [
+                33334,
+                1
+              ]
+            ],
+            "rows": 16667,
+            "stage_path": "data/binary/ADULT_labels_3_2.data",
+            "worker": {
+              "host": "so003",
+              "index": 2,
+              "ip": "130.149.237.13",
+              "port": 8002
+            }
+          },
+          {
+            "address": "130.149.237.14:8003//workspace/experiments/data/binary/ADULT_labels_3_3.data",
+            "blocks": [
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_3.data/0-m-00000",
+                "sha256": "9076e987cc5e30ca75d184e4ca064b8f56ce0ab5982d06ddca89bd3825f0959c"
+              },
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_3.data/0-m-00001",
+                "sha256": "cae18cde3bf9e2c56eb37adfb72c1e752b1610d497de183eaea6ae18afb3d5fd"
+              },
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_3.data/0-m-00002",
+                "sha256": "e1eb527648a3ac9f8528658254e0b1eca1822ac6b6cf4d69868faf01e5de4b46"
+              },
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_3.data/0-m-00003",
+                "sha256": "f0130467cab43f8a2f7df3ba0884699351b1e701f5de6954ca352da547a47a58"
+              },
+              {
+                "bytes": 24225,
+                "path": "data/binary/ADULT_labels_3_3.data/0-m-00004",
+                "sha256": "89b0844b3c823c9ec36a98dd541e5c9a8caa420eaf7427322221ff1d67094045"
+              },
+              {
+                "bytes": 13520,
+                "path": "data/binary/ADULT_labels_3_3.data/0-m-00005",
+                "sha256": "f946e923cbb07d5cf40c5665905b0df1d5dcb428fc53358fcdd22c1191c2614a"
+              }
+            ],
+            "cols": 1,
+            "endpoint": "130.149.237.14:8003",
+            "metadata_path": "data/binary/ADULT_labels_3_3.data.mtd",
+            "metadata_sha256": "cfb09ba032f31c7372d6cd4a746c662b6ab91732f99b7896725a0aff7d5d7874",
+            "nnz": 16666,
+            "privacy": "public",
+            "range": [
+              [
+                33334,
+                0
+              ],
+              [
+                50000,
+                1
+              ]
+            ],
+            "rows": 16666,
+            "stage_path": "data/binary/ADULT_labels_3_3.data",
+            "worker": {
+              "host": "so004",
+              "index": 3,
+              "ip": "130.149.237.14",
+              "port": 8003
+            }
+          }
+        ],
+        "stem": "binary/ADULT_labels"
+      }
+    ],
+    "ml_view": "binary",
+    "outputs": [
+      {
+        "data_type": "matrix",
+        "format": "csv",
+        "path": "tmp/w1357/e307dbd52bc178cad958/result",
+        "role": "result"
+      }
+    ],
+    "qualification": "PURE_RENDER_ONLY",
+    "schema": "cofee-w1357-render/v1",
+    "seeds": {
+      "ALS_SEED": 1389632218,
+      "GMM_DML_SEED": 20260904,
+      "GNMF_SEED": 1011081480,
+      "KMEANS_SEED": 133815928,
+      "ORDER_SEED": 20260922,
+      "PYTHONHASHSEED": 20260922,
+      "SYSTEMDS_SEED": 1011081480
+    },
+    "template": {
+      "canonical_for_execution": false,
+      "canonical_source_bytes": true,
+      "contract_status": "CANONICAL_SOURCE_PURE_RENDER_ONLY",
+      "future_variant_policy": "corrected/canonical templates require an explicit repo-tracked hash and contract revision; recognized variants remain pure-render-only and no variant is auto-authorized",
+      "id": "CANONICAL_TRACKED_STAGE_V2",
+      "known_limitation": null,
+      "path": "harness/sigmod2021-exdra-p523/experiments/code/exp/logreg_fed.dml",
+      "provenance": "sealed-canonical-stage-template",
+      "sha256": "d6a963ca97d7540bcf5f7ed4860d6c36b363d00fa29363a9bfe367b4432a7279"
+    },
+    "topology": {
+      "path": "/home/mchoi/cofee-evaluation/config/multihost_topology.json",
+      "sha256": "30c741dbc300bacc7180c04196b7c764ea4c5e2a7c96ce91113005c5f4fb7cc8",
+      "workers": [
+        "so002",
+        "so003",
+        "so004"
+      ]
+    }
+  }
+}

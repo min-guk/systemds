@@ -1,0 +1,73 @@
+{
+  "classes": [
+    {
+      "file": "TEST-org.apache.sysds.hops.fedplanner.memo.MemoDualModeOptimizerTest.xml",
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "file": "TEST-org.apache.sysds.hops.fedplanner.memo.MemoDualModeImprovementTest.xml",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "file": "TEST-org.apache.sysds.hops.fedplanner.memo.MemoLocalSeedEfficiencyTest.xml",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "file": "TEST-org.apache.sysds.hops.fedplanner.memo.MemoLocalMessagesTest.xml",
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "file": "TEST-org.apache.sysds.hops.fedplanner.memo.MemoDualModeModelTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "file": "TEST-org.apache.sysds.hops.fedplanner.memo.MemoFeasibleSeedTest.xml",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "file": "TEST-org.apache.sysds.hops.fedplanner.memo.MemoLocalOptimizerTest.xml",
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "file": "TEST-org.apache.sysds.hops.fedplanner.memo.MemoLocalPropagationTest.xml",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "file": "TEST-org.apache.sysds.hops.fedplanner.memo.MemoLocalSeedTest.xml",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "totals": {
+    "tests": 82,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  }
+}

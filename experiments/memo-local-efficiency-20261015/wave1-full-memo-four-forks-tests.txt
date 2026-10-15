@@ -1,0 +1,280 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+BOUNDARY_CONFLICT_NODES=15
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+[MemoFactorMeta] {"schema":1,"nodes":29,"factors":63,"emittedFactors":63,"omittedFactors":0,"domains":[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]}
+[MemoFactor] {"schema":1,"id":0,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":0,"scope":[0],"domains":[1],"instrumented":false,"tags":["owner:0","native-owner:false"]}
+[MemoFactor] {"schema":1,"id":1,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":1,"scope":[1],"domains":[1],"instrumented":false,"tags":["owner:1","native-owner:false"]}
+[MemoFactor] {"schema":1,"id":2,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":2,"scope":[2],"domains":[1],"instrumented":false,"tags":["owner:2","native-owner:false"]}
+[MemoFactor] {"schema":1,"id":3,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":3,"scope":[3],"domains":[1],"instrumented":false,"tags":["owner:3","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":4,"kind":"COST","category":"NATIVE_UNARY","site":-1,"scope":[3],"domains":[1],"instrumented":true,"tags":["owner:3","additional-context"]}
+[MemoFactor] {"schema":1,"id":5,"kind":"CHECK","category":"PRIVACY_UNARY","site":3,"scope":[3],"domains":[1],"instrumented":true,"tags":["context:function:.defaultNS::f/if-0/then","region:BASIC_BLOCK","relation:function","frame-depth:1","relation:branch","binding:FORMAL"]}
+[MemoFactor] {"schema":1,"id":6,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":4,"scope":[4],"domains":[1],"instrumented":false,"tags":["owner:4","native-owner:false"]}
+[MemoFactor] {"schema":1,"id":7,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":5,"scope":[5],"domains":[1],"instrumented":false,"tags":["owner:5","native-owner:false"]}
+[MemoFactor] {"schema":1,"id":8,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":6,"scope":[6],"domains":[1],"instrumented":false,"tags":["owner:6","native-owner:false"]}
+[MemoFactor] {"schema":1,"id":9,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":7,"scope":[7],"domains":[1],"instrumented":false,"tags":["owner:7","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":10,"kind":"CHECK","category":"PRIVACY_UNARY","site":7,"scope":[7],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0"]}
+[MemoFactor] {"schema":1,"id":11,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":8,"scope":[8],"domains":[1],"instrumented":false,"tags":["owner:8","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":12,"kind":"CHECK","category":"PRIVACY_UNARY","site":8,"scope":[8],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0"]}
+[MemoFactor] {"schema":1,"id":13,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":9,"scope":[9],"domains":[1],"instrumented":false,"tags":["owner:9","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":14,"kind":"CHECK","category":"PRIVACY_UNARY","site":9,"scope":[9],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0"]}
+[MemoFactor] {"schema":1,"id":15,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":10,"scope":[10],"domains":[1],"instrumented":false,"tags":["owner:10","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":16,"kind":"CHECK","category":"PRIVACY_UNARY","site":10,"scope":[10],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0"]}
+[MemoFactor] {"schema":1,"id":17,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":11,"scope":[11],"domains":[1],"instrumented":false,"tags":["owner:11","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":18,"kind":"CHECK","category":"PRIVACY_UNARY","site":11,"scope":[11],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0"]}
+[MemoFactor] {"schema":1,"id":19,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":12,"scope":[12],"domains":[1],"instrumented":false,"tags":["owner:12","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":20,"kind":"CHECK","category":"PRIVACY_UNARY","site":12,"scope":[12],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0"]}
+[MemoFactor] {"schema":1,"id":21,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":13,"scope":[13],"domains":[1],"instrumented":false,"tags":["owner:13","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":22,"kind":"CHECK","category":"PRIVACY_UNARY","site":13,"scope":[13],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0"]}
+[MemoFactor] {"schema":1,"id":23,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":14,"scope":[14],"domains":[1],"instrumented":false,"tags":["owner:14","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":24,"kind":"CHECK","category":"PRIVACY_UNARY","site":14,"scope":[14],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0"]}
+[MemoFactor] {"schema":1,"id":25,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":15,"scope":[15],"domains":[1],"instrumented":false,"tags":["owner:15","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":26,"kind":"CHECK","category":"PRIVACY_UNARY","site":15,"scope":[15],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":27,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":16,"scope":[16],"domains":[1],"instrumented":false,"tags":["owner:16","native-owner:false"]}
+[MemoFactor] {"schema":1,"id":28,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":17,"scope":[17],"domains":[1],"instrumented":false,"tags":["owner:17","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":29,"kind":"CHECK","category":"PRIVACY_UNARY","site":17,"scope":[17],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0"]}
+[MemoFactor] {"schema":1,"id":30,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":18,"scope":[18],"domains":[1],"instrumented":false,"tags":["owner:18","native-owner:false"]}
+[MemoFactor] {"schema":1,"id":31,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":19,"scope":[19],"domains":[1],"instrumented":false,"tags":["owner:19","native-owner:false"]}
+[MemoFactor] {"schema":1,"id":32,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":20,"scope":[20],"domains":[1],"instrumented":false,"tags":["owner:20","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":33,"kind":"CHECK","category":"PRIVACY_UNARY","site":20,"scope":[20],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0"]}
+[MemoFactor] {"schema":1,"id":34,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":21,"scope":[21],"domains":[1],"instrumented":false,"tags":["owner:21","native-owner:false"]}
+[MemoFactor] {"schema":1,"id":35,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":22,"scope":[22],"domains":[1],"instrumented":false,"tags":["owner:22","native-owner:false"]}
+[MemoFactor] {"schema":1,"id":36,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":23,"scope":[23],"domains":[1],"instrumented":false,"tags":["owner:23","native-owner:false"]}
+[MemoFactor] {"schema":1,"id":37,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":24,"scope":[24],"domains":[1],"instrumented":false,"tags":["owner:24","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":38,"kind":"CHECK","category":"PRIVACY_UNARY","site":24,"scope":[24],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:CALL_RETURN","relation:function","binding:SELECT","relation:branch","binding:DEFINITION","binding:FORMAL"]}
+[MemoFactor] {"schema":1,"id":39,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":25,"scope":[25],"domains":[1],"instrumented":false,"tags":["owner:25","native-owner:false"]}
+[MemoFactor] {"schema":1,"id":40,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":26,"scope":[26],"domains":[1],"instrumented":false,"tags":["owner:26","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":41,"kind":"CHECK","category":"PRIVACY_UNARY","site":26,"scope":[26],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:CALL_RETURN","relation:function","binding:SELECT","relation:branch","binding:DEFINITION","binding:FORMAL"]}
+[MemoFactor] {"schema":1,"id":42,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":27,"scope":[27],"domains":[1],"instrumented":false,"tags":["owner:27","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":43,"kind":"CHECK","category":"PRIVACY_UNARY","site":27,"scope":[27],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":44,"kind":"NATIVE_ARRAY","category":"NATIVE_UNARY","site":28,"scope":[28],"domains":[1],"instrumented":false,"tags":["owner:28","native-owner:true"]}
+[MemoFactor] {"schema":1,"id":45,"kind":"CHECK","category":"PRIVACY_UNARY","site":28,"scope":[28],"domains":[1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":46,"kind":"CHECK","category":"INPUT_SUPPLY","site":3,"scope":[3,15],"domains":[1,1],"instrumented":true,"tags":["context:function:.defaultNS::f/if-0/then","region:BASIC_BLOCK","relation:function","frame-depth:1","relation:branch","binding:FORMAL"]}
+[MemoFactor] {"schema":1,"id":47,"kind":"CHECK","category":"INPUT_SUPPLY","site":15,"scope":[7,15],"domains":[1,1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":48,"kind":"CHECK","category":"INPUT_SUPPLY","site":15,"scope":[8,15],"domains":[1,1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":49,"kind":"CHECK","category":"INPUT_SUPPLY","site":15,"scope":[9,15],"domains":[1,1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":50,"kind":"CHECK","category":"INPUT_SUPPLY","site":15,"scope":[10,15],"domains":[1,1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":51,"kind":"CHECK","category":"INPUT_SUPPLY","site":15,"scope":[11,15],"domains":[1,1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":52,"kind":"CHECK","category":"INPUT_SUPPLY","site":15,"scope":[12,15],"domains":[1,1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":53,"kind":"CHECK","category":"INPUT_SUPPLY","site":15,"scope":[13,15],"domains":[1,1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":54,"kind":"CHECK","category":"INPUT_SUPPLY","site":15,"scope":[14,15],"domains":[1,1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":55,"kind":"CHECK","category":"INPUT_SUPPLY","site":24,"scope":[3,15,24],"domains":[1,1,1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:CALL_RETURN","relation:function","binding:SELECT","relation:branch","binding:DEFINITION","binding:FORMAL"]}
+[MemoFactor] {"schema":1,"id":56,"kind":"CHECK","category":"INPUT_SUPPLY","site":26,"scope":[3,15,26],"domains":[1,1,1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:CALL_RETURN","relation:function","binding:SELECT","relation:branch","binding:DEFINITION","binding:FORMAL"]}
+[MemoFactor] {"schema":1,"id":57,"kind":"CHECK","category":"INPUT_SUPPLY","site":27,"scope":[24,27],"domains":[1,1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":58,"kind":"CHECK","category":"INPUT_SUPPLY","site":27,"scope":[26,27],"domains":[1,1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":59,"kind":"CHECK","category":"INPUT_SUPPLY","site":28,"scope":[27,28],"domains":[1,1],"instrumented":true,"tags":["context:main","region:BASIC_BLOCK","frame-depth:0","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":60,"kind":"COST","category":"MOVEMENT_RETAINED_SHARED","site":-1,"scope":[3,15,24,26],"domains":[1,1,1,1],"instrumented":true,"tags":["retained:true","demands:3","shared:true","context:function:.defaultNS::f/if-0/then","region:BASIC_BLOCK","relation:function","frame-depth:1","relation:branch","binding:FORMAL","context:main","frame-depth:0","binding:CALL_RETURN","binding:SELECT","binding:DEFINITION"]}
+[MemoFactor] {"schema":1,"id":61,"kind":"COST","category":"MOVEMENT_RETAINED_SHARED","site":-1,"scope":[3,24],"domains":[1,1],"instrumented":true,"tags":["retained:true","demands:1","shared:false","context:main","region:BASIC_BLOCK","frame-depth:0","binding:CALL_RETURN","relation:function","binding:SELECT","relation:branch","binding:DEFINITION","binding:FORMAL"]}
+[MemoFactor] {"schema":1,"id":62,"kind":"COST","category":"MOVEMENT_RETAINED_SHARED","site":-1,"scope":[3,26],"domains":[1,1],"instrumented":true,"tags":["retained:true","demands:1","shared:false","context:main","region:BASIC_BLOCK","frame-depth:0","binding:CALL_RETURN","relation:function","binding:SELECT","relation:branch","binding:DEFINITION","binding:FORMAL"]}
+[MemoFactorGraph] {"schema":1,"excludedCategory":"NONE","nodes":29,"factors":63,"edges":17,"components":16,"leafPeeled":24,"coreNodes":5,"estimatedMaxSeparatorVariables":3,"estimatedMaxTableRows":1,"graphSkipped":false,"eliminationSkipped":false,"estimateKind":"separately-optimized-deterministic-min-fill-not-treewidth"}
+[MemoFactorGraph] {"schema":1,"excludedCategory":"CATEGORY:NATIVE_UNARY","nodes":29,"factors":33,"edges":17,"components":16,"leafPeeled":24,"coreNodes":5,"estimatedMaxSeparatorVariables":3,"estimatedMaxTableRows":1,"graphSkipped":false,"eliminationSkipped":false,"estimateKind":"separately-optimized-deterministic-min-fill-not-treewidth"}
+[MemoFactorGraph] {"schema":1,"excludedCategory":"CATEGORY:PRIVACY_UNARY","nodes":29,"factors":47,"edges":17,"components":16,"leafPeeled":24,"coreNodes":5,"estimatedMaxSeparatorVariables":3,"estimatedMaxTableRows":1,"graphSkipped":false,"eliminationSkipped":false,"estimateKind":"separately-optimized-deterministic-min-fill-not-treewidth"}
+[MemoFactorGraph] {"schema":1,"excludedCategory":"CATEGORY:INPUT_SUPPLY","nodes":29,"factors":49,"edges":6,"components":26,"leafPeeled":25,"coreNodes":4,"estimatedMaxSeparatorVariables":3,"estimatedMaxTableRows":1,"graphSkipped":false,"eliminationSkipped":false,"estimateKind":"separately-optimized-deterministic-min-fill-not-treewidth"}
+[MemoFactorGraph] {"schema":1,"excludedCategory":"CATEGORY:LOOP_BOUNDARY","nodes":29,"factors":63,"edges":17,"components":16,"leafPeeled":24,"coreNodes":5,"estimatedMaxSeparatorVariables":3,"estimatedMaxTableRows":1,"graphSkipped":false,"eliminationSkipped":false,"estimateKind":"separately-optimized-deterministic-min-fill-not-treewidth"}
+[MemoFactorGraph] {"schema":1,"excludedCategory":"CATEGORY:MOVEMENT_RETAINED_SHARED","nodes":29,"factors":60,"edges":16,"components":16,"leafPeeled":24,"coreNodes":5,"estimatedMaxSeparatorVariables":3,"estimatedMaxTableRows":1,"graphSkipped":false,"eliminationSkipped":false,"estimateKind":"separately-optimized-deterministic-min-fill-not-treewidth"}
+[MemoFactorGraph] {"schema":1,"excludedCategory":"CATEGORY:MOVEMENT_UNRETAINED","nodes":29,"factors":63,"edges":17,"components":16,"leafPeeled":24,"coreNodes":5,"estimatedMaxSeparatorVariables":3,"estimatedMaxTableRows":1,"graphSkipped":false,"eliminationSkipped":false,"estimateKind":"separately-optimized-deterministic-min-fill-not-treewidth"}
+[MemoFactorGraph] {"schema":1,"excludedCategory":"CATEGORY:LOOP_ENTRY","nodes":29,"factors":63,"edges":17,"components":16,"leafPeeled":24,"coreNodes":5,"estimatedMaxSeparatorVariables":3,"estimatedMaxTableRows":1,"graphSkipped":false,"eliminationSkipped":false,"estimateKind":"separately-optimized-deterministic-min-fill-not-treewidth"}
+[MemoFactorGraph] {"schema":1,"excludedCategory":"TAG:relation:function","nodes":29,"factors":54,"edges":11,"components":18,"leafPeeled":29,"coreNodes":0,"estimatedMaxSeparatorVariables":1,"estimatedMaxTableRows":1,"graphSkipped":false,"eliminationSkipped":false,"estimateKind":"separately-optimized-deterministic-min-fill-not-treewidth"}
+[MemoFactorGraph] {"schema":1,"excludedCategory":"TAG:relation:branch","nodes":29,"factors":54,"edges":11,"components":18,"leafPeeled":29,"coreNodes":0,"estimatedMaxSeparatorVariables":1,"estimatedMaxTableRows":1,"graphSkipped":false,"eliminationSkipped":false,"estimateKind":"separately-optimized-deterministic-min-fill-not-treewidth"}
+[MemoFactorEval] {"schema":1,"category":"NATIVE_UNARY","factors":30,"instrumentedFactors":1,"evaluations":2,"nanos":9848,"cumulative":true}
+[MemoFactorEval] {"schema":1,"category":"PRIVACY_UNARY","factors":16,"instrumentedFactors":16,"evaluations":16,"nanos":265544,"cumulative":true}
+[MemoFactorEval] {"schema":1,"category":"INPUT_SUPPLY","factors":14,"instrumentedFactors":14,"evaluations":14,"nanos":1263751,"cumulative":true}
+[MemoFactorEval] {"schema":1,"category":"LOOP_BOUNDARY","factors":0,"instrumentedFactors":0,"evaluations":0,"nanos":0,"cumulative":true}
+[MemoFactorEval] {"schema":1,"category":"MOVEMENT_RETAINED_SHARED","factors":3,"instrumentedFactors":3,"evaluations":6,"nanos":392763,"cumulative":true}
+[MemoFactorEval] {"schema":1,"category":"MOVEMENT_UNRETAINED","factors":0,"instrumentedFactors":0,"evaluations":0,"nanos":0,"cumulative":true}
+[MemoFactorEval] {"schema":1,"category":"LOOP_ENTRY","factors":0,"instrumentedFactors":0,"evaluations":0,"nanos":0,"cumulative":true}
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=47488112 collections=1 owners=1 status=SUCCESS
+TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=1347308 collections=0 owners=0 status=FAILED
+MemoTransformMetadataFailure owner=2 source binding is not uniquely proved
+TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=1121515 collections=2 owners=2 status=SUCCESS
+TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=3871444 collections=0 owners=0 status=FAILED
+MemoTransformMetadataFailure owner=58 source binding is not uniquely proved
+TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=378588 collections=0 owners=0 status=FAILED
+MemoTransformMetadataFailure owner=24 source binding is not uniquely proved
+TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=640868 collections=0 owners=0 status=FAILED
+MemoTransformMetadataFailure owner=25 source binding is not uniquely proved
+TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=561138 collections=1 owners=1 status=SUCCESS
+TransformMetadataPreparationReceipt schema=transform-metadata-preparation-v1 metadataPreparationNanos=929717 collections=1 owners=1 status=SUCCESS
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+MEMO_EXHAUSTIVE assignments=12 feasible=6 cost=0.5004990875720977783238488625547867039156102464403375051915645599365234375
+MEMO_EXHAUSTIVE assignments=2352 feasible=584 cost=1.000339155942201614385668047529746871315836642679641954600811004638671875
+MEMO_EXHAUSTIVE assignments=48 feasible=6 cost=1.00032151341438293457336181861011548122064596100244671106338500976562500
+MEMO_EXHAUSTIVE assignments=144 feasible=48 cost=1.000336943417787551883702931092116894529198134478065185248851776123046875
+MEMO_EXHAUSTIVE assignments=48 feasible=8 cost=1.000890621691942214968352941012290358013814284277032129466533660888671875
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+MEMO_PROJECTED_SHAPE_REUSE workload=logreg statistics=ReuseStatistics[bindingGuardRequests=0, bindingGuardCacheHits=0, repeatProofRequests=11156, repeatProofCacheHits=10852, phaseShapeRequests=123419, phaseShapeCacheHits=49071, phaseShapeCacheEntries=74061, guardRelevanceRequests=85738, guardRelevanceCacheHits=85724, guardRelevanceIndexEntries=14, occurrenceTransferRequests=82076, occurrenceTransferCacheHits=81514, occurrenceTransferBuilds=562, occurrenceTransferEntries=562, guardAtomRequests=61983, guardAtomHits=61970, guardAtomIdentities=7]
+MEMO_PROJECTED_SHAPE_REUSE workload=glm statistics=ReuseStatistics[bindingGuardRequests=0, bindingGuardCacheHits=0, repeatProofRequests=52648, repeatProofCacheHits=47168, phaseShapeRequests=1166697, phaseShapeCacheHits=350790, phaseShapeCacheEntries=811694, guardRelevanceRequests=4282397, guardRelevanceCacheHits=4282324, guardRelevanceIndexEntries=73, occurrenceTransferRequests=839912, occurrenceTransferCacheHits=838960, occurrenceTransferBuilds=952, occurrenceTransferEntries=914, guardAtomRequests=1831712, guardAtomHits=1831637, guardAtomIdentities=52]
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+whole-call-completion initialCandidates=2 outerChecks=3 invalidationVisits=41 invalidationEdges=58
+loop-summary-checks full=6 incremental=4 invalidationVisits=20 invalidationEdges=20 indexVisits=77 indexEdges=81
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+RESOLVER_COW_STATE_SHA256=3c146f552ac628e7cdc63de118cbb438a7c99b379887faf8a9fc78411d787210
+RESOLVER_COW_ENV_SHA256=e8e4da3f6c67602b3ca3f7f032ec607f0835e38d0c60d2525b24d001b7c15f69
+WARNING: Using incubator modules: jdk.incubator.vector
+[NativeDescriptorProbe] prepared=12 reused=2 oracle=10 contextualViews=10
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/15 12:04:34 ERROR controlprogram.ProgramBlock: Function output Y is missing.
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+EXACT_FAMILY_DESCRIPTOR_CONTEXT loop=true unknown=false
+MEMO_OCCURRENCE_TRANSFER workload=logreg reference=ReuseStatistics[bindingGuardRequests=5916, bindingGuardCacheHits=2554, repeatProofRequests=15668, repeatProofCacheHits=15364, phaseShapeRequests=160215, phaseShapeCacheHits=82004, phaseShapeCacheEntries=77860, guardRelevanceRequests=110004, guardRelevanceCacheHits=109988, guardRelevanceIndexEntries=16, occurrenceTransferRequests=93867, occurrenceTransferCacheHits=0, occurrenceTransferBuilds=93867, occurrenceTransferEntries=0, guardAtomRequests=81614, guardAtomHits=81599, guardAtomIdentities=8] cached=ReuseStatistics[bindingGuardRequests=5916, bindingGuardCacheHits=2554, repeatProofRequests=15668, repeatProofCacheHits=15364, phaseShapeRequests=160215, phaseShapeCacheHits=82004, phaseShapeCacheEntries=77860, guardRelevanceRequests=110004, guardRelevanceCacheHits=109988, guardRelevanceIndexEntries=16, occurrenceTransferRequests=93867, occurrenceTransferCacheHits=93305, occurrenceTransferBuilds=562, occurrenceTransferEntries=562, guardAtomRequests=81614, guardAtomHits=81599, guardAtomIdentities=8]
+MEMO_OCCURRENCE_TRANSFER workload=glm reference=ReuseStatistics[bindingGuardRequests=17170, bindingGuardCacheHits=6380, repeatProofRequests=70260, repeatProofCacheHits=64732, phaseShapeRequests=1301877, phaseShapeCacheHits=437972, phaseShapeCacheEntries=858928, guardRelevanceRequests=4628620, guardRelevanceCacheHits=4628546, guardRelevanceIndexEntries=74, occurrenceTransferRequests=905567, occurrenceTransferCacheHits=0, occurrenceTransferBuilds=905567, occurrenceTransferEntries=0, guardAtomRequests=2120507, guardAtomHits=2120432, guardAtomIdentities=52] cached=ReuseStatistics[bindingGuardRequests=17170, bindingGuardCacheHits=6380, repeatProofRequests=70260, repeatProofCacheHits=64732, phaseShapeRequests=1301877, phaseShapeCacheHits=437972, phaseShapeCacheEntries=858928, guardRelevanceRequests=4628620, guardRelevanceCacheHits=4628546, guardRelevanceIndexEntries=74, occurrenceTransferRequests=905567, occurrenceTransferCacheHits=904615, occurrenceTransferBuilds=952, occurrenceTransferEntries=914, guardAtomRequests=2120507, guardAtomHits=2120432, guardAtomIdentities=52]
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+LOGREG_MEMO_OPTIMIZATION status=OPTIMAL statistics=Statistics[nodes=4359, checkEvaluations=64465, checkCacheHits=62318, supportQueries=53375, supportCacheHits=248, supportWitnessHits=20198, binarySupportHits=20198, binarySupportRows=2046, worklistVisits=8047, removedRules=2551, costEvaluations=1570, costCacheHits=22929, boundPrunes=159, conditionalBoundQueries=1915, conditionalBoundCacheHits=1237, wideBoundRelaxations=0, forestTailAttempts=54, forestTailApplicable=11, forestTailCompletions=11, forestTailCells=3669, annotatedChecks=3731, invariantCheckAxes=864, binaryChecksReduced=80, branchEdgesRemovedDuringNormalization=19, eliminationVariables=0, eliminationCells=0, eliminationRows=0, eliminationFactorHits=0] diagnostics=[shape owner=38 binding=69 SHARED_OCCURRENCE_SHAPE_MISMATCH Shape[dataType=MATRIX, valueType=FP64, rows=192, columns=1, nonZeros=-1, knowledge=EXACT] vs Shape[dataType=MATRIX, valueType=FP64, rows=192, columns=2, nonZeros=-1, knowledge=EXACT]]
+WARNING: Using incubator modules: jdk.incubator.vector
+MOVEMENT_COST_STATES annotated=4 collapsedOwners=1
+MOVEMENT_COST_STATES annotated=6 collapsedOwners=0
+MOVEMENT_COST_STATES annotated=5 collapsedOwners=2
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+MEMO_SOURCE_PROJECTION ownersPerInput=2 contexts=1 primitives=1 bindingVisits=0
+MEMO_SOURCE_PROJECTION ownersPerInput=11 contexts=1 primitives=1 bindingVisits=0
+MEMO_SOURCE_PROJECTION ownersPerInput=101 contexts=1 primitives=1 bindingVisits=0
+MEMO_SOURCE_PROJECTION ownersPerInput=1001 contexts=1 primitives=1 bindingVisits=0
+WARNING: Using incubator modules: jdk.incubator.vector
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+TREE_DP_TRAINING kind=linear algorithm=EXACT status=OPTIMAL weights=[0.471, 0.432] cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+TREE_DP_TRAINING kind=linear algorithm=TREE_DP_GLOBAL status=OPTIMAL weights=[0.471, 0.432] cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+TREE_DP_TRAINING kind=linear algorithm=TREE_DP_LOCAL status=OPTIMAL weights=[0.471, 0.432] cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+TREE_DP_TRAINING kind=linear algorithm=MEMO_GLOBAL status=OPTIMAL weights=[0.471, 0.432] cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+TREE_DP_TRAINING kind=linear algorithm=MEMO_LOCAL status=EPSILON_OPTIMAL weights=[0.471, 0.432] cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+TREE_DP_TRAINING kind=logistic algorithm=EXACT status=OPTIMAL weights=[0.4893567360937929, 0.3790640837187814] cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+TREE_DP_TRAINING kind=logistic algorithm=TREE_DP_GLOBAL status=OPTIMAL weights=[0.4893567360937929, 0.3790640837187814] cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+TREE_DP_TRAINING kind=logistic algorithm=TREE_DP_LOCAL status=OPTIMAL weights=[0.4893567360937929, 0.3790640837187814] cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+TREE_DP_TRAINING kind=logistic algorithm=MEMO_GLOBAL status=OPTIMAL weights=[0.4893567360937929, 0.3790640837187814] cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+TREE_DP_TRAINING kind=logistic algorithm=MEMO_LOCAL status=EPSILON_OPTIMAL weights=[0.4893567360937929, 0.3790640837187814] cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+MEMO_ANALYSIS_WORK workload=logreg phase=build privacy=Statistics[evaluations=0, cacheHits=0, cacheEntries=0, loopBackedgeChecks=0, loopSummaryRounds=0, loopSummaryCacheHits=0, loopCandidateRemovals=0, invalidationVisits=0, invalidationEdges=0, dependencyEdges=1187, indexVisits=1642, indexEdges=2753] shapes=Statistics[bindingVisits=3117, ownerVisits=494, relevanceVisits=1711, relevanceEdges=649]
+MEMO_ANALYSIS_WORK workload=logreg phase=same-request-queries privacy=Statistics[evaluations=955, cacheHits=462, cacheEntries=934, loopBackedgeChecks=0, loopSummaryRounds=0, loopSummaryCacheHits=0, loopCandidateRemovals=0, invalidationVisits=0, invalidationEdges=0, dependencyEdges=1187, indexVisits=1642, indexEdges=2753] shapes=Statistics[bindingVisits=3117, ownerVisits=494, relevanceVisits=1711, relevanceEdges=649]
+MEMO_ANALYSIS_WORK workload=glm phase=build privacy=Statistics[evaluations=0, cacheHits=0, cacheEntries=0, loopBackedgeChecks=0, loopSummaryRounds=0, loopSummaryCacheHits=0, loopCandidateRemovals=0, invalidationVisits=0, invalidationEdges=0, dependencyEdges=2328, indexVisits=7164, indexEdges=13668] shapes=Statistics[bindingVisits=4835, ownerVisits=990, relevanceVisits=4456, relevanceEdges=3545]
+MEMO_ANALYSIS_WORK workload=glm phase=same-request-queries privacy=Statistics[evaluations=1479, cacheHits=1006, cacheEntries=1436, loopBackedgeChecks=0, loopSummaryRounds=0, loopSummaryCacheHits=0, loopCandidateRemovals=0, invalidationVisits=0, invalidationEdges=0, dependencyEdges=2328, indexVisits=7164, indexEdges=13668] shapes=Statistics[bindingVisits=4835, ownerVisits=990, relevanceVisits=4456, relevanceEdges=3545]
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+WARNING: Using incubator modules: jdk.incubator.vector
+SEMANTIC_RELOCATION_TEXT_ALLOCATED=683680
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended

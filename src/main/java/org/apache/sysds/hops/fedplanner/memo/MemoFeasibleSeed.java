@@ -19,6 +19,7 @@
 package org.apache.sysds.hops.fedplanner.memo;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
@@ -50,6 +51,24 @@ public final class MemoFeasibleSeed {
 		private boolean unknown;
 		private MemoOptimizer.Result proof;
 	}
+	private static final class IndexedCheck {
+		private final int id;
+		private final MemoOptimizer.Check check;
+		private final int[] owners;
+		private IndexedCheck(int id, MemoOptimizer.Check check) {
+			this.id=id;
+			this.check=check;
+			this.owners=check.owners();
+		}
+	}
+	private static final class IndexedCost {
+		private final MemoOptimizer.CostTerm cost;
+		private final int[] owners;
+		private IndexedCost(MemoOptimizer.CostTerm cost) {
+			this.cost=cost;
+			this.owners=cost.owners();
+		}
+	}
 
 	private final int[] sizes;
 	private final double[][] nativeCosts;
@@ -58,12 +77,16 @@ public final class MemoFeasibleSeed {
 	private final BitSet[] proofDomains;
 	private final MemoResourcePolicy resources;
 	private final long workLimit;
+	private final List<IndexedCheck> indexedChecks;
+	private final List<IndexedCost> indexedCosts;
+	private final List<IndexedCheck>[] checksClosingAt;
+	private final List<IndexedCost>[] costsClosingAt;
 	private long evaluations;
 	private int repairs;
 
 	private MemoFeasibleSeed(int[] sizes, double[][] nativeCosts, List<MemoOptimizer.Check> checks,
 		List<MemoOptimizer.CostTerm> costs, BitSet[] proofDomains, long workLimit,
-		MemoResourcePolicy resources) {
+		MemoResourcePolicy resources, boolean indexLocalFactors) {
 		this.sizes = sizes.clone();
 		this.nativeCosts = copyAndValidateNative(nativeCosts, sizes);
 		this.checks = List.copyOf(checks);
@@ -74,6 +97,20 @@ public final class MemoFeasibleSeed {
 			throw new IllegalArgumentException("Negative seed work limit");
 		this.workLimit = workLimit;
 		validateScopes();
+		if(indexLocalFactors) {
+			ArrayList<IndexedCheck> checkIndex=new ArrayList<>(checks.size());
+			for(int id=0;id<checks.size();id++) checkIndex.add(new IndexedCheck(id,checks.get(id)));
+			indexedChecks=List.copyOf(checkIndex);
+			indexedCosts=costs.stream().map(IndexedCost::new).toList();
+			checksClosingAt=closingChecks(indexedChecks,sizes.length);
+			costsClosingAt=closingCosts(indexedCosts,sizes.length);
+		}
+		else {
+			indexedChecks=null;
+			indexedCosts=null;
+			checksClosingAt=null;
+			costsClosingAt=null;
+		}
 	}
 
 	public static Result find(int[] sizes, double[][] nativeCosts, List<MemoOptimizer.Check> checks,
@@ -91,7 +128,7 @@ public final class MemoFeasibleSeed {
 			if(!resources.admit(workspace)) return new Result(null,null,0,0,null,"RESOURCE_REJECTED");
 			seedResources=resources.withResidentBytes(workspace);
 		}
-		return new MemoFeasibleSeed(sizes,nativeCosts,checks,costs,proofDomains,workLimit,seedResources).find();
+		return new MemoFeasibleSeed(sizes,nativeCosts,checks,costs,proofDomains,workLimit,seedResources,false).find();
 	}
 
 	/**
@@ -110,11 +147,12 @@ public final class MemoFeasibleSeed {
 		if(workLimit<0) throw new IllegalArgumentException("Negative seed work limit");
 		MemoResourcePolicy seedResources=resources;
 		if(workLimit>0) {
-			long workspace=estimatedWorkspace(sizes,nativeCosts,proofDomains);
+			long workspace=estimatedLocalWorkspace(sizes,nativeCosts,proofDomains,checks,costs);
 			if(!resources.admit(workspace)) return new Result(null,null,0,0,null,"RESOURCE_REJECTED");
 			seedResources=resources.withResidentBytes(workspace);
 		}
-		return new MemoFeasibleSeed(sizes,nativeCosts,checks,costs,proofDomains,workLimit,seedResources)
+		return new MemoFeasibleSeed(sizes,nativeCosts,checks,costs,proofDomains,workLimit,seedResources,
+			workLimit>0)
 			.findFirstWitness();
 	}
 
@@ -140,7 +178,7 @@ public final class MemoFeasibleSeed {
 		long workspace=estimatedImproveWorkspace(sizes,nativeCosts,proofDomains,initialSelected,scopes);
 		if(!resources.admit(workspace)) return new Result(null,null,0,0,null,"RESOURCE_REJECTED");
 		MemoFeasibleSeed seed=new MemoFeasibleSeed(sizes,nativeCosts,checks,costs,proofDomains,workLimit,
-			resources.withResidentBytes(workspace));
+			resources.withResidentBytes(workspace),false);
 		return seed.improve(initialSelected,scopes);
 	}
 
@@ -163,10 +201,13 @@ public final class MemoFeasibleSeed {
 		if(initialSelected.length!=sizes.length)
 			throw new IllegalArgumentException("Initial selection owner mismatch");
 		for(int[] scope:scopes) Objects.requireNonNull(scope,"Null improvement scope");
-		long workspace=estimatedImproveWorkspace(sizes,nativeCosts,proofDomains,initialSelected,scopes);
+		boolean useIndex=workLimit>0 && scopes.stream().anyMatch(scope -> scope.length>0);
+		long workspace=useIndex
+			? estimatedLocalImproveWorkspace(sizes,nativeCosts,proofDomains,initialSelected,scopes,checks,costs)
+			: estimatedImproveWorkspace(sizes,nativeCosts,proofDomains,initialSelected,scopes);
 		if(!resources.admit(workspace)) return new Result(null,null,0,0,null,"RESOURCE_REJECTED");
 		MemoFeasibleSeed seed=new MemoFeasibleSeed(sizes,nativeCosts,checks,costs,proofDomains,workLimit,
-			resources.withResidentBytes(workspace));
+			resources.withResidentBytes(workspace),useIndex);
 		return seed.improveFirstWitness(initialSelected,scopes);
 	}
 
@@ -336,18 +377,32 @@ public final class MemoFeasibleSeed {
 				if(!consume()) return owner;
 				selected[owner]=rule;
 				boolean legal=true;
-				for(int id=0; id<checks.size(); id++) {
-					MemoOptimizer.Check check=checks.get(id);
-					if(!contains(check.owners(),owner) || !assigned(check.owners(),selected)) continue;
-					if(check.evaluate(project(check.owners(),selected)) != MemoOptimizer.Truth.YES) {
-						legal=false; blockedChecks.set(id);
+				if(indexedChecks==null) {
+					for(int id=0; id<checks.size(); id++) {
+						MemoOptimizer.Check check=checks.get(id);
+						if(!contains(check.owners(),owner) || !assigned(check.owners(),selected)) continue;
+						if(check.evaluate(project(check.owners(),selected)) != MemoOptimizer.Truth.YES) {
+							legal=false; blockedChecks.set(id);
+						}
 					}
+				}
+				else {
+					for(IndexedCheck indexed:checksClosingAt[owner])
+						if(indexed.check.evaluate(project(indexed.owners,selected)) != MemoOptimizer.Truth.YES) {
+							legal=false;
+							blockedChecks.set(indexed.id);
+						}
 				}
 				if(legal) {
 					BigDecimal score=exact(nativeCosts[owner][rule]);
-					for(MemoOptimizer.CostTerm cost : costs)
-						if(contains(cost.owners(),owner) && assigned(cost.owners(),selected))
-							score=score.add(cost.evaluateExact(project(cost.owners(),selected)));
+					if(indexedCosts==null) {
+						for(MemoOptimizer.CostTerm cost : costs)
+							if(contains(cost.owners(),owner) && assigned(cost.owners(),selected))
+								score=score.add(cost.evaluateExact(project(cost.owners(),selected)));
+					}
+					else
+						for(IndexedCost indexed:costsClosingAt[owner])
+							score=score.add(indexed.cost.evaluateExact(project(indexed.owners,selected)));
 					if(bestScore==null || score.compareTo(bestScore)<0 || score.compareTo(bestScore)==0 && rule<best) {
 						best=rule; bestScore=score;
 					}
@@ -488,6 +543,14 @@ public final class MemoFeasibleSeed {
 	}
 
 	private boolean closedChecksAllow(int owner, int[] selected, SearchResult result) {
+		if(indexedChecks!=null) {
+			for(IndexedCheck indexed:checksClosingAt[owner]) {
+				MemoOptimizer.Truth truth=indexed.check.evaluate(project(indexed.owners,selected));
+				if(truth==MemoOptimizer.Truth.UNKNOWN) result.unknown=true;
+				if(truth!=MemoOptimizer.Truth.YES) return false;
+			}
+			return true;
+		}
 		for(MemoOptimizer.Check check:checks) {
 			int[] scope=check.owners();
 			if(contains(scope,owner) && assigned(scope,selected)) {
@@ -505,6 +568,14 @@ public final class MemoFeasibleSeed {
 
 	private MemoOptimizer.Truth fullTruth(int[] selected) {
 		boolean unknown=false;
+		if(indexedChecks!=null) {
+			for(IndexedCheck indexed:indexedChecks) {
+				MemoOptimizer.Truth truth=indexed.check.evaluate(project(indexed.owners,selected));
+				if(truth==MemoOptimizer.Truth.NO) return truth;
+				unknown |= truth==MemoOptimizer.Truth.UNKNOWN;
+			}
+			return unknown ? MemoOptimizer.Truth.UNKNOWN : MemoOptimizer.Truth.YES;
+		}
 		for(MemoOptimizer.Check check:checks) {
 			MemoOptimizer.Truth truth=check.evaluate(project(check.owners(),selected));
 			if(truth==MemoOptimizer.Truth.NO) return truth;
@@ -517,6 +588,11 @@ public final class MemoFeasibleSeed {
 		BigDecimal result=BigDecimal.ZERO;
 		for(int owner=0; owner<sizes.length; owner++)
 			result=result.add(exact(nativeCosts[owner][selected[owner]]));
+		if(indexedCosts!=null) {
+			for(IndexedCost indexed:indexedCosts)
+				result=result.add(indexed.cost.evaluateExact(project(indexed.owners,selected)));
+			return result;
+		}
 		for(MemoOptimizer.CostTerm cost:costs)
 			result=result.add(cost.evaluateExact(project(cost.owners(),selected)));
 		return result;
@@ -605,6 +681,66 @@ public final class MemoFeasibleSeed {
 			bytes=MemoResourcePolicy.checkedAdd(bytes,
 				MemoResourcePolicy.checkedAdd(32,MemoResourcePolicy.checkedMultiply(scope.length,4)));
 		return bytes;
+	}
+
+	private static long estimatedLocalWorkspace(int[] sizes,double[][] nativeCosts,BitSet[] domains,
+		List<MemoOptimizer.Check> checks,List<MemoOptimizer.CostTerm> costs) {
+		long bytes=estimatedWorkspace(sizes,nativeCosts,domains);
+		// Immutable factor refs, cached scope copies, and both mutable construction and immutable
+		// publication forms of the per-owner closing lists and their backing arrays.
+		bytes=MemoResourcePolicy.checkedAdd(bytes,
+			MemoResourcePolicy.checkedMultiply(sizes.length,256));
+		for(MemoOptimizer.Check check:checks)
+			bytes=MemoResourcePolicy.checkedAdd(bytes,MemoResourcePolicy.checkedAdd(128,
+				MemoResourcePolicy.checkedMultiply(check.owners().length,8)));
+		for(MemoOptimizer.CostTerm cost:costs)
+			bytes=MemoResourcePolicy.checkedAdd(bytes,MemoResourcePolicy.checkedAdd(128,
+				MemoResourcePolicy.checkedMultiply(cost.owners().length,8)));
+		return bytes;
+	}
+
+	private static long estimatedLocalImproveWorkspace(int[] sizes,double[][] nativeCosts,BitSet[] domains,
+		int[] initialSelected,List<int[]> scopes,List<MemoOptimizer.Check> checks,
+		List<MemoOptimizer.CostTerm> costs) {
+		long bytes=estimatedLocalWorkspace(sizes,nativeCosts,domains,checks,costs);
+		bytes=MemoResourcePolicy.checkedAdd(bytes,
+			MemoResourcePolicy.checkedAdd(16,MemoResourcePolicy.checkedMultiply(initialSelected.length,4)));
+		for(int[] scope:scopes)
+			bytes=MemoResourcePolicy.checkedAdd(bytes,
+				MemoResourcePolicy.checkedAdd(32,MemoResourcePolicy.checkedMultiply(scope.length,4)));
+		return bytes;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<IndexedCheck>[] closingChecks(List<IndexedCheck> checks,int owners) {
+		ArrayList<IndexedCheck>[] mutable=(ArrayList<IndexedCheck>[])new ArrayList<?>[owners];
+		for(int owner=0;owner<owners;owner++) mutable[owner]=new ArrayList<>();
+		for(IndexedCheck check:checks) {
+			int closing=maxOwner(check.owners);
+			if(closing>=0) mutable[closing].add(check);
+		}
+		List<IndexedCheck>[] result=(List<IndexedCheck>[])new List<?>[owners];
+		for(int owner=0;owner<owners;owner++) result[owner]=List.copyOf(mutable[owner]);
+		return result;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<IndexedCost>[] closingCosts(List<IndexedCost> costs,int owners) {
+		ArrayList<IndexedCost>[] mutable=(ArrayList<IndexedCost>[])new ArrayList<?>[owners];
+		for(int owner=0;owner<owners;owner++) mutable[owner]=new ArrayList<>();
+		for(IndexedCost cost:costs) {
+			int closing=maxOwner(cost.owners);
+			if(closing>=0) mutable[closing].add(cost);
+		}
+		List<IndexedCost>[] result=(List<IndexedCost>[])new List<?>[owners];
+		for(int owner=0;owner<owners;owner++) result[owner]=List.copyOf(mutable[owner]);
+		return result;
+	}
+
+	private static int maxOwner(int[] owners) {
+		int result=-1;
+		for(int owner:owners) result=Math.max(result,owner);
+		return result;
 	}
 
 	private static BitSet[] copyDomains(BitSet[] source) {

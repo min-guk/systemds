@@ -1,0 +1,5 @@
+phase,workload,workers,algorithm,status,failureCategory,wallSeconds,peakContainerMemoryUsageBytes
+source-fullcompile,gnmf,3,EXACT,passed,,2.823458284139633,186646528
+source-fullcompile,gnmf,3,MEMO_GLOBAL,passed,,2.6506967321038246,162424422
+source-fullcompile,gnmf,3,MEMO_LOCAL,passed,,2.827369026839733,175636480
+federated-runtime-smoke,,,ALL_ALGORITHMS,passed,,11.54309430718422,331769446

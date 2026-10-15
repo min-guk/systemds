@@ -1,0 +1,25 @@
+{
+  "valid": true,
+  "baselineCommit": "035f9c8eb76fc7cf793ffbde0127690ef131d16e",
+  "baselineMatchesGit": true,
+  "baselineSources": 3981,
+  "currentSources": 3982,
+  "frozenFiles": 8907,
+  "sourceMismatches": [],
+  "binaryMismatches": [],
+  "receiptEngines": {
+    "after": [
+      "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/engine-v1"
+    ],
+    "before": [
+      "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8"
+    ]
+  },
+  "changedSources": [
+    "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoFeasibleSeed.java",
+    "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoLocalMessages.java",
+    "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoLocalOptimizer.java",
+    "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoLocalMessagesTest.java",
+    "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoLocalSeedEfficiencyTest.java"
+  ]
+}

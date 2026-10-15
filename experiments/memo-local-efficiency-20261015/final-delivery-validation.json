@@ -1,0 +1,44 @@
+{
+  "valid": true,
+  "javaTests": {
+    "tests": 915,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "javaClasses": 141,
+  "pythonTests": {
+    "python-harness-tests.txt": 23,
+    "python-auditor-tests.txt": 5,
+    "python-validation-tests.txt": 8
+  },
+  "lintSourceWarnings": 0,
+  "dependencyManifestPathWarnings": 20,
+  "compileRows": 165,
+  "certificates": 104,
+  "boundPoints": 5073,
+  "newLocalRows": 40,
+  "runtimeMethods": 18,
+  "workerBackedMethods": 11,
+  "compilerBindingMethods": 7,
+  "trainingNumericalCases": 10,
+  "syntheticRows": 42,
+  "finalEvidenceSha256": {
+    "experiments/memo-local-efficiency-20261015/evaluation/evaluation-validation.json": "bc514bfe3d26949492a1b42fa94d85f9a046e6cd32669a28a662eeda0a8742ff",
+    "experiments/memo-local-efficiency-20261015/evaluation/paired-efficiency.json": "dc3202ef19e553af578c415424e9ed57e1d63c9d971ef227839069ab29a9c666",
+    "experiments/memo-local-efficiency-20261015/java-test-summary.json": "e0e10060cd091f7cd284aa30b9a3147070df062e11a567766b11113cae0c92e6",
+    "experiments/memo-local-efficiency-20261015/final-provenance-validation.json": "737129dd1bb7dc1b9a32d6b3c7864f9bbdb0328bc402d7ab8828c9e4d931dbdf",
+    "experiments/memo-local-efficiency-20261015/final-review.md": "e52ba826e956a50bd2a8072f0eab295a3c3ee535a258f1adda6a345ffde36b89",
+    "experiments/memo-local-efficiency-20261015/wave1-kernel-review.md": "09b6c66dfaef302ff80e9af294c7128d96eaa45a8ca1022b32f2294a0afb9d86",
+    "experiments/memo-local-efficiency-20261015/wave1-seed-review.md": "e48d9f5e84bc8f2a3ecd1c25185543407d33c1be55df426f0b8342ee1e65914c",
+    "experiments/memo-local-efficiency-20261015/wave1-benchmark-review.md": "c841d58daed9f7771d8818c3337b426b56079f95aa32b24b783e646d9f531e7a",
+    "docs/COFEE_MEMO_LOCAL_EFFICIENCY_REPORT_2026-10-15_KO.md": "5e6aa61d5ff2c47b42fae66589af2af1befec5d4a990eb7eb19166523b93a7aa"
+  },
+  "remainingLimitations": [
+    "Default-stack deep binding recursion can overflow in baseline and remains unfixed.",
+    "GNMF median optimizer time did not improve.",
+    "LogReg/GNMF Local remain slower than EXACT.",
+    "Large ML measurements compile-only; numerical training uses small linear/logistic fixtures.",
+    "Legacy Regional equivalence limited to adapter; no arbitrary OOM recovery claim."
+  ]
+}

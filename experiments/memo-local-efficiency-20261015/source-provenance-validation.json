@@ -1,0 +1,15 @@
+{
+  "baselineCommit": "035f9c8eb76fc7cf793ffbde0127690ef131d16e",
+  "newManifestRepositoryBase": "035f9c8eb76fc7cf793ffbde0127690ef131d16e",
+  "sourceFiles": 3982,
+  "changedSourceFiles": [
+    "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoFeasibleSeed.java",
+    "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoLocalMessages.java",
+    "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoLocalOptimizer.java",
+    "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoLocalMessagesTest.java",
+    "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoLocalSeedEfficiencyTest.java"
+  ],
+  "removedSources": [],
+  "currentSourceMismatches": [],
+  "valid": true
+}

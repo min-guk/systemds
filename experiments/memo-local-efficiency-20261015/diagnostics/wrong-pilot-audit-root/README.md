@@ -1,0 +1,1 @@
+The first audit pointed at the pilot suite directory instead of its enclosing experiment root. Its glob found no summaries and correctly rejected empty evidence. These files describe that invocation error, not an optimizer failure. The corrected pilot audit uses the experiment root with --allow-partial. Final validation uses evaluation/.

@@ -1,0 +1,37 @@
+{
+  "jobs": [
+    {
+      "argv": [
+        "/home/mchoi/cofee-tree-dp-20261014/scripts/fedplanner/run_LAN_docker.sh",
+        "--memo-tree-dp-benchmark",
+        "--engine",
+        "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/engine-v1",
+        "--sealed-stage",
+        "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "--output-root",
+        "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/evaluation/runtime/runtime-and-regional",
+        "--workers",
+        "3",
+        "--search-nodes",
+        "2000",
+        "--workloads",
+        "gnmf",
+        "--algorithms",
+        "EXACT,MEMO_GLOBAL,MEMO_LOCAL",
+        "--runtime-smoke",
+        "--synthetic-repetitions",
+        "7",
+        "--local-improve-seed",
+        "false"
+      ],
+      "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/engine-v1",
+      "name": "runtime-and-regional",
+      "returncode": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/evaluation/runtime/runtime-and-regional/summary.json"
+    }
+  ],
+  "repetitions": 1,
+  "schema": "memo-local-certificate-first-receipts/v1",
+  "seed": 20261015,
+  "suite": "runtime"
+}

@@ -53,7 +53,8 @@ final class MemoLocalOptimizer {
 	private final List<Progress> history=new ArrayList<>();
 	private final LinkedHashMap<BoundKey,BigDecimal> cache=new LinkedHashMap<>(16,.75f,true);
 	private final long started=System.nanoTime();
-	private final long baseBytes;
+	private final long baseBytes,domainBytes;
+	private long messageSetupEstimate=-1;
 	private MemoLocalMessages messages;
 	private BitSet[] root;
 	private BigDecimal rootLower,upper,unknownLower,deferredLower,lastLower,lastUpper;
@@ -79,14 +80,14 @@ final class MemoLocalOptimizer {
 		for(int size:sizes) bytes=MemoResourcePolicy.checkedAdd(bytes,32L+8L*size);
 		for(int[] scope:checkScopes) { bytes=MemoResourcePolicy.checkedAdd(bytes,8L*scope.length); for(int v:scope) degrees[v]++; }
 		for(int[] scope:costScopes) { bytes=MemoResourcePolicy.checkedAdd(bytes,8L*scope.length); for(int v:scope) degrees[v]++; }
-		baseBytes=bytes;
+		baseBytes=bytes; domainBytes=estimateDomainBytes();
 	}
 
 	Result optimize() {
 		for(boolean complete:coverage) if(!complete) return finish(Status.UNRESOLVED,"Incomplete candidate coverage");
 		for(int size:sizes) if(size==0) return finish(Status.INFEASIBLE,"Empty original domain");
 		long before=System.nanoTime();
-		if(!resources.admit(0,MemoResourcePolicy.checkedAdd(baseBytes,domainBytes()))) return finish(Status.RESOURCE_EXHAUSTED,"Cannot retain Local proof domains");
+		if(!resources.admit(0,MemoResourcePolicy.checkedAdd(baseBytes,domainBytes))) return finish(Status.RESOURCE_EXHAUSTED,"Cannot retain Local proof domains");
 		root=new BitSet[sizes.length];
 		for(int v=0;v<sizes.length;v++) { root[v]=new BitSet(sizes[v]); root[v].set(0,sizes[v]); }
 		rootLower=coarseBound(root,false); setupNanos+=System.nanoTime()-before;
@@ -137,18 +138,18 @@ final class MemoLocalOptimizer {
 		if(useMessages && admit(messageSetup)) {
 			before=System.nanoTime();
 			messages=new MemoLocalMessages(sizes,nativeCosts,checks,costs,root,
-				resources.withResidentBytes(baseBytes+domainBytes()+messageSetup));
+				resources.withResidentBytes(baseBytes+domainBytes+messageSetup));
 			setupNanos+=System.nanoTime()-before;
 			long cellLimit=Math.max(1,options.clusterCells());
 			while(!messages.complete()) {
 				before=System.nanoTime();
 				MemoLocalMessages.Step step=messages.refine(cellLimit,
-					resources.withResidentBytes(baseBytes+domainBytes()+messageSetup+cacheBytes+historyBytes));
+					resources.withResidentBytes(baseBytes+domainBytes+messageSetup+cacheBytes+historyBytes));
 				messageNanos+=System.nanoTime()-before;
 				if(!step.changed()) {
 					messageDecline=step.reason(); action("MESSAGE_DECLINED",step.owner(),step.cells()); break;
 				}
-				BigDecimal lower=messages.lowerBound(root); relaxations++;
+				BigDecimal lower=messages.initialBound(); relaxations++;
 				if(lower==null) { rootActive=false; return finish(Status.INFEASIBLE,"Relaxed messages prove original infeasibility"); }
 				rootLower=rootLower.max(lower); publish();
 				// A lower-bound update may already certify the old witness.
@@ -388,14 +389,15 @@ final class MemoLocalOptimizer {
 		cache.clear(); cacheBytes=0; history.clear(); historyBytes=0;
 		return resources.admit(residentBytes(),additional);
 	}
-	private long residentBytes() { return baseBytes+domainBytes()+openBytes+cacheBytes+historyBytes+reservedBytes+
+	private long residentBytes() { return baseBytes+domainBytes+openBytes+cacheBytes+historyBytes+reservedBytes+
 		(messages==null ? 0:messageSetupBytes()+messages.retainedBytes()); }
-	private long domainBytes() { long n=64+32L*sizes.length; for(int size:sizes) n+=48+8L*((size+63L)/64L); return n; }
+	private long estimateDomainBytes() { long n=64+32L*sizes.length; for(int size:sizes) n+=48+8L*((size+63L)/64L); return n; }
 	private long messageSetupBytes() {
+		if(messageSetupEstimate>=0) return messageSetupEstimate;
 		long n=2048+512L*sizes.length+256L*(checks.size()+costs.size());
 		for(int[] scope:costScopes) for(int v:scope) n=MemoResourcePolicy.checkedAdd(n,128L+16L*sizes[v]);
 		for(int[] scope:checkScopes) for(int v:scope) n=MemoResourcePolicy.checkedAdd(n,128L+16L*sizes[v]);
-		return n;
+		return messageSetupEstimate=n;
 	}
 	private void add(Region region) { open.add(region); openBytes+=region.bytes; maxPending=Math.max(maxPending,open.size()); }
 	private void remove() { openBytes-=open.remove().bytes; }

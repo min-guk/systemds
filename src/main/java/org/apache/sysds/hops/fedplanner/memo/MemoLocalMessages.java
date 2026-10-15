@@ -11,9 +11,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.Check;
 import org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.CostTerm;
@@ -38,7 +40,7 @@ final class MemoLocalMessages {
 	}
 	record Statistics(long completedBuckets,long evaluatedCells,long costEvaluations,long checkEvaluations,
 		long boundQueries,long memoryRejections,long candidatePreparations,long touchedVariables,
-		long touchedOriginalFactors) { }
+		long touchedOriginalFactors,long rootBoundQueries,long conditionalBoundQueries) { }
 
 	private enum Kind { NATIVE, COST, CHECK, MESSAGE }
 	private final int[] sizes;
@@ -47,7 +49,7 @@ final class MemoLocalMessages {
 	private final List<CostTerm> costs;
 	private final BitSet[] root;
 	private final MemoResourcePolicy resources;
-	private final List<Factor> active=new ArrayList<>();
+	private final Set<Factor> active=new LinkedHashSet<>();
 	private final List<Factor>[] incident;
 	private final long[] estimateCells;
 	private final int[] estimateWidths;
@@ -56,7 +58,9 @@ final class MemoLocalMessages {
 	private final boolean[] eliminated;
 	private final BitSet touched=new BitSet();
 	private long retainedBytes,completedBuckets,evaluatedCells,costEvaluations,checkEvaluations,boundQueries,memoryRejections;
-	private long candidatePreparations,touchedOriginalFactors;
+	private long candidatePreparations,touchedOriginalFactors,rootBoundQueries,conditionalBoundQueries;
+	private boolean rootBoundComputed;
+	private BigDecimal rootBound;
 
 	MemoLocalMessages(int[] sizes,double[][] nativeCosts,List<Check> checks,List<CostTerm> costs,
 		BitSet[] rootDomains,MemoResourcePolicy resources) {
@@ -108,12 +112,17 @@ final class MemoLocalMessages {
 				throw new IllegalArgumentException("Certified class domain mismatch");
 	}
 
-	BigDecimal initialBound() { return lowerBound(root); }
+	BigDecimal initialBound() {
+		boundQueries++; rootBoundQueries++;
+		return rootBound();
+	}
 
 	BigDecimal lowerBound(BitSet[] residualDomains) {
 		BitSet[] residual=copyResidual(residualDomains);
 		boundQueries++;
 		for(BitSet domain:residual) if(domain.isEmpty()) return null;
+		if(sameDomains(residual,root)) { rootBoundQueries++; return rootBound(); }
+		conditionalBoundQueries++;
 		BigDecimal total=BigDecimal.ZERO;
 		for(Factor factor:active) {
 			BigDecimal minimum=factor.minimum(residual);
@@ -156,7 +165,19 @@ final class MemoLocalMessages {
 		Message message=solve(candidate);
 		if(message==null)
 			return new Step(false,candidate.owner,candidate.cells,candidate.separator,candidate.originalOwners,"ALLOCATION_FAILED");
-		active.removeAll(candidate.inputs);
+		BigDecimal nextRoot=rootBound();
+		if(nextRoot!=null) {
+			for(Factor input:candidate.inputs) {
+				BigDecimal minimum=input.rootMinimum();
+				if(minimum==null) { nextRoot=null; break; }
+				nextRoot=nextRoot.subtract(minimum);
+			}
+			if(nextRoot!=null) {
+				BigDecimal output=message.factor.rootMinimum();
+				nextRoot=output==null ? null:nextRoot.add(output);
+			}
+		}
+		for(Factor input:candidate.inputs) active.remove(input);
 		BitSet affected=new BitSet();
 		for(Factor factor:candidate.inputs) {
 			if(factor.kind!=Kind.MESSAGE) touchedOriginalFactors++;
@@ -174,6 +195,7 @@ final class MemoLocalMessages {
 		retainedBytes=MemoResourcePolicy.checkedAdd(retainedBytes,MemoResourcePolicy.checkedAdd(metadata,additional));
 		completedBuckets++;
 		evaluatedCells=MemoResourcePolicy.checkedAdd(evaluatedCells,candidate.cells);
+		rootBound=nextRoot; rootBoundComputed=true;
 		return new Step(true,candidate.owner,candidate.cells,candidate.separator,candidate.originalOwners,"COMPLETED");
 	}
 
@@ -186,7 +208,23 @@ final class MemoLocalMessages {
 	boolean complete() { return activeOwners().isEmpty(); }
 	long retainedBytes() { return retainedBytes; }
 	Statistics statistics() { return new Statistics(completedBuckets,evaluatedCells,costEvaluations,
-		checkEvaluations,boundQueries,memoryRejections,candidatePreparations,touched.cardinality(),touchedOriginalFactors); }
+		checkEvaluations,boundQueries,memoryRejections,candidatePreparations,touched.cardinality(),touchedOriginalFactors,
+		rootBoundQueries,conditionalBoundQueries); }
+
+	private BigDecimal rootBound() {
+		if(rootBoundComputed) return rootBound;
+		BigDecimal total=BigDecimal.ZERO;
+		for(Factor factor:active) {
+			BigDecimal minimum=factor.rootMinimum();
+			if(minimum==null) { rootBound=null; rootBoundComputed=true; return null; }
+			total=total.add(minimum);
+		}
+		rootBound=total; rootBoundComputed=true; return rootBound;
+	}
+	private static boolean sameDomains(BitSet[] left,BitSet[] right) {
+		for(int owner=0;owner<left.length;owner++) if(!left[owner].equals(right[owner])) return false;
+		return true;
+	}
 
 	int[] reconstruct(int[] preferred) {
 		if(preferred==null || preferred.length!=sizes.length) throw new IllegalArgumentException("Invalid assignment");
@@ -308,6 +346,8 @@ final class MemoLocalMessages {
 		private final int[] evaluationOwners,fixedValues;
 		private boolean constantComputed;
 		private BigDecimal constantValue;
+		private boolean rootMinimumComputed;
+		private BigDecimal cachedRootMinimum;
 		private Factor(Kind kind,int[] owners,int[][] classes,int id,Message message,int[] originalOwners,
 			int[] evaluationOwners,int[] fixedValues) {
 			this.kind=kind; this.owners=owners.clone(); this.classes=copyClasses(classes); this.id=id;
@@ -328,6 +368,10 @@ final class MemoLocalMessages {
 				return best;
 			}
 			return message.minimum(domains);
+		}
+		private BigDecimal rootMinimum() {
+			if(!rootMinimumComputed) { cachedRootMinimum=minimum(root); rootMinimumComputed=true; }
+			return cachedRootMinimum;
 		}
 		private BigDecimal constant() {
 			if(!constantComputed) { constantValue=exact(new int[sizes.length]); constantComputed=true; }

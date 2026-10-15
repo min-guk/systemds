@@ -1,0 +1,531 @@
+{
+  "attempts": 9,
+  "beforeAfter": [],
+  "groups": [
+    {
+      "algorithm": "EXACT",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "9.240349",
+          "median": "9.240349",
+          "min": "9.240349"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "2.368409533",
+          "median": "2.368409533",
+          "min": "2.368409533"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "1039453388",
+          "median": "1039453388",
+          "min": "1039453388"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "10.58402007073164",
+          "median": "10.58402007073164",
+          "min": "10.58402007073164"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "EXACT",
+          "certificateCount": 0,
+          "failureCategory": null,
+          "fullCompileSeconds": "9.240349",
+          "memoPlanCosts": [
+            "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+          ],
+          "optimizationSeconds": "2.368409533",
+          "peakContainerMemoryUsageBytes": 1039453388,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+          "status": "passed",
+          "suite": "pilot",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/pilot/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "10.58402007073164",
+          "workload": "glm"
+        }
+      ],
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "glm"
+    },
+    {
+      "algorithm": "MEMO_GLOBAL",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "9.936926",
+          "median": "9.936926",
+          "min": "9.936926"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "2.529603609",
+          "median": "2.529603609",
+          "min": "2.529603609"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "1098437885",
+          "median": "1098437885",
+          "min": "1098437885"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "11.201397277414799",
+          "median": "11.201397277414799",
+          "min": "11.201397277414799"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "MEMO_GLOBAL",
+          "certificateCount": 1,
+          "failureCategory": null,
+          "fullCompileSeconds": "9.936926",
+          "memoPlanCosts": [
+            "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+          ],
+          "optimizationSeconds": "2.529603609",
+          "peakContainerMemoryUsageBytes": 1098437885,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+          "status": "passed",
+          "suite": "pilot",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/pilot/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "11.201397277414799",
+          "workload": "glm"
+        }
+      ],
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "glm"
+    },
+    {
+      "algorithm": "MEMO_LOCAL",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "8.920314",
+          "median": "8.920314",
+          "min": "8.920314"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "1.93607429",
+          "median": "1.93607429",
+          "min": "1.93607429"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "1105954078",
+          "median": "1105954078",
+          "min": "1105954078"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "10.364707708358765",
+          "median": "10.364707708358765",
+          "min": "10.364707708358765"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "MEMO_LOCAL",
+          "certificateCount": 1,
+          "failureCategory": null,
+          "fullCompileSeconds": "8.920314",
+          "memoPlanCosts": [
+            "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+          ],
+          "optimizationSeconds": "1.93607429",
+          "peakContainerMemoryUsageBytes": 1105954078,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+          "status": "passed",
+          "suite": "pilot",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/pilot/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "10.364707708358765",
+          "workload": "glm"
+        }
+      ],
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "glm"
+    },
+    {
+      "algorithm": "EXACT",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "1.677137",
+          "median": "1.677137",
+          "min": "1.677137"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "0.201907439",
+          "median": "0.201907439",
+          "min": "0.201907439"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "193567129",
+          "median": "193567129",
+          "min": "193567129"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "2.9542757868766785",
+          "median": "2.9542757868766785",
+          "min": "2.9542757868766785"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "EXACT",
+          "certificateCount": 0,
+          "failureCategory": null,
+          "fullCompileSeconds": "1.677137",
+          "memoPlanCosts": [
+            "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+          ],
+          "optimizationSeconds": "0.201907439",
+          "peakContainerMemoryUsageBytes": 193567129,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "suite": "pilot",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/pilot/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "2.9542757868766785",
+          "workload": "gnmf"
+        }
+      ],
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "gnmf"
+    },
+    {
+      "algorithm": "MEMO_GLOBAL",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "1.493228",
+          "median": "1.493228",
+          "min": "1.493228"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "0.224673942",
+          "median": "0.224673942",
+          "min": "0.224673942"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "172385894",
+          "median": "172385894",
+          "min": "172385894"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "2.7350658997893333",
+          "median": "2.7350658997893333",
+          "min": "2.7350658997893333"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "MEMO_GLOBAL",
+          "certificateCount": 1,
+          "failureCategory": null,
+          "fullCompileSeconds": "1.493228",
+          "memoPlanCosts": [
+            "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+          ],
+          "optimizationSeconds": "0.224673942",
+          "peakContainerMemoryUsageBytes": 172385894,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "suite": "pilot",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/pilot/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "2.7350658997893333",
+          "workload": "gnmf"
+        }
+      ],
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "gnmf"
+    },
+    {
+      "algorithm": "MEMO_LOCAL",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "2.039333",
+          "median": "2.039333",
+          "min": "2.039333"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "0.553017094",
+          "median": "0.553017094",
+          "min": "0.553017094"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "167352729",
+          "median": "167352729",
+          "min": "167352729"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "3.366678550839424",
+          "median": "3.366678550839424",
+          "min": "3.366678550839424"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "MEMO_LOCAL",
+          "certificateCount": 1,
+          "failureCategory": null,
+          "fullCompileSeconds": "2.039333",
+          "memoPlanCosts": [
+            "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+          ],
+          "optimizationSeconds": "0.553017094",
+          "peakContainerMemoryUsageBytes": 167352729,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "suite": "pilot",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/pilot/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "3.366678550839424",
+          "workload": "gnmf"
+        }
+      ],
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "gnmf"
+    },
+    {
+      "algorithm": "EXACT",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "4.271293",
+          "median": "4.271293",
+          "min": "4.271293"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "0.935077577",
+          "median": "0.935077577",
+          "min": "0.935077577"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "340682342",
+          "median": "340682342",
+          "min": "340682342"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "6.335653074085712",
+          "median": "6.335653074085712",
+          "min": "6.335653074085712"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "EXACT",
+          "certificateCount": 0,
+          "failureCategory": null,
+          "fullCompileSeconds": "4.271293",
+          "memoPlanCosts": [
+            "4041.3312164761625187616576028123462072105809284039423801004886627197265625000"
+          ],
+          "optimizationSeconds": "0.935077577",
+          "peakContainerMemoryUsageBytes": 340682342,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+          "status": "passed",
+          "suite": "pilot",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/pilot/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "6.335653074085712",
+          "workload": "logreg"
+        }
+      ],
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "logreg"
+    },
+    {
+      "algorithm": "MEMO_GLOBAL",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "3.964027",
+          "median": "3.964027",
+          "min": "3.964027"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "0.947557349",
+          "median": "0.947557349",
+          "min": "0.947557349"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "289616691",
+          "median": "289616691",
+          "min": "289616691"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "5.12137296050787",
+          "median": "5.12137296050787",
+          "min": "5.12137296050787"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "MEMO_GLOBAL",
+          "certificateCount": 1,
+          "failureCategory": null,
+          "fullCompileSeconds": "3.964027",
+          "memoPlanCosts": [
+            "4041.3312164761625187616576028123462072105809284039423801004886627197265625000"
+          ],
+          "optimizationSeconds": "0.947557349",
+          "peakContainerMemoryUsageBytes": 289616691,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+          "status": "passed",
+          "suite": "pilot",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/pilot/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "5.12137296050787",
+          "workload": "logreg"
+        }
+      ],
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "logreg"
+    },
+    {
+      "algorithm": "MEMO_LOCAL",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "5.676776",
+          "median": "5.676776",
+          "min": "5.676776"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "2.631925599",
+          "median": "2.631925599",
+          "min": "2.631925599"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "497339596",
+          "median": "497339596",
+          "min": "497339596"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "6.900166191160679",
+          "median": "6.900166191160679",
+          "min": "6.900166191160679"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "MEMO_LOCAL",
+          "certificateCount": 1,
+          "failureCategory": null,
+          "fullCompileSeconds": "5.676776",
+          "memoPlanCosts": [
+            "4193.6771139917773391949515883144784800240500999279902316629886627197265625000"
+          ],
+          "optimizationSeconds": "2.631925599",
+          "peakContainerMemoryUsageBytes": 497339596,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+          "status": "passed",
+          "suite": "pilot",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-efficiency-20261015/pilot/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "6.900166191160679",
+          "workload": "logreg"
+        }
+      ],
+      "suite": "pilot",
+      "variant": "new-pilot",
+      "workload": "logreg"
+    }
+  ],
+  "schema": "memo-dual-improvement-aggregate/v1",
+  "summaryFiles": 1,
+  "timingContract": "independent cold JVM/process; optimization is sum(memoPlans.phaseNanos.optimization)/1e9"
+}

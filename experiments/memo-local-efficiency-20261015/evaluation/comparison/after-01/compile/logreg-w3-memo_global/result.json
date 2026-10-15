@@ -1,0 +1,111 @@
+{
+  "algorithm": "MEMO_GLOBAL",
+  "comparisonGroup": "ml:logreg:w3:source-fullcompile",
+  "compile": {
+    "executionSeconds": 0.0,
+    "fullCompileSeconds": 4.23644,
+    "fullInitialPlanningSeconds": 4.227444479,
+    "runtimeProgramSeconds": 0.053862,
+    "verified": true
+  },
+  "compileHeapMiB": 3072,
+  "deterministicTreeLimits": {
+    "cacheEntries": 4096,
+    "factorCells": 256,
+    "frontierNodes": 10000,
+    "searchNodes": 2000
+  },
+  "dualCertificates": [
+    {
+      "certified": true,
+      "lowerBound": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "progression": [
+        {
+          "lowerBound": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+          "nodes": 0,
+          "upperBound": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000"
+        }
+      ],
+      "reason": "elimination",
+      "relativeGap": "0.0",
+      "route": "DIRECT",
+      "statistics": {
+        "bestUpperNanos": 824336606,
+        "boundCacheHits": 0,
+        "boundNanos": 0,
+        "cacheBytes": 0,
+        "certificateNanos": 827027726,
+        "clusterBuildNanos": 0,
+        "clusterBytes": 0,
+        "clusterCacheHits": 0,
+        "clusterCells": 0,
+        "clusterGroups": 0,
+        "clusterQueries": 0,
+        "clusterQueryNanos": 0,
+        "directAttempts": 1,
+        "directExactSolves": 1,
+        "exactCells": 14744,
+        "firstUpperNanos": 824336286,
+        "kernelNanos": 786108929,
+        "maxPending": 0,
+        "nodes": 0,
+        "peakEstimatedBytes": 2171548,
+        "pruned": 0,
+        "relaxationCalls": 0,
+        "repairCalls": 0,
+        "searchNanos": 0,
+        "seedAttempts": 0,
+        "seedEvaluations": 0,
+        "seedNanos": 0,
+        "setupNanos": 0,
+        "validationNanos": 30637123
+      },
+      "statisticsRaw": "Statistics[directExactSolves=1, directAttempts=1, seedAttempts=0, seedEvaluations=0, repairCalls=0, nodes=0, relaxationCalls=0, boundCacheHits=0, exactCells=14744, pruned=0, maxPending=0, peakEstimatedBytes=2171548, cacheBytes=0, kernelNanos=786108929, seedNanos=0, boundNanos=0, searchNanos=0, setupNanos=0, validationNanos=30637123, firstUpperNanos=824336286, bestUpperNanos=824336606, certificateNanos=827027726, clusterGroups=0, clusterCells=0, clusterQueries=0, clusterCacheHits=0, clusterBytes=0, clusterBuildNanos=0, clusterQueryNanos=0, route=DIRECT]",
+      "status": "OPTIMAL",
+      "upperBound": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000"
+    }
+  ],
+  "dualOptions": {
+    "clusterCells": 4096,
+    "diagnosticNodes": 9223372036854775807,
+    "diagnostics": false,
+    "directCells": 2000000,
+    "directExact": true,
+    "factorCells": 256,
+    "factorDiagnostics": false,
+    "factorDiagnosticsMaxFactors": 10000,
+    "improveSeed": false,
+    "localImproveSeed": false,
+    "localMessages": true,
+    "memoryBytes": 9223372036854775807,
+    "seedWork": 100000
+  },
+  "externalWatchdogSeconds": 900,
+  "failureCategory": null,
+  "memoPlans": [
+    {
+      "algorithm": "MEMO_GLOBAL",
+      "cost": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "phaseNanos": {
+        "facts": 60776794,
+        "model": 679316104,
+        "optimization": 876988467,
+        "projection": 81379526,
+        "rules": 1518418322
+      },
+      "planningNanos": 3216879213,
+      "status": "OPTIMAL"
+    }
+  ],
+  "peakContainerMemoryUsageBytes": 282381516,
+  "phase": "source-fullcompile",
+  "returncode": 0,
+  "schema": "systemds-memo-tree-dp-attempt/v1",
+  "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+  "status": "passed",
+  "timedOut": false,
+  "treeCertificates": [],
+  "wallSeconds": 5.554318830370903,
+  "workers": 3,
+  "workload": "logreg"
+}
