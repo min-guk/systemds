@@ -1,0 +1,64 @@
+{
+  "schema": "memo-local-certificate-first-delivery/v1",
+  "repositoryHead": "5734de2021f2841d82539063a6b450db69b9f7cb",
+  "branch": "feature/memo-tree-dp-certified-20261014",
+  "implementationScope": "certificate-first Local; existing Global/EXACT optimization algorithms preserved",
+  "deliveryStatus": "implemented-and-validated-with-documented-performance-regressions",
+  "publication": "local working tree; no commit or push performed for this implementation",
+  "javaTests": {
+    "tests": 775,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "javaTestClasses": 117,
+  "pythonTests": {
+    "harness": 23,
+    "auditor": 5,
+    "passed": true
+  },
+  "frozenJavaSourcesVerified": 3981,
+  "compileAttempts": 195,
+  "compilePassed": 195,
+  "jobs": 38,
+  "certificatesChecked": 119,
+  "boundPointsChecked": 4515,
+  "localRouteAndZeroDirectChecks": 49,
+  "dockerJUnitMethods": {
+    "total": 18,
+    "workerBacked": 11,
+    "compilerAndBinding": 7,
+    "passed": true,
+    "trainingNumericalCasesInsideOneMethod": 10
+  },
+  "syntheticRows": 42,
+  "syntheticStatus": "passed",
+  "legacyEqualFactorComparison": true,
+  "independentCodeReview": "APPROVE",
+  "independentReportReview": "APPROVE after two wording fixes",
+  "remainingLimits": [
+    "Default Local remains slower than direct EXACT on all three measured ML sources.",
+    "Large LogReg/GLM/GNMF are source-fullcompile; numerical runtime is small linear/logistic and shared-supply fixtures.",
+    "Gap-aware message selector, work-quantum propagation and independent selector ablation remain partial plan items.",
+    "No arbitrary evaluator OOM recovery, physical maximum heap sweep, or proof for distinct Hops fused into one Lop.",
+    "See correctness-coverage.md for stronger acceptance criteria still marked Partial."
+  ],
+  "artifactSha256": {
+    "docs/COFEE_MEMO_LOCAL_CERTIFICATE_FIRST_REPORT_2026-10-15_KO.md": "b0d99b55872790ed56d28c3ce67b2bf72620d53cb5bbd2b02600e0e4bee2d93e",
+    "experiments/memo-local-certificate-first-20261015/README.md": "01630bcd1de4ef248562afcc5daa6ff89e5c2d284036862d8aa6b49dffd9306b",
+    "experiments/memo-local-certificate-first-20261015/engine-v8-sha256.json": "796537ac65716d3503e3023c498c014fe1b91be9c614f5f2a643a8585bb7d906",
+    "experiments/memo-local-certificate-first-20261015/provenance-validation.json": "12067bac8dda84ccd74d1454582e42d5d3c130d887549a86b7289299d459a647",
+    "experiments/memo-local-certificate-first-20261015/test-summary.json": "0427190e68aa10b28bb922e52938168689ce0d32883fb392bb162883b061e38a",
+    "experiments/memo-local-certificate-first-20261015/correctness-coverage.md": "a775011d42430ebe5ae31521abc1e5531bef2e7aae15324d5e2b038b4f111719",
+    "experiments/memo-local-certificate-first-20261015/final-review.md": "85e4368ef6b523610eea3fe0ec5732a87a09e0dbe356c5558777e2a58182887e",
+    "experiments/memo-local-certificate-first-20261015/final-report-review.md": "1de7244c704f12af833b34fcc588cb9b78768298b026c8bb598754a5482b816d",
+    "experiments/memo-local-certificate-first-20261015/final-static-validation.json": "11b41a7826d90355eef8dcfdc8fdf9102bc96d7116efaf9f936ccc3352a28cdf",
+    "experiments/memo-local-certificate-first-20261015/run_evaluation.py": "750ff41822ebb1ada31b188181f9e3e6843fb55202443d829722f68886f61506",
+    "experiments/memo-local-certificate-first-20261015/analyze_local_results.py": "efd037a45bc539c8be03540f566dcd9a9d48b62e3dc64e42bdb2d98bc1c71545",
+    "experiments/memo-local-certificate-first-20261015/summarize_evaluation.py": "490eb611ef9d85008bf3c30076f30106ee95e86b81f7728bda5898d01a56acd3",
+    "experiments/memo-local-certificate-first-20261015/evaluation/result-validation.json": "e53c20035080d3d2377948cad4e0c626854958054985f83a43ea032f83cca73b",
+    "experiments/memo-local-certificate-first-20261015/evaluation/receipt-validation.json": "a8fc8e33608d301a177bfa766c0c8aad3b9ddbfac8dd9bd72dbfde1b81049cb6",
+    "experiments/memo-local-certificate-first-20261015/evaluation/report-data.json": "39f868b135d017dcde057a6a0bb7c0ea8818babac10b07a3ed775344e98b18c3",
+    "experiments/memo-local-certificate-first-20261015/evaluation/report-data.csv": "d02856faabef59837397b6393253d00a45652376688218c6c43e651d18f2808e"
+  }
+}

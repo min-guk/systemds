@@ -1,0 +1,6 @@
+# Preserve captured experiment bytes.
+*.json -text
+*.csv -text whitespace=cr-at-eol
+*.log -text -whitespace
+*.xml -text
+*.txt -text -whitespace

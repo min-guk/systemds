@@ -1,0 +1,35 @@
+{
+  "jobs": [
+    {
+      "argv": [
+        "/home/mchoi/cofee-tree-dp-20261014/scripts/fedplanner/run_LAN_docker.sh",
+        "--memo-tree-dp-benchmark",
+        "--engine",
+        "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v6",
+        "--sealed-stage",
+        "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "--output-root",
+        "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/pilot-v6/new-pilot",
+        "--workers",
+        "3",
+        "--search-nodes",
+        "2000",
+        "--workloads",
+        "logreg,glm,gnmf",
+        "--algorithms",
+        "EXACT,MEMO_GLOBAL,MEMO_LOCAL",
+        "--dual-diagnostics",
+        "true",
+        "--skip-synthetic"
+      ],
+      "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v6",
+      "name": "new-pilot",
+      "returncode": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/pilot-v6/new-pilot/summary.json"
+    }
+  ],
+  "repetitions": 7,
+  "schema": "memo-local-certificate-first-receipts/v1",
+  "seed": 20261015,
+  "suite": "pilot"
+}

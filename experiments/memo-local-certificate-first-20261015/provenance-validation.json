@@ -1,0 +1,56 @@
+{
+  "baselineEngineFiles": {
+    "actualFileCount": 8881,
+    "allManifestFilesMatch": true,
+    "engineRoot": "experiments/memo-dual-improvement-20261015/engine-v3",
+    "extraFiles": [],
+    "hashMismatches": [],
+    "manifest": "experiments/memo-dual-improvement-20261015/engine-v3-sha256.json",
+    "manifestFileCount": 8881,
+    "missingFiles": []
+  },
+  "baselineSourcesAgainstComparisonHead": {
+    "allManifestSourcesMatchComparisonHead": true,
+    "baselineRepositoryBase": "b8623e3481072940c07ef3962bcd55be526f1d09",
+    "hashMismatches": [],
+    "manifestSourceCount": 3975,
+    "missingAtComparisonHead": []
+  },
+  "comparisonHead": "5734de2021f2841d82539063a6b450db69b9f7cb",
+  "finalEngine": {
+    "actualFileCount": 8903,
+    "allManifestFilesMatch": true,
+    "currentJavaHashMismatches": [],
+    "currentJavaMatch": true,
+    "currentJavaMissing": [],
+    "engineRoot": "experiments/memo-local-certificate-first-20261015/engine-v8",
+    "extraFiles": [],
+    "hashMismatches": [],
+    "manifest": "experiments/memo-local-certificate-first-20261015/engine-v8-sha256.json",
+    "manifestFileCount": 8903,
+    "manifestJavaSourceCount": 3981,
+    "missingFiles": []
+  },
+  "javaSourceSetDelta": {
+    "absentFromFinalEngine": [],
+    "baselineCount": 3975,
+    "finalCount": 3981,
+    "newFilesAbsentFromBaselineAsExpected": true,
+    "newInFinalEngine": [
+      "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoLocalMessages.java",
+      "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoLocalOptimizer.java",
+      "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoLocalMessagesTest.java",
+      "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoLocalOptimizerTest.java",
+      "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoLocalPropagationTest.java",
+      "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoLocalSeedTest.java"
+    ]
+  },
+  "notes": [
+    "Final-engine source equality is checked against current workspace Java bytes.",
+    "Baseline source equality is checked against the requested comparison commit, independently of the manifest repositoryBase.",
+    "New final-engine Java files are reported separately because absence from the baseline is expected."
+  ],
+  "schema": "memo-local-certificate-first-provenance/v1",
+  "valid": true,
+  "verifiedAt": "2026-10-15"
+}

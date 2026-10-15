@@ -1,0 +1,511 @@
+{
+  "attempts": 9,
+  "beforeAfter": [],
+  "groups": [
+    {
+      "algorithm": "EXACT",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "9.711352",
+          "median": "9.711352",
+          "min": "9.711352"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "2.412171266",
+          "median": "2.412171266",
+          "min": "2.412171266"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "883215564",
+          "median": "883215564",
+          "min": "883215564"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "11.09870134294033",
+          "median": "11.09870134294033",
+          "min": "11.09870134294033"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "EXACT",
+          "certificateCount": 0,
+          "failureCategory": null,
+          "fullCompileSeconds": "9.711352",
+          "memoPlanCosts": [
+            "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+          ],
+          "optimizationSeconds": "2.412171266",
+          "peakContainerMemoryUsageBytes": 883215564,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+          "status": "passed",
+          "suite": "pilot-v6",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/pilot-v6/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "11.09870134294033",
+          "workload": "glm"
+        }
+      ],
+      "suite": "pilot-v6",
+      "variant": "new-pilot",
+      "workload": "glm"
+    },
+    {
+      "algorithm": "MEMO_GLOBAL",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "9.520484",
+          "median": "9.520484",
+          "min": "9.520484"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "2.565530519",
+          "median": "2.565530519",
+          "min": "2.565530519"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "1009044684",
+          "median": "1009044684",
+          "min": "1009044684"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "10.786668635904789",
+          "median": "10.786668635904789",
+          "min": "10.786668635904789"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "MEMO_GLOBAL",
+          "certificateCount": 1,
+          "failureCategory": null,
+          "fullCompileSeconds": "9.520484",
+          "memoPlanCosts": [
+            "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+          ],
+          "optimizationSeconds": "2.565530519",
+          "peakContainerMemoryUsageBytes": 1009044684,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+          "status": "passed",
+          "suite": "pilot-v6",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/pilot-v6/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "10.786668635904789",
+          "workload": "glm"
+        }
+      ],
+      "suite": "pilot-v6",
+      "variant": "new-pilot",
+      "workload": "glm"
+    },
+    {
+      "algorithm": "MEMO_LOCAL",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "13.992387",
+          "median": "13.992387",
+          "min": "13.992387"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "6.044193927",
+          "median": "6.044193927",
+          "min": "6.044193927"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "1217623228",
+          "median": "1217623228",
+          "min": "1217623228"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "15.471453309059143",
+          "median": "15.471453309059143",
+          "min": "15.471453309059143"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "MEMO_LOCAL",
+          "certificateCount": 1,
+          "failureCategory": null,
+          "fullCompileSeconds": "13.992387",
+          "memoPlanCosts": [
+            "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+          ],
+          "optimizationSeconds": "6.044193927",
+          "peakContainerMemoryUsageBytes": 1217623228,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+          "status": "passed",
+          "suite": "pilot-v6",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/pilot-v6/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "15.471453309059143",
+          "workload": "glm"
+        }
+      ],
+      "suite": "pilot-v6",
+      "variant": "new-pilot",
+      "workload": "glm"
+    },
+    {
+      "algorithm": "EXACT",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "1.680421",
+          "median": "1.680421",
+          "min": "1.680421"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "0.221650668",
+          "median": "0.221650668",
+          "min": "0.221650668"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "175951052",
+          "median": "175951052",
+          "min": "175951052"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "3.0028091818094254",
+          "median": "3.0028091818094254",
+          "min": "3.0028091818094254"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "EXACT",
+          "certificateCount": 0,
+          "failureCategory": null,
+          "fullCompileSeconds": "1.680421",
+          "memoPlanCosts": [
+            "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+          ],
+          "optimizationSeconds": "0.221650668",
+          "peakContainerMemoryUsageBytes": 175951052,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "suite": "pilot-v6",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/pilot-v6/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "3.0028091818094254",
+          "workload": "gnmf"
+        }
+      ],
+      "suite": "pilot-v6",
+      "variant": "new-pilot",
+      "workload": "gnmf"
+    },
+    {
+      "algorithm": "MEMO_GLOBAL",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "1.825302",
+          "median": "1.825302",
+          "min": "1.825302"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "0.265032992",
+          "median": "0.265032992",
+          "min": "0.265032992"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "186961100",
+          "median": "186961100",
+          "min": "186961100"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "3.11093158274889",
+          "median": "3.11093158274889",
+          "min": "3.11093158274889"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "MEMO_GLOBAL",
+          "certificateCount": 1,
+          "failureCategory": null,
+          "fullCompileSeconds": "1.825302",
+          "memoPlanCosts": [
+            "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+          ],
+          "optimizationSeconds": "0.265032992",
+          "peakContainerMemoryUsageBytes": 186961100,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "suite": "pilot-v6",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/pilot-v6/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "3.11093158274889",
+          "workload": "gnmf"
+        }
+      ],
+      "suite": "pilot-v6",
+      "variant": "new-pilot",
+      "workload": "gnmf"
+    },
+    {
+      "algorithm": "MEMO_LOCAL",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "1.700304",
+          "median": "1.700304",
+          "min": "1.700304"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "0.472510543",
+          "median": "0.472510543",
+          "min": "0.472510543"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "163053568",
+          "median": "163053568",
+          "min": "163053568"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "2.9011064022779465",
+          "median": "2.9011064022779465",
+          "min": "2.9011064022779465"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "MEMO_LOCAL",
+          "certificateCount": 1,
+          "failureCategory": null,
+          "fullCompileSeconds": "1.700304",
+          "memoPlanCosts": [
+            "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+          ],
+          "optimizationSeconds": "0.472510543",
+          "peakContainerMemoryUsageBytes": 163053568,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "suite": "pilot-v6",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/pilot-v6/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "2.9011064022779465",
+          "workload": "gnmf"
+        }
+      ],
+      "suite": "pilot-v6",
+      "variant": "new-pilot",
+      "workload": "gnmf"
+    },
+    {
+      "algorithm": "EXACT",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "4.272321",
+          "median": "4.272321",
+          "min": "4.272321"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "0.995543045",
+          "median": "0.995543045",
+          "min": "0.995543045"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "323275980",
+          "median": "323275980",
+          "min": "323275980"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "5.458576679229736",
+          "median": "5.458576679229736",
+          "min": "5.458576679229736"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "EXACT",
+          "certificateCount": 0,
+          "failureCategory": null,
+          "fullCompileSeconds": "4.272321",
+          "memoPlanCosts": [
+            "4041.3312164761625187616576028123462072105809284039423801004886627197265625000"
+          ],
+          "optimizationSeconds": "0.995543045",
+          "peakContainerMemoryUsageBytes": 323275980,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+          "status": "passed",
+          "suite": "pilot-v6",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/pilot-v6/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "5.458576679229736",
+          "workload": "logreg"
+        }
+      ],
+      "suite": "pilot-v6",
+      "variant": "new-pilot",
+      "workload": "logreg"
+    },
+    {
+      "algorithm": "MEMO_GLOBAL",
+      "attempts": 1,
+      "failed": 0,
+      "metrics": {
+        "fullCompileSeconds": {
+          "count": 1,
+          "max": "4.14479",
+          "median": "4.14479",
+          "min": "4.14479"
+        },
+        "optimizationSeconds": {
+          "count": 1,
+          "max": "0.811045329",
+          "median": "0.811045329",
+          "min": "0.811045329"
+        },
+        "peakContainerMemoryUsageBytes": {
+          "count": 1,
+          "max": "289721548",
+          "median": "289721548",
+          "min": "289721548"
+        },
+        "wallSeconds": {
+          "count": 1,
+          "max": "5.480229079723358",
+          "median": "5.480229079723358",
+          "min": "5.480229079723358"
+        }
+      },
+      "passed": 1,
+      "runs": [
+        {
+          "algorithm": "MEMO_GLOBAL",
+          "certificateCount": 1,
+          "failureCategory": null,
+          "fullCompileSeconds": "4.14479",
+          "memoPlanCosts": [
+            "4041.3312164761625187616576028123462072105809284039423801004886627197265625000"
+          ],
+          "optimizationSeconds": "0.811045329",
+          "peakContainerMemoryUsageBytes": 289721548,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+          "status": "passed",
+          "suite": "pilot-v6",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/pilot-v6/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "5.480229079723358",
+          "workload": "logreg"
+        }
+      ],
+      "suite": "pilot-v6",
+      "variant": "new-pilot",
+      "workload": "logreg"
+    },
+    {
+      "algorithm": "MEMO_LOCAL",
+      "attempts": 1,
+      "failed": 1,
+      "metrics": {
+        "fullCompileSeconds": null,
+        "optimizationSeconds": null,
+        "peakContainerMemoryUsageBytes": null,
+        "wallSeconds": null
+      },
+      "passed": 0,
+      "runs": [
+        {
+          "algorithm": "MEMO_LOCAL",
+          "certificateCount": 1,
+          "failureCategory": "full_compile_evidence_missing",
+          "fullCompileSeconds": null,
+          "memoPlanCosts": [
+            "4193.6771139917773391949515883144784800240500999279902316629886627197265625000"
+          ],
+          "optimizationSeconds": null,
+          "peakContainerMemoryUsageBytes": 715757977,
+          "returncode": 0,
+          "run": "new-pilot",
+          "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+          "status": "failed",
+          "suite": "pilot-v6",
+          "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/pilot-v6/new-pilot/summary.json",
+          "timedOut": false,
+          "variant": "new-pilot",
+          "wallSeconds": "8.290050216019154",
+          "workload": "logreg"
+        }
+      ],
+      "suite": "pilot-v6",
+      "variant": "new-pilot",
+      "workload": "logreg"
+    }
+  ],
+  "schema": "memo-dual-improvement-aggregate/v1",
+  "summaryFiles": 1,
+  "timingContract": "independent cold JVM/process; optimization is sum(memoPlans.phaseNanos.optimization)/1e9"
+}

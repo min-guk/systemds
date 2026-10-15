@@ -1,0 +1,1325 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/15 09:20:57 WARN utils.SettingsChecker: Low memory budget of total:    251 GB set to:      3 GB
+26/10/15 09:20:57 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[MemoPlannerPhase] phase=facts elapsedNs=102877367
+[MemoPlannerPhase] phase=rules elapsedNs=5337678820
+[MemoNativeRequests] preparedRequests=11693 reusedResults=11239 oracleRequests=454 canonicalStringsCreated=121 canonicalStringsReused=11239 uncacheableRequests=333 contextualViewBuilds=454
+[MemoNativeGeneration] cpPatterns=457 prefixRequests=153 prunedPrefixes=2171 unknownPrefixes=36 visitedNativePatterns=971 determinantRegions=3025 oracleEvaluations=3101 evidenceReuses=0 publishedRules=1289 coverageObligations=50
+[MemoPlannerPhase] phase=model elapsedNs=1425446654
+[MemoCostProjection] bindingDagVisits=366951 projectionCacheHits=42138 relevantGuardDecisions=6152 supportPrefixChecks=19849 noRegionsSkipped=64516 unknownObligations=0 invariantProjectionStops=133713 activationEnvironments=7545 projectedContexts=9500 primitiveVectors=9500 primitiveValues=49861 primitiveValueBytes=398888
+[MemoPlannerPhase] phase=optimization elapsedNs=2283090458
+[MemoSearch] status=OPTIMAL nodes=1360977 checkEvaluations=94153 checkCacheHits=54684 supportQueries=73291 supportCacheHits=0 supportWitnessHits=1853 binarySupportHits=1853 binarySupportRows=4090 worklistVisits=8200 removedRules=481 costEvaluations=11556 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=166 cells=1360977 rows=229309 factorHits=3180349
+[MemoShapeReuse] bindingGuardRequests=16194 bindingGuardCacheHits=5964 repeatProofRequests=67552 repeatProofCacheHits=62252 phaseShapeRequests=1204219 phaseShapeCacheHits=411095 phaseShapeCacheEntries=788142 guardRelevanceRequests=4284333 guardRelevanceCacheHits=4284259 guardRelevanceIndexEntries=74 occurrenceTransferRequests=833738 occurrenceTransferCacheHits=832786 occurrenceTransferBuilds=952 occurrenceTransferEntries=914 guardAtomRequests=2063852 guardAtomHits=2063777 guardAtomIdentities=52
+[MemoMovementReuse] activationRows=4919 activationReplays=93258 postGateRequests=530779 postGateBuilds=3676 postGateHits=527103 primitiveContexts=9776 contextualViewBuilds=4354 unionRequests=15167 unionCacheHits=14150 measurementRequests=28050 measurementHits=10835
+[MemoNativeCostReuse] requests=7851 cacheHits=6012 vectorBuilds=3488 entries=1839
+[MemoContextAnalysisReuse] requests=125638 hits=125477 entries=161
+[MemoDirectRoots] resolver=shapes requests=793130 eligibleCalls=793124 fastPathCalls=793124 rootsResolved=793124
+[MemoDirectRoots] resolver=modelPrivacy requests=37440 eligibleCalls=19908 fastPathCalls=19908 rootsResolved=19908
+[MemoCheckProjection] annotatedChecks=5253 invariantCheckAxes=1140 binaryChecksReduced=108 branchEdgesRemovedDuringNormalization=36
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=1 workers=3 nativeRules=2030 fedOwners=25 supplies=5 nodes=1360977 checks=94153 cacheHits=54684 pruned=481 supportQueries=73291 supportCacheHits=0 supportWitnessHits=1853 binarySupportHits=1853 binarySupportRows=4090 worklistVisits=8200 costEvaluations=11556 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=454 oracleHits=0 factsNs=102877367 rulesNs=5337678820 modelNs=1425446654 optimizationNs=2283090458 projectionNs=90416701 cost=426.222945173122011978444871186836413398668632623866869835183024406433105468750000
+[MemoLowering] status=MATCH sb=567 hops=24 supplies=0
+[MemoLowering] status=MATCH sb=578 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=533 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=581 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=582 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=559 hops=22 supplies=0
+[MemoLowering] status=MATCH sb=565 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=538 hops=4 supplies=0
+[MemoLowering] status=MATCH sb=539 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=535 hops=48 supplies=0
+[MemoLowering] status=MATCH sb=537 hops=9 supplies=0
+[MemoLowering] status=MATCH sb=540 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=566 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=555 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=557 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=541 hops=49 supplies=0
+[MemoLowering] status=MATCH sb=558 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=549 hops=9 supplies=0
+[MemoLowering] status=MATCH sb=553 hops=7 supplies=0
+[MemoLowering] status=MATCH sb=545 hops=11 supplies=0
+[MemoLowering] status=MATCH sb=554 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=548 hops=8 supplies=0
+[MemoLowering] status=MATCH sb=526 hops=23 supplies=0
+[MemoLowering] status=MATCH sb=291 hops=29 supplies=0
+[MemoLowering] status=MATCH sb=323 hops=11 supplies=0
+[MemoLowering] status=MATCH sb=376 hops=35 supplies=1
+[MemoLowering] status=MATCH sb=17 hops=20 supplies=0
+[MemoLowering] status=MATCH sb=20 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=15 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=21 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=16 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=166 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=167 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=127 hops=8 supplies=0
+[MemoLowering] status=MATCH sb=128 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=100 hops=25 supplies=0
+[MemoLowering] status=MATCH sb=101 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=27 hops=7 supplies=0
+[MemoLowering] status=MATCH sb=102 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=103 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=51 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=52 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=33 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=29 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=34 hops=7 supplies=0
+[MemoLowering] status=MATCH sb=35 hops=7 supplies=0
+[MemoLowering] status=MATCH sb=30 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=36 hops=11 supplies=0
+[MemoLowering] status=MATCH sb=31 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=37 hops=7 supplies=0
+[MemoLowering] status=MATCH sb=32 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=53 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=42 hops=10 supplies=0
+[MemoLowering] status=MATCH sb=43 hops=16 supplies=1
+[MemoLowering] status=MATCH sb=54 hops=10 supplies=0
+[MemoLowering] status=MATCH sb=59 hops=22 supplies=0
+[MemoLowering] status=MATCH sb=60 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=46 hops=14 supplies=0
+[MemoLowering] status=MATCH sb=61 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=62 hops=26 supplies=0
+[MemoLowering] status=MATCH sb=48 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=71 hops=22 supplies=0
+[MemoLowering] status=MATCH sb=73 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=50 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=104 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=107 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=74 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=75 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=120 hops=27 supplies=0
+[MemoLowering] status=MATCH sb=81 hops=11 supplies=1
+[MemoLowering] status=MATCH sb=124 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=82 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=125 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=126 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=129 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=634 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=638 hops=4 supplies=0
+[MemoLowering] status=MATCH sb=623 hops=15 supplies=0
+[MemoLowering] status=MATCH sb=626 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=614 hops=4 supplies=0
+[MemoLowering] status=MATCH sb=627 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=616 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=628 hops=4 supplies=0
+[MemoLowering] status=MATCH sb=631 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=618 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=619 hops=5 supplies=0
+[MemoLowering] status=MATCH sb=617 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=620 hops=4 supplies=0
+[MemoLowering] status=MATCH sb=632 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=622 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=633 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=491 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=488 hops=4 supplies=0
+[MemoLowering] status=MATCH sb=489 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=487 hops=8 supplies=0
+[MemoLowering] status=MATCH sb=483 hops=11 supplies=0
+[MemoLowering] status=MATCH sb=484 hops=10 supplies=0
+[MemoLowering] status=MATCH sb=482 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=485 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=497 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=490 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=653 hops=38 supplies=2
+[MemoLowering] status=MATCH sb=654 hops=6 supplies=0
+# EXPLAIN (RUNTIME):
+# Memory Budget local/remote = 2150MB/?MB/?MB
+# Degree of Parallelism (vcores) local/remote = 4/
+PROGRAM ( size CP/MR = 984/0 )
+--FUNCTIONS
+----FUNCTION CALL GRAPH
+------MAIN PROGRAM
+--------.builtinNS::m_glm
+----------.builtinNS::glm_initialize
+------------.builtinNS::glm_log_likelihood_part
+--------------.builtinNS::binomial_probability_two_column
+----------.builtinNS::glm_dist
+----------.builtinNS::glm_log_likelihood_part
+------------.builtinNS::binomial_probability_two_column
+----------.builtinNS::round_to_print
+----------.builtinNS::get_CG_Steihaug_point
+----FUNCTION .builtinNS::glm_initialize [recompile=false]
+------GENERIC (lines 526-587) [recompile=false]
+--------CP createvar _mVar343 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp69 true MATRIX binary 50000 1 1000 -1 copy
+--------CP rightIndex Y.MATRIX.FP64 1.SCALAR.INT64.true 50000.SCALAR.INT64.true 1.SCALAR.INT64.true 1.SCALAR.INT64.true _mVar343.MATRIX.FP64
+--------CP createvar _mVar344 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp70 true MATRIX binary 50000 1 1000 -1 copy
+--------CP uark+ Y.MATRIX.FP64 _mVar344.MATRIX.FP64 4
+--------CP createvar _mVar345 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp71 true MATRIX binary 50000 1 1000 -1 copy
+--------CP == _mVar344.MATRIX.FP64 0.SCALAR.INT64.true _mVar345.MATRIX.FP64 4
+--------CP createvar _mVar346 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp72 true MATRIX binary 50000 1 1000 -1 copy
+--------CP + _mVar344.MATRIX.FP64 _mVar345.MATRIX.FP64 _mVar346.MATRIX.FP64 4
+--------CP rmvar _mVar344
+--------CP createvar _mVar347 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp73 true MATRIX binary 50000 1 1000 -1 copy
+--------CP / _mVar343.MATRIX.FP64 _mVar346.MATRIX.FP64 _mVar347.MATRIX.FP64 4
+--------CP rmvar _mVar346
+--------CP createvar _mVar348 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp74 true MATRIX binary 50000 1 1000 -1 copy
+--------CP - 0.5.SCALAR.FP64.true _mVar343.MATRIX.FP64 _mVar348.MATRIX.FP64 4
+--------CP rmvar _mVar343
+--------CP createvar _mVar349 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp75 true MATRIX binary 50000 1 1000 -1 copy
+--------CP * _mVar348.MATRIX.FP64 _mVar345.MATRIX.FP64 _mVar349.MATRIX.FP64 4
+--------CP rmvar _mVar348 _mVar345
+--------CP createvar _mVar350 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp76 true MATRIX binary 50000 1 1000 -1 copy
+--------CP + _mVar347.MATRIX.FP64 _mVar349.MATRIX.FP64 _mVar350.MATRIX.FP64 4
+--------CP rmvar _mVar347 _mVar349
+--------CP createvar _mVar351 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp77 true MATRIX binary 50000 1 1000 -1 copy
+--------CP >= _mVar350.MATRIX.FP64 1.0.SCALAR.FP64.true _mVar351.MATRIX.FP64 4
+--------CP createvar _mVar352 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp78 true MATRIX binary 50000 1 1000 -1 copy
+--------CP - 1.0.SCALAR.FP64.true _mVar351.MATRIX.FP64 _mVar352.MATRIX.FP64 4
+--------CP createvar _mVar353 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp79 true MATRIX binary 50000 1 1000 -1 copy
+--------CP <= _mVar350.MATRIX.FP64 0.SCALAR.INT64.true _mVar353.MATRIX.FP64 4
+--------CP createvar _mVar354 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp80 true MATRIX binary 50000 1 1000 -1 copy
+--------CP - 1.0.SCALAR.FP64.true _mVar353.MATRIX.FP64 _mVar354.MATRIX.FP64 4
+--------CP createvar _mVar355 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp81 true MATRIX binary 50000 1 1000 -1 copy
+--------CP n* _mVar352.MATRIX.FP64 _mVar354.MATRIX.FP64 _mVar350.MATRIX.FP64 _mVar355.MATRIX.FP64
+--------CP rmvar _mVar350
+--------CP createvar _mVar356 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp82 true MATRIX binary 50000 1 1000 -1 copy
+--------CP + _mVar353.MATRIX.FP64 _mVar351.MATRIX.FP64 _mVar356.MATRIX.FP64 4
+--------CP createvar _mVar357 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp83 true MATRIX binary 50000 1 1000 -1 copy
+--------CP +* _mVar355.MATRIX.FP64 0.5.SCALAR.FP64.true _mVar356.MATRIX.FP64 _mVar357.MATRIX.FP64 4
+--------CP rmvar _mVar355 _mVar356
+--------CP createvar _mVar358 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp84 true MATRIX binary 50000 1 1000 -1 copy
+--------CP - 1.0.SCALAR.FP64.true _mVar357.MATRIX.FP64 _mVar358.MATRIX.FP64 4
+--------CP createvar _mVar359 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp85 true MATRIX binary 50000 1 1000 -1 copy
+--------CP / _mVar357.MATRIX.FP64 _mVar358.MATRIX.FP64 _mVar359.MATRIX.FP64 4
+--------CP rmvar _mVar357 _mVar358
+--------CP createvar _mVar360 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp86 true MATRIX binary 50000 1 1000 -1 copy
+--------CP log _mVar359.MATRIX.FP64 _mVar360.MATRIX.FP64 4 false
+--------CP rmvar _mVar359
+--------CP createvar _mVar361 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp87 true MATRIX binary 50000 1 1000 -1 copy
+--------CP / _mVar351.MATRIX.FP64 _mVar352.MATRIX.FP64 _mVar361.MATRIX.FP64 4
+--------CP rmvar _mVar351 _mVar352
+--------CP createvar _mVar362 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp88 true MATRIX binary 50000 1 1000 -1 copy
+--------CP + _mVar360.MATRIX.FP64 _mVar361.MATRIX.FP64 _mVar362.MATRIX.FP64 4
+--------CP rmvar _mVar360 _mVar361
+--------CP createvar _mVar363 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp89 true MATRIX binary 50000 1 1000 -1 copy
+--------CP / _mVar353.MATRIX.FP64 _mVar354.MATRIX.FP64 _mVar363.MATRIX.FP64 4
+--------CP rmvar _mVar353 _mVar354
+--------CP createvar _mVar364 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp90 true MATRIX binary 50000 1 1000 -1 copy
+--------CP - _mVar362.MATRIX.FP64 _mVar363.MATRIX.FP64 _mVar364.MATRIX.FP64 4
+--------CP rmvar _mVar362 _mVar363
+--------CP assignvar 0.0.SCALAR.FP64.true saturated_log_l.SCALAR.FP64
+--------CP assignvar 0.SCALAR.INT64.true isNaN.SCALAR.INT64
+--------CP mvvar _mVar364 linear_terms
+------GENERIC (lines 608-625) [recompile=false]
+--------CP createvar _mVar365 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp91 true MATRIX binary 128 1 1000 0 copy
+--------CP rand 128.SCALAR.INT64.true 1.SCALAR.INT64.true 1000 0.0 0.0 1.0 -1 uniform 1.0 4 _mVar365.MATRIX.FP64
+--------CP FCall .builtinNS glm_log_likelihood_part true 6 2 linear_terms=linear_terms.MATRIX.FP64 Y=Y.MATRIX.FP64 dist_type=2.SCALAR.INT64.true var_power=0.0.SCALAR.FP64.true link_type=2.SCALAR.INT64.true link_power=1.0.SCALAR.FP64.true saturated_log_l isNaN
+--------CP mvvar _mVar365 beta
+--------CP rmvar link_type var_power link_power dist_type linear_terms Y
+----FUNCTION .builtinNS::m_glm [recompile=false]
+------GENERIC (lines 131-225) [recompile=false]
+--------CP createvar _mVar392 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp118 true MATRIX binary 128 1 1000 128 copy
+--------CP rand 128.SCALAR.INT64.true 1.SCALAR.INT64.true 1000 1 1 1.0 -1 uniform 1.0 4 _mVar392.MATRIX.FP64
+--------CP createvar _mVar393 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp119 true MATRIX binary 128 1 1000 0 copy
+--------CP rand 128.SCALAR.INT64.true 1.SCALAR.INT64.true 1000 0 0 1.0 -1 uniform 1.0 4 _mVar393.MATRIX.FP64
+--------CP createvar _mVar394 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp120 true MATRIX binary 50000 1 1000 -1 copy
+--------FED uarsqk+ X.MATRIX.FP64 _mVar394.MATRIX.FP64 4 FOUT
+--------CP createvar _mVar395 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp121 true MATRIX binary 128 1 1000 -1 copy
+--------CP * _mVar392.MATRIX.FP64 0.0.SCALAR.FP64.true _mVar395.MATRIX.FP64 4
+--------CP createvar _mVar396 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp122 true MATRIX binary 50000 1 1000 -1 copy
+--------CP == Y.MATRIX.FP64 0.0.SCALAR.FP64.true _mVar396.MATRIX.FP64 4
+--------CP createvar _mVar397 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp123 true MATRIX binary 50000 1 1000 -1 copy
+--------CP - 1.SCALAR.INT64.true _mVar396.MATRIX.FP64 _mVar397.MATRIX.FP64 4
+--------CP createvar _mVar398 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp124 true MATRIX binary 50000 2 1000 -1 copy
+--------CP append _mVar397.MATRIX.FP64 _mVar396.MATRIX.FP64 1.SCALAR.INT64.true _mVar398.MATRIX.FP64 true
+--------CP rmvar _mVar397
+--------CP uak+ _mVar396.MATRIX.FP64 _Var399.SCALAR.FP64 4
+--------CP rmvar _mVar396
+--------CP print BEGIN GLM SCRIPT.SCALAR.STRING.true _Var400.SCALAR.STRING 4
+--------CP rmvar Y
+--------CP assignvar 0.SCALAR.INT64.true termination_code.SCALAR.INT64
+--------CP assignvar NaN.SCALAR.FP64.true dispersion.SCALAR.FP64
+--------CP assignvar NaN.SCALAR.FP64.true estimated_dispersion.SCALAR.FP64
+--------CP assignvar NaN.SCALAR.FP64.true deviance_nodisp.SCALAR.FP64
+--------CP mvvar _Var399 count_Y_negative
+--------CP rmvar _Var400
+--------CP cpvar _mVar392 scale_X
+--------CP cpvar _mVar393 shift_X
+--------CP cpvar _mVar394 rowSums_X_sq
+--------CP cpvar _mVar395 lambda
+--------CP cpvar _mVar398 Y
+--------CP rmvar _mVar392 _mVar393 _mVar394 _mVar395 _mVar398 dfam moi link mii disp yneg tol vpow reg lpow icpt
+------IF (lines 226-228)
+--------CP == count_Y_negative.SCALAR.FP64.false 0.SCALAR.INT64.true _Var401.SCALAR.BOOLEAN
+--------CP mvvar _Var401 __pred
+--------GENERIC (lines 227-227) [recompile=false]
+----------CP stop GLM Input Error: all Y-values encode Bernoulli YES-label, none encode NO-label.SCALAR.STRING.true _Var402.SCALAR.STRING 4
+----------CP rmvar _Var402
+------IF (lines 229-231)
+--------CP == count_Y_negative.SCALAR.FP64.false 50000.SCALAR.INT64.true _Var403.SCALAR.BOOLEAN
+--------CP mvvar _Var403 __pred
+--------GENERIC (lines 230-230) [recompile=false]
+----------CP stop GLM Input Error: all Y-values encode Bernoulli NO-label, none encode YES-label.SCALAR.STRING.true _Var404.SCALAR.STRING 4
+----------CP rmvar _Var404
+--------CP rmvar count_Y_negative
+------GENERIC (lines 255-257) [recompile=false]
+--------CP print Binomial.logit.SCALAR.STRING.true _Var405.SCALAR.STRING 4
+--------CP assignvar 1.SCALAR.INT64.true is_supported.SCALAR.INT64
+--------CP rmvar _Var405
+------IF (lines 258-451)
+--------CP == is_supported.SCALAR.INT64.false 1.SCALAR.INT64.true _Var406.SCALAR.BOOLEAN
+--------CP mvvar _Var406 __pred
+--------GENERIC (lines 263-265) [recompile=false]
+----------CP FCall .builtinNS glm_initialize true 8 3 X=X.MATRIX.FP64 Y=Y.MATRIX.FP64 dist_type=2.SCALAR.INT64.true var_power=0.0.SCALAR.FP64.true link_type=2.SCALAR.INT64.true link_power=1.0.SCALAR.FP64.true icept_status=0.SCALAR.INT64.true max_iter_CG=5.SCALAR.INT64.true beta saturated_log_l isNaN
+--------IF (lines 266-450)
+----------CP == isNaN.SCALAR.INT64.false 0.SCALAR.INT64.true _Var407.SCALAR.BOOLEAN
+----------CP mvvar _Var407 __pred
+----------GENERIC (lines 271-293) [recompile=false]
+------------CP createvar _mVar408 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp125 true MATRIX binary 50000 1 1000 -1 copy
+------------FED sqrt rowSums_X_sq.MATRIX.FP64 _mVar408.MATRIX.FP64 4
+------------FED uamax _mVar408.MATRIX.FP64 _Var409.SCALAR.FP64 4 LOUT
+------------CP rmvar _mVar408
+------------CP / 5.656854249492381.SCALAR.FP64.true _Var409.SCALAR.FP64.false _Var410.SCALAR.FP64
+------------CP rmvar _Var409
+------------CP createvar _mVar411 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp126 true MATRIX binary 128 1 1000 0 copy
+------------CP rand 128.SCALAR.INT64.true 1.SCALAR.INT64.true 1000 0.0 0.0 1.0 -1 uniform 1.0 4 _mVar411.MATRIX.FP64
+------------CP createvar _mVar412 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp127 true MATRIX binary 1 1 1000 0 copy
+------------CP rand 1.SCALAR.INT64.true 1.SCALAR.INT64.true 1000 0.0 0.0 1.0 -1 uniform -1.0 4 _mVar412.MATRIX.FP64
+------------CP castdts _mVar412.MATRIX.FP64.false _Var413.SCALAR.FP64 4
+------------CP rmvar _mVar412
+------------CP sqrt _Var413.SCALAR.FP64.false _Var414.SCALAR.FP64 4
+------------CP rmvar _Var413
+------------CP createvar _mVar415 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp128 true MATRIX binary 50000 1 1000 0 copy
+------------CP rand 50000.SCALAR.INT64.true 1.SCALAR.INT64.true 1000 0.0 0.0 1.0 -1 uniform -1.0 4 _mVar415.MATRIX.FP64
+------------CP print BEGIN IRLS ITERATIONS....SCALAR.STRING.true _Var416.SCALAR.STRING 4
+------------CP FCall .builtinNS glm_log_likelihood_part true 6 2 linear_terms=_mVar415.MATRIX.FP64 Y=Y.MATRIX.FP64 dist_type=2.SCALAR.INT64.true var_power=0.0.SCALAR.FP64.true link_type=2.SCALAR.INT64.true link_power=1.0.SCALAR.FP64.true new_log_l isNaN_new_log_l
+------------CP assignvar _Var410.SCALAR.FP64.false trust_delta.SCALAR.FP64
+------------CP assignvar 0.0.SCALAR.FP64.true log_l.SCALAR.FP64
+------------CP assignvar 0.0.SCALAR.FP64.true deviance_nodisp.SCALAR.FP64
+------------CP assignvar 0.0.SCALAR.FP64.true new_deviance_nodisp.SCALAR.FP64
+------------CP assignvar 2.SCALAR.INT64.true isNaN_log_l.SCALAR.INT64
+------------CP assignvar _Var414.SCALAR.FP64.false g_norm.SCALAR.FP64
+------------CP assignvar 0.SCALAR.INT64.true reached_trust_boundary.SCALAR.INT64
+------------CP assignvar 0.0.SCALAR.FP64.true neg_log_l_change_predicted.SCALAR.FP64
+------------CP assignvar 0.SCALAR.INT64.true i_IRLS.SCALAR.INT64
+------------CP rmvar _Var410 _Var414
+------------CP cpvar beta newbeta
+------------CP cpvar _mVar411 g
+------------CP rmvar _Var416
+------------CP cpvar _mVar415 all_linear_terms
+------------CP rmvar _mVar411 _mVar415
+----------IF (lines 295-298)
+------------CP == isNaN_new_log_l.SCALAR.INT64.false 0.SCALAR.INT64.true _Var417.SCALAR.BOOLEAN
+------------CP mvvar _Var417 __pred
+------------GENERIC (lines 296-297) [recompile=false]
+--------------CP - saturated_log_l.SCALAR.FP64.false new_log_l.SCALAR.FP64.false _Var418.SCALAR.FP64
+--------------CP * 2.0.SCALAR.FP64.true _Var418.SCALAR.FP64.false _Var419.SCALAR.FP64
+--------------CP rmvar _Var418
+--------------CP - new_log_l.SCALAR.FP64.false 0.0.SCALAR.FP64.true _Var420.SCALAR.FP64
+--------------CP assignvar _Var419.SCALAR.FP64.false new_deviance_nodisp.SCALAR.FP64
+--------------CP assignvar _Var420.SCALAR.FP64.false new_log_l.SCALAR.FP64
+--------------CP rmvar _Var419 _Var420
+----------GENERIC (lines 301-301) [recompile=false]
+------------CP createvar _mVar421 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp129 true MATRIX binary 1 1 1000 0 copy
+------------CP rand 1.SCALAR.INT64.true 1.SCALAR.INT64.true 1000 0.0 0.0 1.0 -1 uniform 1.0 4 _mVar421.MATRIX.FP64
+------------CP mvvar _mVar421 w
+----------WHILE (lines 302-395)
+------------CP == termination_code.SCALAR.INT64.false 0.SCALAR.INT64.true _Var422.SCALAR.BOOLEAN
+------------CP mvvar _Var422 __pred
+------------GENERIC (lines 304-304) [recompile=false]
+--------------CP assignvar 1.SCALAR.INT64.true accept_new_beta.SCALAR.INT64
+------------IF (lines 306-330)
+--------------CP > i_IRLS.SCALAR.INT64.false 0.SCALAR.INT64.true _Var423.SCALAR.BOOLEAN
+--------------CP mvvar _Var423 __pred
+--------------IF (lines 308-310)
+----------------CP == isNaN_log_l.SCALAR.INT64.false 0.SCALAR.INT64.true _Var424.SCALAR.BOOLEAN
+----------------CP mvvar _Var424 __pred
+----------------GENERIC (lines 309-309) [recompile=false]
+------------------CP assignvar 0.SCALAR.INT64.true accept_new_beta.SCALAR.INT64
+--------------GENERIC (lines 315-315) [recompile=false]
+----------------CP * new_log_l.SCALAR.FP64.false -1.SCALAR.INT64.true _Var425.SCALAR.FP64
+----------------CP + _Var425.SCALAR.FP64.false log_l.SCALAR.FP64.false _Var426.SCALAR.FP64
+----------------CP rmvar _Var425
+----------------CP / _Var426.SCALAR.FP64.false neg_log_l_change_predicted.SCALAR.FP64.false _Var427.SCALAR.FP64
+----------------CP rmvar _Var426
+----------------CP mvvar _Var427 rho
+----------------CP rmvar neg_log_l_change_predicted
+--------------IF (lines 316-318)
+----------------CP < rho.SCALAR.FP64.false 0.25.SCALAR.FP64.true _Var428.SCALAR.BOOLEAN
+----------------CP == isNaN_new_log_l.SCALAR.INT64.false 1.SCALAR.INT64.true _Var429.SCALAR.BOOLEAN
+----------------CP || _Var428.SCALAR.BOOLEAN.false _Var429.SCALAR.BOOLEAN.false _Var430.SCALAR.BOOLEAN
+----------------CP rmvar _Var428 _Var429
+----------------CP mvvar _Var430 __pred
+----------------GENERIC (lines 317-317) [recompile=false]
+------------------CP * 0.25.SCALAR.FP64.true trust_delta.SCALAR.FP64.false _Var431.SCALAR.FP64
+------------------CP mvvar _Var431 trust_delta
+--------------IF (lines 319-326)
+----------------CP > rho.SCALAR.FP64.false 0.75.SCALAR.FP64.true _Var432.SCALAR.BOOLEAN
+----------------CP == isNaN_new_log_l.SCALAR.INT64.false 0.SCALAR.INT64.true _Var433.SCALAR.BOOLEAN
+----------------CP && _Var432.SCALAR.BOOLEAN.false _Var433.SCALAR.BOOLEAN.false _Var434.SCALAR.BOOLEAN
+----------------CP rmvar _Var432 _Var433
+----------------CP == reached_trust_boundary.SCALAR.INT64.false 1.SCALAR.INT64.true _Var435.SCALAR.BOOLEAN
+----------------CP && _Var434.SCALAR.BOOLEAN.false _Var435.SCALAR.BOOLEAN.false _Var436.SCALAR.BOOLEAN
+----------------CP rmvar _Var434 _Var435
+----------------CP mvvar _Var436 __pred
+----------------GENERIC (lines 320-320) [recompile=false]
+------------------CP * 2.SCALAR.INT64.true trust_delta.SCALAR.FP64.false _Var437.SCALAR.FP64
+------------------CP mvvar _Var437 trust_delta
+----------------CP rmvar reached_trust_boundary
+--------------IF (lines 327-329)
+----------------CP > rho.SCALAR.FP64.false 0.1.SCALAR.FP64.true _Var438.SCALAR.BOOLEAN
+----------------CP == isNaN_new_log_l.SCALAR.INT64.false 0.SCALAR.INT64.true _Var439.SCALAR.BOOLEAN
+----------------CP && _Var438.SCALAR.BOOLEAN.false _Var439.SCALAR.BOOLEAN.false _Var440.SCALAR.BOOLEAN
+----------------CP rmvar _Var438 _Var439
+----------------CP mvvar _Var440 __pred
+----------------GENERIC (lines 328-328) [recompile=false]
+------------------CP assignvar 1.SCALAR.INT64.true accept_new_beta.SCALAR.INT64
+----------------CP rmvar rho
+--------------CP rmvar reached_trust_boundary neg_log_l_change_predicted
+------------IF (lines 332-345)
+--------------CP == accept_new_beta.SCALAR.INT64.false 1.SCALAR.INT64.true _Var441.SCALAR.BOOLEAN
+--------------CP mvvar _Var441 __pred
+--------------GENERIC (lines 334-336) [recompile=false]
+----------------CP FCall .builtinNS glm_dist true 6 2 linear_terms=all_linear_terms.MATRIX.FP64 Y=Y.MATRIX.FP64 dist_type=2.SCALAR.INT64.true var_power=0.0.SCALAR.FP64.true link_type=2.SCALAR.INT64.true link_power=1.0.SCALAR.FP64.true g_Y w memo_returns=1:0=508>1101
+----------------CP assignvar new_log_l.SCALAR.FP64.false log_l.SCALAR.FP64
+----------------CP assignvar new_deviance_nodisp.SCALAR.FP64.false deviance_nodisp.SCALAR.FP64
+----------------CP assignvar isNaN_new_log_l.SCALAR.INT64.false isNaN_log_l.SCALAR.INT64
+----------------CP cpvar newbeta beta
+----------------CP rmvar all_linear_terms newbeta new_log_l isNaN_new_log_l
+--------------GENERIC (lines 342-344) [recompile=false]
+----------------CP createvar _mVar443 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp130 true MATRIX binary 128 50000 1000 6400000 copy
+----------------FED r' X.MATRIX.FP64 _mVar443.MATRIX.FP64 4 FOUT
+----------------CP createvar _mVar444 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp131 true MATRIX binary 128 1 1000 -1 copy
+----------------CP * lambda.MATRIX.FP64 beta.MATRIX.FP64 _mVar444.MATRIX.FP64 4
+----------------CP createvar _mVar442 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp132 true MATRIX binary 50000 1 1000 -1 copy
+----------------FED fed_supply g_Y.MATRIX.FP64 _mVar442.MATRIX.FP64 ROW LOCAL@UPLOAD@POOLv1:MTMwLjE0OS4yMzcuMTI.8001,MTMwLjE0OS4yMzcuMTM.8002,MTMwLjE0OS4yMzcuMTQ.8003.SCALAR.STRING.true 0,1,1101,ROW,146,Y2Fub25pY2FsL3Yy.SCALAR.STRING.true
+----------------CP createvar _mVar445 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp133 true MATRIX binary 128 1 1000 -1 copy
+----------------FED ba+* _mVar443.MATRIX.FP64 _mVar442.MATRIX.FP64 _mVar445.MATRIX.FP64 4 LOUT
+----------------CP rmvar _mVar443 _mVar442
+----------------CP createvar _mVar446 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp134 true MATRIX binary 128 1 1000 -1 copy
+----------------CP - 0.SCALAR.INT64.true _mVar445.MATRIX.FP64 _mVar446.MATRIX.FP64 4
+----------------CP rmvar _mVar445
+----------------CP createvar _mVar447 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp135 true MATRIX binary 128 1 1000 -1 copy
+----------------CP * scale_X.MATRIX.FP64 _mVar446.MATRIX.FP64 _mVar447.MATRIX.FP64 4
+----------------CP rmvar _mVar446
+----------------CP createvar _mVar448 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp136 true MATRIX binary 128 1 1000 -1 copy
+----------------CP + _mVar447.MATRIX.FP64 _mVar444.MATRIX.FP64 _mVar448.MATRIX.FP64 4
+----------------CP rmvar _mVar444
+----------------CP createvar _mVar449 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp137 true MATRIX binary 1 128 1000 -1 copy
+----------------CP r' _mVar448.MATRIX.FP64 _mVar449.MATRIX.FP64 4
+----------------CP createvar _mVar450 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp138 true MATRIX binary 1 1 1000 -1 copy
+----------------CP ba+* _mVar449.MATRIX.FP64 _mVar448.MATRIX.FP64 _mVar450.MATRIX.FP64 4
+----------------CP rmvar _mVar449 _mVar448
+----------------CP castdts _mVar450.MATRIX.FP64.false _Var451.SCALAR.FP64 4
+----------------CP rmvar _mVar450
+----------------CP sqrt _Var451.SCALAR.FP64.false _Var452.SCALAR.FP64 4
+----------------CP rmvar _Var451
+----------------CP mvvar _Var452 g_norm
+----------------CP mvvar _mVar447 g
+--------------CP rmvar newbeta all_linear_terms accept_new_beta new_log_l isNaN_new_log_l
+------------GENERIC (lines 347-348) [recompile=false]
+--------------CP FCall .builtinNS get_CG_Steihaug_point true 9 4 X=X.MATRIX.FP64 scale_X=scale_X.MATRIX.FP64 shift_X=shift_X.MATRIX.FP64 w=w.MATRIX.FP64 g=g.MATRIX.FP64 beta=beta.MATRIX.FP64 lambda=lambda.MATRIX.FP64 trust_delta=trust_delta.SCALAR.FP64.false max_iter_CG=5.SCALAR.INT64.true z neg_log_l_change_predicted num_CG_iters reached_trust_boundary
+------------GENERIC (lines 350-357) [recompile=false]
+--------------CP createvar _mVar453 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp139 true MATRIX binary 128 1 1000 -1 copy
+--------------CP + beta.MATRIX.FP64 z.MATRIX.FP64 _mVar453.MATRIX.FP64 4
+--------------CP createvar _mVar454 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp140 true MATRIX binary 128 1 1000 -1 copy
+--------------CP * scale_X.MATRIX.FP64 _mVar453.MATRIX.FP64 _mVar454.MATRIX.FP64 4
+--------------CP createvar _mVar455 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp141 true MATRIX binary 1 1 1000 -1 copy
+--------------CP rightIndex _mVar454.MATRIX.FP64 128.SCALAR.INT64.true 128.SCALAR.INT64.true 1.SCALAR.INT64.true 1.SCALAR.INT64.true _mVar455.MATRIX.FP64
+--------------CP createvar _mVar456 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp142 true MATRIX binary 1 1 1000 0 copy
+--------------CP rand 1.SCALAR.INT64.true 1.SCALAR.INT64.true 1000 0.0 0.0 1.0 -1 uniform -1.0 4 _mVar456.MATRIX.FP64
+--------------CP castdts _mVar456.MATRIX.FP64.false _Var457.SCALAR.FP64 4
+--------------CP rmvar _mVar456
+--------------CP createvar _mVar458 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp143 true MATRIX binary 1 1 1000 -1 copy
+--------------CP + _mVar455.MATRIX.FP64 _Var457.SCALAR.FP64.false _mVar458.MATRIX.FP64 4
+--------------CP rmvar _mVar455 _Var457
+--------------CP createvar _mVar459 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp144 true MATRIX binary 128 1 1000 -1 copy
+--------------CP leftIndex _mVar454.MATRIX.FP64 _mVar458.MATRIX.FP64 128.SCALAR.INT64.true 128.SCALAR.INT64.true 1.SCALAR.INT64.true 1.SCALAR.INT64.true _mVar459.MATRIX.FP64
+--------------CP rmvar _mVar454 _mVar458
+--------------CP createvar _mVar460 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp145 true MATRIX binary 50000 1 1000 -1 copy
+--------------FED ba+* X.MATRIX.FP64 _mVar459.MATRIX.FP64 _mVar460.MATRIX.FP64 4 LOUT
+--------------CP rmvar _mVar459
+--------------CP FCall .builtinNS glm_log_likelihood_part true 6 2 linear_terms=_mVar460.MATRIX.FP64 Y=Y.MATRIX.FP64 dist_type=2.SCALAR.INT64.true var_power=0.0.SCALAR.FP64.true link_type=2.SCALAR.INT64.true link_power=1.0.SCALAR.FP64.true new_log_l isNaN_new_log_l
+--------------CP cpvar _mVar453 newbeta
+--------------CP cpvar _mVar460 all_linear_terms
+--------------CP rmvar _mVar453 _mVar460
+------------IF (lines 359-362)
+--------------CP == isNaN_new_log_l.SCALAR.INT64.false 0.SCALAR.INT64.true _Var461.SCALAR.BOOLEAN
+--------------CP mvvar _Var461 __pred
+--------------GENERIC (lines 360-361) [recompile=false]
+----------------CP - saturated_log_l.SCALAR.FP64.false new_log_l.SCALAR.FP64.false _Var462.SCALAR.FP64
+----------------CP * 2.0.SCALAR.FP64.true _Var462.SCALAR.FP64.false _Var463.SCALAR.FP64
+----------------CP rmvar _Var462
+----------------CP createvar _mVar464 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp146 true MATRIX binary 128 1 1000 -1 copy
+----------------CP ^2 newbeta.MATRIX.FP64 2.SCALAR.INT64.true _mVar464.MATRIX.FP64 4
+----------------CP createvar _mVar465 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp147 true MATRIX binary 128 1 1000 -1 copy
+----------------CP * lambda.MATRIX.FP64 _mVar464.MATRIX.FP64 _mVar465.MATRIX.FP64 4
+----------------CP rmvar _mVar464
+----------------CP uak+ _mVar465.MATRIX.FP64 _Var466.SCALAR.FP64 4
+----------------CP rmvar _mVar465
+----------------CP * 0.5.SCALAR.FP64.true _Var466.SCALAR.FP64.false _Var467.SCALAR.FP64
+----------------CP rmvar _Var466
+----------------CP - new_log_l.SCALAR.FP64.false _Var467.SCALAR.FP64.false _Var468.SCALAR.FP64
+----------------CP rmvar _Var467
+----------------CP assignvar _Var463.SCALAR.FP64.false new_deviance_nodisp.SCALAR.FP64
+----------------CP assignvar _Var468.SCALAR.FP64.false new_log_l.SCALAR.FP64
+----------------CP rmvar _Var463 _Var468
+------------GENERIC (lines 364-364) [recompile=false]
+--------------CP - new_log_l.SCALAR.FP64.false log_l.SCALAR.FP64.false _Var469.SCALAR.FP64
+--------------CP mvvar _Var469 log_l_change
+------------IF (lines 366-370)
+--------------CP == reached_trust_boundary.SCALAR.INT64.false 0.SCALAR.INT64.true _Var470.SCALAR.BOOLEAN
+--------------CP == isNaN_new_log_l.SCALAR.INT64.false 0.SCALAR.INT64.true _Var471.SCALAR.BOOLEAN
+--------------CP && _Var470.SCALAR.BOOLEAN.false _Var471.SCALAR.BOOLEAN.false _Var472.SCALAR.BOOLEAN
+--------------CP rmvar _Var470 _Var471
+--------------CP abs log_l_change.SCALAR.FP64.false _Var473.SCALAR.FP64 4
+--------------CP * 2.0.SCALAR.FP64.true _Var473.SCALAR.FP64.false _Var474.SCALAR.FP64
+--------------CP + deviance_nodisp.SCALAR.FP64.false 0.1.SCALAR.FP64.true _Var475.SCALAR.FP64
+--------------CP * 1.0E-6.SCALAR.FP64.true _Var475.SCALAR.FP64.false _Var476.SCALAR.FP64
+--------------CP rmvar _Var475
+--------------CP < _Var474.SCALAR.FP64.false _Var476.SCALAR.FP64.false _Var477.SCALAR.BOOLEAN
+--------------CP rmvar _Var474 _Var476
+--------------CP abs log_l.SCALAR.FP64.false _Var478.SCALAR.FP64 4
+--------------CP abs new_log_l.SCALAR.FP64.false _Var479.SCALAR.FP64 4
+--------------CP + _Var478.SCALAR.FP64.false _Var479.SCALAR.FP64.false _Var480.SCALAR.FP64
+--------------CP rmvar _Var478 _Var479
+--------------CP * _Var480.SCALAR.FP64.false 1.0E-14.SCALAR.FP64.true _Var481.SCALAR.FP64
+--------------CP rmvar _Var480
+--------------CP < _Var473.SCALAR.FP64.false _Var481.SCALAR.FP64.false _Var482.SCALAR.BOOLEAN
+--------------CP rmvar _Var473 _Var481
+--------------CP || _Var477.SCALAR.BOOLEAN.false _Var482.SCALAR.BOOLEAN.false _Var483.SCALAR.BOOLEAN
+--------------CP rmvar _Var477 _Var482
+--------------CP && _Var472.SCALAR.BOOLEAN.false _Var483.SCALAR.BOOLEAN.false _Var484.SCALAR.BOOLEAN
+--------------CP rmvar _Var472 _Var483
+--------------CP mvvar _Var484 __pred
+--------------GENERIC (lines 369-369) [recompile=false]
+----------------CP assignvar 1.SCALAR.INT64.true termination_code.SCALAR.INT64
+------------GENERIC (lines 371-381) [recompile=false]
+--------------CP createvar _mVar485 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp148 true MATRIX binary 1 128 1000 -1 copy
+--------------CP r' z.MATRIX.FP64 _mVar485.MATRIX.FP64 4
+--------------CP createvar _mVar486 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp149 true MATRIX binary 1 1 1000 -1 copy
+--------------CP ba+* _mVar485.MATRIX.FP64 z.MATRIX.FP64 _mVar486.MATRIX.FP64 4
+--------------CP rmvar _mVar485
+--------------CP castdts _mVar486.MATRIX.FP64.false _Var487.SCALAR.FP64 4
+--------------CP rmvar _mVar486
+--------------CP sqrt _Var487.SCALAR.FP64.false _Var488.SCALAR.FP64 4
+--------------CP rmvar _Var487
+--------------CP * log_l_change.SCALAR.FP64.false -1.SCALAR.INT64.true _Var489.SCALAR.FP64
+--------------CP / _Var489.SCALAR.FP64.false neg_log_l_change_predicted.SCALAR.FP64.false _Var490.SCALAR.FP64
+--------------CP rmvar _Var489
+--------------CP + i_IRLS.SCALAR.INT64.false 1.SCALAR.INT64.true _Var491.SCALAR.INT64
+--------------CP FCall .builtinNS round_to_print true 1 2 x_to_truncate=_Var488.SCALAR.FP64.false z_norm_m z_norm_e
+--------------CP rmvar _Var488
+--------------CP FCall .builtinNS round_to_print true 1 2 x_to_truncate=trust_delta.SCALAR.FP64.false trust_delta_m trust_delta_e
+--------------CP FCall .builtinNS round_to_print true 1 2 x_to_truncate=_Var490.SCALAR.FP64.false rho_m rho_e
+--------------CP rmvar _Var490
+--------------CP FCall .builtinNS round_to_print true 1 2 x_to_truncate=new_log_l.SCALAR.FP64.false new_log_l_m new_log_l_e
+--------------CP FCall .builtinNS round_to_print true 1 2 x_to_truncate=log_l_change.SCALAR.FP64.false log_l_change_m log_l_change_e
+--------------CP FCall .builtinNS round_to_print true 1 2 x_to_truncate=g_norm.SCALAR.FP64.false g_norm_m g_norm_e
+--------------CP mvvar _Var491 i_IRLS
+--------------CP rmvar log_l_change z
+------------IF (lines 392-394)
+--------------CP == i_IRLS.SCALAR.INT64.false 20.SCALAR.INT64.true _Var492.SCALAR.BOOLEAN
+--------------CP mvvar _Var492 __pred
+--------------GENERIC (lines 393-393) [recompile=false]
+----------------CP assignvar 2.SCALAR.INT64.true termination_code.SCALAR.INT64
+------------CP rmvar new_log_l_m z_norm_e rho_e z_norm_m log_l_change g_norm_m rho_m num_CG_iters accept_new_beta g_norm_e log_l_change_m trust_delta_e ssX_newbeta rho new_log_l_e z z_norm log_l_change_e trust_delta_m
+----------GENERIC (lines 397-399) [recompile=false]
+------------CP assignvar new_deviance_nodisp.SCALAR.FP64.false deviance_nodisp.SCALAR.FP64
+------------CP cpvar newbeta beta
+------------CP rmvar new_deviance_nodisp newbeta new_log_l
+----------IF (lines 401-406)
+------------CP == termination_code.SCALAR.INT64.false 1.SCALAR.INT64.true _Var493.SCALAR.BOOLEAN
+------------CP mvvar _Var493 __pred
+------------GENERIC (lines 402-402) [recompile=false]
+--------------CP + Converged in .SCALAR.STRING.true i_IRLS.SCALAR.INT64.false _Var494.SCALAR.STRING
+--------------CP + _Var494.SCALAR.STRING.false  steps..SCALAR.STRING.true _Var495.SCALAR.STRING
+--------------CP rmvar _Var494
+--------------CP print _Var495.SCALAR.STRING.false _Var496.SCALAR.STRING 4
+--------------CP rmvar _Var495 _Var496 i_IRLS
+----------ELSE
+------------GENERIC (lines 405-405) [recompile=false]
+--------------CP print Did not converge..SCALAR.STRING.true _Var497.SCALAR.STRING 4
+--------------CP rmvar _Var497
+------------CP rmvar i_IRLS
+----------GENERIC (lines 408-434) [recompile=false]
+------------CP createvar _mVar498 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp150 true MATRIX binary 128 1 1000 -1 copy
+------------CP * scale_X.MATRIX.FP64 beta.MATRIX.FP64 _mVar498.MATRIX.FP64 4
+------------CP createvar _mVar499 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp151 true MATRIX binary 1 1 1000 -1 copy
+------------CP rightIndex _mVar498.MATRIX.FP64 128.SCALAR.INT64.true 128.SCALAR.INT64.true 1.SCALAR.INT64.true 1.SCALAR.INT64.true _mVar499.MATRIX.FP64
+------------CP createvar _mVar500 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp152 true MATRIX binary 1 1 1000 0 copy
+------------CP rand 1.SCALAR.INT64.true 1.SCALAR.INT64.true 1000 0.0 0.0 1.0 -1 uniform -1.0 4 _mVar500.MATRIX.FP64
+------------CP castdts _mVar500.MATRIX.FP64.false _Var501.SCALAR.FP64 4
+------------CP rmvar _mVar500
+------------CP createvar _mVar502 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp153 true MATRIX binary 1 1 1000 -1 copy
+------------CP + _mVar499.MATRIX.FP64 _Var501.SCALAR.FP64.false _mVar502.MATRIX.FP64 4
+------------CP rmvar _mVar499 _Var501
+------------CP createvar _mVar503 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp154 true MATRIX binary 128 1 1000 -1 copy
+------------CP leftIndex _mVar498.MATRIX.FP64 _mVar502.MATRIX.FP64 128.SCALAR.INT64.true 128.SCALAR.INT64.true 1.SCALAR.INT64.true 1.SCALAR.INT64.true _mVar503.MATRIX.FP64
+------------CP rmvar _mVar498 _mVar502
+------------CP uamin _mVar503.MATRIX.FP64 _Var504.SCALAR.FP64 4
+------------CP uamax _mVar503.MATRIX.FP64 _Var505.SCALAR.FP64 4
+------------CP createvar _mVar506 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp155 true MATRIX binary 1 128 1000 -1 copy
+------------CP r' _mVar503.MATRIX.FP64 _mVar506.MATRIX.FP64 4
+------------CP createvar _mVar507 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp156 true MATRIX binary 1 1 1000 -1 copy
+------------CP uarimin _mVar506.MATRIX.FP64 _mVar507.MATRIX.FP64 4 1
+------------CP castdts _mVar507.MATRIX.FP64.false _Var508.SCALAR.FP64 4
+------------CP rmvar _mVar507
+------------CP createvar _mVar509 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp157 true MATRIX binary 1 1 1000 -1 copy
+------------CP uarimax _mVar506.MATRIX.FP64 _mVar509.MATRIX.FP64 4 1
+------------CP rmvar _mVar506
+------------CP castdts _mVar509.MATRIX.FP64.false _Var510.SCALAR.FP64 4
+------------CP rmvar _mVar509
+------------CP createvar _mVar511 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp158 true MATRIX binary 50000 1 1000 -1 copy
+------------FED ba+* X.MATRIX.FP64 _mVar503.MATRIX.FP64 _mVar511.MATRIX.FP64 4 LOUT
+------------CP FCall .builtinNS glm_dist true 6 2 linear_terms=_mVar511.MATRIX.FP64 Y=Y.MATRIX.FP64 dist_type=2.SCALAR.INT64.true var_power=0.0.SCALAR.FP64.true link_type=2.SCALAR.INT64.true link_power=1.0.SCALAR.FP64.true g_Y w memo_returns=1:1=538>1428
+------------CP rmvar _mVar511
+------------CP assignvar _Var504.SCALAR.FP64.false min_beta.SCALAR.FP64
+------------CP assignvar _Var505.SCALAR.FP64.false max_beta.SCALAR.FP64
+------------CP assignvar _Var508.SCALAR.FP64.false i_min_beta.SCALAR.FP64
+------------CP assignvar _Var510.SCALAR.FP64.false i_max_beta.SCALAR.FP64
+------------CP rmvar _Var504 _Var505 _Var508 _Var510
+------------CP mvvar _mVar503 betas
+------------CP rmvar link_as_power_of_the_mean intercept_status scale_X shift_X variance_as_power_of_the_mean link_type Y distribution_type beta
+----------GENERIC (lines 436-441) [recompile=false]
+------------CP createvar _mVar513 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp159 true MATRIX binary 50000 1 1000 -1 copy
+------------CP ^2 g_Y.MATRIX.FP64 2.SCALAR.INT64.true _mVar513.MATRIX.FP64 4
+------------CP createvar _mVar512 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp160 true MATRIX binary 50000 1 1000 -1 copy
+------------FED fed_supply w.MATRIX.FP64 _mVar512.MATRIX.FP64 LOCAL ROW@COLLECT@POOLv1:MTMwLjE0OS4yMzcuMTI.8001,MTMwLjE0OS4yMzcuMTM.8002,MTMwLjE0OS4yMzcuMTQ.8003.SCALAR.STRING.true 0,1,1428,LOCAL,146,Y2Fub25pY2FsL3Yy.SCALAR.STRING.true
+------------CP createvar _mVar514 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp161 true MATRIX binary 50000 1 1000 -1 copy
+------------CP / _mVar513.MATRIX.FP64 _mVar512.MATRIX.FP64 _mVar514.MATRIX.FP64 4
+------------CP rmvar _mVar513 _mVar512
+------------CP createvar _mVar515 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp162 true MATRIX binary 50000 1 1000 -1 copy
+------------CP replace pattern=NaN replacement=0 target=_mVar514 _mVar515.MATRIX.FP64
+------------CP rmvar _mVar514
+------------CP uak+ _mVar515.MATRIX.FP64 _Var516.SCALAR.FP64 4
+------------CP rmvar _mVar515
+------------CP / _Var516.SCALAR.FP64.false 49872.SCALAR.INT64.true _Var517.SCALAR.FP64
+------------CP rmvar _Var516
+------------CP mvvar _Var517 estimated_dispersion
+------------CP rmvar num_features num_records
+----------IF (lines 443-445)
+------------CP <= dispersion.SCALAR.FP64.false 0.SCALAR.INT64.true _Var518.SCALAR.BOOLEAN
+------------CP mvvar _Var518 __pred
+------------GENERIC (lines 444-444) [recompile=false]
+--------------CP assignvar estimated_dispersion.SCALAR.FP64.false dispersion.SCALAR.FP64
+----------GENERIC (lines 446-446) [recompile=false]
+------------CP / deviance_nodisp.SCALAR.FP64.false dispersion.SCALAR.FP64.false _Var519.SCALAR.FP64
+------------CP mvvar _Var519 deviance
+--------ELSE
+----------GENERIC (lines 450-450) [recompile=false]
+------------CP stop Input matrices are out of range.  Terminating the DML..SCALAR.STRING.true _Var520.SCALAR.STRING 4
+------------CP rmvar _Var520
+----------CP rmvar link_as_power_of_the_mean num_features scale_X intercept_status num_records shift_X max_iteration_CG eps isNaN variance_as_power_of_the_mean max_iteration_IRLS link_type lambda saturated_log_l distribution_type beta
+------ELSE
+--------GENERIC (lines 451-451) [recompile=false]
+----------CP stop Distribution/Link not supported.  Terminating the DML..SCALAR.STRING.true _Var521.SCALAR.STRING 4
+----------CP rmvar _Var521
+--------CP rmvar link_as_power_of_the_mean num_features intercept_status scale_X num_records shift_X max_iteration_CG eps variance_as_power_of_the_mean max_iteration_IRLS link_type lambda is_supported distribution_type
+----FUNCTION .builtinNS::binomial_probability_two_column [recompile=false]
+------GENERIC (lines 890-939) [recompile=true]
+--------CP createvar _mVar326 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp55 true MATRIX binary -1 -1 1000 -1 copy
+--------CP replace pattern=Infinity replacement=0 target=linear_terms _mVar326.MATRIX.FP64
+--------CP createvar _mVar327 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp56 true MATRIX binary -1 -1 1000 -1 copy
+--------CP replace pattern=-Infinity replacement=0 target=_mVar326 _mVar327.MATRIX.FP64
+--------CP rmvar _mVar326
+--------CP createvar _mVar328 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp57 true MATRIX binary -1 -1 1000 -1 copy
+--------CP exp _mVar327.MATRIX.FP64 _mVar328.MATRIX.FP64 4 false
+--------CP rmvar _mVar327
+--------CP ncol _mVar328.MATRIX.FP64.false _Var329.SCALAR.INT64 1
+--------CP nrow linear_terms.MATRIX.FP64.false _Var330.SCALAR.INT64 4
+--------CP createvar _mVar331 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp58 true MATRIX binary -1 1 1000 -1 copy
+--------CP rand _Var330.SCALAR.INT64.false 1.SCALAR.INT64.true 1000 1 1 1.0 -1 uniform 1.0 4 _mVar331.MATRIX.FP64
+--------CP rmvar _Var330
+--------CP createvar _mVar332 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp59 true MATRIX binary -1 -1 1000 -1 copy
+--------CP append _mVar328.MATRIX.FP64 _mVar331.MATRIX.FP64 _Var329.SCALAR.INT64.false _mVar332.MATRIX.FP64 true
+--------CP rmvar _mVar328 _mVar331 _Var329
+--------CP createvar _mVar333 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp60 true MATRIX binary -1 1 1000 -1 copy
+--------CP uark+ _mVar332.MATRIX.FP64 _mVar333.MATRIX.FP64 4
+--------CP createvar _mVar334 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp61 true MATRIX binary -1 -1 1000 -1 copy
+--------CP / _mVar332.MATRIX.FP64 _mVar333.MATRIX.FP64 _mVar334.MATRIX.FP64 4
+--------CP rmvar _mVar332 _mVar333
+--------CP createvar _mVar335 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp62 true MATRIX binary -1 -1 1000 -1 copy
+--------CP == linear_terms.MATRIX.FP64 Infinity.SCALAR.FP64.true _mVar335.MATRIX.FP64 4
+--------CP ncol _mVar335.MATRIX.FP64.false _Var336.SCALAR.INT64 1
+--------CP createvar _mVar337 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp63 true MATRIX binary -1 -1 1000 -1 copy
+--------CP == linear_terms.MATRIX.FP64 -Infinity.SCALAR.FP64.true _mVar337.MATRIX.FP64 4
+--------CP createvar _mVar338 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp64 true MATRIX binary -1 -1 1000 -1 copy
+--------CP append _mVar335.MATRIX.FP64 _mVar337.MATRIX.FP64 _Var336.SCALAR.INT64.false _mVar338.MATRIX.FP64 true
+--------CP rmvar _mVar335 _mVar337 _Var336
+--------CP createvar _mVar339 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp65 true MATRIX binary -1 1 1000 -1 copy
+--------CP uark+ _mVar338.MATRIX.FP64 _mVar339.MATRIX.FP64 4
+--------CP createvar _mVar340 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp66 true MATRIX binary -1 1 1000 -1 copy
+--------CP - 1.0.SCALAR.FP64.true _mVar339.MATRIX.FP64 _mVar340.MATRIX.FP64 4
+--------CP rmvar _mVar339
+--------CP createvar _mVar341 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp67 true MATRIX binary -1 -1 1000 -1 copy
+--------CP * _mVar334.MATRIX.FP64 _mVar340.MATRIX.FP64 _mVar341.MATRIX.FP64 4
+--------CP rmvar _mVar334 _mVar340
+--------CP createvar _mVar342 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp68 true MATRIX binary -1 -1 1000 -1 copy
+--------CP + _mVar341.MATRIX.FP64 _mVar338.MATRIX.FP64 _mVar342.MATRIX.FP64 4
+--------CP rmvar _mVar341 _mVar338
+--------CP assignvar 0.SCALAR.INT64.true isNaN.SCALAR.INT64
+--------CP cpvar _mVar342 Y_prob
+--------CP rmvar _mVar342 link_type link_power linear_terms
+----FUNCTION .builtinNS::glm_dist [recompile=false]
+------GENERIC (lines 653-718) [recompile=false]
+--------CP createvar _mVar370 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp92 true MATRIX binary 50000 1 1000 -1 copy
+--------CP replace pattern=Infinity replacement=0 target=linear_terms _mVar370.MATRIX.FP64
+--------CP createvar _mVar371 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp93 true MATRIX binary 50000 1 1000 -1 copy
+--------CP replace pattern=-Infinity replacement=0 target=_mVar370 _mVar371.MATRIX.FP64
+--------CP rmvar _mVar370
+--------CP createvar _mVar372 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp94 true MATRIX binary 50000 1 1000 -1 copy
+--------CP exp _mVar371.MATRIX.FP64 _mVar372.MATRIX.FP64 4 false
+--------CP rmvar _mVar371
+--------CP createvar _mVar373 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp95 true MATRIX binary 50000 1 1000 50000 copy
+--------CP rand 50000.SCALAR.INT64.true 1.SCALAR.INT64.true 1000 1 1 1.0 -1 uniform 1.0 4 _mVar373.MATRIX.FP64
+--------CP createvar _mVar374 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp96 true MATRIX binary 50000 2 1000 -1 copy
+--------CP append _mVar372.MATRIX.FP64 _mVar373.MATRIX.FP64 1.SCALAR.INT64.true _mVar374.MATRIX.FP64 true
+--------CP rmvar _mVar372 _mVar373
+--------CP createvar _mVar375 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp97 true MATRIX binary 50000 1 1000 -1 copy
+--------CP uark+ _mVar374.MATRIX.FP64 _mVar375.MATRIX.FP64 4
+--------CP createvar _mVar376 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp98 true MATRIX binary 50000 2 1000 -1 copy
+--------CP / _mVar374.MATRIX.FP64 _mVar375.MATRIX.FP64 _mVar376.MATRIX.FP64 4
+--------CP rmvar _mVar374 _mVar375
+--------CP createvar _mVar377 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp99 true MATRIX binary 50000 1 1000 -1 copy
+--------CP == linear_terms.MATRIX.FP64 Infinity.SCALAR.FP64.true _mVar377.MATRIX.FP64 4
+--------CP createvar _mVar378 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp100 true MATRIX binary 50000 1 1000 -1 copy
+--------CP == linear_terms.MATRIX.FP64 -Infinity.SCALAR.FP64.true _mVar378.MATRIX.FP64 4
+--------CP createvar _mVar379 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp101 true MATRIX binary 50000 2 1000 -1 copy
+--------CP append _mVar377.MATRIX.FP64 _mVar378.MATRIX.FP64 1.SCALAR.INT64.true _mVar379.MATRIX.FP64 true
+--------CP rmvar _mVar377 _mVar378
+--------CP createvar _mVar380 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp102 true MATRIX binary 50000 1 1000 -1 copy
+--------CP uark+ _mVar379.MATRIX.FP64 _mVar380.MATRIX.FP64 4
+--------CP createvar _mVar381 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp103 true MATRIX binary 50000 1 1000 -1 copy
+--------CP - 1.0.SCALAR.FP64.true _mVar380.MATRIX.FP64 _mVar381.MATRIX.FP64 4
+--------CP rmvar _mVar380
+--------CP createvar _mVar382 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp104 true MATRIX binary 50000 2 1000 -1 copy
+--------CP * _mVar376.MATRIX.FP64 _mVar381.MATRIX.FP64 _mVar382.MATRIX.FP64 4
+--------CP rmvar _mVar376 _mVar381
+--------CP createvar _mVar383 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp105 true MATRIX binary 50000 2 1000 -1 copy
+--------CP + _mVar382.MATRIX.FP64 _mVar379.MATRIX.FP64 _mVar383.MATRIX.FP64 4
+--------CP rmvar _mVar382 _mVar379
+--------CP createvar _mVar384 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp106 true MATRIX binary 2 2 1000 -1 copy
+--------CP sinit 2 2 1000 0 -1 1 0 _mVar384.MATRIX.FP64
+--------CP createvar _mVar385 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp107 true MATRIX binary 50000 2 1000 -1 copy
+--------CP ba+* _mVar383.MATRIX.FP64 _mVar384.MATRIX.FP64 _mVar385.MATRIX.FP64 4
+--------CP rmvar _mVar384
+--------CP createvar _mVar386 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp108 true MATRIX binary 50000 2 1000 -1 copy
+--------CP * Y.MATRIX.FP64 _mVar385.MATRIX.FP64 _mVar386.MATRIX.FP64 4
+--------CP rmvar _mVar385
+--------CP createvar _mVar387 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp109 true MATRIX binary 50000 1 1000 -1 copy
+--------CP uark+ _mVar386.MATRIX.FP64 _mVar387.MATRIX.FP64 4
+--------CP rmvar _mVar386
+--------CP createvar _mVar388 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp110 true MATRIX binary 2 2 1000 -1 copy
+--------CP sinit 2 2 1000 0 1 1 0 _mVar388.MATRIX.FP64
+--------CP createvar _mVar389 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp111 true MATRIX binary 50000 2 1000 -1 copy
+--------CP ba+* _mVar383.MATRIX.FP64 _mVar388.MATRIX.FP64 _mVar389.MATRIX.FP64 4
+--------CP rmvar _mVar388
+--------CP createvar _mVar390 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp112 true MATRIX binary 50000 2 1000 -1 copy
+--------CP n* Y.MATRIX.FP64 _mVar383.MATRIX.FP64 _mVar389.MATRIX.FP64 _mVar390.MATRIX.FP64
+--------CP rmvar _mVar383 _mVar389
+--------CP createvar _mVar366 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp113 true MATRIX binary 50000 2 1000 -1 copy
+--------FED memo_def _mVar390.MATRIX.FP64 _mVar366.MATRIX.FP64 537
+--------CP rmvar _mVar390
+--------CP createvar _mVar367 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp114 true MATRIX binary 50000 1 1000 -1 copy
+--------FED memo_def _mVar387.MATRIX.FP64 _mVar367.MATRIX.FP64 508
+--------CP rmvar _mVar387
+--------CP createvar _mVar369 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp115 true MATRIX binary 50000 2 1000 -1 copy
+--------FED fed_supply _mVar366.MATRIX.FP64 _mVar369.MATRIX.FP64 ROW LOCAL@UPLOAD@POOLv1:MTMwLjE0OS4yMzcuMTI.8001,MTMwLjE0OS4yMzcuMTM.8002,MTMwLjE0OS4yMzcuMTQ.8003.SCALAR.STRING.true 0,1,537,ROW,145,Y2Fub25pY2FsL3Yy.SCALAR.STRING.true
+--------CP rmvar _mVar366
+--------CP createvar _mVar391 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp116 true MATRIX binary 50000 1 1000 -1 copy
+--------FED uark+ _mVar369.MATRIX.FP64 _mVar391.MATRIX.FP64 4 FOUT
+--------CP rmvar _mVar369
+--------CP createvar _mVar368 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp117 true MATRIX binary 50000 1 1000 -1 copy
+--------FED memo_def _mVar391.MATRIX.FP64 _mVar368.MATRIX.FP64 538
+--------CP rmvar _mVar391
+--------CP cpvar _mVar367 g_Y
+--------CP cpvar _mVar368 w
+--------CP rmvar _mVar367 _mVar368 link_power link_type var_power dist_type linear_terms Y
+----FUNCTION .builtinNS::round_to_print [recompile=false]
+------GENERIC (lines 1084-1087) [recompile=false]
+--------CP abs x_to_truncate.SCALAR.FP64.false _Var522.SCALAR.FP64 4
+--------CP assignvar 0.SCALAR.INT64.true eee.SCALAR.INT64
+--------CP assignvar _Var522.SCALAR.FP64.false x.SCALAR.FP64
+--------CP rmvar _Var522
+------IF (lines 1088-1115)
+--------CP / x.SCALAR.FP64.false 2.0.SCALAR.FP64.true _Var523.SCALAR.FP64
+--------CP != x.SCALAR.FP64.false _Var523.SCALAR.FP64.false _Var524.SCALAR.BOOLEAN
+--------CP rmvar _Var523
+--------CP mvvar _Var524 __pred
+--------GENERIC (lines 1089-1091) [recompile=false]
+----------CP log x.SCALAR.FP64.false _Var525.SCALAR.FP64 4
+----------CP / _Var525.SCALAR.FP64.false 2.302585092994046.SCALAR.FP64.true _Var526.SCALAR.FP64
+----------CP rmvar _Var525
+----------CP - _Var526.SCALAR.FP64.false 0.5.SCALAR.FP64.true _Var527.SCALAR.FP64
+----------CP rmvar _Var526
+----------CP round _Var527.SCALAR.FP64.false _Var528.SCALAR.FP64 4
+----------CP rmvar _Var527
+----------CP - 4.0.SCALAR.FP64.true _Var528.SCALAR.FP64.false _Var529.SCALAR.FP64
+----------CP * 2.302585092994046.SCALAR.FP64.true _Var529.SCALAR.FP64.false _Var530.SCALAR.FP64
+----------CP rmvar _Var529
+----------CP exp _Var530.SCALAR.FP64.false _Var531.SCALAR.FP64 4
+----------CP rmvar _Var530
+----------CP * x.SCALAR.FP64.false _Var531.SCALAR.FP64.false _Var532.SCALAR.FP64
+----------CP rmvar _Var531
+----------CP round _Var532.SCALAR.FP64.false _Var533.SCALAR.FP64 4
+----------CP rmvar _Var532
+----------CP / _Var533.SCALAR.FP64.false 10000.SCALAR.INT64.true _Var534.SCALAR.FP64
+----------CP rmvar _Var533
+----------CP assignvar _Var528.SCALAR.FP64.false d_eee.SCALAR.FP64
+----------CP assignvar _Var534.SCALAR.FP64.false mantissa.SCALAR.FP64
+----------CP rmvar _Var528 _Var534 x
+--------IF (lines 1092-1095)
+----------CP == mantissa.SCALAR.FP64.false 10.0.SCALAR.FP64.true _Var535.SCALAR.BOOLEAN
+----------CP mvvar _Var535 __pred
+----------GENERIC (lines 1093-1094) [recompile=false]
+------------CP + d_eee.SCALAR.FP64.false 1.SCALAR.INT64.true _Var536.SCALAR.FP64
+------------CP assignvar 1.0.SCALAR.FP64.true mantissa.SCALAR.FP64
+------------CP assignvar _Var536.SCALAR.FP64.false d_eee.SCALAR.FP64
+------------CP rmvar _Var536
+--------IF (lines 1096-1098)
+----------CP < x_to_truncate.SCALAR.FP64.false 0.SCALAR.INT64.true _Var537.SCALAR.BOOLEAN
+----------CP mvvar _Var537 __pred
+----------GENERIC (lines 1097-1097) [recompile=false]
+------------CP * mantissa.SCALAR.FP64.false -1.SCALAR.INT64.true _Var538.SCALAR.FP64
+------------CP mvvar _Var538 mantissa
+----------CP rmvar x_to_truncate
+--------GENERIC (lines 1099-1101) [recompile=false]
+----------CP abs d_eee.SCALAR.FP64.false _Var539.SCALAR.FP64 4
+----------CP assignvar 0.SCALAR.INT64.true eee.SCALAR.INT64
+----------CP assignvar 1.SCALAR.INT64.true pow_two.SCALAR.INT64
+----------CP mvvar _Var539 res_eee
+--------WHILE (lines 1102-1109)
+----------CP != res_eee.SCALAR.FP64.false 0.SCALAR.INT64.true _Var540.SCALAR.BOOLEAN
+----------CP mvvar _Var540 __pred
+----------GENERIC (lines 1103-1103) [recompile=false]
+------------CP / res_eee.SCALAR.FP64.false 2.0.SCALAR.FP64.true _Var541.SCALAR.FP64
+------------CP - _Var541.SCALAR.FP64.false 0.3.SCALAR.FP64.true _Var542.SCALAR.FP64
+------------CP rmvar _Var541
+------------CP round _Var542.SCALAR.FP64.false _Var543.SCALAR.FP64 4
+------------CP rmvar _Var542
+------------CP mvvar _Var543 new_res_eee
+----------IF (lines 1104-1106)
+------------CP * new_res_eee.SCALAR.FP64.false 2.0.SCALAR.FP64.true _Var544.SCALAR.FP64
+------------CP < _Var544.SCALAR.FP64.false res_eee.SCALAR.FP64.false _Var545.SCALAR.BOOLEAN
+------------CP rmvar _Var544
+------------CP mvvar _Var545 __pred
+------------GENERIC (lines 1105-1105) [recompile=false]
+--------------CP + eee.SCALAR.INT64.false pow_two.SCALAR.INT64.false _Var546.SCALAR.INT64
+--------------CP mvvar _Var546 eee
+------------CP rmvar res_eee
+----------GENERIC (lines 1107-1108) [recompile=false]
+------------CP * 2.SCALAR.INT64.true pow_two.SCALAR.INT64.false _Var547.SCALAR.INT64
+------------CP assignvar new_res_eee.SCALAR.FP64.false res_eee.SCALAR.FP64
+------------CP assignvar _Var547.SCALAR.INT64.false pow_two.SCALAR.INT64
+------------CP rmvar _Var547 new_res_eee
+----------CP rmvar new_res_eee
+--------IF (lines 1110-1112)
+----------CP < d_eee.SCALAR.FP64.false 0.SCALAR.INT64.true _Var548.SCALAR.BOOLEAN
+----------CP mvvar _Var548 __pred
+----------GENERIC (lines 1111-1111) [recompile=false]
+------------CP * eee.SCALAR.INT64.false -1.SCALAR.INT64.true _Var549.SCALAR.INT64
+------------CP mvvar _Var549 eee
+----------CP rmvar d_eee
+------ELSE
+--------GENERIC (lines 1114-1114) [recompile=false]
+----------CP mvvar x_to_truncate mantissa
+--------CP rmvar x x_to_truncate
+----FUNCTION .builtinNS::glm_log_likelihood_part [recompile=false]
+------GENERIC (lines 759-762) [recompile=false]
+--------CP assignvar 0.SCALAR.INT64.true isNaN.SCALAR.INT64
+--------CP assignvar 0.0.SCALAR.FP64.true log_l.SCALAR.FP64
+------GENERIC (lines 866-866) [recompile=false]
+--------CP FCall .builtinNS binomial_probability_two_column true 3 2 linear_terms=linear_terms.MATRIX.FP64 link_type=2.SCALAR.INT64.true link_power=1.0.SCALAR.FP64.true Y_prob isNaN
+--------CP rmvar link_type linear_terms link_power
+------IF (lines 868-877)
+--------CP == isNaN.SCALAR.INT64.false 0.SCALAR.INT64.true _Var550.SCALAR.BOOLEAN
+--------CP mvvar _Var550 __pred
+--------IF (lines 869-876)
+----------CP createvar _mVar551 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp163 true MATRIX binary -1 -1 1000 -1 copy
+----------CP <= Y_prob.MATRIX.FP64 0.SCALAR.INT64.true _mVar551.MATRIX.FP64 4
+----------CP createvar _mVar552 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp164 true MATRIX binary -1 -1 1000 -1 copy
+----------CP abs Y.MATRIX.FP64 _mVar552.MATRIX.FP64 4 false
+----------CP createvar _mVar553 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp165 true MATRIX binary -1 -1 1000 -1 copy
+----------CP * _mVar551.MATRIX.FP64 _mVar552.MATRIX.FP64 _mVar553.MATRIX.FP64 4
+----------CP rmvar _mVar551 _mVar552
+----------CP uak+ _mVar553.MATRIX.FP64 _Var554.SCALAR.FP64 4
+----------CP rmvar _mVar553
+----------CP == _Var554.SCALAR.FP64.false 0.SCALAR.INT64.true _Var555.SCALAR.BOOLEAN
+----------CP rmvar _Var554
+----------CP mvvar _Var555 __pred
+----------GENERIC (lines 870-870) [recompile=true]
+------------CP createvar _mVar556 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp166 true MATRIX binary -1 -1 1000 -1 copy
+------------CP <= Y_prob.MATRIX.FP64 0.SCALAR.INT64.true _mVar556.MATRIX.FP64 4
+------------CP createvar _mVar557 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp167 true MATRIX binary -1 -1 1000 -1 copy
+------------CP - 1.SCALAR.INT64.true _mVar556.MATRIX.FP64 _mVar557.MATRIX.FP64 4
+------------CP createvar _mVar558 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp168 true MATRIX binary -1 -1 1000 -1 copy
+------------CP * Y_prob.MATRIX.FP64 _mVar557.MATRIX.FP64 _mVar558.MATRIX.FP64 4
+------------CP rmvar _mVar557
+------------CP createvar _mVar559 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp169 true MATRIX binary -1 -1 1000 -1 copy
+------------CP + _mVar558.MATRIX.FP64 _mVar556.MATRIX.FP64 _mVar559.MATRIX.FP64 4
+------------CP rmvar _mVar558 _mVar556
+------------CP createvar _mVar560 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp170 true MATRIX binary -1 -1 1000 -1 copy
+------------CP log _mVar559.MATRIX.FP64 _mVar560.MATRIX.FP64 4 false
+------------CP rmvar _mVar559
+------------CP createvar _mVar561 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp171 true MATRIX binary -1 -1 1000 -1 copy
+------------CP * Y.MATRIX.FP64 _mVar560.MATRIX.FP64 _mVar561.MATRIX.FP64 4
+------------CP rmvar _mVar560
+------------CP uak+ _mVar561.MATRIX.FP64 _Var562.SCALAR.FP64 4
+------------CP rmvar _mVar561
+------------CP mvvar _Var562 log_l
+------------CP rmvar Y_prob Y
+----------IF (lines 871-871)
+------------CP != log_l.SCALAR.FP64.false log_l.SCALAR.FP64.false _Var563.SCALAR.BOOLEAN
+------------CP + log_l.SCALAR.FP64.false 1.0.SCALAR.FP64.true _Var564.SCALAR.FP64
+------------CP == log_l.SCALAR.FP64.false _Var564.SCALAR.FP64.false _Var565.SCALAR.BOOLEAN
+------------CP rmvar _Var564
+------------CP * log_l.SCALAR.FP64.false 2.0.SCALAR.FP64.true _Var566.SCALAR.FP64
+------------CP == log_l.SCALAR.FP64.false _Var566.SCALAR.FP64.false _Var567.SCALAR.BOOLEAN
+------------CP rmvar _Var566
+------------CP && _Var565.SCALAR.BOOLEAN.false _Var567.SCALAR.BOOLEAN.false _Var568.SCALAR.BOOLEAN
+------------CP rmvar _Var565 _Var567
+------------CP || _Var563.SCALAR.BOOLEAN.false _Var568.SCALAR.BOOLEAN.false _Var569.SCALAR.BOOLEAN
+------------CP rmvar _Var563 _Var568
+------------CP mvvar _Var569 __pred
+------------GENERIC (lines 871-871) [recompile=false]
+--------------CP assignvar 1.SCALAR.INT64.true isNaN.SCALAR.INT64
+--------ELSE
+----------GENERIC (lines 874-875) [recompile=false]
+------------CP assignvar -Infinity.SCALAR.FP64.true log_l.SCALAR.FP64
+------------CP assignvar 1.SCALAR.INT64.true isNaN.SCALAR.INT64
+----------CP rmvar Y_prob
+--------CP rmvar Y_prob
+------IF (lines 880-882)
+--------CP == isNaN.SCALAR.INT64.false 1.SCALAR.INT64.true _Var570.SCALAR.BOOLEAN
+--------CP mvvar _Var570 __pred
+--------GENERIC (lines 881-881) [recompile=false]
+----------CP assignvar -Infinity.SCALAR.FP64.true log_l.SCALAR.FP64
+----FUNCTION .builtinNS::get_CG_Steihaug_point [recompile=false]
+------GENERIC (lines 958-968) [recompile=false]
+--------CP ^ trust_delta.SCALAR.FP64.false 2.SCALAR.INT64.true _Var189.SCALAR.FP64
+--------CP createvar _mVar190 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp0 true MATRIX binary 128 1 1000 0 copy
+--------CP rand 128.SCALAR.INT64.true 1.SCALAR.INT64.true 1000 0.0 0.0 1.0 -1 uniform 1.0 4 _mVar190.MATRIX.FP64
+--------CP createvar _mVar191 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp1 true MATRIX binary 128 1 1000 -1 copy
+--------CP * lambda.MATRIX.FP64 beta.MATRIX.FP64 _mVar191.MATRIX.FP64 4
+--------CP createvar _mVar192 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp2 true MATRIX binary 128 1 1000 -1 copy
+--------CP + g.MATRIX.FP64 _mVar191.MATRIX.FP64 _mVar192.MATRIX.FP64 4
+--------CP rmvar _mVar191
+--------CP createvar _mVar193 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp3 true MATRIX binary 128 1 1000 -1 copy
+--------CP - 0.SCALAR.INT64.true _mVar192.MATRIX.FP64 _mVar193.MATRIX.FP64 4
+--------CP createvar _mVar194 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp4 true MATRIX binary 1 128 1000 -1 copy
+--------CP r' _mVar192.MATRIX.FP64 _mVar194.MATRIX.FP64 4
+--------CP createvar _mVar195 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp5 true MATRIX binary 1 1 1000 -1 copy
+--------CP ba+* _mVar194.MATRIX.FP64 _mVar192.MATRIX.FP64 _mVar195.MATRIX.FP64 4
+--------CP rmvar _mVar194
+--------CP castdts _mVar195.MATRIX.FP64.false _Var196.SCALAR.FP64 4
+--------CP rmvar _mVar195
+--------CP sqrt _Var196.SCALAR.FP64.false _Var197.SCALAR.FP64 4
+--------CP min 0.25.SCALAR.FP64.true _Var197.SCALAR.FP64.false _Var198.SCALAR.FP64
+--------CP rmvar _Var197
+--------CP * _Var196.SCALAR.FP64.false _Var198.SCALAR.FP64.false _Var199.SCALAR.FP64
+--------CP rmvar _Var198
+--------CP assignvar _Var189.SCALAR.FP64.false trust_delta_sq.SCALAR.FP64
+--------CP assignvar 0.0.SCALAR.FP64.true neg_log_l_change.SCALAR.FP64
+--------CP assignvar 0.SCALAR.INT64.true reached_trust_boundary.SCALAR.INT64
+--------CP assignvar _Var196.SCALAR.FP64.false rr_CG.SCALAR.FP64
+--------CP assignvar _Var199.SCALAR.FP64.false eps_CG.SCALAR.FP64
+--------CP assignvar 0.SCALAR.INT64.true converged_CG.SCALAR.INT64
+--------CP rmvar _Var189 _Var196 _Var199
+--------CP cpvar _mVar190 z
+--------CP cpvar _mVar192 g_reg
+--------CP cpvar _mVar192 r_CG
+--------CP cpvar _mVar193 p_CG
+--------CP rmvar _mVar190 _mVar192 _mVar193 g trust_delta beta
+------IF (lines 969-971)
+--------CP < rr_CG.SCALAR.FP64.false eps_CG.SCALAR.FP64.false _Var200.SCALAR.BOOLEAN
+--------CP mvvar _Var200 __pred
+--------GENERIC (lines 970-970) [recompile=false]
+----------CP assignvar 1.SCALAR.INT64.true converged_CG.SCALAR.INT64
+------GENERIC (lines 973-977) [recompile=false]
+--------CP assignvar 0.SCALAR.INT64.true i_CG.SCALAR.INT64
+--------CP rmvar max_iter_CG
+------WHILE (lines 978-1022)
+--------CP == converged_CG.SCALAR.INT64.false 0.SCALAR.INT64.true _Var201.SCALAR.BOOLEAN
+--------CP mvvar _Var201 __pred
+--------GENERIC (lines 980-985) [recompile=false]
+----------CP + i_CG.SCALAR.INT64.false 1.SCALAR.INT64.true _Var202.SCALAR.INT64
+----------CP createvar _mVar203 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp6 true MATRIX binary 128 1 1000 -1 copy
+----------CP * lambda.MATRIX.FP64 p_CG.MATRIX.FP64 _mVar203.MATRIX.FP64 4
+----------CP createvar _mVar204 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp7 true MATRIX binary 128 50000 1000 6400000 copy
+----------FED r' X.MATRIX.FP64 _mVar204.MATRIX.FP64 4 FOUT
+----------CP createvar _mVar205 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp8 true MATRIX binary 128 1 1000 -1 copy
+----------CP * scale_X.MATRIX.FP64 p_CG.MATRIX.FP64 _mVar205.MATRIX.FP64 4
+----------CP createvar _mVar206 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp9 true MATRIX binary 1 1 1000 -1 copy
+----------CP rightIndex _mVar205.MATRIX.FP64 128.SCALAR.INT64.true 128.SCALAR.INT64.true 1.SCALAR.INT64.true 1.SCALAR.INT64.true _mVar206.MATRIX.FP64
+----------CP createvar _mVar207 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp10 true MATRIX binary 128 1 1000 -1 copy
+----------CP leftIndex _mVar205.MATRIX.FP64 _mVar206.MATRIX.FP64 128.SCALAR.INT64.true 128.SCALAR.INT64.true 1.SCALAR.INT64.true 1.SCALAR.INT64.true _mVar207.MATRIX.FP64
+----------CP rmvar _mVar205 _mVar206
+----------CP createvar _mVar208 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp11 true MATRIX binary 50000 1 1000 -1 copy
+----------FED ba+* X.MATRIX.FP64 _mVar207.MATRIX.FP64 _mVar208.MATRIX.FP64 4 FOUT
+----------CP rmvar _mVar207
+----------CP createvar _mVar209 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp12 true MATRIX binary 50000 1 1000 -1 copy
+----------FED * w.MATRIX.FP64 _mVar208.MATRIX.FP64 _mVar209.MATRIX.FP64 4 FOUT
+----------CP rmvar _mVar208
+----------CP createvar _mVar210 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp13 true MATRIX binary 128 1 1000 -1 copy
+----------FED ba+* _mVar204.MATRIX.FP64 _mVar209.MATRIX.FP64 _mVar210.MATRIX.FP64 4 LOUT
+----------CP rmvar _mVar204 _mVar209
+----------CP createvar _mVar211 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp14 true MATRIX binary 128 1 1000 -1 copy
+----------CP * scale_X.MATRIX.FP64 _mVar210.MATRIX.FP64 _mVar211.MATRIX.FP64 4
+----------CP rmvar _mVar210
+----------CP createvar _mVar212 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp15 true MATRIX binary 128 1 1000 -1 copy
+----------CP + _mVar203.MATRIX.FP64 _mVar211.MATRIX.FP64 _mVar212.MATRIX.FP64 4
+----------CP rmvar _mVar203 _mVar211
+----------CP createvar _mVar213 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp16 true MATRIX binary 1 128 1000 -1 copy
+----------CP r' p_CG.MATRIX.FP64 _mVar213.MATRIX.FP64 4
+----------CP createvar _mVar214 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp17 true MATRIX binary 1 1 1000 -1 copy
+----------CP ba+* _mVar213.MATRIX.FP64 _mVar212.MATRIX.FP64 _mVar214.MATRIX.FP64 4
+----------CP rmvar _mVar213
+----------CP castdts _mVar214.MATRIX.FP64.false _Var215.SCALAR.FP64 4
+----------CP rmvar _mVar214
+----------CP assignvar _Var202.SCALAR.INT64.false i_CG.SCALAR.INT64
+----------CP assignvar _Var215.SCALAR.FP64.false pq_CG.SCALAR.FP64
+----------CP rmvar _Var202 _Var215
+----------CP mvvar _mVar212 q_CG
+--------IF (lines 986-996)
+----------CP <= pq_CG.SCALAR.FP64.false 0.SCALAR.INT64.true _Var216.SCALAR.BOOLEAN
+----------CP mvvar _Var216 __pred
+----------GENERIC (lines 987-987) [recompile=false]
+------------CP createvar _mVar217 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp18 true MATRIX binary 1 128 1000 -1 copy
+------------CP r' p_CG.MATRIX.FP64 _mVar217.MATRIX.FP64 4
+------------CP createvar _mVar218 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp19 true MATRIX binary 1 1 1000 -1 copy
+------------CP ba+* _mVar217.MATRIX.FP64 p_CG.MATRIX.FP64 _mVar218.MATRIX.FP64 4
+------------CP rmvar _mVar217
+------------CP castdts _mVar218.MATRIX.FP64.false _Var219.SCALAR.FP64 4
+------------CP rmvar _mVar218
+------------CP mvvar _Var219 pp_CG
+----------IF (lines 988-994)
+------------CP > pp_CG.SCALAR.FP64.false 0.SCALAR.INT64.true _Var220.SCALAR.BOOLEAN
+------------CP mvvar _Var220 __pred
+------------GENERIC (lines 989-991) [recompile=false]
+--------------CP createvar _mVar221 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp20 true MATRIX binary 1 128 1000 -1 copy
+--------------CP r' z.MATRIX.FP64 _mVar221.MATRIX.FP64 4
+--------------CP createvar _mVar222 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp21 true MATRIX binary 128 1 1000 -1 copy
+--------------CP + r_CG.MATRIX.FP64 g_reg.MATRIX.FP64 _mVar222.MATRIX.FP64 4
+--------------CP createvar _mVar223 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp22 true MATRIX binary 1 1 1000 -1 copy
+--------------CP ba+* _mVar221.MATRIX.FP64 _mVar222.MATRIX.FP64 _mVar223.MATRIX.FP64 4
+--------------CP rmvar _mVar222
+--------------CP castdts _mVar223.MATRIX.FP64.false _Var224.SCALAR.FP64 4
+--------------CP rmvar _mVar223
+--------------CP * 0.5.SCALAR.FP64.true _Var224.SCALAR.FP64.false _Var225.SCALAR.FP64
+--------------CP rmvar _Var224
+--------------CP createvar _mVar226 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp23 true MATRIX binary 1 128 1000 -1 copy
+--------------CP r' p_CG.MATRIX.FP64 _mVar226.MATRIX.FP64 4
+--------------CP createvar _mVar227 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp24 true MATRIX binary 1 1 1000 -1 copy
+--------------CP ba+* _mVar226.MATRIX.FP64 z.MATRIX.FP64 _mVar227.MATRIX.FP64 4
+--------------CP rmvar _mVar226
+--------------CP castdts _mVar227.MATRIX.FP64.false _Var228.SCALAR.FP64 4
+--------------CP rmvar _mVar227
+--------------CP * _Var228.SCALAR.FP64.false -1.SCALAR.INT64.true _Var229.SCALAR.FP64
+--------------CP * _Var228.SCALAR.FP64.false _Var228.SCALAR.FP64.false _Var230.SCALAR.FP64
+--------------CP rmvar _Var228
+--------------CP createvar _mVar231 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp25 true MATRIX binary 1 1 1000 -1 copy
+--------------CP ba+* _mVar221.MATRIX.FP64 z.MATRIX.FP64 _mVar231.MATRIX.FP64 4
+--------------CP castdts _mVar231.MATRIX.FP64.false _Var232.SCALAR.FP64 4
+--------------CP rmvar _mVar231
+--------------CP - _Var232.SCALAR.FP64.false trust_delta_sq.SCALAR.FP64.false _Var233.SCALAR.FP64
+--------------CP rmvar _Var232
+--------------CP * pp_CG.SCALAR.FP64.false _Var233.SCALAR.FP64.false _Var234.SCALAR.FP64
+--------------CP rmvar _Var233
+--------------CP - _Var230.SCALAR.FP64.false _Var234.SCALAR.FP64.false _Var235.SCALAR.FP64
+--------------CP rmvar _Var230 _Var234
+--------------CP sqrt _Var235.SCALAR.FP64.false _Var236.SCALAR.FP64 4
+--------------CP rmvar _Var235
+--------------CP + _Var229.SCALAR.FP64.false _Var236.SCALAR.FP64.false _Var237.SCALAR.FP64
+--------------CP / _Var237.SCALAR.FP64.false pp_CG.SCALAR.FP64.false _Var238.SCALAR.FP64
+--------------CP rmvar _Var237
+--------------CP n* 0.5.SCALAR.FP64.true _Var238.SCALAR.FP64.false pq_CG.SCALAR.FP64.false _Var239.SCALAR.FP64
+--------------CP createvar _mVar240 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp26 true MATRIX binary 1 1 1000 -1 copy
+--------------CP ba+* _mVar221.MATRIX.FP64 q_CG.MATRIX.FP64 _mVar240.MATRIX.FP64 4
+--------------CP rmvar _mVar221
+--------------CP castdts _mVar240.MATRIX.FP64.false _Var241.SCALAR.FP64 4
+--------------CP rmvar _mVar240
+--------------CP createvar _mVar242 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp27 true MATRIX binary 1 128 1000 -1 copy
+--------------CP r' g_reg.MATRIX.FP64 _mVar242.MATRIX.FP64 4
+--------------CP createvar _mVar243 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp28 true MATRIX binary 1 1 1000 -1 copy
+--------------CP ba+* _mVar242.MATRIX.FP64 p_CG.MATRIX.FP64 _mVar243.MATRIX.FP64 4
+--------------CP rmvar _mVar242
+--------------CP castdts _mVar243.MATRIX.FP64.false _Var244.SCALAR.FP64 4
+--------------CP rmvar _mVar243
+--------------CP n+ _Var239.SCALAR.FP64.false _Var241.SCALAR.FP64.false _Var244.SCALAR.FP64.false _Var245.SCALAR.FP64
+--------------CP rmvar _Var239
+--------------CP * _Var245.SCALAR.FP64.false _Var238.SCALAR.FP64.false _Var246.SCALAR.FP64
+--------------CP rmvar _Var245
+--------------CP + _Var225.SCALAR.FP64.false _Var246.SCALAR.FP64.false _Var247.SCALAR.FP64
+--------------CP rmvar _Var246
+--------------CP - _Var229.SCALAR.FP64.false _Var236.SCALAR.FP64.false _Var248.SCALAR.FP64
+--------------CP rmvar _Var229 _Var236
+--------------CP / _Var248.SCALAR.FP64.false pp_CG.SCALAR.FP64.false _Var249.SCALAR.FP64
+--------------CP rmvar _Var248
+--------------CP n* 0.5.SCALAR.FP64.true _Var249.SCALAR.FP64.false pq_CG.SCALAR.FP64.false _Var250.SCALAR.FP64
+--------------CP n+ _Var250.SCALAR.FP64.false _Var241.SCALAR.FP64.false _Var244.SCALAR.FP64.false _Var251.SCALAR.FP64
+--------------CP rmvar _Var250 _Var241 _Var244
+--------------CP * _Var251.SCALAR.FP64.false _Var249.SCALAR.FP64.false _Var252.SCALAR.FP64
+--------------CP rmvar _Var251
+--------------CP + _Var225.SCALAR.FP64.false _Var252.SCALAR.FP64.false _Var253.SCALAR.FP64
+--------------CP rmvar _Var225 _Var252
+--------------CP < _Var247.SCALAR.FP64.false _Var253.SCALAR.FP64.false _Var254.SCALAR.BOOLEAN
+--------------CP ifelse _Var254.SCALAR.BOOLEAN.false _Var238.SCALAR.FP64.false _Var249.SCALAR.FP64.false _Var255.SCALAR.FP64
+--------------CP rmvar _Var254 _Var238 _Var249
+--------------CP createvar _mVar256 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp29 true MATRIX binary 128 1 1000 -1 copy
+--------------CP +* z.MATRIX.FP64 _Var255.SCALAR.FP64.false p_CG.MATRIX.FP64 _mVar256.MATRIX.FP64 4
+--------------CP rmvar _Var255
+--------------CP min _Var247.SCALAR.FP64.false _Var253.SCALAR.FP64.false _Var257.SCALAR.FP64
+--------------CP rmvar _Var247 _Var253 z
+--------------CP assignvar _Var257.SCALAR.FP64.false neg_log_l_change.SCALAR.FP64
+--------------CP assignvar 1.SCALAR.INT64.true reached_trust_boundary.SCALAR.INT64
+--------------CP rmvar _Var257
+--------------CP mvvar _mVar256 z
+--------------CP rmvar pp_CG
+----------ELSE
+------------GENERIC (lines 993-993) [recompile=false]
+--------------CP createvar _mVar258 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp30 true MATRIX binary 1 128 1000 -1 copy
+--------------CP r' z.MATRIX.FP64 _mVar258.MATRIX.FP64 4
+--------------CP createvar _mVar259 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp31 true MATRIX binary 128 1 1000 -1 copy
+--------------CP + r_CG.MATRIX.FP64 g_reg.MATRIX.FP64 _mVar259.MATRIX.FP64 4
+--------------CP createvar _mVar260 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp32 true MATRIX binary 1 1 1000 -1 copy
+--------------CP ba+* _mVar258.MATRIX.FP64 _mVar259.MATRIX.FP64 _mVar260.MATRIX.FP64 4
+--------------CP rmvar _mVar258 _mVar259
+--------------CP castdts _mVar260.MATRIX.FP64.false _Var261.SCALAR.FP64 4
+--------------CP rmvar _mVar260
+--------------CP * 0.5.SCALAR.FP64.true _Var261.SCALAR.FP64.false _Var262.SCALAR.FP64
+--------------CP rmvar _Var261
+--------------CP mvvar _Var262 neg_log_l_change
+------------CP rmvar pp_CG
+----------GENERIC (lines 995-995) [recompile=false]
+------------CP assignvar 1.SCALAR.INT64.true converged_CG.SCALAR.INT64
+--------IF (lines 997-1021)
+----------CP == converged_CG.SCALAR.INT64.false 0.SCALAR.INT64.true _Var263.SCALAR.BOOLEAN
+----------CP mvvar _Var263 __pred
+----------GENERIC (lines 998-999) [recompile=false]
+------------CP / rr_CG.SCALAR.FP64.false pq_CG.SCALAR.FP64.false _Var264.SCALAR.FP64
+------------CP createvar _mVar265 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp33 true MATRIX binary 128 1 1000 -1 copy
+------------CP +* z.MATRIX.FP64 _Var264.SCALAR.FP64.false p_CG.MATRIX.FP64 _mVar265.MATRIX.FP64 4
+------------CP mvvar _Var264 alpha_CG
+------------CP mvvar _mVar265 new_z
+----------IF (lines 1000-1006)
+------------CP createvar _mVar266 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp34 true MATRIX binary 1 128 1000 -1 copy
+------------CP r' new_z.MATRIX.FP64 _mVar266.MATRIX.FP64 4
+------------CP createvar _mVar267 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp35 true MATRIX binary 1 1 1000 -1 copy
+------------CP ba+* _mVar266.MATRIX.FP64 new_z.MATRIX.FP64 _mVar267.MATRIX.FP64 4
+------------CP rmvar _mVar266
+------------CP castdts _mVar267.MATRIX.FP64.false _Var268.SCALAR.FP64 4
+------------CP rmvar _mVar267
+------------CP >= _Var268.SCALAR.FP64.false trust_delta_sq.SCALAR.FP64.false _Var269.SCALAR.BOOLEAN
+------------CP rmvar _Var268
+------------CP mvvar _Var269 __pred
+------------GENERIC (lines 1001-1005) [recompile=false]
+--------------CP createvar _mVar270 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp36 true MATRIX binary 1 128 1000 -1 copy
+--------------CP r' z.MATRIX.FP64 _mVar270.MATRIX.FP64 4
+--------------CP createvar _mVar271 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp37 true MATRIX binary 128 1 1000 -1 copy
+--------------CP + r_CG.MATRIX.FP64 g_reg.MATRIX.FP64 _mVar271.MATRIX.FP64 4
+--------------CP createvar _mVar272 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp38 true MATRIX binary 1 1 1000 -1 copy
+--------------CP ba+* _mVar270.MATRIX.FP64 _mVar271.MATRIX.FP64 _mVar272.MATRIX.FP64 4
+--------------CP rmvar _mVar271
+--------------CP castdts _mVar272.MATRIX.FP64.false _Var273.SCALAR.FP64 4
+--------------CP rmvar _mVar272
+--------------CP * 0.5.SCALAR.FP64.true _Var273.SCALAR.FP64.false _Var274.SCALAR.FP64
+--------------CP rmvar _Var273
+--------------CP createvar _mVar275 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp39 true MATRIX binary 1 128 1000 -1 copy
+--------------CP r' p_CG.MATRIX.FP64 _mVar275.MATRIX.FP64 4
+--------------CP createvar _mVar276 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp40 true MATRIX binary 1 1 1000 -1 copy
+--------------CP ba+* _mVar275.MATRIX.FP64 z.MATRIX.FP64 _mVar276.MATRIX.FP64 4
+--------------CP castdts _mVar276.MATRIX.FP64.false _Var277.SCALAR.FP64 4
+--------------CP rmvar _mVar276
+--------------CP * _Var277.SCALAR.FP64.false -1.SCALAR.INT64.true _Var278.SCALAR.FP64
+--------------CP * _Var277.SCALAR.FP64.false _Var277.SCALAR.FP64.false _Var279.SCALAR.FP64
+--------------CP rmvar _Var277
+--------------CP createvar _mVar280 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp41 true MATRIX binary 1 1 1000 -1 copy
+--------------CP ba+* _mVar275.MATRIX.FP64 p_CG.MATRIX.FP64 _mVar280.MATRIX.FP64 4
+--------------CP rmvar _mVar275
+--------------CP castdts _mVar280.MATRIX.FP64.false _Var281.SCALAR.FP64 4
+--------------CP rmvar _mVar280
+--------------CP createvar _mVar282 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp42 true MATRIX binary 1 1 1000 -1 copy
+--------------CP ba+* _mVar270.MATRIX.FP64 z.MATRIX.FP64 _mVar282.MATRIX.FP64 4
+--------------CP castdts _mVar282.MATRIX.FP64.false _Var283.SCALAR.FP64 4
+--------------CP rmvar _mVar282
+--------------CP - _Var283.SCALAR.FP64.false trust_delta_sq.SCALAR.FP64.false _Var284.SCALAR.FP64
+--------------CP rmvar _Var283
+--------------CP * _Var281.SCALAR.FP64.false _Var284.SCALAR.FP64.false _Var285.SCALAR.FP64
+--------------CP rmvar _Var284
+--------------CP - _Var279.SCALAR.FP64.false _Var285.SCALAR.FP64.false _Var286.SCALAR.FP64
+--------------CP rmvar _Var279 _Var285
+--------------CP sqrt _Var286.SCALAR.FP64.false _Var287.SCALAR.FP64 4
+--------------CP rmvar _Var286
+--------------CP + _Var278.SCALAR.FP64.false _Var287.SCALAR.FP64.false _Var288.SCALAR.FP64
+--------------CP / _Var288.SCALAR.FP64.false _Var281.SCALAR.FP64.false _Var289.SCALAR.FP64
+--------------CP rmvar _Var288
+--------------CP n* 0.5.SCALAR.FP64.true _Var289.SCALAR.FP64.false pq_CG.SCALAR.FP64.false _Var290.SCALAR.FP64
+--------------CP createvar _mVar291 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp43 true MATRIX binary 1 1 1000 -1 copy
+--------------CP ba+* _mVar270.MATRIX.FP64 q_CG.MATRIX.FP64 _mVar291.MATRIX.FP64 4
+--------------CP rmvar _mVar270
+--------------CP castdts _mVar291.MATRIX.FP64.false _Var292.SCALAR.FP64 4
+--------------CP rmvar _mVar291
+--------------CP createvar _mVar293 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp44 true MATRIX binary 1 128 1000 -1 copy
+--------------CP r' g_reg.MATRIX.FP64 _mVar293.MATRIX.FP64 4
+--------------CP createvar _mVar294 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp45 true MATRIX binary 1 1 1000 -1 copy
+--------------CP ba+* _mVar293.MATRIX.FP64 p_CG.MATRIX.FP64 _mVar294.MATRIX.FP64 4
+--------------CP rmvar _mVar293
+--------------CP castdts _mVar294.MATRIX.FP64.false _Var295.SCALAR.FP64 4
+--------------CP rmvar _mVar294
+--------------CP n+ _Var290.SCALAR.FP64.false _Var292.SCALAR.FP64.false _Var295.SCALAR.FP64.false _Var296.SCALAR.FP64
+--------------CP rmvar _Var290
+--------------CP * _Var296.SCALAR.FP64.false _Var289.SCALAR.FP64.false _Var297.SCALAR.FP64
+--------------CP rmvar _Var296
+--------------CP + _Var274.SCALAR.FP64.false _Var297.SCALAR.FP64.false _Var298.SCALAR.FP64
+--------------CP rmvar _Var297
+--------------CP - _Var278.SCALAR.FP64.false _Var287.SCALAR.FP64.false _Var299.SCALAR.FP64
+--------------CP rmvar _Var278 _Var287
+--------------CP / _Var299.SCALAR.FP64.false _Var281.SCALAR.FP64.false _Var300.SCALAR.FP64
+--------------CP rmvar _Var299 _Var281
+--------------CP n* 0.5.SCALAR.FP64.true _Var300.SCALAR.FP64.false pq_CG.SCALAR.FP64.false _Var301.SCALAR.FP64
+--------------CP n+ _Var301.SCALAR.FP64.false _Var292.SCALAR.FP64.false _Var295.SCALAR.FP64.false _Var302.SCALAR.FP64
+--------------CP rmvar _Var301 _Var292 _Var295
+--------------CP * _Var302.SCALAR.FP64.false _Var300.SCALAR.FP64.false _Var303.SCALAR.FP64
+--------------CP rmvar _Var302
+--------------CP + _Var274.SCALAR.FP64.false _Var303.SCALAR.FP64.false _Var304.SCALAR.FP64
+--------------CP rmvar _Var274 _Var303
+--------------CP < _Var298.SCALAR.FP64.false _Var304.SCALAR.FP64.false _Var305.SCALAR.BOOLEAN
+--------------CP ifelse _Var305.SCALAR.BOOLEAN.false _Var289.SCALAR.FP64.false _Var300.SCALAR.FP64.false _Var306.SCALAR.FP64
+--------------CP rmvar _Var305 _Var289 _Var300
+--------------CP createvar _mVar307 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp46 true MATRIX binary 128 1 1000 -1 copy
+--------------CP +* z.MATRIX.FP64 _Var306.SCALAR.FP64.false p_CG.MATRIX.FP64 _mVar307.MATRIX.FP64 4
+--------------CP rmvar _Var306
+--------------CP min _Var298.SCALAR.FP64.false _Var304.SCALAR.FP64.false _Var308.SCALAR.FP64
+--------------CP rmvar _Var298 _Var304 z
+--------------CP assignvar _Var308.SCALAR.FP64.false neg_log_l_change.SCALAR.FP64
+--------------CP assignvar 1.SCALAR.INT64.true reached_trust_boundary.SCALAR.INT64
+--------------CP assignvar 1.SCALAR.INT64.true converged_CG.SCALAR.INT64
+--------------CP rmvar _Var308
+--------------CP mvvar _mVar307 z
+--------------CP rmvar pq_CG
+------------CP rmvar pq_CG
+----------IF (lines 1007-1020)
+------------CP == converged_CG.SCALAR.INT64.false 0.SCALAR.INT64.true _Var309.SCALAR.BOOLEAN
+------------CP mvvar _Var309 __pred
+------------GENERIC (lines 1008-1011) [recompile=false]
+--------------CP createvar _mVar310 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp47 true MATRIX binary 128 1 1000 -1 copy
+--------------CP +* r_CG.MATRIX.FP64 alpha_CG.SCALAR.FP64.false q_CG.MATRIX.FP64 _mVar310.MATRIX.FP64 4
+--------------CP createvar _mVar311 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp48 true MATRIX binary 1 128 1000 -1 copy
+--------------CP r' _mVar310.MATRIX.FP64 _mVar311.MATRIX.FP64 4
+--------------CP createvar _mVar312 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp49 true MATRIX binary 1 1 1000 -1 copy
+--------------CP ba+* _mVar311.MATRIX.FP64 _mVar310.MATRIX.FP64 _mVar312.MATRIX.FP64 4
+--------------CP rmvar _mVar311
+--------------CP castdts _mVar312.MATRIX.FP64.false _Var313.SCALAR.FP64 4
+--------------CP rmvar _mVar312 r_CG
+--------------CP assignvar rr_CG.SCALAR.FP64.false old_rr_CG.SCALAR.FP64
+--------------CP assignvar _Var313.SCALAR.FP64.false rr_CG.SCALAR.FP64
+--------------CP rmvar _Var313
+--------------CP cpvar new_z z
+--------------CP cpvar _mVar310 r_CG
+--------------CP rmvar _mVar310 new_z q_CG alpha_CG
+------------IF (lines 1012-1016)
+--------------CP == i_CG.SCALAR.INT64.false 5.SCALAR.INT64.true _Var314.SCALAR.BOOLEAN
+--------------CP < rr_CG.SCALAR.FP64.false eps_CG.SCALAR.FP64.false _Var315.SCALAR.BOOLEAN
+--------------CP || _Var314.SCALAR.BOOLEAN.false _Var315.SCALAR.BOOLEAN.false _Var316.SCALAR.BOOLEAN
+--------------CP rmvar _Var314 _Var315
+--------------CP mvvar _Var316 __pred
+--------------GENERIC (lines 1013-1015) [recompile=false]
+----------------CP createvar _mVar317 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp50 true MATRIX binary 1 128 1000 -1 copy
+----------------CP r' z.MATRIX.FP64 _mVar317.MATRIX.FP64 4
+----------------CP createvar _mVar318 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp51 true MATRIX binary 128 1 1000 -1 copy
+----------------CP + r_CG.MATRIX.FP64 g_reg.MATRIX.FP64 _mVar318.MATRIX.FP64 4
+----------------CP createvar _mVar319 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp52 true MATRIX binary 1 1 1000 -1 copy
+----------------CP ba+* _mVar317.MATRIX.FP64 _mVar318.MATRIX.FP64 _mVar319.MATRIX.FP64 4
+----------------CP rmvar _mVar317 _mVar318
+----------------CP castdts _mVar319.MATRIX.FP64.false _Var320.SCALAR.FP64 4
+----------------CP rmvar _mVar319
+----------------CP * 0.5.SCALAR.FP64.true _Var320.SCALAR.FP64.false _Var321.SCALAR.FP64
+----------------CP rmvar _Var320
+----------------CP assignvar _Var321.SCALAR.FP64.false neg_log_l_change.SCALAR.FP64
+----------------CP assignvar 0.SCALAR.INT64.true reached_trust_boundary.SCALAR.INT64
+----------------CP assignvar 1.SCALAR.INT64.true converged_CG.SCALAR.INT64
+----------------CP rmvar _Var321
+------------IF (lines 1017-1019)
+--------------CP == converged_CG.SCALAR.INT64.false 0.SCALAR.INT64.true _Var322.SCALAR.BOOLEAN
+--------------CP mvvar _Var322 __pred
+--------------GENERIC (lines 1018-1018) [recompile=false]
+----------------CP createvar _mVar323 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp53 true MATRIX binary 128 1 1000 -1 copy
+----------------CP - 0.SCALAR.INT64.true r_CG.MATRIX.FP64 _mVar323.MATRIX.FP64 4
+----------------CP / rr_CG.SCALAR.FP64.false old_rr_CG.SCALAR.FP64.false _Var324.SCALAR.FP64
+----------------CP createvar _mVar325 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp54 true MATRIX binary 128 1 1000 -1 copy
+----------------CP +* _mVar323.MATRIX.FP64 _Var324.SCALAR.FP64.false p_CG.MATRIX.FP64 _mVar325.MATRIX.FP64 4
+----------------CP rmvar _mVar323 _Var324
+----------------CP mvvar _mVar325 p_CG
+----------------CP rmvar old_rr_CG
+--------------CP rmvar old_rr_CG
+------------CP rmvar alpha_CG new_z q_CG
+----------CP rmvar pq_CG q_CG
+--------CP rmvar size_CG eps_CG g_reg r_CG scale_X q_CG p_CG shift_X max_iteration_CG converged_CG temp_CG lambda trust_delta_sq ssX_p_CG rr_CG pq_CG
+--MAIN PROGRAM
+----GENERIC (lines 1-15) [recompile=false]
+------CP list 130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_3_1.data.SCALAR.STRING.true 130.149.237.13:8002//workspace/experiments/data/continuous/ADULT_features_3_2.data.SCALAR.STRING.true 130.149.237.14:8003//workspace/experiments/data/continuous/ADULT_features_3_3.data.SCALAR.STRING.true _Var573.LIST.UNKNOWN
+------CP list 0.SCALAR.INT64.true 0.SCALAR.INT64.true _Var574.LIST.UNKNOWN
+------CP list 16667.SCALAR.INT64.true 128.SCALAR.INT64.true _Var575.LIST.UNKNOWN
+------CP list 16667.SCALAR.INT64.true 0.SCALAR.INT64.true _Var576.LIST.UNKNOWN
+------CP list 33334.SCALAR.INT64.true 128.SCALAR.INT64.true _Var577.LIST.UNKNOWN
+------CP list 33334.SCALAR.INT64.true 0.SCALAR.INT64.true _Var578.LIST.UNKNOWN
+------CP list 50000.SCALAR.INT64.true 128.SCALAR.INT64.true _Var579.LIST.UNKNOWN
+------CP list _Var574.LIST.UNKNOWN.false _Var575.LIST.UNKNOWN.false _Var576.LIST.UNKNOWN.false _Var577.LIST.UNKNOWN.false _Var578.LIST.UNKNOWN.false _Var579.LIST.UNKNOWN.false _Var580.LIST.UNKNOWN
+------CP rmvar _Var575 _Var577 _Var579
+------CP createvar X /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp172 true MATRIX binary -1 -1 -1 -1 copy
+------FED fedinit matrix.SCALAR.STRING.true _Var573.LIST.UNKNOWN.false _Var580.LIST.UNKNOWN.false X.MATRIX.FP64
+------CP rmvar _Var573 _Var580
+------CP list 130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_labels_3_1.data.SCALAR.STRING.true 130.149.237.13:8002//workspace/experiments/data/continuous/ADULT_labels_3_2.data.SCALAR.STRING.true 130.149.237.14:8003//workspace/experiments/data/continuous/ADULT_labels_3_3.data.SCALAR.STRING.true _Var581.LIST.UNKNOWN
+------CP list 16667.SCALAR.INT64.true 1.SCALAR.INT64.true _Var582.LIST.UNKNOWN
+------CP list 33334.SCALAR.INT64.true 1.SCALAR.INT64.true _Var583.LIST.UNKNOWN
+------CP list 50000.SCALAR.INT64.true 1.SCALAR.INT64.true _Var584.LIST.UNKNOWN
+------CP list _Var574.LIST.UNKNOWN.false _Var582.LIST.UNKNOWN.false _Var576.LIST.UNKNOWN.false _Var583.LIST.UNKNOWN.false _Var578.LIST.UNKNOWN.false _Var584.LIST.UNKNOWN.false _Var585.LIST.UNKNOWN
+------CP rmvar _Var574 _Var582 _Var576 _Var583 _Var578 _Var584
+------CP createvar Y /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp173 true MATRIX binary -1 -1 -1 -1 copy
+------FED fedinit matrix.SCALAR.STRING.true _Var581.LIST.UNKNOWN.false _Var585.LIST.UNKNOWN.false Y.MATRIX.FP64
+------CP rmvar _Var581 _Var585
+------CP createvar _mVar571 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp174 true MATRIX binary -1 -1 -1 -1 copy
+------FED memo_def Y.MATRIX.FP64 _mVar571.MATRIX.FP64 1583
+------CP createvar _mVar572 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp175 true MATRIX binary -1 -1 -1 -1 copy
+------FED fed_supply _mVar571.MATRIX.FP64 _mVar572.MATRIX.FP64 LOCAL ROW@COLLECT@POOLv1:MTMwLjE0OS4yMzcuMTI.8001,MTMwLjE0OS4yMzcuMTM.8002,MTMwLjE0OS4yMzcuMTQ.8003.SCALAR.STRING.true 0,1,1583,LOCAL,147,Y2Fub25pY2FsL3Yy.SCALAR.STRING.true
+------CP rmvar _mVar571
+------CP uamean _mVar572.MATRIX.FP64 _Var586.SCALAR.FP64 4
+------CP createvar _mVar587 /evidence/tmp/scratch//_p0_0.0.0.0//_t0/temp176 true MATRIX binary 50000 1 1000 -1 copy
+------CP > _mVar572.MATRIX.FP64 _Var586.SCALAR.FP64.false _mVar587.MATRIX.FP64 4
+------CP rmvar _mVar572 _Var586
+------CP FCall .builtinNS m_glm true 14 1 X=X.MATRIX.FP64 Y=_mVar587.MATRIX.FP64 dfam=2.SCALAR.INT64.true vpow=0.0.SCALAR.FP64.true link=2.SCALAR.INT64.true lpow=1.0.SCALAR.FP64.true yneg=0.0.SCALAR.FP64.true icpt=0.SCALAR.INT64.true disp=0.0.SCALAR.FP64.true reg=0.0.SCALAR.FP64.true tol=1.0E-6.SCALAR.FP64.true moi=20.SCALAR.INT64.true mii=5.SCALAR.INT64.true verbose=false.SCALAR.BOOLEAN.true beta
+------CP rmvar _mVar587
+----GENERIC (lines 17-17) [recompile=false]
+------CP write beta.MATRIX.FP64 tmp/w1357/529ac865dd4557cff967/result.SCALAR.STRING.true csv.SCALAR.STRING.true false , false .SCALAR.STRING.true -1
+------CP rmvar beta
+
+SystemDS Statistics:
+Total elapsed time:		10.870901 sec.
+Total compilation time:		10.870901 sec.
+PlanningFullInitialReceipt schema=planning-full-initial-v1 Tplanning_full_initial_nanos=10852171060
+Compile Phase Parse:		0.000000 sec.
+Compile Phase HopsBuild:	0.000000 sec.
+Compile Phase HopsRewrite:	0.867238 sec.
+Compile Observed HOPs:		973.
+Compile Phase LopsBuild:	9.268072 sec.
+Compile Phase LopsRewrite:	0.001778 sec.
+Compile Phase RuntimeProgram:	0.058904 sec.
+Compile Phase FedPlanner:	9.246270 sec.
+Total execution time:		0.000 sec.
+Cache hits (Mem/Li/WB/FS/HDFS):	0/0/0/0/0.
+Cache writes (Li/WB/FS/HDFS):	0/0/0/0.
+Cache times (ACQr/m, RLS, EXP):	0.000/0.000/0.000/0.000 sec.
+HOP DAGs recompiled (PRED, SB):	0/0.
+HOP DAGs recompile time:	0.000 sec.
+Total JIT compile time:		17.474 sec.
+Total JVM GC count:		28.
+Total JVM GC time:		0.49 sec.
+Heavy hitter instructions:
+  #  Instruction  Time(s)  Count
+  1  log            0.100      4
+  2  ==             0.002    100
+  3  mvvar          0.002    189
+  4  -              0.001     26
+  5  +              0.000     11
+  6  *              0.000      5
+  7  &&             0.000     19
+  8  ^              0.000      3
+  9  >=             0.000      5
+ 10  ||             0.000      5
+ 11  <=             0.000      5
+ 12  >              0.000      2
+ 13  /              0.000      2
+ 14  !=             0.000      1
+ 15  sqrt           0.000      1
+

@@ -1,0 +1,2457 @@
+{
+  "actionContract": {
+    "checks": [
+      {
+        "actions": 2963,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-01/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 2963,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-02/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 2963,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-03/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 2967,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-01/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 2967,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-02/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 2967,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-03/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 86,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-01/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 86,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-02/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 86,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-03/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 90,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-01/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 90,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-02/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 90,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-03/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 90,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 494,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 3,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json",
+        "workload": "logreg"
+      },
+      {
+        "actions": 936,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 6,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json",
+        "workload": "glm"
+      },
+      {
+        "actions": 936,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 2,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json",
+        "workload": "glm"
+      },
+      {
+        "actions": 90,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 5,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 494,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 8,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json",
+        "workload": "logreg"
+      },
+      {
+        "actions": 90,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 2,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 936,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 5,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json",
+        "workload": "glm"
+      },
+      {
+        "actions": 494,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 8,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json",
+        "workload": "logreg"
+      },
+      {
+        "actions": 936,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json",
+        "workload": "glm"
+      },
+      {
+        "actions": 494,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 4,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json",
+        "workload": "logreg"
+      },
+      {
+        "actions": 90,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 7,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 90,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 2,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 494,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 5,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json",
+        "workload": "logreg"
+      },
+      {
+        "actions": 936,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 8,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json",
+        "workload": "glm"
+      },
+      {
+        "actions": 494,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json",
+        "workload": "logreg"
+      },
+      {
+        "actions": 936,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 3,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json",
+        "workload": "glm"
+      },
+      {
+        "actions": 90,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 6,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 936,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json",
+        "workload": "glm"
+      },
+      {
+        "actions": 494,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 3,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json",
+        "workload": "logreg"
+      },
+      {
+        "actions": 90,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 6,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 494,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1024/summary.json",
+        "workload": "logreg"
+      },
+      {
+        "actions": 936,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 3,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1024/summary.json",
+        "workload": "glm"
+      },
+      {
+        "actions": 90,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 5,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1024/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 494,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1536/summary.json",
+        "workload": "logreg"
+      },
+      {
+        "actions": 936,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 3,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1536/summary.json",
+        "workload": "glm"
+      },
+      {
+        "actions": 90,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 5,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1536/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 90,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 2,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/runtime/runtime-and-regional/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 490,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-01/summary.json",
+        "workload": "logreg"
+      },
+      {
+        "actions": 932,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 3,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-01/summary.json",
+        "workload": "glm"
+      },
+      {
+        "actions": 86,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 5,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-01/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 490,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-02/summary.json",
+        "workload": "logreg"
+      },
+      {
+        "actions": 932,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 3,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-02/summary.json",
+        "workload": "glm"
+      },
+      {
+        "actions": 86,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 5,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-02/summary.json",
+        "workload": "gnmf"
+      },
+      {
+        "actions": 490,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 1,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-03/summary.json",
+        "workload": "logreg"
+      },
+      {
+        "actions": 932,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 3,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-03/summary.json",
+        "workload": "glm"
+      },
+      {
+        "actions": 86,
+        "certificates": 1,
+        "firstFeasible": 1,
+        "initialBounds": 1,
+        "localSummaries": 1,
+        "row": 5,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-03/summary.json",
+        "workload": "gnmf"
+      }
+    ],
+    "errors": [],
+    "schema": "memo-local-action-contract-validation/v1",
+    "valid": true
+  },
+  "boundPointsCheckedIncludingFinal": 4515,
+  "certificateAudits": [
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-01/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-02/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-03/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-01/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-02/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-03/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-01/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-02/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-03/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-01/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-02/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-03/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 4,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 7,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 8,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 4,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 7,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 8,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 4,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 7,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 4,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 7,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 8,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 8,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 8,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-01/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-01/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-01/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-01/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 4,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-01/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-01/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 7,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-02/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-02/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-02/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 4,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-02/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-02/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 7,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-02/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 8,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-03/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-03/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-03/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-03/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-03/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-03/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 8,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-04/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-04/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-04/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-04/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-04/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 4,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-04/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-04/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-04/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-04/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 7,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-04/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-04/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 8,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-04/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-05/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-05/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-05/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-05/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-05/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-05/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-05/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 4,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-05/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-05/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-05/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-05/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 7,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-05/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-06/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-06/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-06/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-06/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-06/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-06/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-06/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-06/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-06/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-06/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-06/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 8,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-06/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-07/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-07/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-07/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-07/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-07/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-07/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-07/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 4,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-07/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-07/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-07/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-07/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 7,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-07/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1024/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1024/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1024/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1024/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1024/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1024/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1536/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1536/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1536/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1536/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1536/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1536/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-false-01/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-false-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-false-02/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-false-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-false-03/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-false-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-true-01/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-true-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-true-02/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-true-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-true-03/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-true-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/runtime/runtime-and-regional/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/runtime/runtime-and-regional/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/runtime/runtime-and-regional/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/runtime/runtime-and-regional/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-01/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-01/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-01/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-01/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-02/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-02/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-02/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-02/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-03/summary.json",
+      "certificate": 0,
+      "optimum": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-03/summary.json",
+      "certificate": 0,
+      "optimum": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-03/summary.json"
+    },
+    {
+      "baseline": "same-summary",
+      "baselineSummary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-03/summary.json",
+      "certificate": 0,
+      "optimum": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-03/summary.json"
+    }
+  ],
+  "certificatesChecked": 119,
+  "decimalPrecision": 300,
+  "errors": [],
+  "exactBaselineKeys": 3,
+  "failedOomWithoutCertificatesRetained": [],
+  "localRouteChecks": [
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-01/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-02/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-03/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-01/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-02/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-03/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-01/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-02/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-03/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-01/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-02/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-03/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 8,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 8,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 4,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 7,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 8,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1024/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1024/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1024/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1536/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1536/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1536/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/runtime/runtime-and-regional/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-01/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-01/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-01/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-02/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-02/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-02/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 1,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-03/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-03/summary.json"
+    },
+    {
+      "certificate": 0,
+      "directAttempts": 0,
+      "directExactSolves": 0,
+      "route": "LOCAL_CERTIFICATE_FIRST",
+      "row": 5,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-03/summary.json"
+    }
+  ],
+  "localRouteChecksPassed": 49,
+  "receiptValidation": {
+    "allRequestedCompileRowsPassed": true,
+    "compileRowsExpected": 195,
+    "compileRowsMatched": 195,
+    "errors": [],
+    "failedCompileRows": [],
+    "jobs": [
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 2,
+        "job": 0,
+        "name": "messages-on-seed-off-01",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-01/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 2,
+        "job": 1,
+        "name": "messages-on-seed-on-01",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-01/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 2,
+        "job": 2,
+        "name": "messages-off-seed-off-01",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-01/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 2,
+        "job": 3,
+        "name": "messages-off-seed-on-01",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-01/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 2,
+        "job": 4,
+        "name": "messages-off-seed-on-02",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-02/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 2,
+        "job": 5,
+        "name": "messages-on-seed-off-02",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-02/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 2,
+        "job": 6,
+        "name": "messages-off-seed-off-02",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-02/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 2,
+        "job": 7,
+        "name": "messages-on-seed-on-02",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-02/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 2,
+        "job": 8,
+        "name": "messages-off-seed-on-03",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-03/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 2,
+        "job": 9,
+        "name": "messages-on-seed-on-03",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-03/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 2,
+        "job": 10,
+        "name": "messages-on-seed-off-03",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-03/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 2,
+        "job": 11,
+        "name": "messages-off-seed-off-03",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-03/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 9,
+        "job": 0,
+        "name": "after-01",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+        "expectedRows": 9,
+        "job": 1,
+        "name": "before-01",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-01/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+        "expectedRows": 9,
+        "job": 2,
+        "name": "before-02",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-02/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 9,
+        "job": 3,
+        "name": "after-02",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 9,
+        "job": 4,
+        "name": "after-03",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+        "expectedRows": 9,
+        "job": 5,
+        "name": "before-03",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-03/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 9,
+        "job": 6,
+        "name": "after-04",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+        "expectedRows": 9,
+        "job": 7,
+        "name": "before-04",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-04/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 9,
+        "job": 8,
+        "name": "after-05",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+        "expectedRows": 9,
+        "job": 9,
+        "name": "before-05",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-05/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+        "expectedRows": 9,
+        "job": 10,
+        "name": "before-06",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-06/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 9,
+        "job": 11,
+        "name": "after-06",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 9,
+        "job": 12,
+        "name": "after-07",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+        "expectedRows": 9,
+        "job": 13,
+        "name": "before-07",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-07/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 6,
+        "job": 0,
+        "name": "heap-1024",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1024/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 6,
+        "job": 1,
+        "name": "heap-1536",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1536/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+        "expectedRows": 2,
+        "job": 0,
+        "name": "before-search-seed-false-01",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-false-01/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+        "expectedRows": 2,
+        "job": 1,
+        "name": "before-search-seed-true-01",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-true-01/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+        "expectedRows": 2,
+        "job": 2,
+        "name": "before-search-seed-false-02",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-false-02/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+        "expectedRows": 2,
+        "job": 3,
+        "name": "before-search-seed-true-02",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-true-02/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+        "expectedRows": 2,
+        "job": 4,
+        "name": "before-search-seed-false-03",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-false-03/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+        "expectedRows": 2,
+        "job": 5,
+        "name": "before-search-seed-true-03",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-true-03/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 3,
+        "job": 0,
+        "name": "runtime-and-regional",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/runtime/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/runtime/runtime-and-regional/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 6,
+        "job": 0,
+        "name": "seed-off-01",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-01/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 6,
+        "job": 1,
+        "name": "seed-off-02",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-02/summary.json"
+      },
+      {
+        "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v8",
+        "expectedRows": 6,
+        "job": 2,
+        "name": "seed-off-03",
+        "receipt": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/receipts.json",
+        "returncode": 0,
+        "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-03/summary.json"
+      }
+    ],
+    "jobsExpected": 38,
+    "jobsMatched": 38,
+    "observedSuites": [
+      "ablation",
+      "comparison",
+      "memory",
+      "old-search",
+      "runtime",
+      "seed-off"
+    ],
+    "receiptFiles": 6,
+    "requiredSuites": [
+      "comparison",
+      "ablation",
+      "runtime"
+    ],
+    "schema": "memo-local-certificate-first-receipt-validation/v1",
+    "valid": true
+  },
+  "schema": "memo-local-certificate-first-result-validation/v1",
+  "summaries": [
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-01/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-02/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-off-03/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-01/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-02/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-off-seed-on-03/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-01/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-02/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-off-03/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-01/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-02/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/ablation/messages-on-seed-on-03/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 9,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-01/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 9,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-02/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 9,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-03/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 9,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-04/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 9,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-05/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 9,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-06/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 9,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/after-07/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 9,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-01/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 9,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-02/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 9,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-03/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 9,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-04/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 9,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-05/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 9,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-06/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 9,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/comparison/before-07/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1024/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/memory/heap-1536/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-false-01/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-false-02/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-false-03/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-true-01/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-true-02/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 2,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/old-search/before-search-seed-true-03/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 3,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/runtime/runtime-and-regional/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-01/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-02/summary.json",
+      "valid": true
+    },
+    {
+      "errors": 0,
+      "rows": 6,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/evaluation/seed-off/seed-off-03/summary.json",
+      "valid": true
+    }
+  ],
+  "summaryFiles": 38,
+  "unauditedCertificates": [],
+  "valid": true
+}

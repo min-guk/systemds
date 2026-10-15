@@ -56,6 +56,23 @@ public class MemoMultiOutputBuiltinTest {
 	}
 
 	@Test
+	public void resolverKeepsPhysicalMultiOutputSlotDefinitionsDistinct() throws Exception {
+		MemoProgramFacts facts=MemoProgramFacts.analyze(compiled(QR));
+		facts.requireComplete();
+		MemoBindingResolver resolver=new MemoBindingResolver(facts);
+		MemoBindingResolver.OriginIdentity q=resolvedIdentity(facts,resolver,"Q");
+		MemoBindingResolver.OriginIdentity r=resolvedIdentity(facts,resolver,"R");
+		long qOrigin=MemoProgramModel.nativeDefinitionOrigin(q,
+			facts.valueBinding(q.nativeDefinitionOccurrenceId()),facts);
+		long rOrigin=MemoProgramModel.nativeDefinitionOrigin(r,
+			facts.valueBinding(r.nativeDefinitionOccurrenceId()),facts);
+
+		Assert.assertEquals(facts.valueBinding(transientRead(facts,"Q")),qOrigin);
+		Assert.assertEquals(facts.valueBinding(transientRead(facts,"R")),rOrigin);
+		Assert.assertNotEquals("separate physical output slots need separate marker identities",qOrigin,rOrigin);
+	}
+
+	@Test
 	public void nativeCatalogExposesOneCpRuleWithEveryLocalOutputSlot() throws Exception {
 		FunctionOp qr = (FunctionOp) builtin(MemoProgramFacts.analyze(compiled(QR))).hop();
 		MemoNativeRules.Result result = new MemoNativeRules().rules(qr, 2,
@@ -154,6 +171,19 @@ public class MemoMultiOutputBuiltinTest {
 		return facts.occurrences().stream().filter(occurrence -> name.equals(occurrence.hop().getName())
 			&& occurrence.hop().getOpString().startsWith("TRead")).mapToInt(MemoProgramFacts.Occurrence::id)
 			.findFirst().orElseThrow();
+	}
+
+	private static MemoBindingResolver.OriginIdentity resolvedIdentity(MemoProgramFacts facts,
+		MemoBindingResolver resolver,String name) {
+		int binding=facts.valueBinding(transientRead(facts,name));
+		List<MemoBindingResolver.OriginIdentity> identities=new ArrayList<>();
+		resolver.visitJoint(List.of(binding),MemoBindingResolver.EvaluationContext.empty(),environment -> {
+			identities.add(resolver.resolveOriginIdentity(binding,
+				MemoBindingResolver.EvaluationContext.empty(),environment));
+			return true;
+		});
+		Assert.assertEquals(1,identities.size());
+		return identities.get(0);
 	}
 
 	private static DMLProgram compiled(String script) throws Exception {

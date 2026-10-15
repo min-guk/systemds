@@ -26,6 +26,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.sysds.api.DMLScript;
@@ -80,6 +81,12 @@ public class MemoSharedSupplyRuntimeTest {
 			DMLTranslator translator=new DMLTranslator(program);
 			translator.liveVariableAnalysis(program); translator.validateParseTree(program); translator.constructHops(program);
 			MemoProgramFacts facts=MemoProgramFacts.analyze(program);
+			Assert.assertEquals(3,facts.calls().size());
+			Assert.assertEquals("each call retains a distinct caller-visible return after later calls execute",3,
+				facts.calls().stream().map(call -> call.returnBindingIds().get(0)).distinct().count());
+			Assert.assertEquals("all calls execute one shared compiled function body",1,
+				facts.calls().stream().map(call -> facts.functionSummary(call.functionSummaryId()).compiledOwnerIds())
+					.distinct().count());
 			MemoSources sources=MemoSources.acquire(facts,null);
 			var universe=MemoRuleBuilder.build(facts,sources,new MemoNativeRules());
 			MemoProgramModel original=new MemoProgramModel(facts,sources,universe,MemoProgramModel.Profile.defaults());
@@ -100,6 +107,10 @@ public class MemoSharedSupplyRuntimeTest {
 			Assert.assertEquals("the original objective charges the retained upload once",0,
 				oneUpload.compareTo(cost.movement()));
 			var schedule=MemoPlanRegistry.schedule(program);
+			HashSet<String> physicalDefinitions=new HashSet<>();
+			Assert.assertTrue("one statement block cannot publish competing origins for one physical producer",
+				schedule.definitions().stream().allMatch(definition -> physicalDefinitions.add(
+					definition.statementBlockId()+":"+definition.producerHopId())));
 			var actions=schedule.scopes().stream().flatMap(scope -> scope.actions().stream()).toList();
 			Assert.assertEquals("two calls share one explicit action",1,actions.size());
 			Assert.assertEquals(MemoSupplyRegistry.Movement.UPLOAD,actions.get(0).recipe().movement());

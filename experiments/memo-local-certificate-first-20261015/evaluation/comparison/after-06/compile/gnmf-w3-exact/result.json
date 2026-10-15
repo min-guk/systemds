@@ -1,0 +1,62 @@
+{
+  "algorithm": "EXACT",
+  "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+  "compile": {
+    "executionSeconds": 0.0,
+    "fullCompileSeconds": 1.502599,
+    "fullInitialPlanningSeconds": 1.495318104,
+    "runtimeProgramSeconds": 0.046673,
+    "verified": true
+  },
+  "compileHeapMiB": 3072,
+  "deterministicTreeLimits": {
+    "cacheEntries": 4096,
+    "factorCells": 256,
+    "frontierNodes": 10000,
+    "searchNodes": 2000
+  },
+  "dualCertificates": [],
+  "dualOptions": {
+    "clusterCells": 4096,
+    "diagnosticNodes": 9223372036854775807,
+    "diagnostics": false,
+    "directCells": 2000000,
+    "directExact": true,
+    "factorCells": 256,
+    "factorDiagnostics": false,
+    "factorDiagnosticsMaxFactors": 10000,
+    "improveSeed": false,
+    "localImproveSeed": true,
+    "localMessages": true,
+    "memoryBytes": 9223372036854775807,
+    "seedWork": 100000
+  },
+  "externalWatchdogSeconds": 900,
+  "failureCategory": null,
+  "memoPlans": [
+    {
+      "algorithm": "EXACT",
+      "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+      "phaseNanos": {
+        "facts": 38205869,
+        "model": 141361156,
+        "optimization": 202190104,
+        "projection": 62092949,
+        "rules": 214186021
+      },
+      "planningNanos": 658036099,
+      "status": "OPTIMAL"
+    }
+  ],
+  "peakContainerMemoryUsageBytes": 124675686,
+  "phase": "source-fullcompile",
+  "returncode": 0,
+  "schema": "systemds-memo-tree-dp-attempt/v1",
+  "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+  "status": "passed",
+  "timedOut": false,
+  "treeCertificates": [],
+  "wallSeconds": 2.947813406586647,
+  "workers": 3,
+  "workload": "gnmf"
+}

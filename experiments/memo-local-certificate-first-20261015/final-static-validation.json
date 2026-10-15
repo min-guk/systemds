@@ -1,0 +1,36 @@
+{
+  "pythonTests": [
+    {
+      "argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/fedplanner/tests",
+        "-p",
+        "test_run_memo_tree_dp_benchmark.py"
+      ],
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "experiments/memo-local-certificate-first-20261015",
+        "-p",
+        "analyze_local_results_test.py"
+      ],
+      "returncode": 0
+    }
+  ],
+  "pythonScriptsParse": true,
+  "javaSourcesMatchFrozenEngine": 3981,
+  "sourceHashMismatches": [],
+  "diffCheck": true,
+  "newSourceWhitespaceErrors": [],
+  "brokenDocumentLinks": []
+}

@@ -1,0 +1,98 @@
+[
+  {
+    "suite": "comparison",
+    "returncode": 0,
+    "argv": [
+      "python3",
+      "experiments/memo-local-certificate-first-20261015/run_evaluation.py",
+      "--suite",
+      "comparison",
+      "--output",
+      "experiments/memo-local-certificate-first-20261015/evaluation/comparison",
+      "--engine",
+      "experiments/memo-local-certificate-first-20261015/engine-v8",
+      "--repetitions",
+      "7"
+    ]
+  },
+  {
+    "suite": "ablation",
+    "returncode": 0,
+    "argv": [
+      "python3",
+      "experiments/memo-local-certificate-first-20261015/run_evaluation.py",
+      "--suite",
+      "ablation",
+      "--output",
+      "experiments/memo-local-certificate-first-20261015/evaluation/ablation",
+      "--engine",
+      "experiments/memo-local-certificate-first-20261015/engine-v8",
+      "--repetitions",
+      "3"
+    ]
+  },
+  {
+    "suite": "runtime",
+    "returncode": 0,
+    "argv": [
+      "python3",
+      "experiments/memo-local-certificate-first-20261015/run_evaluation.py",
+      "--suite",
+      "runtime",
+      "--output",
+      "experiments/memo-local-certificate-first-20261015/evaluation/runtime",
+      "--engine",
+      "experiments/memo-local-certificate-first-20261015/engine-v8",
+      "--repetitions",
+      "1"
+    ]
+  },
+  {
+    "suite": "memory",
+    "returncode": 0,
+    "argv": [
+      "python3",
+      "experiments/memo-local-certificate-first-20261015/run_evaluation.py",
+      "--suite",
+      "memory",
+      "--output",
+      "experiments/memo-local-certificate-first-20261015/evaluation/memory",
+      "--engine",
+      "experiments/memo-local-certificate-first-20261015/engine-v8",
+      "--repetitions",
+      "1"
+    ]
+  },
+  {
+    "suite": "old-search",
+    "returncode": 0,
+    "argv": [
+      "python3",
+      "experiments/memo-local-certificate-first-20261015/run_evaluation.py",
+      "--suite",
+      "old-search",
+      "--output",
+      "experiments/memo-local-certificate-first-20261015/evaluation/old-search",
+      "--engine",
+      "experiments/memo-local-certificate-first-20261015/engine-v8",
+      "--repetitions",
+      "3"
+    ]
+  },
+  {
+    "suite": "seed-off",
+    "returncode": 0,
+    "argv": [
+      "python3",
+      "experiments/memo-local-certificate-first-20261015/run_evaluation.py",
+      "--suite",
+      "seed-off",
+      "--repetitions",
+      "3",
+      "--engine",
+      "experiments/memo-local-certificate-first-20261015/engine-v8",
+      "--output",
+      "experiments/memo-local-certificate-first-20261015/evaluation/seed-off"
+    ]
+  }
+]

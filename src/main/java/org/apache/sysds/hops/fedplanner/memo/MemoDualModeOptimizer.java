@@ -66,8 +66,17 @@ public final class MemoDualModeOptimizer {
 		long certificateNanos,long clusterGroups,long clusterCells,long clusterQueries,long clusterCacheHits,
 		long clusterBytes,long clusterBuildNanos,long clusterQueryNanos,String route) { }
 	public record Progress(long nodes,BigDecimal lowerBound,BigDecimal upperBound) { }
+	public record LocalStatistics(long variables,long originalFactors,long completedMessages,long untouchedBuckets,
+		long messageTouchedVariables,long messageTouchedFactors,long candidatePreparations,long messageMemoryRejections,
+		long memoryRejections,long activeRegions,long unknownRegions,long deferredRegions,String messageDecline,
+		long propagationNanos,long propagatedRules,long propagationChecks) { }
 	public record Result(Status status,BigDecimal lowerBound,BigDecimal upperBound,int[] selectedRules,
-		Statistics statistics,List<Progress> progression,String reason,MemoOptimizer.Statistics kernelStatistics) {
+		Statistics statistics,List<Progress> progression,String reason,MemoOptimizer.Statistics kernelStatistics,
+		LocalStatistics localStatistics) {
+		public Result(Status status,BigDecimal lowerBound,BigDecimal upperBound,int[] selectedRules,
+			Statistics statistics,List<Progress> progression,String reason,MemoOptimizer.Statistics kernelStatistics) {
+			this(status,lowerBound,upperBound,selectedRules,statistics,progression,reason,kernelStatistics,null);
+		}
 		public Result {
 			selectedRules=selectedRules==null ? null : selectedRules.clone();
 			progression=List.copyOf(progression);
@@ -144,6 +153,8 @@ public final class MemoDualModeOptimizer {
 	public Result optimize() {
 		if(optimized) throw new IllegalStateException("A dual-mode invocation is single-use");
 		optimized=true;
+		if(mode==Mode.LOCAL)
+			return new MemoLocalOptimizer(sizes,coverage,nativeInput,checks,costs,options,listener).optimize();
 		for(boolean complete:coverage) if(!complete) return finish(Status.UNRESOLVED,null,"Incomplete candidate coverage");
 		for(int size:sizes) if(size==0) return finish(Status.INFEASIBLE,null,"Empty original domain");
 		long domainBytes=16L+8L*sizes.length;

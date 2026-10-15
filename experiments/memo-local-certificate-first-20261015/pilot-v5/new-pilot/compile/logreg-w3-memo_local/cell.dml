@@ -1,0 +1,16 @@
+# Global sizes for compile-time stamping in the experiment harness.
+N = 50000
+D = 128
+
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/binary/ADULT_features_3_1.data","130.149.237.13:8002//workspace/experiments/data/binary/ADULT_features_3_2.data","130.149.237.14:8003//workspace/experiments/data/binary/ADULT_features_3_3.data"), ranges=list(list(0,0),list(16667,128),list(16667,0),list(33334,128),list(33334,0),list(50000,128)))
+Y = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/binary/ADULT_labels_3_1.data","130.149.237.13:8002//workspace/experiments/data/binary/ADULT_labels_3_2.data","130.149.237.14:8003//workspace/experiments/data/binary/ADULT_labels_3_3.data"), ranges=list(list(0,0),list(16667,1),list(16667,0),list(33334,1),list(33334,0),list(50000,1)))
+
+Y = (Y < 0) + 1
+
+m = multiLogReg(
+  X=X, Y=Y,
+  verbose=FALSE, maxi=30, maxii=5, tol=1e-9, icpt=0,
+  numclasses=2, numrows=N, numcols=D
+)
+
+write(m, "tmp/w1357/e307dbd52bc178cad958/result", format= "csv")

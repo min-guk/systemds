@@ -174,6 +174,8 @@ class MemoTreeDpBenchmarkTest(unittest.TestCase):
                 "memoryBytes": 789, "diagnosticNodes": 1011}
         script = benchmark.container_script("TREE_DP_LOCAL", limits, dual)
         self.assertIn("<sysds.fedplanner.memo.algorithm>TREE_DP_LOCAL", config)
+        self.assertIn("<sysds.fedplanner.memo.local.messages>true", config)
+        self.assertIn("<sysds.fedplanner.memo.local.improveSeed>true", config)
         self.assertIn("-Dsysds.fedplanner.memo.algorithm=TREE_DP_LOCAL", script)
         self.assertIn("-Dsysds.fedplanner.memo.tree.searchNodes=2000", script)
         self.assertIn("-Dsysds.fedplanner.memo.dual.directExact=false", script)
@@ -182,8 +184,34 @@ class MemoTreeDpBenchmarkTest(unittest.TestCase):
         self.assertIn("-Dsysds.fedplanner.memo.dual.directCells=0", script)
         self.assertIn("-Dsysds.fedplanner.memo.dual.memoryBytes=789", script)
         self.assertIn("-Dsysds.fedplanner.memo.dual.diagnosticNodes=1011", script)
+        self.assertIn("-Dsysds.fedplanner.memo.local.messages=true", script)
+        self.assertIn("-Dsysds.fedplanner.memo.local.improveSeed=true", script)
         self.assertIn("-Xmx3072m", script)
         self.assertNotIn("timeout ", script)
+
+    def test_local_policy_flags_can_be_disabled_in_xml_and_jvm(self):
+        limits = {"searchNodes": 2000, "frontierNodes": 1000,
+                  "factorCells": 4096, "cacheEntries": 4096}
+        dual = {"directExact": True, "seedWork": 100000, "factorCells": 256,
+                "directCells": 2000000, "memoryBytes": 2**63-1,
+                "diagnosticNodes": 2**63-1, "localMessages": False,
+                "localImproveSeed": False}
+        config = benchmark.configuration("compile_memo", "MEMO_LOCAL", dual)
+        script = benchmark.container_script("MEMO_LOCAL", limits, dual)
+        self.assertIn("<sysds.fedplanner.memo.local.messages>false", config)
+        self.assertIn("<sysds.fedplanner.memo.local.improveSeed>false", config)
+        self.assertIn("-Dsysds.fedplanner.memo.local.messages=false", script)
+        self.assertIn("-Dsysds.fedplanner.memo.local.improveSeed=false", script)
+
+    def test_local_policy_parser_defaults_are_enabled_and_strict(self):
+        parser = benchmark.argument_parser()
+        defaults = parser.parse_args(["--engine", "/tmp/engine", "--sealed-stage", "/tmp/stage"])
+        self.assertTrue(defaults.local_messages)
+        self.assertTrue(defaults.local_improve_seed)
+        disabled = parser.parse_args(["--engine", "/tmp/engine", "--sealed-stage", "/tmp/stage",
+                                      "--local-messages", "false", "--local-improve-seed", "FALSE"])
+        self.assertFalse(disabled.local_messages)
+        self.assertFalse(disabled.local_improve_seed)
 
     def test_compile_heap_is_explicit_and_does_not_change_other_phase_defaults(self):
         limits = {"searchNodes": 2000, "frontierNodes": 1000,
@@ -203,6 +231,7 @@ class MemoTreeDpBenchmarkTest(unittest.TestCase):
             factor_cells=256, cache_entries=4096, dual_direct_exact=True,
             dual_seed_work=100000, dual_factor_cells=256, dual_direct_cells=2000000,
             dual_cluster_cells=128, dual_improve_seed=False, factor_diagnostics=True, factor_diagnostics_max_factors=50000, dual_diagnostics=True,
+            local_messages=False, local_improve_seed=True,
             dual_memory_bytes=2**63-1, dual_diagnostic_nodes=2**63-1,
             synthetic_repetitions=7, skip_synthetic=True, runtime_smoke=False)
         command = benchmark.reproduction_command(args,["gnmf"],["EXACT","MEMO_GLOBAL","MEMO_LOCAL"])
@@ -210,6 +239,8 @@ class MemoTreeDpBenchmarkTest(unittest.TestCase):
         self.assertIn("--dual-direct-cells 2000000",command)
         self.assertIn("--dual-cluster-cells 128",command)
         self.assertIn("--dual-improve-seed false",command)
+        self.assertIn("--local-messages false",command)
+        self.assertIn("--local-improve-seed true",command)
         self.assertIn("--factor-diagnostics true",command)
         self.assertIn("--factor-diagnostics-max-factors 50000",command)
         self.assertIn("--dual-diagnostics true",command)

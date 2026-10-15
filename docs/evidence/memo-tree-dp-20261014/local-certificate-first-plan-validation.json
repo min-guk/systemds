@@ -1,0 +1,39 @@
+{
+  "schema": "memo-local-plan-validation/v1",
+  "createdAtUtc": "2026-10-15T08:03:53.894983+00:00",
+  "baseCommit": "5734de2021f2841d82539063a6b450db69b9f7cb",
+  "documents": [
+    {
+      "path": "docs/COFEE_MEMO_LOCAL_CERTIFICATE_FIRST_PLAN_2026-10-15_KO.md",
+      "sha256": "729916b95faafc09522d037d88f27e93e9de9ade07ba1549028c36597d8d4a50",
+      "links": 25,
+      "linkErrors": [],
+      "balancedFences": true
+    },
+    {
+      "path": ".omx/plans/memo-local-certificate-first-20261015.md",
+      "sha256": "931229b28a6165b82c0f884471e39cbd1dd9aac2f70fcb270a0796b973b61890",
+      "links": 25,
+      "linkErrors": [],
+      "balancedFences": true
+    }
+  ],
+  "mirrorMatches": true,
+  "javaSourcesChecked": 3975,
+  "javaSourceChanges": [],
+  "example": {
+    "LB": "960",
+    "UB": "1000",
+    "gapPercent": "4.166666666666666666666666667",
+    "certified": true
+  },
+  "scope": "Plan only; no new optimizer implementation or benchmark.",
+  "valid": true,
+  "independentArchitectureReview": "Prior revision PASS; seed/proof separation addendum author-reviewed, not independently re-reviewed.",
+  "seedTargetExample": {
+    "oldUB": "120",
+    "newUB": "105",
+    "oldRequiredLB": "114.2857142857142857142857143",
+    "newRequiredLB": "1E+2"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "status": "ABORTED_UNCERTIFIED",
+  "reason": "Explicit development interruption after stack and bound trace showed excessive full-domain messages and cover search; no successful certificate",
+  "engine": "engine-v4",
+  "timeUTC": "2026-10-15T08:44:20.312176+00:00",
+  "baselineCompleted": [
+    "EXACT",
+    "MEMO_GLOBAL"
+  ],
+  "localCompleted": false
+}

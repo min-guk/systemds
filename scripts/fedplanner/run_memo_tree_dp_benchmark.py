@@ -68,7 +68,9 @@ def load_matrix_module():
     return module
 
 
-def configuration(planner: str, algorithm: str | None) -> str:
+def configuration(planner: str, algorithm: str | None,
+                  dual: dict[str, Any] | None = None) -> str:
+    dual = dual or {}
     values = {
         "sysds.native.blas": "none",
         "sysds.local.spark": "true",
@@ -78,6 +80,10 @@ def configuration(planner: str, algorithm: str | None) -> str:
         "sysds.codegen.enabled": "false",
         "sysds.localtmpdir": "/evidence/tmp/local",
         "sysds.scratch": "/evidence/tmp/scratch",
+        "sysds.fedplanner.memo.local.messages":
+            str(dual.get("localMessages", True)).lower(),
+        "sysds.fedplanner.memo.local.improveSeed":
+            str(dual.get("localImproveSeed", True)).lower(),
     }
     if algorithm is not None:
         values["sysds.fedplanner.memo.algorithm"] = algorithm
@@ -201,6 +207,8 @@ def reproduction_command(args: argparse.Namespace, workloads: list[str],
         "--dual-direct-cells", str(args.dual_direct_cells),
         "--dual-cluster-cells", str(args.dual_cluster_cells),
         "--dual-improve-seed", str(args.dual_improve_seed).lower(),
+        "--local-messages", str(getattr(args, "local_messages", True)).lower(),
+        "--local-improve-seed", str(getattr(args, "local_improve_seed", True)).lower(),
         "--factor-diagnostics", str(args.factor_diagnostics).lower(),
         "--factor-diagnostics-max-factors", str(args.factor_diagnostics_max_factors),
         "--dual-diagnostics", str(args.dual_diagnostics).lower(),
@@ -312,6 +320,8 @@ def container_script(algorithm: str, limits: dict[str, int], dual: dict[str, Any
         f"-Dsysds.fedplanner.memo.dual.directCells={dual['directCells']} "
         f"-Dsysds.fedplanner.memo.dual.clusterCells={dual.get('clusterCells', 4096)} "
         f"-Dsysds.fedplanner.memo.dual.improveSeed={str(dual.get('improveSeed', False)).lower()} "
+        f"-Dsysds.fedplanner.memo.local.messages={str(dual.get('localMessages', True)).lower()} "
+        f"-Dsysds.fedplanner.memo.local.improveSeed={str(dual.get('localImproveSeed', True)).lower()} "
         f"-Dsysds.fedplanner.memo.factorDiagnostics={str(dual.get('factorDiagnostics', False)).lower()} "
         f"-Dsysds.fedplanner.memo.factorDiagnostics.maxFactors={dual.get('factorDiagnosticsMaxFactors', 10000)} "
         f"-Dsysds.fedplanner.memo.dual.diagnostics={str(dual.get('diagnostics', False)).lower()} "
@@ -349,7 +359,7 @@ def run_compile_cell(output: Path, engine: Path, stage: Path, workload: str, wor
     attempt = output / "compile" / f"{workload}-w{workers}-{algorithm.lower()}"
     attempt.mkdir(parents=True, exist_ok=False)
     (attempt / "cell.dml").write_text(source, encoding="utf-8")
-    (attempt / "execution.xml").write_text(configuration("compile_memo", algorithm), encoding="utf-8")
+    (attempt / "execution.xml").write_text(configuration("compile_memo", algorithm, dual), encoding="utf-8")
     has_dependencies = bool(rendered["renderReceipt"].get("dependencies"))
     (attempt / "container-run.sh").write_text(
         container_script(algorithm, limits, dual, has_dependencies, heap_mib), encoding="utf-8")
@@ -447,7 +457,9 @@ def runtime_script(limits: dict[str, int]) -> str:
         f"-Dsysds.fedplanner.memo.tree.frontierNodes={limits['frontierNodes']} "
         "-cp \"$CP\" org.junit.runner.JUnitCore "
         "org.apache.sysds.hops.fedplanner.memo.MemoPlannerFederatedRuntimeTest "
-        "org.apache.sysds.hops.fedplanner.memo.MemoTreeDpTrainingRuntimeTest", ""))
+        "org.apache.sysds.hops.fedplanner.memo.MemoTreeDpTrainingRuntimeTest "
+        "org.apache.sysds.hops.fedplanner.memo.MemoSharedSupplyRuntimeTest "
+        "org.apache.sysds.hops.fedplanner.memo.MemoMultiOutputBuiltinTest", ""))
 
 
 def run_runtime_cell(output: Path, engine: Path, timeout: int,
@@ -645,7 +657,7 @@ def parse_boolean(value: str) -> bool:
     return normalized == "true"
 
 
-def main(argv: list[str] | None = None) -> int:
+def argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--engine", required=True, type=Path,
                         help="frozen engine containing classes/, lib/, and optionally test-classes/")
@@ -667,6 +679,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dual-direct-cells", type=int, default=2_000_000)
     parser.add_argument("--dual-cluster-cells", type=int, default=4096)
     parser.add_argument("--dual-improve-seed", type=parse_boolean, default=False)
+    parser.add_argument("--local-messages", type=parse_boolean, default=True)
+    parser.add_argument("--local-improve-seed", type=parse_boolean, default=True)
     parser.add_argument("--factor-diagnostics", type=parse_boolean, default=False)
     parser.add_argument("--factor-diagnostics-max-factors", type=int, default=10000)
     parser.add_argument("--dual-diagnostics", type=parse_boolean, default=False)
@@ -675,7 +689,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-synthetic", action="store_true")
     parser.add_argument("--synthetic-repetitions", type=int, default=7)
     parser.add_argument("--runtime-smoke", action="store_true")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = argument_parser().parse_args(argv)
     args.output_root = absolute_output_root(args.output_root)
     workloads = parse_list(args.workloads, WORKLOADS, "--workloads")
     algorithms = parse_list(args.algorithms, ALGORITHMS, "--algorithms")
@@ -685,6 +703,7 @@ def main(argv: list[str] | None = None) -> int:
             "factorCells": args.dual_factor_cells, "directCells": args.dual_direct_cells,
             "memoryBytes": args.dual_memory_bytes, "clusterCells": args.dual_cluster_cells,
             "improveSeed": args.dual_improve_seed, "factorDiagnostics": args.factor_diagnostics,
+            "localMessages": args.local_messages, "localImproveSeed": args.local_improve_seed,
             "factorDiagnosticsMaxFactors": args.factor_diagnostics_max_factors,
             "diagnostics": args.dual_diagnostics,
             "diagnosticNodes": args.dual_diagnostic_nodes}

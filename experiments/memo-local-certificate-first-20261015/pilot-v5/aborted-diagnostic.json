@@ -1,0 +1,6 @@
+{
+  "status": "ABORTED_UNCERTIFIED",
+  "reason": "GLM refinement regression under investigation; LogReg earlier produced epsilon certificate but physical lowering rejected its plan, so that attempt is a pipeline failure",
+  "engine": "engine-v5",
+  "timeUTC": "2026-10-15T08:51:16.103894+00:00"
+}

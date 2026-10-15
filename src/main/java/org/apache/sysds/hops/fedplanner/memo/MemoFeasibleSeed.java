@@ -95,6 +95,30 @@ public final class MemoFeasibleSeed {
 	}
 
 	/**
+	 * Finds the first fully legal original-model witness without invoking an exact optimization kernel.
+	 * The work limit bounds only this heuristic search: exhaustion, or even a complete unsuccessful
+	 * enumeration, does not prove the incoming domains infeasible.
+	 */
+	public static Result findFirst(int[] sizes, double[][] nativeCosts, List<MemoOptimizer.Check> checks,
+		List<MemoOptimizer.CostTerm> costs, BitSet[] proofDomains, long workLimit,
+		MemoResourcePolicy resources) {
+		Objects.requireNonNull(sizes);
+		Objects.requireNonNull(nativeCosts);
+		Objects.requireNonNull(checks);
+		Objects.requireNonNull(costs);
+		Objects.requireNonNull(resources);
+		if(workLimit<0) throw new IllegalArgumentException("Negative seed work limit");
+		MemoResourcePolicy seedResources=resources;
+		if(workLimit>0) {
+			long workspace=estimatedWorkspace(sizes,nativeCosts,proofDomains);
+			if(!resources.admit(workspace)) return new Result(null,null,0,0,null,"RESOURCE_REJECTED");
+			seedResources=resources.withResidentBytes(workspace);
+		}
+		return new MemoFeasibleSeed(sizes,nativeCosts,checks,costs,proofDomains,workLimit,seedResources)
+			.findFirstWitness();
+	}
+
+	/**
 	 * Improves an already feasible incumbent by exactly solving bounded conditional scopes.  Variables
 	 * outside each scope are fixed to the incumbent, and neither skipped nor infeasible conditional
 	 * blocks make any statement about feasibility of the original proof domains.
@@ -118,6 +142,32 @@ public final class MemoFeasibleSeed {
 		MemoFeasibleSeed seed=new MemoFeasibleSeed(sizes,nativeCosts,checks,costs,proofDomains,workLimit,
 			resources.withResidentBytes(workspace));
 		return seed.improve(initialSelected,scopes);
+	}
+
+	/**
+	 * Returns after the first strictly cheaper, fully validated witness found in the supplied
+	 * conditional scopes.  It performs bounded enumeration only and never publishes a proof for a
+	 * conditional block or for the original domains.
+	 */
+	public static Result improveFirst(int[] sizes, double[][] nativeCosts, List<MemoOptimizer.Check> checks,
+		List<MemoOptimizer.CostTerm> costs, BitSet[] proofDomains, int[] initialSelected,
+		List<int[]> scopes, long workLimit, MemoResourcePolicy resources) {
+		Objects.requireNonNull(sizes);
+		Objects.requireNonNull(nativeCosts);
+		Objects.requireNonNull(checks);
+		Objects.requireNonNull(costs);
+		Objects.requireNonNull(initialSelected);
+		Objects.requireNonNull(scopes);
+		Objects.requireNonNull(resources);
+		if(workLimit<0) throw new IllegalArgumentException("Negative seed work limit");
+		if(initialSelected.length!=sizes.length)
+			throw new IllegalArgumentException("Initial selection owner mismatch");
+		for(int[] scope:scopes) Objects.requireNonNull(scope,"Null improvement scope");
+		long workspace=estimatedImproveWorkspace(sizes,nativeCosts,proofDomains,initialSelected,scopes);
+		if(!resources.admit(workspace)) return new Result(null,null,0,0,null,"RESOURCE_REJECTED");
+		MemoFeasibleSeed seed=new MemoFeasibleSeed(sizes,nativeCosts,checks,costs,proofDomains,workLimit,
+			resources.withResidentBytes(workspace));
+		return seed.improveFirstWitness(initialSelected,scopes);
 	}
 
 	private Result find() {
@@ -163,6 +213,44 @@ public final class MemoFeasibleSeed {
 		}
 	}
 
+	private Result findFirstWitness() {
+		for(BitSet domain : proofDomains)
+			if(domain.isEmpty())
+				return result(null,null,null,"EMPTY_PROOF_DOMAIN");
+		if(workLimit == 0)
+			return result(null,null,null,"WORK_LIMIT");
+
+		int[] greedy = new int[sizes.length];
+		Arrays.fill(greedy,-1);
+		BitSet blockedChecks = new BitSet(checks.size());
+		int deadOwner = greedy(greedy,blockedChecks);
+		if(deadOwner < 0 && fullyFeasible(greedy))
+			return result(greedy,fullCost(greedy),null,"GREEDY_FEASIBLE");
+		if(evaluations >= workLimit)
+			return result(null,null,null,"WORK_LIMIT");
+
+		BitSet region = repairRegion(greedy,deadOwner,blockedChecks);
+		boolean sawUnknown=false;
+		while(true) {
+			BitSet[] restrictions = conditionalDomains(greedy,region);
+			repairs++;
+			SearchResult repair = enumerateFirst(restrictions,null);
+			sawUnknown |= repair.unknown;
+			if(repair.selected != null && fullyFeasible(repair.selected))
+				return result(repair.selected,repair.cost,null,
+					repair.status == SearchStatus.COMPLETE ? "FIRST_REPAIRED" : "FIRST_REPAIRED_AT_WORK_LIMIT");
+			if(repair.status == SearchStatus.LIMITED)
+				return result(null,null,null,"WORK_LIMIT");
+			BitSet expanded = expandRegion(region);
+			if(expanded.equals(region)) {
+				if(region.cardinality() == sizes.length)
+					return result(null,null,null,sawUnknown ? "UNRESOLVED_UNKNOWN" : "NO_FEASIBLE_WITNESS");
+				expanded.set(0,sizes.length);
+			}
+			region = expanded;
+		}
+	}
+
 	private Result improve(int[] initialSelected, List<int[]> sourceScopes) {
 		int[] incumbent=initialSelected.clone();
 		for(int owner=0;owner<sizes.length;owner++)
@@ -198,6 +286,31 @@ public final class MemoFeasibleSeed {
 		String reason=evaluations>=workLimit ? improvedAny ? "IMPROVED_AT_WORK_LIMIT" : "WORK_LIMIT"
 			: improvedAny ? "IMPROVED" : "NO_IMPROVEMENT";
 		return result(incumbent,incumbentCost,null,reason);
+	}
+
+	private Result improveFirstWitness(int[] initialSelected, List<int[]> sourceScopes) {
+		int[] incumbent=initialSelected.clone();
+		for(int owner=0;owner<sizes.length;owner++)
+			if(incumbent[owner]<0 || incumbent[owner]>=sizes[owner] || !proofDomains[owner].get(incumbent[owner]))
+				throw new IllegalArgumentException("Initial selection is outside proof domain for owner "+owner);
+		if(!fullyFeasible(incumbent))
+			throw new IllegalArgumentException("Initial selection is not fully legal in the original model");
+		BigDecimal incumbentCost=fullCost(incumbent);
+		List<BitSet> scopes=copyAndValidateScopes(sourceScopes);
+		if(workLimit==0 || scopes.isEmpty())
+			return result(incumbent,incumbentCost,null,workLimit==0 ? "WORK_LIMIT" : "NO_SCOPES");
+
+		for(BitSet scope:scopes) {
+			if(scope.isEmpty() || evaluations>=workLimit) continue;
+			repairs++;
+			SearchResult candidate=enumerateFirst(conditionalDomains(incumbent,scope),incumbentCost);
+			if(candidate.selected!=null && fullyFeasible(candidate.selected))
+				return result(candidate.selected,candidate.cost,null,"FIRST_IMPROVEMENT");
+			if(candidate.status==SearchStatus.LIMITED)
+				return result(incumbent,incumbentCost,null,"WORK_LIMIT");
+		}
+		return result(incumbent,incumbentCost,null,
+			evaluations>=workLimit ? "WORK_LIMIT" : "NO_IMPROVEMENT");
 	}
 
 	private List<BitSet> copyAndValidateScopes(List<int[]> scopes) {
@@ -320,6 +433,43 @@ public final class MemoFeasibleSeed {
 			if(result.cost==null || value.compareTo(result.cost)<0 || value.compareTo(result.cost)==0 &&
 				lexicographicallyLess(selected,result.selected)) {
 				result.cost=value; result.selected=selected.clone();
+			}
+		}
+		return result;
+	}
+
+	private SearchResult enumerateFirst(BitSet[] restrictions, BigDecimal exclusiveUpperBound) {
+		SearchResult result=new SearchResult();
+		result.status=SearchStatus.COMPLETE;
+		int[] selected=new int[sizes.length]; Arrays.fill(selected,-1);
+		if(sizes.length==0) {
+			MemoOptimizer.Truth truth=fullTruth(selected);
+			if(truth==MemoOptimizer.Truth.UNKNOWN) result.unknown=true;
+			if(truth==MemoOptimizer.Truth.YES) {
+				BigDecimal value=fullCost(selected);
+				if(exclusiveUpperBound==null || value.compareTo(exclusiveUpperBound)<0) {
+					result.cost=value; result.selected=selected;
+				}
+			}
+			return result;
+		}
+		int owner=0;
+		while(owner>=0) {
+			int rule=restrictions[owner].nextSetBit(selected[owner]+1);
+			if(rule<0) {
+				selected[owner]=-1; owner--; continue;
+			}
+			if(!consume()) { result.status=SearchStatus.LIMITED; break; }
+			selected[owner]=rule;
+			if(!closedChecksAllow(owner,selected,result)) continue;
+			if(owner+1<sizes.length) { selected[++owner]=-1; continue; }
+			MemoOptimizer.Truth truth=fullTruth(selected);
+			if(truth==MemoOptimizer.Truth.UNKNOWN) result.unknown=true;
+			if(truth!=MemoOptimizer.Truth.YES) continue;
+			BigDecimal value=fullCost(selected);
+			if(exclusiveUpperBound==null || value.compareTo(exclusiveUpperBound)<0) {
+				result.cost=value; result.selected=selected.clone();
+				return result;
 			}
 		}
 		return result;

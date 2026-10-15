@@ -127,7 +127,9 @@ public final class MemoSupplyLowering {
 		for(Map.Entry<Lop, Integer> entry : definitionsPerProducer.entrySet())
 			if(entry.getValue() != 1)
 				throw new LopsException("One physical Memo producer cannot publish multiple native origin markers: hop="
-					+ entry.getKey().getHopID() + " definitions=" + entry.getValue());
+					+ entry.getKey().getHopID() + " definitions=" + entry.getValue() + " sites="
+					+ resolvedDefinitions.values().stream().filter(value -> value.producer()==entry.getKey())
+						.map(ResolvedDefinition::site).toList());
 		Set<Lop> exactPhysicalDAG = Collections.newSetFromMap(new IdentityHashMap<>());
 		exactPhysicalDAG.addAll(lops);
 		Map<DefinitionKey, List<PhysicalUse>> markerUses = new LinkedHashMap<>();

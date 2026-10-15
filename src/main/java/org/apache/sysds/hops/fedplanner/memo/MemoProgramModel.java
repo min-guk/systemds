@@ -1870,22 +1870,24 @@ public final class MemoProgramModel {
 		Set<MemoPlanRegistry.ActionEdge> edges = new LinkedHashSet<>();
 		for(ScheduledDemand demand : demands) {
 			long region=retentionRegions.get(demand.scope());
-			Action action=new Action(epoch,demand.identity().visibleBindingId(),demand.target(),demand.recipe(),
-				region,"canonical/v2");
-			actions.computeIfAbsent(demand.scope(),ignored -> new LinkedHashSet<>()).add(action);
 			Occurrence nativeDefinition=facts.occurrence(demand.identity().nativeDefinitionOccurrenceId());
-			long nativeOrigin=demand.identity().boundarySlot()>=0
-				? demand.identity().visibleBindingId() : facts.valueBinding(nativeDefinition.id());
+			long nativeOrigin=nativeDefinitionOrigin(demand.identity(),facts.valueBinding(nativeDefinition.id()),facts);
+			long actionOrigin=demand.identity().exportChain().isEmpty()
+				? nativeOrigin : demand.identity().visibleBindingId();
+			Action action=new Action(epoch,actionOrigin,demand.target(),demand.recipe(),region,"canonical/v2");
+			actions.computeIfAbsent(demand.scope(),ignored -> new LinkedHashSet<>()).add(action);
 			Hop definitionHop=nativeOutputHop(demand.identity(),nativeDefinition.hop());
 			definitions.add(new MemoPlanRegistry.DefinitionSite(nativeDefinition.statementBlockId(),
 				definitionHop.getHopID(),nativeOrigin));
+			int exportIndex=0;
 			for(var export : demand.identity().exportChain()) {
 				var call=facts.call(export.callId());
 				if(call.callOccurrenceId()<0)
 					throw new IllegalStateException("Retained export has no exact call occurrence: "+export.callId());
 				Occurrence callOccurrence=facts.occurrence(call.callOccurrenceId());
 				returns.add(new MemoPlanRegistry.ReturnDefinitionSite(callOccurrence.statementBlockId(),
-					callOccurrence.hop().getHopID(),export.outputSlot(),export.sourceBindingId(),export.targetBindingId()));
+					callOccurrence.hop().getHopID(),export.outputSlot(),
+					exportIndex++==0 ? nativeOrigin : export.sourceBindingId(),export.targetBindingId()));
 			}
 			edges.add(new MemoPlanRegistry.ActionEdge(demand.edge().statementBlockId(),
 				demand.edge().producerHopId(),demand.edge().consumerHopId(),demand.edge().inputPosition(),action));
@@ -1896,6 +1898,39 @@ public final class MemoProgramModel {
 		return new MemoPlanRegistry.SupplySchedule(scopes,List.copyOf(definitions),List.copyOf(edges),List.copyOf(returns));
 	}
 
+	/** Resolve the logical native source before physical occurrences are canonicalized. Distinct
+	 * caller return bindings are created by the explicit export chain. */
+	static long nativeDefinitionOrigin(MemoBindingResolver.OriginIdentity identity,long nativeBinding) {
+		return identity.exportChain().isEmpty()
+			? (identity.boundarySlot()>=0 ? identity.visibleBindingId() : nativeBinding)
+			: identity.exportChain().get(0).sourceBindingId();
+	}
+
+	/** Canonicalize native definitions which have several logical occurrences but compile to one
+	 * physical producer. The marker and its direct actions share this physical identity; the first
+	 * explicit return remap exports this identity to the caller-visible target. */
+	static long nativeDefinitionOrigin(MemoBindingResolver.OriginIdentity identity,long nativeBinding,
+		MemoProgramFacts facts) {
+		long logical=nativeDefinitionOrigin(identity,nativeBinding);
+		if(identity.nativeDefinitionOccurrenceId()<0) return logical;
+		Occurrence nativeOccurrence=facts.occurrence(identity.nativeDefinitionOccurrenceId());
+		long canonical=Long.MAX_VALUE;
+		for(int occurrenceId : facts.occurrenceIds(nativeOccurrence.hop())) {
+			// Only aliases of one block-local producer event share its runtime epoch.
+			if(facts.occurrence(occurrenceId).statementBlockId()!=nativeOccurrence.statementBlockId()) continue;
+			long binding=identity.boundarySlot()<0 ? facts.valueBinding(occurrenceId)
+				: nativeOutputBinding(facts,occurrenceId,identity.boundarySlot());
+			if(binding>=0) canonical=Math.min(canonical,binding);
+		}
+		return canonical==Long.MAX_VALUE ? logical : canonical;
+	}
+
+	private static long nativeOutputBinding(MemoProgramFacts facts,int occurrenceId,int slot) {
+		for(var binding : facts.bindings())
+			if(binding.kind()==MemoProgramFacts.BindingKind.DEFINITION
+				&& binding.referenceId()==occurrenceId && binding.position()==slot) return binding.id();
+		return -1;
+	}
 
 	/** All runtime residencies of one transparent value; no alias creates a new layout. */
 	public Set<MemoPartition> selectedLayouts(int owner,int[] selected) {

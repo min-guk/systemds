@@ -1,0 +1,70 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+BOUNDARY_CONFLICT_NODES=15
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+[ERROR] Tests run: 14, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.13 s <<< FAILURE! - in org.apache.sysds.hops.fedplanner.memo.MemoLocalMessagesTest
+[ERROR] org.apache.sysds.hops.fedplanner.memo.MemoLocalMessagesTest.materializesOnlySelectedSmallConflictUnderTightMemory  Time elapsed: 0.067 s  <<< FAILURE!
+java.lang.AssertionError: expected:<2> but was:<1>
+	at org.apache.sysds.hops.fedplanner.memo.MemoLocalMessagesTest.materializesOnlySelectedSmallConflictUnderTightMemory(MemoLocalMessagesTest.java:74)
+
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+RESOLVER_COW_STATE_SHA256=3c146f552ac628e7cdc63de118cbb438a7c99b379887faf8a9fc78411d787210
+RESOLVER_COW_ENV_SHA256=e8e4da3f6c67602b3ca3f7f032ec607f0835e38d0c60d2525b24d001b7c15f69
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/15 10:54:12 ERROR controlprogram.ProgramBlock: Function output Y is missing.
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+TREE_DP_TRAINING kind=linear algorithm=EXACT status=OPTIMAL weights=[0.471, 0.432] cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+TREE_DP_TRAINING kind=linear algorithm=TREE_DP_GLOBAL status=OPTIMAL weights=[0.471, 0.432] cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+TREE_DP_TRAINING kind=linear algorithm=TREE_DP_LOCAL status=OPTIMAL weights=[0.471, 0.432] cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+TREE_DP_TRAINING kind=linear algorithm=MEMO_GLOBAL status=OPTIMAL weights=[0.471, 0.432] cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+TREE_DP_TRAINING kind=linear algorithm=MEMO_LOCAL status=EPSILON_OPTIMAL weights=[0.471, 0.432] cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+TREE_DP_TRAINING kind=logistic algorithm=EXACT status=OPTIMAL weights=[0.4893567360937929, 0.3790640837187814] cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+TREE_DP_TRAINING kind=logistic algorithm=TREE_DP_GLOBAL status=OPTIMAL weights=[0.4893567360937929, 0.3790640837187814] cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+TREE_DP_TRAINING kind=logistic algorithm=TREE_DP_LOCAL status=OPTIMAL weights=[0.4893567360937929, 0.3790640837187814] cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+TREE_DP_TRAINING kind=logistic algorithm=MEMO_GLOBAL status=OPTIMAL weights=[0.4893567360937929, 0.3790640837187814] cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+TREE_DP_TRAINING kind=logistic algorithm=MEMO_LOCAL status=EPSILON_OPTIMAL weights=[0.4893567360937929, 0.3790640837187814] cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+[ERROR] Failures: 
+[ERROR]   MemoLocalMessagesTest.materializesOnlySelectedSmallConflictUnderTightMemory:74 expected:<2> but was:<1>
+[ERROR] Tests run: 269, Failures: 1, Errors: 0, Skipped: 0
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.0.0:test (default-test) on project systemds: There are test failures.
+[ERROR] 
+[ERROR] Please refer to /home/mchoi/cofee-tree-dp-20261014/target/surefire-reports for the individual test results.
+[ERROR] Please refer to dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

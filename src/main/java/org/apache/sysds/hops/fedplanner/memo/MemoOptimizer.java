@@ -63,6 +63,7 @@ public final class MemoOptimizer {
 		/** Read-only factor evaluation shared by independently selectable optimizers. */
 		Truth evaluate(int[] scopedRules) { return predicate.test(scopedRules.clone()); }
 		public int[] owners() { return owners.clone(); }
+		int[][] certifiedTruthClasses() { return copyCostClasses(truthClasses); }
 	}
 	/** A term has exactly one cost owner. A shared movement is one term with several demands.
 	 * The evaluator is pure and finite for every complete scoped tuple, including
@@ -135,6 +136,16 @@ public final class MemoOptimizer {
 			result=Objects.requireNonNull(result);
 			domains=cloneDomains(domains);
 			kernel=Objects.requireNonNull(kernel);
+		}
+		@Override public BitSet[] domains() { return cloneDomains(domains); }
+	}
+	/** Sound feasibility filtering only.  It never constructs a plan or invokes
+	 * normalization, Tree DP, variable elimination, cost optimization, or search. */
+	public record PropagationResult(boolean feasible,boolean completeCoverage,BitSet[] domains,
+		Statistics statistics) {
+		public PropagationResult {
+			domains=cloneDomains(domains);
+			statistics=Objects.requireNonNull(statistics);
 		}
 		@Override public BitSet[] domains() { return cloneDomains(domains); }
 	}
@@ -318,6 +329,53 @@ public final class MemoOptimizer {
 				(incumbent == null || unresolvedLowerBound.compareTo(incumbent) <= 0) ? Status.UNRESOLVED
 			: selected == null ? Status.INFEASIBLE : Status.OPTIMAL;
 		return new Result(status, incumbent, selected, statistics());
+	}
+
+	/**
+	 * Applies optional original-ordinal restrictions and runs the same bounded,
+	 * UNKNOWN-safe support filtering used by exact Memo. A true feasible flag
+	 * means only that this pass did not prove infeasibility; it is not a witness.
+	 * Only a proved-NO support removes an ordinal.  The instance is consumed.
+	 */
+	public PropagationResult propagateOnly(BitSet[] restrictions) {
+		if(optimized) throw new IllegalStateException("Optimizer invocation already consumed");
+		optimized=true;
+		applyRestrictions(restrictions);
+		boolean covered=complete();
+		boolean feasible=Arrays.stream(domains).noneMatch(BitSet::isEmpty);
+		if(covered && feasible) {
+			for(int id=0;id<checks.size();id++) enqueue(id);
+			feasible=propagate() && Arrays.stream(domains).noneMatch(BitSet::isEmpty);
+		}
+		return new PropagationResult(feasible,covered,domains,statistics());
+	}
+
+	/** Conservative retained workspace estimate for an optional propagation-only pass. */
+	static long estimatePropagationBytes(int[] domainSizes,List<Check> checks,Limits limits) {
+		Objects.requireNonNull(domainSizes); Objects.requireNonNull(checks); Objects.requireNonNull(limits);
+		long bytes=MemoResourcePolicy.checkedMultiply(domainSizes.length,1024);
+		for(int size:domainSizes) {
+			if(size<0) throw new IllegalArgumentException("Negative domain size");
+			// Exact binary64 BigDecimal/BigInteger payloads, native arrays and trail.
+			bytes=MemoResourcePolicy.checkedAdd(bytes,MemoResourcePolicy.checkedMultiply(size,768));
+		}
+		long largestKey=256,largestArity=0;
+		for(Check check:checks) {
+			largestArity=Math.max(largestArity,check.owners.length);
+			bytes=MemoResourcePolicy.checkedAdd(bytes,256L+128L*check.owners.length);
+			long key=256L+32L*check.owners.length;
+			for(int owner:check.owners) {
+				if(owner<0 || owner>=domainSizes.length) throw new IllegalArgumentException("Unknown owner "+owner);
+				bytes=MemoResourcePolicy.checkedAdd(bytes,MemoResourcePolicy.checkedMultiply(domainSizes[owner],16));
+				if(domainSizes[owner]>Long.SIZE) key=MemoResourcePolicy.checkedAdd(key,
+					32L+8L*((domainSizes[owner]+63L)/64L));
+			}
+			largestKey=Math.max(largestKey,key);
+		}
+		// Independent support-domain, truth-tuple, witness, exact-value caches and
+		// binary support rows. Wide-domain snapshots scale with the scoped words.
+		long perEntry=MemoResourcePolicy.checkedAdd(largestKey,768L+16L*largestArity);
+		return MemoResourcePolicy.checkedAdd(bytes,MemoResourcePolicy.checkedMultiply(limits.cacheEntries(),perEntry));
 	}
 
 	/**

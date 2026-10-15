@@ -1,0 +1,830 @@
+{
+  "description": "Full Memo suite then focused origin/runtime/Local rerun; final per-class XML",
+  "totals": {
+    "tests": 775,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "classes": [
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoActivationUnionReuseTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoAnalysisDependenciesTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoAnalysisReuseTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoAnalysisWorkTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolverCopyOnWriteTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolverDirectNativeRootTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolverMapSnapshotTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoBindingResolverTest",
+      "tests": 24,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoBoundaryProjectionTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoBuiltinRuntimeTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoCheckStateModelSignatureTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoClusterBoundsTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoCompilerIntegrationTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoContextAnalysisReuseTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoContextualShapeReuseTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoControlFlowParityTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoCostContextProjectionTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoCostModelTest",
+      "tests": 23,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoCostShapeProjectionTest",
+      "tests": 15,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoDataGenDimensionLoweringTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoDirectHeadStaticBoundaryTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoDirectKernelTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoDualModeImprovementTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoDualModeModelTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoDualModeOptimizerTest",
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoEmptyHeadBitsCandidateTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoExactDecimalReuseTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoExhaustiveParityTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoFactorDiagnosticsTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoFairGuardTerminalTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoFairGuardUnionProductionTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoFeasibleSeedTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoFederatedModelTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoFunctionTerminationTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoGlmFailureTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoGuardDecisionHashTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoGuardProvenanceTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoGuardedResidencyTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoHeadMembershipSnapshotTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoIndexedFrameEqualityTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoIndexedShapeContextSameModelTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoIndexedShapeContextTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoInputColumnMetadataTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoLegalityTableTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoLocalMessagesTest",
+      "tests": 14,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoLocalOptimizerTest",
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoLocalPropagationTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoLocalSeedTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoLoopCostContextProjectionTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoLoopEntryCostTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoLoopPrivacyIncrementalTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoLoopPrivacyTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoMovementCostSignatureTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoMovementCostStateTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoMovementMeasurementReuseTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoMovementRecipeCacheTest",
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoMovementReuseTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoMultiOutputBuiltinTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoMultiOutputFederatedRuntimeTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoMultiOutputPrivacyTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoNativeCostVectorTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoNativeDescriptorContextTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoNativeDescriptorTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoNativeExactFamilyCacheCleanTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoNativeKernelLoweringTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoNativeRequestTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoNativeRulesTest",
+      "tests": 23,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoNativeWideVectorBoundaryTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOccurrenceShapeTransferTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOccurrenceTransferTupleCleanTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerBinarySupportTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerBoundaryBoundTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerCheckStateTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerCostInvariantProjectionTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerCostStateRefinementTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerCostStateTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerDomainCacheTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerEliminationTest",
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerForestTailTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerPseudoforestTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerScopeValidationTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerSupportWitnessTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerTest",
+      "tests": 23,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerUnaryTautologyTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoOwnerRuleIntersectionTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoParForRuntimeContractTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoPhaseGuardIndexTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoPlanLifecycleTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoPlannerFederatedRuntimeTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoPrivacyTest",
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoProgramFactsIndexTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoProgramFactsTest",
+      "tests": 37,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoProgramModelTest",
+      "tests": 19,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoReachableContextPrefixCleanTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoRecursiveMetadataShapeTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoRepeatedLoopCostTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoResidencyTest",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoReturnShapeTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoSelectionScratchLifecycleTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoShapeAliasJumpParityTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoShapeContextProjectionTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoShapeHeadLookupTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoShapeKeyAtomsTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoShapeProjectionAtomCacheKeyTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoShapeProofReuseTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoShapesTest",
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoSharedSupplyRuntimeTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoSourceGeometryTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoTransformFactsTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoTransposeNativeVectorBoundaryTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoTreeDpModelTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoTreeDpOptimizerTest",
+      "tests": 13,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.hops.fedplanner.memo.MemoTreeDpTrainingRuntimeTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.lops.compile.MemoSupplyLoweringTest",
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.runtime.controlprogram.federated.MemoLoopRuntimeTest",
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.test.component.compress.cost.MemoryCostTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "class": "org.apache.sysds.test.component.misc.MemoryEstimateTest",
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ]
+}

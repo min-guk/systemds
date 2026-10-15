@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd /workspace/experiments
+mkdir -p /evidence/tmp/local /evidence/tmp/scratch
+CP=/engine/classes:/deps/*
+exec java --add-modules jdk.incubator.vector -Xmx3072m -XX:ActiveProcessorCount=4 -Dsysds.fedplanner.memo.trace=true -Dsysds.fedplanner.memo.algorithm=EXACT -Dsysds.fedplanner.memo.tree.searchNodes=2000 -Dsysds.fedplanner.memo.tree.factorCells=256 -Dsysds.fedplanner.memo.tree.cacheEntries=4096 -Dsysds.fedplanner.memo.tree.frontierNodes=10000 -Dsysds.fedplanner.memo.dual.directExact=true -Dsysds.fedplanner.memo.dual.seedWork=100000 -Dsysds.fedplanner.memo.dual.factorCells=256 -Dsysds.fedplanner.memo.dual.directCells=2000000 -Dsysds.fedplanner.memo.dual.clusterCells=4096 -Dsysds.fedplanner.memo.dual.improveSeed=false -Dsysds.fedplanner.memo.local.messages=true -Dsysds.fedplanner.memo.local.improveSeed=true -Dsysds.fedplanner.memo.factorDiagnostics=false -Dsysds.fedplanner.memo.factorDiagnostics.maxFactors=10000 -Dsysds.fedplanner.memo.dual.diagnostics=false -Dsysds.fedplanner.memo.dual.memoryBytes=9223372036854775807 -Dsysds.fedplanner.memo.dual.diagnosticNodes=9223372036854775807 -cp "$CP" org.apache.sysds.api.DMLScript -f /evidence/cell.dml -config /evidence/execution.xml -exec singlenode -seed 1011081480 -noFedRuntimeConversion -stats 100 -explain runtime

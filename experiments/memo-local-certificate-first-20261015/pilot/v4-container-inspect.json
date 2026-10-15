@@ -1,0 +1,232 @@
+[
+    {
+        "Id": "450dcde010808e9b5c7e71c8a0fe6676afb371e1841a0e496c4ce6c3e7da8dd7",
+        "Created": "2026-10-15T08:40:53.965340326Z",
+        "Path": "bash",
+        "Args": [
+            "/evidence/container-run.sh"
+        ],
+        "State": {
+            "Status": "running",
+            "Running": true,
+            "Paused": false,
+            "Restarting": false,
+            "OOMKilled": false,
+            "Dead": false,
+            "Pid": 2853638,
+            "ExitCode": 0,
+            "Error": "",
+            "StartedAt": "2026-10-15T08:40:53.994956656Z",
+            "FinishedAt": "0001-01-01T00:00:00Z"
+        },
+        "Image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+        "ResolvConfPath": "/var/snap/docker/common/var-lib-docker/containers/450dcde010808e9b5c7e71c8a0fe6676afb371e1841a0e496c4ce6c3e7da8dd7/resolv.conf",
+        "HostnamePath": "/var/snap/docker/common/var-lib-docker/containers/450dcde010808e9b5c7e71c8a0fe6676afb371e1841a0e496c4ce6c3e7da8dd7/hostname",
+        "HostsPath": "/var/snap/docker/common/var-lib-docker/containers/450dcde010808e9b5c7e71c8a0fe6676afb371e1841a0e496c4ce6c3e7da8dd7/hosts",
+        "LogPath": "/var/snap/docker/common/var-lib-docker/containers/450dcde010808e9b5c7e71c8a0fe6676afb371e1841a0e496c4ce6c3e7da8dd7/450dcde010808e9b5c7e71c8a0fe6676afb371e1841a0e496c4ce6c3e7da8dd7-json.log",
+        "Name": "/sysds-tree-dp-c676df92b2bcdbf8",
+        "RestartCount": 0,
+        "Driver": "overlay2",
+        "Platform": "linux",
+        "MountLabel": "",
+        "ProcessLabel": "",
+        "AppArmorProfile": "docker-default",
+        "ExecIDs": null,
+        "HostConfig": {
+            "Binds": [
+                "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z:/workspace/experiments:ro",
+                "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v4/classes:/engine/classes:ro",
+                "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v4/lib:/deps:ro",
+                "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/pilot/new-pilot/compile/logreg-w3-memo_local:/evidence:rw"
+            ],
+            "ContainerIDFile": "",
+            "LogConfig": {
+                "Type": "json-file",
+                "Config": {}
+            },
+            "NetworkMode": "none",
+            "PortBindings": {},
+            "RestartPolicy": {
+                "Name": "no",
+                "MaximumRetryCount": 0
+            },
+            "AutoRemove": true,
+            "VolumeDriver": "",
+            "VolumesFrom": null,
+            "ConsoleSize": [
+                0,
+                0
+            ],
+            "CapAdd": null,
+            "CapDrop": null,
+            "CgroupnsMode": "private",
+            "Dns": null,
+            "DnsOptions": [],
+            "DnsSearch": [],
+            "ExtraHosts": null,
+            "GroupAdd": null,
+            "IpcMode": "private",
+            "Cgroup": "",
+            "Links": null,
+            "OomScoreAdj": 0,
+            "PidMode": "",
+            "Privileged": false,
+            "PublishAllPorts": false,
+            "ReadonlyRootfs": false,
+            "SecurityOpt": null,
+            "UTSMode": "",
+            "UsernsMode": "",
+            "ShmSize": 67108864,
+            "Runtime": "runc",
+            "Isolation": "",
+            "CpuShares": 0,
+            "Memory": 8589934592,
+            "NanoCpus": 4000000000,
+            "CgroupParent": "",
+            "BlkioWeight": 0,
+            "BlkioWeightDevice": [],
+            "BlkioDeviceReadBps": [],
+            "BlkioDeviceWriteBps": [],
+            "BlkioDeviceReadIOps": [],
+            "BlkioDeviceWriteIOps": [],
+            "CpuPeriod": 0,
+            "CpuQuota": 0,
+            "CpuRealtimePeriod": 0,
+            "CpuRealtimeRuntime": 0,
+            "CpusetCpus": "",
+            "CpusetMems": "",
+            "Devices": [],
+            "DeviceCgroupRules": null,
+            "DeviceRequests": null,
+            "MemoryReservation": 0,
+            "MemorySwap": 17179869184,
+            "MemorySwappiness": null,
+            "OomKillDisable": null,
+            "PidsLimit": null,
+            "Ulimits": null,
+            "CpuCount": 0,
+            "CpuPercent": 0,
+            "IOMaximumIOps": 0,
+            "IOMaximumBandwidth": 0,
+            "MaskedPaths": [
+                "/proc/acpi",
+                "/proc/asound",
+                "/proc/interrupts",
+                "/proc/kcore",
+                "/proc/keys",
+                "/proc/latency_stats",
+                "/proc/sched_debug",
+                "/proc/scsi",
+                "/proc/timer_list",
+                "/proc/timer_stats",
+                "/sys/devices/virtual/powercap",
+                "/sys/firmware"
+            ],
+            "ReadonlyPaths": [
+                "/proc/bus",
+                "/proc/fs",
+                "/proc/irq",
+                "/proc/sys",
+                "/proc/sysrq-trigger"
+            ]
+        },
+        "GraphDriver": {
+            "Data": {
+                "ID": "450dcde010808e9b5c7e71c8a0fe6676afb371e1841a0e496c4ce6c3e7da8dd7",
+                "LowerDir": "/var/snap/docker/common/var-lib-docker/overlay2/c74866fc589a15cdd0bbeb5a4779506ae9e66e7e80234b351f64bb9dfc3c3b50-init/diff:/var/snap/docker/common/var-lib-docker/overlay2/d14fje9nxfupqb7a9qs3uz4al/diff:/var/snap/docker/common/var-lib-docker/overlay2/paf2f6y6osiukonseths57x18/diff:/var/snap/docker/common/var-lib-docker/overlay2/tid7mwbctgfa65tic20oqcnkj/diff:/var/snap/docker/common/var-lib-docker/overlay2/94934ff33b257e4fb7a55e05f3728ec461fe612f4e96915203ce279c110b6065/diff",
+                "MergedDir": "/var/snap/docker/common/var-lib-docker/overlay2/c74866fc589a15cdd0bbeb5a4779506ae9e66e7e80234b351f64bb9dfc3c3b50/merged",
+                "UpperDir": "/var/snap/docker/common/var-lib-docker/overlay2/c74866fc589a15cdd0bbeb5a4779506ae9e66e7e80234b351f64bb9dfc3c3b50/diff",
+                "WorkDir": "/var/snap/docker/common/var-lib-docker/overlay2/c74866fc589a15cdd0bbeb5a4779506ae9e66e7e80234b351f64bb9dfc3c3b50/work"
+            },
+            "Name": "overlay2"
+        },
+        "Mounts": [
+            {
+                "Type": "bind",
+                "Source": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v4/lib",
+                "Destination": "/deps",
+                "Mode": "ro",
+                "RW": false,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "bind",
+                "Source": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/pilot/new-pilot/compile/logreg-w3-memo_local",
+                "Destination": "/evidence",
+                "Mode": "rw",
+                "RW": true,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "bind",
+                "Source": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-local-certificate-first-20261015/engine-v4/classes",
+                "Destination": "/engine/classes",
+                "Mode": "ro",
+                "RW": false,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "bind",
+                "Source": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+                "Destination": "/workspace/experiments",
+                "Mode": "ro",
+                "RW": false,
+                "Propagation": "rprivate"
+            }
+        ],
+        "Config": {
+            "Hostname": "450dcde01080",
+            "Domainname": "",
+            "User": "10041:5500",
+            "AttachStdin": false,
+            "AttachStdout": true,
+            "AttachStderr": true,
+            "Tty": false,
+            "OpenStdin": false,
+            "StdinOnce": false,
+            "Env": [
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "DEBIAN_FRONTEND=noninteractive"
+            ],
+            "Cmd": [
+                "/evidence/container-run.sh"
+            ],
+            "Image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+            "Volumes": null,
+            "WorkingDir": "/workspace/experiments",
+            "Entrypoint": [
+                "bash"
+            ],
+            "Labels": {
+                "com.docker.compose.project": "g005_c7696a3f_pca4_fedall_20260726t113522z",
+                "com.docker.compose.service": "coordinator",
+                "com.docker.compose.version": "5.1.1",
+                "org.opencontainers.image.version": "22.04"
+            }
+        },
+        "NetworkSettings": {
+            "SandboxID": "a643b9556036dd2bcc591a411413f0f2f44f07ad206d71e758a5d09f3fa9f31c",
+            "SandboxKey": "/run/snap.docker/netns/a643b9556036",
+            "Ports": {},
+            "Networks": {
+                "none": {
+                    "IPAMConfig": null,
+                    "Links": null,
+                    "Aliases": null,
+                    "DriverOpts": null,
+                    "GwPriority": 0,
+                    "NetworkID": "9f5b864d14377ad49d8b9929fa15ac90ffa666e4f03c62edea9a62ab7263754a",
+                    "EndpointID": "21476e8a0c189c4686155a1d27fe24ae59c50065d30deccda0c8af6e07f0f878",
+                    "Gateway": "",
+                    "IPAddress": "",
+                    "MacAddress": "",
+                    "IPPrefixLen": 0,
+                    "IPv6Gateway": "",
+                    "GlobalIPv6Address": "",
+                    "GlobalIPv6PrefixLen": 0,
+                    "DNSNames": null
+                }
+            }
+        }
+    }
+]

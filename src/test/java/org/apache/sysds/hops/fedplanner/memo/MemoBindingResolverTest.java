@@ -320,6 +320,21 @@ public class MemoBindingResolverTest {
 		Assert.assertEquals(facts.call(1).returnBindingIds().get(0).intValue(),identities.get(1).visibleBindingId());
 		Assert.assertEquals(1,identities.get(0).exportChain().size());
 		Assert.assertEquals(0,identities.get(0).exportChain().get(0).outputSlot());
+		Assert.assertEquals("shared compiled returns have one callee-local marker origin",
+			identities.get(0).exportChain().get(0).sourceBindingId(),
+			identities.get(1).exportChain().get(0).sourceBindingId());
+		long firstNative=MemoProgramModel.nativeDefinitionOrigin(identities.get(0),
+			facts.valueBinding(identities.get(0).nativeDefinitionOccurrenceId()));
+		long secondNative=MemoProgramModel.nativeDefinitionOrigin(identities.get(1),
+			facts.valueBinding(identities.get(1).nativeDefinitionOccurrenceId()));
+		Assert.assertEquals("caller targets are exported from one physical definition marker",
+			firstNative,secondNative);
+		Assert.assertEquals(firstNative,MemoProgramModel.nativeDefinitionOrigin(identities.get(0),
+			facts.valueBinding(identities.get(0).nativeDefinitionOccurrenceId()),facts));
+		Assert.assertEquals(secondNative,MemoProgramModel.nativeDefinitionOrigin(identities.get(1),
+			facts.valueBinding(identities.get(1).nativeDefinitionOccurrenceId()),facts));
+		Assert.assertNotEquals(identities.get(0).visibleBindingId(),firstNative);
+		Assert.assertNotEquals(identities.get(1).visibleBindingId(),secondNative);
 
 		Set<Integer> firstDependencies = resolver.influencingCompiledOwners(
 			facts.call(0).returnBindingIds().get(0));
