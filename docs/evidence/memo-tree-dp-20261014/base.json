@@ -1,0 +1,8 @@
+{
+  "workspace": "/home/mchoi/cofee-tree-dp-20261014",
+  "base_commit": "b8623e3481072940c07ef3962bcd55be526f1d09",
+  "branch": "feature/memo-tree-dp-certified-20261014",
+  "origin": "git@github.com:min-guk/systemds.git",
+  "epsilon": "0.05",
+  "objective": "Exact sum of frozen binary64 cost primitives in MemoProgramModel; not measured runtime optimality"
+}

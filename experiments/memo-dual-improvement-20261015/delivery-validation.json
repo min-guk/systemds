@@ -1,0 +1,71 @@
+{
+  "schema": "memo-dual-improvement-delivery/v1",
+  "checkedAtUtc": "2026-10-15T03:44:35.300113+00:00",
+  "branch": "feature/memo-tree-dp-certified-20261014",
+  "repositoryBase": "b8623e3481072940c07ef3962bcd55be526f1d09",
+  "binaryManifests": [
+    {
+      "manifest": "experiments/memo-dual-mode-20261015/engine-v1-sha256.json",
+      "files": 8865,
+      "bytes": 368855363,
+      "errors": []
+    },
+    {
+      "manifest": "experiments/memo-dual-improvement-20261015/engine-v2-sha256.json",
+      "files": 8881,
+      "bytes": 368994483,
+      "errors": []
+    },
+    {
+      "manifest": "experiments/memo-dual-improvement-20261015/engine-v3-sha256.json",
+      "files": 8881,
+      "bytes": 368994435,
+      "errors": []
+    }
+  ],
+  "currentJavaSources": {
+    "files": 3975,
+    "errors": []
+  },
+  "tests": {
+    "tests": 158,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "xmlSuites": 24
+  },
+  "certificateAudit": {
+    "valid": true,
+    "summaryFiles": 39,
+    "certificatesChecked": 139,
+    "boundPointsCheckedIncludingFinal": 787,
+    "errors": [],
+    "unauditedCertificates": []
+  },
+  "valid": true,
+  "reports": [
+    {
+      "path": "docs/COFEE_MEMO_DUAL_MODE_IMPROVEMENT_REPORT_2026-10-15_KO.md",
+      "sha256": "44051d7a2b03b5fc91ca81cb6906d36b03640228d893ed201e96f5d266087211",
+      "localLinks": 23,
+      "missingLinks": [],
+      "balancedCodeFences": true,
+      "unfinishedMarkers": []
+    },
+    {
+      "path": "docs/COFEE_MEMO_DUAL_MODE_IMPLEMENTATION_REPORT_2026-10-15_KO.md",
+      "sha256": "b7944f2a5dc4a08b95d73b5d5c5205ff85c7b4c0338d1b213209073c6b1168b9",
+      "localLinks": 23,
+      "missingLinks": [],
+      "balancedCodeFences": true,
+      "unfinishedMarkers": []
+    }
+  ],
+  "checks": {
+    "gitDiffCheck": true,
+    "pythonSyntaxCompile": true,
+    "independentCodeProofReview": "PASS",
+    "independentReportNumericalReview": "PASS",
+    "placeholderScanNote": "The legitimate metric phrase Max pending frame is not a work-in-progress marker."
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "algorithm": "EXACT",
+  "comparisonGroup": "ml:logreg:w3:source-fullcompile",
+  "compile": {
+    "executionSeconds": 0.0,
+    "fullCompileSeconds": 4.482897,
+    "fullInitialPlanningSeconds": 4.470259507,
+    "runtimeProgramSeconds": 0.08042,
+    "verified": true
+  },
+  "compileHeapMiB": 3072,
+  "deterministicTreeLimits": {
+    "cacheEntries": 4096,
+    "factorCells": 256,
+    "frontierNodes": 10000,
+    "searchNodes": 2000
+  },
+  "dualCertificates": [],
+  "dualOptions": {
+    "diagnosticNodes": 9223372036854775807,
+    "directCells": 2000000,
+    "directExact": true,
+    "factorCells": 256,
+    "memoryBytes": 9223372036854775807,
+    "seedWork": 100000
+  },
+  "externalWatchdogSeconds": 900,
+  "failureCategory": null,
+  "memoPlans": [
+    {
+      "algorithm": "EXACT",
+      "cost": "4041.3312164761625187616576028123462072105809284039423801004886627197265625000",
+      "phaseNanos": {
+        "facts": 60979344,
+        "model": 658347455,
+        "optimization": 1131729491,
+        "projection": 111610677,
+        "rules": 1363559084
+      },
+      "planningNanos": 3326226051,
+      "status": "OPTIMAL"
+    }
+  ],
+  "peakContainerMemoryUsageBytes": 322227404,
+  "phase": "source-fullcompile",
+  "returncode": 0,
+  "schema": "systemds-memo-tree-dp-attempt/v1",
+  "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+  "status": "passed",
+  "timedOut": false,
+  "treeCertificates": [],
+  "wallSeconds": 5.793104603886604,
+  "workers": 3,
+  "workload": "logreg"
+}

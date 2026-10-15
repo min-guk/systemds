@@ -1,0 +1,286 @@
+{
+  "schema": "memo-dual-mode-independent-validation/v1",
+  "generatedAt": "2026-10-15",
+  "scope": "Read-only validation of the frozen Java engine, recorded Java test summary, and design acceptance criteria C01-C21. This validation did not rerun Java tests or benchmarks.",
+  "inputs": {
+    "engineManifest": {
+      "path": "experiments/memo-dual-mode-20261015/engine-v1-sha256.json",
+      "sha256": "4ef7e475327b77d185fc8c27fb30926aca4866c47912744fcfe1b4c9752e7a91",
+      "schema": "memo-tree-dp-frozen-engine/v1",
+      "repositoryBase": "b8623e3481072940c07ef3962bcd55be526f1d09"
+    },
+    "javaTestSummary": {
+      "path": "experiments/memo-dual-mode-20261015/java-test-summary.json",
+      "sha256": "b934e2f1ecc325bc2e99167f127d0572b2d103cabe860bf02dc7013c3e6b1f02"
+    },
+    "design": {
+      "path": "docs/COFEE_MEMO_DUAL_MODE_OPTIMIZER_DESIGN_2026-10-15_KO.md",
+      "sha256": "02c935a8befbf5ab09d4830718851052c887f18d8da37da26cacfde7c5a9c5b3"
+    }
+  },
+  "frozenSourceVerification": {
+    "method": "For every sourceFiles entry in the engine manifest, compute SHA-256 for the current repository-relative file and compare it with the recorded digest.",
+    "sourceFileCount": 3970,
+    "missingFileCount": 0,
+    "hashMismatchCount": 0,
+    "result": "MATCH"
+  },
+  "recordedJavaTestEvidence": {
+    "executedByThisValidation": false,
+    "recordedCommand": "mvn -q clean -Dspotless.check.skip=true -Drat.skip=true '-Dtest=MemoDualMode*Test,MemoFeasibleSeedTest,MemoDirectKernelTest,MemoOptimizer*Test,MemoTreeDp*Test' test",
+    "declaredTests": 142,
+    "summedSuiteTests": 142,
+    "suiteCount": 21,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "manifestDigestMatchesSummary": true,
+    "focusedSuites": {
+      "MemoDualModeOptimizerTest": 17,
+      "MemoDualModeModelTest": 1,
+      "MemoFeasibleSeedTest": 6,
+      "MemoDirectKernelTest": 5,
+      "MemoTreeDpTrainingRuntimeTest": 1
+    }
+  },
+  "sourceDigests": {
+    "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoDualModeOptimizer.java": "ebac993361a102ac482983a1d2ccb4b5910feb3f5a9aea6724a29671c027a5aa",
+    "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoFeasibleSeed.java": "0e23ce9fb92497e17e1cf5f857412bf23a04b44d6df351ca925ab562c287dc66",
+    "src/main/java/org/apache/sysds/hops/fedplanner/memo/MemoResourcePolicy.java": "4a9f0cf896f79590f364fa49005d25d053b0ba856e48c06e36f0b114a9ce65a9",
+    "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoDualModeOptimizerTest.java": "22a8497dc34cecf6332075cbcdad1513e2d25325663c119b69371261ad68bc50",
+    "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoDualModeModelTest.java": "3beb5e037417f678a56b834221c89e1c93eae3cc699ce80f220b8bc475bad65e",
+    "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoFeasibleSeedTest.java": "19ab0400ad2b16a9dfd96a95e67f49f87ef96e49ad358045566d716de072bc9c",
+    "src/test/java/org/apache/sysds/hops/fedplanner/memo/MemoDirectKernelTest.java": "f8de657a6fa8500e7f7f75b0b991f3ac837a59dd7270b877e1d6c54a3dde20aa"
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "C01",
+      "status": "SATISFIED",
+      "evidence": [
+        "MemoDualModeOptimizerTest.globalDirectAndSearchMatchIndependentOracleOnSignedRandomGraphs",
+        "MemoDualModeOptimizerTest.globalCanonicalTieBreakIsLexicographicAcrossRoutes",
+        "MemoDualModeModelTest parsed-model Cartesian oracle"
+      ],
+      "limitation": "Exhaustive comparison is intentionally limited to small candidate products."
+    },
+    {
+      "id": "C02",
+      "status": "SATISFIED",
+      "evidence": [
+        "MemoDualModeOptimizerTest.localCertificatesAndEveryPublishedBoundContainTheTrueOptimum",
+        "MemoDualModeOptimizerTest.localUsesTheExactFivePercentBoundaryWithoutFloatingTolerance",
+        "MemoDualModeOptimizer.certificate requires positive LB and UB <= 1.05 * LB"
+      ],
+      "limitation": "The guarantee is established for the recorded oracle fixtures; workload-scale certification is evaluated separately by benchmarks."
+    },
+    {
+      "id": "C03",
+      "status": "PARTIAL",
+      "evidence": [
+        "MemoDualModeOptimizerTest checks every retained Progress point against the independent optimum and checks monotone LB/UB",
+        "MemoDualModeOptimizer.publish rejects regressing lower bounds"
+      ],
+      "gap": "No test directly compares every new checkpoint with the old solver's certified LB and best UB on the identical intermediate state."
+    },
+    {
+      "id": "C04",
+      "status": "SATISFIED",
+      "evidence": [
+        "Exact 5% boundary and just-outside fixture",
+        "negativeZeroAndLargeConstantsRequireExactProof",
+        "globalCanonicalTieBreakIsLexicographicAcrossRoutes"
+      ],
+      "limitation": "Inputs originate as doubles and are converted to exact BigDecimal representations of those binary values; the epsilon multiplier itself is exact decimal 1.05."
+    },
+    {
+      "id": "C05",
+      "status": "PARTIAL",
+      "evidence": [
+        "MemoDualModeOptimizer.bound sums native and factor lower bounds",
+        "child bounds use max(parent bound, recomputed child bound)",
+        "globalLower uses min across pending alternatives and UNKNOWN/incumbent cover",
+        "signed random oracle and checkpoint tests"
+      ],
+      "gap": "There is no separately named fixture isolating signed independent-component AND summation from OR-min and relaxation-max composition in one test."
+    },
+    {
+      "id": "C06",
+      "status": "SATISFIED",
+      "evidence": [
+        "MemoDualModeOptimizerTest.multiParentSharedMovementAndCrossingHighArityFactorAreCountedOnce",
+        "MemoFeasibleSeedTest.repairEvaluatesCrossingLegalityAndSharedMovementInTheFullObjective"
+      ],
+      "limitation": "The adversarial fixtures are synthetic small models."
+    },
+    {
+      "id": "C07",
+      "status": "SATISFIED",
+      "evidence": [
+        "MemoDualModeModelTest covers parsed shared producer, branch join, two-iteration loop, and two function-call contexts",
+        "MemoTreeDpTrainingRuntimeTest records linear and logistic execution for MEMO_GLOBAL and MEMO_LOCAL",
+        "MemoProgramModel.optimizeDualMode validates original checks, original cost, and reconstruction"
+      ],
+      "limitation": "Parsed-program enumeration is restricted to small programs; broad program semantics remain covered by the existing Memo suites."
+    },
+    {
+      "id": "C08",
+      "status": "SATISFIED",
+      "evidence": [
+        "unknownOpenAndRejectAllModelsNeverProduceFalseSuccess",
+        "lateUnknownObligationIsPreservedWithoutEnumeratingUnrelatedDomains",
+        "alreadyFixedUnknownScopeStopsBeforeUnrelatedDomains",
+        "MemoFeasibleSeedTest.unknownCompleteChecksNeverProduceAnUpperBound"
+      ],
+      "limitation": "UNKNOWN handling is validated through deterministic predicates rather than external oracle failures."
+    },
+    {
+      "id": "C09",
+      "status": "PARTIAL",
+      "evidence": [
+        "certifiedClassesNeverReplaceTheSelectedNativeOrdinal",
+        "directTreeHonorsSparseOriginalOrdinalRestrictions",
+        "MemoOptimizerDomainCacheTest and cost-state suites in the recorded 142-test set"
+      ],
+      "gap": "No dual-mode test explicitly mutates profile identity or cross-model boundary identity while reusing one cache instance; caches are invocation-local, which reduces but does not independently test that scenario."
+    },
+    {
+      "id": "C10",
+      "status": "SATISFIED",
+      "evidence": [
+        "greedyDeadEndAndSeedWorkCapsDoNotRemoveFeasibleAssignments",
+        "MemoFeasibleSeedTest.greedyDeadEndRepairsWithoutPruningTheOriginalFeasiblePlan"
+      ],
+      "limitation": "One deterministic dead-end topology is directly isolated."
+    },
+    {
+      "id": "C11",
+      "status": "SATISFIED",
+      "evidence": [
+        "Seed caps 0, 1, and Long.MAX_VALUE preserve Global oracle optimum",
+        "MemoFeasibleSeedTest proves zero/small caps leave proof domains unchanged"
+      ],
+      "limitation": "The tested caps exercise work exhaustion, not every possible resource-rejection point."
+    },
+    {
+      "id": "C12",
+      "status": "SATISFIED",
+      "evidence": [
+        "MemoFeasibleSeedTest crossing legality and shared movement fixture",
+        "MemoDualModeOptimizer.consider rechecks full original Truth and full original cost before incumbent publication"
+      ],
+      "limitation": "Conditional repair optimum is checked on small fixtures."
+    },
+    {
+      "id": "C13",
+      "status": "PARTIAL",
+      "evidence": [
+        "MemoFeasibleSeed expands repair regions and only publishes a fullProof for complete incoming-domain enumeration",
+        "MemoFeasibleSeedTest.fullProofRequiresCompleteEnumerationOfTheIncomingDomains",
+        "greedy dead-end repair records a reusable shared-kernel full proof"
+      ],
+      "gap": "No explicit test begins with an infeasible strict subregion and asserts the exact sequence of expansion before a feasible larger region is found."
+    },
+    {
+      "id": "C14",
+      "status": "SATISFIED",
+      "evidence": [
+        "directExactRouteDoesNotCreateSeedRelaxationOrPendingSearchWork asserts one direct solve and zero seed, relaxation, and pending work",
+        "MemoDirectKernelTest checks tree and elimination kernels and canonical tie"
+      ],
+      "limitation": "Counters prove the route contract for representative small tree/VE fixtures."
+    },
+    {
+      "id": "C15",
+      "status": "SATISFIED",
+      "evidence": [
+        "Random problems are solved with directExact true and false against the same oracle",
+        "declinedCyclicKernelPreservesTheCoverAndCompletesConditionedTrees",
+        "directKernelRecomputesNeighborsAfterConditionalPropagation",
+        "MemoDirectKernel admission/work rejection preserves original domains"
+      ],
+      "limitation": "Selector choices are forced through options rather than an injected prediction error."
+    },
+    {
+      "id": "C16",
+      "status": "PARTIAL",
+      "evidence": [
+        "Direct-kernel admission rejection returns unchanged proof domains",
+        "memoryRejectedDirectTableFallsBackToExactLowMemorySearch",
+        "Bound entries are published only after complete term enumeration"
+      ],
+      "gap": "There is no deterministic fault injected after some table rows have been evaluated but before atomic publication."
+    },
+    {
+      "id": "C17",
+      "status": "PARTIAL",
+      "evidence": [
+        "All recorded progress checkpoints are checked against the independent optimum",
+        "DFS child and sibling memory is reserved before parent-cover replacement",
+        "Random forced-search fixtures preserve exact cover"
+      ],
+      "gap": "The implementation uses a DFS pending stack rather than a priority-frontier-to-DFS conversion, so that specific conversion event is not exercised; queue-pop/in-flight fault injection is also absent."
+    },
+    {
+      "id": "C18",
+      "status": "PARTIAL",
+      "evidence": [
+        "insufficientMemoryAndDiagnosticLimitAreNeverReportedAsCertifiedSuccess",
+        "memoryRejectedDirectTableFallsBackToExactLowMemorySearch",
+        "deepTreeChainPreservesWitnessAndExactCostWithoutRecursiveOverflow",
+        "MemoResourcePolicy resident-plus-additional ceiling test"
+      ],
+      "gap": "No separate small-Xmx JVM run or explicit cache-evict-and-recompute equality assertion is recorded in java-test-summary.json."
+    },
+    {
+      "id": "C19",
+      "status": "PARTIAL",
+      "evidence": [
+        "Diagnostic node cap returns RESOURCE_EXHAUSTED rather than a certificate",
+        "Dual-mode search uses a memory-accounted DFS cover without the legacy fixed frontier cap"
+      ],
+      "gap": "No fixture in the recorded suite demonstrates completion after exceeding the legacy frontier count of 10,000."
+    },
+    {
+      "id": "C20",
+      "status": "SATISFIED",
+      "evidence": [
+        "Every successful oracle test re-evaluates the original full objective",
+        "MemoProgramModel.optimizeDualMode revalidates all original checks and cost before reconstruction",
+        "MemoDualModeModelTest compares reconstructed supplies",
+        "MemoTreeDpTrainingRuntimeTest records identical linear/logistic weights and costs across all five algorithms"
+      ],
+      "limitation": "The runtime fixture is a small two-worker training oracle, not the representative large-workload benchmark."
+    },
+    {
+      "id": "C21",
+      "status": "SATISFIED",
+      "evidence": [
+        "No wall-clock stopping condition exists in MemoDualModeOptimizer; nanoTime values are telemetry only",
+        "Diagnostic node exhaustion reports RESOURCE_EXHAUSTED",
+        "Fixed and late UNKNOWN tests terminate UNRESOLVED without unrelated Cartesian enumeration"
+      ],
+      "limitation": "Finite termination is supported by finite original domains and the tested transitions; no formal model checker was used."
+    }
+  ],
+  "coverageSummary": {
+    "satisfied": 13,
+    "partial": 8,
+    "unmet": 0
+  },
+  "numericalAndCertificationReview": {
+    "observedViolation": false,
+    "findings": [
+      "Local epsilon certification is guarded by LB > 0 and exact BigDecimal comparison UB <= 1.05 * LB.",
+      "Global exact certification requires equal bounds and closes equal-cost alternatives with the canonical lexicographic rule.",
+      "The root and child lower bounds sum per-owner minima and sound per-factor minima; child bounds are tightened with max(parent, child), while pending alternatives compose with min.",
+      "Cost evaluators are checked against their certified floors before they can contribute to a bound.",
+      "The recorded oracle tests found no LB > OPT, OPT > UB, nonmonotone published bound, or epsilon-label violation."
+    ],
+    "limitations": [
+      "This slice inspected source and recorded test results; it did not independently execute the tests.",
+      "C03, C05, C09, C13, C16, C17, C18, and C19 retain the explicit test gaps listed above.",
+      "Docker comparison and large ML workload benchmark results were still outside this artifact's scope."
+    ]
+  },
+  "conclusion": "The frozen engine exactly matches the current 3,970-file source manifest and is linked to a self-consistent 142-test zero-failure record. Core exact and 5%-certificate invariants have direct oracle evidence. Eight design criteria remain partially demonstrated because their strongest fault-injection, cross-solver-bound, cache-context, or legacy-cap comparison clauses are not isolated by the recorded Java suite."
+}

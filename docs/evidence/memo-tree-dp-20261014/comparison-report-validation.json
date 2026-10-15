@@ -1,0 +1,24 @@
+{
+  "report": "COFEE_LEGACY_MEMO_TREE_DP_COMPARISON_2026-10-15_KO.md",
+  "directMlRowsChecked": [
+    "LogReg/Memo EXACT",
+    "LogReg/Tree Global",
+    "LogReg/Tree Local",
+    "GLM/Memo EXACT",
+    "GLM/Tree Global",
+    "GLM/Tree Local",
+    "GNMF/Memo EXACT",
+    "GNMF/Tree Global",
+    "GNMF/Tree Local"
+  ],
+  "historicalPlannerTimesChecked": 4,
+  "existingLinksChecked": 52,
+  "fencesBalanced": true,
+  "javaSourceMatchesFrozenEngine": true,
+  "newExperimentsRunForDocument": false,
+  "independentReviews": {
+    "legacy": "approved; clarified reduced-root cluster initialization and sealed contribution",
+    "memo": "approved; clarified owner variable semantics, UNKNOWN relaxation and relaxation timing"
+  },
+  "newReportSha256": "37397601132814df6d2db7f508c4f8d4ad8a4c2d674be151554273d00bcc3517"
+}

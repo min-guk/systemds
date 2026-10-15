@@ -1,0 +1,112 @@
+{
+  "algorithm": "MEMO_GLOBAL",
+  "comparisonGroup": "ml:glm:w3:source-fullcompile",
+  "compile": {
+    "executionSeconds": 0.0,
+    "fullCompileSeconds": 206.640213,
+    "fullInitialPlanningSeconds": 206.612472588,
+    "runtimeProgramSeconds": 0.090804,
+    "verified": true
+  },
+  "compileHeapMiB": 256,
+  "deterministicTreeLimits": {
+    "cacheEntries": 4096,
+    "factorCells": 256,
+    "frontierNodes": 10000,
+    "searchNodes": 2000
+  },
+  "dualCertificates": [
+    {
+      "certified": true,
+      "lowerBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "progression": [
+        {
+          "lowerBound": "354.464649581871946198133286746637755568190009114459826378151774406433105468750000",
+          "nodes": 0,
+          "upperBound": "null"
+        },
+        {
+          "lowerBound": "354.464649581871946198133286746637755568190009114459826378151774406433105468750000",
+          "nodes": 0,
+          "upperBound": "509.530166072386029781271480769048272049803749439433886436745524406433105468750000"
+        },
+        {
+          "lowerBound": "356.967548751793821198133286746637755568190009114459826378151774406433105468750000",
+          "nodes": 3,
+          "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+        },
+        {
+          "lowerBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+          "nodes": 557,
+          "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+        }
+      ],
+      "reason": "Requested bound certificate established",
+      "relativeGap": "0.0",
+      "route": "CERTIFIED_SEARCH",
+      "statistics": {
+        "boundCacheHits": 15219805,
+        "boundNanos": 50634212387,
+        "cacheBytes": 2685706,
+        "directAttempts": 557,
+        "directExactSolves": 252,
+        "exactCells": 18839356,
+        "kernelNanos": 99698762227,
+        "maxPending": 18,
+        "nodes": 557,
+        "peakEstimatedBytes": 26302936,
+        "pruned": 422,
+        "relaxationCalls": 1690,
+        "repairCalls": 0,
+        "searchNanos": 195977571285,
+        "seedAttempts": 1,
+        "seedEvaluations": 1955,
+        "seedNanos": 1021326633
+      },
+      "statisticsRaw": "Statistics[directExactSolves=252, directAttempts=557, seedAttempts=1, seedEvaluations=1955, repairCalls=0, nodes=557, relaxationCalls=1690, boundCacheHits=15219805, exactCells=18839356, pruned=422, maxPending=18, peakEstimatedBytes=26302936, cacheBytes=2685706, kernelNanos=99698762227, seedNanos=1021326633, boundNanos=50634212387, searchNanos=195977571285, route=CERTIFIED_SEARCH]",
+      "status": "OPTIMAL",
+      "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+    }
+  ],
+  "dualOptions": {
+    "clusterCells": 4096,
+    "diagnosticNodes": 9223372036854775807,
+    "diagnostics": false,
+    "directCells": 2000000,
+    "directExact": true,
+    "factorCells": 256,
+    "factorDiagnostics": false,
+    "factorDiagnosticsMaxFactors": 10000,
+    "improveSeed": false,
+    "memoryBytes": 9223372036854775807,
+    "seedWork": 100000
+  },
+  "externalWatchdogSeconds": 900,
+  "failureCategory": null,
+  "memoPlans": [
+    {
+      "algorithm": "MEMO_GLOBAL",
+      "cost": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "phaseNanos": {
+        "facts": 88639195,
+        "model": 1400100486,
+        "optimization": 198606804853,
+        "projection": 156194727,
+        "rules": 4593269599
+      },
+      "planningNanos": 204845008860,
+      "status": "OPTIMAL"
+    }
+  ],
+  "peakContainerMemoryUsageBytes": 437675622,
+  "phase": "source-fullcompile",
+  "returncode": 0,
+  "schema": "systemds-memo-tree-dp-attempt/v1",
+  "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+  "status": "passed",
+  "timedOut": false,
+  "treeCertificates": [],
+  "wallSeconds": 208.00463793426752,
+  "workers": 3,
+  "workload": "glm"
+}

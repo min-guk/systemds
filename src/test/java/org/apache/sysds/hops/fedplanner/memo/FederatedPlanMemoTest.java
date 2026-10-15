@@ -37,6 +37,23 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class FederatedPlanMemoTest {
+	@Test public void exactSelectionIgnoresTreeSpecificResourceProperties() {
+		String algorithm=System.getProperty(FederatedPlanMemo.ALGORITHM_PROPERTY);
+		String property="sysds.fedplanner.memo.tree.factorCells";
+		String cells=System.getProperty(property);
+		try {
+			System.clearProperty(FederatedPlanMemo.ALGORITHM_PROPERTY);
+			System.setProperty(property,"invalid");
+			new FederatedPlanMemo();
+			System.setProperty(FederatedPlanMemo.ALGORITHM_PROPERTY,"TREE_DP_LOCAL");
+			Assert.assertThrows(NumberFormatException.class,FederatedPlanMemo::new);
+		}
+		finally {
+			if(algorithm==null) System.clearProperty(FederatedPlanMemo.ALGORITHM_PROPERTY);
+			else System.setProperty(FederatedPlanMemo.ALGORITHM_PROPERTY,algorithm);
+			if(cells==null) System.clearProperty(property); else System.setProperty(property,cells);
+		}
+	}
 	@After public void clear() {
 		MemoSupplyRegistry.clear(); MemoLoopRuntime.clear(); MemoPlanRegistry.clear();
 	}

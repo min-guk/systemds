@@ -1,0 +1,790 @@
+{
+  "schema": "memo-dual-recorded-results-audit/v1",
+  "summaryCount": 13,
+  "compileAttempts": 96,
+  "attemptStatuses": {
+    "passed": 89,
+    "failed": 7
+  },
+  "certificateStatuses": {
+    "OPTIMAL": 58,
+    "RESOURCE_EXHAUSTED": 4,
+    "EPSILON_OPTIMAL": 2
+  },
+  "publishedBoundPointsChecked": 727,
+  "sameSourceExactOptimumGroups": 3,
+  "engineManifestSha256": "4ef7e475327b77d185fc8c27fb30926aca4866c47912744fcfe1b4c9752e7a91",
+  "allPublishedBoundsValidAndMonotone": true,
+  "allSuccessfulCertificatesValidated": true,
+  "attempts": [
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "glm",
+      "algorithm": "TREE_DP_GLOBAL",
+      "heapMiB": 3072,
+      "status": "failed",
+      "failure": "deterministic_resource_exhaustion"
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "glm",
+      "algorithm": "TREE_DP_LOCAL",
+      "heapMiB": 3072,
+      "status": "failed",
+      "failure": "deterministic_resource_exhaustion"
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "gnmf",
+      "algorithm": "TREE_DP_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "gnmf",
+      "algorithm": "TREE_DP_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "logreg",
+      "algorithm": "TREE_DP_GLOBAL",
+      "heapMiB": 3072,
+      "status": "failed",
+      "failure": "deterministic_resource_exhaustion"
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "logreg",
+      "algorithm": "TREE_DP_LOCAL",
+      "heapMiB": 3072,
+      "status": "failed",
+      "failure": "deterministic_resource_exhaustion"
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-01/summary.json",
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-02/summary.json",
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-02/summary.json",
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-02/summary.json",
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-02/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-02/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-02/summary.json",
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-02/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-02/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-02/summary.json",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-03/summary.json",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-03/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-03/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-03/summary.json",
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-03/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-03/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-03/summary.json",
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-03/summary.json",
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-03/summary.json",
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-04/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-04/summary.json",
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-04/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-04/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-04/summary.json",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-04/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-04/summary.json",
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-04/summary.json",
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-04/summary.json",
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-05/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-05/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-05/summary.json",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-05/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-05/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-05/summary.json",
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-05/summary.json",
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-05/summary.json",
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-05/summary.json",
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-06/summary.json",
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-06/summary.json",
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-06/summary.json",
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-06/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-06/summary.json",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-06/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-06/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-06/summary.json",
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-06/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-07/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-07/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-07/summary.json",
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-07/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-07/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-07/summary.json",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-07/summary.json",
+      "workload": "logreg",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-07/summary.json",
+      "workload": "logreg",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1/repeat-07/summary.json",
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-ablation-direct0-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-ablation-direct0-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-ablation-direct0-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-ablation-direct0-seed0-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-ablation-direct0-seed0-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-ablation-direct0-seed0-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-ablation-seed0-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-ablation-seed0-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-ablation-seed0-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 3072,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap128-glm-gnmf/summary.json",
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "heapMiB": 128,
+      "status": "failed",
+      "failure": "jvm_out_of_memory"
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap128-glm-gnmf/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 128,
+      "status": "failed",
+      "failure": "jvm_out_of_memory"
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap128-glm-gnmf/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 128,
+      "status": "failed",
+      "failure": "jvm_out_of_memory"
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap128-glm-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "heapMiB": 128,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap128-glm-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 128,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap128-glm-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 128,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap256-glm-gnmf/summary.json",
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "heapMiB": 256,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap256-glm-gnmf/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 256,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap256-glm-gnmf/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 256,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap256-glm-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "heapMiB": 256,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap256-glm-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 256,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap256-glm-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 256,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap512-glm-gnmf/summary.json",
+      "workload": "glm",
+      "algorithm": "EXACT",
+      "heapMiB": 512,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap512-glm-gnmf/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 512,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap512-glm-gnmf/summary.json",
+      "workload": "glm",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 512,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap512-glm-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "EXACT",
+      "heapMiB": 512,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap512-glm-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_GLOBAL",
+      "heapMiB": 512,
+      "status": "passed",
+      "failure": null
+    },
+    {
+      "summary": "experiments/memo-dual-mode-20261015/comparison-r1-heap512-glm-gnmf/summary.json",
+      "workload": "gnmf",
+      "algorithm": "MEMO_LOCAL",
+      "heapMiB": 512,
+      "status": "passed",
+      "failure": null
+    }
+  ],
+  "scope": "Recorded Docker results, original-cost intervals and DML identity; does not rerun solver or certify runtime feasibility independently."
+}

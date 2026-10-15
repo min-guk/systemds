@@ -1,0 +1,19 @@
+{
+  "algorithm": "ALL_ALGORITHMS",
+  "compileOnly": false,
+  "deterministicTreeLimits": {
+    "cacheEntries": 4096,
+    "factorCells": 256,
+    "frontierNodes": 10000,
+    "searchNodes": 2000
+  },
+  "failureCategory": null,
+  "network": "bridge",
+  "peakContainerMemoryUsageBytes": 311531929,
+  "phase": "federated-runtime-smoke",
+  "returncode": 0,
+  "schema": "systemds-memo-tree-dp-runtime/v1",
+  "status": "passed",
+  "tests": 10,
+  "wallSeconds": 9.038823753595352
+}

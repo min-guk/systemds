@@ -1,0 +1,3 @@
+# Captured logs retain original bytes and whitespace for historical evidence.
+*.log -text -whitespace
+*.json -text

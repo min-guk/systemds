@@ -1,0 +1,10 @@
+phase,workload,workers,algorithm,status,failureCategory,wallSeconds,peakContainerMemoryUsageBytes
+source-fullcompile,glm,3,MEMO_GLOBAL,passed,,11.838940508663654,1117765238
+source-fullcompile,glm,3,MEMO_LOCAL,passed,,12.979526787996292,992162611
+source-fullcompile,glm,3,EXACT,passed,,11.596539214253426,936902656
+source-fullcompile,gnmf,3,MEMO_GLOBAL,passed,,2.369135543704033,168296448
+source-fullcompile,gnmf,3,MEMO_LOCAL,passed,,2.7074102088809013,173329612
+source-fullcompile,gnmf,3,EXACT,passed,,2.4013231098651886,160117555
+source-fullcompile,logreg,3,MEMO_GLOBAL,passed,,5.432322300970554,348546662
+source-fullcompile,logreg,3,MEMO_LOCAL,passed,,4.915067180991173,327784857
+source-fullcompile,logreg,3,EXACT,passed,,5.535297751426697,307127910

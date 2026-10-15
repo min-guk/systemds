@@ -1,0 +1,49 @@
+{
+  "report": "docs/COFEE_MEMO_DUAL_MODE_OPTIMIZER_DESIGN_2026-10-15_KO.md",
+  "reportSha256": "dec1962fbea891d3c9d82e22af5fdc58c4604c38218da14bcc6ceeb88943f973",
+  "directMlRowsChecked": [
+    "logreg/EXACT",
+    "logreg/TREE_DP_GLOBAL",
+    "logreg/TREE_DP_LOCAL",
+    "glm/EXACT",
+    "glm/TREE_DP_GLOBAL",
+    "glm/TREE_DP_LOCAL",
+    "gnmf/EXACT",
+    "gnmf/TREE_DP_GLOBAL",
+    "gnmf/TREE_DP_LOCAL"
+  ],
+  "additionalMetricChecks": [
+    "exact wall logreg",
+    "exact wall glm",
+    "exact wall gnmf",
+    "gnmf optimization EXACT",
+    "gnmf optimization TREE_DP_GLOBAL",
+    "gnmf optimization TREE_DP_LOCAL",
+    "cost evaluations logreg",
+    "cost evaluations glm",
+    "20k logreg bounds resource wall memory"
+  ],
+  "fileLinksChecked": 66,
+  "uniquePrimarySourceUrls": [
+    "https://docs.kernel.org/admin-guide/cgroup-v2.html",
+    "https://docs.oracle.com/en/java/javase/17/troubleshoot/diagnostic-tools.html",
+    "https://ics.uci.edu/~dechter/publications/r153.pdf",
+    "https://ics.uci.edu/~dechter/publications/r62.pdf",
+    "https://www.ics.uci.edu/~dechter/publications/r122.pdf",
+    "https://www.isiweb.ee.ethz.ch/papers/arch/aloe-2001-1.pdf"
+  ],
+  "fencesBalanced": true,
+  "whitespaceCheck": true,
+  "acceptanceCriteriaCount": 16,
+  "frozenSourceFilesChecked": 3963,
+  "sourceFilesMatchFrozenEngine": true,
+  "newOptimizerImplementedForThisDocument": false,
+  "newBenchmarksRunForThisDocument": false,
+  "independentReviews": {
+    "architecture": "CLEAR after incident-factor elimination, signed AND aggregation, and in-loop failure corrections",
+    "primarySources": "No blocking overclaim; signed AND aggregation clarification incorporated",
+    "currentCode": "No further factual blocker; sparse backpointer citation corrected"
+  },
+  "scope": "Design-document verification; future engine correctness and performance require the specified tests.",
+  "followupDirectExactClarification": "Updated to distinguish direct exact DP from bound-based search; see COFEE_ML_STRUCTURE_AND_SEED_AUDIT_2026-10-15_KO.md"
+}

@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "docker",
+    "run",
+    "--rm",
+    "--pull",
+    "never",
+    "--network",
+    "none",
+    "--name",
+    "sysds-tree-synthetic-8734e4b97bec8f4e",
+    "--cpus",
+    "4",
+    "--memory",
+    "8g",
+    "--user",
+    "10041:5500",
+    "--volume",
+    "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/runtime/runtime-and-regional/synthetic-same-model:/evidence:rw",
+    "--volume",
+    "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3/classes:/engine/classes:ro",
+    "--volume",
+    "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3/test-classes:/engine/test-classes:ro",
+    "--volume",
+    "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3/lib:/deps:ro",
+    "--entrypoint",
+    "bash",
+    "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+    "/evidence/container-run.sh"
+  ],
+  "shell": "docker run --rm --pull never --network none --name sysds-tree-synthetic-8734e4b97bec8f4e --cpus 4 --memory 8g --user 10041:5500 --volume /home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/runtime/runtime-and-regional/synthetic-same-model:/evidence:rw --volume /home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3/classes:/engine/classes:ro --volume /home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3/test-classes:/engine/test-classes:ro --volume /home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3/lib:/deps:ro --entrypoint bash sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434 /evidence/container-run.sh"
+}

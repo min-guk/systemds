@@ -1,0 +1,13 @@
+{
+  "timeUtc": "2026-10-15T03:01:11Z",
+  "platform": "Linux-6.8.0-64-generic-x86_64-with-glibc2.39",
+  "cpus": 48,
+  "loadAverage": [
+    15.07958984375,
+    21.43505859375,
+    15.3779296875
+  ],
+  "memoryInfo": "MemTotal:       263575952 kB\nMemFree:        18882504 kB\nMemAvailable:   97697836 kB\nBuffers:         4450224 kB\nCached:         173707148 kB\nSwapCached:        97700 kB\nActive:         96643140 kB\nInactive:       117858120 kB\nActive(anon):   92633828 kB\nInactive(anon): 62618056 kB\nActive(file):    4009312 kB\nInactive(file): 55240064 kB\nUnevictable:       31104 kB\nMlocked:           28032 kB\nSwapTotal:      35668984 kB\nSwapFree:            136 kB\nZswap:                 0 kB\nZswapped:              0 kB\nDirty:               312 kB\nWriteback:             0 kB\nAnonPages:      36278728 kB\nMapped:           456400 kB\nShmem:          118899340 kB\nKReclaimable:   22275840 kB\nSlab:           28618480 kB\nSReclaimable:   22275840 kB\nSUnreclaim:      6342640 kB\nKernelStack:       33344 kB\nPageTables:       142184 kB\nSecPageTables:         0 kB\nNFS_Unstable:          0 kB\nBounce:                0 kB\nWritebackTmp:          0 kB\nCommitLimit:    167456960 kB\nCommitted_AS:   201534436 kB\nVmallocTotal:   34359738367 kB\nVmallocUsed:      319700 kB\nVmallocChunk:          0 kB\nPercpu:           238080 kB\nHardwareCorrupted:     0 kB\nAnonHugePages:         0 kB\nShmemHugePages:        0 kB\nShmemPmdMapped:        0 kB\nFileHugePages:         0 kB\nFilePmdMapped:         0 kB\nUnaccepted:            0 kB\nHugePages_Total:       0\nHugePages_Free:        0\nHugePages_Rsvd:        0\nHugePages_Surp:        0\nHugepagesize:       2048 kB\nHugetlb:               0 kB\nDirectMap4k:     2914356 kB\nDirectMap2M:    84828160 kB\nDirectMap1G:    181403648 kB\n",
+  "exclusiveHost": false,
+  "performanceContainersWithinThisEvaluation": "sequential; no concurrent benchmark launched by this task"
+}

@@ -1,0 +1,5 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+26/10/15 03:23:57 WARN utils.SettingsChecker: Low memory budget set of:    128 MB this should most likely be increased
+26/10/15 03:23:57 WARN util.NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+[MemoPlannerPhase] phase=facts elapsedNs=60973161
+Exception in thread "main" java.lang.OutOfMemoryError: Java heap space: failed reallocation of scalar replaced objects

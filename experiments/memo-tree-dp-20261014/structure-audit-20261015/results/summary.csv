@@ -1,0 +1,4 @@
+phase,workload,workers,algorithm,status,failureCategory,wallSeconds,peakContainerMemoryUsageBytes
+source-fullcompile,logreg,3,EXACT,passed,,5.314410962164402,338060902
+source-fullcompile,glm,3,EXACT,passed,,11.187650889158249,872205516
+source-fullcompile,gnmf,3,EXACT,passed,,2.6967909783124924,181403648

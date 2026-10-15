@@ -1,0 +1,39 @@
+# Memo Tree-DP benchmark report
+
+Overall result: **INCOMPLETE/FAILED**.
+
+Reproduction command:
+
+```sh
+/home/mchoi/cofee-tree-dp-20261014/scripts/fedplanner/run_LAN_docker.sh --memo-tree-dp-benchmark --engine /home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-mode-20261015/engine-v1 --sealed-stage /home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z --output-root /home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-mode-20261015/comparison-r1-heap128-glm-gnmf --workloads glm,gnmf --workers 3 --algorithms EXACT,MEMO_GLOBAL,MEMO_LOCAL --watchdog-seconds 900 --heap-mib 128 --search-nodes 20000 --frontier-nodes 10000 --factor-cells 256 --cache-entries 4096 --dual-direct-exact true --dual-seed-work 100000 --dual-factor-cells 256 --dual-direct-cells 2000000 --dual-memory-bytes 9223372036854775807 --dual-diagnostic-nodes 9223372036854775807 --synthetic-repetitions 7 --skip-synthetic
+```
+
+The selected Memo algorithms use exact structural kernels or certified conflict search over the same immutable factors. Deferred cyclic, wide, shared-movement, and legality factors remain represented in the certified bound. Every reported upper bound is a fully validated assignment.
+
+Global succeeds only with equal lower and upper bounds. Local succeeds only with a positive lower bound and `(UB-LB)/LB <= 0.05`, or with exact equality for a non-positive lower bound. Deterministic resource exhaustion and the external watchdog are failures, never approximate-success conditions.
+
+## Source full-compile results
+
+| Workload | Algorithm | Heap MiB | Status | Planner seconds | DP seconds | Conflict seconds | Wall seconds | Full compile seconds | Peak container usage bytes | Final LB | Final UB | Failure |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| glm | EXACT | 128 | failed | unavailable | unavailable | unavailable | 14.369345 |  | 272420044 |  |  | jvm_out_of_memory |
+| glm | MEMO_GLOBAL | 128 | failed | unavailable | unavailable | unavailable | 14.921943 |  | 275565772 |  |  | jvm_out_of_memory |
+| glm | MEMO_LOCAL | 128 | failed | unavailable | unavailable | unavailable | 15.339925 |  | 263507148 |  |  | jvm_out_of_memory |
+| gnmf | EXACT | 128 | passed | 0.825526 | unavailable | unavailable | 2.630082 | 1.492989 | 168925593 |  | 217.047325383116814386166933852680832606196759115846361964941024780273437500 |  |
+| gnmf | MEMO_GLOBAL | 128 | passed | 0.812670 | unavailable | unavailable | 2.966699 | 1.738486 | 131806003 | 217.047325383116814386166933852680832606196759115846361964941024780273437500 | 217.047325383116814386166933852680832606196759115846361964941024780273437500 |  |
+| gnmf | MEMO_LOCAL | 128 | passed | 0.661134 | unavailable | unavailable | 2.607027 | 1.395992 | 148688076 | 217.047325383116814386166933852680832606196759115846361964941024780273437500 | 217.047325383116814386166933852680832606196759115846361964941024780273437500 |  |
+
+Each workload group used byte-identical source. Memo EXACT was executed independently on the same frozen model and checked against every reported certificate interval:
+
+- `ml:glm:w3:source-fullcompile`: failed (EXACT baseline costs missing)
+- `ml:gnmf:w3:source-fullcompile`: passed; valid bounds=true, requested guarantee established=true
+
+## Synthetic and Regional comparison
+
+Synthetic comparison was explicitly skipped.
+
+## Runtime evidence
+
+Runtime smoke was not requested; the table above is compile-only evidence.
+
+Machine-readable bounds, full progression, counters, commands, and failure categories are in `summary.json` and the per-attempt directories.

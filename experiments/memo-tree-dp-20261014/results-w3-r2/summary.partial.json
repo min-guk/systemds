@@ -1,0 +1,37 @@
+{
+  "schema": "systemds-memo-tree-dp-partial-summary/v1",
+  "complete": false,
+  "reason": "stopped after diagnosed deterministic Global exhaustion and manually interrupted Local root work",
+  "rows": [
+    {
+      "workload": "logreg",
+      "algorithm": "EXACT",
+      "status": "passed",
+      "result": "compile/logreg-w3-exact/result.json"
+    },
+    {
+      "workload": "logreg",
+      "algorithm": "TREE_DP_GLOBAL",
+      "status": "failed",
+      "failureCategory": "deterministic_resource_exhaustion",
+      "result": "compile/logreg-w3-tree_dp_global/result.json"
+    },
+    {
+      "workload": "logreg",
+      "algorithm": "TREE_DP_LOCAL",
+      "status": "MANUALLY_INTERRUPTED_UNCERTIFIED",
+      "lowerBound": null,
+      "upperBound": null,
+      "result": null
+    }
+  ],
+  "notStarted": [
+    "glm:EXACT",
+    "glm:TREE_DP_GLOBAL",
+    "glm:TREE_DP_LOCAL",
+    "gnmf:EXACT",
+    "gnmf:TREE_DP_GLOBAL",
+    "gnmf:TREE_DP_LOCAL",
+    "runtime-smoke"
+  ]
+}

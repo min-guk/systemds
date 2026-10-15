@@ -1,0 +1,39 @@
+{
+  "core_review": {
+    "reviewer": "independent_correctness (executor, independent test author)",
+    "result": "approved",
+    "checked": [
+      "frontier domain partition",
+      "atomic branching/resource preservation",
+      "UNKNOWN lower-bound retention",
+      "exact 1.05 multiplication",
+      "constant/singleton factor projection",
+      "subtree cache dependency signatures"
+    ],
+    "limits": [
+      "CostTerm.certifiedMinimum trusted per existing contract",
+      "recursive depth failure explicit",
+      "no guarantee of faster planning"
+    ]
+  },
+  "integration_review": {
+    "reviewer": "tree_solver (executor, core author reviewing independent integration)",
+    "result": "approved after harness/header fixes",
+    "checked": [
+      "Global/Local status gates",
+      "original checks and cost validation",
+      "reconstruction and publication",
+      "enum switch consumers"
+    ],
+    "fixed": [
+      "full ASF headers",
+      "all-algorithm runtime label"
+    ]
+  },
+  "verification": {
+    "java_tests": 128,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0
+  }
+}

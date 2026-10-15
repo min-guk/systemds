@@ -1,0 +1,170 @@
+{
+  "totals": {
+    "tests": 128,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0
+  },
+  "suites": [
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.FederatedPlanMemoTest",
+      "tests": 7,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "3.731"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoControlFlowParityTest",
+      "tests": 6,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "1.104"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoExhaustiveParityTest",
+      "tests": 5,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "1.465"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerBinarySupportTest",
+      "tests": 6,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.048"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerBoundaryBoundTest",
+      "tests": 4,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.057"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerCheckStateTest",
+      "tests": 4,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.04"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerCostInvariantProjectionTest",
+      "tests": 5,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.14"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerCostStateRefinementTest",
+      "tests": 3,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.075"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerCostStateTest",
+      "tests": 9,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.078"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerDomainCacheTest",
+      "tests": 5,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.124"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerEliminationTest",
+      "tests": 12,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.384"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerForestTailTest",
+      "tests": 7,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.079"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerPseudoforestTest",
+      "tests": 5,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.049"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerScopeValidationTest",
+      "tests": 3,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.028"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerSupportWitnessTest",
+      "tests": 7,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.068"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerTest",
+      "tests": 23,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.267"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerUnaryTautologyTest",
+      "tests": 5,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.039"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoTreeDpModelTest",
+      "tests": 1,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "1.582"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoTreeDpOptimizerTest",
+      "tests": 10,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "0.261"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoTreeDpTrainingRuntimeTest",
+      "tests": 1,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": "4.245"
+    }
+  ]
+}

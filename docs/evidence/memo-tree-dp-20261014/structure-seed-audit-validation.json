@@ -1,0 +1,26 @@
+{
+  "schema": "memo-structure-report-validation/v1",
+  "documents": {
+    "COFEE_ML_STRUCTURE_AND_SEED_AUDIT_2026-10-15_KO.md": {
+      "sha256": "64de425112ea131df04ff02e7bd2e94d0085cb2b94d4691671420bc2a4b1443b",
+      "linksChecked": 15
+    },
+    "COFEE_TREE_DP_CLUSTER_GLOBAL_LOCAL_CONCEPTS_2026-10-15_KO.md": {
+      "sha256": "4552d91239c60d4430d44c6a60105a04942fda37233d06966a284f57cdf76409",
+      "linksChecked": 4
+    },
+    "COFEE_MEMO_DUAL_MODE_OPTIMIZER_DESIGN_2026-10-15_KO.md": {
+      "sha256": "dec1962fbea891d3c9d82e22af5fdc58c4604c38218da14bcc6ceeb88943f973",
+      "linksChecked": 62,
+      "historicalSnapshot": "docs/evidence/memo-tree-dp-20261014/dual-mode-design-v1-before-rewrite.md",
+      "supersededBy": "docs/evidence/memo-tree-dp-20261014/dual-mode-design-validation.json"
+    }
+  },
+  "mlDiagnosticRunsPassed": 3,
+  "allInputHashesMatchBaseline": true,
+  "allOptimumCostsMatchBaseline": true,
+  "productionSourceHashesVerified": 3963,
+  "graphConservationChecksPassed": true,
+  "independentProbeReview": "CLEAR: read-only observation; graph-definition and performance limits documented",
+  "performanceAblationPerformed": false
+}

@@ -1,0 +1,31 @@
+{
+  "algorithm": "TREE_DP_LOCAL",
+  "comparisonGroup": "ml:glm:w3:source-fullcompile",
+  "compile": {
+    "executionSeconds": null,
+    "fullCompileSeconds": null,
+    "fullInitialPlanningSeconds": null,
+    "runtimeProgramSeconds": null,
+    "verified": false
+  },
+  "deterministicTreeLimits": {
+    "cacheEntries": 4096,
+    "factorCells": 256,
+    "frontierNodes": 10000,
+    "searchNodes": 2000
+  },
+  "externalWatchdogSeconds": 900,
+  "failureCategory": "container_failure",
+  "memoPlans": [],
+  "peakContainerMemoryUsageBytes": null,
+  "phase": "source-fullcompile",
+  "returncode": 125,
+  "schema": "systemds-memo-tree-dp-attempt/v1",
+  "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+  "status": "failed",
+  "timedOut": false,
+  "treeCertificates": [],
+  "wallSeconds": 0.4202614054083824,
+  "workers": 3,
+  "workload": "glm"
+}

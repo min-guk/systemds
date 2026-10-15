@@ -1,0 +1,57 @@
+{
+  "algorithms": [
+    "EXACT",
+    "TREE_DP_GLOBAL",
+    "TREE_DP_LOCAL"
+  ],
+  "compileNetwork": "none",
+  "costContract": {
+    "codegen": false,
+    "costEnvironment": {},
+    "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+    "nativeBlas": "none",
+    "productionDefaults": {
+      "aggregateBinaryFlopsPerSecond": 32000000000,
+      "flopsPerSecond": 2147483648,
+      "memoryBandwidthMiBPerSecond": 25000.0,
+      "networkBandwidthC2WMiBPerSecond": 125.0,
+      "networkBandwidthW2CMiBPerSecond": 125.0,
+      "networkLatencyC2WSeconds": 0.0005,
+      "networkLatencyW2CSeconds": 0.0005,
+      "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+      "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+      "unknownDimensionTransferFallbackMiB": 256.0,
+      "uploadEstimateClampRatio": 4.0
+    },
+    "semantics": "production-default-costs-no-overrides/v1"
+  },
+  "deterministicTreeLimits": {
+    "cacheEntries": 4096,
+    "factorCells": 4096,
+    "frontierNodes": 10000,
+    "searchNodes": 2000
+  },
+  "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-tree-dp-20261014/engine",
+  "engineValidation": {
+    "manifest": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-tree-dp-20261014/engine-sha256.json",
+    "manifestSha256": "e9d29906d804c68eec384bc8353d50cc2a1ebdf3c30a4cf06c3cbcc235427e3a",
+    "verifiedFiles": 8836
+  },
+  "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "repository": "/home/mchoi/cofee-tree-dp-20261014",
+  "repositoryCommit": "b8623e3481072940c07ef3962bcd55be526f1d09",
+  "runtimeNetwork": "bridge",
+  "schema": "systemds-memo-tree-dp-manifest/v1",
+  "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+  "stageValidation": {
+    "manifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+  },
+  "watchdogSeconds": 900,
+  "watchdogSemantics": "failure only; never an optimization success condition",
+  "workers": 3,
+  "workloads": [
+    "logreg",
+    "glm",
+    "gnmf"
+  ]
+}

@@ -1,0 +1,635 @@
+{
+  "comparisonContract": "identical DML bytes, image, CPU, memory, cost defaults, and compile-only mode",
+  "compileRows": [
+    {
+      "algorithm": "EXACT",
+      "comparisonGroup": "ml:logreg:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "runtimeProgramSeconds": null,
+        "verified": false
+      },
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": "container_failure",
+      "memoPlans": [],
+      "peakContainerMemoryUsageBytes": null,
+      "phase": "source-fullcompile",
+      "returncode": 125,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+      "status": "failed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 0.37047380954027176,
+      "workers": 3,
+      "workload": "logreg"
+    },
+    {
+      "algorithm": "TREE_DP_GLOBAL",
+      "comparisonGroup": "ml:logreg:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "runtimeProgramSeconds": null,
+        "verified": false
+      },
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": "container_failure",
+      "memoPlans": [],
+      "peakContainerMemoryUsageBytes": null,
+      "phase": "source-fullcompile",
+      "returncode": 125,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+      "status": "failed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 0.3557831645011902,
+      "workers": 3,
+      "workload": "logreg"
+    },
+    {
+      "algorithm": "TREE_DP_LOCAL",
+      "comparisonGroup": "ml:logreg:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "runtimeProgramSeconds": null,
+        "verified": false
+      },
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": "container_failure",
+      "memoPlans": [],
+      "peakContainerMemoryUsageBytes": null,
+      "phase": "source-fullcompile",
+      "returncode": 125,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+      "status": "failed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 0.36192337423563004,
+      "workers": 3,
+      "workload": "logreg"
+    },
+    {
+      "algorithm": "EXACT",
+      "comparisonGroup": "ml:glm:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "runtimeProgramSeconds": null,
+        "verified": false
+      },
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": "container_failure",
+      "memoPlans": [],
+      "peakContainerMemoryUsageBytes": null,
+      "phase": "source-fullcompile",
+      "returncode": 125,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+      "status": "failed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 0.3625590205192566,
+      "workers": 3,
+      "workload": "glm"
+    },
+    {
+      "algorithm": "TREE_DP_GLOBAL",
+      "comparisonGroup": "ml:glm:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "runtimeProgramSeconds": null,
+        "verified": false
+      },
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": "container_failure",
+      "memoPlans": [],
+      "peakContainerMemoryUsageBytes": null,
+      "phase": "source-fullcompile",
+      "returncode": 125,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+      "status": "failed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 0.3671736791729927,
+      "workers": 3,
+      "workload": "glm"
+    },
+    {
+      "algorithm": "TREE_DP_LOCAL",
+      "comparisonGroup": "ml:glm:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "runtimeProgramSeconds": null,
+        "verified": false
+      },
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": "container_failure",
+      "memoPlans": [],
+      "peakContainerMemoryUsageBytes": null,
+      "phase": "source-fullcompile",
+      "returncode": 125,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+      "status": "failed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 0.4202614054083824,
+      "workers": 3,
+      "workload": "glm"
+    },
+    {
+      "algorithm": "EXACT",
+      "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "runtimeProgramSeconds": null,
+        "verified": false
+      },
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": "container_failure",
+      "memoPlans": [],
+      "peakContainerMemoryUsageBytes": null,
+      "phase": "source-fullcompile",
+      "returncode": 125,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "status": "failed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 0.36670955270528793,
+      "workers": 3,
+      "workload": "gnmf"
+    },
+    {
+      "algorithm": "TREE_DP_GLOBAL",
+      "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "runtimeProgramSeconds": null,
+        "verified": false
+      },
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": "container_failure",
+      "memoPlans": [],
+      "peakContainerMemoryUsageBytes": null,
+      "phase": "source-fullcompile",
+      "returncode": 125,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "status": "failed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 0.3872123584151268,
+      "workers": 3,
+      "workload": "gnmf"
+    },
+    {
+      "algorithm": "TREE_DP_LOCAL",
+      "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": null,
+        "fullCompileSeconds": null,
+        "fullInitialPlanningSeconds": null,
+        "runtimeProgramSeconds": null,
+        "verified": false
+      },
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": "container_failure",
+      "memoPlans": [],
+      "peakContainerMemoryUsageBytes": null,
+      "phase": "source-fullcompile",
+      "returncode": 125,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "status": "failed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 0.3957635164260864,
+      "workers": 3,
+      "workload": "gnmf"
+    }
+  ],
+  "complete": false,
+  "groups": {
+    "ml:glm:w3:source-fullcompile": {
+      "exactComparison": {
+        "reason": "EXACT baseline costs missing",
+        "status": "failed"
+      },
+      "rows": [
+        {
+          "algorithm": "EXACT",
+          "comparisonGroup": "ml:glm:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": null,
+            "fullCompileSeconds": null,
+            "fullInitialPlanningSeconds": null,
+            "runtimeProgramSeconds": null,
+            "verified": false
+          },
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": "container_failure",
+          "memoPlans": [],
+          "peakContainerMemoryUsageBytes": null,
+          "phase": "source-fullcompile",
+          "returncode": 125,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+          "status": "failed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 0.3625590205192566,
+          "workers": 3,
+          "workload": "glm"
+        },
+        {
+          "algorithm": "TREE_DP_GLOBAL",
+          "comparisonGroup": "ml:glm:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": null,
+            "fullCompileSeconds": null,
+            "fullInitialPlanningSeconds": null,
+            "runtimeProgramSeconds": null,
+            "verified": false
+          },
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": "container_failure",
+          "memoPlans": [],
+          "peakContainerMemoryUsageBytes": null,
+          "phase": "source-fullcompile",
+          "returncode": 125,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+          "status": "failed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 0.3671736791729927,
+          "workers": 3,
+          "workload": "glm"
+        },
+        {
+          "algorithm": "TREE_DP_LOCAL",
+          "comparisonGroup": "ml:glm:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": null,
+            "fullCompileSeconds": null,
+            "fullInitialPlanningSeconds": null,
+            "runtimeProgramSeconds": null,
+            "verified": false
+          },
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": "container_failure",
+          "memoPlans": [],
+          "peakContainerMemoryUsageBytes": null,
+          "phase": "source-fullcompile",
+          "returncode": 125,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+          "status": "failed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 0.4202614054083824,
+          "workers": 3,
+          "workload": "glm"
+        }
+      ],
+      "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b"
+    },
+    "ml:gnmf:w3:source-fullcompile": {
+      "exactComparison": {
+        "reason": "EXACT baseline costs missing",
+        "status": "failed"
+      },
+      "rows": [
+        {
+          "algorithm": "EXACT",
+          "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": null,
+            "fullCompileSeconds": null,
+            "fullInitialPlanningSeconds": null,
+            "runtimeProgramSeconds": null,
+            "verified": false
+          },
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": "container_failure",
+          "memoPlans": [],
+          "peakContainerMemoryUsageBytes": null,
+          "phase": "source-fullcompile",
+          "returncode": 125,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "failed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 0.36670955270528793,
+          "workers": 3,
+          "workload": "gnmf"
+        },
+        {
+          "algorithm": "TREE_DP_GLOBAL",
+          "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": null,
+            "fullCompileSeconds": null,
+            "fullInitialPlanningSeconds": null,
+            "runtimeProgramSeconds": null,
+            "verified": false
+          },
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": "container_failure",
+          "memoPlans": [],
+          "peakContainerMemoryUsageBytes": null,
+          "phase": "source-fullcompile",
+          "returncode": 125,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "failed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 0.3872123584151268,
+          "workers": 3,
+          "workload": "gnmf"
+        },
+        {
+          "algorithm": "TREE_DP_LOCAL",
+          "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": null,
+            "fullCompileSeconds": null,
+            "fullInitialPlanningSeconds": null,
+            "runtimeProgramSeconds": null,
+            "verified": false
+          },
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": "container_failure",
+          "memoPlans": [],
+          "peakContainerMemoryUsageBytes": null,
+          "phase": "source-fullcompile",
+          "returncode": 125,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "failed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 0.3957635164260864,
+          "workers": 3,
+          "workload": "gnmf"
+        }
+      ],
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a"
+    },
+    "ml:logreg:w3:source-fullcompile": {
+      "exactComparison": {
+        "reason": "EXACT baseline costs missing",
+        "status": "failed"
+      },
+      "rows": [
+        {
+          "algorithm": "EXACT",
+          "comparisonGroup": "ml:logreg:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": null,
+            "fullCompileSeconds": null,
+            "fullInitialPlanningSeconds": null,
+            "runtimeProgramSeconds": null,
+            "verified": false
+          },
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": "container_failure",
+          "memoPlans": [],
+          "peakContainerMemoryUsageBytes": null,
+          "phase": "source-fullcompile",
+          "returncode": 125,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+          "status": "failed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 0.37047380954027176,
+          "workers": 3,
+          "workload": "logreg"
+        },
+        {
+          "algorithm": "TREE_DP_GLOBAL",
+          "comparisonGroup": "ml:logreg:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": null,
+            "fullCompileSeconds": null,
+            "fullInitialPlanningSeconds": null,
+            "runtimeProgramSeconds": null,
+            "verified": false
+          },
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": "container_failure",
+          "memoPlans": [],
+          "peakContainerMemoryUsageBytes": null,
+          "phase": "source-fullcompile",
+          "returncode": 125,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+          "status": "failed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 0.3557831645011902,
+          "workers": 3,
+          "workload": "logreg"
+        },
+        {
+          "algorithm": "TREE_DP_LOCAL",
+          "comparisonGroup": "ml:logreg:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": null,
+            "fullCompileSeconds": null,
+            "fullInitialPlanningSeconds": null,
+            "runtimeProgramSeconds": null,
+            "verified": false
+          },
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": "container_failure",
+          "memoPlans": [],
+          "peakContainerMemoryUsageBytes": null,
+          "phase": "source-fullcompile",
+          "returncode": 125,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+          "status": "failed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 0.36192337423563004,
+          "workers": 3,
+          "workload": "logreg"
+        }
+      ],
+      "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c"
+    }
+  },
+  "regionalComparison": {
+    "performed": false,
+    "reason": "real-workload Regional model is not proven equivalent; equal-factor synthetic comparison is in synthetic"
+  },
+  "runtimeRows": [
+    {
+      "algorithm": "ALL_ALGORITHMS",
+      "compileOnly": false,
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "failureCategory": "runtime_test_failure",
+      "network": "bridge",
+      "peakContainerMemoryUsageBytes": null,
+      "phase": "federated-runtime-smoke",
+      "returncode": 125,
+      "schema": "systemds-memo-tree-dp-runtime/v1",
+      "status": "failed",
+      "tests": null,
+      "wallSeconds": 0.35918886959552765
+    }
+  ],
+  "schema": "systemds-memo-tree-dp-benchmark/v1",
+  "synthetic": {
+    "failureCategory": "benchmark_failure",
+    "legacyRegional": [],
+    "legacyRegionalCompared": true,
+    "memorySemantics": {
+      "peakContainerMemoryUsageBytes": "high-water of Docker MemUsage samples; includes charged cache and is not RSS",
+      "peakPoolBytes": "per-process JVM pool high-water; sequential algorithms retain prior heap state"
+    },
+    "peakContainerMemoryUsageBytes": null,
+    "phase": "synthetic-same-model",
+    "returncode": 125,
+    "rows": [],
+    "schema": "systemds-memo-tree-dp-synthetic/v1",
+    "status": "failed",
+    "wallSeconds": 0.3498411551117897
+  }
+}

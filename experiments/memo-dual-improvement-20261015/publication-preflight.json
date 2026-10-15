@@ -1,0 +1,20 @@
+{
+  "schema": "memo-publication-preflight/v1",
+  "checkedAtUtc": "2026-10-15T07:42:56.102297+00:00",
+  "base": "b8623e3481072940c07ef3962bcd55be526f1d09",
+  "originMainAtFetch": "b8623e3481072940c07ef3962bcd55be526f1d09",
+  "stagedFilesBeforeThisRecord": 2805,
+  "stagedByteEquality": true,
+  "stagedWhitespaceCheck": true,
+  "rawEvidenceWhitespacePolicy": "Captured log/text whitespace preserved; CSV CRLF accepted; source checks unchanged.",
+  "pythonTestsRerun": {
+    "harness": 21,
+    "independentAuditor": 10,
+    "failures": 0
+  },
+  "javaValidation": "3975 source hashes match tested frozen engine-v3; prior 158-test result retained. No Java changes during publication.",
+  "compiledEngineFilesIncluded": false,
+  "largeBinariesIncluded": false,
+  "credentialPatternScan": "No private key header, GitHub token, or AWS access key pattern in staged files. This is a bounded pattern scan.",
+  "publication": "Normal fast-forward push to origin/main requested; remote post-push verification follows outside this preflight record."
+}

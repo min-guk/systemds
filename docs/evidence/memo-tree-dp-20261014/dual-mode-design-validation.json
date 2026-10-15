@@ -1,0 +1,143 @@
+{
+  "schema": "memo-dual-mode-design-validation/v2",
+  "date": "2026-10-15",
+  "report": "docs/COFEE_MEMO_DUAL_MODE_OPTIMIZER_DESIGN_2026-10-15_KO.md",
+  "reportSha256": "02c935a8befbf5ab09d4830718851052c887f18d8da37da26cacfde7c5a9c5b3",
+  "documents": {
+    "docs/COFEE_MEMO_DUAL_MODE_OPTIMIZER_DESIGN_2026-10-15_KO.md": {
+      "sha256": "02c935a8befbf5ab09d4830718851052c887f18d8da37da26cacfde7c5a9c5b3",
+      "lines": 513,
+      "fileLinksChecked": 45,
+      "sourceLineLinksChecked": 28,
+      "fencesBalanced": true,
+      "whitespaceChecked": true
+    },
+    ".omx/plans/memo-dual-mode-20261015.md": {
+      "sha256": "612da0931ef614d010b890583034ebd5d5a48c48055e89360aeaab3a36812075",
+      "lines": 47,
+      "fileLinksChecked": 7,
+      "sourceLineLinksChecked": 3,
+      "fencesBalanced": true,
+      "whitespaceChecked": true
+    }
+  },
+  "archivedV1": {
+    "report": "docs/evidence/memo-tree-dp-20261014/dual-mode-design-v1-before-rewrite.md",
+    "sha256": "dec1962fbea891d3c9d82e22af5fdc58c4604c38218da14bcc6ceeb88943f973",
+    "validation": "docs/evidence/memo-tree-dp-20261014/dual-mode-design-v1-validation.json"
+  },
+  "metricRowsChecked": [
+    {
+      "label": "전체 모델 변수 슬롯",
+      "values": [
+        489,
+        1001,
+        85
+      ]
+    },
+    {
+      "label": "초기 선택지 2개 이상 변수",
+      "values": [
+        86,
+        171,
+        18
+      ]
+    },
+    {
+      "label": "정규화 후 선택지 2개 이상 변수",
+      "values": [
+        80,
+        166,
+        16
+      ]
+    },
+    {
+      "label": "boundary ≤ 1로 반복 leaf 제거 가능한 변수",
+      "values": [
+        12,
+        21,
+        0
+      ]
+    },
+    {
+      "label": "그 비율",
+      "values": [
+        15.0,
+        12.650602409638553,
+        0.0
+      ]
+    },
+    {
+      "label": "실제 elimination의 최대 separator 변수 수",
+      "values": [
+        4,
+        10,
+        3
+      ]
+    },
+    {
+      "label": "최대 class-aware 출력 table rows",
+      "values": [
+        441,
+        111132,
+        80
+      ]
+    },
+    {
+      "label": "전체 elimination cells",
+      "values": [
+        14744,
+        1360977,
+        3308
+      ]
+    },
+    {
+      "label": "Memo EXACT",
+      "values": [
+        "0.696407157",
+        "2.2368796",
+        "0.156286576"
+      ]
+    }
+  ],
+  "baselineDirectExactTraceChecked": {
+    "logreg": {
+      "nodes": 14744,
+      "boundPrunes": 0,
+      "conditionalBoundQueries": 0
+    },
+    "glm": {
+      "nodes": 1360977,
+      "boundPrunes": 0,
+      "conditionalBoundQueries": 0
+    },
+    "gnmf": {
+      "nodes": 3308,
+      "boundPrunes": 0,
+      "conditionalBoundQueries": 0
+    }
+  },
+  "baselineTreeOutcomesChecked": {
+    "logreg": "both modes uncertified at diagnostic 2000-node cap",
+    "glm": "both modes uncertified at diagnostic 2000-node cap",
+    "gnmf": "Global exact; Local certified 4.6073%; both optimization times checked"
+  },
+  "allThreeDiagnosticOptimumCostsMatchBaseline": true,
+  "acceptanceCriteriaCount": 21,
+  "uniquePrimarySourceUrls": [
+    "https://docs.kernel.org/admin-guide/cgroup-v2.html",
+    "https://docs.oracle.com/en/java/javase/17/troubleshoot/diagnostic-tools.html",
+    "https://ics.uci.edu/~dechter/publications/r62.pdf",
+    "https://www.isiweb.ee.ethz.ch/papers/arch/aloe-2001-1.pdf"
+  ],
+  "frozenSourceFilesChecked": 3963,
+  "sourceFilesMatchFrozenEngine": true,
+  "gitDiffCheck": true,
+  "independentReviews": {
+    "architecture": "CLEAR; full v2 reviewed: direct exact, seed/proof separation, bound/cover, tie, atomic publication, memory and C01-C21 consistent. Design review only.",
+    "legacyFacts": "No factual blockers; greedy/repair/validation/lift and limited resource guard descriptions checked against current code."
+  },
+  "newOptimizerImplementedForThisDocument": false,
+  "newBenchmarksRunForThisRevision": false,
+  "scope": "Document rewrite and evidence consistency verification only. Proposed engine correctness and performance require sections 10-12 implementation and independent tests."
+}

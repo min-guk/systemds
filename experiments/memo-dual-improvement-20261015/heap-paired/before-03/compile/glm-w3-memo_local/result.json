@@ -1,0 +1,112 @@
+{
+  "algorithm": "MEMO_LOCAL",
+  "comparisonGroup": "ml:glm:w3:source-fullcompile",
+  "compile": {
+    "executionSeconds": 0.0,
+    "fullCompileSeconds": 13.505397,
+    "fullInitialPlanningSeconds": 13.489738744,
+    "runtimeProgramSeconds": 0.085782,
+    "verified": true
+  },
+  "compileHeapMiB": 256,
+  "deterministicTreeLimits": {
+    "cacheEntries": 4096,
+    "factorCells": 256,
+    "frontierNodes": 10000,
+    "searchNodes": 2000
+  },
+  "dualCertificates": [
+    {
+      "certified": true,
+      "lowerBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "progression": [
+        {
+          "lowerBound": "354.464649581871946198133286746637755568190009114459826378151774406433105468750000",
+          "nodes": 0,
+          "upperBound": "null"
+        },
+        {
+          "lowerBound": "354.464649581871946198133286746637755568190009114459826378151774406433105468750000",
+          "nodes": 0,
+          "upperBound": "509.530166072386029781271480769048272049803749439433886436745524406433105468750000"
+        },
+        {
+          "lowerBound": "356.967548751793821198133286746637755568190009114459826378151774406433105468750000",
+          "nodes": 2,
+          "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+        },
+        {
+          "lowerBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+          "nodes": 3,
+          "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+        }
+      ],
+      "reason": "Requested bound certificate established",
+      "relativeGap": "0.0",
+      "route": "CERTIFIED_SEARCH",
+      "statistics": {
+        "boundCacheHits": 27727,
+        "boundNanos": 1150513326,
+        "cacheBytes": 2658628,
+        "directAttempts": 3,
+        "directExactSolves": 2,
+        "exactCells": 325857,
+        "kernelNanos": 2086563515,
+        "maxPending": 2,
+        "nodes": 3,
+        "peakEstimatedBytes": 26302936,
+        "pruned": 0,
+        "relaxationCalls": 4,
+        "repairCalls": 0,
+        "searchNanos": 1390295538,
+        "seedAttempts": 1,
+        "seedEvaluations": 1955,
+        "seedNanos": 1374523986
+      },
+      "statisticsRaw": "Statistics[directExactSolves=2, directAttempts=3, seedAttempts=1, seedEvaluations=1955, repairCalls=0, nodes=3, relaxationCalls=4, boundCacheHits=27727, exactCells=325857, pruned=0, maxPending=2, peakEstimatedBytes=26302936, cacheBytes=2658628, kernelNanos=2086563515, seedNanos=1374523986, boundNanos=1150513326, searchNanos=1390295538, route=CERTIFIED_SEARCH]",
+      "status": "OPTIMAL",
+      "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+    }
+  ],
+  "dualOptions": {
+    "clusterCells": 4096,
+    "diagnosticNodes": 9223372036854775807,
+    "diagnostics": false,
+    "directCells": 2000000,
+    "directExact": true,
+    "factorCells": 256,
+    "factorDiagnostics": false,
+    "factorDiagnosticsMaxFactors": 10000,
+    "improveSeed": false,
+    "memoryBytes": 9223372036854775807,
+    "seedWork": 100000
+  },
+  "externalWatchdogSeconds": 900,
+  "failureCategory": null,
+  "memoPlans": [
+    {
+      "algorithm": "MEMO_LOCAL",
+      "cost": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "phaseNanos": {
+        "facts": 85403924,
+        "model": 1690854422,
+        "optimization": 5018734769,
+        "projection": 145089960,
+        "rules": 4805913076
+      },
+      "planningNanos": 11745996151,
+      "status": "OPTIMAL"
+    }
+  ],
+  "peakContainerMemoryUsageBytes": 444491366,
+  "phase": "source-fullcompile",
+  "returncode": 0,
+  "schema": "systemds-memo-tree-dp-attempt/v1",
+  "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+  "status": "passed",
+  "timedOut": false,
+  "treeCertificates": [],
+  "wallSeconds": 15.283883407711983,
+  "workers": 3,
+  "workload": "glm"
+}

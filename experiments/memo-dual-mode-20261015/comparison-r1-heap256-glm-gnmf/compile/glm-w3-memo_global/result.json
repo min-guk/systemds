@@ -1,0 +1,122 @@
+{
+  "algorithm": "MEMO_GLOBAL",
+  "comparisonGroup": "ml:glm:w3:source-fullcompile",
+  "compile": {
+    "executionSeconds": 0.0,
+    "fullCompileSeconds": 19.19564,
+    "fullInitialPlanningSeconds": 19.176690507,
+    "runtimeProgramSeconds": 0.072952,
+    "verified": true
+  },
+  "compileHeapMiB": 256,
+  "deterministicTreeLimits": {
+    "cacheEntries": 4096,
+    "factorCells": 256,
+    "frontierNodes": 10000,
+    "searchNodes": 20000
+  },
+  "dualCertificates": [
+    {
+      "certified": true,
+      "lowerBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "progression": [
+        {
+          "lowerBound": "354.464649581871946198133286746637755568190009114459826378151774406433105468750000",
+          "nodes": 0,
+          "upperBound": "null"
+        },
+        {
+          "lowerBound": "354.464649581871946198133286746637755568190009114459826378151774406433105468750000",
+          "nodes": 0,
+          "upperBound": "509.530166072386029781271480769048272049803749439433886436745524406433105468750000"
+        },
+        {
+          "lowerBound": "356.967548751793821198133286746637755568190009114459826378151774406433105468750000",
+          "nodes": 2,
+          "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+        },
+        {
+          "lowerBound": "381.964814249637245973549162026864462957109758178830816177651286125183105468750000",
+          "nodes": 3,
+          "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+        },
+        {
+          "lowerBound": "397.588601891162515638578271264636605428210991419746278552338480949401855468750000",
+          "nodes": 5,
+          "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+        },
+        {
+          "lowerBound": "397.625985924365640638578271264636605428210991419746278552338480949401855468750000",
+          "nodes": 27,
+          "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+        },
+        {
+          "lowerBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+          "nodes": 28,
+          "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+        }
+      ],
+      "reason": "Requested bound certificate established",
+      "relativeGap": "0.0",
+      "route": "CERTIFIED_SEARCH",
+      "statistics": {
+        "boundCacheHits": 742775,
+        "boundNanos": 2670018783,
+        "cacheBytes": 3738683,
+        "directAttempts": 28,
+        "directExactSolves": 13,
+        "exactCells": 1242230,
+        "kernelNanos": 6320593203,
+        "maxPending": 7,
+        "nodes": 28,
+        "peakEstimatedBytes": 26302944,
+        "pruned": 19,
+        "relaxationCalls": 83,
+        "repairCalls": 0,
+        "searchNanos": 9651535391,
+        "seedAttempts": 1,
+        "seedEvaluations": 1955,
+        "seedNanos": 1017135088
+      },
+      "statisticsRaw": "Statistics[directExactSolves=13, directAttempts=28, seedAttempts=1, seedEvaluations=1955, repairCalls=0, nodes=28, relaxationCalls=83, boundCacheHits=742775, exactCells=1242230, pruned=19, maxPending=7, peakEstimatedBytes=26302944, cacheBytes=3738683, kernelNanos=6320593203, seedNanos=1017135088, boundNanos=2670018783, searchNanos=9651535391, route=CERTIFIED_SEARCH]",
+      "status": "OPTIMAL",
+      "upperBound": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000"
+    }
+  ],
+  "dualOptions": {
+    "diagnosticNodes": 9223372036854775807,
+    "directCells": 2000000,
+    "directExact": true,
+    "factorCells": 256,
+    "memoryBytes": 9223372036854775807,
+    "seedWork": 100000
+  },
+  "externalWatchdogSeconds": 900,
+  "failureCategory": null,
+  "memoPlans": [
+    {
+      "algorithm": "MEMO_GLOBAL",
+      "cost": "426.222945173122011978444871186836413398668632623866869835183024406433105468750000",
+      "phaseNanos": {
+        "facts": 80729358,
+        "model": 1275181379,
+        "optimization": 12287645756,
+        "projection": 128027009,
+        "rules": 3728445993
+      },
+      "planningNanos": 17500029495,
+      "status": "OPTIMAL"
+    }
+  ],
+  "peakContainerMemoryUsageBytes": 442603929,
+  "phase": "source-fullcompile",
+  "returncode": 0,
+  "schema": "systemds-memo-tree-dp-attempt/v1",
+  "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+  "status": "passed",
+  "timedOut": false,
+  "treeCertificates": [],
+  "wallSeconds": 20.389050111174583,
+  "workers": 3,
+  "workload": "glm"
+}

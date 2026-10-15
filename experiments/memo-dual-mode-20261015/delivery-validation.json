@@ -1,0 +1,21 @@
+{
+  "schema": "memo-dual-delivery-validation/v1",
+  "sourceFilesMatchingFrozenEngine": 3970,
+  "localLinksChecked": 33,
+  "markdownFencesAndWhitespace": "passed",
+  "gitDiffCheck": "passed",
+  "reportNumericalReview": "CLEAR: independently checked main, ablation, heap, synthetic, legacy adapter and runtime against recorded JSON",
+  "architectureReportReview": "CLEAR after floor-shortcut, admission-policy, seed-work and reserve wording corrections",
+  "testEvidence": {
+    "java": "java-test-summary.json",
+    "python": "python-test-summary.json",
+    "pythonRaw": "python-test-output.txt"
+  },
+  "resultEvidence": "result-validation.json",
+  "acceptanceCriteriaScope": "independent-validation.json; partial strongest fault/stress criteria retained explicitly",
+  "fileSha256": {
+    "docs/COFEE_MEMO_DUAL_MODE_IMPLEMENTATION_REPORT_2026-10-15_KO.md": "869e5c30337657c5713b0a2defd01c6bfc9e6bba4290f7834fcc1549d7f99d98",
+    ".omx/plans/memo-dual-mode-20261015.md": "a8d739b2c0f0850971caf8bfdbc3e65c252cec6efc472e86945fb783adcad6eb",
+    "docs/SESSION_ISSUES_2026-10-15.md": "579f558ce58c99b8c64481c80767fcb1ea35bc61bba5f64ed22390a0f3c75798"
+  }
+}

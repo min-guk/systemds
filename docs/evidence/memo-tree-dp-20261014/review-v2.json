@@ -1,0 +1,25 @@
+{
+  "reviewer": "independent_correctness native executor",
+  "decision": "APPROVE",
+  "scope": "v2 cost tuple/domain caches and certified cost-class projection",
+  "findings": [],
+  "evidence": [
+    "Keys include factor identity and full ordered tuples/domains, with wide BitSet masks",
+    "Representatives selected from current live domains only",
+    "Native costs, actual rule domains, legality checks and subtree keys preserve original ordinals",
+    "Node carries conditional minima for exact node domains",
+    "NO/UNKNOWN witnesses do not create feasible incumbents",
+    "All three cache capacities sum to configured total"
+  ],
+  "proof_boundary": "Existing CostTerm certifiedMinimum and certifiedCostClasses contracts must be truthful",
+  "integrationReview": {
+    "reviewer": "tree_solver native executor",
+    "fixed": "EXACT now ignores Tree-specific resource properties; tree selection still validates them",
+    "checks": [
+      "Only certified local or OPTIMAL global reaches publication",
+      "Original cost/legality revalidated before existing reconstruction",
+      "Rollback and existing EXACT solve implementation preserved"
+    ],
+    "verification": "132 Java tests pass; focused constructor isolation regression included"
+  }
+}

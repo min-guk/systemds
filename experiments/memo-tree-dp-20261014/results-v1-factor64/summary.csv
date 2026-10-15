@@ -1,0 +1,3 @@
+phase,workload,workers,algorithm,status,failureCategory,wallSeconds,peakContainerMemoryUsageBytes
+source-fullcompile,logreg,3,TREE_DP_GLOBAL,failed,deterministic_resource_exhaustion,13.095059268176556,734632345
+source-fullcompile,logreg,3,TREE_DP_LOCAL,failed,deterministic_resource_exhaustion,12.36303772777319,757281587

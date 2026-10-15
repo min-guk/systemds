@@ -1,0 +1,72 @@
+[
+  {
+    "workload": "logreg",
+    "algorithm": "TREE_DP_GLOBAL",
+    "searchNodeCap": 2000,
+    "status": "RESOURCE_EXHAUSTED",
+    "pointsChecked": 127,
+    "boundsContainIndependentOptimum": true,
+    "boundsMonotone": true,
+    "certificateValidIfClaimed": true
+  },
+  {
+    "workload": "logreg",
+    "algorithm": "TREE_DP_LOCAL",
+    "searchNodeCap": 2000,
+    "status": "RESOURCE_EXHAUSTED",
+    "pointsChecked": 127,
+    "boundsContainIndependentOptimum": true,
+    "boundsMonotone": true,
+    "certificateValidIfClaimed": true
+  },
+  {
+    "workload": "glm",
+    "algorithm": "TREE_DP_GLOBAL",
+    "searchNodeCap": 2000,
+    "status": "RESOURCE_EXHAUSTED",
+    "pointsChecked": 151,
+    "boundsContainIndependentOptimum": true,
+    "boundsMonotone": true,
+    "certificateValidIfClaimed": true
+  },
+  {
+    "workload": "glm",
+    "algorithm": "TREE_DP_LOCAL",
+    "searchNodeCap": 2000,
+    "status": "RESOURCE_EXHAUSTED",
+    "pointsChecked": 151,
+    "boundsContainIndependentOptimum": true,
+    "boundsMonotone": true,
+    "certificateValidIfClaimed": true
+  },
+  {
+    "workload": "gnmf",
+    "algorithm": "TREE_DP_GLOBAL",
+    "searchNodeCap": 2000,
+    "status": "OPTIMAL",
+    "pointsChecked": 9,
+    "boundsContainIndependentOptimum": true,
+    "boundsMonotone": true,
+    "certificateValidIfClaimed": true
+  },
+  {
+    "workload": "gnmf",
+    "algorithm": "TREE_DP_LOCAL",
+    "searchNodeCap": 2000,
+    "status": "EPSILON_OPTIMAL",
+    "pointsChecked": 8,
+    "boundsContainIndependentOptimum": true,
+    "boundsMonotone": true,
+    "certificateValidIfClaimed": true
+  },
+  {
+    "workload": "logreg",
+    "algorithm": "TREE_DP_LOCAL",
+    "searchNodeCap": 20000,
+    "status": "RESOURCE_EXHAUSTED",
+    "pointsChecked": 814,
+    "boundsContainIndependentOptimum": true,
+    "boundsMonotone": true,
+    "certificateValidIfClaimed": true
+  }
+]

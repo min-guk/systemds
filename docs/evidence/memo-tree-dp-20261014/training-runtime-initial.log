@@ -1,0 +1,22 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+[ERROR] Tests run: 1, Failures: 0, Errors: 1, Skipped: 0, Time elapsed: 0.003 s <<< FAILURE! - in org.apache.sysds.hops.fedplanner.memo.MemoTreeDpTrainingRuntimeTest
+[ERROR] org.apache.sysds.hops.fedplanner.memo.MemoTreeDpTrainingRuntimeTest.protectedGradientTrainingMatchesIndependentArithmeticForAllAlgorithms  Time elapsed: 0.003 s  <<< ERROR!
+java.lang.NoClassDefFoundError: org/apache/sysds/conf/ConfigurationManager
+	at org.apache.sysds.hops.fedplanner.memo.MemoTreeDpTrainingRuntimeTest.protectedGradientTrainingMatchesIndependentArithmeticForAllAlgorithms(MemoTreeDpTrainingRuntimeTest.java:48)
+Caused by: java.lang.ClassNotFoundException: org.apache.sysds.conf.ConfigurationManager
+	at org.apache.sysds.hops.fedplanner.memo.MemoTreeDpTrainingRuntimeTest.protectedGradientTrainingMatchesIndependentArithmeticForAllAlgorithms(MemoTreeDpTrainingRuntimeTest.java:48)
+
+[ERROR] Errors: 
+[ERROR]   MemoTreeDpTrainingRuntimeTest.protectedGradientTrainingMatchesIndependentArithmeticForAllAlgorithms:48 NoClassDefFound org/apache/sysds/conf/ConfigurationManager
+[ERROR] Tests run: 1, Failures: 0, Errors: 1, Skipped: 0
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.0.0:test (default-test) on project systemds: 
+[ERROR] 
+[ERROR] Please refer to /home/mchoi/cofee-tree-dp-20261014/target/surefire-reports for the individual test results.
+[ERROR] Please refer to dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

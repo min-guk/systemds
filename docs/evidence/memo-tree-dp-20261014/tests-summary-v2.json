@@ -1,0 +1,171 @@
+{
+  "totals": {
+    "tests": 132,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "suites": [
+    {
+      "suite": "FederatedPlanMemoTest",
+      "tests": 8,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.847
+    },
+    {
+      "suite": "MemoControlFlowParityTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.113
+    },
+    {
+      "suite": "MemoExhaustiveParityTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.445
+    },
+    {
+      "suite": "MemoOptimizerBinarySupportTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.032
+    },
+    {
+      "suite": "MemoOptimizerBoundaryBoundTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.088
+    },
+    {
+      "suite": "MemoOptimizerCheckStateTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.042
+    },
+    {
+      "suite": "MemoOptimizerCostInvariantProjectionTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.131
+    },
+    {
+      "suite": "MemoOptimizerCostStateRefinementTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.062
+    },
+    {
+      "suite": "MemoOptimizerCostStateTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.077
+    },
+    {
+      "suite": "MemoOptimizerDomainCacheTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.128
+    },
+    {
+      "suite": "MemoOptimizerEliminationTest",
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.29
+    },
+    {
+      "suite": "MemoOptimizerForestTailTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.084
+    },
+    {
+      "suite": "MemoOptimizerPseudoforestTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.061
+    },
+    {
+      "suite": "MemoOptimizerScopeValidationTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.025
+    },
+    {
+      "suite": "MemoOptimizerSupportWitnessTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.083
+    },
+    {
+      "suite": "MemoOptimizerTest",
+      "tests": 23,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.257
+    },
+    {
+      "suite": "MemoOptimizerUnaryTautologyTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.056
+    },
+    {
+      "suite": "MemoTreeDpModelTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 1.686
+    },
+    {
+      "suite": "MemoTreeDpOptimizerTest",
+      "tests": 13,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 0.309
+    },
+    {
+      "suite": "MemoTreeDpTrainingRuntimeTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.158
+    }
+  ],
+  "validation": "Full v2 131-test run then affected-suite rerun after fixing a test-isolation assertion and adding EXACT tree-property isolation regression. Unaffected suites retained from full run."
+}

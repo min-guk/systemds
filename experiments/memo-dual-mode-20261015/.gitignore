@@ -1,0 +1,3 @@
+# Frozen compiled engines are local artifacts; retain their SHA-256 manifests.
+engine-v*/
+__pycache__/

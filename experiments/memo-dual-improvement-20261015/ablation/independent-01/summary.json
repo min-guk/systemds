@@ -1,0 +1,1023 @@
+{
+  "comparisonContract": "identical DML bytes, image, CPU, memory, cost defaults, and compile-only mode",
+  "compileRows": [
+    {
+      "algorithm": "EXACT",
+      "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": 0.0,
+        "fullCompileSeconds": 1.400303,
+        "fullInitialPlanningSeconds": 1.3937547,
+        "runtimeProgramSeconds": 0.029656,
+        "verified": true
+      },
+      "compileHeapMiB": 3072,
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "dualCertificates": [],
+      "dualOptions": {
+        "clusterCells": 0,
+        "diagnosticNodes": 9223372036854775807,
+        "diagnostics": false,
+        "directCells": 0,
+        "directExact": true,
+        "factorCells": 256,
+        "factorDiagnostics": false,
+        "factorDiagnosticsMaxFactors": 10000,
+        "improveSeed": false,
+        "memoryBytes": 9223372036854775807,
+        "seedWork": 100000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": null,
+      "memoPlans": [
+        {
+          "algorithm": "EXACT",
+          "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "phaseNanos": {
+            "facts": 39840652,
+            "model": 135870062,
+            "optimization": 171427151,
+            "projection": 71490649,
+            "rules": 250415189
+          },
+          "planningNanos": 669043703,
+          "status": "OPTIMAL"
+        }
+      ],
+      "peakContainerMemoryUsageBytes": 188533964,
+      "phase": "source-fullcompile",
+      "returncode": 0,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "status": "passed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 2.7454764619469643,
+      "workers": 3,
+      "workload": "gnmf"
+    },
+    {
+      "algorithm": "MEMO_GLOBAL",
+      "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": 0.0,
+        "fullCompileSeconds": 4.321293,
+        "fullInitialPlanningSeconds": 4.316699299,
+        "runtimeProgramSeconds": 0.020318,
+        "verified": true
+      },
+      "compileHeapMiB": 3072,
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "dualCertificates": [
+        {
+          "certified": true,
+          "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "progression": [
+            {
+              "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+              "nodes": 0,
+              "upperBound": "null"
+            },
+            {
+              "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+              "nodes": 0,
+              "upperBound": "910.460326538970080852333862546973269891381619345338549464941024780273437500"
+            },
+            {
+              "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+              "nodes": 11,
+              "upperBound": "900.460326538970080852333862546973269891381619345338549464941024780273437500"
+            },
+            {
+              "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+              "nodes": 15,
+              "upperBound": "890.460326538970080852333862546973269891381619345338549464941024780273437500"
+            },
+            {
+              "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+              "nodes": 21,
+              "upperBound": "657.982811222960561499587069827273827504754422079713549464941024780273437500"
+            },
+            {
+              "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+              "nodes": 22,
+              "upperBound": "647.982811222960561499587069827273827504754422079713549464941024780273437500"
+            },
+            {
+              "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+              "nodes": 37,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "146.793137068043162692301902732313484412074444662721361964941024780273437500",
+              "nodes": 349,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "150.631993065764513552354327723722254850358126532228197902441024780273437500",
+              "nodes": 351,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "150.796262068043158562966140517121876873929409157426562160253524780273437500",
+              "nodes": 427,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "150.812119001636910516958663857397388019521144997270312160253524780273437500",
+              "nodes": 508,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "151.891403669605660516958663857397388019521144997270312160253524780273437500",
+              "nodes": 521,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "155.553342146168158562966140517121876873929409157426562160253524780273437500",
+              "nodes": 522,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "155.569199079761910516958663857397388019521144997270312160253524780273437500",
+              "nodes": 560,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "156.648483747730660516958663857397388019521144997270312160253524780273437500",
+              "nodes": 582,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "168.679184431324410516958663857397388019521144997270312160253524780273437500",
+              "nodes": 583,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "171.324826521168154122074042016495715179402736794145312160253524780273437500",
+              "nodes": 584,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "172.397812361011910516958663857397388019521144997270312160253524780273437500",
+              "nodes": 607,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "176.081906599293154122074042016495715179402736794145312160253524780273437500",
+              "nodes": 610,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "177.154892439136910516958663857397388019521144997270312160253524780273437500",
+              "nodes": 637,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "189.533432478199410516958663857397388019521144997270312160253524780273437500",
+              "nodes": 644,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "201.911972517261910516958663857397388019521144997270312160253524780273437500",
+              "nodes": 649,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "nodes": 651,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            }
+          ],
+          "reason": "Requested bound certificate established",
+          "relativeGap": "0.0",
+          "route": "CERTIFIED_SEARCH",
+          "statistics": {
+            "bestUpperNanos": 825639532,
+            "boundCacheHits": 617930,
+            "boundNanos": 360448440,
+            "cacheBytes": 1279916,
+            "certificateNanos": 2740115511,
+            "clusterBuildNanos": 0,
+            "clusterBytes": 0,
+            "clusterCacheHits": 0,
+            "clusterCells": 0,
+            "clusterGroups": 0,
+            "clusterQueries": 0,
+            "clusterQueryNanos": 0,
+            "directAttempts": 651,
+            "directExactSolves": 17,
+            "exactCells": 0,
+            "firstUpperNanos": 343539421,
+            "kernelNanos": 1489395716,
+            "maxPending": 10,
+            "nodes": 651,
+            "peakEstimatedBytes": 1426206,
+            "pruned": 1393,
+            "relaxationCalls": 3477,
+            "repairCalls": 0,
+            "searchNanos": 2396288373,
+            "seedAttempts": 1,
+            "seedEvaluations": 238,
+            "seedNanos": 113748759,
+            "setupNanos": 2728118,
+            "validationNanos": 342762156
+          },
+          "statisticsRaw": "Statistics[directExactSolves=17, directAttempts=651, seedAttempts=1, seedEvaluations=238, repairCalls=0, nodes=651, relaxationCalls=3477, boundCacheHits=617930, exactCells=0, pruned=1393, maxPending=10, peakEstimatedBytes=1426206, cacheBytes=1279916, kernelNanos=1489395716, seedNanos=113748759, boundNanos=360448440, searchNanos=2396288373, setupNanos=2728118, validationNanos=342762156, firstUpperNanos=343539421, bestUpperNanos=825639532, certificateNanos=2740115511, clusterGroups=0, clusterCells=0, clusterQueries=0, clusterCacheHits=0, clusterBytes=0, clusterBuildNanos=0, clusterQueryNanos=0, route=CERTIFIED_SEARCH]",
+          "status": "OPTIMAL",
+          "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+        }
+      ],
+      "dualOptions": {
+        "clusterCells": 0,
+        "diagnosticNodes": 9223372036854775807,
+        "diagnostics": false,
+        "directCells": 0,
+        "directExact": true,
+        "factorCells": 256,
+        "factorDiagnostics": false,
+        "factorDiagnosticsMaxFactors": 10000,
+        "improveSeed": false,
+        "memoryBytes": 9223372036854775807,
+        "seedWork": 100000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": null,
+      "memoPlans": [
+        {
+          "algorithm": "MEMO_GLOBAL",
+          "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "phaseNanos": {
+            "facts": 63719109,
+            "model": 191616995,
+            "optimization": 2757420866,
+            "projection": 42473843,
+            "rules": 399632992
+          },
+          "planningNanos": 3454863805,
+          "status": "OPTIMAL"
+        }
+      ],
+      "peakContainerMemoryUsageBytes": 341206630,
+      "phase": "source-fullcompile",
+      "returncode": 0,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "status": "passed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 5.682739153504372,
+      "workers": 3,
+      "workload": "gnmf"
+    },
+    {
+      "algorithm": "MEMO_LOCAL",
+      "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": 0.0,
+        "fullCompileSeconds": 4.793009,
+        "fullInitialPlanningSeconds": 4.784144,
+        "runtimeProgramSeconds": 0.040209,
+        "verified": true
+      },
+      "compileHeapMiB": 3072,
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "dualCertificates": [
+        {
+          "certified": true,
+          "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "progression": [
+            {
+              "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+              "nodes": 0,
+              "upperBound": "null"
+            },
+            {
+              "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+              "nodes": 0,
+              "upperBound": "910.460326538970080852333862546973269891381619345338549464941024780273437500"
+            },
+            {
+              "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+              "nodes": 11,
+              "upperBound": "900.460326538970080852333862546973269891381619345338549464941024780273437500"
+            },
+            {
+              "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+              "nodes": 15,
+              "upperBound": "890.460326538970080852333862546973269891381619345338549464941024780273437500"
+            },
+            {
+              "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+              "nodes": 21,
+              "upperBound": "657.982811222960561499587069827273827504754422079713549464941024780273437500"
+            },
+            {
+              "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+              "nodes": 22,
+              "upperBound": "647.982811222960561499587069827273827504754422079713549464941024780273437500"
+            },
+            {
+              "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+              "nodes": 37,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "146.793137068043162692301902732313484412074444662721361964941024780273437500",
+              "nodes": 349,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "150.631993065764513552354327723722254850358126532228197902441024780273437500",
+              "nodes": 351,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "150.796262068043158562966140517121876873929409157426562160253524780273437500",
+              "nodes": 427,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "150.812119001636910516958663857397388019521144997270312160253524780273437500",
+              "nodes": 508,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "151.891403669605660516958663857397388019521144997270312160253524780273437500",
+              "nodes": 521,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "155.553342146168158562966140517121876873929409157426562160253524780273437500",
+              "nodes": 522,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "155.569199079761910516958663857397388019521144997270312160253524780273437500",
+              "nodes": 560,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "156.648483747730660516958663857397388019521144997270312160253524780273437500",
+              "nodes": 582,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "168.679184431324410516958663857397388019521144997270312160253524780273437500",
+              "nodes": 583,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "171.324826521168154122074042016495715179402736794145312160253524780273437500",
+              "nodes": 584,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "172.397812361011910516958663857397388019521144997270312160253524780273437500",
+              "nodes": 607,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "176.081906599293154122074042016495715179402736794145312160253524780273437500",
+              "nodes": 610,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "177.154892439136910516958663857397388019521144997270312160253524780273437500",
+              "nodes": 637,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "189.533432478199410516958663857397388019521144997270312160253524780273437500",
+              "nodes": 644,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "201.911972517261910516958663857397388019521144997270312160253524780273437500",
+              "nodes": 649,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "nodes": 651,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            }
+          ],
+          "reason": "Requested bound certificate established",
+          "relativeGap": "0.0",
+          "route": "CERTIFIED_SEARCH",
+          "statistics": {
+            "bestUpperNanos": 790672720,
+            "boundCacheHits": 617930,
+            "boundNanos": 444961657,
+            "cacheBytes": 1279916,
+            "certificateNanos": 3256989808,
+            "clusterBuildNanos": 0,
+            "clusterBytes": 0,
+            "clusterCacheHits": 0,
+            "clusterCells": 0,
+            "clusterGroups": 0,
+            "clusterQueries": 0,
+            "clusterQueryNanos": 0,
+            "directAttempts": 651,
+            "directExactSolves": 17,
+            "exactCells": 0,
+            "firstUpperNanos": 249926197,
+            "kernelNanos": 1798075320,
+            "maxPending": 10,
+            "nodes": 651,
+            "peakEstimatedBytes": 1426206,
+            "pruned": 1393,
+            "relaxationCalls": 3477,
+            "repairCalls": 0,
+            "searchNanos": 3006762309,
+            "seedAttempts": 1,
+            "seedEvaluations": 238,
+            "seedNanos": 77518654,
+            "setupNanos": 1913125,
+            "validationNanos": 406667508
+          },
+          "statisticsRaw": "Statistics[directExactSolves=17, directAttempts=651, seedAttempts=1, seedEvaluations=238, repairCalls=0, nodes=651, relaxationCalls=3477, boundCacheHits=617930, exactCells=0, pruned=1393, maxPending=10, peakEstimatedBytes=1426206, cacheBytes=1279916, kernelNanos=1798075320, seedNanos=77518654, boundNanos=444961657, searchNanos=3006762309, setupNanos=1913125, validationNanos=406667508, firstUpperNanos=249926197, bestUpperNanos=790672720, certificateNanos=3256989808, clusterGroups=0, clusterCells=0, clusterQueries=0, clusterCacheHits=0, clusterBytes=0, clusterBuildNanos=0, clusterQueryNanos=0, route=CERTIFIED_SEARCH]",
+          "status": "OPTIMAL",
+          "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+        }
+      ],
+      "dualOptions": {
+        "clusterCells": 0,
+        "diagnosticNodes": 9223372036854775807,
+        "diagnostics": false,
+        "directCells": 0,
+        "directExact": true,
+        "factorCells": 256,
+        "factorDiagnostics": false,
+        "factorDiagnosticsMaxFactors": 10000,
+        "improveSeed": false,
+        "memoryBytes": 9223372036854775807,
+        "seedWork": 100000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": null,
+      "memoPlans": [
+        {
+          "algorithm": "MEMO_LOCAL",
+          "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "phaseNanos": {
+            "facts": 52224792,
+            "model": 191542357,
+            "optimization": 3280001134,
+            "projection": 90097627,
+            "rules": 325129072
+          },
+          "planningNanos": 3938994982,
+          "status": "OPTIMAL"
+        }
+      ],
+      "peakContainerMemoryUsageBytes": 422156697,
+      "phase": "source-fullcompile",
+      "returncode": 0,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "status": "passed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 6.208957761526108,
+      "workers": 3,
+      "workload": "gnmf"
+    }
+  ],
+  "complete": true,
+  "groups": {
+    "ml:gnmf:w3:source-fullcompile": {
+      "exactComparison": {
+        "independentOptimumSource": "Memo EXACT on identical frozen model",
+        "reason": null,
+        "requestedGuaranteeEstablished": true,
+        "status": "passed",
+        "validBounds": true
+      },
+      "rows": [
+        {
+          "algorithm": "EXACT",
+          "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": 0.0,
+            "fullCompileSeconds": 1.400303,
+            "fullInitialPlanningSeconds": 1.3937547,
+            "runtimeProgramSeconds": 0.029656,
+            "verified": true
+          },
+          "compileHeapMiB": 3072,
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "dualCertificates": [],
+          "dualOptions": {
+            "clusterCells": 0,
+            "diagnosticNodes": 9223372036854775807,
+            "diagnostics": false,
+            "directCells": 0,
+            "directExact": true,
+            "factorCells": 256,
+            "factorDiagnostics": false,
+            "factorDiagnosticsMaxFactors": 10000,
+            "improveSeed": false,
+            "memoryBytes": 9223372036854775807,
+            "seedWork": 100000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": null,
+          "memoPlans": [
+            {
+              "algorithm": "EXACT",
+              "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "phaseNanos": {
+                "facts": 39840652,
+                "model": 135870062,
+                "optimization": 171427151,
+                "projection": 71490649,
+                "rules": 250415189
+              },
+              "planningNanos": 669043703,
+              "status": "OPTIMAL"
+            }
+          ],
+          "peakContainerMemoryUsageBytes": 188533964,
+          "phase": "source-fullcompile",
+          "returncode": 0,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 2.7454764619469643,
+          "workers": 3,
+          "workload": "gnmf"
+        },
+        {
+          "algorithm": "MEMO_GLOBAL",
+          "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": 0.0,
+            "fullCompileSeconds": 4.321293,
+            "fullInitialPlanningSeconds": 4.316699299,
+            "runtimeProgramSeconds": 0.020318,
+            "verified": true
+          },
+          "compileHeapMiB": 3072,
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "dualCertificates": [
+            {
+              "certified": true,
+              "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "progression": [
+                {
+                  "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+                  "nodes": 0,
+                  "upperBound": "null"
+                },
+                {
+                  "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+                  "nodes": 0,
+                  "upperBound": "910.460326538970080852333862546973269891381619345338549464941024780273437500"
+                },
+                {
+                  "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+                  "nodes": 11,
+                  "upperBound": "900.460326538970080852333862546973269891381619345338549464941024780273437500"
+                },
+                {
+                  "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+                  "nodes": 15,
+                  "upperBound": "890.460326538970080852333862546973269891381619345338549464941024780273437500"
+                },
+                {
+                  "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+                  "nodes": 21,
+                  "upperBound": "657.982811222960561499587069827273827504754422079713549464941024780273437500"
+                },
+                {
+                  "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+                  "nodes": 22,
+                  "upperBound": "647.982811222960561499587069827273827504754422079713549464941024780273437500"
+                },
+                {
+                  "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+                  "nodes": 37,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "146.793137068043162692301902732313484412074444662721361964941024780273437500",
+                  "nodes": 349,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "150.631993065764513552354327723722254850358126532228197902441024780273437500",
+                  "nodes": 351,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "150.796262068043158562966140517121876873929409157426562160253524780273437500",
+                  "nodes": 427,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "150.812119001636910516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 508,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "151.891403669605660516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 521,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "155.553342146168158562966140517121876873929409157426562160253524780273437500",
+                  "nodes": 522,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "155.569199079761910516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 560,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "156.648483747730660516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 582,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "168.679184431324410516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 583,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "171.324826521168154122074042016495715179402736794145312160253524780273437500",
+                  "nodes": 584,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "172.397812361011910516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 607,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "176.081906599293154122074042016495715179402736794145312160253524780273437500",
+                  "nodes": 610,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "177.154892439136910516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 637,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "189.533432478199410516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 644,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "201.911972517261910516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 649,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+                  "nodes": 651,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                }
+              ],
+              "reason": "Requested bound certificate established",
+              "relativeGap": "0.0",
+              "route": "CERTIFIED_SEARCH",
+              "statistics": {
+                "bestUpperNanos": 825639532,
+                "boundCacheHits": 617930,
+                "boundNanos": 360448440,
+                "cacheBytes": 1279916,
+                "certificateNanos": 2740115511,
+                "clusterBuildNanos": 0,
+                "clusterBytes": 0,
+                "clusterCacheHits": 0,
+                "clusterCells": 0,
+                "clusterGroups": 0,
+                "clusterQueries": 0,
+                "clusterQueryNanos": 0,
+                "directAttempts": 651,
+                "directExactSolves": 17,
+                "exactCells": 0,
+                "firstUpperNanos": 343539421,
+                "kernelNanos": 1489395716,
+                "maxPending": 10,
+                "nodes": 651,
+                "peakEstimatedBytes": 1426206,
+                "pruned": 1393,
+                "relaxationCalls": 3477,
+                "repairCalls": 0,
+                "searchNanos": 2396288373,
+                "seedAttempts": 1,
+                "seedEvaluations": 238,
+                "seedNanos": 113748759,
+                "setupNanos": 2728118,
+                "validationNanos": 342762156
+              },
+              "statisticsRaw": "Statistics[directExactSolves=17, directAttempts=651, seedAttempts=1, seedEvaluations=238, repairCalls=0, nodes=651, relaxationCalls=3477, boundCacheHits=617930, exactCells=0, pruned=1393, maxPending=10, peakEstimatedBytes=1426206, cacheBytes=1279916, kernelNanos=1489395716, seedNanos=113748759, boundNanos=360448440, searchNanos=2396288373, setupNanos=2728118, validationNanos=342762156, firstUpperNanos=343539421, bestUpperNanos=825639532, certificateNanos=2740115511, clusterGroups=0, clusterCells=0, clusterQueries=0, clusterCacheHits=0, clusterBytes=0, clusterBuildNanos=0, clusterQueryNanos=0, route=CERTIFIED_SEARCH]",
+              "status": "OPTIMAL",
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            }
+          ],
+          "dualOptions": {
+            "clusterCells": 0,
+            "diagnosticNodes": 9223372036854775807,
+            "diagnostics": false,
+            "directCells": 0,
+            "directExact": true,
+            "factorCells": 256,
+            "factorDiagnostics": false,
+            "factorDiagnosticsMaxFactors": 10000,
+            "improveSeed": false,
+            "memoryBytes": 9223372036854775807,
+            "seedWork": 100000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": null,
+          "memoPlans": [
+            {
+              "algorithm": "MEMO_GLOBAL",
+              "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "phaseNanos": {
+                "facts": 63719109,
+                "model": 191616995,
+                "optimization": 2757420866,
+                "projection": 42473843,
+                "rules": 399632992
+              },
+              "planningNanos": 3454863805,
+              "status": "OPTIMAL"
+            }
+          ],
+          "peakContainerMemoryUsageBytes": 341206630,
+          "phase": "source-fullcompile",
+          "returncode": 0,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 5.682739153504372,
+          "workers": 3,
+          "workload": "gnmf"
+        },
+        {
+          "algorithm": "MEMO_LOCAL",
+          "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": 0.0,
+            "fullCompileSeconds": 4.793009,
+            "fullInitialPlanningSeconds": 4.784144,
+            "runtimeProgramSeconds": 0.040209,
+            "verified": true
+          },
+          "compileHeapMiB": 3072,
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "dualCertificates": [
+            {
+              "certified": true,
+              "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "progression": [
+                {
+                  "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+                  "nodes": 0,
+                  "upperBound": "null"
+                },
+                {
+                  "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+                  "nodes": 0,
+                  "upperBound": "910.460326538970080852333862546973269891381619345338549464941024780273437500"
+                },
+                {
+                  "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+                  "nodes": 11,
+                  "upperBound": "900.460326538970080852333862546973269891381619345338549464941024780273437500"
+                },
+                {
+                  "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+                  "nodes": 15,
+                  "upperBound": "890.460326538970080852333862546973269891381619345338549464941024780273437500"
+                },
+                {
+                  "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+                  "nodes": 21,
+                  "upperBound": "657.982811222960561499587069827273827504754422079713549464941024780273437500"
+                },
+                {
+                  "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+                  "nodes": 22,
+                  "upperBound": "647.982811222960561499587069827273827504754422079713549464941024780273437500"
+                },
+                {
+                  "lowerBound": "130.812119001636909805722038706906479310632107626588549464941024780273437500",
+                  "nodes": 37,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "146.793137068043162692301902732313484412074444662721361964941024780273437500",
+                  "nodes": 349,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "150.631993065764513552354327723722254850358126532228197902441024780273437500",
+                  "nodes": 351,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "150.796262068043158562966140517121876873929409157426562160253524780273437500",
+                  "nodes": 427,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "150.812119001636910516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 508,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "151.891403669605660516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 521,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "155.553342146168158562966140517121876873929409157426562160253524780273437500",
+                  "nodes": 522,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "155.569199079761910516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 560,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "156.648483747730660516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 582,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "168.679184431324410516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 583,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "171.324826521168154122074042016495715179402736794145312160253524780273437500",
+                  "nodes": 584,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "172.397812361011910516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 607,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "176.081906599293154122074042016495715179402736794145312160253524780273437500",
+                  "nodes": 610,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "177.154892439136910516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 637,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "189.533432478199410516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 644,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "201.911972517261910516958663857397388019521144997270312160253524780273437500",
+                  "nodes": 649,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+                  "nodes": 651,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                }
+              ],
+              "reason": "Requested bound certificate established",
+              "relativeGap": "0.0",
+              "route": "CERTIFIED_SEARCH",
+              "statistics": {
+                "bestUpperNanos": 790672720,
+                "boundCacheHits": 617930,
+                "boundNanos": 444961657,
+                "cacheBytes": 1279916,
+                "certificateNanos": 3256989808,
+                "clusterBuildNanos": 0,
+                "clusterBytes": 0,
+                "clusterCacheHits": 0,
+                "clusterCells": 0,
+                "clusterGroups": 0,
+                "clusterQueries": 0,
+                "clusterQueryNanos": 0,
+                "directAttempts": 651,
+                "directExactSolves": 17,
+                "exactCells": 0,
+                "firstUpperNanos": 249926197,
+                "kernelNanos": 1798075320,
+                "maxPending": 10,
+                "nodes": 651,
+                "peakEstimatedBytes": 1426206,
+                "pruned": 1393,
+                "relaxationCalls": 3477,
+                "repairCalls": 0,
+                "searchNanos": 3006762309,
+                "seedAttempts": 1,
+                "seedEvaluations": 238,
+                "seedNanos": 77518654,
+                "setupNanos": 1913125,
+                "validationNanos": 406667508
+              },
+              "statisticsRaw": "Statistics[directExactSolves=17, directAttempts=651, seedAttempts=1, seedEvaluations=238, repairCalls=0, nodes=651, relaxationCalls=3477, boundCacheHits=617930, exactCells=0, pruned=1393, maxPending=10, peakEstimatedBytes=1426206, cacheBytes=1279916, kernelNanos=1798075320, seedNanos=77518654, boundNanos=444961657, searchNanos=3006762309, setupNanos=1913125, validationNanos=406667508, firstUpperNanos=249926197, bestUpperNanos=790672720, certificateNanos=3256989808, clusterGroups=0, clusterCells=0, clusterQueries=0, clusterCacheHits=0, clusterBytes=0, clusterBuildNanos=0, clusterQueryNanos=0, route=CERTIFIED_SEARCH]",
+              "status": "OPTIMAL",
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            }
+          ],
+          "dualOptions": {
+            "clusterCells": 0,
+            "diagnosticNodes": 9223372036854775807,
+            "diagnostics": false,
+            "directCells": 0,
+            "directExact": true,
+            "factorCells": 256,
+            "factorDiagnostics": false,
+            "factorDiagnosticsMaxFactors": 10000,
+            "improveSeed": false,
+            "memoryBytes": 9223372036854775807,
+            "seedWork": 100000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": null,
+          "memoPlans": [
+            {
+              "algorithm": "MEMO_LOCAL",
+              "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "phaseNanos": {
+                "facts": 52224792,
+                "model": 191542357,
+                "optimization": 3280001134,
+                "projection": 90097627,
+                "rules": 325129072
+              },
+              "planningNanos": 3938994982,
+              "status": "OPTIMAL"
+            }
+          ],
+          "peakContainerMemoryUsageBytes": 422156697,
+          "phase": "source-fullcompile",
+          "returncode": 0,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 6.208957761526108,
+          "workers": 3,
+          "workload": "gnmf"
+        }
+      ],
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a"
+    }
+  },
+  "regionalComparison": {
+    "performed": false,
+    "reason": "real-workload Regional model is not proven equivalent; equal-factor synthetic comparison is in synthetic"
+  },
+  "runtimeRows": [],
+  "schema": "systemds-memo-tree-dp-benchmark/v1",
+  "synthetic": null
+}

@@ -1,0 +1,34 @@
+{
+  "schema": "memo-tree-dependencies-document-validation/v1",
+  "document": "docs/COFEE_TREE_DP_DEPENDENCIES_AND_MATERIALIZATION_2026-10-15_KO.md",
+  "documentSha256": "5cbb8ff4198ede8c8607d081dc84d6529ebb54580ddb5c953b98052482d7b485",
+  "localLinksChecked": 12,
+  "lineReferencesWithinFile": true,
+  "markdownFencesAndWhitespace": "passed",
+  "illustrativeSharedUploadTruthTable": [
+    {
+      "aNeedsRow": false,
+      "bNeedsRow": false,
+      "sharedCost": 0
+    },
+    {
+      "aNeedsRow": false,
+      "bNeedsRow": true,
+      "sharedCost": 10
+    },
+    {
+      "aNeedsRow": true,
+      "bNeedsRow": false,
+      "sharedCost": 10
+    },
+    {
+      "aNeedsRow": true,
+      "bNeedsRow": true,
+      "sharedCost": 10
+    }
+  ],
+  "illustrativeCostIsNotIndependentAdditive": true,
+  "unchangedFrozenSourceFiles": 3970,
+  "gitDiffCheck": "passed",
+  "scope": "Documentation only; no new algorithm execution or workload benchmark. Per-dependency contribution to tree structure remains unmeasured."
+}

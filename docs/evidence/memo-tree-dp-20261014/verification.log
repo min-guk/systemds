@@ -1,0 +1,130 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+BOUNDARY_CONFLICT_NODES=15
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+MEMO_EXHAUSTIVE assignments=12 feasible=6 cost=0.5004990875720977783238488625547867039156102464403375051915645599365234375
+MEMO_EXHAUSTIVE assignments=2352 feasible=584 cost=1.000339155942201614385668047529746871315836642679641954600811004638671875
+MEMO_EXHAUSTIVE assignments=48 feasible=6 cost=1.00032151341438293457336181861011548122064596100244671106338500976562500
+MEMO_EXHAUSTIVE assignments=144 feasible=48 cost=1.000336943417787551883702931092116894529198134478065185248851776123046875
+MEMO_EXHAUSTIVE assignments=48 feasible=8 cost=1.000890621691942214968352941012290358013814284277032129466533660888671875
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 1.444 s <<< FAILURE! - in org.apache.sysds.hops.fedplanner.memo.MemoTreeDpModelTest
+[ERROR] org.apache.sysds.hops.fedplanner.memo.MemoTreeDpModelTest.parsedFunctionsBranchesLoopsAndSharedProducersMatchEnumeration  Time elapsed: 1.444 s  <<< FAILURE!
+java.lang.AssertionError: 
+expected: java.util.Collections$UnmodifiableMap<{statements
+for (i in seq(1,1,1)) { 
+statements
+A = ABS(A);
+liveout [A, i]
+livein [i, A]
+gen [A]
+kill [A]
+read [A]
+updated [A]
+}
+
+liveout [A]
+livein [A, i]
+gen [A]
+kill [i, A]
+read [A]
+updated [i, A]
+=[Contract[variable=A, dataType=MATRIX, entryValueType=FP64, valueType=FP64, target=LOCAL, entryRows=4, entryColumns=2, repeatRows=4, repeatColumns=2, entryRequired=true, localResidencyApproved=true, entryRecipes=[Recipe[sourcePartition=ROW, movement=COLLECT, workerPoolDescriptor=POOLv1:bG9jYWxob3N0.19101,bG9jYWxob3N0.19102]], pool=org.apache.sysds.runtime.controlprogram.federated.CanonicalWorkerPool@4faf0250]]}> but was: java.util.Collections$UnmodifiableMap<{statements
+for (i in seq(1,1,1)) { 
+statements
+A = ABS(A);
+liveout [A, i]
+livein [i, A]
+gen [A]
+kill [A]
+read [A]
+updated [A]
+}
+
+liveout [A]
+livein [A, i]
+gen [A]
+kill [i, A]
+read [A]
+updated [i, A]
+=[Contract[variable=A, dataType=MATRIX, entryValueType=FP64, valueType=FP64, target=LOCAL, entryRows=4, entryColumns=2, repeatRows=4, repeatColumns=2, entryRequired=true, localResidencyApproved=true, entryRecipes=[Recipe[sourcePartition=ROW, movement=COLLECT, workerPoolDescriptor=POOLv1:bG9jYWxob3N0.19101,bG9jYWxob3N0.19102]], pool=org.apache.sysds.runtime.controlprogram.federated.CanonicalWorkerPool@4faf0250]]}>
+	at org.apache.sysds.hops.fedplanner.memo.MemoTreeDpModelTest.assertParsedExact(MemoTreeDpModelTest.java:87)
+	at org.apache.sysds.hops.fedplanner.memo.MemoTreeDpModelTest.parsedFunctionsBranchesLoopsAndSharedProducersMatchEnumeration(MemoTreeDpModelTest.java:44)
+
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+[ERROR] Tests run: 1, Failures: 0, Errors: 1, Skipped: 0, Time elapsed: 3.208 s <<< FAILURE! - in org.apache.sysds.hops.fedplanner.memo.MemoTreeDpTrainingRuntimeTest
+[ERROR] org.apache.sysds.hops.fedplanner.memo.MemoTreeDpTrainingRuntimeTest.protectedGradientTrainingMatchesIndependentArithmeticForAllAlgorithms  Time elapsed: 3.208 s  <<< ERROR!
+org.apache.sysds.runtime.DMLRuntimeException: org.apache.sysds.runtime.DMLRuntimeException: ERROR: Runtime error in program block generated from statement block between lines 1 and 1 -- Error evaluating instruction: CP°print°_mVar44·MATRIX·STRING·false°_Var46·SCALAR·STRING°48
+	at org.apache.sysds.hops.fedplanner.memo.MemoTreeDpTrainingRuntimeTest.protectedGradientTrainingMatchesIndependentArithmeticForAllAlgorithms(MemoTreeDpTrainingRuntimeTest.java:110)
+Caused by: org.apache.sysds.runtime.DMLRuntimeException: ERROR: Runtime error in program block generated from statement block between lines 1 and 1 -- Error evaluating instruction: CP°print°_mVar44·MATRIX·STRING·false°_Var46·SCALAR·STRING°48
+	at org.apache.sysds.hops.fedplanner.memo.MemoTreeDpTrainingRuntimeTest.protectedGradientTrainingMatchesIndependentArithmeticForAllAlgorithms(MemoTreeDpTrainingRuntimeTest.java:110)
+Caused by: org.apache.sysds.runtime.DMLRuntimeException: Builtin.execute(): Unknown operation: PRINT
+	at org.apache.sysds.hops.fedplanner.memo.MemoTreeDpTrainingRuntimeTest.protectedGradientTrainingMatchesIndependentArithmeticForAllAlgorithms(MemoTreeDpTrainingRuntimeTest.java:110)
+
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+[ERROR] Failures: 
+[ERROR]   MemoTreeDpModelTest.parsedFunctionsBranchesLoopsAndSharedProducersMatchEnumeration:44->assertParsedExact:87 expected: java.util.Collections$UnmodifiableMap<{statements
+for (i in seq(1,1,1)) { 
+statements
+A = ABS(A);
+liveout [A, i]
+livein [i, A]
+gen [A]
+kill [A]
+read [A]
+updated [A]
+}
+
+liveout [A]
+livein [A, i]
+gen [A]
+kill [i, A]
+read [A]
+updated [i, A]
+=[Contract[variable=A, dataType=MATRIX, entryValueType=FP64, valueType=FP64, target=LOCAL, entryRows=4, entryColumns=2, repeatRows=4, repeatColumns=2, entryRequired=true, localResidencyApproved=true, entryRecipes=[Recipe[sourcePartition=ROW, movement=COLLECT, workerPoolDescriptor=POOLv1:bG9jYWxob3N0.19101,bG9jYWxob3N0.19102]], pool=org.apache.sysds.runtime.controlprogram.federated.CanonicalWorkerPool@4faf0250]]}> but was: java.util.Collections$UnmodifiableMap<{statements
+for (i in seq(1,1,1)) { 
+statements
+A = ABS(A);
+liveout [A, i]
+livein [i, A]
+gen [A]
+kill [A]
+read [A]
+updated [A]
+}
+
+liveout [A]
+livein [A, i]
+gen [A]
+kill [i, A]
+read [A]
+updated [i, A]
+=[Contract[variable=A, dataType=MATRIX, entryValueType=FP64, valueType=FP64, target=LOCAL, entryRows=4, entryColumns=2, repeatRows=4, repeatColumns=2, entryRequired=true, localResidencyApproved=true, entryRecipes=[Recipe[sourcePartition=ROW, movement=COLLECT, workerPoolDescriptor=POOLv1:bG9jYWxob3N0.19101,bG9jYWxob3N0.19102]], pool=org.apache.sysds.runtime.controlprogram.federated.CanonicalWorkerPool@4faf0250]]}>
+[ERROR] Errors: 
+[ERROR]   MemoTreeDpTrainingRuntimeTest.protectedGradientTrainingMatchesIndependentArithmeticForAllAlgorithms:110 » DMLRuntime org.apache.sysds.runtime.DMLRuntimeException: ERROR: Runtime error in program block generated from statement block between lines 1 and 1 -- Error evaluating instruction: CP°print°_mVar44·MATRIX·STRING·false°_Var46·SCALAR·STRING°48
+[ERROR] Tests run: 127, Failures: 1, Errors: 1, Skipped: 0
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.0.0:test (default-test) on project systemds: There are test failures.
+[ERROR] 
+[ERROR] Please refer to /home/mchoi/cofee-tree-dp-20261014/target/surefire-reports for the individual test results.
+[ERROR] Please refer to dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

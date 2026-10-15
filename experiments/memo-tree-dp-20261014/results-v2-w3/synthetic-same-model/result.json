@@ -1,0 +1,16 @@
+{
+  "failureCategory": "benchmark_failure",
+  "legacyRegional": [],
+  "legacyRegionalCompared": true,
+  "memorySemantics": {
+    "peakContainerMemoryUsageBytes": "high-water of Docker MemUsage samples; includes charged cache and is not RSS",
+    "peakPoolBytes": "per-process JVM pool high-water; sequential algorithms retain prior heap state"
+  },
+  "peakContainerMemoryUsageBytes": null,
+  "phase": "synthetic-same-model",
+  "returncode": 125,
+  "rows": [],
+  "schema": "systemds-memo-tree-dp-synthetic/v1",
+  "status": "failed",
+  "wallSeconds": 0.3498411551117897
+}

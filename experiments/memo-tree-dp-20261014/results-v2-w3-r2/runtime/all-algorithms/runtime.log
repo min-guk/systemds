@@ -1,0 +1,683 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+JUnit version 4.13.1
+.[MemoPlannerPhase] phase=facts elapsedNs=45435564
+[MemoPlannerPhase] phase=rules elapsedNs=233542451
+[MemoNativeRequests] preparedRequests=11 reusedResults=0 oracleRequests=11 canonicalStringsCreated=4 canonicalStringsReused=0 uncacheableRequests=7 contextualViewBuilds=11
+[MemoNativeGeneration] cpPatterns=11 prefixRequests=0 prunedPrefixes=15 unknownPrefixes=0 visitedNativePatterns=17 determinantRegions=32 oracleEvaluations=32 evidenceReuses=0 publishedRules=36 coverageObligations=0
+[MemoPlannerPhase] phase=model elapsedNs=65273273
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=31 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=17 activationEnvironments=31 projectedContexts=31 primitiveVectors=31 primitiveValues=52 primitiveValueBytes=416
+[MemoPlannerPhase] phase=optimization elapsedNs=52105327
+[MemoSearch] status=OPTIMAL nodes=35 checkEvaluations=111 checkCacheHits=93 supportQueries=53 supportCacheHits=0 supportWitnessHits=23 binarySupportHits=12 binarySupportRows=0 worklistVisits=68 removedRules=17 costEvaluations=22 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=2 bindingGuardCacheHits=0 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=0 phaseShapeCacheHits=0 phaseShapeCacheEntries=0 guardRelevanceRequests=0 guardRelevanceCacheHits=0 guardRelevanceIndexEntries=0 occurrenceTransferRequests=52 occurrenceTransferCacheHits=21 occurrenceTransferBuilds=31 occurrenceTransferEntries=31 guardAtomRequests=0 guardAtomHits=0 guardAtomIdentities=0
+[MemoMovementReuse] activationRows=5 activationReplays=32 postGateRequests=16 postGateBuilds=2 postGateHits=14 primitiveContexts=2 contextualViewBuilds=2 unionRequests=16 unionCacheHits=14 measurementRequests=6 measurementHits=4
+[MemoNativeCostReuse] requests=4 cacheHits=0 vectorBuilds=31 entries=4
+[MemoContextAnalysisReuse] requests=134 hits=133 entries=1
+[MemoDirectRoots] resolver=shapes requests=0 eligibleCalls=0 fastPathCalls=0 rootsResolved=0
+[MemoDirectRoots] resolver=modelPrivacy requests=104 eligibleCalls=69 fastPathCalls=69 rootsResolved=69
+[MemoCheckProjection] annotatedChecks=5 invariantCheckAxes=3 binaryChecksReduced=1 branchEdgesRemovedDuringNormalization=2
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=1 workers=2 nativeRules=52 fedOwners=3 supplies=0 nodes=35 checks=111 cacheHits=93 pruned=17 supportQueries=53 supportCacheHits=0 supportWitnessHits=23 binarySupportHits=12 binarySupportRows=0 worklistVisits=68 costEvaluations=22 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=11 oracleHits=0 factsNs=45435564 rulesNs=233542451 modelNs=65273273 optimizationNs=52105327 projectionNs=54992081 cost=2.00277048051357277280999755371404535964074966614134609699249267578125000
+[MemoLowering] status=MATCH sb=0 hops=31 supplies=0
+[MemoLowering] status=MATCH sb=0 hops=31 supplies=0
+.[MemoPlannerPhase] phase=facts elapsedNs=6985473
+[MemoPlannerPhase] phase=rules elapsedNs=30875616
+[MemoNativeRequests] preparedRequests=23 reusedResults=9 oracleRequests=14 canonicalStringsCreated=7 canonicalStringsReused=9 uncacheableRequests=7 contextualViewBuilds=14
+[MemoNativeGeneration] cpPatterns=14 prefixRequests=0 prunedPrefixes=13 unknownPrefixes=0 visitedNativePatterns=10 determinantRegions=23 oracleEvaluations=23 evidenceReuses=0 publishedRules=25 coverageObligations=2
+[MemoPlannerPhase] phase=model elapsedNs=30433179
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=52 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=36 activationEnvironments=52 projectedContexts=47 primitiveVectors=47 primitiveValues=69 primitiveValueBytes=552
+[MemoPlannerPhase] phase=optimization elapsedNs=19531738
+[MemoSearch] status=OPTIMAL nodes=50 checkEvaluations=145 checkCacheHits=92 supportQueries=48 supportCacheHits=0 supportWitnessHits=45 binarySupportHits=37 binarySupportRows=0 worklistVisits=104 removedRules=13 costEvaluations=1 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=0 bindingGuardCacheHits=0 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=38 phaseShapeCacheHits=28 phaseShapeCacheEntries=10 guardRelevanceRequests=0 guardRelevanceCacheHits=0 guardRelevanceIndexEntries=0 occurrenceTransferRequests=98 occurrenceTransferCacheHits=60 occurrenceTransferBuilds=38 occurrenceTransferEntries=38 guardAtomRequests=0 guardAtomHits=0 guardAtomIdentities=0
+[MemoMovementReuse] activationRows=14 activationReplays=17 postGateRequests=0 postGateBuilds=0 postGateHits=0 primitiveContexts=0 contextualViewBuilds=0 unionRequests=0 unionCacheHits=0 measurementRequests=0 measurementHits=0
+[MemoNativeCostReuse] requests=13 cacheHits=2 vectorBuilds=45 entries=11
+[MemoContextAnalysisReuse] requests=146 hits=142 entries=4
+[MemoDirectRoots] resolver=shapes requests=10 eligibleCalls=10 fastPathCalls=10 rootsResolved=10
+[MemoDirectRoots] resolver=modelPrivacy requests=191 eligibleCalls=71 fastPathCalls=71 rootsResolved=71
+[MemoCheckProjection] annotatedChecks=19 invariantCheckAxes=0 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=4
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=2 workers=2 nativeRules=47 fedOwners=6 supplies=0 nodes=50 checks=145 cacheHits=92 pruned=13 supportQueries=48 supportCacheHits=0 supportWitnessHits=45 binarySupportHits=37 binarySupportRows=0 worklistVisits=104 costEvaluations=1 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=14 oracleHits=0 factsNs=6985473 rulesNs=30875616 modelNs=30433179 optimizationNs=19531738 projectionNs=10469334 cost=12.0009311217069637134374296020883007840573952762497356161475181579589843750
+[MemoLowering] status=MATCH sb=6 hops=30 supplies=0
+[MemoLowering] status=MATCH sb=10 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=4 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=11 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=6 hops=30 supplies=0
+[MemoLowering] status=MATCH sb=11 hops=3 supplies=0
+[MemoPlannerPhase] phase=facts elapsedNs=2284469
+[MemoPlannerPhase] phase=rules elapsedNs=18975619
+[MemoNativeRequests] preparedRequests=23 reusedResults=9 oracleRequests=14 canonicalStringsCreated=7 canonicalStringsReused=9 uncacheableRequests=7 contextualViewBuilds=14
+[MemoNativeGeneration] cpPatterns=14 prefixRequests=0 prunedPrefixes=13 unknownPrefixes=0 visitedNativePatterns=10 determinantRegions=23 oracleEvaluations=23 evidenceReuses=0 publishedRules=25 coverageObligations=2
+[MemoPlannerPhase] phase=model elapsedNs=20196601
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=52 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=36 activationEnvironments=52 projectedContexts=47 primitiveVectors=47 primitiveValues=69 primitiveValueBytes=552
+[MemoPlannerPhase] phase=optimization elapsedNs=15126806
+[MemoSearch] status=OPTIMAL nodes=50 checkEvaluations=145 checkCacheHits=92 supportQueries=48 supportCacheHits=0 supportWitnessHits=45 binarySupportHits=37 binarySupportRows=0 worklistVisits=104 removedRules=13 costEvaluations=1 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=0 bindingGuardCacheHits=0 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=38 phaseShapeCacheHits=28 phaseShapeCacheEntries=10 guardRelevanceRequests=0 guardRelevanceCacheHits=0 guardRelevanceIndexEntries=0 occurrenceTransferRequests=98 occurrenceTransferCacheHits=60 occurrenceTransferBuilds=38 occurrenceTransferEntries=38 guardAtomRequests=0 guardAtomHits=0 guardAtomIdentities=0
+[MemoMovementReuse] activationRows=14 activationReplays=17 postGateRequests=0 postGateBuilds=0 postGateHits=0 primitiveContexts=0 contextualViewBuilds=0 unionRequests=0 unionCacheHits=0 measurementRequests=0 measurementHits=0
+[MemoNativeCostReuse] requests=13 cacheHits=2 vectorBuilds=45 entries=11
+[MemoContextAnalysisReuse] requests=146 hits=142 entries=4
+[MemoDirectRoots] resolver=shapes requests=10 eligibleCalls=10 fastPathCalls=10 rootsResolved=10
+[MemoDirectRoots] resolver=modelPrivacy requests=191 eligibleCalls=71 fastPathCalls=71 rootsResolved=71
+[MemoCheckProjection] annotatedChecks=19 invariantCheckAxes=0 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=4
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=3 workers=2 nativeRules=47 fedOwners=6 supplies=0 nodes=50 checks=145 cacheHits=92 pruned=13 supportQueries=48 supportCacheHits=0 supportWitnessHits=45 binarySupportHits=37 binarySupportRows=0 worklistVisits=104 costEvaluations=1 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=14 oracleHits=0 factsNs=2284469 rulesNs=18975619 modelNs=20196601 optimizationNs=15126806 projectionNs=8599119 cost=12.0009317320585262134379717031745435362743990026501705870032310485839843750
+[MemoLowering] status=MATCH sb=14 hops=30 supplies=0
+[MemoLowering] status=MATCH sb=18 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=12 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=19 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=14 hops=30 supplies=0
+[MemoLowering] status=MATCH sb=12 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=19 hops=3 supplies=0
+[MemoPlannerPhase] phase=facts elapsedNs=2945264
+[MemoPlannerPhase] phase=rules elapsedNs=34403017
+[MemoNativeRequests] preparedRequests=23 reusedResults=9 oracleRequests=14 canonicalStringsCreated=7 canonicalStringsReused=9 uncacheableRequests=7 contextualViewBuilds=14
+[MemoNativeGeneration] cpPatterns=14 prefixRequests=0 prunedPrefixes=13 unknownPrefixes=0 visitedNativePatterns=10 determinantRegions=23 oracleEvaluations=23 evidenceReuses=0 publishedRules=25 coverageObligations=2
+[MemoPlannerPhase] phase=model elapsedNs=17912463
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=52 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=36 activationEnvironments=52 projectedContexts=47 primitiveVectors=47 primitiveValues=69 primitiveValueBytes=552
+[MemoPlannerPhase] phase=optimization elapsedNs=12515868
+[MemoSearch] status=OPTIMAL nodes=50 checkEvaluations=145 checkCacheHits=92 supportQueries=48 supportCacheHits=0 supportWitnessHits=45 binarySupportHits=37 binarySupportRows=0 worklistVisits=104 removedRules=13 costEvaluations=1 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=0 bindingGuardCacheHits=0 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=38 phaseShapeCacheHits=28 phaseShapeCacheEntries=10 guardRelevanceRequests=0 guardRelevanceCacheHits=0 guardRelevanceIndexEntries=0 occurrenceTransferRequests=98 occurrenceTransferCacheHits=60 occurrenceTransferBuilds=38 occurrenceTransferEntries=38 guardAtomRequests=0 guardAtomHits=0 guardAtomIdentities=0
+[MemoMovementReuse] activationRows=14 activationReplays=17 postGateRequests=0 postGateBuilds=0 postGateHits=0 primitiveContexts=0 contextualViewBuilds=0 unionRequests=0 unionCacheHits=0 measurementRequests=0 measurementHits=0
+[MemoNativeCostReuse] requests=13 cacheHits=2 vectorBuilds=45 entries=11
+[MemoContextAnalysisReuse] requests=146 hits=142 entries=4
+[MemoDirectRoots] resolver=shapes requests=10 eligibleCalls=10 fastPathCalls=10 rootsResolved=10
+[MemoDirectRoots] resolver=modelPrivacy requests=191 eligibleCalls=71 fastPathCalls=71 rootsResolved=71
+[MemoCheckProjection] annotatedChecks=19 invariantCheckAxes=0 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=4
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=4 workers=2 nativeRules=47 fedOwners=6 supplies=0 nodes=50 checks=145 cacheHits=92 pruned=13 supportQueries=48 supportCacheHits=0 supportWitnessHits=45 binarySupportHits=37 binarySupportRows=0 worklistVisits=104 costEvaluations=1 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=14 oracleHits=0 factsNs=2945264 rulesNs=34403017 modelNs=17912463 optimizationNs=12515868 projectionNs=6885366 cost=12.0009317320585262134379717031745435362743990026501705870032310485839843750
+[MemoLowering] status=MATCH sb=22 hops=30 supplies=0
+[MemoLowering] status=MATCH sb=26 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=20 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=27 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=22 hops=30 supplies=0
+[MemoLowering] status=MATCH sb=20 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=20 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=27 hops=3 supplies=0
+[MemoPlannerPhase] phase=facts elapsedNs=2514219
+[MemoPlannerPhase] phase=rules elapsedNs=19824455
+[MemoNativeRequests] preparedRequests=23 reusedResults=9 oracleRequests=14 canonicalStringsCreated=7 canonicalStringsReused=9 uncacheableRequests=7 contextualViewBuilds=14
+[MemoNativeGeneration] cpPatterns=14 prefixRequests=0 prunedPrefixes=13 unknownPrefixes=0 visitedNativePatterns=10 determinantRegions=23 oracleEvaluations=23 evidenceReuses=0 publishedRules=25 coverageObligations=2
+[MemoPlannerPhase] phase=model elapsedNs=14671276
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=52 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=36 activationEnvironments=52 projectedContexts=47 primitiveVectors=47 primitiveValues=69 primitiveValueBytes=552
+[MemoPlannerPhase] phase=optimization elapsedNs=10085245
+[MemoSearch] status=OPTIMAL nodes=50 checkEvaluations=145 checkCacheHits=92 supportQueries=48 supportCacheHits=0 supportWitnessHits=45 binarySupportHits=37 binarySupportRows=0 worklistVisits=104 removedRules=13 costEvaluations=1 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=0 bindingGuardCacheHits=0 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=38 phaseShapeCacheHits=28 phaseShapeCacheEntries=10 guardRelevanceRequests=0 guardRelevanceCacheHits=0 guardRelevanceIndexEntries=0 occurrenceTransferRequests=98 occurrenceTransferCacheHits=60 occurrenceTransferBuilds=38 occurrenceTransferEntries=38 guardAtomRequests=0 guardAtomHits=0 guardAtomIdentities=0
+[MemoMovementReuse] activationRows=14 activationReplays=17 postGateRequests=0 postGateBuilds=0 postGateHits=0 primitiveContexts=0 contextualViewBuilds=0 unionRequests=0 unionCacheHits=0 measurementRequests=0 measurementHits=0
+[MemoNativeCostReuse] requests=13 cacheHits=2 vectorBuilds=45 entries=11
+[MemoContextAnalysisReuse] requests=146 hits=142 entries=4
+[MemoDirectRoots] resolver=shapes requests=10 eligibleCalls=10 fastPathCalls=10 rootsResolved=10
+[MemoDirectRoots] resolver=modelPrivacy requests=191 eligibleCalls=71 fastPathCalls=71 rootsResolved=71
+[MemoCheckProjection] annotatedChecks=19 invariantCheckAxes=0 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=4
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=5 workers=2 nativeRules=47 fedOwners=6 supplies=0 nodes=50 checks=145 cacheHits=92 pruned=13 supportQueries=48 supportCacheHits=0 supportWitnessHits=45 binarySupportHits=37 binarySupportRows=0 worklistVisits=104 costEvaluations=1 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=14 oracleHits=0 factsNs=2514219 rulesNs=19824455 modelNs=14671276 optimizationNs=10085245 projectionNs=6010792 cost=12.0009317320585262134379717031745435362743990026501705870032310485839843750
+[MemoLowering] status=MATCH sb=30 hops=30 supplies=0
+[MemoLowering] status=MATCH sb=34 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=28 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=35 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=30 hops=30 supplies=0
+[MemoLowering] status=MATCH sb=28 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=28 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=28 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=35 hops=3 supplies=0
+.[MemoPlannerPhase] phase=facts elapsedNs=2817385
+[MemoPlannerPhase] phase=rules elapsedNs=18291079
+[MemoNativeRequests] preparedRequests=14 reusedResults=1 oracleRequests=13 canonicalStringsCreated=5 canonicalStringsReused=1 uncacheableRequests=8 contextualViewBuilds=13
+[MemoNativeGeneration] cpPatterns=13 prefixRequests=0 prunedPrefixes=13 unknownPrefixes=0 visitedNativePatterns=6 determinantRegions=19 oracleEvaluations=19 evidenceReuses=0 publishedRules=18 coverageObligations=1
+[MemoPlannerPhase] phase=model elapsedNs=8793833
+[MemoCostProjection] bindingDagVisits=3 projectionCacheHits=0 relevantGuardDecisions=1 supportPrefixChecks=44 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=23 activationEnvironments=42 projectedContexts=43 primitiveVectors=43 primitiveValues=50 primitiveValueBytes=400
+[MemoPlannerPhase] phase=optimization elapsedNs=7663551
+[MemoSearch] status=OPTIMAL nodes=50 checkEvaluations=94 checkCacheHits=82 supportQueries=15 supportCacheHits=0 supportWitnessHits=7 binarySupportHits=3 binarySupportRows=0 worklistVisits=87 removedRules=4 costEvaluations=1 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=1 bindingGuardCacheHits=0 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=0 phaseShapeCacheHits=0 phaseShapeCacheEntries=0 guardRelevanceRequests=60 guardRelevanceCacheHits=59 guardRelevanceIndexEntries=1 occurrenceTransferRequests=69 occurrenceTransferCacheHits=26 occurrenceTransferBuilds=43 occurrenceTransferEntries=43 guardAtomRequests=1 guardAtomHits=0 guardAtomIdentities=1
+[MemoMovementReuse] activationRows=5 activationReplays=13 postGateRequests=2 postGateBuilds=1 postGateHits=1 primitiveContexts=1 contextualViewBuilds=1 unionRequests=2 unionCacheHits=1 measurementRequests=1 measurementHits=0
+[MemoNativeCostReuse] requests=6 cacheHits=0 vectorBuilds=43 entries=6
+[MemoContextAnalysisReuse] requests=138 hits=133 entries=5
+[MemoDirectRoots] resolver=shapes requests=0 eligibleCalls=0 fastPathCalls=0 rootsResolved=0
+[MemoDirectRoots] resolver=modelPrivacy requests=129 eligibleCalls=71 fastPathCalls=71 rootsResolved=71
+[MemoCheckProjection] annotatedChecks=4 invariantCheckAxes=0 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=1
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=6 workers=2 nativeRules=46 fedOwners=4 supplies=1 nodes=50 checks=94 cacheHits=82 pruned=4 supportQueries=15 supportCacheHits=0 supportWitnessHits=7 binarySupportHits=3 binarySupportRows=0 worklistVisits=87 costEvaluations=1 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=13 oracleHits=0 factsNs=2817385 rulesNs=18291079 modelNs=8793833 optimizationNs=7663551 projectionNs=16146372 cost=2.0016637408733367431448265768754134208418093976433738134801387786865234375
+[MemoLowering] status=MATCH sb=38 hops=28 supplies=0
+[MemoLowering] status=MATCH sb=40 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=36 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=37 hops=9 supplies=0
+[MemoLowering] status=MATCH sb=41 hops=3 supplies=1
+[MemoLowering] status=MATCH sb=38 hops=28 supplies=0
+[MemoLowering] status=MATCH sb=36 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=41 hops=3 supplies=1
+[MemoPlannerPhase] phase=facts elapsedNs=1628934
+[MemoPlannerPhase] phase=rules elapsedNs=11237389
+[MemoNativeRequests] preparedRequests=14 reusedResults=1 oracleRequests=13 canonicalStringsCreated=5 canonicalStringsReused=1 uncacheableRequests=8 contextualViewBuilds=13
+[MemoNativeGeneration] cpPatterns=13 prefixRequests=0 prunedPrefixes=13 unknownPrefixes=0 visitedNativePatterns=6 determinantRegions=19 oracleEvaluations=19 evidenceReuses=0 publishedRules=18 coverageObligations=1
+[MemoPlannerPhase] phase=model elapsedNs=6632924
+[MemoCostProjection] bindingDagVisits=3 projectionCacheHits=0 relevantGuardDecisions=1 supportPrefixChecks=44 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=23 activationEnvironments=42 projectedContexts=43 primitiveVectors=43 primitiveValues=50 primitiveValueBytes=400
+[MemoPlannerPhase] phase=optimization elapsedNs=5119387
+[MemoSearch] status=OPTIMAL nodes=50 checkEvaluations=94 checkCacheHits=82 supportQueries=15 supportCacheHits=0 supportWitnessHits=7 binarySupportHits=3 binarySupportRows=0 worklistVisits=87 removedRules=4 costEvaluations=1 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=1 bindingGuardCacheHits=0 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=0 phaseShapeCacheHits=0 phaseShapeCacheEntries=0 guardRelevanceRequests=60 guardRelevanceCacheHits=59 guardRelevanceIndexEntries=1 occurrenceTransferRequests=69 occurrenceTransferCacheHits=26 occurrenceTransferBuilds=43 occurrenceTransferEntries=43 guardAtomRequests=1 guardAtomHits=0 guardAtomIdentities=1
+[MemoMovementReuse] activationRows=5 activationReplays=13 postGateRequests=2 postGateBuilds=1 postGateHits=1 primitiveContexts=1 contextualViewBuilds=1 unionRequests=2 unionCacheHits=1 measurementRequests=1 measurementHits=0
+[MemoNativeCostReuse] requests=6 cacheHits=0 vectorBuilds=43 entries=6
+[MemoContextAnalysisReuse] requests=138 hits=133 entries=5
+[MemoDirectRoots] resolver=shapes requests=0 eligibleCalls=0 fastPathCalls=0 rootsResolved=0
+[MemoDirectRoots] resolver=modelPrivacy requests=129 eligibleCalls=71 fastPathCalls=71 rootsResolved=71
+[MemoCheckProjection] annotatedChecks=4 invariantCheckAxes=0 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=1
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=7 workers=2 nativeRules=46 fedOwners=4 supplies=1 nodes=50 checks=94 cacheHits=82 pruned=4 supportQueries=15 supportCacheHits=0 supportWitnessHits=7 binarySupportHits=3 binarySupportRows=0 worklistVisits=87 costEvaluations=1 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=13 oracleHits=0 factsNs=1628934 rulesNs=11237389 modelNs=6632924 optimizationNs=5119387 projectionNs=3964057 cost=2.0016631305217742431442844757891706686248056712429388426244258880615234375
+[MemoLowering] status=MATCH sb=44 hops=28 supplies=0
+[MemoLowering] status=MATCH sb=46 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=42 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=43 hops=9 supplies=0
+[MemoLowering] status=MATCH sb=47 hops=3 supplies=1
+[MemoLowering] status=MATCH sb=44 hops=28 supplies=0
+[MemoLowering] status=MATCH sb=47 hops=3 supplies=1
+.[MemoPlannerPhase] phase=facts elapsedNs=4082268
+[MemoPlannerPhase] phase=rules elapsedNs=17350382
+[MemoNativeRequests] preparedRequests=20 reusedResults=6 oracleRequests=14 canonicalStringsCreated=6 canonicalStringsReused=6 uncacheableRequests=8 contextualViewBuilds=13
+[MemoNativeGeneration] cpPatterns=14 prefixRequests=0 prunedPrefixes=21 unknownPrefixes=0 visitedNativePatterns=17 determinantRegions=38 oracleEvaluations=38 evidenceReuses=0 publishedRules=37 coverageObligations=1
+[MemoPlannerPhase] phase=model elapsedNs=11765506
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=47 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=29 activationEnvironments=47 projectedContexts=47 primitiveVectors=47 primitiveValues=114 primitiveValueBytes=912
+[MemoPlannerPhase] phase=optimization elapsedNs=14104556
+[MemoSearch] status=OPTIMAL nodes=26 checkEvaluations=230 checkCacheHits=122 supportQueries=126 supportCacheHits=0 supportWitnessHits=30 binarySupportHits=15 binarySupportRows=66 worklistVisits=108 removedRules=60 costEvaluations=21 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=5 cells=26 rows=10 factorHits=10
+[MemoShapeReuse] bindingGuardRequests=5 bindingGuardCacheHits=1 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=0 phaseShapeCacheHits=0 phaseShapeCacheEntries=0 guardRelevanceRequests=0 guardRelevanceCacheHits=0 guardRelevanceIndexEntries=0 occurrenceTransferRequests=90 occurrenceTransferCacheHits=43 occurrenceTransferBuilds=47 occurrenceTransferEntries=47 guardAtomRequests=0 guardAtomHits=0 guardAtomIdentities=0
+[MemoMovementReuse] activationRows=14 activationReplays=60 postGateRequests=17 postGateBuilds=5 postGateHits=12 primitiveContexts=5 contextualViewBuilds=8 unionRequests=14 unionCacheHits=8 measurementRequests=13 measurementHits=5
+[MemoNativeCostReuse] requests=11 cacheHits=0 vectorBuilds=47 entries=11
+[MemoContextAnalysisReuse] requests=244 hits=240 entries=4
+[MemoDirectRoots] resolver=shapes requests=0 eligibleCalls=0 fastPathCalls=0 rootsResolved=0
+[MemoDirectRoots] resolver=modelPrivacy requests=185 eligibleCalls=82 fastPathCalls=82 rootsResolved=82
+[MemoCheckProjection] annotatedChecks=14 invariantCheckAxes=6 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=5
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=8 workers=2 nativeRules=115 fedOwners=8 supplies=0 nodes=26 checks=230 cacheHits=122 pruned=60 supportQueries=126 supportCacheHits=0 supportWitnessHits=30 binarySupportHits=15 binarySupportRows=66 worklistVisits=108 costEvaluations=21 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=14 oracleHits=0 factsNs=4082268 rulesNs=17350382 modelNs=11765506 optimizationNs=14104556 projectionNs=4022677 cost=6.010215446501969838171232891703942013972294944323948584496974945068359375
+[MemoLowering] status=MATCH sb=48 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=50 hops=36 supplies=0
+[MemoLowering] status=MATCH sb=53 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=54 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=55 hops=12 supplies=0
+[MemoLowering] status=MATCH sb=50 hops=36 supplies=0
+[MemoLowering] status=MATCH sb=55 hops=12 supplies=0
+.[MemoPlannerPhase] phase=facts elapsedNs=2511433
+[MemoPlannerPhase] phase=rules elapsedNs=31036356
+[MemoNativeRequests] preparedRequests=22 reusedResults=6 oracleRequests=16 canonicalStringsCreated=6 canonicalStringsReused=6 uncacheableRequests=10 contextualViewBuilds=16
+[MemoNativeGeneration] cpPatterns=16 prefixRequests=0 prunedPrefixes=20 unknownPrefixes=0 visitedNativePatterns=14 determinantRegions=34 oracleEvaluations=34 evidenceReuses=0 publishedRules=37 coverageObligations=2
+[MemoPlannerPhase] phase=model elapsedNs=15531723
+[MemoCostProjection] bindingDagVisits=12 projectionCacheHits=0 relevantGuardDecisions=2 supportPrefixChecks=71 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=42 activationEnvironments=67 projectedContexts=69 primitiveVectors=69 primitiveValues=153 primitiveValueBytes=1224
+[MemoPlannerPhase] phase=optimization elapsedNs=17575944
+[MemoSearch] status=OPTIMAL nodes=86 checkEvaluations=196 checkCacheHits=138 supportQueries=73 supportCacheHits=0 supportWitnessHits=16 binarySupportHits=9 binarySupportRows=0 worklistVisits=142 removedRules=41 costEvaluations=5 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=8 bindingGuardCacheHits=0 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=272 phaseShapeCacheHits=126 phaseShapeCacheEntries=146 guardRelevanceRequests=568 guardRelevanceCacheHits=563 guardRelevanceIndexEntries=5 occurrenceTransferRequests=259 occurrenceTransferCacheHits=194 occurrenceTransferBuilds=65 occurrenceTransferEntries=65 guardAtomRequests=52 guardAtomHits=46 guardAtomIdentities=3
+[MemoMovementReuse] activationRows=17 activationReplays=70 postGateRequests=14 postGateBuilds=8 postGateHits=6 primitiveContexts=8 contextualViewBuilds=5 unionRequests=8 unionCacheHits=3 measurementRequests=8 measurementHits=0
+[MemoNativeCostReuse] requests=12 cacheHits=4 vectorBuilds=65 entries=8
+[MemoContextAnalysisReuse] requests=307 hits=296 entries=11
+[MemoDirectRoots] resolver=shapes requests=146 eligibleCalls=146 fastPathCalls=146 rootsResolved=146
+[MemoDirectRoots] resolver=modelPrivacy requests=236 eligibleCalls=106 fastPathCalls=106 rootsResolved=106
+[MemoCheckProjection] annotatedChecks=16 invariantCheckAxes=1 binaryChecksReduced=2 branchEdgesRemovedDuringNormalization=5
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=9 workers=2 nativeRules=107 fedOwners=8 supplies=4 nodes=86 checks=196 cacheHits=138 pruned=41 supportQueries=73 supportCacheHits=0 supportWitnessHits=16 binarySupportHits=9 binarySupportRows=0 worklistVisits=142 costEvaluations=5 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=16 oracleHits=0 factsNs=2511433 rulesNs=31036356 modelNs=15531723 optimizationNs=17575944 projectionNs=8347628 cost=6.0035269732773300965825032693185155097115313083122600801289081573486328125
+[MemoLowering] status=MATCH sb=61 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=59 hops=3 supplies=2
+[MemoLowering] status=MATCH sb=60 hops=3 supplies=2
+[MemoLowering] status=MATCH sb=65 hops=28 supplies=0
+[MemoLowering] status=MATCH sb=67 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=68 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=62 hops=9 supplies=0
+[MemoLowering] status=MATCH sb=63 hops=9 supplies=0
+[MemoLowering] status=MATCH sb=69 hops=12 supplies=0
+[MemoLowering] status=MATCH sb=70 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=65 hops=28 supplies=0
+[MemoLowering] status=MATCH sb=67 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=59 hops=3 supplies=2
+[MemoLowering] status=MATCH sb=59 hops=3 supplies=2
+[MemoLowering] status=MATCH sb=70 hops=6 supplies=0
+[MemoPlannerPhase] phase=facts elapsedNs=5077087
+[MemoPlannerPhase] phase=rules elapsedNs=19601338
+[MemoNativeRequests] preparedRequests=22 reusedResults=6 oracleRequests=16 canonicalStringsCreated=6 canonicalStringsReused=6 uncacheableRequests=10 contextualViewBuilds=16
+[MemoNativeGeneration] cpPatterns=16 prefixRequests=0 prunedPrefixes=20 unknownPrefixes=0 visitedNativePatterns=14 determinantRegions=34 oracleEvaluations=34 evidenceReuses=0 publishedRules=37 coverageObligations=2
+[MemoPlannerPhase] phase=model elapsedNs=11862307
+[MemoCostProjection] bindingDagVisits=12 projectionCacheHits=0 relevantGuardDecisions=2 supportPrefixChecks=71 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=42 activationEnvironments=67 projectedContexts=69 primitiveVectors=69 primitiveValues=153 primitiveValueBytes=1224
+[MemoPlannerPhase] phase=optimization elapsedNs=13064603
+[MemoSearch] status=OPTIMAL nodes=86 checkEvaluations=196 checkCacheHits=138 supportQueries=73 supportCacheHits=0 supportWitnessHits=16 binarySupportHits=9 binarySupportRows=0 worklistVisits=142 removedRules=41 costEvaluations=5 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=8 bindingGuardCacheHits=0 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=272 phaseShapeCacheHits=126 phaseShapeCacheEntries=146 guardRelevanceRequests=568 guardRelevanceCacheHits=563 guardRelevanceIndexEntries=5 occurrenceTransferRequests=259 occurrenceTransferCacheHits=194 occurrenceTransferBuilds=65 occurrenceTransferEntries=65 guardAtomRequests=52 guardAtomHits=46 guardAtomIdentities=3
+[MemoMovementReuse] activationRows=17 activationReplays=70 postGateRequests=14 postGateBuilds=8 postGateHits=6 primitiveContexts=8 contextualViewBuilds=5 unionRequests=8 unionCacheHits=3 measurementRequests=8 measurementHits=0
+[MemoNativeCostReuse] requests=12 cacheHits=4 vectorBuilds=65 entries=8
+[MemoContextAnalysisReuse] requests=307 hits=296 entries=11
+[MemoDirectRoots] resolver=shapes requests=146 eligibleCalls=146 fastPathCalls=146 rootsResolved=146
+[MemoDirectRoots] resolver=modelPrivacy requests=236 eligibleCalls=106 fastPathCalls=106 rootsResolved=106
+[MemoCheckProjection] annotatedChecks=16 invariantCheckAxes=1 binaryChecksReduced=2 branchEdgesRemovedDuringNormalization=5
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=10 workers=2 nativeRules=107 fedOwners=8 supplies=4 nodes=86 checks=196 cacheHits=138 pruned=41 supportQueries=73 supportCacheHits=0 supportWitnessHits=16 binarySupportHits=9 binarySupportRows=0 worklistVisits=142 costEvaluations=5 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=16 oracleHits=0 factsNs=5077087 rulesNs=19601338 modelNs=11862307 optimizationNs=13064603 projectionNs=6507410 cost=6.0035263629257675965819611682322727574945275819118251092731952667236328125
+[MemoLowering] status=MATCH sb=73 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=71 hops=3 supplies=2
+[MemoLowering] status=MATCH sb=72 hops=3 supplies=2
+[MemoLowering] status=MATCH sb=77 hops=28 supplies=0
+[MemoLowering] status=MATCH sb=79 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=80 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=74 hops=9 supplies=0
+[MemoLowering] status=MATCH sb=75 hops=9 supplies=0
+[MemoLowering] status=MATCH sb=81 hops=12 supplies=0
+[MemoLowering] status=MATCH sb=82 hops=6 supplies=0
+[MemoLowering] status=MATCH sb=77 hops=28 supplies=0
+[MemoLowering] status=MATCH sb=79 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=71 hops=3 supplies=2
+[MemoLowering] status=MATCH sb=71 hops=3 supplies=2
+[MemoLowering] status=MATCH sb=82 hops=6 supplies=0
+.[MemoPlannerPhase] phase=facts elapsedNs=1778022
+[MemoPlannerPhase] phase=rules elapsedNs=15058930
+[MemoNativeRequests] preparedRequests=33 reusedResults=21 oracleRequests=12 canonicalStringsCreated=5 canonicalStringsReused=21 uncacheableRequests=7 contextualViewBuilds=12
+[MemoNativeGeneration] cpPatterns=12 prefixRequests=0 prunedPrefixes=12 unknownPrefixes=0 visitedNativePatterns=9 determinantRegions=21 oracleEvaluations=21 evidenceReuses=0 publishedRules=23 coverageObligations=1
+[MemoPlannerPhase] phase=model elapsedNs=11577795
+[MemoCostProjection] bindingDagVisits=36 projectionCacheHits=0 relevantGuardDecisions=6 supportPrefixChecks=65 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=37 activationEnvironments=53 projectedContexts=59 primitiveVectors=59 primitiveValues=127 primitiveValueBytes=1016
+[MemoPlannerPhase] phase=optimization elapsedNs=13123533
+[MemoSearch] status=OPTIMAL nodes=69 checkEvaluations=199 checkCacheHits=123 supportQueries=104 supportCacheHits=0 supportWitnessHits=46 binarySupportHits=28 binarySupportRows=0 worklistVisits=127 removedRules=30 costEvaluations=25 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=12 bindingGuardCacheHits=6 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=130 phaseShapeCacheHits=104 phaseShapeCacheEntries=26 guardRelevanceRequests=340 guardRelevanceCacheHits=334 guardRelevanceIndexEntries=6 occurrenceTransferRequests=151 occurrenceTransferCacheHits=104 occurrenceTransferBuilds=47 occurrenceTransferEntries=47 guardAtomRequests=60 guardAtomHits=56 guardAtomIdentities=2
+[MemoMovementReuse] activationRows=30 activationReplays=104 postGateRequests=32 postGateBuilds=12 postGateHits=20 primitiveContexts=12 contextualViewBuilds=8 unionRequests=18 unionCacheHits=5 measurementRequests=12 measurementHits=0
+[MemoNativeCostReuse] requests=26 cacheHits=10 vectorBuilds=49 entries=16
+[MemoContextAnalysisReuse] requests=315 hits=306 entries=9
+[MemoDirectRoots] resolver=shapes requests=26 eligibleCalls=26 fastPathCalls=26 rootsResolved=26
+[MemoDirectRoots] resolver=modelPrivacy requests=183 eligibleCalls=70 fastPathCalls=70 rootsResolved=70
+[MemoCheckProjection] annotatedChecks=30 invariantCheckAxes=4 binaryChecksReduced=8 branchEdgesRemovedDuringNormalization=18
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=11 workers=2 nativeRules=81 fedOwners=12 supplies=8 nodes=69 checks=199 cacheHits=123 pruned=30 supportQueries=104 supportCacheHits=0 supportWitnessHits=46 binarySupportHits=28 binarySupportRows=0 worklistVisits=127 costEvaluations=25 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=12 oracleHits=0 factsNs=1778022 rulesNs=15058930 modelNs=11577795 optimizationNs=13123533 projectionNs=8403804 cost=9.003566360026597763524349975618014940703659476639586500823497772216796875
+[MemoLowering] status=MATCH sb=87 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=83 hops=4 supplies=2
+[MemoLowering] status=MATCH sb=85 hops=4 supplies=2
+[MemoLowering] status=MATCH sb=89 hops=18 supplies=0
+[MemoLowering] status=MATCH sb=90 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=91 hops=9 supplies=0
+[MemoLowering] status=MATCH sb=92 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=93 hops=16 supplies=4
+[MemoLowering] status=MATCH sb=89 hops=18 supplies=0
+[MemoLowering] status=MATCH sb=90 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=83 hops=4 supplies=2
+[MemoLowering] status=MATCH sb=85 hops=4 supplies=2
+[MemoLowering] status=MATCH sb=93 hops=16 supplies=4
+.[MemoPlannerPhase] phase=facts elapsedNs=1397802
+[MemoPlannerPhase] phase=rules elapsedNs=12429597
+[MemoNativeRequests] preparedRequests=17 reusedResults=2 oracleRequests=15 canonicalStringsCreated=6 canonicalStringsReused=2 uncacheableRequests=9 contextualViewBuilds=15
+[MemoNativeGeneration] cpPatterns=15 prefixRequests=0 prunedPrefixes=19 unknownPrefixes=0 visitedNativePatterns=14 determinantRegions=33 oracleEvaluations=33 evidenceReuses=0 publishedRules=36 coverageObligations=2
+[MemoPlannerPhase] phase=model elapsedNs=6737059
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=54 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=31 activationEnvironments=54 projectedContexts=54 primitiveVectors=54 primitiveValues=96 primitiveValueBytes=768
+[MemoPlannerPhase] phase=optimization elapsedNs=7164759
+[MemoSearch] status=OPTIMAL nodes=64 checkEvaluations=171 checkCacheHits=127 supportQueries=76 supportCacheHits=0 supportWitnessHits=18 binarySupportHits=8 binarySupportRows=0 worklistVisits=117 removedRules=40 costEvaluations=5 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=4 bindingGuardCacheHits=2 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=0 phaseShapeCacheHits=0 phaseShapeCacheEntries=0 guardRelevanceRequests=84 guardRelevanceCacheHits=83 guardRelevanceIndexEntries=1 occurrenceTransferRequests=89 occurrenceTransferCacheHits=35 occurrenceTransferBuilds=54 occurrenceTransferEntries=54 guardAtomRequests=4 guardAtomHits=2 guardAtomIdentities=1
+[MemoMovementReuse] activationRows=11 activationReplays=40 postGateRequests=8 postGateBuilds=4 postGateHits=4 primitiveContexts=4 contextualViewBuilds=2 unionRequests=6 unionCacheHits=0 measurementRequests=4 measurementHits=0
+[MemoNativeCostReuse] requests=8 cacheHits=0 vectorBuilds=54 entries=8
+[MemoContextAnalysisReuse] requests=226 hits=221 entries=5
+[MemoDirectRoots] resolver=shapes requests=0 eligibleCalls=0 fastPathCalls=0 rootsResolved=0
+[MemoDirectRoots] resolver=modelPrivacy requests=189 eligibleCalls=96 fastPathCalls=96 rootsResolved=96
+[MemoCheckProjection] annotatedChecks=10 invariantCheckAxes=4 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=2
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=12 workers=2 nativeRules=96 fedOwners=6 supplies=0 nodes=64 checks=171 cacheHits=127 pruned=40 supportQueries=76 supportCacheHits=0 supportWitnessHits=18 binarySupportHits=8 binarySupportRows=0 worklistVisits=117 costEvaluations=5 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=15 oracleHits=0 factsNs=1397802 rulesNs=12429597 modelNs=6737059 optimizationNs=7164759 projectionNs=3269730 cost=4.0068086810410019715817578803249317254131511845116619952023029327392578125
+[MemoLowering] status=MATCH sb=96 hops=28 supplies=0
+[MemoLowering] status=MATCH sb=98 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=94 hops=9 supplies=0
+[MemoLowering] status=MATCH sb=95 hops=9 supplies=0
+[MemoLowering] status=MATCH sb=99 hops=8 supplies=0
+[MemoLowering] status=MATCH sb=96 hops=28 supplies=0
+[MemoLowering] status=MATCH sb=99 hops=8 supplies=0
+[MemoPlannerPhase] phase=facts elapsedNs=1215671
+[MemoPlannerPhase] phase=rules elapsedNs=10415052
+[MemoNativeRequests] preparedRequests=17 reusedResults=2 oracleRequests=15 canonicalStringsCreated=6 canonicalStringsReused=2 uncacheableRequests=9 contextualViewBuilds=15
+[MemoNativeGeneration] cpPatterns=15 prefixRequests=0 prunedPrefixes=19 unknownPrefixes=0 visitedNativePatterns=14 determinantRegions=33 oracleEvaluations=33 evidenceReuses=0 publishedRules=36 coverageObligations=2
+[MemoPlannerPhase] phase=model elapsedNs=5799528
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=54 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=31 activationEnvironments=54 projectedContexts=54 primitiveVectors=54 primitiveValues=96 primitiveValueBytes=768
+[MemoPlannerPhase] phase=optimization elapsedNs=6547845
+[MemoSearch] status=OPTIMAL nodes=64 checkEvaluations=171 checkCacheHits=127 supportQueries=76 supportCacheHits=0 supportWitnessHits=18 binarySupportHits=8 binarySupportRows=0 worklistVisits=117 removedRules=40 costEvaluations=5 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=4 bindingGuardCacheHits=2 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=0 phaseShapeCacheHits=0 phaseShapeCacheEntries=0 guardRelevanceRequests=84 guardRelevanceCacheHits=83 guardRelevanceIndexEntries=1 occurrenceTransferRequests=89 occurrenceTransferCacheHits=35 occurrenceTransferBuilds=54 occurrenceTransferEntries=54 guardAtomRequests=4 guardAtomHits=2 guardAtomIdentities=1
+[MemoMovementReuse] activationRows=11 activationReplays=40 postGateRequests=8 postGateBuilds=4 postGateHits=4 primitiveContexts=4 contextualViewBuilds=2 unionRequests=6 unionCacheHits=0 measurementRequests=4 measurementHits=0
+[MemoNativeCostReuse] requests=8 cacheHits=0 vectorBuilds=54 entries=8
+[MemoContextAnalysisReuse] requests=226 hits=221 entries=5
+[MemoDirectRoots] resolver=shapes requests=0 eligibleCalls=0 fastPathCalls=0 rootsResolved=0
+[MemoDirectRoots] resolver=modelPrivacy requests=189 eligibleCalls=96 fastPathCalls=96 rootsResolved=96
+[MemoCheckProjection] annotatedChecks=10 invariantCheckAxes=4 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=2
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=13 workers=2 nativeRules=96 fedOwners=6 supplies=0 nodes=64 checks=171 cacheHits=127 pruned=40 supportQueries=76 supportCacheHits=0 supportWitnessHits=18 binarySupportHits=8 binarySupportRows=0 worklistVisits=117 costEvaluations=5 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=15 oracleHits=0 factsNs=1215671 rulesNs=10415052 modelNs=5799528 optimizationNs=6547845 projectionNs=3200301 cost=4.0068080706894394715812157792386889731961474581112270243465900421142578125
+[MemoLowering] status=MATCH sb=104 hops=28 supplies=0
+[MemoLowering] status=MATCH sb=106 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=102 hops=9 supplies=0
+[MemoLowering] status=MATCH sb=103 hops=9 supplies=0
+[MemoLowering] status=MATCH sb=107 hops=8 supplies=0
+[MemoLowering] status=MATCH sb=104 hops=28 supplies=0
+[MemoLowering] status=MATCH sb=107 hops=8 supplies=0
+.[MemoPlannerPhase] phase=facts elapsedNs=1694056
+[MemoPlannerPhase] phase=rules elapsedNs=7160300
+[MemoNativeRequests] preparedRequests=12 reusedResults=3 oracleRequests=9 canonicalStringsCreated=3 canonicalStringsReused=3 uncacheableRequests=6 contextualViewBuilds=9
+[MemoNativeGeneration] cpPatterns=9 prefixRequests=0 prunedPrefixes=10 unknownPrefixes=0 visitedNativePatterns=5 determinantRegions=15 oracleEvaluations=15 evidenceReuses=0 publishedRules=14 coverageObligations=0
+[MemoPlannerPhase] phase=model elapsedNs=4351261
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=33 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=13 activationEnvironments=33 projectedContexts=33 primitiveVectors=33 primitiveValues=43 primitiveValueBytes=344
+[MemoPlannerPhase] phase=optimization elapsedNs=3427184
+[MemoSearch] status=OPTIMAL nodes=33 checkEvaluations=99 checkCacheHits=56 supportQueries=33 supportCacheHits=0 supportWitnessHits=47 binarySupportHits=38 binarySupportRows=0 worklistVisits=69 removedRules=9 costEvaluations=1 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=0 bindingGuardCacheHits=0 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=11 phaseShapeCacheHits=7 phaseShapeCacheEntries=4 guardRelevanceRequests=0 guardRelevanceCacheHits=0 guardRelevanceIndexEntries=0 occurrenceTransferRequests=56 occurrenceTransferCacheHits=31 occurrenceTransferBuilds=25 occurrenceTransferEntries=25 guardAtomRequests=0 guardAtomHits=0 guardAtomIdentities=0
+[MemoMovementReuse] activationRows=6 activationReplays=10 postGateRequests=0 postGateBuilds=0 postGateHits=0 primitiveContexts=0 contextualViewBuilds=0 unionRequests=0 unionCacheHits=0 measurementRequests=0 measurementHits=0
+[MemoNativeCostReuse] requests=6 cacheHits=2 vectorBuilds=31 entries=4
+[MemoContextAnalysisReuse] requests=90 hits=86 entries=4
+[MemoDirectRoots] resolver=shapes requests=4 eligibleCalls=4 fastPathCalls=4 rootsResolved=4
+[MemoDirectRoots] resolver=modelPrivacy requests=99 eligibleCalls=40 fastPathCalls=40 rootsResolved=40
+[MemoCheckProjection] annotatedChecks=9 invariantCheckAxes=0 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=3
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=14 workers=2 nativeRules=31 fedOwners=6 supplies=0 nodes=33 checks=99 cacheHits=56 pruned=9 supportQueries=33 supportCacheHits=0 supportWitnessHits=47 binarySupportHits=38 binarySupportRows=0 worklistVisits=69 costEvaluations=1 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=9 oracleHits=0 factsNs=1694056 rulesNs=7160300 modelNs=4351261 optimizationNs=3427184 projectionNs=2570414 cost=5.00084014117717719827371054223258406423724409251008182764053344726562500
+[MemoLowering] status=MATCH sb=111 hops=19 supplies=0
+[MemoLowering] status=MATCH sb=113 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=113 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=113 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=110 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=114 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=111 hops=19 supplies=0
+[MemoLowering] status=MATCH sb=110 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=110 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=110 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=114 hops=3 supplies=0
+.[MemoPlannerPhase] phase=facts elapsedNs=1549816
+[MemoPlannerPhase] phase=rules elapsedNs=17602343
+[MemoNativeRequests] preparedRequests=32 reusedResults=17 oracleRequests=15 canonicalStringsCreated=7 canonicalStringsReused=17 uncacheableRequests=8 contextualViewBuilds=15
+[MemoNativeGeneration] cpPatterns=15 prefixRequests=0 prunedPrefixes=13 unknownPrefixes=0 visitedNativePatterns=8 determinantRegions=21 oracleEvaluations=21 evidenceReuses=0 publishedRules=20 coverageObligations=3
+[MemoPlannerPhase] phase=model elapsedNs=10094693
+[MemoCostProjection] bindingDagVisits=62 projectionCacheHits=0 relevantGuardDecisions=1 supportPrefixChecks=71 noRegionsSkipped=6 unknownObligations=0 invariantProjectionStops=40 activationEnvironments=69 projectedContexts=64 primitiveVectors=64 primitiveValues=89 primitiveValueBytes=712
+[MemoPlannerPhase] phase=optimization elapsedNs=9754338
+[MemoSearch] status=OPTIMAL nodes=73 checkEvaluations=187 checkCacheHits=124 supportQueries=62 supportCacheHits=0 supportWitnessHits=47 binarySupportHits=37 binarySupportRows=0 worklistVisits=130 removedRules=12 costEvaluations=5 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=9 bindingGuardCacheHits=2 repeatProofRequests=16 repeatProofCacheHits=4 phaseShapeRequests=384 phaseShapeCacheHits=190 phaseShapeCacheEntries=194 guardRelevanceRequests=221 guardRelevanceCacheHits=215 guardRelevanceIndexEntries=6 occurrenceTransferRequests=319 occurrenceTransferCacheHits=268 occurrenceTransferBuilds=51 occurrenceTransferEntries=51 guardAtomRequests=88 guardAtomHits=84 guardAtomIdentities=2
+[MemoMovementReuse] activationRows=20 activationReplays=47 postGateRequests=8 postGateBuilds=5 postGateHits=3 primitiveContexts=5 contextualViewBuilds=2 unionRequests=6 unionCacheHits=3 measurementRequests=7 measurementHits=2
+[MemoNativeCostReuse] requests=20 cacheHits=7 vectorBuilds=57 entries=13
+[MemoContextAnalysisReuse] requests=228 hits=217 entries=11
+[MemoDirectRoots] resolver=shapes requests=194 eligibleCalls=194 fastPathCalls=194 rootsResolved=194
+[MemoDirectRoots] resolver=modelPrivacy requests=249 eligibleCalls=80 fastPathCalls=80 rootsResolved=80
+[MemoCheckProjection] annotatedChecks=27 invariantCheckAxes=1 binaryChecksReduced=4 branchEdgesRemovedDuringNormalization=7
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=15 workers=2 nativeRules=59 fedOwners=10 supplies=1 nodes=73 checks=187 cacheHits=124 pruned=12 supportQueries=62 supportCacheHits=0 supportWitnessHits=47 binarySupportHits=37 binarySupportRows=0 worklistVisits=130 costEvaluations=5 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=15 oracleHits=0 factsNs=1549816 rulesNs=17602343 modelNs=10094693 optimizationNs=9754338 projectionNs=4643387 cost=14.0019451327621923741896819862271655887653309946472290903329849243164062500
+[MemoLowering] status=MATCH sb=117 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=115 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=116 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=121 hops=18 supplies=0
+[MemoLowering] status=MATCH sb=122 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=123 hops=20 supplies=0
+[MemoLowering] status=MATCH sb=126 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=118 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=119 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=127 hops=6 supplies=1
+[MemoLowering] status=MATCH sb=121 hops=18 supplies=0
+[MemoLowering] status=MATCH sb=122 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=115 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=127 hops=6 supplies=1
+[MemoPlannerPhase] phase=facts elapsedNs=1478302
+[MemoPlannerPhase] phase=rules elapsedNs=10994495
+[MemoNativeRequests] preparedRequests=32 reusedResults=17 oracleRequests=15 canonicalStringsCreated=7 canonicalStringsReused=17 uncacheableRequests=8 contextualViewBuilds=15
+[MemoNativeGeneration] cpPatterns=15 prefixRequests=0 prunedPrefixes=13 unknownPrefixes=0 visitedNativePatterns=8 determinantRegions=21 oracleEvaluations=21 evidenceReuses=0 publishedRules=20 coverageObligations=3
+[MemoPlannerPhase] phase=model elapsedNs=7265957
+[MemoCostProjection] bindingDagVisits=62 projectionCacheHits=0 relevantGuardDecisions=1 supportPrefixChecks=71 noRegionsSkipped=6 unknownObligations=0 invariantProjectionStops=40 activationEnvironments=69 projectedContexts=64 primitiveVectors=64 primitiveValues=89 primitiveValueBytes=712
+[MemoPlannerPhase] phase=optimization elapsedNs=6709809
+[MemoSearch] status=OPTIMAL nodes=73 checkEvaluations=187 checkCacheHits=124 supportQueries=62 supportCacheHits=0 supportWitnessHits=47 binarySupportHits=37 binarySupportRows=0 worklistVisits=130 removedRules=12 costEvaluations=5 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=9 bindingGuardCacheHits=2 repeatProofRequests=16 repeatProofCacheHits=4 phaseShapeRequests=384 phaseShapeCacheHits=190 phaseShapeCacheEntries=194 guardRelevanceRequests=221 guardRelevanceCacheHits=215 guardRelevanceIndexEntries=6 occurrenceTransferRequests=319 occurrenceTransferCacheHits=268 occurrenceTransferBuilds=51 occurrenceTransferEntries=51 guardAtomRequests=88 guardAtomHits=84 guardAtomIdentities=2
+[MemoMovementReuse] activationRows=20 activationReplays=47 postGateRequests=8 postGateBuilds=5 postGateHits=3 primitiveContexts=5 contextualViewBuilds=2 unionRequests=6 unionCacheHits=3 measurementRequests=7 measurementHits=2
+[MemoNativeCostReuse] requests=20 cacheHits=7 vectorBuilds=57 entries=13
+[MemoContextAnalysisReuse] requests=228 hits=217 entries=11
+[MemoDirectRoots] resolver=shapes requests=194 eligibleCalls=194 fastPathCalls=194 rootsResolved=194
+[MemoDirectRoots] resolver=modelPrivacy requests=249 eligibleCalls=80 fastPathCalls=80 rootsResolved=80
+[MemoCheckProjection] annotatedChecks=27 invariantCheckAxes=1 binaryChecksReduced=4 branchEdgesRemovedDuringNormalization=7
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=16 workers=2 nativeRules=59 fedOwners=10 supplies=1 nodes=73 checks=187 cacheHits=124 pruned=12 supportQueries=62 supportCacheHits=0 supportWitnessHits=47 binarySupportHits=37 binarySupportRows=0 worklistVisits=130 costEvaluations=5 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=15 oracleHits=0 factsNs=1478302 rulesNs=10994495 modelNs=7265957 optimizationNs=6709809 projectionNs=3702569 cost=14.0019457431137548741902240873134083409823347210476640611886978149414062500
+[MemoLowering] status=MATCH sb=130 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=128 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=129 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=134 hops=18 supplies=0
+[MemoLowering] status=MATCH sb=135 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=136 hops=20 supplies=0
+[MemoLowering] status=MATCH sb=139 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=131 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=132 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=140 hops=6 supplies=1
+[MemoLowering] status=MATCH sb=134 hops=18 supplies=0
+[MemoLowering] status=MATCH sb=135 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=128 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=131 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=128 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=140 hops=6 supplies=1
+[MemoPlannerPhase] phase=facts elapsedNs=1176689
+[MemoPlannerPhase] phase=rules elapsedNs=10402548
+[MemoNativeRequests] preparedRequests=32 reusedResults=17 oracleRequests=15 canonicalStringsCreated=7 canonicalStringsReused=17 uncacheableRequests=8 contextualViewBuilds=15
+[MemoNativeGeneration] cpPatterns=15 prefixRequests=0 prunedPrefixes=13 unknownPrefixes=0 visitedNativePatterns=8 determinantRegions=21 oracleEvaluations=21 evidenceReuses=0 publishedRules=20 coverageObligations=3
+[MemoPlannerPhase] phase=model elapsedNs=6929459
+[MemoCostProjection] bindingDagVisits=62 projectionCacheHits=0 relevantGuardDecisions=1 supportPrefixChecks=71 noRegionsSkipped=6 unknownObligations=0 invariantProjectionStops=40 activationEnvironments=69 projectedContexts=64 primitiveVectors=64 primitiveValues=89 primitiveValueBytes=712
+[MemoPlannerPhase] phase=optimization elapsedNs=5928428
+[MemoSearch] status=OPTIMAL nodes=73 checkEvaluations=187 checkCacheHits=124 supportQueries=62 supportCacheHits=0 supportWitnessHits=47 binarySupportHits=37 binarySupportRows=0 worklistVisits=130 removedRules=12 costEvaluations=5 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=9 bindingGuardCacheHits=2 repeatProofRequests=16 repeatProofCacheHits=4 phaseShapeRequests=384 phaseShapeCacheHits=190 phaseShapeCacheEntries=194 guardRelevanceRequests=221 guardRelevanceCacheHits=215 guardRelevanceIndexEntries=6 occurrenceTransferRequests=319 occurrenceTransferCacheHits=268 occurrenceTransferBuilds=51 occurrenceTransferEntries=51 guardAtomRequests=88 guardAtomHits=84 guardAtomIdentities=2
+[MemoMovementReuse] activationRows=20 activationReplays=47 postGateRequests=8 postGateBuilds=5 postGateHits=3 primitiveContexts=5 contextualViewBuilds=2 unionRequests=6 unionCacheHits=3 measurementRequests=7 measurementHits=2
+[MemoNativeCostReuse] requests=20 cacheHits=7 vectorBuilds=57 entries=13
+[MemoContextAnalysisReuse] requests=228 hits=217 entries=11
+[MemoDirectRoots] resolver=shapes requests=194 eligibleCalls=194 fastPathCalls=194 rootsResolved=194
+[MemoDirectRoots] resolver=modelPrivacy requests=249 eligibleCalls=80 fastPathCalls=80 rootsResolved=80
+[MemoCheckProjection] annotatedChecks=27 invariantCheckAxes=1 binaryChecksReduced=4 branchEdgesRemovedDuringNormalization=7
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=17 workers=2 nativeRules=59 fedOwners=10 supplies=1 nodes=73 checks=187 cacheHits=124 pruned=12 supportQueries=62 supportCacheHits=0 supportWitnessHits=47 binarySupportHits=37 binarySupportRows=0 worklistVisits=130 costEvaluations=5 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=15 oracleHits=0 factsNs=1176689 rulesNs=10402548 modelNs=6929459 optimizationNs=5928428 projectionNs=3659228 cost=14.0019457431137548741902240873134083409823347210476640611886978149414062500
+[MemoLowering] status=MATCH sb=143 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=141 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=142 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=147 hops=18 supplies=0
+[MemoLowering] status=MATCH sb=148 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=149 hops=20 supplies=0
+[MemoLowering] status=MATCH sb=152 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=144 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=145 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=153 hops=6 supplies=1
+[MemoLowering] status=MATCH sb=147 hops=18 supplies=0
+[MemoLowering] status=MATCH sb=148 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=141 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=144 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=141 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=144 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=141 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=144 hops=3 supplies=0
+[MemoLowering] status=MATCH sb=141 hops=2 supplies=0
+[MemoLowering] status=MATCH sb=153 hops=6 supplies=1
+.[MemoPlannerPhase] phase=facts elapsedNs=1327080
+[MemoPlannerPhase] phase=rules elapsedNs=14444582
+[MemoNativeRequests] preparedRequests=32 reusedResults=14 oracleRequests=18 canonicalStringsCreated=8 canonicalStringsReused=14 uncacheableRequests=10 contextualViewBuilds=18
+[MemoNativeGeneration] cpPatterns=18 prefixRequests=0 prunedPrefixes=36 unknownPrefixes=0 visitedNativePatterns=54 determinantRegions=90 oracleEvaluations=90 evidenceReuses=0 publishedRules=99 coverageObligations=0
+[MemoPlannerPhase] phase=model elapsedNs=6719045
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=80 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=60 activationEnvironments=80 projectedContexts=80 primitiveVectors=80 primitiveValues=303 primitiveValueBytes=2424
+[MemoPlannerPhase] phase=optimization elapsedNs=12321926
+[MemoSearch] status=OPTIMAL nodes=120 checkEvaluations=756 checkCacheHits=624 supportQueries=553 supportCacheHits=0 supportWitnessHits=354 binarySupportHits=259 binarySupportRows=179 worklistVisits=177 removedRules=41 costEvaluations=124 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=8 cells=120 rows=28 factorHits=71
+[MemoShapeReuse] bindingGuardRequests=26 bindingGuardCacheHits=6 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=252 phaseShapeCacheHits=223 phaseShapeCacheEntries=29 guardRelevanceRequests=0 guardRelevanceCacheHits=0 guardRelevanceIndexEntries=0 occurrenceTransferRequests=202 occurrenceTransferCacheHits=142 occurrenceTransferBuilds=60 occurrenceTransferEntries=60 guardAtomRequests=0 guardAtomHits=0 guardAtomIdentities=0
+[MemoMovementReuse] activationRows=45 activationReplays=119 postGateRequests=119 postGateBuilds=23 postGateHits=96 primitiveContexts=23 contextualViewBuilds=16 unionRequests=36 unionCacheHits=28 measurementRequests=81 measurementHits=41
+[MemoNativeCostReuse] requests=22 cacheHits=12 vectorBuilds=68 entries=10
+[MemoContextAnalysisReuse] requests=362 hits=358 entries=4
+[MemoDirectRoots] resolver=shapes requests=29 eligibleCalls=29 fastPathCalls=29 rootsResolved=29
+[MemoDirectRoots] resolver=modelPrivacy requests=262 eligibleCalls=118 fastPathCalls=118 rootsResolved=118
+[MemoCheckProjection] annotatedChecks=48 invariantCheckAxes=22 binaryChecksReduced=3 branchEdgesRemovedDuringNormalization=3
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=18 workers=2 nativeRules=137 fedOwners=5 supplies=0 nodes=120 checks=756 cacheHits=624 pruned=41 supportQueries=553 supportCacheHits=0 supportWitnessHits=354 binarySupportHits=259 binarySupportRows=179 worklistVisits=177 costEvaluations=124 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=18 oracleHits=0 factsNs=1327080 rulesNs=14444582 modelNs=6719045 optimizationNs=12321926 projectionNs=2646646 cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoLowering] status=MATCH sb=157 hops=36 supplies=0
+[MemoLowering] status=MATCH sb=160 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=160 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=160 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=154 hops=10 supplies=0
+[MemoLowering] status=MATCH sb=161 hops=15 supplies=0
+[MemoLowering] status=MATCH sb=157 hops=36 supplies=0
+[MemoLowering] status=MATCH sb=154 hops=10 supplies=0
+[MemoLowering] status=MATCH sb=154 hops=10 supplies=0
+[MemoLowering] status=MATCH sb=154 hops=10 supplies=0
+TREE_DP_TRAINING kind=linear algorithm=EXACT status=OPTIMAL weights=[0.471, 0.432] cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoPlannerPhase] phase=facts elapsedNs=993927
+[MemoPlannerPhase] phase=rules elapsedNs=11167588
+[MemoNativeRequests] preparedRequests=32 reusedResults=14 oracleRequests=18 canonicalStringsCreated=8 canonicalStringsReused=14 uncacheableRequests=10 contextualViewBuilds=18
+[MemoNativeGeneration] cpPatterns=18 prefixRequests=0 prunedPrefixes=36 unknownPrefixes=0 visitedNativePatterns=54 determinantRegions=90 oracleEvaluations=90 evidenceReuses=0 publishedRules=99 coverageObligations=0
+[MemoPlannerPhase] phase=model elapsedNs=6535403
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=80 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=60 activationEnvironments=80 projectedContexts=80 primitiveVectors=80 primitiveValues=303 primitiveValueBytes=2424
+[MemoPlannerPhase] phase=optimization elapsedNs=34186793
+[MemoSearch] status=OPTIMAL nodes=0 checkEvaluations=0 checkCacheHits=0 supportQueries=0 supportCacheHits=0 supportWitnessHits=0 binarySupportHits=0 binarySupportRows=0 worklistVisits=0 removedRules=0 costEvaluations=0 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoTreeDP] status=OPTIMAL certified=true lowerBound=9.01826319336891179648261812531323533548288651218172162771224975585937500 upperBound=9.01826319336891179648261812531323533548288651218172162771224975585937500 statistics=Statistics[nodes=52, conflicts=4, dpCells=1457, cacheHits=3132, checkEvaluations=5517, costEvaluations=213, maxFrontier=37, retainedChecks=137, retainedCosts=29, deferredChecks=6, deferredCosts=4, cacheEntries=395, maxRetainedDomainSlots=2664, exactCostCacheHits=2472, conditionalCostQueries=164, conditionalCostCacheHits=143, conditionalEnumeratedCells=80, wideBoundRelaxations=0, dpNanos=21571789, conflictNanos=1900880]
+[MemoTreeDPBound] nodes=1 lowerBound=9.01194605469703679648261812531323533548288651218172162771224975585937500 upperBound=null
+[MemoTreeDPBound] nodes=1 lowerBound=9.01194605469703679648261812531323533548288651218172162771224975585937500 upperBound=15.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoTreeDPBound] nodes=24 lowerBound=9.01405176758766179648261812531323533548288651218172162771224975585937500 upperBound=15.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoTreeDPBound] nodes=24 lowerBound=9.01405176758766179648261812531323533548288651218172162771224975585937500 upperBound=12.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoTreeDPBound] nodes=52 lowerBound=9.01826319336891179648261812531323533548288651218172162771224975585937500 upperBound=12.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoTreeDPBound] nodes=52 lowerBound=9.01826319336891179648261812531323533548288651218172162771224975585937500 upperBound=9.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=25 bindingGuardCacheHits=5 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=247 phaseShapeCacheHits=218 phaseShapeCacheEntries=29 guardRelevanceRequests=0 guardRelevanceCacheHits=0 guardRelevanceIndexEntries=0 occurrenceTransferRequests=204 occurrenceTransferCacheHits=144 occurrenceTransferBuilds=60 occurrenceTransferEntries=60 guardAtomRequests=0 guardAtomHits=0 guardAtomIdentities=0
+[MemoMovementReuse] activationRows=45 activationReplays=145 postGateRequests=102 postGateBuilds=23 postGateHits=79 primitiveContexts=23 contextualViewBuilds=17 unionRequests=38 unionCacheHits=30 measurementRequests=86 measurementHits=43
+[MemoNativeCostReuse] requests=22 cacheHits=12 vectorBuilds=68 entries=10
+[MemoContextAnalysisReuse] requests=597 hits=593 entries=4
+[MemoDirectRoots] resolver=shapes requests=29 eligibleCalls=29 fastPathCalls=29 rootsResolved=29
+[MemoDirectRoots] resolver=modelPrivacy requests=471 eligibleCalls=328 fastPathCalls=328 rootsResolved=328
+[MemoCheckProjection] annotatedChecks=0 invariantCheckAxes=0 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=0
+[MemoPlanner] status=OPTIMAL algorithm=TREE_DP_GLOBAL epoch=19 workers=2 nativeRules=137 fedOwners=5 supplies=0 nodes=0 checks=0 cacheHits=0 pruned=0 supportQueries=0 supportCacheHits=0 supportWitnessHits=0 binarySupportHits=0 binarySupportRows=0 worklistVisits=0 costEvaluations=0 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=18 oracleHits=0 factsNs=993927 rulesNs=11167588 modelNs=6535403 optimizationNs=34186793 projectionNs=10062884 cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoLowering] status=MATCH sb=166 hops=36 supplies=0
+[MemoLowering] status=MATCH sb=169 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=169 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=169 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=163 hops=10 supplies=0
+[MemoLowering] status=MATCH sb=170 hops=15 supplies=0
+[MemoLowering] status=MATCH sb=166 hops=36 supplies=0
+[MemoLowering] status=MATCH sb=163 hops=10 supplies=0
+[MemoLowering] status=MATCH sb=163 hops=10 supplies=0
+[MemoLowering] status=MATCH sb=163 hops=10 supplies=0
+TREE_DP_TRAINING kind=linear algorithm=TREE_DP_GLOBAL status=OPTIMAL weights=[0.471, 0.432] cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoPlannerPhase] phase=facts elapsedNs=875065
+[MemoPlannerPhase] phase=rules elapsedNs=10045401
+[MemoNativeRequests] preparedRequests=32 reusedResults=14 oracleRequests=18 canonicalStringsCreated=8 canonicalStringsReused=14 uncacheableRequests=10 contextualViewBuilds=18
+[MemoNativeGeneration] cpPatterns=18 prefixRequests=0 prunedPrefixes=36 unknownPrefixes=0 visitedNativePatterns=54 determinantRegions=90 oracleEvaluations=90 evidenceReuses=0 publishedRules=99 coverageObligations=0
+[MemoPlannerPhase] phase=model elapsedNs=6243998
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=80 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=60 activationEnvironments=80 projectedContexts=80 primitiveVectors=80 primitiveValues=303 primitiveValueBytes=2424
+[MemoPlannerPhase] phase=optimization elapsedNs=17204540
+[MemoSearch] status=OPTIMAL nodes=0 checkEvaluations=0 checkCacheHits=0 supportQueries=0 supportCacheHits=0 supportWitnessHits=0 binarySupportHits=0 binarySupportRows=0 worklistVisits=0 removedRules=0 costEvaluations=0 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoTreeDP] status=OPTIMAL certified=true lowerBound=9.01826319336891179648261812531323533548288651218172162771224975585937500 upperBound=9.01826319336891179648261812531323533548288651218172162771224975585937500 statistics=Statistics[nodes=52, conflicts=4, dpCells=1457, cacheHits=3132, checkEvaluations=5517, costEvaluations=213, maxFrontier=37, retainedChecks=137, retainedCosts=29, deferredChecks=6, deferredCosts=4, cacheEntries=395, maxRetainedDomainSlots=2664, exactCostCacheHits=2472, conditionalCostQueries=164, conditionalCostCacheHits=143, conditionalEnumeratedCells=80, wideBoundRelaxations=0, dpNanos=12589869, conflictNanos=1372926]
+[MemoTreeDPBound] nodes=1 lowerBound=9.01194605469703679648261812531323533548288651218172162771224975585937500 upperBound=null
+[MemoTreeDPBound] nodes=1 lowerBound=9.01194605469703679648261812531323533548288651218172162771224975585937500 upperBound=15.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoTreeDPBound] nodes=24 lowerBound=9.01405176758766179648261812531323533548288651218172162771224975585937500 upperBound=15.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoTreeDPBound] nodes=24 lowerBound=9.01405176758766179648261812531323533548288651218172162771224975585937500 upperBound=12.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoTreeDPBound] nodes=52 lowerBound=9.01826319336891179648261812531323533548288651218172162771224975585937500 upperBound=12.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoTreeDPBound] nodes=52 lowerBound=9.01826319336891179648261812531323533548288651218172162771224975585937500 upperBound=9.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=25 bindingGuardCacheHits=5 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=247 phaseShapeCacheHits=218 phaseShapeCacheEntries=29 guardRelevanceRequests=0 guardRelevanceCacheHits=0 guardRelevanceIndexEntries=0 occurrenceTransferRequests=204 occurrenceTransferCacheHits=144 occurrenceTransferBuilds=60 occurrenceTransferEntries=60 guardAtomRequests=0 guardAtomHits=0 guardAtomIdentities=0
+[MemoMovementReuse] activationRows=45 activationReplays=145 postGateRequests=102 postGateBuilds=23 postGateHits=79 primitiveContexts=23 contextualViewBuilds=17 unionRequests=38 unionCacheHits=30 measurementRequests=86 measurementHits=43
+[MemoNativeCostReuse] requests=22 cacheHits=12 vectorBuilds=68 entries=10
+[MemoContextAnalysisReuse] requests=597 hits=593 entries=4
+[MemoDirectRoots] resolver=shapes requests=29 eligibleCalls=29 fastPathCalls=29 rootsResolved=29
+[MemoDirectRoots] resolver=modelPrivacy requests=471 eligibleCalls=328 fastPathCalls=328 rootsResolved=328
+[MemoCheckProjection] annotatedChecks=0 invariantCheckAxes=0 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=0
+[MemoPlanner] status=OPTIMAL algorithm=TREE_DP_LOCAL epoch=20 workers=2 nativeRules=137 fedOwners=5 supplies=0 nodes=0 checks=0 cacheHits=0 pruned=0 supportQueries=0 supportCacheHits=0 supportWitnessHits=0 binarySupportHits=0 binarySupportRows=0 worklistVisits=0 costEvaluations=0 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=18 oracleHits=0 factsNs=875065 rulesNs=10045401 modelNs=6243998 optimizationNs=17204540 projectionNs=6827618 cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoLowering] status=MATCH sb=175 hops=36 supplies=0
+[MemoLowering] status=MATCH sb=178 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=178 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=178 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=172 hops=10 supplies=0
+[MemoLowering] status=MATCH sb=179 hops=15 supplies=0
+[MemoLowering] status=MATCH sb=175 hops=36 supplies=0
+[MemoLowering] status=MATCH sb=172 hops=10 supplies=0
+[MemoLowering] status=MATCH sb=172 hops=10 supplies=0
+[MemoLowering] status=MATCH sb=172 hops=10 supplies=0
+TREE_DP_TRAINING kind=linear algorithm=TREE_DP_LOCAL status=OPTIMAL weights=[0.471, 0.432] cost=9.01826319336891179648261812531323533548288651218172162771224975585937500
+[MemoPlannerPhase] phase=facts elapsedNs=920790
+[MemoPlannerPhase] phase=rules elapsedNs=11953738
+[MemoNativeRequests] preparedRequests=44 reusedResults=22 oracleRequests=22 canonicalStringsCreated=12 canonicalStringsReused=22 uncacheableRequests=10 contextualViewBuilds=22
+[MemoNativeGeneration] cpPatterns=22 prefixRequests=0 prunedPrefixes=41 unknownPrefixes=0 visitedNativePatterns=65 determinantRegions=106 oracleEvaluations=106 evidenceReuses=0 publishedRules=119 coverageObligations=0
+[MemoPlannerPhase] phase=model elapsedNs=7217016
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=101 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=81 activationEnvironments=101 projectedContexts=101 primitiveVectors=101 primitiveValues=372 primitiveValueBytes=2976
+[MemoPlannerPhase] phase=optimization elapsedNs=15948693
+[MemoSearch] status=OPTIMAL nodes=174 checkEvaluations=973 checkCacheHits=724 supportQueries=717 supportCacheHits=0 supportWitnessHits=436 binarySupportHits=296 binarySupportRows=219 worklistVisits=217 removedRules=44 costEvaluations=168 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=12 cells=174 rows=39 factorHits=112
+[MemoShapeReuse] bindingGuardRequests=38 bindingGuardCacheHits=6 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=412 phaseShapeCacheHits=359 phaseShapeCacheEntries=53 guardRelevanceRequests=0 guardRelevanceCacheHits=0 guardRelevanceIndexEntries=0 occurrenceTransferRequests=291 occurrenceTransferCacheHits=224 occurrenceTransferBuilds=67 occurrenceTransferEntries=67 guardAtomRequests=0 guardAtomHits=0 guardAtomIdentities=0
+[MemoMovementReuse] activationRows=66 activationReplays=154 postGateRequests=161 postGateBuilds=35 postGateHits=126 primitiveContexts=35 contextualViewBuilds=24 unionRequests=50 unionCacheHits=38 measurementRequests=123 measurementHits=59
+[MemoNativeCostReuse] requests=34 cacheHits=20 vectorBuilds=81 entries=14
+[MemoContextAnalysisReuse] requests=448 hits=444 entries=4
+[MemoDirectRoots] resolver=shapes requests=53 eligibleCalls=53 fastPathCalls=53 rootsResolved=53
+[MemoDirectRoots] resolver=modelPrivacy requests=316 eligibleCalls=151 fastPathCalls=151 rootsResolved=151
+[MemoCheckProjection] annotatedChecks=69 invariantCheckAxes=31 binaryChecksReduced=3 branchEdgesRemovedDuringNormalization=3
+[MemoPlanner] status=OPTIMAL algorithm=EXACT epoch=21 workers=2 nativeRules=160 fedOwners=5 supplies=0 nodes=174 checks=973 cacheHits=724 pruned=44 supportQueries=717 supportCacheHits=0 supportWitnessHits=436 binarySupportHits=296 binarySupportRows=219 worklistVisits=217 costEvaluations=168 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=22 oracleHits=0 factsNs=920790 rulesNs=11953738 modelNs=7217016 optimizationNs=15948693 projectionNs=2300869 cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+[MemoLowering] status=MATCH sb=185 hops=36 supplies=0
+[MemoLowering] status=MATCH sb=188 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=188 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=188 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=181 hops=17 supplies=0
+[MemoLowering] status=MATCH sb=189 hops=15 supplies=0
+[MemoLowering] status=MATCH sb=185 hops=36 supplies=0
+[MemoLowering] status=MATCH sb=181 hops=17 supplies=0
+[MemoLowering] status=MATCH sb=181 hops=17 supplies=0
+[MemoLowering] status=MATCH sb=181 hops=17 supplies=0
+TREE_DP_TRAINING kind=logistic algorithm=EXACT status=OPTIMAL weights=[0.4893567360937929, 0.3790640837187814] cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+[MemoPlannerPhase] phase=facts elapsedNs=1092952
+[MemoPlannerPhase] phase=rules elapsedNs=13059384
+[MemoNativeRequests] preparedRequests=44 reusedResults=22 oracleRequests=22 canonicalStringsCreated=12 canonicalStringsReused=22 uncacheableRequests=10 contextualViewBuilds=22
+[MemoNativeGeneration] cpPatterns=22 prefixRequests=0 prunedPrefixes=41 unknownPrefixes=0 visitedNativePatterns=65 determinantRegions=106 oracleEvaluations=106 evidenceReuses=0 publishedRules=119 coverageObligations=0
+[MemoPlannerPhase] phase=model elapsedNs=8467152
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=101 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=81 activationEnvironments=101 projectedContexts=101 primitiveVectors=101 primitiveValues=372 primitiveValueBytes=2976
+[MemoPlannerPhase] phase=optimization elapsedNs=19208384
+[MemoSearch] status=OPTIMAL nodes=0 checkEvaluations=0 checkCacheHits=0 supportQueries=0 supportCacheHits=0 supportWitnessHits=0 binarySupportHits=0 binarySupportRows=0 worklistVisits=0 removedRules=0 costEvaluations=0 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoTreeDP] status=OPTIMAL certified=true lowerBound=9.01861282467842107382148921553705056552985297457780689001083374023437500 upperBound=9.01861282467842107382148921553705056552985297457780689001083374023437500 statistics=Statistics[nodes=29, conflicts=2, dpCells=4291, cacheHits=1693, checkEvaluations=14979, costEvaluations=280, maxFrontier=16, retainedChecks=168, retainedCosts=48, deferredChecks=3, deferredCosts=3, cacheEntries=560, maxRetainedDomainSlots=1264, exactCostCacheHits=6174, conditionalCostQueries=54, conditionalCostCacheHits=44, conditionalEnumeratedCells=56, wideBoundRelaxations=0, dpNanos=14901917, conflictNanos=861830]
+[MemoTreeDPBound] nodes=1 lowerBound=9.01440139889717107382148921553705056552985297457780689001083374023437500 upperBound=null
+[MemoTreeDPBound] nodes=1 lowerBound=9.01440139889717107382148921553705056552985297457780689001083374023437500 upperBound=12.01861282467842107382148921553705056552985297457780689001083374023437500
+[MemoTreeDPBound] nodes=29 lowerBound=9.01861282467842107382148921553705056552985297457780689001083374023437500 upperBound=12.01861282467842107382148921553705056552985297457780689001083374023437500
+[MemoTreeDPBound] nodes=29 lowerBound=9.01861282467842107382148921553705056552985297457780689001083374023437500 upperBound=9.01861282467842107382148921553705056552985297457780689001083374023437500
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=37 bindingGuardCacheHits=5 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=414 phaseShapeCacheHits=361 phaseShapeCacheEntries=53 guardRelevanceRequests=0 guardRelevanceCacheHits=0 guardRelevanceIndexEntries=0 occurrenceTransferRequests=293 occurrenceTransferCacheHits=226 occurrenceTransferBuilds=67 occurrenceTransferEntries=67 guardAtomRequests=0 guardAtomHits=0 guardAtomIdentities=0
+[MemoMovementReuse] activationRows=66 activationReplays=177 postGateRequests=141 postGateBuilds=35 postGateHits=106 primitiveContexts=35 contextualViewBuilds=25 unionRequests=51 unionCacheHits=39 measurementRequests=125 measurementHits=58
+[MemoNativeCostReuse] requests=34 cacheHits=20 vectorBuilds=81 entries=14
+[MemoContextAnalysisReuse] requests=610 hits=606 entries=4
+[MemoDirectRoots] resolver=shapes requests=53 eligibleCalls=53 fastPathCalls=53 rootsResolved=53
+[MemoDirectRoots] resolver=modelPrivacy requests=455 eligibleCalls=291 fastPathCalls=291 rootsResolved=291
+[MemoCheckProjection] annotatedChecks=0 invariantCheckAxes=0 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=0
+[MemoPlanner] status=OPTIMAL algorithm=TREE_DP_GLOBAL epoch=22 workers=2 nativeRules=160 fedOwners=5 supplies=0 nodes=0 checks=0 cacheHits=0 pruned=0 supportQueries=0 supportCacheHits=0 supportWitnessHits=0 binarySupportHits=0 binarySupportRows=0 worklistVisits=0 costEvaluations=0 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=22 oracleHits=0 factsNs=1092952 rulesNs=13059384 modelNs=8467152 optimizationNs=19208384 projectionNs=2832483 cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+[MemoLowering] status=MATCH sb=195 hops=36 supplies=0
+[MemoLowering] status=MATCH sb=198 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=198 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=198 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=191 hops=17 supplies=0
+[MemoLowering] status=MATCH sb=199 hops=15 supplies=0
+[MemoLowering] status=MATCH sb=195 hops=36 supplies=0
+[MemoLowering] status=MATCH sb=191 hops=17 supplies=0
+[MemoLowering] status=MATCH sb=191 hops=17 supplies=0
+[MemoLowering] status=MATCH sb=191 hops=17 supplies=0
+TREE_DP_TRAINING kind=logistic algorithm=TREE_DP_GLOBAL status=OPTIMAL weights=[0.4893567360937929, 0.3790640837187814] cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+[MemoPlannerPhase] phase=facts elapsedNs=976655
+[MemoPlannerPhase] phase=rules elapsedNs=11098058
+[MemoNativeRequests] preparedRequests=44 reusedResults=22 oracleRequests=22 canonicalStringsCreated=12 canonicalStringsReused=22 uncacheableRequests=10 contextualViewBuilds=22
+[MemoNativeGeneration] cpPatterns=22 prefixRequests=0 prunedPrefixes=41 unknownPrefixes=0 visitedNativePatterns=65 determinantRegions=106 oracleEvaluations=106 evidenceReuses=0 publishedRules=119 coverageObligations=0
+[MemoPlannerPhase] phase=model elapsedNs=7067557
+[MemoCostProjection] bindingDagVisits=0 projectionCacheHits=0 relevantGuardDecisions=0 supportPrefixChecks=101 noRegionsSkipped=0 unknownObligations=0 invariantProjectionStops=81 activationEnvironments=101 projectedContexts=101 primitiveVectors=101 primitiveValues=372 primitiveValueBytes=2976
+[MemoPlannerPhase] phase=optimization elapsedNs=19590458
+[MemoSearch] status=OPTIMAL nodes=0 checkEvaluations=0 checkCacheHits=0 supportQueries=0 supportCacheHits=0 supportWitnessHits=0 binarySupportHits=0 binarySupportRows=0 worklistVisits=0 removedRules=0 costEvaluations=0 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0
+[MemoTreeDP] status=OPTIMAL certified=true lowerBound=9.01861282467842107382148921553705056552985297457780689001083374023437500 upperBound=9.01861282467842107382148921553705056552985297457780689001083374023437500 statistics=Statistics[nodes=29, conflicts=2, dpCells=4291, cacheHits=1693, checkEvaluations=14979, costEvaluations=280, maxFrontier=16, retainedChecks=168, retainedCosts=48, deferredChecks=3, deferredCosts=3, cacheEntries=560, maxRetainedDomainSlots=1264, exactCostCacheHits=6174, conditionalCostQueries=54, conditionalCostCacheHits=44, conditionalEnumeratedCells=56, wideBoundRelaxations=0, dpNanos=15526320, conflictNanos=811086]
+[MemoTreeDPBound] nodes=1 lowerBound=9.01440139889717107382148921553705056552985297457780689001083374023437500 upperBound=null
+[MemoTreeDPBound] nodes=1 lowerBound=9.01440139889717107382148921553705056552985297457780689001083374023437500 upperBound=12.01861282467842107382148921553705056552985297457780689001083374023437500
+[MemoTreeDPBound] nodes=29 lowerBound=9.01861282467842107382148921553705056552985297457780689001083374023437500 upperBound=12.01861282467842107382148921553705056552985297457780689001083374023437500
+[MemoTreeDPBound] nodes=29 lowerBound=9.01861282467842107382148921553705056552985297457780689001083374023437500 upperBound=9.01861282467842107382148921553705056552985297457780689001083374023437500
+[MemoForestTail] attempts=0 applicable=0 completions=0 cells=0
+[MemoElimination] variables=0 cells=0 rows=0 factorHits=0
+[MemoShapeReuse] bindingGuardRequests=37 bindingGuardCacheHits=5 repeatProofRequests=0 repeatProofCacheHits=0 phaseShapeRequests=414 phaseShapeCacheHits=361 phaseShapeCacheEntries=53 guardRelevanceRequests=0 guardRelevanceCacheHits=0 guardRelevanceIndexEntries=0 occurrenceTransferRequests=293 occurrenceTransferCacheHits=226 occurrenceTransferBuilds=67 occurrenceTransferEntries=67 guardAtomRequests=0 guardAtomHits=0 guardAtomIdentities=0
+[MemoMovementReuse] activationRows=66 activationReplays=177 postGateRequests=141 postGateBuilds=35 postGateHits=106 primitiveContexts=35 contextualViewBuilds=25 unionRequests=51 unionCacheHits=39 measurementRequests=125 measurementHits=58
+[MemoNativeCostReuse] requests=34 cacheHits=20 vectorBuilds=81 entries=14
+[MemoContextAnalysisReuse] requests=610 hits=606 entries=4
+[MemoDirectRoots] resolver=shapes requests=53 eligibleCalls=53 fastPathCalls=53 rootsResolved=53
+[MemoDirectRoots] resolver=modelPrivacy requests=455 eligibleCalls=291 fastPathCalls=291 rootsResolved=291
+[MemoCheckProjection] annotatedChecks=0 invariantCheckAxes=0 binaryChecksReduced=0 branchEdgesRemovedDuringNormalization=0
+[MemoPlanner] status=OPTIMAL algorithm=TREE_DP_LOCAL epoch=23 workers=2 nativeRules=160 fedOwners=5 supplies=0 nodes=0 checks=0 cacheHits=0 pruned=0 supportQueries=0 supportCacheHits=0 supportWitnessHits=0 binarySupportHits=0 binarySupportRows=0 worklistVisits=0 costEvaluations=0 costCacheHits=0 boundPrunes=0 conditionalBoundQueries=0 conditionalBoundCacheHits=0 wideBoundRelaxations=0 oracleMisses=22 oracleHits=0 factsNs=976655 rulesNs=11098058 modelNs=7067557 optimizationNs=19590458 projectionNs=2778252 cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+[MemoLowering] status=MATCH sb=205 hops=36 supplies=0
+[MemoLowering] status=MATCH sb=208 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=208 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=208 hops=1 supplies=0
+[MemoLowering] status=MATCH sb=201 hops=17 supplies=0
+[MemoLowering] status=MATCH sb=209 hops=15 supplies=0
+[MemoLowering] status=MATCH sb=205 hops=36 supplies=0
+[MemoLowering] status=MATCH sb=201 hops=17 supplies=0
+[MemoLowering] status=MATCH sb=201 hops=17 supplies=0
+[MemoLowering] status=MATCH sb=201 hops=17 supplies=0
+TREE_DP_TRAINING kind=logistic algorithm=TREE_DP_LOCAL status=OPTIMAL weights=[0.4893567360937929, 0.3790640837187814] cost=9.01861282467842107382148921553705056552985297457780689001083374023437500
+
+Time: 7.247
+
+OK (10 tests)
+

@@ -1,0 +1,11 @@
+phase,workload,workers,algorithm,status,failureCategory,wallSeconds,peakContainerMemoryUsageBytes
+source-fullcompile,logreg,3,EXACT,passed,,4.8987585082650185,346344652
+source-fullcompile,logreg,3,TREE_DP_GLOBAL,failed,deterministic_resource_exhaustion,8.469035811722279,783495987
+source-fullcompile,logreg,3,TREE_DP_LOCAL,failed,deterministic_resource_exhaustion,8.720910653471947,978216550
+source-fullcompile,glm,3,EXACT,passed,,10.447174608707428,1056964608
+source-fullcompile,glm,3,TREE_DP_GLOBAL,failed,deterministic_resource_exhaustion,20.045217141509056,1258425417
+source-fullcompile,glm,3,TREE_DP_LOCAL,failed,deterministic_resource_exhaustion,25.597834274172783,1239098064
+source-fullcompile,gnmf,3,EXACT,passed,,2.5950996354222298,170183884
+source-fullcompile,gnmf,3,TREE_DP_GLOBAL,passed,,2.885860212147236,193881702
+source-fullcompile,gnmf,3,TREE_DP_LOCAL,passed,,2.8048508912324905,141033472
+federated-runtime-smoke,,,ALL_ALGORITHMS,passed,,8.793386779725552,299368448

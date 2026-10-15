@@ -1,0 +1,31 @@
+{
+  "algorithm": "TREE_DP_LOCAL",
+  "comparisonGroup": "ml:logreg:w3:source-fullcompile",
+  "compile": {
+    "executionSeconds": null,
+    "fullCompileSeconds": null,
+    "fullInitialPlanningSeconds": null,
+    "runtimeProgramSeconds": null,
+    "verified": false
+  },
+  "deterministicTreeLimits": {
+    "cacheEntries": 4096,
+    "factorCells": 256,
+    "frontierNodes": 10000,
+    "searchNodes": 2000
+  },
+  "externalWatchdogSeconds": 900,
+  "failureCategory": "container_failure",
+  "memoPlans": [],
+  "peakContainerMemoryUsageBytes": null,
+  "phase": "source-fullcompile",
+  "returncode": 125,
+  "schema": "systemds-memo-tree-dp-attempt/v1",
+  "sourceSha256": "0df28e9755086e488840cd33d8616958a8009480eeac4a42b5b29fee6127459c",
+  "status": "failed",
+  "timedOut": false,
+  "treeCertificates": [],
+  "wallSeconds": 0.36192337423563004,
+  "workers": 3,
+  "workload": "logreg"
+}

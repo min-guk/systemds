@@ -1,0 +1,41 @@
+{
+  "algorithm": "MEMO_GLOBAL",
+  "comparisonGroup": "ml:glm:w3:source-fullcompile",
+  "compile": {
+    "executionSeconds": null,
+    "fullCompileSeconds": null,
+    "fullInitialPlanningSeconds": null,
+    "runtimeProgramSeconds": null,
+    "verified": false
+  },
+  "compileHeapMiB": 128,
+  "deterministicTreeLimits": {
+    "cacheEntries": 4096,
+    "factorCells": 256,
+    "frontierNodes": 10000,
+    "searchNodes": 20000
+  },
+  "dualCertificates": [],
+  "dualOptions": {
+    "diagnosticNodes": 9223372036854775807,
+    "directCells": 2000000,
+    "directExact": true,
+    "factorCells": 256,
+    "memoryBytes": 9223372036854775807,
+    "seedWork": 100000
+  },
+  "externalWatchdogSeconds": 900,
+  "failureCategory": "jvm_out_of_memory",
+  "memoPlans": [],
+  "peakContainerMemoryUsageBytes": 275565772,
+  "phase": "source-fullcompile",
+  "returncode": 1,
+  "schema": "systemds-memo-tree-dp-attempt/v1",
+  "sourceSha256": "c4ee01b1a88432f35736d76d29bcdf091c090b374cd9c5015b33d049346f3f8b",
+  "status": "failed",
+  "timedOut": false,
+  "treeCertificates": [],
+  "wallSeconds": 14.921943113207817,
+  "workers": 3,
+  "workload": "glm"
+}

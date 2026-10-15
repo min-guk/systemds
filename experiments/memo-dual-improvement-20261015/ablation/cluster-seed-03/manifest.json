@@ -1,0 +1,75 @@
+{
+  "algorithms": [
+    "EXACT",
+    "MEMO_GLOBAL",
+    "MEMO_LOCAL"
+  ],
+  "compileHeapMiB": 3072,
+  "compileNetwork": "none",
+  "costContract": {
+    "codegen": false,
+    "costEnvironment": {},
+    "costModelSourceSha256": "f7b3d55753731282d41d9a178e75f641a4601a72c338befea99696fe5a4ecd2c",
+    "nativeBlas": "none",
+    "productionDefaults": {
+      "aggregateBinaryFlopsPerSecond": 32000000000,
+      "flopsPerSecond": 2147483648,
+      "memoryBandwidthMiBPerSecond": 25000.0,
+      "networkBandwidthC2WMiBPerSecond": 125.0,
+      "networkBandwidthW2CMiBPerSecond": 125.0,
+      "networkLatencyC2WSeconds": 0.0005,
+      "networkLatencyW2CSeconds": 0.0005,
+      "networkSerdesBandwidthC2WMiBPerSecond": 0.0,
+      "networkSerdesBandwidthW2CMiBPerSecond": 0.0,
+      "unknownDimensionTransferFallbackMiB": 256.0,
+      "uploadEstimateClampRatio": 4.0
+    },
+    "semantics": "production-default-costs-no-overrides/v1"
+  },
+  "deterministicTreeLimits": {
+    "cacheEntries": 4096,
+    "factorCells": 256,
+    "frontierNodes": 10000,
+    "searchNodes": 2000
+  },
+  "dualOptions": {
+    "clusterCells": 4096,
+    "diagnosticNodes": 9223372036854775807,
+    "diagnostics": false,
+    "directCells": 0,
+    "directExact": true,
+    "factorCells": 256,
+    "factorDiagnostics": false,
+    "factorDiagnosticsMaxFactors": 10000,
+    "improveSeed": true,
+    "memoryBytes": 9223372036854775807,
+    "seedWork": 100000
+  },
+  "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+  "engineValidation": {
+    "manifest": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3-sha256.json",
+    "manifestSha256": "8d3bfe5d770da33ee176a5d73b1edcdef34fecbf14cd131b9f45efc2c07b2b2b",
+    "verifiedFiles": 8881
+  },
+  "heapConfiguration": {
+    "compileMiB": 3072,
+    "runtimeMiB": 3072,
+    "syntheticMiB": 3072
+  },
+  "image": "sha256:2816d74bddb56a977e16c54698b140907d8609132693e7793784a8a748b1b434",
+  "repository": "/home/mchoi/cofee-tree-dp-20261014",
+  "repositoryCommit": "b8623e3481072940c07ef3962bcd55be526f1d09",
+  "reproductionCommand": "/home/mchoi/cofee-tree-dp-20261014/scripts/fedplanner/run_LAN_docker.sh --memo-tree-dp-benchmark --engine /home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3 --sealed-stage /home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z --output-root /home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/ablation/cluster-seed-03 --workloads gnmf --workers 3 --algorithms EXACT,MEMO_GLOBAL,MEMO_LOCAL --watchdog-seconds 900 --heap-mib 3072 --search-nodes 2000 --frontier-nodes 10000 --factor-cells 256 --cache-entries 4096 --dual-direct-exact true --dual-seed-work 100000 --dual-factor-cells 256 --dual-direct-cells 0 --dual-cluster-cells 4096 --dual-improve-seed true --factor-diagnostics false --factor-diagnostics-max-factors 10000 --dual-diagnostics false --dual-memory-bytes 9223372036854775807 --dual-diagnostic-nodes 9223372036854775807 --synthetic-repetitions 7 --skip-synthetic",
+  "runtimeNetwork": null,
+  "schema": "systemds-memo-tree-dp-manifest/v1",
+  "stage": "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+  "stageValidation": {
+    "manifestSha256": "e3544c65da20e46b3318c02a8d984aff108bf32435bf7a18b66e65d15bfd6a1e"
+  },
+  "watchdogSeconds": 900,
+  "watchdogSemantics": "failure only; never an optimization success condition",
+  "workers": 3,
+  "workloads": [
+    "gnmf"
+  ]
+}

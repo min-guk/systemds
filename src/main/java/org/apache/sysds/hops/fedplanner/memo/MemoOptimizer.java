@@ -37,7 +37,7 @@ import java.util.function.ToDoubleFunction;
  */
 public final class MemoOptimizer {
 	public enum Truth { YES, NO, UNKNOWN }
-	public enum Status { OPTIMAL, INFEASIBLE, UNRESOLVED, RESOURCE_EXHAUSTED }
+	public enum Status { OPTIMAL, EPSILON_OPTIMAL, INFEASIBLE, UNRESOLVED, RESOURCE_EXHAUSTED }
 	@FunctionalInterface public interface Predicate {
 		/** -1 means unassigned; YES/NO must hold for every completion of that prefix. */
 		Truth test(int[] scopedRules);
@@ -60,6 +60,8 @@ public final class MemoOptimizer {
 			this.truthClasses=validateClasses(this.owners,truthClasses,"Truth");
 		}
 		public int site() { return site; }
+		/** Read-only factor evaluation shared by independently selectable optimizers. */
+		Truth evaluate(int[] scopedRules) { return predicate.test(scopedRules.clone()); }
 		public int[] owners() { return owners.clone(); }
 	}
 	/** A term has exactly one cost owner. A shared movement is one term with several demands.
@@ -84,6 +86,8 @@ public final class MemoOptimizer {
 			this.costClasses=validateCostClasses(this.owners,costClasses);
 		}
 		public int[] owners() { return owners.clone(); }
+		BigDecimal certifiedMinimum() { return certifiedMinimum; }
+		int[][] certifiedCostClasses() { return copyCostClasses(costClasses); }
 		BigDecimal evaluateExact(int[] scopedRules) {
 			return exact(evaluator.applyAsDouble(scopedRules.clone()));
 		}
@@ -123,6 +127,16 @@ public final class MemoOptimizer {
 	public record Result(Status status, BigDecimal cost, int[] selectedRules, Statistics statistics) {
 		public Result { selectedRules = selectedRules == null ? null : selectedRules.clone(); }
 		@Override public int[] selectedRules() { return selectedRules == null ? null : selectedRules.clone(); }
+	}
+	/** Result of the optional direct exact kernel.  An incomplete result has not
+	 * changed the candidate universe and may be covered by another exact search. */
+	public record DirectResult(boolean completed,Result result,BitSet[] domains,String kernel) {
+		public DirectResult {
+			result=Objects.requireNonNull(result);
+			domains=cloneDomains(domains);
+			kernel=Objects.requireNonNull(kernel);
+		}
+		@Override public BitSet[] domains() { return cloneDomains(domains); }
 	}
 
 	private final int[] domainSizes;
@@ -298,12 +312,127 @@ public final class MemoOptimizer {
 			for(int id=0;id<checks.size();id++)
 				if(checks.get(id).owners.length==0 && evaluate(id,new int[0])==Truth.UNKNOWN)
 					return new Result(Status.UNRESOLVED,null,null,statistics());
-		if(feasible && !tryTreeSolve() && !tryEliminationSolve() && !tryLeafRegionSolve()) search();
+		if(feasible && !tryTreeSolve(null) && !tryEliminationSolve() && !tryLeafRegionSolve()) search();
 		Status status = exhausted ? Status.RESOURCE_EXHAUSTED
 			: !complete() || unresolvedLowerBound != null &&
 				(incumbent == null || unresolvedLowerBound.compareTo(incumbent) <= 0) ? Status.UNRESOLVED
 			: selected == null ? Status.INFEASIBLE : Status.OPTIMAL;
 		return new Result(status, incumbent, selected, statistics());
+	}
+
+	/**
+	 * Runs only propagation followed by an admitted tree or class-aware bucket
+	 * elimination kernel.  It does not create an incumbent seed, search frontier,
+	 * leaf-region search, or approximate proof.  A rejection/UNKNOWN is an
+	 * incomplete handoff with the sound propagated domains in original ordinals.
+	 */
+	public DirectResult optimizeDirect(BitSet[] restrictions,MemoResourcePolicy resources) {
+		return optimizeDirect(restrictions,resources,Long.MAX_VALUE);
+	}
+
+	/** A work-selector overload; exceeding the cell estimate declines this kernel, not the problem. */
+	public DirectResult optimizeDirect(BitSet[] restrictions,MemoResourcePolicy resources,
+		long maxEliminationCells) {
+		if(optimized) throw new IllegalStateException("Optimizer invocation already consumed");
+		if(maxEliminationCells<0) throw new IllegalArgumentException("Negative elimination cell limit");
+		optimized=true;
+		resources=Objects.requireNonNull(resources);
+		boolean diagnostic=Boolean.getBoolean("sysds.fedplanner.memo.dual.diagnostics");
+		long phaseStarted=diagnostic ? System.nanoTime() : 0;
+		applyRestrictions(restrictions);
+		if(!complete()) return direct(false,Status.UNRESOLVED,"coverage");
+		for(int c=0;c<checks.size();c++) enqueue(c);
+		boolean feasible=Arrays.stream(domains).noneMatch(BitSet::isEmpty) && propagate()
+			&& Arrays.stream(domains).noneMatch(BitSet::isEmpty);
+		phaseStarted=directPhase(diagnostic,"propagate",phaseStarted);
+		if(!feasible) return direct(true,Status.INFEASIBLE,"propagation");
+		normalizeAfterPropagation();
+		phaseStarted=directPhase(diagnostic,"normalize",phaseStarted);
+		for(int id=0;id<checks.size();id++)
+			if(checks.get(id).owners.length==0 && evaluate(id,new int[0])==Truth.UNKNOWN)
+				return direct(false,Status.UNRESOLVED,"unknown");
+
+		long treeBytes=estimateTreeBytes();
+		if(treeBytes>=0 && resources.admit(treeBytes) && tryTreeSolve(resources))
+			return direct(true,selected==null ? Status.INFEASIBLE : Status.OPTIMAL,"tree");
+		phaseStarted=directPhase(diagnostic,"tree-declined",phaseStarted);
+		if(maxEliminationCells==0) return direct(false,Status.UNRESOLVED,"elimination-disabled");
+
+		if(!resources.admit(estimateEliminationPreparationBytes()))
+			return direct(false,Status.UNRESOLVED,"none");
+		EliminationPlan plan;
+		boolean prepared;
+		try {
+			plan=new EliminationPlan(resources,maxEliminationCells);
+			prepared=plan.prepare();
+		}
+		catch(OutOfMemoryError allocationFailure) {
+			// Planning invokes no user evaluator; failure here is confined to the
+			// admitted class/graph workspace and publishes no partial message.
+			return direct(false,Status.UNRESOLVED,"none");
+		}
+		phaseStarted=directPhase(diagnostic,prepared ? "elimination-prepared" : "elimination-declined",phaseStarted);
+		if(prepared && plan.solve())
+		{
+			directPhase(diagnostic,"elimination-solved",phaseStarted);
+			return direct(true,selected==null ? Status.INFEASIBLE : Status.OPTIMAL,"elimination");
+		}
+		return direct(false,Status.UNRESOLVED,"none");
+	}
+	private static long directPhase(boolean enabled,String phase,long started) {
+		if(!enabled) return 0;
+		long now=System.nanoTime();
+		System.out.println("[MemoKernelPhase] {\"phase\":\""+phase+"\",\"nanos\":"+(now-started)+"}");
+		return now;
+	}
+
+	private DirectResult direct(boolean completed,Status status,String kernel) {
+		return new DirectResult(completed,new Result(status,incumbent,selected,statistics()),domains,kernel);
+	}
+
+	private void applyRestrictions(BitSet[] restrictions) {
+		if(restrictions==null) return;
+		if(restrictions.length!=domains.length)
+			throw new IllegalArgumentException("Restriction/domain mismatch");
+		for(int owner=0;owner<domains.length;owner++) {
+			BitSet allowed=restrictions[owner];
+			if(allowed==null) continue;
+			if(allowed.length()>domainSizes[owner])
+				throw new IllegalArgumentException("Restriction contains unknown ordinal for owner "+owner);
+			domains[owner].and((BitSet)allowed.clone());
+			domainCardinalities[owner]=domains[owner].cardinality();
+			if(!wideDomains[owner]) compactDomains[owner]=compact(domains[owner]);
+			revisions[owner]++;
+		}
+		// Restriction updates bypass remove(); refresh its live-neighbor invariant
+		// before propagation can transition another owner to singleton.
+		for(int owner=0;owner<domains.length;owner++)
+			activeBranchNeighbors[owner]=scanBranchConnectivity(owner);
+	}
+
+	private static BitSet[] cloneDomains(BitSet[] values) {
+		return Arrays.stream(values).map(bits -> (BitSet)bits.clone()).toArray(BitSet[]::new);
+	}
+	private static long compact(BitSet bits) {
+		long[] words=bits.toLongArray();
+		return words.length==0 ? 0 : words[0];
+	}
+	private long estimateEliminationPreparationBytes() {
+		long bytes=MemoResourcePolicy.checkedMultiply(domains.length,512);
+		for(BitSet domain:domains)
+			bytes=MemoResourcePolicy.checkedAdd(bytes,
+				MemoResourcePolicy.checkedMultiply(domain.cardinality(),Integer.BYTES));
+		for(Check check:checks) bytes=estimateFactorPreparation(bytes,check.owners);
+		for(CostFactor term:terms) bytes=estimateFactorPreparation(bytes,term.owners);
+		return MemoResourcePolicy.checkedAdd(bytes,
+			MemoResourcePolicy.checkedMultiply(limits.cacheEntries(),256));
+	}
+	private long estimateFactorPreparation(long bytes,int[] owners) {
+		bytes=MemoResourcePolicy.checkedAdd(bytes,MemoResourcePolicy.checkedMultiply(owners.length,128));
+		for(int owner:owners)
+			bytes=MemoResourcePolicy.checkedAdd(bytes,
+				MemoResourcePolicy.checkedMultiply(domainSizes[owner],Integer.BYTES));
+		return bytes;
 	}
 
 	/** Exact bucket elimination over certified factor classes, not native-rule identities.
@@ -313,18 +442,25 @@ public final class MemoOptimizer {
 	private boolean tryEliminationSolve() {
 		// Keep the existing finite-node budget traversal and its resource semantics.
 		if(limits.searchNodes()!=Long.MAX_VALUE) return false;
-		EliminationPlan plan=new EliminationPlan();
+		EliminationPlan plan=new EliminationPlan(null,EliminationPlan.MAX_CELLS);
 		return plan.prepare() && plan.solve();
 	}
 
 	private final class EliminationPlan {
 		private static final long MAX_CELLS=2_000_000,MAX_ROWS=500_000;
+		private static final long MAX_ARRAY_ROWS=Integer.MAX_VALUE-8L;
+		private final MemoResourcePolicy resources;
+		private final long maxEliminationCells;
 		private final int[][] live=Arrays.stream(domains).map(bits -> bits.stream().toArray()).toArray(int[][]::new);
 		private final List<EliminationFactor> originals=new ArrayList<>();
 		private final List<EliminationBucket> order=new ArrayList<>(),roots=new ArrayList<>();
 		private final int[] assignment=currentAssignment();
 		private final int[] tieLeft=new int[domains.length],tieRight=new int[domains.length];
-		private long plannedRows;
+		private long plannedRows,factorRows;
+		private EliminationPlan(MemoResourcePolicy resources,long maxEliminationCells) {
+			this.resources=resources;
+			this.maxEliminationCells=maxEliminationCells;
+		}
 
 		private final class EliminationFactor {
 			private final int[] owners;
@@ -347,10 +483,10 @@ public final class MemoOptimizer {
 						int label=proof==null ? rule : proof[axis][rule];
 						classes[axis][rule]=labels.computeIfAbsent(label,ignored -> labels.size());
 					}
-					strides[axis]=(int)Math.min(size,MAX_ROWS+1);
+					strides[axis]=(int)Math.min(size,rowLimit()+1);
 					size=boundedProduct(size,labels.size());
 				}
-				rows=(int)Math.min(size,MAX_ROWS+1);
+				rows=(int)Math.min(size,rowLimit()+1);
 			}
 			private int index(int[] selected) {
 				int index=0;
@@ -412,9 +548,12 @@ public final class MemoOptimizer {
 				}
 			}
 			private void restore(int row,int[] selected) {
-				selected[owner]=choices[row];
-				for(EliminationFactor factor:inputs) if(factor.message!=null)
-					factor.message.restore(factor.index(selected),selected);
+				if(resources==null) {
+					selected[owner]=choices[row];
+					for(EliminationFactor factor:inputs) if(factor.message!=null)
+						factor.message.restore(factor.index(selected),selected);
+				}
+				else EliminationPlan.this.restore(this,row,selected);
 			}
 			private boolean lexLess(int candidate,int retained) {
 				for(int axis:separator) tieLeft[axis]=tieRight[axis]=assignment[axis];
@@ -427,10 +566,28 @@ public final class MemoOptimizer {
 				return false;
 			}
 		}
+		private EliminationBucket[] restoreBuckets;
+		private int[] restoreRows;
+		/** Message dependencies follow elimination order; an explicit stack avoids depth overflow. */
+		private void restore(EliminationBucket root,int row,int[] solution) {
+			int top=0; restoreBuckets[0]=root; restoreRows[0]=row;
+			while(top>=0) {
+				EliminationBucket bucket=restoreBuckets[top];
+				solution[bucket.owner]=bucket.choices[restoreRows[top--]];
+				for(int i=bucket.inputs.size()-1;i>=0;i--) {
+					EliminationFactor factor=bucket.inputs.get(i);
+					if(factor.message!=null) {
+						restoreBuckets[++top]=factor.message; restoreRows[top]=factor.index(solution);
+					}
+				}
+			}
+		}
 
 		private long boundedProduct(long left,int right) {
-			return right==0 ? 0 : left>(MAX_CELLS+1)/right ? MAX_CELLS+1 : left*right;
+			long cap=resources==null ? MAX_CELLS : MAX_ARRAY_ROWS;
+			return right==0 ? 0 : left>(cap+1)/right ? cap+1 : left*right;
 		}
+		private long rowLimit() { return resources==null ? MAX_ROWS : MAX_ARRAY_ROWS; }
 		private int[] refine(int owner,List<EliminationFactor> factors) {
 			List<int[]> mappings=new ArrayList<>();
 			for(EliminationFactor factor:factors) for(int axis=0;axis<factor.owners.length;axis++)
@@ -465,7 +622,7 @@ public final class MemoOptimizer {
 			return candidate.owner<best.owner;
 		}
 		private boolean prepare() {
-			long factorRows=0;
+			factorRows=0;
 			for(int id=0;id<checks.size();id++) {
 				Check check=checks.get(id);
 				originals.add(new EliminationFactor(check.owners,check.truthClasses,id,-1,null));
@@ -476,8 +633,8 @@ public final class MemoOptimizer {
 			}
 			List<List<EliminationFactor>> incidentFactors=lists(domains.length);
 			for(EliminationFactor factor:originals) {
-				factorRows+=factor.rows;
-				if(factorRows>MAX_ROWS) return false;
+				factorRows=MemoResourcePolicy.checkedAdd(factorRows,factor.rows);
+				if(factorRows>rowLimit()) return false;
 				for(int owner:factor.owners) incidentFactors.get(owner).add(factor);
 			}
 			BitSet remaining=new BitSet(); BitSet[] graph=new BitSet[domains.length];
@@ -493,8 +650,10 @@ public final class MemoOptimizer {
 					EliminationBucket candidate=new EliminationBucket(owner,incidentFactors.get(owner),graph);
 					if(better(candidate,best)) best=candidate;
 				}
-				cells+=boundedProduct(best.rowCount,live[best.owner].length); plannedRows+=best.rowCount;
-				if(cells>MAX_CELLS || plannedRows+factorRows>MAX_ROWS) return false;
+				cells=MemoResourcePolicy.checkedAdd(cells,boundedProduct(best.rowCount,live[best.owner].length));
+				plannedRows=MemoResourcePolicy.checkedAdd(plannedRows,best.rowCount);
+				if((resources==null && cells>MAX_CELLS) || (resources!=null && cells>maxEliminationCells)
+					|| MemoResourcePolicy.checkedAdd(plannedRows,factorRows)>rowLimit()) return false;
 				best.output=new EliminationFactor(best.separator,best.classes,-1,-1,best);
 				for(EliminationFactor factor:best.inputs) for(int axis:factor.owners)
 					incidentFactors.get(axis).remove(factor);
@@ -505,12 +664,56 @@ public final class MemoOptimizer {
 				if(best.separator.length==0) roots.add(best);
 				remaining.clear(best.owner); order.add(best);
 			}
-			return true;
+			// Metadata already occupies the current JVM/cgroup used bytes. Only
+			// tables/cache growth is an additional allocation; the ceiling covers both.
+			return resources==null || resources.admit(estimateMetadataBytes(),estimateAdditionalBytes());
+		}
+		private long estimateAdditionalBytes() {
+			long rows=MemoResourcePolicy.checkedAdd(plannedRows,factorRows);
+			long tableBytes=MemoResourcePolicy.checkedMultiply(rows,96);
+			return MemoResourcePolicy.checkedAdd(tableBytes,
+				MemoResourcePolicy.checkedMultiply(limits.cacheEntries(),256));
+		}
+		private long estimateMetadataBytes() {
+			long metadataBytes=MemoResourcePolicy.checkedMultiply(domains.length,192);
+			for(EliminationFactor factor:originals)
+				metadataBytes=MemoResourcePolicy.checkedAdd(metadataBytes,factorMetadataBytes(factor));
+			for(EliminationBucket bucket:order) {
+				metadataBytes=MemoResourcePolicy.checkedAdd(metadataBytes,
+					MemoResourcePolicy.checkedMultiply(bucket.witnessOwners.length,Integer.BYTES));
+				metadataBytes=MemoResourcePolicy.checkedAdd(metadataBytes,factorMetadataBytes(bucket.output));
+				for(int axis=0;axis<bucket.separator.length;axis++) {
+					metadataBytes=MemoResourcePolicy.checkedAdd(metadataBytes,
+						MemoResourcePolicy.checkedMultiply(domainSizes[bucket.separator[axis]],Integer.BYTES));
+					metadataBytes=MemoResourcePolicy.checkedAdd(metadataBytes,
+						MemoResourcePolicy.checkedMultiply(bucket.representatives[axis].length,Integer.BYTES));
+				}
+			}
+			return metadataBytes;
+		}
+		private long factorMetadataBytes(EliminationFactor factor) {
+			long bytes=MemoResourcePolicy.checkedMultiply(factor.owners.length,64);
+			for(int owner:factor.owners)
+				bytes=MemoResourcePolicy.checkedAdd(bytes,
+					MemoResourcePolicy.checkedMultiply(domainSizes[owner],Integer.BYTES));
+			return bytes;
 		}
 		private boolean solve() {
+			if(resources!=null) {
+				try {
+					restoreBuckets=new EliminationBucket[order.size()]; restoreRows=new int[order.size()];
+				}
+				catch(OutOfMemoryError allocationFailure) { return false; }
+			}
 			for(EliminationFactor factor:originals) {
-				if(factor.check>=0) factor.truths=new Truth[factor.rows];
-				else factor.costs=new BigDecimal[factor.rows];
+				try {
+					if(factor.check>=0) factor.truths=new Truth[factor.rows];
+					else factor.costs=new BigDecimal[factor.rows];
+				}
+				catch(OutOfMemoryError allocationFailure) {
+					if(resources==null) throw allocationFailure;
+					return false;
+				}
 			}
 			BigDecimal total=fixedCost;
 			for(int owner=0;owner<domains.length;owner++) if(live[owner].length==1)
@@ -525,7 +728,14 @@ public final class MemoOptimizer {
 			}
 			for(EliminationBucket bucket:order) {
 				int rows=(int)bucket.rowCount;
-				bucket.values=new BigDecimal[rows]; bucket.choices=new int[rows]; Arrays.fill(bucket.choices,-1);
+				try {
+					bucket.values=new BigDecimal[rows]; bucket.choices=new int[rows];
+				}
+				catch(OutOfMemoryError allocationFailure) {
+					if(resources==null) throw allocationFailure;
+					return false;
+				}
+				Arrays.fill(bucket.choices,-1);
 				for(int row=0;row<rows;row++) {
 					bucket.selectRow(row);
 					for(int rule:live[bucket.owner]) {
@@ -990,7 +1200,7 @@ public final class MemoOptimizer {
 
 
 	/** Exact DP for a closed forest of unary/binary scopes; no physical alternative table. */
-	private boolean tryTreeSolve() {
+	private boolean tryTreeSolve(MemoResourcePolicy resources) {
 		if(!complete() || limits.searchNodes() != Long.MAX_VALUE) return false;
 		List<Set<Integer>> adjacent = new ArrayList<>();
 		for(int i = 0; i < domains.length; i++) adjacent.add(new LinkedHashSet<>());
@@ -1032,10 +1242,19 @@ public final class MemoOptimizer {
 			else if(scope.length == 1) unaryTerms.get(scope[0]).add(id);
 			else edgeTerms.computeIfAbsent(edgeKey(scope[0],scope[1]),key -> new ArrayList<>()).add(id);
 		}
-		TreeCell[][] cells = new TreeCell[domains.length][];
+		TreeCell[][] cells;
+		try { cells=new TreeCell[domains.length][]; }
+		catch(OutOfMemoryError allocationFailure) {
+			if(resources==null) throw allocationFailure;
+			return false;
+		}
 		for(int pos = order.size()-1; pos >= 0; pos--) {
 			int owner = order.get(pos);
-			cells[owner] = new TreeCell[domainSizes[owner]];
+			try { cells[owner]=new TreeCell[domainSizes[owner]]; }
+			catch(OutOfMemoryError allocationFailure) {
+				if(resources==null) throw allocationFailure;
+				return false;
+			}
 			int[] children = adjacent.get(owner).stream().filter(next -> parent[next] == owner).mapToInt(Integer::intValue).toArray();
 			for(int rule = 0; rule < cells[owner].length; rule++) {
 				if(!domains[owner].get(rule)) continue;
@@ -1072,7 +1291,7 @@ public final class MemoOptimizer {
 								? new int[] {rule,childRule} : new int[] {childRule,rule}));
 						}
 						if(best == null || candidate.compareTo(best) < 0 || candidate.compareTo(best) == 0
-							&& compareTreeChoice(cells,child,childRule,bestRule) < 0) {
+							&& compareTreeChoice(cells,child,childRule,bestRule,resources!=null) < 0) {
 							best = candidate; bestRule = childRule;
 						}
 					}
@@ -1090,14 +1309,46 @@ public final class MemoOptimizer {
 				if(cells[root][rule] == null) continue;
 				if(bestRule < 0 || cells[root][rule].cost.compareTo(cells[root][bestRule].cost) < 0
 					|| cells[root][rule].cost.compareTo(cells[root][bestRule].cost) == 0
-					&& compareTreeChoice(cells,root,rule,bestRule) < 0) bestRule = rule;
+					&& compareTreeChoice(cells,root,rule,bestRule,resources!=null) < 0) bestRule = rule;
 			}
 			if(bestRule < 0) return true;
 			total = total.add(cells[root][bestRule].cost);
-			reconstructTree(cells,root,bestRule,assignment);
+			if(resources==null) reconstructTree(cells,root,bestRule,assignment);
+			else reconstructTreeIterative(cells,root,bestRule,assignment);
 		}
 		selected = assignment; incumbent = total;
 		return true;
+	}
+	/** Returns -1 when the current primal graph is not a unary/binary forest. */
+	private long estimateTreeBytes() {
+		List<Set<Integer>> adjacent=new ArrayList<>();
+		for(int owner=0;owner<domains.length;owner++) adjacent.add(new LinkedHashSet<>());
+		for(Check check:checks) if(!addTreeEdge(adjacent,check.owners)) return -1;
+		for(CostFactor term:terms) if(!addTreeEdge(adjacent,term.owners)) return -1;
+		int[] parent=new int[domains.length]; Arrays.fill(parent,-2);
+		for(int root=0;root<domains.length;root++) {
+			if(parent[root]!=-2) continue;
+			parent[root]=-1;
+			ArrayDeque<Integer> pending=new ArrayDeque<>(); pending.add(root);
+			while(!pending.isEmpty()) {
+				int owner=pending.removeFirst();
+				for(int next:adjacent.get(owner)) {
+					if(next==parent[owner]) continue;
+					if(parent[next]!=-2) return -1;
+					parent[next]=owner; pending.add(next);
+				}
+			}
+		}
+		long bytes=MemoResourcePolicy.checkedMultiply(domains.length,192);
+		for(int owner=0;owner<domains.length;owner++) {
+			long children=0;
+			for(int next:adjacent.get(owner)) if(parent[next]==owner) children++;
+			long perCell=MemoResourcePolicy.checkedAdd(112,
+				MemoResourcePolicy.checkedMultiply(children,8));
+			bytes=MemoResourcePolicy.checkedAdd(bytes,
+				MemoResourcePolicy.checkedMultiply(domainSizes[owner],perCell));
+		}
+		return bytes;
 	}
 	private static boolean addTreeEdge(List<Set<Integer>> adjacent,int[] scope) {
 		if(scope.length > 2) return false;
@@ -1107,14 +1358,33 @@ public final class MemoOptimizer {
 	private static long edgeKey(int a,int b) { return ((long)Math.min(a,b) << 32) | Math.max(a,b); }
 	private record TreeCell(BigDecimal cost,int[] children,int[] childRules) { }
 	private static void reconstructTree(TreeCell[][] cells,int owner,int rule,int[] assignment) {
-		assignment[owner] = rule;
-		TreeCell cell = cells[owner][rule];
-		for(int i = 0; i < cell.children.length; i++) reconstructTree(cells,cell.children[i],cell.childRules[i],assignment);
+		assignment[owner]=rule;
+		TreeCell cell=cells[owner][rule];
+		for(int i=0;i<cell.children.length;i++)
+			reconstructTree(cells,cell.children[i],cell.childRules[i],assignment);
+	}
+	private static void reconstructTreeIterative(TreeCell[][] cells,int owner,int rule,int[] assignment) {
+		ArrayDeque<int[]> pending=new ArrayDeque<>(); pending.push(new int[] {owner,rule});
+		while(!pending.isEmpty()) {
+			int[] next=pending.pop();
+			assignment[next[0]]=next[1];
+			TreeCell cell=cells[next[0]][next[1]];
+			for(int i=cell.children.length-1;i>=0;i--)
+				pending.push(new int[] {cell.children[i],cell.childRules[i]});
+		}
+	}
+	private static int compareTreeChoice(TreeCell[][] cells,int owner,int a,int b,boolean iterative) {
+		int[] left = new int[cells.length], right = new int[cells.length];
+		if(iterative) {
+			reconstructTreeIterative(cells,owner,a,left); reconstructTreeIterative(cells,owner,b,right);
+		}
+		else {
+			reconstructTree(cells,owner,a,left); reconstructTree(cells,owner,b,right);
+		}
+		return lexicographic(left,right);
 	}
 	private static int compareTreeChoice(TreeCell[][] cells,int owner,int a,int b) {
-		int[] left = new int[cells.length], right = new int[cells.length];
-		reconstructTree(cells,owner,a,left); reconstructTree(cells,owner,b,right);
-		return lexicographic(left,right);
+		return compareTreeChoice(cells,owner,a,b,false);
 	}
 	private BigDecimal evaluateCost(int id,int[] values) {
 		CostFactor term = terms.get(id);

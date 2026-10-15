@@ -1,0 +1,12 @@
+X = federated(addresses=list("130.149.237.12:8001//workspace/experiments/data/continuous/ADULT_features_3_1.data","130.149.237.13:8002//workspace/experiments/data/continuous/ADULT_features_3_2.data","130.149.237.14:8003//workspace/experiments/data/continuous/ADULT_features_3_3.data"), ranges=list(list(0,0),list(16667,128),list(16667,0),list(33334,128),list(33334,0),list(50000,128)))
+
+# GNMF requires non-negative input.  P2P2D contains normally distributed
+# continuous columns, so shift all entries by the privacy-permitted global min.
+xmin = min(X)
+if (xmin < 0) {
+  X = X - xmin
+}
+
+[W, H] = gnmf(X=X, rnk=10, eps=1e-8, maxi=10, seed=1011081480)
+
+write(H, "tmp/w1357/254ca9dfdf8c0551864e/result", format="csv")

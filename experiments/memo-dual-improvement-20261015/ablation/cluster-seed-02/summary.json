@@ -1,0 +1,963 @@
+{
+  "comparisonContract": "identical DML bytes, image, CPU, memory, cost defaults, and compile-only mode",
+  "compileRows": [
+    {
+      "algorithm": "EXACT",
+      "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": 0.0,
+        "fullCompileSeconds": 1.708196,
+        "fullInitialPlanningSeconds": 1.70014171,
+        "runtimeProgramSeconds": 0.035237,
+        "verified": true
+      },
+      "compileHeapMiB": 3072,
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "dualCertificates": [],
+      "dualOptions": {
+        "clusterCells": 4096,
+        "diagnosticNodes": 9223372036854775807,
+        "diagnostics": false,
+        "directCells": 0,
+        "directExact": true,
+        "factorCells": 256,
+        "factorDiagnostics": false,
+        "factorDiagnosticsMaxFactors": 10000,
+        "improveSeed": true,
+        "memoryBytes": 9223372036854775807,
+        "seedWork": 100000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": null,
+      "memoPlans": [
+        {
+          "algorithm": "EXACT",
+          "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "phaseNanos": {
+            "facts": 46308699,
+            "model": 184032187,
+            "optimization": 209587798,
+            "projection": 80483976,
+            "rules": 310961796
+          },
+          "planningNanos": 831374456,
+          "status": "OPTIMAL"
+        }
+      ],
+      "peakContainerMemoryUsageBytes": 189897113,
+      "phase": "source-fullcompile",
+      "returncode": 0,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "status": "passed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 2.987144857645035,
+      "workers": 3,
+      "workload": "gnmf"
+    },
+    {
+      "algorithm": "MEMO_GLOBAL",
+      "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": 0.0,
+        "fullCompileSeconds": 11.386552,
+        "fullInitialPlanningSeconds": 11.380846284,
+        "runtimeProgramSeconds": 0.02149,
+        "verified": true
+      },
+      "compileHeapMiB": 3072,
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "dualCertificates": [
+        {
+          "certified": true,
+          "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "progression": [
+            {
+              "lowerBound": "161.654145966460318913274304302492984097838757406861986964941024780273437500",
+              "nodes": 0,
+              "upperBound": "null"
+            },
+            {
+              "lowerBound": "161.654145966460318913274304302492984097838757406861986964941024780273437500",
+              "nodes": 0,
+              "upperBound": "910.460326538970080852333862546973269891381619345338549464941024780273437500"
+            },
+            {
+              "lowerBound": "161.654145966460318913274304302492984097838757406861986964941024780273437500",
+              "nodes": 0,
+              "upperBound": "870.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+              "nodes": 3946,
+              "upperBound": "870.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+              "nodes": 3962,
+              "upperBound": "657.982811222960561499587069827273827504754422079713549464941024780273437500"
+            },
+            {
+              "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+              "nodes": 3963,
+              "upperBound": "647.982811222960561499587069827273827504754422079713549464941024780273437500"
+            },
+            {
+              "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+              "nodes": 3972,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "187.228928083668166348231628353434435885205289196164812892675399780273437500",
+              "nodes": 4019,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "188.539855655282748191793692376424379508748074840696062892675399780273437500",
+              "nodes": 4021,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "188.814621443043166348231628353434435885205289196164812892675399780273437500",
+              "nodes": 4021,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "191.370091210295768659380240999442340799063799750001635402441024780273437500",
+              "nodes": 4022,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "191.550217146168163663747049279325457282752154242189135402441024780273437500",
+              "nodes": 4027,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "198.067990583668163669992053792841962822635082375199999660253524780273437500",
+              "nodes": 4029,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "198.665268415699415623984577133117473968226818215043749660253524780273437500",
+              "nodes": 4039,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "202.825070661793163669992053792841962822635082375199999660253524780273437500",
+              "nodes": 4040,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "203.422348493824415623984577133117473968226818215043749660253524780273437500",
+              "nodes": 4045,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "204.660202497730665623984577133117473968226818215043749660253524780273437500",
+              "nodes": 4048,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "207.305844587574409229099955292215801128108410011918749660253524780273437500",
+              "nodes": 4049,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "208.378830427418165623984577133117473968226818215043749660253524780273437500",
+              "nodes": 4049,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "212.062924665699409229099955292215801128108410011918749660253524780273437500",
+              "nodes": 4049,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "213.135910505543165623984577133117473968226818215043749660253524780273437500",
+              "nodes": 4051,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "nodes": 4052,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            }
+          ],
+          "reason": "Requested bound certificate established",
+          "relativeGap": "0.0",
+          "route": "CERTIFIED_SEARCH",
+          "statistics": {
+            "bestUpperNanos": 9712228293,
+            "boundCacheHits": 2455383,
+            "boundNanos": 1262482040,
+            "cacheBytes": 1746225,
+            "certificateNanos": 9882739517,
+            "clusterBuildNanos": 367135629,
+            "clusterBytes": 551080,
+            "clusterCacheHits": 337357,
+            "clusterCells": 4096,
+            "clusterGroups": 27,
+            "clusterQueries": 13751,
+            "clusterQueryNanos": 602908959,
+            "directAttempts": 4052,
+            "directExactSolves": 1240,
+            "exactCells": 0,
+            "firstUpperNanos": 603220296,
+            "kernelNanos": 5442631367,
+            "maxPending": 10,
+            "nodes": 4052,
+            "peakEstimatedBytes": 2423435,
+            "pruned": 4190,
+            "relaxationCalls": 13751,
+            "repairCalls": 42,
+            "searchNanos": 9038933342,
+            "seedAttempts": 1,
+            "seedEvaluations": 99773,
+            "seedNanos": 287956112,
+            "setupNanos": 370230602,
+            "validationNanos": 1081707100
+          },
+          "statisticsRaw": "Statistics[directExactSolves=1240, directAttempts=4052, seedAttempts=1, seedEvaluations=99773, repairCalls=42, nodes=4052, relaxationCalls=13751, boundCacheHits=2455383, exactCells=0, pruned=4190, maxPending=10, peakEstimatedBytes=2423435, cacheBytes=1746225, kernelNanos=5442631367, seedNanos=287956112, boundNanos=1262482040, searchNanos=9038933342, setupNanos=370230602, validationNanos=1081707100, firstUpperNanos=603220296, bestUpperNanos=9712228293, certificateNanos=9882739517, clusterGroups=27, clusterCells=4096, clusterQueries=13751, clusterCacheHits=337357, clusterBytes=551080, clusterBuildNanos=367135629, clusterQueryNanos=602908959, route=CERTIFIED_SEARCH]",
+          "status": "OPTIMAL",
+          "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+        }
+      ],
+      "dualOptions": {
+        "clusterCells": 4096,
+        "diagnosticNodes": 9223372036854775807,
+        "diagnostics": false,
+        "directCells": 0,
+        "directExact": true,
+        "factorCells": 256,
+        "factorDiagnostics": false,
+        "factorDiagnosticsMaxFactors": 10000,
+        "improveSeed": true,
+        "memoryBytes": 9223372036854775807,
+        "seedWork": 100000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": null,
+      "memoPlans": [
+        {
+          "algorithm": "MEMO_GLOBAL",
+          "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "phaseNanos": {
+            "facts": 54129001,
+            "model": 226818804,
+            "optimization": 9902988974,
+            "projection": 46629638,
+            "rules": 352040403
+          },
+          "planningNanos": 10582606820,
+          "status": "OPTIMAL"
+        }
+      ],
+      "peakContainerMemoryUsageBytes": 546517811,
+      "phase": "source-fullcompile",
+      "returncode": 0,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "status": "passed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 12.745432078838348,
+      "workers": 3,
+      "workload": "gnmf"
+    },
+    {
+      "algorithm": "MEMO_LOCAL",
+      "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+      "compile": {
+        "executionSeconds": 0.0,
+        "fullCompileSeconds": 11.408673,
+        "fullInitialPlanningSeconds": 11.399352797,
+        "runtimeProgramSeconds": 0.038159,
+        "verified": true
+      },
+      "compileHeapMiB": 3072,
+      "deterministicTreeLimits": {
+        "cacheEntries": 4096,
+        "factorCells": 256,
+        "frontierNodes": 10000,
+        "searchNodes": 2000
+      },
+      "dualCertificates": [
+        {
+          "certified": true,
+          "lowerBound": "207.305844587574409229099955292215801128108410011918749660253524780273437500",
+          "progression": [
+            {
+              "lowerBound": "161.654145966460318913274304302492984097838757406861986964941024780273437500",
+              "nodes": 0,
+              "upperBound": "null"
+            },
+            {
+              "lowerBound": "161.654145966460318913274304302492984097838757406861986964941024780273437500",
+              "nodes": 0,
+              "upperBound": "910.460326538970080852333862546973269891381619345338549464941024780273437500"
+            },
+            {
+              "lowerBound": "161.654145966460318913274304302492984097838757406861986964941024780273437500",
+              "nodes": 0,
+              "upperBound": "870.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+              "nodes": 3946,
+              "upperBound": "870.460326538970000916276089535702359389901516806276049464941024780273437500"
+            },
+            {
+              "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+              "nodes": 3962,
+              "upperBound": "657.982811222960561499587069827273827504754422079713549464941024780273437500"
+            },
+            {
+              "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+              "nodes": 3963,
+              "upperBound": "647.982811222960561499587069827273827504754422079713549464941024780273437500"
+            },
+            {
+              "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+              "nodes": 3972,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "187.228928083668166348231628353434435885205289196164812892675399780273437500",
+              "nodes": 4019,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "188.539855655282748191793692376424379508748074840696062892675399780273437500",
+              "nodes": 4021,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "188.814621443043166348231628353434435885205289196164812892675399780273437500",
+              "nodes": 4021,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "191.370091210295768659380240999442340799063799750001635402441024780273437500",
+              "nodes": 4022,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "191.550217146168163663747049279325457282752154242189135402441024780273437500",
+              "nodes": 4027,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "198.067990583668163669992053792841962822635082375199999660253524780273437500",
+              "nodes": 4029,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "198.665268415699415623984577133117473968226818215043749660253524780273437500",
+              "nodes": 4039,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "202.825070661793163669992053792841962822635082375199999660253524780273437500",
+              "nodes": 4040,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "203.422348493824415623984577133117473968226818215043749660253524780273437500",
+              "nodes": 4045,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "204.660202497730665623984577133117473968226818215043749660253524780273437500",
+              "nodes": 4048,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            },
+            {
+              "lowerBound": "207.305844587574409229099955292215801128108410011918749660253524780273437500",
+              "nodes": 4049,
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            }
+          ],
+          "reason": "Requested bound certificate established",
+          "relativeGap": "0.04699086422248557",
+          "route": "CERTIFIED_SEARCH",
+          "statistics": {
+            "bestUpperNanos": 10003344355,
+            "boundCacheHits": 2450908,
+            "boundNanos": 1245711070,
+            "cacheBytes": 1746225,
+            "certificateNanos": 10205566352,
+            "clusterBuildNanos": 282422162,
+            "clusterBytes": 551080,
+            "clusterCacheHits": 336722,
+            "clusterCells": 4096,
+            "clusterGroups": 27,
+            "clusterQueries": 13726,
+            "clusterQueryNanos": 576870208,
+            "directAttempts": 4049,
+            "directExactSolves": 1240,
+            "exactCells": 0,
+            "firstUpperNanos": 447493612,
+            "kernelNanos": 5715865625,
+            "maxPending": 10,
+            "nodes": 4049,
+            "peakEstimatedBytes": 2423435,
+            "pruned": 4178,
+            "relaxationCalls": 13726,
+            "repairCalls": 42,
+            "searchNanos": 9535120589,
+            "seedAttempts": 1,
+            "seedEvaluations": 99773,
+            "seedNanos": 256775641,
+            "setupNanos": 284226153,
+            "validationNanos": 1147989607
+          },
+          "statisticsRaw": "Statistics[directExactSolves=1240, directAttempts=4049, seedAttempts=1, seedEvaluations=99773, repairCalls=42, nodes=4049, relaxationCalls=13726, boundCacheHits=2450908, exactCells=0, pruned=4178, maxPending=10, peakEstimatedBytes=2423435, cacheBytes=1746225, kernelNanos=5715865625, seedNanos=256775641, boundNanos=1245711070, searchNanos=9535120589, setupNanos=284226153, validationNanos=1147989607, firstUpperNanos=447493612, bestUpperNanos=10003344355, certificateNanos=10205566352, clusterGroups=27, clusterCells=4096, clusterQueries=13726, clusterCacheHits=336722, clusterBytes=551080, clusterBuildNanos=282422162, clusterQueryNanos=576870208, route=CERTIFIED_SEARCH]",
+          "status": "EPSILON_OPTIMAL",
+          "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+        }
+      ],
+      "dualOptions": {
+        "clusterCells": 4096,
+        "diagnosticNodes": 9223372036854775807,
+        "diagnostics": false,
+        "directCells": 0,
+        "directExact": true,
+        "factorCells": 256,
+        "factorDiagnostics": false,
+        "factorDiagnosticsMaxFactors": 10000,
+        "improveSeed": true,
+        "memoryBytes": 9223372036854775807,
+        "seedWork": 100000
+      },
+      "externalWatchdogSeconds": 900,
+      "failureCategory": null,
+      "memoPlans": [
+        {
+          "algorithm": "MEMO_LOCAL",
+          "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+          "phaseNanos": {
+            "facts": 36515580,
+            "model": 144786116,
+            "optimization": 10222426024,
+            "projection": 57179822,
+            "rules": 249555590
+          },
+          "planningNanos": 10710463132,
+          "status": "EPSILON_OPTIMAL"
+        }
+      ],
+      "peakContainerMemoryUsageBytes": 633549619,
+      "phase": "source-fullcompile",
+      "returncode": 0,
+      "schema": "systemds-memo-tree-dp-attempt/v1",
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+      "status": "passed",
+      "timedOut": false,
+      "treeCertificates": [],
+      "wallSeconds": 12.892157927155495,
+      "workers": 3,
+      "workload": "gnmf"
+    }
+  ],
+  "complete": true,
+  "groups": {
+    "ml:gnmf:w3:source-fullcompile": {
+      "exactComparison": {
+        "independentOptimumSource": "Memo EXACT on identical frozen model",
+        "reason": null,
+        "requestedGuaranteeEstablished": true,
+        "status": "passed",
+        "validBounds": true
+      },
+      "rows": [
+        {
+          "algorithm": "EXACT",
+          "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": 0.0,
+            "fullCompileSeconds": 1.708196,
+            "fullInitialPlanningSeconds": 1.70014171,
+            "runtimeProgramSeconds": 0.035237,
+            "verified": true
+          },
+          "compileHeapMiB": 3072,
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "dualCertificates": [],
+          "dualOptions": {
+            "clusterCells": 4096,
+            "diagnosticNodes": 9223372036854775807,
+            "diagnostics": false,
+            "directCells": 0,
+            "directExact": true,
+            "factorCells": 256,
+            "factorDiagnostics": false,
+            "factorDiagnosticsMaxFactors": 10000,
+            "improveSeed": true,
+            "memoryBytes": 9223372036854775807,
+            "seedWork": 100000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": null,
+          "memoPlans": [
+            {
+              "algorithm": "EXACT",
+              "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "phaseNanos": {
+                "facts": 46308699,
+                "model": 184032187,
+                "optimization": 209587798,
+                "projection": 80483976,
+                "rules": 310961796
+              },
+              "planningNanos": 831374456,
+              "status": "OPTIMAL"
+            }
+          ],
+          "peakContainerMemoryUsageBytes": 189897113,
+          "phase": "source-fullcompile",
+          "returncode": 0,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 2.987144857645035,
+          "workers": 3,
+          "workload": "gnmf"
+        },
+        {
+          "algorithm": "MEMO_GLOBAL",
+          "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": 0.0,
+            "fullCompileSeconds": 11.386552,
+            "fullInitialPlanningSeconds": 11.380846284,
+            "runtimeProgramSeconds": 0.02149,
+            "verified": true
+          },
+          "compileHeapMiB": 3072,
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "dualCertificates": [
+            {
+              "certified": true,
+              "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "progression": [
+                {
+                  "lowerBound": "161.654145966460318913274304302492984097838757406861986964941024780273437500",
+                  "nodes": 0,
+                  "upperBound": "null"
+                },
+                {
+                  "lowerBound": "161.654145966460318913274304302492984097838757406861986964941024780273437500",
+                  "nodes": 0,
+                  "upperBound": "910.460326538970080852333862546973269891381619345338549464941024780273437500"
+                },
+                {
+                  "lowerBound": "161.654145966460318913274304302492984097838757406861986964941024780273437500",
+                  "nodes": 0,
+                  "upperBound": "870.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+                  "nodes": 3946,
+                  "upperBound": "870.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+                  "nodes": 3962,
+                  "upperBound": "657.982811222960561499587069827273827504754422079713549464941024780273437500"
+                },
+                {
+                  "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+                  "nodes": 3963,
+                  "upperBound": "647.982811222960561499587069827273827504754422079713549464941024780273437500"
+                },
+                {
+                  "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+                  "nodes": 3972,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "187.228928083668166348231628353434435885205289196164812892675399780273437500",
+                  "nodes": 4019,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "188.539855655282748191793692376424379508748074840696062892675399780273437500",
+                  "nodes": 4021,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "188.814621443043166348231628353434435885205289196164812892675399780273437500",
+                  "nodes": 4021,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "191.370091210295768659380240999442340799063799750001635402441024780273437500",
+                  "nodes": 4022,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "191.550217146168163663747049279325457282752154242189135402441024780273437500",
+                  "nodes": 4027,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "198.067990583668163669992053792841962822635082375199999660253524780273437500",
+                  "nodes": 4029,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "198.665268415699415623984577133117473968226818215043749660253524780273437500",
+                  "nodes": 4039,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "202.825070661793163669992053792841962822635082375199999660253524780273437500",
+                  "nodes": 4040,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "203.422348493824415623984577133117473968226818215043749660253524780273437500",
+                  "nodes": 4045,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "204.660202497730665623984577133117473968226818215043749660253524780273437500",
+                  "nodes": 4048,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "207.305844587574409229099955292215801128108410011918749660253524780273437500",
+                  "nodes": 4049,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "208.378830427418165623984577133117473968226818215043749660253524780273437500",
+                  "nodes": 4049,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "212.062924665699409229099955292215801128108410011918749660253524780273437500",
+                  "nodes": 4049,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "213.135910505543165623984577133117473968226818215043749660253524780273437500",
+                  "nodes": 4051,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+                  "nodes": 4052,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                }
+              ],
+              "reason": "Requested bound certificate established",
+              "relativeGap": "0.0",
+              "route": "CERTIFIED_SEARCH",
+              "statistics": {
+                "bestUpperNanos": 9712228293,
+                "boundCacheHits": 2455383,
+                "boundNanos": 1262482040,
+                "cacheBytes": 1746225,
+                "certificateNanos": 9882739517,
+                "clusterBuildNanos": 367135629,
+                "clusterBytes": 551080,
+                "clusterCacheHits": 337357,
+                "clusterCells": 4096,
+                "clusterGroups": 27,
+                "clusterQueries": 13751,
+                "clusterQueryNanos": 602908959,
+                "directAttempts": 4052,
+                "directExactSolves": 1240,
+                "exactCells": 0,
+                "firstUpperNanos": 603220296,
+                "kernelNanos": 5442631367,
+                "maxPending": 10,
+                "nodes": 4052,
+                "peakEstimatedBytes": 2423435,
+                "pruned": 4190,
+                "relaxationCalls": 13751,
+                "repairCalls": 42,
+                "searchNanos": 9038933342,
+                "seedAttempts": 1,
+                "seedEvaluations": 99773,
+                "seedNanos": 287956112,
+                "setupNanos": 370230602,
+                "validationNanos": 1081707100
+              },
+              "statisticsRaw": "Statistics[directExactSolves=1240, directAttempts=4052, seedAttempts=1, seedEvaluations=99773, repairCalls=42, nodes=4052, relaxationCalls=13751, boundCacheHits=2455383, exactCells=0, pruned=4190, maxPending=10, peakEstimatedBytes=2423435, cacheBytes=1746225, kernelNanos=5442631367, seedNanos=287956112, boundNanos=1262482040, searchNanos=9038933342, setupNanos=370230602, validationNanos=1081707100, firstUpperNanos=603220296, bestUpperNanos=9712228293, certificateNanos=9882739517, clusterGroups=27, clusterCells=4096, clusterQueries=13751, clusterCacheHits=337357, clusterBytes=551080, clusterBuildNanos=367135629, clusterQueryNanos=602908959, route=CERTIFIED_SEARCH]",
+              "status": "OPTIMAL",
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            }
+          ],
+          "dualOptions": {
+            "clusterCells": 4096,
+            "diagnosticNodes": 9223372036854775807,
+            "diagnostics": false,
+            "directCells": 0,
+            "directExact": true,
+            "factorCells": 256,
+            "factorDiagnostics": false,
+            "factorDiagnosticsMaxFactors": 10000,
+            "improveSeed": true,
+            "memoryBytes": 9223372036854775807,
+            "seedWork": 100000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": null,
+          "memoPlans": [
+            {
+              "algorithm": "MEMO_GLOBAL",
+              "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "phaseNanos": {
+                "facts": 54129001,
+                "model": 226818804,
+                "optimization": 9902988974,
+                "projection": 46629638,
+                "rules": 352040403
+              },
+              "planningNanos": 10582606820,
+              "status": "OPTIMAL"
+            }
+          ],
+          "peakContainerMemoryUsageBytes": 546517811,
+          "phase": "source-fullcompile",
+          "returncode": 0,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 12.745432078838348,
+          "workers": 3,
+          "workload": "gnmf"
+        },
+        {
+          "algorithm": "MEMO_LOCAL",
+          "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+          "compile": {
+            "executionSeconds": 0.0,
+            "fullCompileSeconds": 11.408673,
+            "fullInitialPlanningSeconds": 11.399352797,
+            "runtimeProgramSeconds": 0.038159,
+            "verified": true
+          },
+          "compileHeapMiB": 3072,
+          "deterministicTreeLimits": {
+            "cacheEntries": 4096,
+            "factorCells": 256,
+            "frontierNodes": 10000,
+            "searchNodes": 2000
+          },
+          "dualCertificates": [
+            {
+              "certified": true,
+              "lowerBound": "207.305844587574409229099955292215801128108410011918749660253524780273437500",
+              "progression": [
+                {
+                  "lowerBound": "161.654145966460318913274304302492984097838757406861986964941024780273437500",
+                  "nodes": 0,
+                  "upperBound": "null"
+                },
+                {
+                  "lowerBound": "161.654145966460318913274304302492984097838757406861986964941024780273437500",
+                  "nodes": 0,
+                  "upperBound": "910.460326538970080852333862546973269891381619345338549464941024780273437500"
+                },
+                {
+                  "lowerBound": "161.654145966460318913274304302492984097838757406861986964941024780273437500",
+                  "nodes": 0,
+                  "upperBound": "870.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+                  "nodes": 3946,
+                  "upperBound": "870.460326538970000916276089535702359389901516806276049464941024780273437500"
+                },
+                {
+                  "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+                  "nodes": 3962,
+                  "upperBound": "657.982811222960561499587069827273827504754422079713549464941024780273437500"
+                },
+                {
+                  "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+                  "nodes": 3963,
+                  "upperBound": "647.982811222960561499587069827273827504754422079713549464941024780273437500"
+                },
+                {
+                  "lowerBound": "166.793137068043164912747951982626565259337780844361986964941024780273437500",
+                  "nodes": 3972,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "187.228928083668166348231628353434435885205289196164812892675399780273437500",
+                  "nodes": 4019,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "188.539855655282748191793692376424379508748074840696062892675399780273437500",
+                  "nodes": 4021,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "188.814621443043166348231628353434435885205289196164812892675399780273437500",
+                  "nodes": 4021,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "191.370091210295768659380240999442340799063799750001635402441024780273437500",
+                  "nodes": 4022,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "191.550217146168163663747049279325457282752154242189135402441024780273437500",
+                  "nodes": 4027,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "198.067990583668163669992053792841962822635082375199999660253524780273437500",
+                  "nodes": 4029,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "198.665268415699415623984577133117473968226818215043749660253524780273437500",
+                  "nodes": 4039,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "202.825070661793163669992053792841962822635082375199999660253524780273437500",
+                  "nodes": 4040,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "203.422348493824415623984577133117473968226818215043749660253524780273437500",
+                  "nodes": 4045,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "204.660202497730665623984577133117473968226818215043749660253524780273437500",
+                  "nodes": 4048,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                },
+                {
+                  "lowerBound": "207.305844587574409229099955292215801128108410011918749660253524780273437500",
+                  "nodes": 4049,
+                  "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+                }
+              ],
+              "reason": "Requested bound certificate established",
+              "relativeGap": "0.04699086422248557",
+              "route": "CERTIFIED_SEARCH",
+              "statistics": {
+                "bestUpperNanos": 10003344355,
+                "boundCacheHits": 2450908,
+                "boundNanos": 1245711070,
+                "cacheBytes": 1746225,
+                "certificateNanos": 10205566352,
+                "clusterBuildNanos": 282422162,
+                "clusterBytes": 551080,
+                "clusterCacheHits": 336722,
+                "clusterCells": 4096,
+                "clusterGroups": 27,
+                "clusterQueries": 13726,
+                "clusterQueryNanos": 576870208,
+                "directAttempts": 4049,
+                "directExactSolves": 1240,
+                "exactCells": 0,
+                "firstUpperNanos": 447493612,
+                "kernelNanos": 5715865625,
+                "maxPending": 10,
+                "nodes": 4049,
+                "peakEstimatedBytes": 2423435,
+                "pruned": 4178,
+                "relaxationCalls": 13726,
+                "repairCalls": 42,
+                "searchNanos": 9535120589,
+                "seedAttempts": 1,
+                "seedEvaluations": 99773,
+                "seedNanos": 256775641,
+                "setupNanos": 284226153,
+                "validationNanos": 1147989607
+              },
+              "statisticsRaw": "Statistics[directExactSolves=1240, directAttempts=4049, seedAttempts=1, seedEvaluations=99773, repairCalls=42, nodes=4049, relaxationCalls=13726, boundCacheHits=2450908, exactCells=0, pruned=4178, maxPending=10, peakEstimatedBytes=2423435, cacheBytes=1746225, kernelNanos=5715865625, seedNanos=256775641, boundNanos=1245711070, searchNanos=9535120589, setupNanos=284226153, validationNanos=1147989607, firstUpperNanos=447493612, bestUpperNanos=10003344355, certificateNanos=10205566352, clusterGroups=27, clusterCells=4096, clusterQueries=13726, clusterCacheHits=336722, clusterBytes=551080, clusterBuildNanos=282422162, clusterQueryNanos=576870208, route=CERTIFIED_SEARCH]",
+              "status": "EPSILON_OPTIMAL",
+              "upperBound": "217.047325383116814386166933852680832606196759115846361964941024780273437500"
+            }
+          ],
+          "dualOptions": {
+            "clusterCells": 4096,
+            "diagnosticNodes": 9223372036854775807,
+            "diagnostics": false,
+            "directCells": 0,
+            "directExact": true,
+            "factorCells": 256,
+            "factorDiagnostics": false,
+            "factorDiagnosticsMaxFactors": 10000,
+            "improveSeed": true,
+            "memoryBytes": 9223372036854775807,
+            "seedWork": 100000
+          },
+          "externalWatchdogSeconds": 900,
+          "failureCategory": null,
+          "memoPlans": [
+            {
+              "algorithm": "MEMO_LOCAL",
+              "cost": "217.047325383116814386166933852680832606196759115846361964941024780273437500",
+              "phaseNanos": {
+                "facts": 36515580,
+                "model": 144786116,
+                "optimization": 10222426024,
+                "projection": 57179822,
+                "rules": 249555590
+              },
+              "planningNanos": 10710463132,
+              "status": "EPSILON_OPTIMAL"
+            }
+          ],
+          "peakContainerMemoryUsageBytes": 633549619,
+          "phase": "source-fullcompile",
+          "returncode": 0,
+          "schema": "systemds-memo-tree-dp-attempt/v1",
+          "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+          "status": "passed",
+          "timedOut": false,
+          "treeCertificates": [],
+          "wallSeconds": 12.892157927155495,
+          "workers": 3,
+          "workload": "gnmf"
+        }
+      ],
+      "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a"
+    }
+  },
+  "regionalComparison": {
+    "performed": false,
+    "reason": "real-workload Regional model is not proven equivalent; equal-factor synthetic comparison is in synthetic"
+  },
+  "runtimeRows": [],
+  "schema": "systemds-memo-tree-dp-benchmark/v1",
+  "synthetic": null
+}

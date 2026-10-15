@@ -24,24 +24,27 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.ToDoubleFunction;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.EvaluationContext;
 import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.GuardDecision;
-import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.LoopDecision;
 import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.LoopCardinalityDecision;
+import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.LoopDecision;
+import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.OriginKind;
+import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.ResolvedEnvironment;
+import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.ResolvedOrigin;
+import org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.BindingKind;
 import org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.IterationPhase;
 import org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.LoopCardinality;
 import org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.LoopExecutionCase;
 import org.apache.sysds.hops.fedplanner.memo.MemoProgramFacts.PhaseLoop;
-import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.OriginKind;
-import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.ResolvedEnvironment;
-import org.apache.sysds.hops.fedplanner.memo.MemoBindingResolver.ResolvedOrigin;
 import org.apache.sysds.hops.fedplanner.memo.MemoNativeRules.InputRole;
 import org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.Check;
 import org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.CostTerm;
+import org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.Predicate;
 import org.apache.sysds.hops.fedplanner.memo.MemoOptimizer.Truth;
 import org.apache.sysds.hops.fedplanner.memo.MemoPrivacy.Context;
 import org.apache.sysds.hops.fedplanner.memo.MemoPrivacy.LoopSlot;
@@ -80,7 +83,14 @@ public final class MemoProgramModel {
 		long invariantProjectionStops,long activationEnvironments,
 		long projectedContexts,long primitiveVectors,long primitiveValues,long primitiveValueBytes) { }
 	public record Solution(MemoOptimizer.Result optimization,
-		Map<Long,List<MemoSupplyRegistry.Supply>> supplies,List<String> diagnostics) {
+		Map<Long,List<MemoSupplyRegistry.Supply>> supplies,List<String> diagnostics,
+		MemoTreeDpOptimizer.Result treeDpCertificate,MemoDualModeOptimizer.Result dualModeCertificate) {
+		public Solution(MemoOptimizer.Result optimization,Map<Long,List<MemoSupplyRegistry.Supply>> supplies,
+			List<String> diagnostics) { this(optimization,supplies,diagnostics,null,null); }
+		public Solution(MemoOptimizer.Result optimization,Map<Long,List<MemoSupplyRegistry.Supply>> supplies,
+			List<String> diagnostics,MemoTreeDpOptimizer.Result treeDpCertificate) {
+			this(optimization,supplies,diagnostics,treeDpCertificate,null);
+		}
 		public Solution { supplies = Map.copyOf(supplies); diagnostics = List.copyOf(diagnostics); }
 	}
 	private record Use(Occurrence consumer,List<Integer> bindings,List<List<Integer>> frames) { }
@@ -267,6 +277,7 @@ public final class MemoProgramModel {
 	private final int[] unselectedDefinitionRules;
 	private final boolean[] coverage;
 	private final double[][] nativeCosts;
+	private final MemoFactorDiagnostics factorDiagnostics;
 	private final Map<Integer,MutableCostProjectionStatistics> costProjectionStatistics=new LinkedHashMap<>();
 	private static final class MutableCostProjectionStatistics {
 		private long bindingDagVisits;
@@ -338,6 +349,7 @@ public final class MemoProgramModel {
 			}
 		}
 		sizes = new int[facts.compiledOwnerCount()+heads.size()]; coverage = new boolean[sizes.length];
+		factorDiagnostics=MemoFactorDiagnostics.enabled() ? MemoFactorDiagnostics.liveDomains(sizes) : null;
 		unselectedDefinitionRules=new int[sizes.length]; Arrays.fill(unselectedDefinitionRules,-1);
 		selectionScratch=new SelectionScratch(sizes.length);
 		nativeCosts = new double[sizes.length][];
@@ -353,6 +365,8 @@ public final class MemoProgramModel {
 			sizes[owner] = nativeOwner ? memo.rules(owner).size() : 1;
 			coverage[owner] = !nativeOwner || memo.complete(owner);
 			nativeCosts[owner] = new double[sizes[owner]];
+			if(factorDiagnostics!=null) factorDiagnostics.addNativeArray(owner,
+				List.of("owner:"+owner,"native-owner:"+nativeOwner));
 			if(!nativeOwner) continue;
 			boolean firstNativeTerm = true;
 			for(Occurrence occurrence : occurrences) {
@@ -362,7 +376,8 @@ public final class MemoProgramModel {
 					for(double[] values : nativeCostTerms(occurrence,frame)) {
 						// Each reachable phase/context is one frozen binary64 primitive.
 						if(firstNativeTerm) { nativeCosts[owner] = values; firstNativeTerm = false; }
-						else costs.add(new CostTerm(new int[] {owner},choices -> values[choices[0]],0));
+						else addCost(MemoFactorDiagnostics.Category.NATIVE_UNARY,new int[] {owner},
+							choices -> values[choices[0]],0,null,List.of("owner:"+owner,"additional-context"));
 					}
 				}
 				List<Integer> bindings = new ArrayList<>();
@@ -370,8 +385,8 @@ public final class MemoProgramModel {
 				Use use = new Use(occurrence,List.copyOf(bindings),contexts); uses.add(use);
 				// Native pattern/shape is already frozen. Privacy transfer observes semantic
 				// values, not producer placement choices, so it needs only this rule choice.
-				checks.add(new Check(occurrence.id(),new int[] {owner},choices ->
-					privacyCompatible(use,choices[0])));
+				addCheck(MemoFactorDiagnostics.Category.PRIVACY_UNARY,occurrence.id(),new int[] {owner},choices ->
+					privacyCompatible(use,choices[0]),null,factorTagsIfEnabled(use,bindings));
 			}
 		}
 		for(Head head : heads) {
@@ -387,15 +402,80 @@ public final class MemoProgramModel {
 			cacheable |= entryType.isMatrix() || entryType.isFrame();
 			sizes[head.variable()] = cacheable && sources.workers() > 0 ? sources.workers() == 1 ? 2 : 4 : 1;
 			coverage[head.variable()] = true; nativeCosts[head.variable()] = new double[sizes[head.variable()]];
+			if(factorDiagnostics!=null) factorDiagnostics.addNativeArray(head.variable(),
+				List.of("loop-head:true","relation:loop","loop:"+head.slot().loopId(),"slot:"+head.slot().slot()));
 		}
 		registerBoundaryChecks();
 		registerInputChecks();
 		nativeCostTermCount=costs.size();
 		registerMovementCosts();
+		if(factorDiagnostics!=null) factorDiagnostics.emitStructure();
 	}
 	public RuleMemo memo() { return memo; }
 	public List<Head> heads() { return List.copyOf(heads); }
 	public List<Check> checks() { return List.copyOf(checks); }
+	public MemoFactorDiagnostics factorDiagnostics() { return factorDiagnostics; }
+	private void addCheck(MemoFactorDiagnostics.Category category,int site,int[] scope,Predicate predicate,
+		int[][] truthClasses,List<String> tags) {
+		checks.add(factorDiagnostics==null ? new Check(site,scope,predicate,truthClasses)
+			: factorDiagnostics.check(category,site,scope,predicate,truthClasses,tags));
+	}
+	private void addCost(MemoFactorDiagnostics.Category category,int[] scope,ToDoubleFunction<int[]> evaluator,
+		double certifiedMinimum,int[][] costClasses,List<String> tags) {
+		costs.add(factorDiagnostics==null ? new CostTerm(scope,evaluator,certifiedMinimum,costClasses)
+			: factorDiagnostics.cost(category,scope,evaluator,certifiedMinimum,costClasses,tags));
+	}
+	private void emitFactorTimings() {
+		if(factorDiagnostics!=null) factorDiagnostics.emitTimings();
+	}
+	private List<String> factorTagsIfEnabled(Use use,List<Integer> bindings) {
+		return factorDiagnostics==null ? List.of() : factorTags(use,bindings);
+	}
+	private List<String> factorTags(Use use,List<Integer> bindings) {
+		LinkedHashSet<String> tags=new LinkedHashSet<>();
+		tags.add("context:"+use.consumer().context());
+		tags.add("region:"+facts.region(use.consumer().regionId()).kind());
+		if(use.frames().stream().anyMatch(frame -> !frame.isEmpty())) tags.add("relation:function");
+		int maxDepth=use.frames().stream().mapToInt(List::size).max().orElse(0);
+		tags.add("frame-depth:"+maxDepth);
+		for(int region=use.consumer().regionId();region>=0;region=facts.region(region).parentId()) {
+			RegionKind kind=facts.region(region).kind();
+			if(kind==RegionKind.IF_THEN || kind==RegionKind.IF_ELSE) tags.add("relation:branch");
+			else if(kind==RegionKind.FUNCTION) tags.add("relation:function");
+			else if(kind==RegionKind.LOOP_BODY) tags.add("relation:loop");
+		}
+		LinkedHashSet<Integer> pending=new LinkedHashSet<>(bindings),seen=new LinkedHashSet<>();
+		while(!pending.isEmpty()) {
+			int binding=pending.iterator().next(); pending.remove(binding);
+			if(!seen.add(binding) || binding<0 || binding>=facts.bindings().size()) continue;
+			var node=facts.binding(binding);
+			tags.add("binding:"+node.kind());
+			if(node.kind()==BindingKind.SELECT) tags.add("relation:branch");
+			if(node.kind()==BindingKind.CALL_ARG || node.kind()==BindingKind.CALL_RETURN
+				|| node.kind()==BindingKind.FORMAL || node.kind()==BindingKind.CALL_COMPLETION)
+				tags.add("relation:function");
+			if(node.kind()==BindingKind.LOOP_HEAD || node.kind()==BindingKind.LAST) tags.add("relation:loop");
+			pending.addAll(node.children());
+		}
+		return List.copyOf(tags);
+	}
+	private List<String> loopTags(Head head,String detail) {
+		return List.of("relation:loop","loop:"+head.slot().loopId(),"slot:"+head.slot().slot(),detail);
+	}
+	private List<String> loopTagsIfEnabled(Head head,String detail) {
+		return factorDiagnostics==null ? List.of() : loopTags(head,detail);
+	}
+	private List<String> movementTags(MovementGroup group,Set<MovementEdge> edges) {
+		LinkedHashSet<String> tags=new LinkedHashSet<>();
+		tags.add(group.identity()==null ? "retained:false" : "retained:true");
+		tags.add("demands:"+edges.size());
+		tags.add("shared:"+(edges.size()>1));
+		for(MovementEdge edge:edges) {
+			Use use=uses.get(edge.use());
+			tags.addAll(factorTags(use,List.of(use.bindings().get(edge.position()))));
+		}
+		return List.copyOf(tags);
+	}
 	MemoBindingResolver.DirectRootStatistics directRootStatistics() { return resolver.directRootStatistics(); }
 	ContextAnalysisReuseStatistics contextAnalysisReuseStatistics() {
 		return new ContextAnalysisReuseStatistics(contextAnalysisRequests,contextAnalysisHits,
@@ -439,7 +519,58 @@ public final class MemoProgramModel {
 			throw new IllegalStateException("Selected Memo cost differs from the original cost ownership model");
 		Map<Long,List<MemoSupplyRegistry.Supply>> supplies = result.status() == MemoOptimizer.Status.OPTIMAL
 			? reconstructSupplies(result.selectedRules()) : Map.of();
+		emitFactorTimings();
 		return new Solution(result,supplies,diagnostics);
+	}
+
+
+	/** Independent tree relaxation solver over the exact same frozen owner/factor model. */
+	public Solution optimizeTreeDp(MemoTreeDpOptimizer.Mode mode,MemoTreeDpOptimizer.Limits limits) {
+		MemoTreeDpOptimizer.Result certificate = new MemoTreeDpOptimizer(sizes,coverage,nativeCosts,
+			checks,costs,mode,limits).optimize();
+		MemoOptimizer.Status status = MemoOptimizer.Status.valueOf(certificate.status().name());
+		if(certificate.certified()) {
+			int[] selected=certificate.selectedRules();
+			for(Check check:checks) {
+				int[] tuple=Arrays.stream(check.owners()).map(owner -> selected[owner]).toArray();
+				if(check.evaluate(tuple)!=Truth.YES)
+					throw new IllegalStateException("Tree DP certificate contains an unvalidated selection");
+			}
+			if(evaluateCost(selected).total().compareTo(certificate.upperBound())!=0)
+				throw new IllegalStateException("Tree DP cost differs from original cost ownership model");
+		}
+		// Keep legacy statistics separate; the complete tree-specific counters live in the certificate.
+		MemoOptimizer.Statistics legacyStatistics = new MemoOptimizer.Statistics(
+			0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
+		MemoOptimizer.Result result = new MemoOptimizer.Result(status,certificate.upperBound(),
+			certificate.selectedRules(),legacyStatistics);
+		Map<Long,List<MemoSupplyRegistry.Supply>> supplies = certificate.certified()
+			? reconstructSupplies(result.selectedRules()) : Map.of();
+		emitFactorTimings();
+		return new Solution(result,supplies,diagnostics,certificate);
+	}
+
+	/** Dual-mode policy over the same immutable factors and original reconstruction contract. */
+	public Solution optimizeDualMode(MemoDualModeOptimizer.Mode mode,MemoDualModeOptimizer.Options options) {
+		MemoDualModeOptimizer optimizer=new MemoDualModeOptimizer(sizes,coverage,nativeCosts,checks,costs,mode,options);
+		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
+			optimizer.onProgress(point -> System.err.println("[MemoDualBound] nodes="+point.nodes()
+				+" lowerBound="+point.lowerBound()+" upperBound="+point.upperBound()));
+		MemoDualModeOptimizer.Result certificate=optimizer.optimize();
+		if(certificate.certified()) {
+			int[] selected=certificate.selectedRules();
+			for(Check check:checks)
+				if(check.evaluate(Arrays.stream(check.owners()).map(owner -> selected[owner]).toArray())!=Truth.YES)
+					throw new IllegalStateException("Dual-mode certificate contains an unvalidated selection");
+			if(evaluateCost(selected).total().compareTo(certificate.upperBound())!=0)
+				throw new IllegalStateException("Dual-mode cost differs from original cost ownership model");
+		}
+		MemoOptimizer.Result result=new MemoOptimizer.Result(certificate.status(),certificate.upperBound(),
+			certificate.selectedRules(),certificate.kernelStatistics());
+		Solution solution=new Solution(result,certificate.certified() ? reconstructSupplies(result.selectedRules()) : Map.of(),
+			diagnostics,null,certificate);
+		emitFactorTimings();
+		return solution;
 	}
 
 	/** Re-evaluate one complete selection from the original, ungrouped cost primitives. */
@@ -553,8 +684,9 @@ public final class MemoProgramModel {
 					projections.add(projection);
 				}
 				if(!complete) {
-					checks.add(new Check(use.consumer().id(),originalScope,choices ->
-						inputCompatibleExpanded(use,edge,originalScope,choices)));
+					addCheck(MemoFactorDiagnostics.Category.INPUT_SUPPLY,use.consumer().id(),originalScope,choices ->
+						inputCompatibleExpanded(use,edge,originalScope,choices),null,
+						factorTagsIfEnabled(use,List.of(use.bindings().get(position))));
 					continue;
 				}
 				for(int frameIndex=0;frameIndex<projections.size();frameIndex++) {
@@ -585,7 +717,12 @@ public final class MemoProgramModel {
 		// Retain the entire row and lazily evaluate only the actually requested layouts.
 		Truth[][] legality=new Truth[MemoPartition.values().length][MemoPartition.values().length];
 		int[][] truthClasses=inputTruthClasses(scope,consumer,source,position,outputs);
-		checks.add(new Check(use.consumer().id(),scope,choices -> {
+		List<String> tags=List.of();
+		if(factorDiagnostics!=null) {
+			tags=new ArrayList<>(factorTags(use,List.of(use.bindings().get(position))));
+			tags.add("origin:"+origin.kind());
+		}
+		addCheck(MemoFactorDiagnostics.Category.INPUT_SUPPLY,use.consumer().id(),scope,choices -> {
 			int consumerRule=choices[consumerPosition];
 			if(consumerRule<0) return Truth.UNKNOWN;
 			int sourceRule=sourcePosition<0 ? 0 : choices[sourcePosition];
@@ -598,7 +735,7 @@ public final class MemoProgramModel {
 			Truth result=inputCompatibility(use,position,rule,from,base,row.environment());
 			legality[from.ordinal()][target.ordinal()]=result;
 			return result;
-		},truthClasses));
+		},truthClasses,tags);
 	}
 	private int[][] inputTruthClasses(int[] scope,int consumer,int source,int inputPosition,MemoPartition[] outputs) {
 		if(scope.length==1) {
@@ -777,12 +914,15 @@ public final class MemoProgramModel {
 			if(rows==null) {
 				int[] scope=scope(List.of(head.value().entryBindingId(),head.value().backedgeBindingId()),
 					List.of(head.variable()),framesFor(facts.loop(head.slot().loopId()).regionId()));
-				checks.add(new Check(-1-head.variable(),scope,choices -> boundaryCompatibleExpanded(head,scope,choices)));
+				addCheck(MemoFactorDiagnostics.Category.LOOP_BOUNDARY,-1-head.variable(),scope,
+					choices -> boundaryCompatibleExpanded(head,scope,choices),null,
+					loopTagsIfEnabled(head,"projected:false"));
 				continue;
 			}
 			retained+=rows.size();
-			if(rows.isEmpty()) checks.add(new Check(-1-head.variable(),new int[] {head.variable()},
-				choices -> choices[0]<0 ? Truth.UNKNOWN : Truth.YES));
+			if(rows.isEmpty()) addCheck(MemoFactorDiagnostics.Category.LOOP_BOUNDARY,-1-head.variable(),
+				new int[] {head.variable()},choices -> choices[0]<0 ? Truth.UNKNOWN : Truth.YES,null,
+				loopTagsIfEnabled(head,"empty:true"));
 			for(BoundaryRow row:rows) registerBoundaryRow(head,row,unselected);
 		}
 	}
@@ -849,7 +989,13 @@ public final class MemoProgramModel {
 		unselected[consumer]=-1;
 		Truth[][] legality=new Truth[MemoPartition.values().length][MemoPartition.values().length];
 		int[][] truthClasses=boundaryTruthClasses(scope,consumer,source,outputs,targets);
-		checks.add(new Check(-1-consumer,scope,choices -> {
+		List<String> tags=List.of();
+		if(factorDiagnostics!=null) {
+			tags=new ArrayList<>(loopTags(head,"projected:true"));
+			tags.add("boundary:"+(row.entry() ? "entry" : "backedge"));
+			tags.add("origin:"+row.origin().kind());
+		}
+		addCheck(MemoFactorDiagnostics.Category.LOOP_BOUNDARY,-1-consumer,scope,choices -> {
 			if(choices[headPosition]<0) return Truth.UNKNOWN;
 			int sourceRule=sourcePosition<0 ? 0 : choices[sourcePosition];
 			MemoPartition from=sourceRule<0 ? null : outputs[sourceRule];
@@ -870,7 +1016,7 @@ public final class MemoProgramModel {
 				: from==target ? Truth.YES : Truth.NO;
 			legality[from.ordinal()][target.ordinal()]=result;
 			return result;
-		},truthClasses));
+		},truthClasses,tags);
 	}
 	private int[][] boundaryTruthClasses(int[] scope,int consumer,int source,MemoPartition[] outputs,
 		MemoPartition[] targets) {
@@ -1020,13 +1166,18 @@ public final class MemoProgramModel {
 				diagnostics.add("MOVEMENT_FACTOR_WIDTH origin="+(group.getKey().identity()==null ? "unretained"
 					: group.getKey().identity().visibleBindingId())+" width="+scope.length);
 			List<MovementEdge> edges=List.copyOf(group.getValue());
-			costs.add(new CostTerm(scope,choices ->
-				movementGroupCostExpanded(group.getKey(),edges,factorScope,choices),0,costClasses));
+			MemoFactorDiagnostics.Category category=group.getKey().identity()==null
+				? MemoFactorDiagnostics.Category.MOVEMENT_UNRETAINED
+				: MemoFactorDiagnostics.Category.MOVEMENT_RETAINED_SHARED;
+			addCost(category,scope,choices -> movementGroupCostExpanded(group.getKey(),edges,factorScope,choices),
+				0,costClasses,factorDiagnostics==null ? List.of() : movementTags(group.getKey(),group.getValue()));
 		}
 		for(Head head : heads) {
 			int[] scope = scope(List.of(head.value().entryBindingId()),List.of(head.variable()),
 				framesFor(facts.loop(head.slot().loopId()).regionId()));
-			costs.add(new CostTerm(scope,choices -> entryCostExpanded(head,scope,choices),0));
+			addCost(MemoFactorDiagnostics.Category.LOOP_ENTRY,scope,
+				choices -> entryCostExpanded(head,scope,choices),0,null,
+				loopTagsIfEnabled(head,"entry-cost"));
 		}
 	}
 	/** Keep one exact aggregate primitive, but omit alternate origins filtered by its identity. */

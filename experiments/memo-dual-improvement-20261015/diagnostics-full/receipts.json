@@ -1,0 +1,38 @@
+{
+  "seed": 20261015,
+  "suite": "diagnostics",
+  "repetitions": 1,
+  "jobs": [
+    {
+      "name": "typed-factors",
+      "engine": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+      "argv": [
+        "/home/mchoi/cofee-tree-dp-20261014/scripts/fedplanner/run_LAN_docker.sh",
+        "--memo-tree-dp-benchmark",
+        "--engine",
+        "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/engine-v3",
+        "--sealed-stage",
+        "/home/mchoi/w1357-stage-main276-fixedpool-20261008T1345Z",
+        "--output-root",
+        "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/diagnostics-full/typed-factors",
+        "--workers",
+        "3",
+        "--search-nodes",
+        "2000",
+        "--workloads",
+        "logreg,glm,gnmf",
+        "--algorithms",
+        "MEMO_GLOBAL",
+        "--factor-diagnostics",
+        "true",
+        "--factor-diagnostics-max-factors",
+        "50000",
+        "--dual-diagnostics",
+        "true",
+        "--skip-synthetic"
+      ],
+      "returncode": 0,
+      "summary": "/home/mchoi/cofee-tree-dp-20261014/experiments/memo-dual-improvement-20261015/diagnostics-full/typed-factors/summary.json"
+    }
+  ]
+}

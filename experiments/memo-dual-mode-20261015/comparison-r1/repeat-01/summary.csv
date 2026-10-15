@@ -1,0 +1,17 @@
+phase,workload,workers,algorithm,status,failureCategory,wallSeconds,peakContainerMemoryUsageBytes
+source-fullcompile,glm,3,EXACT,passed,,10.754452027380466,1145682526
+source-fullcompile,glm,3,MEMO_LOCAL,passed,,11.452310390770435,1002438656
+source-fullcompile,glm,3,TREE_DP_GLOBAL,failed,deterministic_resource_exhaustion,22.0643794760108,1394790629
+source-fullcompile,glm,3,TREE_DP_LOCAL,failed,deterministic_resource_exhaustion,20.21250779181719,1400159338
+source-fullcompile,glm,3,MEMO_GLOBAL,passed,,11.534032851457596,928304332
+source-fullcompile,gnmf,3,EXACT,passed,,3.0169070959091187,203318886
+source-fullcompile,gnmf,3,MEMO_LOCAL,passed,,2.8644970506429672,156237824
+source-fullcompile,gnmf,3,TREE_DP_GLOBAL,passed,,2.8410688936710358,170079027
+source-fullcompile,gnmf,3,TREE_DP_LOCAL,passed,,2.3940330371260643,169449881
+source-fullcompile,gnmf,3,MEMO_GLOBAL,passed,,2.537961795926094,169869312
+source-fullcompile,logreg,3,EXACT,passed,,6.186232261359692,401814323
+source-fullcompile,logreg,3,MEMO_LOCAL,passed,,5.812708117067814,272000614
+source-fullcompile,logreg,3,TREE_DP_GLOBAL,failed,deterministic_resource_exhaustion,8.810191251337528,839280230
+source-fullcompile,logreg,3,TREE_DP_LOCAL,failed,deterministic_resource_exhaustion,7.565373249351978,738407219
+source-fullcompile,logreg,3,MEMO_GLOBAL,passed,,5.162398025393486,340262912
+federated-runtime-smoke,,,ALL_ALGORITHMS,passed,,9.038823753595352,311531929

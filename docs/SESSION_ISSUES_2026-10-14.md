@@ -653,3 +653,14 @@
 - **검증:** 게시 직전 Java metadata/private·aggregate·UNKNOWN 및 release 회귀 **26 tests PASS**, evaluation producer/package/provenance **12 tests PASS**. `py_compile`, native `SHA256SUMS`, `git diff --check` PASS. 기존 구현 시의 Java35 및 cross-language smoke 증거는 그대로 보존한다. 게시 작업 때문에 workload/데이터 스캔을 추가하지 않았다.
 - **의사결정 근거:** 사용자 요청 범위인 metadata 구현만 일반 fast-forward push로 게시하며 force push하지 않는다. 실제 원격 main SHA와 local commit SHA 일치는 push 후 별도로 확인한다.
 - **잔여 이슈/회귀 위험:** 앞선 metadata 계약의 원격 mirror·초기 setup opt-in·동적 shape 미해결 범위는 동일하다. 두 repository push는 하나의 원자적 transaction이 아니므로 각각의 결과를 검증한다. 전체 workload/runtime 성공이나 전체 test suite PASS를 새로 주장하지 않는다.
+
+
+### Tree DP + conflict resolution with certified bounds — 진행중
+
+- **문제 정의/범위:** 사용자 요청에 따라 원격 `origin/main` `b8623e3481`에서 새 worktree `/home/mchoi/cofee-tree-dp-20261014` 및 `feature/memo-tree-dp-certified-20261014` 브랜치를 만들었다. 기존 exact solver의 선택/탐색 동작과 후보군을 유지하고 독립 Global/Local 알고리즘을 추가한다.
+- **원인/설계:** HOP DAG의 공유 producer·movement와 함수/분기/루프 경계는 단순 트리 비용 합으로 다룰 수 없다. 기존 MemoProgramModel의 변수/제약/cost ownership을 그대로 사용해 forest relaxation + conflict branching으로 인증한다. 단일 movement factor를 중복 계산하지 않는다.
+- **해결 진행:** 새 MemoTreeDpOptimizer; read-only factor accessor; 별도 `sysds.fedplanner.memo.algorithm=TREE_DP_GLOBAL|TREE_DP_LOCAL` 선택; 원래 모델 비용/합법성 재검증 후 같은 reconstruction 경로를 사용한다. 기본 EXACT 경로는 유지한다.
+- **적용 원칙:** 사용자 요구가 기존 DP 우선·public fixture 생략 지침보다 우선한다. comprehensive exhaustive correctness tests에는 public/negative/unknown 사례도 포함한다. 시간/반복 수만으로 Local 성공 처리하지 않는다. 자원 한도는 명시적 실패 상태이며 성공은 bound certificate로만 결정한다.
+- **검증 계획:** 독립 brute-force 최적값, 모든 LB/UB 기록의 포함관계, 정확한 5% 경계, UNKNOWN/coverage/resource 실패, 함수/분기/루프 모델, 동일 Docker 환경의 synthetic 및 sealed 실제 ML training 프로그램 비교. Docker benchmark는 `run_LAN_docker.sh --memo-tree-dp-benchmark` 새 경로로 실행한다.
+- **발견한 실험 한계:** 기존 Memo matrix는 network-none compile-only이며 실제 training 실행을 증명하지 않는다. fullcompile과 runtime 결과를 분리해 보고한다. Legacy Regional과 다른 모델이면 objective 동등성을 주장하지 않는다.
+- **잔여 이슈/위험:** 구현/검증 진행중. 기존 high-arity cost/check의 완화가 느슨하면 탐색량이 증가할 수 있다. exact binary64 primitive 합은 BigDecimal로 비교하며 epsilon 경계·UNKNOWN 검사를 독립 테스트로 확인한다.

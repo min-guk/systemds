@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python3",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "scripts/fedplanner/tests",
+    "-p",
+    "test_run_memo_tree_dp_benchmark.py"
+  ],
+  "returncode": 0,
+  "tests": 21,
+  "result": "passed",
+  "outputSha256": "ee092db8946b567b25c5d37ae8c6a0a366d0b7302e1ae4e336b3587aefa2a67e"
+}

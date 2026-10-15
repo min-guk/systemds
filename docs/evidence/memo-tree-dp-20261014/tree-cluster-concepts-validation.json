@@ -1,0 +1,19 @@
+{
+  "document": "docs/COFEE_TREE_DP_CLUSTER_GLOBAL_LOCAL_CONCEPTS_2026-10-15_KO.md",
+  "sha256": "4552d91239c60d4430d44c6a60105a04942fda37233d06966a284f57cdf76409",
+  "localLinksChecked": 4,
+  "fencesBalanced": true,
+  "whitespaceCheck": true,
+  "example": {
+    "relaxedLowerBound": 2,
+    "feasibleCosts": [
+      8,
+      5
+    ],
+    "optimum": 5
+  },
+  "epsilonExampleVerified": true,
+  "productionCodeChanged": false,
+  "newBenchmarksRun": false,
+  "followupDirectExactClarification": "Updated to distinguish direct exact DP from bound-based search; see COFEE_ML_STRUCTURE_AND_SEED_AUDIT_2026-10-15_KO.md"
+}

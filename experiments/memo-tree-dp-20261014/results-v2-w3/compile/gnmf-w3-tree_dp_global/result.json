@@ -1,0 +1,31 @@
+{
+  "algorithm": "TREE_DP_GLOBAL",
+  "comparisonGroup": "ml:gnmf:w3:source-fullcompile",
+  "compile": {
+    "executionSeconds": null,
+    "fullCompileSeconds": null,
+    "fullInitialPlanningSeconds": null,
+    "runtimeProgramSeconds": null,
+    "verified": false
+  },
+  "deterministicTreeLimits": {
+    "cacheEntries": 4096,
+    "factorCells": 256,
+    "frontierNodes": 10000,
+    "searchNodes": 2000
+  },
+  "externalWatchdogSeconds": 900,
+  "failureCategory": "container_failure",
+  "memoPlans": [],
+  "peakContainerMemoryUsageBytes": null,
+  "phase": "source-fullcompile",
+  "returncode": 125,
+  "schema": "systemds-memo-tree-dp-attempt/v1",
+  "sourceSha256": "8adfc03fe60196562e03c0bcb0a00af027d44a65a72dd2e0acc107f44dd73d8a",
+  "status": "failed",
+  "timedOut": false,
+  "treeCertificates": [],
+  "wallSeconds": 0.3872123584151268,
+  "workers": 3,
+  "workload": "gnmf"
+}

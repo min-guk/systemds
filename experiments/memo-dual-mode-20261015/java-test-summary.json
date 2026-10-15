@@ -1,0 +1,154 @@
+{
+  "command": "mvn -q clean -Dspotless.check.skip=true -Drat.skip=true '-Dtest=MemoDualMode*Test,MemoFeasibleSeedTest,MemoDirectKernelTest,MemoOptimizer*Test,MemoTreeDp*Test' test",
+  "totalTests": 142,
+  "suites": [
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoDirectKernelTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoDualModeModelTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoDualModeOptimizerTest",
+      "tests": "17",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoFeasibleSeedTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerBinarySupportTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerBoundaryBoundTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerCheckStateTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerCostInvariantProjectionTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerCostStateRefinementTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerCostStateTest",
+      "tests": "9",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerDomainCacheTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerEliminationTest",
+      "tests": "12",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerForestTailTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerPseudoforestTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerScopeValidationTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerSupportWitnessTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerTest",
+      "tests": "23",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoOptimizerUnaryTautologyTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoTreeDpModelTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoTreeDpOptimizerTest",
+      "tests": "13",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "org.apache.sysds.hops.fedplanner.memo.MemoTreeDpTrainingRuntimeTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    }
+  ],
+  "engineManifestSha256": "4ef7e475327b77d185fc8c27fb30926aca4866c47912744fcfe1b4c9752e7a91"
+}

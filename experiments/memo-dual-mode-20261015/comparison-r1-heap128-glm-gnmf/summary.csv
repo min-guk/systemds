@@ -1,0 +1,7 @@
+phase,workload,workers,algorithm,status,failureCategory,wallSeconds,peakContainerMemoryUsageBytes
+source-fullcompile,glm,3,EXACT,failed,jvm_out_of_memory,14.369345270097256,272420044
+source-fullcompile,glm,3,MEMO_GLOBAL,failed,jvm_out_of_memory,14.921943113207817,275565772
+source-fullcompile,glm,3,MEMO_LOCAL,failed,jvm_out_of_memory,15.339924775063992,263507148
+source-fullcompile,gnmf,3,EXACT,passed,,2.630082443356514,168925593
+source-fullcompile,gnmf,3,MEMO_GLOBAL,passed,,2.966699458658695,131806003
+source-fullcompile,gnmf,3,MEMO_LOCAL,passed,,2.6070274338126183,148688076

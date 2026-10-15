@@ -37,6 +37,9 @@ import org.apache.sysds.runtime.lineage.LineageCacheConfig;
 
 /** One immutable native universe, exact optimization, and transactional projection. */
 public final class FederatedPlanMemo extends AFederatedPlanner {
+	/** The existing exact solver remains the default; tree modes share its model and projection. */
+	public enum Algorithm { EXACT, TREE_DP_GLOBAL, TREE_DP_LOCAL, MEMO_GLOBAL, MEMO_LOCAL }
+	public static final String ALGORITHM_PROPERTY = "sysds.fedplanner.memo.algorithm";
 	public record Receipt(MemoProgramFacts facts,MemoProgramModel.Solution solution)
 		implements PlannerInvocationReceipt { }
 	private record Projection(Hop hop,ExecType execution,FederatedOutput output) { }
@@ -52,9 +55,44 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 	}
 	private final CanonicalWorkerPool pool;
 	private final MemoOptimizer.Limits limits;
+	private final Algorithm algorithm;
+	private final MemoTreeDpOptimizer.Limits treeLimits;
 	public FederatedPlanMemo() { this(null,MemoOptimizer.Limits.exactDefaults()); }
 	public FederatedPlanMemo(CanonicalWorkerPool pool,MemoOptimizer.Limits limits) {
-		this.pool = pool; this.limits = limits;
+		this(pool,limits,Algorithm.valueOf(System.getProperty(ALGORITHM_PROPERTY,"EXACT")
+			.trim().toUpperCase(java.util.Locale.ROOT)));
+	}
+	private FederatedPlanMemo(CanonicalWorkerPool pool,MemoOptimizer.Limits limits,Algorithm algorithm) {
+		this(pool,limits,algorithm,algorithm==Algorithm.TREE_DP_GLOBAL || algorithm==Algorithm.TREE_DP_LOCAL
+			? configuredTreeLimits() : MemoTreeDpOptimizer.Limits.defaults());
+	}
+	public FederatedPlanMemo(CanonicalWorkerPool pool,MemoOptimizer.Limits limits,Algorithm algorithm,
+		MemoTreeDpOptimizer.Limits treeLimits) {
+		this.pool = pool; this.limits = java.util.Objects.requireNonNull(limits);
+		this.algorithm = java.util.Objects.requireNonNull(algorithm);
+		this.treeLimits = java.util.Objects.requireNonNull(treeLimits);
+	}
+	private static MemoTreeDpOptimizer.Limits configuredTreeLimits() {
+		MemoTreeDpOptimizer.Limits defaults=MemoTreeDpOptimizer.Limits.defaults();
+		return new MemoTreeDpOptimizer.Limits(
+			Long.parseLong(System.getProperty("sysds.fedplanner.memo.tree.searchNodes",Long.toString(defaults.searchNodes()))),
+			Integer.parseInt(System.getProperty("sysds.fedplanner.memo.tree.factorCells",Integer.toString(defaults.factorCells()))),
+			Integer.parseInt(System.getProperty("sysds.fedplanner.memo.tree.cacheEntries",Integer.toString(defaults.cacheEntries()))),
+			Integer.parseInt(System.getProperty("sysds.fedplanner.memo.tree.frontierNodes",Integer.toString(defaults.frontierNodes()))));
+	}
+	private static MemoDualModeOptimizer.Options configuredDualOptions() {
+		MemoDualModeOptimizer.Options defaults=MemoDualModeOptimizer.Options.defaults();
+		String prefix="sysds.fedplanner.memo.dual.";
+		return new MemoDualModeOptimizer.Options(
+			Boolean.parseBoolean(System.getProperty(prefix+"directExact","true")),
+			Long.parseLong(System.getProperty(prefix+"seedWork",Long.toString(defaults.seedWorkLimit()))),
+			Integer.parseInt(System.getProperty(prefix+"factorCells",Integer.toString(defaults.factorCells()))),
+			Long.parseLong(System.getProperty(prefix+"cacheBytes",Long.toString(defaults.cacheBytes()))),
+			Long.parseLong(System.getProperty(prefix+"diagnosticNodes",Long.toString(defaults.diagnosticNodes()))),
+			Long.parseLong(System.getProperty(prefix+"memoryBytes",Long.toString(defaults.maxResidentBytes()))),false,
+			Long.parseLong(System.getProperty(prefix+"directCells",Long.toString(defaults.directCells()))),
+			Integer.parseInt(System.getProperty(prefix+"clusterCells",Integer.toString(defaults.clusterCells()))),
+			Boolean.parseBoolean(System.getProperty(prefix+"improveSeed",Boolean.toString(defaults.improveSeed()))));
 	}
 	@Override public void rewriteProgram(DMLProgram program,FunctionCallGraph graph,FunctionCallSizeInfo sizes) {
 		plan(program);
@@ -85,10 +123,18 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 		long modelFinished = System.nanoTime();
 		tracePhase("model",modelFinished-rulesFinished);
 		traceCostProjection(model.costProjectionStatistics());
-		MemoProgramModel.Solution solution = model.optimize(limits);
+		MemoProgramModel.Solution solution = switch(algorithm) {
+			case EXACT -> model.optimize(limits);
+			case TREE_DP_GLOBAL,TREE_DP_LOCAL -> model.optimizeTreeDp(algorithm==Algorithm.TREE_DP_GLOBAL
+				? MemoTreeDpOptimizer.Mode.GLOBAL : MemoTreeDpOptimizer.Mode.LOCAL,treeLimits);
+			case MEMO_GLOBAL,MEMO_LOCAL -> model.optimizeDualMode(algorithm==Algorithm.MEMO_GLOBAL
+				? MemoDualModeOptimizer.Mode.GLOBAL : MemoDualModeOptimizer.Mode.LOCAL,configuredDualOptions());
+		};
 		long optimizationFinished = System.nanoTime();
 		tracePhase("optimization",optimizationFinished-modelFinished);
 		traceSearch(solution.optimization());
+		traceTreeDp(solution.treeDpCertificate());
+		traceDualMode(solution.dualModeCertificate());
 		traceForestTail(solution.optimization().statistics());
 		traceShapeReuse(universe.shapes().reuseStatistics());
 		traceMovementReuse(model.movementReuseStatistics());
@@ -97,8 +143,12 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 		traceDirectRoots("shapes",universe.shapes().directRootStatistics());
 		traceDirectRoots("modelPrivacy",model.directRootStatistics());
 		traceCheckProjection(solution.optimization().statistics());
-		if(solution.optimization().status() != MemoOptimizer.Status.OPTIMAL)
-			throw new IllegalStateException("Memo planner did not prove an optimum: "
+		if(solution.optimization().status() != MemoOptimizer.Status.OPTIMAL
+			&& !(algorithm==Algorithm.TREE_DP_LOCAL && solution.treeDpCertificate()!=null
+				&& solution.treeDpCertificate().certified())
+			&& !(algorithm==Algorithm.MEMO_LOCAL && solution.dualModeCertificate()!=null
+				&& solution.dualModeCertificate().certified()))
+			throw new IllegalStateException("Memo planner did not establish the requested certificate: "
 				+ solution.optimization().status() + " " + solution.diagnostics());
 		int[] selected = solution.optimization().selectedRules();
 		// All derived contracts are validated before any compiled Hop or registry is changed.
@@ -164,7 +214,8 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 				.mapToLong(owner -> universe.memo().rules(owner).size()).sum();
 			long federated = projections.stream().filter(p -> p.execution() == ExecType.FED).count();
 			var stats = solution.optimization().statistics();
-			System.err.println("[MemoPlanner] status=OPTIMAL epoch=" + MemoPlanRegistry.epoch(program)
+			System.err.println("[MemoPlanner] status=" + solution.optimization().status()
+				+ " algorithm=" + algorithm + " epoch=" + MemoPlanRegistry.epoch(program)
 				+ " workers=" + sources.workers() + " nativeRules=" + generated + " fedOwners=" + federated
 				+ " supplies=" + solution.supplies().values().stream().mapToInt(List::size).sum()
 				+ " nodes=" + stats.nodes() + " checks=" + stats.checkEvaluations()
@@ -188,6 +239,22 @@ public final class FederatedPlanMemo extends AFederatedPlanner {
 		}
 		return new Receipt(facts,solution);
 	}
+	private static void traceDualMode(MemoDualModeOptimizer.Result result) {
+		if(result==null || !Boolean.getBoolean("sysds.fedplanner.memo.trace")) return;
+		System.err.println("[MemoDual] status="+result.status()+" certified="+result.certified()
+			+" lowerBound="+result.lowerBound()+" upperBound="+result.upperBound()
+			+" statistics="+result.statistics()+" reason="+result.reason());
+	}
+	private static void traceTreeDp(MemoTreeDpOptimizer.Result result) {
+		if(result==null || !Boolean.getBoolean("sysds.fedplanner.memo.trace")) return;
+		System.err.println("[MemoTreeDP] status="+result.status()+" certified="+result.certified()
+			+" lowerBound="+result.lowerBound()+" upperBound="+result.upperBound()
+			+" statistics="+result.statistics());
+		for(MemoTreeDpOptimizer.BoundPoint point:result.progression())
+			System.err.println("[MemoTreeDPBound] nodes="+point.nodes()+" lowerBound="+point.lowerBound()
+				+" upperBound="+point.upperBound());
+	}
+
 	private static void traceNativeRequests(MemoRuleBuilder.RequestStatistics statistics) {
 		if(Boolean.getBoolean("sysds.fedplanner.memo.trace"))
 			System.err.println("[MemoNativeRequests] preparedRequests=" + statistics.preparedRequests()
